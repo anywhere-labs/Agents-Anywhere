@@ -103,8 +103,10 @@ class CodexTurnController:
         selections: Mapping[str, str | None] | None = None,
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
+        project_id: str | None = None,
     ) -> RuntimeOperationResult:
         return await self.session_starter.create_and_start_session(
+            project_id=project_id,
             session_id=session_id,
             content=content,
             title=title,

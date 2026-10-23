@@ -24,7 +24,7 @@ export default defineConfig([
       name: 'standard-decorators',
       transform(code, id) {
         // Module ids keep the platform separator, so compare a normalized path.
-        if (!/(?:^|\/)(?:rpc\/service|dsh-runtime\/bridge-service)\.ts$/.test(id.replaceAll('\\', '/'))) return
+        if (!/(?:^|\/)(?:rpc\/service|dsh-runtime\/(?:bridge-service|workspace-operations))\.ts$/.test(id.replaceAll('\\', '/'))) return
         const output = ts.transpileModule(code, {
           fileName: id,
           compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, sourceMap: true, experimentalDecorators: false },

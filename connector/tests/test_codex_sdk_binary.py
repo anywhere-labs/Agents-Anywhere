@@ -52,7 +52,7 @@ def test_invalid_codex_falls_back_to_sdk(monkeypatch, configured, failure):
             stderr="",
         )
 
-    monkeypatch.setattr(binary.subprocess, "run", run)
+    monkeypatch.setattr(binary, "_run_probe", run)
     selection = binary.select_codex_runtime_binary(
         "prefer_system",
         {"PATH": "example"},
@@ -68,8 +68,8 @@ def test_invalid_codex_falls_back_to_sdk(monkeypatch, configured, failure):
 def test_valid_codex_is_used(monkeypatch, configured):
     monkeypatch.setattr(binary, "find_executable_on_path", lambda *_: "codex.exe")
     monkeypatch.setattr(
-        binary.subprocess,
-        "run",
+        binary,
+        "_run_probe",
         lambda *a, **kw: subprocess.CompletedProcess(
             a[0],
             0,
@@ -92,7 +92,7 @@ def test_disabled_system_codex_does_not_probe(monkeypatch):
         pytest.fail("SDK mode should not search or probe system Codex")
 
     monkeypatch.setattr(binary, "find_executable_on_path", unexpected)
-    monkeypatch.setattr(binary.subprocess, "run", unexpected)
+    monkeypatch.setattr(binary, "_run_probe", unexpected)
     selection = binary.select_codex_runtime_binary(
         "sdk_bundled",
         {},
@@ -130,7 +130,7 @@ def test_windows_does_not_run_posix_login_shell(monkeypatch):
     monkeypatch.setattr(binary.sys, "platform", "win32")
     monkeypatch.setenv("SHELL", "/bin/bash")
     monkeypatch.setattr(
-        binary.subprocess, "run", lambda *a, **kw: pytest.fail("must use Windows PATH")
+        binary, "_run_probe", lambda *a, **kw: pytest.fail("must use Windows PATH")
     )
     assert binary.read_login_shell_path().path is None
 
@@ -166,7 +166,7 @@ def test_windows_scripts_use_same_launcher_for_probe_and_sdk(
             command, 0, stdout="codex-cli 0.144.4\n", stderr=""
         )
 
-    monkeypatch.setattr(binary.subprocess, "run", run)
+    monkeypatch.setattr(binary, "_run_probe", run)
     values = {"environment": environment}
     if configured:
         values["codexExecutablePath"] = "codex" + suffix
@@ -215,8 +215,8 @@ def test_windows_script_version_failure_falls_back(monkeypatch, suffix):
     monkeypatch.setattr(binary.sys, "platform", "win32")
     monkeypatch.setattr("connector.launch._powershell_bin", lambda: "powershell.exe")
     monkeypatch.setattr(
-        binary.subprocess,
-        "run",
+        binary,
+        "_run_probe",
         lambda command, **kwargs: subprocess.CompletedProcess(
             command, 7, stdout="codex-cli 0.144.4", stderr=""
         ),
@@ -229,3 +229,29 @@ def test_windows_script_version_failure_falls_back(monkeypatch, suffix):
     )
     assert selection.source == "sdk_bundled"
     assert "exited with code 7" in selection.reason
+
+
+@pytest.mark.skipif(__import__("os").name != "posix", reason="POSIX process group cleanup")
+def test_probe_timeout_cleans_up_launcher_descendants(tmp_path):
+    import sys
+    import time
+
+    import psutil
+
+    from connector.runtimes.codex.sdk import binary
+
+    marker = tmp_path / "child-pid"
+    script = (
+        "import subprocess,sys,time; from pathlib import Path; "
+        "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); "
+        "Path(sys.argv[1]).write_text(str(child.pid)); time.sleep(60)"
+    )
+    with pytest.raises(subprocess.TimeoutExpired):
+        binary._run_probe([sys.executable, "-c", script, str(marker)], timeout=0.5)
+    child_pid = int(marker.read_text())
+    for _ in range(50):
+        if not psutil.pid_exists(child_pid) or psutil.Process(child_pid).status() == psutil.STATUS_ZOMBIE:
+            break
+        time.sleep(0.01)
+    else:
+        pytest.fail("Version probe left its launcher child running")

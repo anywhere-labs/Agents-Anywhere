@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from typing import Any
@@ -14,6 +15,7 @@ from connector.core.config import ConnectorConfig
 from connector.core.preferences import read_local_preferences
 from connector.local import create_local_ops
 from connector.logging import logger
+from connector.operations.remote import RemoteOperations
 from connector.runtime_protocol import (
     RuntimeHostClient,
 )
@@ -56,6 +58,7 @@ from connector.server.urls import api_v2_path, device_os, is_loopback_url
 from connector.server.urls import (
     ws_url as build_ws_url,
 )
+from connector.server.workspace_sync import WorkspaceSyncRunner
 
 INGEST_ONLY_NOTIFICATION_METHODS = frozenset({"timeline.sync"})
 SYNC_STATE_FLUSH_INTERVAL_SECONDS = 1.0
@@ -136,6 +139,9 @@ class BackendRpcClient:
             ingest_notifications=self.ingest_notifications,
             flush_sync_state=self._flush_sync_state,
         )
+        self._workspace_sync = WorkspaceSyncRunner(config, self.agent_runtime_supervisor, self._publish_workspace_inventory)
+        self._workspace_connection_token = ""
+        self._remote_operations = RemoteOperations(self)
         self._runtime_sync_task: asyncio.Task[None] | None = None
 
     async def run_forever(self) -> None:
@@ -220,6 +226,7 @@ class BackendRpcClient:
             finally:
                 self._ingest.close()
                 await self._timeline_notifications.abort()
+            await self._remote_operations.close()
             ingest_flush_task.cancel()
             sync_state_flush_task.cancel()
             if self._runtime_sync_task is not None:
@@ -259,11 +266,14 @@ class BackendRpcClient:
             },
             proxy=None if is_loopback_url(self.config.server_url) else True,
         ) as ws:
+            self._workspace_connection_token = secrets.token_urlsafe(24)
             self._rpc.set_connection(ws)
             capabilities_task = asyncio.create_task(
                 self._publish_runtime_capabilities(request_session)
             )
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+            mesh_task = asyncio.create_task(self._remote_operations.run())
+            workspace_task = asyncio.create_task(self._run_workspace_sync())
             recovery_task = asyncio.create_task(self._runtime_sync.reconnect_event_runtimes())
             reader_task = asyncio.create_task(self._read_backend_messages(ws, request_session))
             try:
@@ -281,14 +291,45 @@ class BackendRpcClient:
                     await heartbeat_task
                     raise ConnectorNetworkError("backend heartbeat stopped")
             finally:
+                mesh_task.cancel()
                 capabilities_task.cancel()
                 heartbeat_task.cancel()
+                workspace_task.cancel()
                 recovery_task.cancel()
                 reader_task.cancel()
                 await asyncio.gather(
-                    capabilities_task, heartbeat_task, recovery_task, reader_task, return_exceptions=True
+                    capabilities_task, heartbeat_task, recovery_task, reader_task, workspace_task, mesh_task, return_exceptions=True
                 )
                 await self._rpc.close_connection()
+
+    async def _run_workspace_sync(self) -> None:
+        while True:
+            try:
+                token = await self.ensure_access_token()
+                client = self._get_http_client()
+                assert client is not None
+                response = await client.post(
+                    self.config.server_url.rstrip("/") + api_v2_path("/connector/workspaces/lease"),
+                    headers={"Authorization": f"Bearer {token}"},
+                    json={"connectionToken": self._workspace_connection_token},
+                )
+                response.raise_for_status()
+                await self._workspace_sync.run(response.json()["epoch"])
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("workspace lease acquisition deferred")
+                await asyncio.sleep(3)
+
+    async def _publish_workspace_inventory(self, notifications: list[dict[str, Any]]) -> None:
+        ingest = ConnectorIngestClient(
+            server_url=self.config.server_url,
+            access_token_provider=self._auth.ensure_access_token,
+            http_client_getter=self._get_http_client,
+            http_client_factory=lambda timeout: self._new_http_client(timeout=timeout),
+        )
+        await ingest.ingest_notifications(notifications)
 
     async def _read_backend_messages(self, ws, request_session) -> None:
         async for raw_message in ws:
@@ -332,7 +373,11 @@ class BackendRpcClient:
         request_session: ConnectorRequestSession | None = None,
     ) -> None:
         dispatcher = request_session or self._dispatcher
-        self._rpc.start_request(message, dispatcher.dispatch)
+        async def dispatch(method: str, params: dict[str, Any]) -> Any:
+            if method == "workspace.connection":
+                return {"connectionToken": self._workspace_connection_token, "operationsProtocol": "1.0"}
+            return await dispatcher.dispatch(method, params)
+        self._rpc.start_request(message, dispatch)
 
     async def dispatch(self, method: str, params: dict[str, Any]) -> Any:
         return await self._dispatcher.dispatch(method, params)
@@ -343,6 +388,9 @@ class BackendRpcClient:
     async def send_backend_notification(
         self, method: str, params: dict[str, Any]
     ) -> None:
+        if method == "runtime.workspaces.invalidated":
+            self._workspace_sync.request(str(params.get("runtimeId") or params.get("runtime")))
+            return
         await self._timeline_notifications.send(method, params)
 
     async def _send_backend_notification_now(

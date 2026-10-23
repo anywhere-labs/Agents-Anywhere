@@ -1,5 +1,7 @@
 "use client"
 
+import { useTranslations } from "next-intl"
+
 import * as React from "react"
 import {
   defaultFilter,
@@ -63,6 +65,7 @@ export type PanelMode = "docked" | "floating" | "closed"
 export type AppPage = "home" | "session" | "settings" | "admin" | "mobile-connections" | "device"
 
 export type WorkspaceSessionView = DemoSessionView & {
+  projectSyncReason?: string | null
   projectId?: string | null
 }
 
@@ -153,6 +156,7 @@ function mapSession(session: RealSessionView): SessionView {
     id: session.id,
     connectorId: session.connectorId,
     projectId: session.projectId ?? null,
+    projectSyncReason: session.projectSyncReason,
     connectorStatus: session.connectorStatus,
     runtime: session.runtime,
     runtimeId: session.runtimeId,
@@ -324,7 +328,7 @@ export type WorkspaceState = ReturnType<typeof useSessionCreation> & {
   toggleArchiveSession: (id: string, archived?: boolean) => Promise<SessionView | null>
   renameSession: (id: string, title: string) => Promise<boolean>
   createProject: (payload: ProjectCreateRequest) => Promise<ProjectView | null>
-  resolveProject: (payload: Pick<ProjectCreateRequest, "connectorId" | "workspacePath">) => Promise<ProjectView>
+  resolveProject: (payload: Pick<ProjectCreateRequest, "connectorId" | "workspacePath" | "runtime" | "runtimeId"> & { projectId?: string; requestId: string }) => Promise<ProjectView>
   updateProject: (projectId: string, patch: ProjectPatchRequest) => Promise<ProjectView | null>
   deleteProject: (projectId: string) => Promise<boolean>
   archiveProjectSessions: (projectId: string) => Promise<boolean>
@@ -437,6 +441,7 @@ export function useWorkspace() {
 // ─── Provider ─────────────────────────────────────────────────
 
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
+  const tProjectSync = useTranslations("dashboard.projectSync")
   const { session: authSession } = useAuth()
   const currentAccessTokenRef = React.useRef(authSession?.accessToken ?? null)
   currentAccessTokenRef.current = authSession?.accessToken ?? null
@@ -993,12 +998,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   ): Promise<ProjectView | null> => {
     const token = authSession?.accessToken
     if (!token) return null
-    const response = await dashboardApi.createProject(token, payload)
+    const created = await dashboardApi.createProject(token, payload)
+    const response = { project: await dashboardApi.awaitProject(token, created, tProjectSync) }
     if (currentAccessTokenRef.current !== token) return null
     upsertProject(response.project)
     void refreshProjects().catch(() => undefined)
     return response.project
-  }, [authSession?.accessToken, refreshProjects, upsertProject])
+  }, [authSession?.accessToken, refreshProjects, upsertProject, tProjectSync])
 
   const updateProject = React.useCallback(async (
     projectId: string,
@@ -1018,7 +1024,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
   }, [authSession?.accessToken, refreshProjects, upsertProject])
 
-  const resolveProject = React.useCallback(async (payload: Pick<ProjectCreateRequest, "connectorId" | "workspacePath">): Promise<ProjectView> => {
+  const resolveProject = React.useCallback(async (payload: Pick<ProjectCreateRequest, "connectorId" | "workspacePath" | "runtime" | "runtimeId"> & { projectId?: string; requestId: string }): Promise<ProjectView> => {
     const token = authSession?.accessToken
     if (!token) throw new Error("Authentication required")
     let path = payload.workspacePath.trim()
@@ -1028,16 +1034,18 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       path = response.result.path
     }
     const project = await resolveWorkspaceProject({
+      translate: tProjectSync,
       projects,
       connectorId: payload.connectorId,
+      runtime: payload.runtime, runtimeId: payload.runtimeId, projectId: payload.projectId,
       path,
       deviceOs: connectors.find((connector) => connector.id === payload.connectorId)?.deviceOs,
-      list: async () => (await dashboardApi.listProjects(token)).projects,
-      create: async (body) => (await dashboardApi.createProject(token, body)).project,
+      requestId: payload.requestId,
+      create: async (body) => dashboardApi.awaitProject(token, await dashboardApi.createProject(token, body), tProjectSync),
     })
     upsertProject(project)
     return project
-  }, [authSession?.accessToken, connectors, projects, upsertProject])
+  }, [authSession?.accessToken, connectors, projects, upsertProject, tProjectSync])
 
   const deleteProject = React.useCallback(async (projectId: string): Promise<boolean> => {
     const token = authSession?.accessToken

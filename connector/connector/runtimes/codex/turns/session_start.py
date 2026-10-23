@@ -48,6 +48,7 @@ class CodexSessionStartController:
         selections: Mapping[str, str | None] | None = None,
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
+        project_id: str | None = None,
     ) -> RuntimeOperationResult:
         """Create a Codex thread, publish session meta/state, then start a turn.
 
@@ -91,6 +92,7 @@ class CodexSessionStartController:
             )
         result = await self.client.start_thread(
             CodexStartThreadRequest(
+                project_id=project_id,
                 cwd=cwd,
                 model=selected_model.model,
                 approval_policy=native_permission.approval_policy,

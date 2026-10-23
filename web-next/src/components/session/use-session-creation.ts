@@ -70,7 +70,7 @@ export function useSessionCreation(options: Options) {
     messages.current.delete(id)
     latest.current.removeLocal(id)
     publish()
-    latest.current.edit(entry.draft.request.projectId)
+    latest.current.edit(entry.draft.request.projectId ?? "")
   }, [publish])
 
   const submit = React.useCallback(async (id: string, retry = false) => {

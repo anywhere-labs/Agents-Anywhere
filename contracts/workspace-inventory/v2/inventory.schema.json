@@ -1,0 +1,193 @@
+{
+  "$defs": {
+    "DirectoryObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "present",
+            "missing",
+            "unknown"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "state"
+      ],
+      "title": "DirectoryObservation",
+      "type": "object"
+    },
+    "NativeWorkspace": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "roots": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 256,
+          "minItems": 1,
+          "title": "Roots",
+          "type": "array"
+        },
+        "identityKind": {
+          "default": "native",
+          "enum": [
+            "native",
+            "directory"
+          ],
+          "title": "Identitykind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "path",
+        "roots"
+      ],
+      "title": "NativeWorkspace",
+      "type": "object"
+    },
+    "WorkspaceMember": {
+      "additionalProperties": false,
+      "properties": {
+        "sessionId": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "projectId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Projectid"
+        },
+        "cwd": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cwd"
+        }
+      },
+      "required": [
+        "sessionId",
+        "projectId",
+        "cwd"
+      ],
+      "title": "WorkspaceMember",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 2,
+      "title": "Version",
+      "type": "integer"
+    },
+    "epoch": {
+      "maxLength": 128,
+      "minLength": 16,
+      "title": "Epoch",
+      "type": "string"
+    },
+    "sequence": {
+      "minimum": 1,
+      "title": "Sequence",
+      "type": "integer"
+    },
+    "snapshotId": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Snapshotid",
+      "type": "string"
+    },
+    "observedAt": {
+      "format": "date-time",
+      "title": "Observedat",
+      "type": "string"
+    },
+    "catalogComplete": {
+      "default": false,
+      "title": "Catalogcomplete",
+      "type": "boolean"
+    },
+    "membersComplete": {
+      "default": false,
+      "title": "Memberscomplete",
+      "type": "boolean"
+    },
+    "workspaces": {
+      "items": {
+        "$ref": "#/$defs/NativeWorkspace"
+      },
+      "maxItems": 10000,
+      "title": "Workspaces",
+      "type": "array"
+    },
+    "members": {
+      "items": {
+        "$ref": "#/$defs/WorkspaceMember"
+      },
+      "maxItems": 50000,
+      "title": "Members",
+      "type": "array"
+    },
+    "directories": {
+      "items": {
+        "$ref": "#/$defs/DirectoryObservation"
+      },
+      "maxItems": 60000,
+      "title": "Directories",
+      "type": "array"
+    }
+  },
+  "required": [
+    "version",
+    "epoch",
+    "sequence",
+    "snapshotId",
+    "observedAt"
+  ],
+  "title": "RuntimeWorkspaceInventory",
+  "type": "object"
+}

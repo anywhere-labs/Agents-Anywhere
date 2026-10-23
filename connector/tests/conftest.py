@@ -20,3 +20,14 @@ def isolated_runtime_home(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime_owner, "_pid_alive", inspect_fixture_pid)
     for key in ("AA_CONNECTOR_OWNER_INSTANCE", "AA_CONNECTOR_OWNER_PID", "AA_CONNECTOR_OWNER_KIND"):
         monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def isolated_codex_binary_discovery(request, monkeypatch):
+    # Runtime unit tests use SDK doubles; never execute a developer's global
+    # CLI shim. Dedicated binary tests provide their own executable probes.
+    if request.node.path.name == "test_codex_sdk_binary.py":
+        return
+    from connector.runtimes.codex.sdk import binary
+
+    monkeypatch.setattr(binary, "read_login_shell_path", lambda: binary.LoginShellPathResult(shell=None, path=""))

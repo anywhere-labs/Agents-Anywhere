@@ -8,6 +8,8 @@ All Server HTTP, SSE, and WebSocket API documentation should live under this dir
 
 ## Documents
 
+- [项目归档与本机工作区](./project-archiving.md)：#301 的 DSH/Codex 原生成员同步、归档与同目录重建行为，以及 Claude 保持原有同步策略的边界。
+
 - [Upgrading to v2](../upgrading.md): current deployment and client upgrade
   guidance, including legacy v1 migrations.
 - [API v2 namespace](./namespace.md): `/api/v2` namespace and client/connector URL rules.

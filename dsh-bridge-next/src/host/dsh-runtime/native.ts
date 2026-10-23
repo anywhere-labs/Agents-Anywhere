@@ -21,6 +21,7 @@ import { RuntimeConfiguration } from './configuration.js'
 import { RuntimeCommands } from './commands.js'
 import type { Selections } from './selections.js'
 import { capabilities } from './capabilities.js'
+import { WorkspaceOperations } from './workspace-operations.js'
 import { CreationIntents } from './creation-intents.js'
 import { RuntimeAttachments, attachmentFingerprint, attachmentReferences, type AttachmentSnapshot, type StagedAttachment } from './attachments.js'
 declare module '@deepseek-ai/cordis' {
@@ -32,7 +33,7 @@ export type NativeChange = { type: 'stream', id: string, turn: number, step: num
   | { type: 'session', id: string } | { type: 'status', id: string }
   | { type: 'refresh', id: string }
   | { type: 'question', id: string } | { type: 'approval', id: string } | { type: 'capabilities' }
-  | { type: 'visibility' } | { type: 'catalogs', catalogType: 'model' | 'permission' } | { type: 'commands' }
+  | { type: 'visibility' } | { type: 'workspaces' } | { type: 'catalogs', catalogType: 'model' | 'permission' } | { type: 'commands' }
 export interface NativeWorkspace { id: string, title: string, path: string, sessionIds: string[] }
 
 export const MAX_RETAINED_FACTS = 128
@@ -61,6 +62,8 @@ export class NativeRuntime {
   readonly commands: RuntimeCommands
   private writes = new Map<string, Promise<unknown>>()
   private closed = false
+  private readonly workspaceOperationSources = new Map<string, WorkspaceOperations>()
+  private readonly workspaceOperationDirectory: string
   private creations: CreationIntents
   readonly attachments: RuntimeAttachments
   private readonly facts = new Map<string, { revision: string, value: SessionFacts }>()
@@ -69,6 +72,7 @@ export class NativeRuntime {
     readonly diagnostics = new RuntimeDiagnostics(),
     legacyAttachmentStaging?: string) {
     this.creations = new CreationIntents(creationDirectory)
+    this.workspaceOperationDirectory = join(dirname(creationDirectory), 'workspace-operations')
     this.attachments = new RuntimeAttachments(join(dirname(creationDirectory), 'attachments'), legacyAttachmentStaging)
     this.catalogs = new RuntimeCatalogs(ctx, () => this.emit({ type: 'catalogs', catalogType: 'model' }))
     this.configuration = new RuntimeConfiguration(ctx)
@@ -120,6 +124,7 @@ export class NativeRuntime {
     ctx.on('agent/status', ({ agent }) => this.emit({ type: 'status', id: agent.id }), { global: true })
     ctx.on('domain/changed', change => {
       if (change.domain !== 'workspace') return
+      this.emit({ type: 'workspaces' })
       if (change.table === '' && change.operation === 'put') {
         const ids = record(change.value).archivedSessionIds
         if (Array.isArray(ids)) {
@@ -242,9 +247,18 @@ export class NativeRuntime {
     return snapshot
   }
 
+  workspaceOperationsFor(namespace: string): WorkspaceOperations {
+    let operations = this.workspaceOperationSources.get(namespace)
+    if (!operations) {
+      operations = new WorkspaceOperations(this, join(this.workspaceOperationDirectory, digest(namespace)))
+      this.workspaceOperationSources.set(namespace, operations)
+    }
+    return operations
+  }
+
   async send(id: SessionId, text: string, requestId: string, cwd?: string, create = false,
     selections: Selections = {}, agentPreset?: string, signal = new AbortController().signal,
-    images: readonly StagedAttachment[] = [], platformId?: string): Promise<void> {
+    images: readonly StagedAttachment[] = [], platformId?: string, nativeProjectId?: string): Promise<void> {
     if ((!text.trim() && !images.length) || text.length > 1_000_000 || !requestId || requestId.length > 512) {
       throw new BridgeError('INVALID_PARAMS', 'A text message and stable client message ID are required.')
     }
@@ -271,7 +285,7 @@ export class NativeRuntime {
           path = await realpath(cwd)
           if (!(await stat(path)).isDirectory()) throw new Error('not a directory')
         } catch { throw new BridgeError('INVALID_PARAMS', 'The workspace must be an accessible directory on the DSH device.') }
-        fingerprint = digest(canonicalJson({ requestId, content: text, cwd: path, agentPreset: agentPreset ?? null,
+        fingerprint = digest(canonicalJson({ requestId, content: text, cwd: path, nativeProjectId: nativeProjectId ?? null, agentPreset: agentPreset ?? null,
           model: selections.model ?? null, permission: selections.permission ?? null,
           ...(images.length ? { attachments: attachmentReferences(images).map(image => ({ ...image })) } : {}) }))
         if (intent && (intent.requestId !== requestId || intent.fingerprint !== fingerprint)) {
@@ -300,8 +314,11 @@ export class NativeRuntime {
       if (create) {
         if (log?.events.some(event => event.type === 'turn/start')) throw new BridgeError('INVALID_PARAMS', 'This session has already started. Continue it with a new message.')
         if (!intent) await this.creations.write(id, { requestId, fingerprint: fingerprint! })
-        await this.configuration.controller().create({ sessionId: id, cwd: path!, agentPreset: preset! })
+        const selected = nativeProjectId ? this.ctx.workspaceRegistry.list().find(w => w.id === nativeProjectId) : undefined
+        if (nativeProjectId && (!selected || selected.path !== path)) throw new BridgeError('INVALID_PARAMS', 'The selected native workspace is unavailable or has a different directory.')
         const workspace = await this.ctx.workspaceRegistry.create(path!)
+        if (nativeProjectId && workspace.id !== nativeProjectId) throw new BridgeError('INVALID_PARAMS', 'The selected native workspace changed during creation.')
+        await this.configuration.controller().create({ sessionId: id, cwd: path!, agentPreset: preset! })
         await workspace.attachSession(id)
       }
       const agent = await this.configuration.agent(id)

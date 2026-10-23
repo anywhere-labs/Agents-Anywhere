@@ -217,7 +217,6 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     onExpandedChange: setProjectExpanded,
     onOpenSession: openSession,
     onNewSession: startProjectSession,
-    onEdit: (project) => setProjectEditor({ mode: "edit", project }),
     onTogglePin: (project) => void toggleProjectPin(project),
     onArchiveAll: setProjectToArchive,
     onToggleSessionPin: togglePinSession,
@@ -347,7 +346,6 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
           if (!open) setProjectEditor(null)
         }}
         onCreate={createProject}
-        onUpdate={updateProject}
       />
 
       <ProjectConfirmationDialogs

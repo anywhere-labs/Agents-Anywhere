@@ -1,6 +1,15 @@
 package com.agentsanywhere.app.api
 
 data class RemoteProject(
+    val runtime: String? = null,
+    val runtimeId: String? = null,
+    val nativeProjectId: String? = null,
+    val identityKind: String = "legacy",
+    val roots: List<String> = emptyList(),
+    val sourceState: String = "pending",
+    val sourceAvailability: String = "unknown",
+    val rootStates: Map<String, String> = emptyMap(),
+    val lastSyncedAt: String? = null,
     val id: String,
     val userId: String,
     val connectorId: String,
@@ -28,6 +37,11 @@ data class RemoteProjectResponse(
 
 data class RemoteProjectCreateResponse(
     val project: RemoteProject,
-    val attachedSessions: Int,
     val serverTime: String?,
+)
+
+// Account-owned durable receipt; safe to resume after the editor or app restarts.
+data class RemotePendingProjectOperation(
+    val operationId: String, val status: String, val name: String,
+    val connectorId: String, val runtime: String, val runtimeId: String, val workspacePath: String,
 )

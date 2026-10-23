@@ -5,6 +5,8 @@ import com.agentsanywhere.app.model.AgentProject
 
 internal fun RemoteProject.toAgentProject(): AgentProject {
     return AgentProject(
+        runtime = runtime, runtimeId = runtimeId, nativeProjectId = nativeProjectId, identityKind = identityKind,
+        roots = roots, sourceState = sourceState, sourceAvailability = sourceAvailability, rootStates = rootStates, lastSyncedAt = lastSyncedAt,
         id = id,
         userId = userId,
         connectorId = connectorId,

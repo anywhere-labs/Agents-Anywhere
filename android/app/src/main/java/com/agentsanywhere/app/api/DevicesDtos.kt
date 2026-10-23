@@ -23,6 +23,7 @@ data class RemoteDeviceRuntimeList(
 )
 
 data class RemoteDeviceRuntime(
+    val capabilities: Map<String, Any?> = emptyMap(),
     val connectorId: String,
     val runtimeId: String,
     val runtimeType: String,

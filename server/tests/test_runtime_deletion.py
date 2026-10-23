@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from conftest import ApiV2TestClient as TestClient
+from runtime_fixtures import seed_workspace_project
 from sqlalchemy import insert, select, update
 from test_connector_deletion import timeline_input
 from test_runtime_instances_lifecycle import (
@@ -69,8 +70,10 @@ async def add_session(app, device, runtime, name):
         title=name,
         cwd="/work/shared",
     )
-    now = utc_now()
     owner = (await store.get_connector(device)).userId
+    await seed_workspace_project(store, device, owner, "/work/shared", runtime_id=runtime, member_ids=[name])
+    session = await store.get_session(session.id)
+    now = utc_now()
     await store.upsert_timeline_item(
         session_id=session.id, item=timeline_input(session.id)
     )
@@ -233,9 +236,15 @@ def test_runtime_deletion_removes_only_its_sessions_and_related_data(api):
         await assert_session_data(client.app, {session.id for session in kept})
         store = client.app.state.store
         async with store.engine.connect() as conn:
-            assert set((await conn.execute(select(db.projects.c.id))).scalars()) == {
+            assert set((await conn.execute(select(db.projects.c.id).where(db.projects.c.source_state != "historical"))).scalars()) == {
                 session.projectId for session in kept
             }
+            retired = (await conn.execute(select(db.projects).where(db.projects.c.connector_id == device, db.projects.c.runtime_id == runtime))).mappings().all()
+            assert retired and all(row["source_state"] == "historical" for row in retired)
+            assert not (await conn.execute(select(db.runtime_workspace_inventories).where(
+                db.runtime_workspace_inventories.c.connector_id == device,
+                db.runtime_workspace_inventories.c.runtime_id == runtime,
+            ))).first()
         for session in deleted:
             assert not (store.files.root / session.id).exists()
             assert (

@@ -45,6 +45,8 @@ from agent_server.deps import (
 )
 from agent_server.infra.connector_rpc import (
     ConnectorConnection,
+    ConnectorOfflineError,
+    ConnectorRpcError,
     ConnectorRpcManager,
     DuplicateConnectorConnectionError,
 )
@@ -428,23 +430,57 @@ def get_terminal_broker(conn: HTTPConnection) -> TerminalBroker:
     return conn.app.state.terminal_broker
 
 
+@router.post("/connector/workspaces/lease")
+async def workspace_lease(
+    payload: dict[str, str],
+    authorization: str = Header(..., alias="Authorization"), db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+) -> dict[str, str]:
+    connector_id = _access_token_connector_id(authorization)
+    async with db.connector_lifecycle(connector_id):
+        await _require_active_connector(authorization, db)
+        try:
+            result, connection_id = await manager.request_bound(connector_id, "workspace.connection", {}, timeout=5)
+        except (TimeoutError, ConnectorOfflineError, ConnectorRpcError) as exc:
+            raise HTTPException(409, detail="workspace connection is unavailable") from exc
+        if not payload.get("connectionToken") or result.get("connectionToken") != payload["connectionToken"]:
+            raise HTTPException(409, detail="workspace lease belongs to a different connection")
+        if not await manager.is_connection_id_current(connector_id, connection_id):
+            raise HTTPException(409, detail="connection changed while acquiring workspace lease")
+        return {"epoch": await db.issue_workspace_epoch(connector_id, epoch=connection_id)}
+
+
 @router.post("/connector/ingest", response_model=ConnectorIngestResponse)
 async def connector_ingest(
     payload: ConnectorIngestRequest,
     authorization: str = Header(..., alias="Authorization"),
     db: Store = Depends(get_store),
     ingest_service: ConnectorIngestService = Depends(get_connector_ingest_service),
+    manager: ConnectorRpcManager = Depends(get_rpc),
 ) -> ConnectorIngestResponse:
     connector_id = _access_token_connector_id(authorization)
-    async with db.connector_lifecycle(connector_id):
+    workspace_methods = {"runtime.workspaces.updated", "runtime.workspaces.chunk", "runtime.workspaces.unavailable"}
+    workspace = [n for n in payload.notifications if n.method in workspace_methods]
+    if workspace:
+        runtime_ids = [n.params.get("runtimeId") for n in workspace]
+        if not all(isinstance(value, str) and value for value in runtime_ids):
+            raise HTTPException(400, detail="workspace runtimeId must be a nonempty string")
+        sources = set(runtime_ids)
+        if len(workspace) != len(payload.notifications) or len(sources) != 1:
+            raise HTTPException(400, detail="workspace notifications require a separate single-source batch")
+        # Admission is short. Each persistence stage checks epoch and source binding
+        # again under a DB row lock shared with Runtime/Connector retirement.
+        async with db.connector_lifecycle(connector_id):
+            await _require_active_connector(authorization, db)
+        guard = manager.workspace_guard(connector_id, next(iter(sources)))
+    else:
+        guard = db.connector_lifecycle(connector_id)
+    async with guard:
         await _require_active_connector(authorization, db)
         try:
             return await ingest_service.ingest(connector_id=connector_id, payload=payload)
         except NotificationValidationError as exc:
-            raise HTTPException(
-                status_code=400,
-                detail={"code": exc.code, "message": exc.message},
-            ) from exc
+            raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message}) from exc
 
 
 @router.get("/connector/sessions/{session_id}/attachments/{file_id}/content")

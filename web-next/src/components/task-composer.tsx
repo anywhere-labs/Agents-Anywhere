@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { projectWorkspacePath } from "@/features/dashboard/project-workspaces"
 import { Monitor, ChevronDown, ArrowUp, Loader2, Check } from "lucide-react"
 import { toast } from "sonner"
 
@@ -138,9 +139,9 @@ export function TaskComposer() {
     projects,
     resolveProject,
     sidebarShowsSessions,
-    updateProject,
   } = useWorkspace()
   const t = useTranslations("dashboard.new")
+  const tCommon = useTranslations("common")
   const typewriterTitles = React.useMemo(
     () => {
       const keys = isMobile ? MOBILE_NEW_SESSION_TITLE_KEYS : NEW_SESSION_TITLE_KEYS
@@ -216,12 +217,19 @@ export function TaskComposer() {
   )
   const hasOnlineDevice = deviceOptions.length > 0
 
-  const [selectedDevice, setSelectedDevice] = React.useState(creationEditorDraft?.request.connectorId ?? deviceOptions[0]?.id ?? "")
+  const [workspace, setWorkspace] = React.useState<WorkspaceSelection | null>(creationEditorDraft?.workspace ?? null)
+  const projectPrefillAppliedRef = React.useRef<string | null>(creationEditorDraft?.request.projectId ?? null)
+  const boundProject = newSessionProject && projectPrefillAppliedRef.current !== newSessionProject.id
+    ? newSessionProject
+    : projects.find((project) => project.id === workspace?.projectId)
+  const [deviceChoice, setSelectedDevice] = React.useState(creationEditorDraft?.request.connectorId ?? deviceOptions[0]?.id ?? "")
+  // A native project's source is authoritative; preferences only seed free creation.
+  const selectedDevice = boundProject?.connectorId ?? deviceChoice
   const selectedConnector =
     onlineConnectors.find((connector) => connector.id === selectedDevice) ??
-    onlineConnectors[0] ??
+    (boundProject ? null : onlineConnectors[0]) ??
     null
-  const selectedConnectorId = selectedConnector?.id ?? ""
+  const selectedConnectorId = boundProject?.connectorId ?? selectedConnector?.id ?? ""
   const agentOptions = React.useMemo(
     () => selectedConnector
       ? activeRuntimes(runtimeInventory[selectedConnector.id]).map((runtime) => ({
@@ -232,7 +240,8 @@ export function TaskComposer() {
     [runtimeInventory, selectedConnector],
   )
 
-  const [selectedAgent, setSelectedAgent] = React.useState(creationEditorDraft?.request.runtimeId ?? agentOptions[0]?.id ?? "")
+  const [agentChoice, setSelectedAgent] = React.useState(creationEditorDraft?.request.runtimeId ?? agentOptions[0]?.id ?? "")
+  const selectedAgent = boundProject?.runtimeId ?? agentChoice
   const selectedRuntime = activeRuntimes(runtimeInventory[selectedConnectorId])
     .find((runtime) => runtime.runtimeId === selectedAgent) ?? null
   const selectedRuntimeScope = selectedRuntime
@@ -242,7 +251,7 @@ export function TaskComposer() {
   const [selectedReasoning, setSelectedReasoning] = React.useState(creationEditorDraft?.reasoningId ?? "")
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState(creationEditorDraft?.permissionMode ?? "")
   const [permissionRefreshKey, setPermissionRefreshKey] = React.useState(0)
-  const [workspace, setWorkspace] = React.useState<WorkspaceSelection | null>(creationEditorDraft?.workspace ?? null)
+  const projectRequestsRef = React.useRef(new Map<string, string>())
   const [projectEditor, setProjectEditor] = React.useState<ProjectEditorState>(null)
   const [prompt, setPrompt] = React.useState(creationEditorDraft?.prompt ?? "")
   const [modelCatalog, setModelCatalog] = React.useState<ProtocolModelCatalog | null>(null)
@@ -250,6 +259,8 @@ export function TaskComposer() {
   const [runtimeCapabilities, setRuntimeCapabilities] = React.useState<ProtocolCapabilitySet | null>(null)
   const [catalogsLoading, setCatalogsLoading] = React.useState(false)
   const [catalogRefreshKey, setCatalogRefreshKey] = React.useState(0)
+  const [catalogsError, setCatalogsError] = React.useState(false)
+  const [catalogRetry, setCatalogRetry] = React.useState(0)
   const [creating, setCreating] = React.useState(false)
   const [recoveryTargetChanged, setRecoveryTargetChanged] = React.useState(false)
   const preserveRecoveredSelections = Boolean(creationEditorDraft && !recoveryTargetChanged)
@@ -258,7 +269,6 @@ export function TaskComposer() {
   const [preferenceLoaded, setPreferenceLoaded] = React.useState(false)
   const [preference, setPreference] = React.useState<NewSessionPreference | null>(null)
   const preferenceRef = React.useRef<NewSessionPreference | null>(null)
-  const projectPrefillAppliedRef = React.useRef<string | null>(creationEditorDraft?.request.projectId ?? null)
   const composerRef = React.useRef<HTMLDivElement | null>(null)
   const composerWidth = useElementWidth(composerRef)
 
@@ -317,26 +327,17 @@ export function TaskComposer() {
     }
 
     if (projectPrefillAppliedRef.current === newSessionProject.id) return
-    if (!deviceOptions.some((option) => option.id === newSessionProject.connectorId)) {
-      setWorkspace(null)
-      return
-    }
-    if (selectedDevice !== newSessionProject.connectorId) {
-      setSelectedDevice(newSessionProject.connectorId)
-      return
-    }
-
     projectPrefillAppliedRef.current = newSessionProject.id
     setWorkspace({
       label: newSessionProject.name,
-      path: newSessionProject.workspacePath,
+      path: projectWorkspacePath(newSessionProject),
       connectorId: newSessionProject.connectorId,
       projectId: newSessionProject.id,
     })
   }, [creationEditorDraft, runtimeInventoryLoading, deviceOptions, newSessionProject, selectedDevice])
 
   React.useEffect(() => {
-    if (runtimeInventoryLoading || newSessionProject) return
+    if (runtimeInventoryLoading || boundProject) return
     const nextDevice = preferredAvailableOptionId(
       deviceOptions,
       selectedDevice,
@@ -345,10 +346,10 @@ export function TaskComposer() {
     if (nextDevice !== selectedDevice) {
       setSelectedDevice(nextDevice)
     }
-  }, [runtimeInventoryLoading, deviceOptions, newSessionProject, preference?.connectorId, preferenceLoaded, selectedDevice])
+  }, [runtimeInventoryLoading, deviceOptions, newSessionProject, boundProject, preference?.connectorId, preferenceLoaded, selectedDevice])
 
   React.useEffect(() => {
-    if (!selectedConnectorId) return
+    if (!selectedConnectorId || boundProject) return
     setWorkspace((current) => {
       if (!current) return current
       if (current.connectorId && current.connectorId !== selectedConnectorId) return null
@@ -357,10 +358,10 @@ export function TaskComposer() {
       ))) return null
       return current
     })
-  }, [projects, selectedConnectorId])
+  }, [boundProject, projects, selectedConnectorId])
 
   React.useEffect(() => {
-    if (runtimeInventoryLoading) return
+    if (runtimeInventoryLoading || boundProject) return
     const connectorId = selectedConnectorId
     const preferredAgent = preferenceLoaded && preference?.connectorId === connectorId
       ? preference.agent
@@ -373,17 +374,19 @@ export function TaskComposer() {
     if (nextAgent !== selectedAgent) {
       setSelectedAgent(nextAgent)
     }
-  }, [runtimeInventoryLoading, agentOptions, preference, preferenceLoaded, selectedAgent, selectedConnectorId])
+  }, [runtimeInventoryLoading, agentOptions, boundProject, preference, preferenceLoaded, selectedAgent, selectedConnectorId])
 
   React.useEffect(() => {
-    if (!authSession?.accessToken || !selectedConnectorId || !selectedAgent) {
+    if (!authSession?.accessToken || !selectedConnector || !selectedRuntime || !selectedAgent) {
       setModelCatalog(null)
       setPermissionCatalog(null)
       setRuntimeCapabilities(null)
       setCatalogsLoading(false)
+      setCatalogsError(false)
       return
     }
     let cancelled = false
+    setCatalogsError(false)
     setCatalogsLoading(true)
     setModelCatalog(null)
     setPermissionCatalog(null)
@@ -394,6 +397,7 @@ export function TaskComposer() {
       selectedAgent,
     )
       .then(async (capabilitiesResponse) => {
+        if (cancelled) return null
         const capabilitySet = capabilitiesResponse.capabilitySet
         const canUseModelCatalog = capabilityIsUsable(
           capabilitySet,
@@ -423,14 +427,16 @@ export function TaskComposer() {
         ])
         return { capabilitySet, modelCatalogResponse, permissionCatalogResponse }
       })
-      .then(({ capabilitySet, modelCatalogResponse, permissionCatalogResponse }) => {
-        if (cancelled) return
+      .then((response) => {
+        if (cancelled || !response) return
+        const { capabilitySet, modelCatalogResponse, permissionCatalogResponse } = response
         setRuntimeCapabilities(capabilitySet)
         setModelCatalog(modelCatalogResponse?.catalog ?? null)
         setPermissionCatalog(permissionCatalogResponse?.catalog ?? null)
       })
       .catch(() => {
         if (cancelled) return
+        setCatalogsError(true)
         setRuntimeCapabilities(null)
         setModelCatalog(null)
         setPermissionCatalog(null)
@@ -441,7 +447,7 @@ export function TaskComposer() {
     return () => {
       cancelled = true
     }
-  }, [authSession?.accessToken, selectedAgent, selectedConnectorId, selectedRuntime?.runtimeType, selectedRuntime?.status, catalogRefreshKey])
+  }, [authSession?.accessToken, selectedAgent, selectedConnectorId, selectedRuntime?.runtimeType, selectedRuntime?.status, catalogRefreshKey, catalogRetry, selectedConnector?.status])
 
   // A failed cold-start read is not an authoritative empty catalog. Recover in place.
   React.useEffect(() => {
@@ -659,7 +665,7 @@ export function TaskComposer() {
     handleDeviceChange(project.connectorId)
     setWorkspace({
       label: project.name,
-      path: project.workspacePath,
+      path: projectWorkspacePath(project),
       connectorId: project.connectorId,
       projectId: project.id,
     })
@@ -722,7 +728,7 @@ export function TaskComposer() {
     Boolean(authSession?.accessToken && selectedConnector && selectedRuntime && workspace?.path) &&
     workspace?.connectorId === selectedConnectorId &&
     !creating &&
-    !catalogsLoading &&
+    !catalogsLoading && !catalogsError &&
     (!requiresModelSelection || Boolean(selectedModelSelection)) &&
     (!requiresPermissionSelection || Boolean(selectedPermissionSelection)) &&
     (attachments.length === 0 || canUseAttachments) && attachmentsAllowed &&
@@ -738,15 +744,25 @@ export function TaskComposer() {
     if (!authSession?.accessToken || !selectedConnector || !selectedRuntime || !workspace?.path || creatingRef.current) return
     if (recoveryTargetUnavailable || workspace.connectorId !== selectedConnector.id) return
     if (!prompt.trim() && attachments.length === 0) return
-    if (catalogsLoading) return
+    if (catalogsLoading || catalogsError) return
     if (requiresModelSelection && !selectedModelSelection) return
     if (requiresPermissionSelection && !selectedPermissionSelection) return
     if (attachments.length > 0 && (!canUseAttachments || !attachmentsAllowed)) return
     creatingRef.current = true
     setCreating(true)
+    const projectRequestKey = JSON.stringify([selectedConnector.id, selectedRuntime.runtimeId, workspace.path])
+    let projectRequestId = projectRequestsRef.current.get(projectRequestKey)
+    if (!projectRequestId) {
+      projectRequestId = crypto.randomUUID()
+      projectRequestsRef.current.set(projectRequestKey, projectRequestId)
+    }
     let project
     try {
-      project = await resolveProject({ connectorId: selectedConnector.id, workspacePath: workspace.path })
+      project = selectedRuntime.capabilities?.directoryProjects === true && !workspace.projectId
+        ? { id: null, workspacePath: workspace.path }
+        : await resolveProject({ connectorId: selectedConnector.id, workspacePath: workspace.path,
+            projectId: workspace.projectId, runtime: selectedRuntime.runtimeType, runtimeId: selectedRuntime.runtimeId, requestId: projectRequestId })
+      if (project.id) setWorkspace({ ...workspace, projectId: project.id })
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("createFailed"))
       creatingRef.current = false
@@ -770,7 +786,7 @@ export function TaskComposer() {
       runtimeTypeDisplayName: selectedRuntime ? runtimeTypeName(selectedRuntime) : null,
       externalSessionId: null,
       title: sessionTitleFromPrompt(prompt),
-      cwd: project.workspacePath,
+      cwd: "roots" in project ? projectWorkspacePath(project, workspace.path) : project.workspacePath,
       status: "waiting",
       takeover: true,
       pinned: false,
@@ -835,7 +851,7 @@ export function TaskComposer() {
           selectedRuntime?.runtimeId ?? selectedAgent,
         ),
         title: prompt.trim() || undefined,
-        cwd: project.workspacePath,
+        cwd: "roots" in project ? projectWorkspacePath(project, workspace.path) : project.workspacePath,
         ...(selectedRuntime?.runtimeType === "dsh" ? {
           runtimeOptions: {
             agentPreset: selectedRuntime.config?.defaultAgentPreset ?? selectedRuntime.defaults?.defaultAgentPreset,
@@ -858,7 +874,7 @@ export function TaskComposer() {
       startSessionCreation({
         localSessionId, clientMessageId, prompt,
         attachments: selectedAttachments,
-        workspace: { ...workspace, projectId: project.id },
+        workspace: { ...workspace, projectId: project.id ?? undefined },
         modelId: selectedModel, reasoningId: selectedReasoning, permissionMode: selectedPermissionMode,
         request: { ...createBody, content: messageText, selections, clientMessageId },
       }, optimisticMessage, (id) => toolSidebarStore.migrateSession(localSessionId, id))
@@ -976,6 +992,14 @@ export function TaskComposer() {
             {recoveryTargetUnavailable ? <p role="alert" className="text-sm text-destructive">{t("restoredTargetUnavailable")}</p> : null}
             <AttachmentPreviewList attachments={attachments} onRemove={remove} />
             {attachmentError ? <p role="alert" className="text-xs text-destructive">{attachmentError}</p> : null}
+            {catalogsError ? (
+              <div role="alert" className="flex items-center justify-between gap-2 text-xs text-destructive">
+                <span>{t("runtimeSettingsFailed")}</span>
+                <Button variant="outline" size="sm" onClick={() => setCatalogRetry((current) => current + 1)}>
+                  {tCommon("retry")}
+                </Button>
+              </div>
+            ) : null}
             <Textarea
               value={prompt}
               onChange={(event) => setPrompt(event.currentTarget.value)}
@@ -1021,18 +1045,18 @@ export function TaskComposer() {
                     title={t("deviceAndAgent")}
                     deviceLabel={t("device")}
                     agentLabel={t("agent")}
-                    deviceItems={deviceOptions}
+                    deviceItems={boundProject ? deviceOptions.filter((item) => item.id === boundProject.connectorId) : deviceOptions}
                     selectedDevice={selectedDevice}
                     onDeviceChange={handleDeviceChange}
-                    agentItems={agentOptions}
+                    agentItems={boundProject ? agentOptions.filter((item) => item.id === boundProject.runtimeId) : agentOptions}
                     selectedAgent={selectedAgent}
                     onAgentChange={handleAgentChange}
                   />
                 ) : hasOnlineDevice ? (
                   <CascadingSelector
                     icon={<Monitor className="size-4" />}
-                    primaryOptions={deviceOptions}
-                    secondaryOptions={agentOptions}
+                    primaryOptions={boundProject ? deviceOptions.filter((item) => item.id === boundProject.connectorId) : deviceOptions}
+                    secondaryOptions={boundProject ? agentOptions.filter((item) => item.id === boundProject.runtimeId) : agentOptions}
                     selectedPrimary={selectedDevice}
                     selectedSecondary={selectedAgent}
                     onPrimaryChange={handleDeviceChange}
@@ -1146,6 +1170,7 @@ export function TaskComposer() {
             value={workspace}
             onChange={setWorkspace}
             includeProjects={!sidebarShowsSessions}
+            allowDirectorySelection={selectedRuntime?.capabilities?.directoryProjects === true}
             disabled={creating}
             onCreateProject={() => setProjectEditor({ mode: "create" })}
           />
@@ -1161,7 +1186,6 @@ export function TaskComposer() {
           if (!open) setProjectEditor(null)
         }}
         onCreate={createAndSelectProject}
-        onUpdate={updateProject}
       />
     </div>
   )

@@ -215,9 +215,9 @@ class SyncRelay:
                     await self.publish_notification(notice)
             await self.ingest_notifications(pending)
         elif kind == "workspace.inventory":
-            # Older plugin builds sent native project facts. Ignore those batches;
-            # all project grouping and naming use the existing session cwd path.
-            return
+            await self.host.publish_runtime_notifications("dsh", [{
+                "method": "runtime.workspaces.invalidated", "params": {},
+            }])
         else:
             raise ValueError(f"Unsupported bridge operation: {kind}")
 

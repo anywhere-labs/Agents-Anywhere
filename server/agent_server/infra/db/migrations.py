@@ -21,8 +21,8 @@ from sqlalchemy.pool import NullPool
 from agent_server.infra.db.engine import resolve_db_url
 
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_44"
-CURRENT_SCHEMA_VERSION = "2.44"
+CURRENT_SCHEMA_REVISION = "v2_46"
+CURRENT_SCHEMA_VERSION = "2.46"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -332,6 +332,11 @@ def _classify_sync(connection) -> UnversionedDatabase:
                             .get("options", {})
                             .get("ondelete", "")
                         ).upper()
+                        if ("uq_projects_native_identity" in project_unique_constraints
+                            and "project_operations" in tables
+                            and "workspace_epoch" in connector_columns
+                            and {"native_project_id", "project_sync_reason"}.issubset(session_columns)):
+                            return UnversionedDatabase("v2", "v2_45")
                         if (
                             ondelete == "SET NULL"
                             and workspace_unique

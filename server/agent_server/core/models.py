@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -146,6 +147,15 @@ class ProjectView(BaseModel):
     connectorId: str
     name: str
     workspacePath: str
+    runtime: str | None = None
+    runtimeId: str | None = None
+    nativeProjectId: str | None = None
+    identityKind: str = "legacy"
+    roots: list[str] = Field(default_factory=list)
+    sourceState: str = "pending"
+    sourceAvailability: str = "unknown"
+    rootStates: dict[str, Literal["present", "missing", "unknown"]] = Field(default_factory=dict)
+    lastSyncedAt: str | None = None
     manuallyCreated: bool = False
     pinned: bool = False
     pinnedAt: str | None = None
@@ -159,17 +169,21 @@ class ProjectView(BaseModel):
 
 
 class ProjectCreateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
 
+    runtime: str | None = None
+    runtimeId: str | None = None
+    requestId: str | None = Field(default=None, min_length=1, max_length=128)
+    newOperation: bool = False
     name: str = Field(min_length=1, max_length=255)
     connectorId: str = Field(min_length=1)
     workspacePath: str = Field(min_length=1, max_length=4096)
-    # Automatic workspace selection must not claim or rename an existing project.
-    manuallyCreated: bool = True
-    # Retained for compatibility with older clients. Project creation never
-    # binds existing sessions, even when this legacy flag is true.
-    attachMatchingSessions: bool = False
 
+    @model_validator(mode="after")
+    def _absolute_workspace(self) -> ProjectCreateRequest:
+        if not (PurePosixPath(self.workspacePath).is_absolute() or PureWindowsPath(self.workspacePath).is_absolute()):
+            raise ValueError("workspacePath must be an absolute path")
+        return self
 
 class ProjectPatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -189,8 +203,25 @@ class ProjectResponse(BaseModel):
     serverTime: str
 
 
-class ProjectCreateResponse(ProjectResponse):
-    attachedSessions: int = 0
+class ProjectCreateResponse(BaseModel):
+    project: ProjectView | None = None
+    operationId: str
+    status: Literal["pending", "succeeded", "failed", "unknown"]
+    syncState: str = "pending"
+    nativeProjectId: str | None = None
+    roots: list[str] = Field(default_factory=list)
+    message: str | None = None
+    serverTime: str
+
+
+class ProjectPendingOperation(BaseModel):
+    request: ProjectCreateRequest
+    operation: ProjectCreateResponse
+
+
+class ProjectOperationListResponse(BaseModel):
+    operations: list[ProjectPendingOperation]
+    serverTime: str
 
 
 class ProjectListResponse(BaseModel):
@@ -763,7 +794,7 @@ class SessionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     connectorId: str
-    projectId: str = Field(min_length=1)
+    projectId: str | None = Field(default=None, min_length=1)
     runtime: RuntimeName = "codex"
     runtimeId: str | None = None
     externalSessionId: str | None = None
@@ -798,7 +829,7 @@ class SessionCreateAndStartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     connectorId: str
-    projectId: str = Field(min_length=1)
+    projectId: str | None = Field(default=None, min_length=1)
     runtime: RuntimeName = "codex"
     runtimeId: str | None = None
     title: str | None = None
@@ -823,6 +854,8 @@ class SessionView(BaseModel):
     id: str
     connectorId: str
     projectId: str | None = None
+    nativeProjectId: str | None = None
+    projectSyncReason: str | None = None
     connectorStatus: ConnectorStatus
     runtime: RuntimeName
     runtimeId: str | None = None

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 
+from runtime_fixtures import seed_workspace_project
+from test_runtime_instances_lifecycle import _make_client, _v2_discovery
 
 from agent_server.core.device_runtime import RuntimeDiscoveryResponse
 from agent_server.infra.connector_rpc import ConnectorRpcError
-from test_runtime_instances_lifecycle import _make_client, _v2_discovery
 
 
 def test_named_snapshot_and_runtime_recover_after_discovery_error(tmp_path):
@@ -27,12 +28,8 @@ def test_named_snapshot_and_runtime_recover_after_discovery_error(tmp_path):
 
     runtime = asyncio.run(seed())
     runtime_id = runtime["runtimeId"]
-    project = client.post(
-        "/projects",
-        headers=headers,
-        json={"connectorId": connector_id, "name": "Work", "workspacePath": "/work"},
-    )
-    assert project.status_code == 200, project.text
+    project = asyncio.run(seed_workspace_project(store, connector_id,
+        client.get("/auth/me", headers=headers).json()["userId"], "/work", runtime_id=runtime_id))
     imported = client.post(
         "/sessions",
         headers=headers,
@@ -40,7 +37,7 @@ def test_named_snapshot_and_runtime_recover_after_discovery_error(tmp_path):
             "connectorId": connector_id,
             "runtime": "codex",
             "runtimeId": runtime_id,
-            "projectId": project.json()["project"]["id"],
+            "projectId": project.id,
             "externalSessionId": "native-existing",
         },
     )

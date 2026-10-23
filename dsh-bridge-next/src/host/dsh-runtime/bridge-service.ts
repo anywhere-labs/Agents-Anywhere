@@ -12,8 +12,8 @@ export const PROTOCOL_VERSION = '2.0'
 /** Call metadata naming the caller's session namespace (1.0 sent it in `initialize`). */
 export const NAMESPACE_METADATA = 'aa-session-namespace'
 
-interface CallScope { namespace: string; logger: RpcLogger }
-const callScope = dependency((namespace, context): CallScope => {
+export interface CallScope { namespace: string; logger: RpcLogger }
+export const callScope = dependency((namespace, context): CallScope => {
   if (typeof namespace !== 'string' || !namespace || namespace.length > 512) {
     throw new MeshCallError('INVALID_PARAMS', 'A runtime namespace is required.')
   }
@@ -93,7 +93,7 @@ export class BridgeService {
       identity: { runtime: 'dsh', runtimeVersion: RUNTIME_VERSION, bridgeVersion: BRIDGE_VERSION, protocolVersion: PROTOCOL_VERSION, displayName: 'DeepSeek Harness' },
       storage: { mode: 'dsh-native', sameSessionWriterLimit: 1, crossProcessWriterExclusion: false },
       features: { attachments: Boolean(reader.native?.ctx.get('sessionController') && reader.native.ctx.get('attachments')),
-        sessionDiscovery: true, timelineSuffixRead: false, approval: reader.native?.approvals.available ?? false, userQuestions: reader.native?.questions.available ?? false,
+        workspaceOperations: '1.0', sessionDiscovery: true, timelineSuffixRead: false, approval: reader.native?.approvals.available ?? false, userQuestions: reader.native?.questions.available ?? false,
         readOnly: !reader.native?.ctx.get('sessionController'), snapshotPagination: true, syncMode: reader.native ? 'events' : 'polling', projectionVersion: PROJECTION_VERSION },
     }
   }
@@ -106,6 +106,9 @@ export class BridgeService {
 
   @query({ description: 'Runtime-wide capabilities.', request: payload, response: payload, inject: [callScope] })
   async getRuntimeCapabilities(request: Payload, call: CallScope, context: RpcContext): Promise<Payload> { return this.forward('getRuntimeCapabilities', request, call, context) }
+
+  @mutates({ description: 'Create or reuse a native workspace in an existing directory.', request: payload, response: payload, inject: [callScope] })
+  async createWorkspace(request: Payload, call: CallScope, context: RpcContext): Promise<Payload> { return this.forward('createWorkspace', request, call, context) }
 
   @query({ description: 'Workspaces DSH knows.', request: payload, response: payload, inject: [callScope] })
   async listWorkspaces(request: Payload, call: CallScope, context: RpcContext): Promise<Payload> { return this.forward('listWorkspaces', request, call, context) }

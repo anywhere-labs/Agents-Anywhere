@@ -10,6 +10,7 @@ import { RpcLogOutput } from './log-output.js'
 import { readRuntimeLogPage } from './log-reader.js'
 import { SyncServiceClient, type CheckpointResult, type SnapshotPage, type SnapshotRequest, type SnapshotResult, type SyncBatch as WireBatch } from '../generated/dsh-sync.js'
 import { acquireManagerLock } from '../storage/files.js'
+import { WorkspaceOperationsService } from './workspace-operations.js'
 import { BridgeService } from './bridge-service.js'
 import { quietDiagnostics, type RuntimeDiagnostics } from './diagnostics.js'
 import type { SessionReader } from './router.js'
@@ -76,6 +77,7 @@ interface Link { rendezvous: Rendezvous, mesh: Mesh, server: RunningServer, sync
  * which would split the Connector's calls between two DSH processes.
  */
 export class BridgeConnection {
+  private readonly operations: WorkspaceOperationsService
   private readonly service: BridgeService
   private link: Link | undefined
   private releaseLease: (() => Promise<void>) | undefined
@@ -91,6 +93,7 @@ export class BridgeConnection {
   constructor(readonly rendezvousPath: string, reader: SessionReader,
     private readonly diagnostics: RuntimeDiagnostics = reader.native?.diagnostics ?? quietDiagnostics,
     private readonly pollMs = 1000, private readonly logOutput?: RpcLogOutput) {
+    this.operations = new WorkspaceOperationsService(reader.native)
     this.service = new BridgeService({ reader, diagnostics,
       transportFor: subscriptionId => new ConnectorSync(this.requireLink().sync, subscriptionId) })
   }
@@ -179,7 +182,7 @@ export class BridgeConnection {
     const router = new Router('unixPath' in rendezvous.endpoint ? { unixPath: rendezvous.endpoint.unixPath } : { pipe: rendezvous.endpoint.pipe })
     const rpcLogger = new RuntimeRpcLogger(this.diagnostics)
     const mesh = new Mesh(router, { token: rendezvous.key, peerId: `dsh-bridge-${randomUUID()}`, logger: rpcLogger })
-    mesh.mount(this.service, { instanceId: `dsh-bridge-${randomUUID()}` })
+    mesh.mount(this.service, this.operations, { instanceId: `dsh-bridge-${randomUUID()}` })
     let server: RunningServer
     try { server = await mesh.startServing({ logLevel: 'debug', logger: rpcLogger }) }
     catch (error) {

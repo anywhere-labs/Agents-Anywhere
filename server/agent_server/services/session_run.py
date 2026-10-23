@@ -130,6 +130,7 @@ class SessionRunService:
             raise SessionRunNotFoundError("connector not found") from None
         project_id, project_cwd = await self._validate_project_binding(
             payload.projectId,
+            runtime=payload.runtime, runtime_id=_request_runtime_id(payload),
             connector_id=payload.connectorId,
             cwd=payload.cwd,
             user_id=user_id,
@@ -176,6 +177,7 @@ class SessionRunService:
             raise SessionRunNotFoundError("connector not found") from None
         project_id, project_cwd = await self._validate_project_binding(
             payload.projectId,
+            runtime=payload.runtime, runtime_id=_request_runtime_id(payload),
             connector_id=payload.connectorId,
             cwd=payload.cwd,
             user_id=user_id,
@@ -226,8 +228,13 @@ class SessionRunService:
             params["cwd"] = payload.cwd
         if selections:
             params["selections"] = selections
-        if payload.runtimeOptions:
-            params["runtimeOptions"] = dict(payload.runtimeOptions)
+        options = dict(payload.runtimeOptions)
+        if project_id:
+            project = await self._store.get_project(project_id, user_id=user_id)
+            if project.identityKind == "native":
+                options["nativeProjectId"] = project.nativeProjectId
+        if options:
+            params["runtimeOptions"] = options
         if payload.clientMessageId:
             params["clientMessageId"] = payload.clientMessageId
         persisted_attachment_refs: list[dict[str, Any]] = []
@@ -397,7 +404,10 @@ class SessionRunService:
         connector_id: str,
         cwd: str | None,
         user_id: str,
-    ) -> tuple[str, str]:
+        runtime: str, runtime_id: str,
+    ) -> tuple[str | None, str]:
+        if not project_id and runtime == "claude" and cwd:
+            return None, _clean_workspace_path(cwd, None)[0]
         if not project_id:
             raise SessionRunInvalidConfigError(
                 {
@@ -409,6 +419,12 @@ class SessionRunService:
             project = await self._store.get_project(project_id, user_id=user_id)
         except KeyError:
             raise SessionRunNotFoundError("project not found") from None
+        if project.identityKind == "legacy":
+            raise SessionRunInvalidConfigError({"code": "upgrade_required", "message": "Wait for native project reconciliation"})
+        if project.runtime != runtime or project.runtimeId != runtime_id:
+            raise SessionRunInvalidConfigError("project Runtime must match the selected Runtime instance")
+        if project.sourceAvailability != "available" or project.sourceState == "historical":
+            raise SessionRunConflictError("native project is not currently available")
         if project.connectorId != connector_id:
             raise SessionRunInvalidConfigError(
                 {
@@ -419,20 +435,17 @@ class SessionRunService:
                 }
             )
         if cwd is None:
-            # Keep the connector request and the persisted session on the
-            # project's canonical workspace path.
-            cwd = project.workspacePath
+            # A default must use a confirmed present root; another unavailable
+            # root must not prevent creation in a healthy directory.
+            cwd = next((root for root in project.roots if project.rootStates.get(root) == "present"), project.workspacePath)
         else:
             try:
                 _cleaned_cwd, cwd_key = _clean_workspace_path(cwd, None)
-                _project_path, project_key = _clean_workspace_path(
-                    project.workspacePath,
-                    None,
-                )
+                project_keys = {_clean_workspace_path(root, None)[1] for root in project.roots}
             except ValueError:
                 cwd_key = ""
-                project_key = "__invalid__"
-            if cwd_key != project_key:
+                project_keys = set()
+            if cwd_key not in project_keys:
                 raise SessionRunInvalidConfigError(
                     {
                         "code": "project_workspace_mismatch",
@@ -441,7 +454,13 @@ class SessionRunService:
                         ),
                     }
                 )
-        return project.id, project.workspacePath
+        cwd_key = _clean_workspace_path(cwd, None)[1]
+        directory_state = next((value for root, value in project.rootStates.items()
+                                if _clean_workspace_path(root, None)[1] == cwd_key), "unknown")
+        if directory_state != "present":
+            raise SessionRunConflictError({"code": "project_directory_unavailable",
+                "message": "所选项目目录不存在或暂不可读，请核对目录后重试"})
+        return project.id, _clean_workspace_path(cwd, None)[0]
 
     async def _mark_create_and_start_failed(
         self,

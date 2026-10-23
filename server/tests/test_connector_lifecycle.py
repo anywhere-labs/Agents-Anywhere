@@ -179,6 +179,10 @@ def test_runtime_deletion_cancels_old_queue_and_retires_legacy_identity(tmp_path
                 await service.handle_notification_message(**kwargs)
 
         class Socket:
+            async def send_json(self, message):
+                # Runtime deletion now stops the configured source before retiring it.
+                state.rpc.resolve_response(connector_id, {"type": "response", "id": message["id"], "ok": True, "result": {}})
+
             async def close(self, **kwargs):
                 pass
 

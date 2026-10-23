@@ -399,6 +399,13 @@ class ConnectorRepositoryMixin:
         return secrets.compare_digest(row.token_hash, _hash_token(token))
 
 
+    async def connector_credential_fingerprint(self, connector_id: str) -> str:
+        async with self._engine.connect() as conn:
+            value = (await conn.execute(select(connectors_t.c.token_hash).where(
+                connectors_t.c.id == connector_id, connectors_t.c.revoked == 0,
+            ))).scalar_one_or_none()
+        return str(value or "")
+
     async def authenticate_connector_access(self, token: str) -> str | None:
         from agent_server.core.auth import (
             connector_access_token_id,

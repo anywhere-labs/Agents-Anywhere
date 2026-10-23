@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import com.agentsanywhere.app.ui.designsystem.localizedProjectMessage
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
@@ -61,7 +62,6 @@ import com.agentsanywhere.app.feature.sessions.ProjectDeviceAgentFilter
 import com.agentsanywhere.app.feature.sessions.ProjectSessionLoadKey
 import com.agentsanywhere.app.feature.sessions.ProjectSessionStatusFilter
 import com.agentsanywhere.app.feature.sessions.sessionListComparator
-import com.agentsanywhere.app.feature.sessions.availableProjectName
 import androidx.compose.runtime.LaunchedEffect
 import com.agentsanywhere.app.feature.update.AppUpdateViewModel
 import com.agentsanywhere.app.model.AgentDevice
@@ -128,6 +128,7 @@ fun HomeScreen(
     onSetSessionArchived: suspend (String, Boolean) -> Result<AgentSession>,
     onLoadProjects: suspend () -> Result<List<AgentProject>>,
     onLoadProjectSessions: (String, ProjectSessionStatusFilter) -> Unit,
+    onRefreshProject: suspend (AgentProject) -> Result<Unit>,
     onUpdateProject: suspend (String, String?, Boolean?) -> Result<AgentProject>,
     onArchiveProjectSessions: suspend (String) -> Result<List<AgentSession>>,
     onNewSessionInProject: (AgentProject) -> Unit,
@@ -166,10 +167,6 @@ fun HomeScreen(
             onLoadProjectSessions(id, projectSessionStatus)
         }
     }
-    var editingProject by remember { mutableStateOf<AgentProject?>(null) }
-    var projectEditBusy by remember { mutableStateOf(false) }
-    var projectEditError by remember { mutableStateOf<String?>(null) }
-    var projectEditName by remember { mutableStateOf("") }
     var projectToArchive by remember { mutableStateOf<AgentProject?>(null) }
     var projectArchiveBusy by remember { mutableStateOf(false) }
 
@@ -256,7 +253,7 @@ fun HomeScreen(
                         scope.launch {
                             onSetSessionPinned(session.id, !session.pinned)
                                 .onSuccess { showToast(context.getString(if (it.pinned) R.string.home_session_pinned else R.string.home_session_unpinned)) }
-                                .onFailure { showToast(it.message ?: context.getString(R.string.home_pin_update_failed), isError = true) }
+                                .onFailure { showToast(it.localizedProjectMessage(context) ?: context.getString(R.string.home_pin_update_failed), isError = true) }
                         }
                     },
                     onToggleArchived = {
@@ -269,7 +266,7 @@ fun HomeScreen(
                                 }
                                 .onFailure {
                                     showToast(
-                                        it.message ?: context.getString(if (session.archived) R.string.home_restore_failed else R.string.home_archive_failed),
+                                        it.localizedProjectMessage(context) ?: context.getString(if (session.archived) R.string.home_restore_failed else R.string.home_archive_failed),
                                         isError = true,
                                     )
                                 }
@@ -281,11 +278,13 @@ fun HomeScreen(
                 HomeProjectActionOverlay(
                     menu = menu,
                     onDismiss = { projectActionMenu = null },
-                    onEdit = {
+                    onRefresh = {
                         projectActionMenu = null
-                        projectEditError = null
-                        projectEditName = menu.project.name
-                        editingProject = menu.project
+                        scope.launch {
+                            onRefreshProject(menu.project)
+                                .onSuccess { showToast(context.getString(R.string.project_refresh_requested)) }
+                                .onFailure { showToast(it.localizedProjectMessage(context) ?: context.getString(R.string.project_refresh_failed), isError = true) }
+                        }
                     },
                     onTogglePinned = {
                         val project = menu.project
@@ -301,7 +300,7 @@ fun HomeScreen(
                                 }
                                 .onFailure {
                                     showToast(
-                                        it.message ?: context.getString(R.string.home_project_update_failed),
+                                        it.localizedProjectMessage(context) ?: context.getString(R.string.home_project_update_failed),
                                         isError = true,
                                     )
                                 }
@@ -370,53 +369,9 @@ fun HomeScreen(
                                 showToast(context.getString(R.string.home_session_renamed))
                             }
                             .onFailure {
-                                renameErrorMessage = it.message ?: context.getString(R.string.home_rename_failed)
+                                renameErrorMessage = it.localizedProjectMessage(context) ?: context.getString(R.string.home_rename_failed)
                             }
                         renameBusy = false
-                    }
-                }
-            },
-        )
-    }
-
-    editingProject?.let { project ->
-        HomeProjectEditSheet(
-            project = project,
-            deviceName = state.devices.firstOrNull { it.id == project.connectorId }?.name ?: project.connectorId,
-            name = projectEditName,
-            onNameChange = { projectEditName = it; projectEditError = null },
-            busy = projectEditBusy,
-            errorMessage = projectEditError,
-            onDismiss = {
-                if (!projectEditBusy) {
-                    editingProject = null
-                    projectEditError = null
-                }
-            },
-            onSave = {
-                if (!projectEditBusy) {
-                    projectEditBusy = true
-                    projectEditError = null
-                    val name = availableProjectName(projectEditName, state.projects, project.id)
-                    projectEditName = name
-                    scope.launch {
-                        try {
-                            onUpdateProject(project.id, name, null)
-                                .onSuccess {
-                                    editingProject = null
-                                    showToast(context.getString(R.string.home_project_updated))
-                                }
-                                .onFailure { error ->
-                                    if (error is CancellationException) throw error
-                                    if (error is ApiException && error.errorCode == "project_name_conflict") {
-                                        val latest = onLoadProjects().getOrDefault(state.projects)
-                                        projectEditName = availableProjectName(name, latest, project.id, setOf(name))
-                                        projectEditError = context.getString(R.string.project_name_adjusted)
-                                    } else {
-                                        projectEditError = error.message ?: context.getString(R.string.home_project_update_failed)
-                                    }
-                                }
-                        } finally { projectEditBusy = false }
                     }
                 }
             },
@@ -440,7 +395,7 @@ fun HomeScreen(
                             }
                             .onFailure {
                                 showToast(
-                                    it.message ?: context.getString(R.string.home_project_archive_failed),
+                                    it.localizedProjectMessage(context) ?: context.getString(R.string.home_project_archive_failed),
                                     isError = true,
                                 )
                             }
@@ -615,6 +570,12 @@ private fun HomeProjectModeList(
                     .groupBy { it.projectId.orEmpty() }
                     .mapValues { (_, sessions) -> sessions.sortedWith(sessionListComparator()) }
             }
+            val knownProjectIds = state.projects.mapTo(mutableSetOf()) { it.id }
+            val ungroupedSessions = allSessions.filter {
+                (it.projectId == null || it.projectId !in knownProjectIds) &&
+                    (!it.pinned || it.archived) &&
+                    projectSessionMatchesStatus(it, projectSessionStatus) && deviceAgentFilter.matches(it)
+            }.sortedWith(sessionListComparator())
             HomeProjectList(
                 projects = state.projects.filter { projectHasVisibleSessions(it, allSessions, projectSessionStatus, deviceAgentFilter) },
                 devices = state.devices,
@@ -622,7 +583,8 @@ private fun HomeProjectModeList(
                     allSessions.map(AgentSession::runtime).filter(String::isNotBlank).distinct().sortedBy(String::runtimeTypeLabel)
                 },
                 deviceAgentFilter = deviceAgentFilter,
-                hasProjectsInOtherStatuses = state.projects.any { projectHasVisibleSessions(it, allSessions, ProjectSessionStatusFilter.All) },
+                hasProjectsInOtherStatuses = state.projects.any { projectHasVisibleSessions(it, allSessions, ProjectSessionStatusFilter.All) } ||
+                    allSessions.any { (it.projectId == null || it.projectId !in knownProjectIds) && deviceAgentFilter.matches(it) },
                 allSessions = allSessions,
                 projectPreferences = projectPreferences,
                 projectSessionStatus = projectSessionStatus,
@@ -632,6 +594,7 @@ private fun HomeProjectModeList(
                 onCreateProject = onCreateProject,
                 pinnedSessions = allSessions.filter { it.pinned && !it.archived && deviceAgentFilter.matches(it) }
                     .sortedWith(sessionListComparator()),
+                ungroupedSessions = ungroupedSessions,
                 sessionsByProject = visibleSessions,
                 loadingProjectIds = loadingProjectIds,
                 expandedProjectIds = expandedProjectIds,

@@ -81,6 +81,10 @@ def test_connector_uses_runtime_control_v2_contract_fixtures(
 
 
 class _Host(RuntimeHostClient):
+    async def publish_runtime_notifications(self, runtime, notifications, runtime_id=None, on_progress=None):
+        assert notifications == [{"method": "runtime.workspaces.invalidated", "params": {}}]
+        assert runtime_id
+
     @property
     def connector_id(self) -> str:
         return "conn_contract"
@@ -454,3 +458,25 @@ async def _test_runtime_control_v2_rejects_invalid_lifecycle_contracts() -> None
             "runtime.stop",
             {"runtime": "claude", "runtimeId": "rti_codex_work_01"},
         )
+
+
+def test_workspace_refresh_failure_preserves_successful_start_and_creation():
+    from unittest.mock import AsyncMock
+
+    async def run():
+        handler, supervisor = _handler()
+        host = handler.agent_runtime_host
+        host.publish_runtime_notifications = AsyncMock(side_effect=ConnectionError("refresh unavailable"))
+        started = await handler.dispatch("runtime.start", {"runtime": "codex", "runtimeId": "codex", "name": "Codex", "config": {}, "configRevision": 1})
+        assert started["status"] == "running"
+        runtime = supervisor.entry("codex").runtime.native_runtime
+        runtime.create_and_start_session = AsyncMock(return_value=RuntimeOperationResult(result={"externalSessionId": "thread"}))
+        # Legacy type-equal routing intentionally allows an omitted runtimeId.
+        result = await handler.dispatch("session.create", {"runtime": "codex", "sessionId": "session", "content": "hello"})
+        assert result["externalSessionId"] == "thread"
+        assert result["runtimeId"] == "codex"
+        runtime.create_and_start_session.assert_awaited_once()
+        assert host.publish_runtime_notifications.await_count == 2
+        await supervisor.stop("codex")
+
+    asyncio.run(run())

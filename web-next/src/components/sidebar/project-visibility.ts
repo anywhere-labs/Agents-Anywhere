@@ -32,11 +32,14 @@ export function projectSessionMatchesStatus(
  * filtered list never expands into an empty "no sessions" row.
  */
 export function projectHasVisibleSessions(
-  project: Pick<ProjectView, "id" | "connectorId" | "manuallyCreated" | "sidebarSessionCounts">,
+  project: Pick<ProjectView, "id" | "connectorId" | "manuallyCreated" | "sidebarSessionCounts" | "runtime" | "nativeProjectId" | "sourceState">,
   sessions: readonly ProjectSession[],
   status: ProjectSessionStatusFilter,
   filter?: DeviceAgentFilter | null,
 ): boolean {
+  if (project.nativeProjectId && status !== "archived" && ["active", "unknown"].includes(project.sourceState ?? "")) {
+    return projectMatchesDeviceAgentFilter(project, sessions, filter)
+  }
   if (project.manuallyCreated && !isDeviceAgentFilterActive(filter)) return true
   if (!projectMatchesDeviceAgentFilter(project, sessions, filter)) return false
 

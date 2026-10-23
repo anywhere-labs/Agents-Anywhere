@@ -132,7 +132,7 @@ test('only the Connector key can call the Bridge, and closing leaves the Connect
   const authFile = join(home, 'router-auth.json')
   await writeFile(authFile, JSON.stringify({ api_keys: [{
     id: 'bridge', key_hash: createHash('sha256').update(key).digest('hex'), roles: ['client', 'server'],
-    register: ['aa.dsh.v2.Bridge'], call: ['aa.dsh.v2.Bridge/*'],
+    register: ['aa.dsh.v2.Bridge', 'aa.dsh.v2.Operations'], call: ['aa.dsh.v2.Bridge/*'],
   }] }))
   const router = await LocalRouter.start({ ...endpoint, authFile })
   const path = join(home, 'bridge', 'connector.json')

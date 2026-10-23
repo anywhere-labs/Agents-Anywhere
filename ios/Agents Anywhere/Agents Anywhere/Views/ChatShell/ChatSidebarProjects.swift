@@ -13,7 +13,6 @@ struct ChatSidebarProjects: View {
     let onCopySession: (String) -> Void
     @State private var filter = V2DeviceSessionFilter.active
     @State private var createsProject = false
-    @State private var editing: V2Project?
     @State private var action: ProjectAction?
     @State private var busy: Set<String> = []
     @State private var error: String?
@@ -23,7 +22,6 @@ struct ChatSidebarProjects: View {
 
     private struct ProjectAction: Identifiable {
         let project: V2Project
-        let deletes: Bool
         var id: String { project.id }
     }
     var body: some View {
@@ -78,20 +76,18 @@ struct ChatSidebarProjects: View {
                 repository.sidebarPreferences.projectsExpanded = true
             }
         }
-        .sheet(item: $editing) { ProjectEditorSheet(repository: repository, project: $0) }
-        .alert(action?.deletes == true ? String(localized: "删除项目？") : String(localized: "归档这个项目的会话？"), isPresented: Binding(
+        .alert(String(localized: "归档这个项目的会话？"), isPresented: Binding(
             get: { action != nil }, set: { if !$0 { action = nil } })) {
             Button(String(localized: "取消"), role: .cancel) { action = nil }
-            Button(action?.deletes == true ? String(localized: "删除") : String(localized: "归档"), role: .destructive) {
+            Button(String(localized: "归档"), role: .destructive) {
                 guard let pending = action else { return }
                 action = nil
                 perform(pending.project.id) {
-                    if pending.deletes { try await repository.deleteProject(pending.project.id) }
-                    else { try await repository.archiveProject(pending.project.id, archived: true) }
+                    try await repository.archiveProject(pending.project.id, archived: true)
                 }
             }
         } message: {
-            Text(action?.deletes == true ? String(localized: "只有没有会话的项目可以删除，设备上的文件会保留。") : String(localized: "Archive all sessions in \(action?.project.name ?? "")? The project will remain available for future sessions."))
+            Text(String(localized: "Archive all sessions in \(action?.project.name ?? "")? The project will remain available for future sessions."))
         }
         .alert(String(localized: "操作未完成"), isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button(String(localized: "好")) { error = nil }
@@ -112,8 +108,11 @@ struct ChatSidebarProjects: View {
             Button { toggleProject(project.id) } label: {
                 HStack(spacing: 8) {
                     AppSymbol(expanded.contains(project.id) ? "folder.fill" : "folder", size: 18)
-                    Text(project.name).font(.body).lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading) {
+                        Text(project.name).font(.body).lineLimit(1)
+                        Text([project.runtime, project.runtimeId, project.nativeProjectId, project.workspacePath].compactMap { $0 }.joined(separator: " · "))
+                            .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
                     if isBusy { ProgressView().controlSize(.mini) }
                 }
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(.rect)
@@ -134,17 +133,19 @@ struct ChatSidebarProjects: View {
     private func projectMenu(_ project: V2Project, isBusy: Bool) -> some View {
         let deviceName = repository.connectors.first { $0.id == project.connectorId }?.name ?? String(localized: "设备不可用")
         Section(deviceName) {
+            Text(String(format: String(localized: "最近核对：%@"), project.lastSyncedAt ?? String(localized: "尚未完成")))
+            if project.sourceState == "unknown" { Text(String(localized: "来源暂不可用，保留上次结果")) }
+            if project.sourceState == "pending" { Text(String(localized: "等待来源升级或首次核对")) }
+            Button(String(localized: "核对原生来源"), systemImage: "arrow.clockwise") {
+                perform(project.id) { try await repository.refreshProjectSource(project) }
+            }.disabled(!repository.canWrite || isBusy || project.runtimeId == nil)
             Button(String(localized: "新建会话"), systemImage: "square.and.pencil") { onNewSession(project.id) }
-            Button(String(localized: "编辑项目"), systemImage: "pencil") { editing = project }
-                .disabled(!repository.canWrite || isBusy)
             Button(project.pinned ? String(localized: "取消置顶") : String(localized: "置顶"), systemImage: "pin") {
                 perform(project.id) { try await repository.updateProject(project.id, pinned: !project.pinned) }
             }.disabled(!repository.canWrite || isBusy)
         }
         Section {
-            Button(String(localized: "归档项目会话"), systemImage: "archivebox", role: .destructive) { action = .init(project: project, deletes: false) }
-                .disabled(!repository.canWrite || isBusy)
-            Button(String(localized: "删除项目"), systemImage: "trash", role: .destructive) { action = .init(project: project, deletes: true) }
+            Button(String(localized: "归档项目会话"), systemImage: "archivebox", role: .destructive) { action = .init(project: project) }
                 .disabled(!repository.canWrite || isBusy)
         }
     }
@@ -172,6 +173,10 @@ struct ChatSidebarProjects: View {
     private func sessionRows(_ sessions: [V2SessionMeta], inset: Bool) -> some View {
         LazyVStack(alignment: .leading, spacing: 2) {
             ForEach(sessions) { session in
+                if session.projectId == nil, let reason = session.projectSyncReason {
+                    Text((["native_project_missing": String(localized: "项目已移除"), "project_directory_missing": String(localized: "项目目录不存在"), "session_directory_missing": String(localized: "会话目录不存在"), "directory_unknown": String(localized: "目录暂不可用"), "awaiting_native_inventory": String(localized: "等待来源核对"), "no_native_membership": String(localized: "原生会话未分组")][reason] ?? reason) + " · " + (session.cwd ?? ""))
+                        .font(.caption2).foregroundStyle(.secondary).lineLimit(2).padding(.horizontal, 10)
+                }
                 ChatSidebarSessionRow(session: .init(session: session), isSelected: selectedSessionID == session.id,
                     inset: inset,
                     onOpen: { onOpenSession(session.id) }, onRename: { onRenameSession(session.id, $0) },

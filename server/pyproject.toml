@@ -13,6 +13,7 @@ dependencies = [
     "httpx-s3-client",
     "jsonschema>=4.26.0",
     "loguru>=0.7.3",
+    "meshcall==0.3.0",
     "python-multipart>=0.0.20",
     "redis>=6.0.0",
     "sqlalchemy[asyncio]>=2.0.36",
@@ -33,5 +34,11 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple/"
+explicit = true
+
 [tool.uv.sources]
+meshcall = { index = "pypi" }
 httpx-s3-client = { git = "https://github.com/t4wefan/httpx-s3-client.git" }

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -11,11 +11,13 @@ from connector.runtime_protocol import (
     AgentRuntime,
     PreparedSessionTimelineSync,
     RuntimeAttachment,
+    RuntimeCapability,
     RuntimeCapabilitySet,
     RuntimeCommand,
     RuntimeCommandResult,
     RuntimeConfig,
     RuntimeIdentity,
+    RuntimeInvalidRequestError,
     RuntimeModelCatalog,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
@@ -53,18 +55,20 @@ from connector.runtimes.codex.ipc import (
     CodexIpcSessionProjector,
     CodexIpcTurnController,
     FollowedThread,
+    desktop_app,
     thread_snapshot_from_conversation_state,
 )
 from connector.runtimes.codex.ipc import deeplink as ipc_deeplink
-from connector.runtimes.codex.ipc import desktop_app
 from connector.runtimes.codex.lifecycle.runtime_lifecycle import CodexRuntimeLifecycle
 from connector.runtimes.codex.notifications import CodexNotificationProjector
 from connector.runtimes.codex.notifications.projector import notification_event
+from connector.runtimes.codex.sdk.command_notifications import notification_parts
 from connector.runtimes.codex.sdk.runtime_client import (
     CodexModelListResult,
     CodexRuntimeClient,
 )
 from connector.runtimes.codex.sessions.reader import CodexSessionReader
+from connector.runtimes.codex.sessions.workspaces import CodexWorkspaceInventory
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
 from connector.runtimes.codex.turns.command_input import command_input
 from connector.runtimes.codex.turns.controller import CodexTurnController
@@ -86,6 +90,9 @@ class CodexRuntime(AgentRuntime):
     ipc_handoff_timeout_ms: int = 5000
 
     def __post_init__(self) -> None:
+        self._project_support_state = "unknown"
+        self._project_support_reason = "正在探测此 Codex 实例的项目协议"
+        self._workspaces = CodexWorkspaceInventory(self.host, self.client)
         self._active_turn_ids: dict[str, str] = {}
         self._session_states = RuntimeSessionStateCache(
             "codex",
@@ -472,7 +479,15 @@ class CodexRuntime(AgentRuntime):
             revision=self.config.revision,
             client_available=self.client is not None,
         )
-        return codex_runtime_capabilities(context)
+        capabilities = codex_runtime_capabilities(context)
+        return replace(capabilities, capabilities=capabilities.capabilities + tuple(
+            RuntimeCapability(capability_id=capability_id, scope="runtime", runtime="codex",
+                supported=self._project_support_state != "unsupported",
+                available=self._project_support_state == "available",
+                unavailable_reason=None if self._project_support_state == "available" else self._project_support_reason,
+                metadata={"projectSupport": self._project_support_state})
+            for capability_id in ("runtime.project.create", "runtime.project.sync")
+        ))
 
     async def list_model_catalog(
         self,
@@ -501,10 +516,48 @@ class CodexRuntime(AgentRuntime):
         page_size: int = 100,
         force: bool = False,
     ) -> tuple[SessionMeta, ...]:
+        await self.start()
+        shared = await self._workspaces.history_inventory()
         return await self._session_reader.list_complete_session_inventory(
             page_size,
             force,
+            shared_threads=shared,
         )
+
+    async def create_workspace(self, name: str, path: str, request_id: str) -> dict[str, Any]:
+        inventory = await self.workspace_inventory(full=False)
+        if inventory is None:
+            raise RuntimeUnsupportedError("当前 Codex 不支持项目协议，请升级到支持 project/list 和 project/create 的版本")
+        from connector.runtime_protocol.workspace_paths import DirectoryObserver
+        if (await DirectoryObserver().read({path}))[0]["state"] != "present":
+            raise RuntimeInvalidRequestError("Choose an existing accessible directory")
+        project = await self.client.create_native_project(name, path, request_id)
+        return {"nativeProjectId": project["id"], "name": project["name"],
+                "roots": [r["path"] for r in project["roots"]], "identityKind": "native"}
+
+    async def _set_project_support(self, state: str, reason: str | None) -> None:
+        if (state, reason) == (self._project_support_state, self._project_support_reason):
+            return
+        previous = self._project_support_state, self._project_support_reason
+        self._project_support_state, self._project_support_reason = state, reason
+        try:
+            await self.publish_runtime_capabilities()
+        except BaseException:
+            self._project_support_state, self._project_support_reason = previous
+            raise
+
+    async def workspace_inventory(self, full: bool = True) -> dict[str, Any] | None:
+        try:
+            await self.start()
+            inventory = await self._workspaces.read(full=full)
+        except Exception:
+            await self._set_project_support("unavailable", "Codex 项目来源暂不可用，稍后重试")
+            raise
+        if inventory is None:
+            await self._set_project_support("unsupported", "当前 Codex 不支持项目协议，请升级到支持 project/list 和 project/create 的版本")
+        else:
+            await self._set_project_support("available", None)
+        return inventory
 
     async def get_session_state(
         self,
@@ -640,9 +693,10 @@ class CodexRuntime(AgentRuntime):
         *,
         runtime_options: Mapping[str, Any] | None = None,
     ) -> RuntimeOperationResult:
-        if runtime_options:
+        if set(runtime_options or {}) - {"nativeProjectId"}:
             raise RuntimeUnsupportedError("runtimeOptions")
-        return await self._turns.create_and_start_session(
+        result = await self._turns.create_and_start_session(
+            project_id=(runtime_options or {}).get("nativeProjectId"),
             session_id=session_id,
             content=content,
             title=title,
@@ -651,6 +705,10 @@ class CodexRuntime(AgentRuntime):
             attachments=attachments,
             client_message_id=client_message_id,
         )
+        external_id = result.result.get("externalSessionId")
+        if isinstance(external_id, str):
+            self._workspaces.confirm_created_thread(external_id, (runtime_options or {}).get("nativeProjectId"))
+        return result
 
     async def start_turn(
         self,
@@ -831,6 +889,12 @@ class CodexRuntime(AgentRuntime):
 
     async def _after_notification(self, message: Any) -> None:
         """Let the IPC owner republish after a native notification was projected."""
+
+        method, _ = notification_parts(message)
+        if method in {"project/changed", "thread/project/updated"}:
+            await self.host.publish_runtime_notifications("codex", [{
+                "method": "runtime.workspaces.invalidated", "params": {},
+            }])
 
         if self.ipc_owner is not None:
             try:

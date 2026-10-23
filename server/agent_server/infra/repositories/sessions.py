@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from sqlalchemy import case, literal_column
 from pydantic import BaseModel
 
@@ -289,33 +291,40 @@ class SessionRepositoryMixin:
             connector = (await conn.execute(connector_q)).first()
             if connector is None:
                 raise KeyError(connector_id)
+            # Native directory projects (Claude) only exist after the first
+            # conversation. Service validation owns eligibility for this path.
             if not project_id:
-                raise ValueError("project_id is required for every session")
-            project_q = select(
-                projects_t.c.connector_id,
-                projects_t.c.user_id,
-                projects_t.c.workspace_path,
-                projects_t.c.workspace_key,
-            ).where(projects_t.c.id == project_id)
-            if user_id is not None:
-                project_q = project_q.where(projects_t.c.user_id == user_id)
-            project = (await conn.execute(project_q)).first()
-            if project is None:
-                raise KeyError(project_id)
-            if project.connector_id != connector_id:
-                raise ValueError("project connector and workspace must match the session")
-            if cwd is None:
-                cwd = project.workspace_path
+                if runtime != "claude" or not cwd:
+                    raise ValueError("an unbound session requires Claude and a workspace")
+                cwd = _clean_workspace_path(cwd, connector.device_os)[0]
             else:
-                cleaned_cwd, cwd_key = _clean_workspace_path(
-                    cwd,
-                    connector.device_os,
-                )
-                if cwd_key != project.workspace_key:
-                    raise ValueError(
-                        "project connector and workspace must match the session"
-                    )
-                cwd = project.workspace_path or cleaned_cwd
+                project_q = select(
+                    projects_t.c.connector_id,
+                    projects_t.c.user_id,
+                    projects_t.c.workspace_path,
+                    projects_t.c.roots_json,
+                    projects_t.c.runtime_id,
+                ).where(projects_t.c.id == project_id)
+                if user_id is not None:
+                    project_q = project_q.where(projects_t.c.user_id == user_id)
+                project = (await conn.execute(project_q)).first()
+                if project is None:
+                    raise KeyError(project_id)
+                if project.connector_id != connector_id or (
+                    project.runtime_id is not None
+                    and project.runtime_id != str(identity.runtime_id)
+                ):
+                    raise ValueError("project source must match the session")
+                cwd = _clean_workspace_path(
+                    cwd or project.workspace_path, connector.device_os
+                )[0]
+                roots = json.loads(project.roots_json) or [project.workspace_path]
+                root_keys = {
+                    _clean_workspace_path(root, connector.device_os)[1]
+                    for root in roots
+                }
+                if _clean_workspace_path(cwd, connector.device_os)[1] not in root_keys:
+                    raise ValueError("project workspace must match the session")
             await conn.execute(
                 insert(sessions_t).values(
                     id=session_id,
@@ -464,10 +473,13 @@ class SessionRepositoryMixin:
                 )
             ).first()
             if existing is None:
-                project_id, normalized_cwd = await self._ensure_project_for_workspace(
+                project_id, normalized_cwd, native_project_id, project_sync_reason = await self._resolve_runtime_session_project(
                     conn,
                     connector_id=connector_id,
+                    runtime_id=runtime_id,
+                    external_session_id=external_session_id,
                     workspace_path=cwd,
+                    runtime=runtime,
                     now=now,
                 )
                 await conn.execute(
@@ -484,6 +496,8 @@ class SessionRepositoryMixin:
                         title=title,
                         title_source=TITLE_SOURCE_CONNECTOR if title is not None else None,
                         cwd=normalized_cwd,
+                        native_project_id=native_project_id,
+                        project_sync_reason=project_sync_reason,
                         status=status or "idle",
                         takeover=0,
                         last_synced_at=last_synced_at,
@@ -540,14 +554,19 @@ class SessionRepositoryMixin:
                     values["title"] = title
                     values["title_source"] = TITLE_SOURCE_CONNECTOR
                 if cwd is not None or current.project_id is None:
-                    project_id, normalized_cwd = await self._ensure_project_for_workspace(
+                    project_id, normalized_cwd, native_project_id, project_sync_reason = await self._resolve_runtime_session_project(
                         conn,
                         connector_id=connector_id,
+                        runtime_id=runtime_id,
+                        external_session_id=external_session_id or current.external_session_id,
                         workspace_path=cwd or current.cwd,
+                        runtime=runtime,
                         now=now,
                     )
                     values["project_id"] = project_id
                     values["cwd"] = normalized_cwd
+                    values["native_project_id"] = native_project_id
+                    values["project_sync_reason"] = project_sync_reason
                 if status is not None:
                     values["status"] = status
                 if last_synced_at is not None:
@@ -1758,6 +1777,7 @@ class SessionRepositoryMixin:
         last_activity_at: str | None = None,
         mark_read_on_change: bool = False,
         source_state: str | None = None,
+        resolve_workspace: bool = False,
     ) -> SessionView:
         values: dict[str, Any] = {}
         if status is not None:
@@ -1780,6 +1800,8 @@ class SessionRepositoryMixin:
                     select(
                         sessions_t.c.connector_id,
                         sessions_t.c.project_id,
+                        sessions_t.c.native_project_id,
+                        sessions_t.c.project_sync_reason,
                         sessions_t.c.status,
                         sessions_t.c.title,
                         sessions_t.c.title_source,
@@ -1788,6 +1810,7 @@ class SessionRepositoryMixin:
                         sessions_t.c.last_activity_at,
                         sessions_t.c.source_state,
                         sessions_t.c.runtime,
+                        sessions_t.c.runtime_id,
                         sessions_t.c.archived,
                         sessions_t.c.dsh_archive_legacy,
                     ).where(sessions_t.c.id == session_id)
@@ -1802,14 +1825,19 @@ class SessionRepositoryMixin:
             ):
                 values["title"] = title
                 values["title_source"] = TITLE_SOURCE_CONNECTOR
-            if cwd is not None or row.project_id is None:
-                project_id, normalized_cwd = await self._ensure_project_for_workspace(
+            if resolve_workspace or cwd is not None or row.project_id is None:
+                project_id, normalized_cwd, native_project_id, project_sync_reason = await self._resolve_runtime_session_project(
                     conn,
                     connector_id=row.connector_id,
+                    runtime_id=row.runtime_id,
+                    external_session_id=external_session_id or row.external_session_id,
                     workspace_path=cwd if cwd is not None else row.cwd,
+                    runtime=row.runtime,
                 )
                 values["project_id"] = project_id
                 values["cwd"] = normalized_cwd
+                values["native_project_id"] = native_project_id
+                values["project_sync_reason"] = project_sync_reason
             if source_state is not None:
                 values.update(
                     _source_archive_update(
@@ -1824,6 +1852,8 @@ class SessionRepositoryMixin:
                 "title",
                 "cwd",
                 "project_id",
+                "native_project_id",
+                "project_sync_reason",
                 "external_session_id",
                 "source_state",
                 "archived",
@@ -1904,6 +1934,8 @@ class SessionRepositoryMixin:
             id=session_id,
             connectorId=row["connector_id"],
             projectId=row["project_id"],
+            nativeProjectId=row.get("native_project_id"),
+            projectSyncReason=row.get("project_sync_reason"),
             connectorStatus=row["connector_status"],
             runtime=runtime,
             runtimeId=runtime_id,

@@ -1014,9 +1014,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_44() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_44"
-    assert CURRENT_SCHEMA_VERSION == "2.44"
+def test_current_schema_version_is_v2_46() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_46"
+    assert CURRENT_SCHEMA_VERSION == "2.46"
 
 
 def _insert_required(connection, table: str, values: dict) -> None:
@@ -1112,8 +1112,8 @@ def test_v2_42_replaces_dashboard_tables_with_usage_events(fresh_database_url) -
     finally:
         engine.dispose()
 
-    upgrade_database(db_url=url)
-    upgrade_database(db_url=url)
+    upgrade_database(db_url=url, revision="v2_42")
+    upgrade_database(db_url=url, revision="v2_42")
 
     engine = create_engine(_sync_url(url))
     try:

@@ -45,7 +45,7 @@ export type ProjectIdentity = {
  * different devices stay distinguishable even before connectors load.
  */
 export function resolveProjectIdentity(
-  project: Pick<ProjectView, "id" | "connectorId" | "workspacePath">,
+  project: Pick<ProjectView, "id" | "connectorId" | "workspacePath" | "runtime" | "runtimeId">,
   sessions: readonly ProjectSession[],
   connectors: readonly IdentityConnector[],
 ): ProjectIdentity {
@@ -59,6 +59,8 @@ export function resolveProjectIdentity(
     group.sessionCount += 1
     groups.set(session.runtime, group)
   }
+
+  if (project.runtime) groups.set(project.runtime, { displayName: groups.get(project.runtime)?.displayName || runtimeLabel(project.runtime), sessionCount: groups.get(project.runtime)?.sessionCount ?? 0 })
 
   const agents = Array.from(groups, ([runtime, group]) => ({
     runtime,
@@ -154,12 +156,12 @@ export function filterProjectSessions<S extends FilterableSession>(
  * session running on the selected runtime.
  */
 export function projectMatchesDeviceAgentFilter(
-  project: Pick<ProjectView, "id" | "connectorId">,
+  project: Pick<ProjectView, "id" | "connectorId" | "runtime">,
   sessions: readonly ProjectSession[],
   filter?: DeviceAgentFilter | null,
 ): boolean {
   if (!filter) return true
   if (filter.connectorId !== "all" && project.connectorId !== filter.connectorId) return false
   if (filter.runtime === "all") return true
-  return sessions.some((session) => session.projectId === project.id && session.runtime === filter.runtime)
+  return project.runtime === filter.runtime || sessions.some((session) => session.projectId === project.id && session.runtime === filter.runtime)
 }

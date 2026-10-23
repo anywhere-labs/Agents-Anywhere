@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from conftest import ApiV2TestClient as TestClient
+from runtime_fixtures import seed_workspace_project
 from sqlalchemy import select
 
 from agent_server.app import create_app
@@ -56,6 +57,9 @@ class ArchiveClient:
                     },
                 }
             )
+            user_id = self.client.get("/auth/me", headers=self.headers).json()["userId"]
+            asyncio.run(seed_workspace_project(self.client.app.state.store, self.connector_id, user_id, cwd,
+                runtime=runtime, member_ids=[identity["externalSessionId"]]))
         elif mode == "event":
             self.ingest(
                 {"method": "session.source.updated", "params": {**identity, **source}}
@@ -210,16 +214,16 @@ def test_project_unarchive_persists_for_synced_sessions_and_refreshes_counts(
         json={"archived": False, "scope": "archived"},
     )
     assert response.status_code == 200, response.text
-    assert response.json()["affected"] == 2
+    assert response.json()["affected"] == 1
     assert all(not session["archived"] for session in response.json()["sessions"])
     api.sync("codex_session", "codex", "archived", mode="inventory")
     api.sync("claude_session", "claude", "archived", mode="meta")
-    assert api.listed_ids(archived=True) == {"other_project"}
-    assert api.listed_ids(archived=False) == {"codex_session", "claude_session"}
+    assert api.listed_ids(archived=True) == {"other_project", "claude_session"}
+    assert api.listed_ids(archived=False) == {"codex_session"}
     projects = api.client.get("/projects", headers=api.headers).json()["projects"]
     project = next(project for project in projects if project["id"] == project_id)
-    assert project["activeSessionCount"] == 2
-    assert project["sidebarSessionCounts"] == {"active": 2, "archived": 0}
+    assert project["activeSessionCount"] == 1
+    assert project["sidebarSessionCounts"] == {"active": 1, "archived": 0}
 
 
 @pytest.mark.parametrize("runtime", ["codex", "claude", "dsh"])

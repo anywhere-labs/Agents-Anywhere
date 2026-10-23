@@ -4,6 +4,11 @@ import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
+from conftest import ApiV2TestClient as TestClient
+from fakeredis import FakeAsyncRedis
+from sqlalchemy import insert, select, text, update
+from sqlalchemy.exc import IntegrityError
+
 from agent_server.app import create_app
 from agent_server.core.models import SessionRuntimeState, TimelineItemIn
 from agent_server.core.utc import utc_now
@@ -13,10 +18,6 @@ from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
-from conftest import ApiV2TestClient as TestClient
-from fakeredis import FakeAsyncRedis
-from sqlalchemy import insert, select, text, update
-from sqlalchemy.exc import IntegrityError
 
 DEVICE_CHILD_TABLES = (
     db.connector_runtime_types,
@@ -55,18 +56,12 @@ def create_device(client, headers, name="Device"):
 
 
 def create_project(client, headers, device, name, *, manual=True):
-    response = client.post(
-        "/projects",
-        headers=headers,
-        json={
-            "connectorId": device,
-            "name": name,
-            "workspacePath": f"/work/{name}",
-            "manuallyCreated": manual,
-        },
-    )
-    assert response.status_code == 200, response.text
-    return response.json()["project"]["id"]
+    # These deletion tests intentionally include retained legacy records.
+    user_id = client.get("/auth/me", headers=headers).json()["userId"]
+    return asyncio.run(client.app.state.store.create_project(
+        user_id=user_id, connector_id=device, name=name,
+        workspace_path=f"/work/{name}", manually_created=manual,
+    )).id
 
 
 def add_session(client, device, project, name, *, archived=False):

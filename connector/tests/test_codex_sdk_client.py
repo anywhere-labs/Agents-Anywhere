@@ -1010,7 +1010,9 @@ class _FakeCodexConfig:
         env: dict[str, str] | None = None,
         client_name: str = "",
         client_title: str = "",
+        experimental_api: bool = False,
     ) -> None:
+        self.experimental_api = experimental_api
         self.codex_bin = codex_bin
         self.env = env
         self.client_name = client_name
