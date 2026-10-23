@@ -20,7 +20,19 @@ struct ChatShellView: View {
         let layout = ChatSidebarState.Layout.resolve(
             hasRegularWidth: horizontalSizeClass == .regular
         )
-        sidebarLayout(layout)
+        // Regular width keeps the native split sidebar. The two-tab shell is
+        // exclusive to the iPhone Duo cover screen: its narrow strip is the
+        // only compact width where the drawer hurts. Bar phones share the
+        // compact trait with it, so the model id is the one reliable signal —
+        // the "never a device model" rule above cannot express this split.
+        // Extend the set when more foldables land.
+        Group {
+            if layout == .regularSplit || !isDuoFoldableIPhone {
+                sidebarLayout(layout)
+            } else {
+                CompactChatShellView()
+            }
+        }
         .onChange(of: layout, initial: true) { _, next in sidebar.setLayout(next) }
         .task(id: NewSessionLoadKey(target: appState.nativeChatServices?.newSession.refreshKey,
             presentationID: newSessionPresentationID)) {

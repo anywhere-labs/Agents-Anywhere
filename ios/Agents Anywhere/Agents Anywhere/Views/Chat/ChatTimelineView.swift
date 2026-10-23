@@ -56,6 +56,11 @@ struct ChatTimelineView: View {
             }
             .scrollPosition($position)
             .scrollDismissesKeyboard(.interactively)
+            // At regular widths the system inflates scroll content margins for
+            // readability, making each message line noticeably shorter than
+            // the composer below. Zero them: rows already carry their own
+            // padding, so text spans nearly the full width like the dock.
+            .contentMargins(.horizontal, 0, for: .scrollContent)
             .scrollIndicators(.hidden)
             .scrollBounceBehavior(.always, axes: .vertical)
             .scrollEdgeEffectStyle(.soft, for: .top)

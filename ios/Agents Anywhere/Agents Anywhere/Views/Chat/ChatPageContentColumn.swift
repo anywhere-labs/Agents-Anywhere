@@ -11,7 +11,9 @@ struct ChatPageContentColumn: ViewModifier {
     func body(content: Content) -> some View {
         content
             .padding(.horizontal, horizontalInset ?? systemMargin).padding(.top, 16)
-            .frame(maxWidth: 760).frame(maxWidth: .infinity)
+            // On the Duo's wide inner screen a 760pt cap letterboxes the chat
+            // column whenever the sidebar is hidden; let foldables fill.
+            .frame(maxWidth: isDuoFoldableIPhone ? 2200 : 760).frame(maxWidth: .infinity)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { containerWidth = $0 }
     }
 
