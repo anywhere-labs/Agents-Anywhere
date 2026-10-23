@@ -1,0 +1,108 @@
+{
+  "string": [
+    {
+      "name": "profile_cancel",
+      "value": "Cancel"
+    },
+    {
+      "name": "files_back",
+      "value": "Back"
+    },
+    {
+      "name": "files_up",
+      "value": "Up"
+    },
+    {
+      "name": "files_truncated",
+      "value": "Directory listing is truncated."
+    },
+    {
+      "name": "devices_no_online",
+      "value": "No online devices"
+    },
+    {
+      "name": "session_agent_files",
+      "value": "Agent files"
+    },
+    {
+      "name": "session_agent_files_loading",
+      "value": "Loading files…"
+    },
+    {
+      "name": "session_agent_files_empty",
+      "value": "This directory is empty."
+    },
+    {
+      "name": "session_agent_files_binary",
+      "value": "This file cannot be previewed."
+    },
+    {
+      "name": "session_agent_files_truncated_notice",
+      "value": "File is truncated — showing the first part only."
+    },
+    {
+      "name": "session_agent_files_save",
+      "value": "Save"
+    },
+    {
+      "name": "session_agent_files_saved",
+      "value": "File saved."
+    },
+    {
+      "name": "session_agent_files_save_failed",
+      "value": "Could not save the file."
+    },
+    {
+      "name": "session_agent_files_no_workspace",
+      "value": "This session has no workspace."
+    },
+    {
+      "name": "session_agent_files_missing_session",
+      "value": "Missing session."
+    },
+    {
+      "name": "files_copy_path",
+      "value": "Copy path"
+    },
+    {
+      "name": "files_copied_path",
+      "value": "Copied path"
+    },
+    {
+      "name": "files_copy_content",
+      "value": "Copy content"
+    },
+    {
+      "name": "files_copied_content",
+      "value": "Copied content"
+    },
+    {
+      "name": "files_search",
+      "value": "Search"
+    },
+    {
+      "name": "files_pair_first",
+      "value": "Pair a device first to browse files."
+    },
+    {
+      "name": "files_all_devices_offline",
+      "value": "All devices are offline. Bring one online to browse files."
+    },
+    {
+      "name": "files_windows_drives",
+      "value": "This PC"
+    },
+    {
+      "name": "files_empty_directory",
+      "value": "This directory is empty."
+    },
+    {
+      "name": "files_loading",
+      "value": "Loading files…"
+    },
+    {
+      "name": "home_pair_new_device",
+      "value": "Pair a new device"
+    }
+  ]
+}

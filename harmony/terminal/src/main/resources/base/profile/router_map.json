@@ -1,0 +1,9 @@
+{
+  "routerMap": [
+    {
+      "name": "terminal",
+      "pageSourceFile": "src/main/ets/pages/TerminalPage.ets",
+      "buildFunction": "TerminalPageBuilder"
+    }
+  ]
+}

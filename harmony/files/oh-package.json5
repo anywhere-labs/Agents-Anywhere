@@ -1,0 +1,13 @@
+{
+  "name": "files",
+  "version": "1.0.0",
+  "description": "文件域：文件浏览与 Agent 文件页",
+  "main": "Index.ets",
+  "author": "",
+  "license": "",
+  "dependencies": {
+    "common": "file:../common",
+    "network": "file:../network",
+    "session": "file:../session"
+  }
+}

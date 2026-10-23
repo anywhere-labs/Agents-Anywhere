@@ -16,6 +16,7 @@ Agents Anywhere 是一个跨设备的 Agent 工作台。工作设备上的 **Con
 | `desktop-workbench/` | **当前**桌面客户端，内含受管理的本机 Connector | Electron、TypeScript、Yarn |
 | `android/` | Android 客户端，见 `android/ARCHITECTURE.md` | Kotlin、Gradle、JDK 17 |
 | `ios/` | iOS / iPadOS 客户端，见 `ios/ARCHITECTURE.md` | Swift、Xcode |
+| `harmony/` | 鸿蒙（HarmonyOS / ArkTS）客户端（另有自己的 [AGENTS.md](harmony/AGENTS.md)）：`common`/`network`（HAR）+ `session`/`terminal`/`files`（HSP）+ `entry`（HAP）六模块，依赖单向，兼容 API 12+ / target API 26，`devecocli build` 构建 unsigned HAP | ArkTS、DevEco Studio / devecocli |
 | `dsh-bridge-next/` | **当前** DSH 插件（npm 包，也随 DSH Desktop 分发） | TypeScript、Yarn |
 | `contracts/` | 跨端契约与 fixtures，按 `<name>/<version>/` 组织 | JSON Schema / 文档 |
 | `docker/` | 自托管部署与本地数据库 compose | Docker Compose |
@@ -42,7 +43,7 @@ Agents Anywhere 是一个跨设备的 Agent 工作台。工作设备上的 **Con
 - 本地联调用 `./local-up.sh`（Server + Web，可加 `--with-connector`）或 `./desktop-local-up.sh`。**不要**使用 `--reset-data`，除非用户明确要求，因为它会删除本地数据库。
 - Server 测试需要 PostgreSQL：通过 `AGENT_SERVER_TEST_DB_URL` 指向一个名字含 `test` 的一次性数据库（本地用 `docker/docker-compose.local.yml` 的 postgres，建库和环境变量见[开发指南](docs/development.md)）；测试会清空该库的所有表，绝不能指向开发库或生产库，也不要把生产 URL 带进测试进程。
 - Headless 检查通过，不等于真实安装、OAuth 回调或远程 Runtime 会话已经验证。汇报时要说明哪些验证没有做。
-- CI（`.github/workflows/ci.yml`）按改动路径运行 Connector、Server、Web、Desktop 的 headless 检查和 DSH 插件检查：`connector/` 的改动会连带触发 Server 与插件，`server/` 的改动会连带触发插件，`contracts/` 与工作流文件触发全部。CI 不跑 ruff（仓库里还有历史 lint 问题），也不覆盖 Android / iOS，这些要靠本地检查。
+- CI（`.github/workflows/ci.yml`）按改动路径运行 Connector、Server、Web、Desktop 的 headless 检查和 DSH 插件检查：`connector/` 的改动会连带触发 Server 与插件，`server/` 的改动会连带触发插件，`contracts/` 与工作流文件触发全部。CI 不跑 ruff（仓库里还有历史 lint 问题），也不覆盖 Android / iOS，这些要靠本地检查；鸿蒙的 HAP 构建检查由 `.github/workflows/harmony.yml` 按 `harmony/**` 路径触发。
 
 ## 跨端修改的规则
 
@@ -50,7 +51,7 @@ Agents Anywhere 是一个跨设备的 Agent 工作台。工作设备上的 **Con
 - **能力驱动**：各 Runtime 支持的功能不同，客户端应当根据有效能力（见 [capabilities](docs/api/capabilities.md)）显示或隐藏功能，不要按 provider 名称写死判断。
 - **Server 分层**：`core` 不能导入外层；`services` 不能导入 FastAPI、API 模块或具体的 `Store`。这些规则由 `server/tests/test_architecture_boundaries.py` 强制检查。
 - **数据库**：schema 变化需要新增 Alembic 迁移 `server/migrations/versions/v2_N.py`，编号接着现有最大值递增，不要修改已发布的迁移。
-- 多端功能（例如排队消息、计划审阅）通常要同时修改 Web、Desktop、Android、iOS。如果只修改了其中一部分，要在 PR 中写明哪些端还没有跟进。
+- 多端功能（例如排队消息、计划审阅）通常要同时修改 Web、Desktop、Android、iOS、鸿蒙。如果只修改了其中一部分，要在 PR 中写明哪些端还没有跟进。
 
 ## 版本号
 
@@ -58,7 +59,7 @@ Agents Anywhere 是一个跨设备的 Agent 工作台。工作设备上的 **Con
 
 ## 提交与 PR
 
-- 从最新的 `main` 创建分支，分支名为 `<type>/<domain>/<topic>`：type 与提交信息的类型一致（`feat`、`fix`、`docs`、`chore`、`refactor` 等）；domain 用缩写：`fe`（Web）、`be`（Server）、`con`（Connector）、`dsk`（Desktop）、`apk`（Android）、`ios`、`dsh`、`docs`，同时涉及多个 domain 时用 `+` 连接。例如 `feat/con/codex-ipc-takeover`、`fix/ios/testflight-entry`、`feat/con+be/runtime-phase`。
+- 从最新的 `main` 创建分支，分支名为 `<type>/<domain>/<topic>`：type 与提交信息的类型一致（`feat`、`fix`、`docs`、`chore`、`refactor` 等）；domain 用缩写：`fe`（Web）、`be`（Server）、`con`（Connector）、`dsk`（Desktop）、`apk`（Android）、`ios`、`hmo`（鸿蒙）、`dsh`、`docs`，同时涉及多个 domain 时用 `+` 连接。例如 `feat/con/codex-ipc-takeover`、`fix/ios/testflight-entry`、`feat/con+be/runtime-phase`。
 - 提交信息使用 Conventional Commits，并带上作用域，例如 `fix(dsh): ...`、`feat(android): ...`、`docs(ios): ...`。正文可以用中文或英文。
 - 一个 PR 只做一件事。不要顺手提交与任务无关的本地改动、部署检查点或调试产物（`.local-dev/`、截图、日志）。
 - 不要提交凭据、签名证书、`.env` 文件或生产地址中的密钥。签名、公证和发布流程见各子项目的 README。
