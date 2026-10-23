@@ -371,8 +371,28 @@ class DshRuntime(AgentRuntime):
         if set(options) - {"agentPreset"}:
             raise RuntimeInvalidRequestError("Unsupported DSH creation option")
         preset = options.get("agentPreset", self.config.values.get("defaultAgentPreset"))
+        if preset is None:
+            preset = await self._initial_agent_preset()
         return await self._send_text("createAndStartSession", session_id, None, content, cwd, attachments, client_message_id,
                                      selections=selections, agent_preset=preset)
+
+    async def _initial_agent_preset(self) -> str | None:
+        """The plugin's declared initial mode when this Runtime has none saved.
+
+        ``defaultAgentPreset`` is only filled in when the Runtime config was
+        validated while DSH was reachable. The plugin owns the initial rule
+        (the mode DSH itself uses for new sessions, when it is loadable), so
+        read it from the catalog the config form uses; when it declares none,
+        the plugin asks the user to choose a mode.
+        """
+
+        try:
+            catalog = _object(await self._request("listAgentPresets"))
+        except RuntimeUnsupportedError:
+            return None
+        field = catalog.get("configField")
+        default = field.get("default") if isinstance(field, dict) else None
+        return default if isinstance(default, str) and default else None
 
     async def start_turn(
         self, session_id: str, external_session_id: str | None, content: str,

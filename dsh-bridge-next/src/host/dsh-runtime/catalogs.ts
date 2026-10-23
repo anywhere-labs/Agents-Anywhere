@@ -15,7 +15,7 @@ export interface ModelCatalog {
   metadata: { failures: { provider: string, name: string, message: string }[], routableProviders: string[] },
 }
 
-/** The AA directory intentionally never reads DSH's remembered selections. */
+/** Model and permission directories never read DSH's remembered selections; only the Agent mode default follows DSH. */
 export class RuntimeCatalogs {
   private generation = 0
   private loadedAt = 0
@@ -106,7 +106,8 @@ export class RuntimeCatalogs {
       id: preset.id, name: preset.name || preset.id, description: preset.description,
       enabled: !preset.broken, disabledReason: preset.broken,
     }))
-    const initial = presets.some(preset => preset.id === 'standard' && preset.enabled) ? 'standard' : undefined
+    // An unsaved AA Runtime follows the mode DSH itself would use for a new session.
+    const initial = presets.some(preset => preset.id === service.defaultId && preset.enabled) ? service.defaultId : undefined
     return { runtime: 'dsh', revision: 3, presets,
       configField: { type: 'string', minLength: 1, title: '新会话默认模式',
         description: '仅用于以后创建的会话，已有会话保持原模式。',

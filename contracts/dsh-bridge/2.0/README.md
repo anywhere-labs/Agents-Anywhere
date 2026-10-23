@@ -47,6 +47,8 @@ API key 形如 `mk_<id>_<随机 hex>`，Router 按 id 查表并比对 SHA-256。
 
 错误以 1.0 的错误名作为 MeshCall 应用错误码（`SESSION_NOT_FOUND`、`INVALID_PARAMS`、`DSH_SERVICE_UNAVAILABLE`、`PERSISTENCE_ERROR`、`UNSUPPORTED_OPERATION` …），`retryable` 放在错误 details 里。传输错误使用 MeshCall 的 `deadline_exceeded` / `unavailable` / `resource_exhausted`。
 
+`listAgentPresets` 的 `configField.default` 是 Runtime 未保存“新会话默认模式”时使用的模式，取 DSH 自己的默认模式（`agentPresets.defaultId`，不可用时省略）；Connector 在新建会话缺 `agentPreset` 时读取它。
+
 ## `aa.dsh.v2.Sync`（Connector 提供）
 
 | 方法 | 形状 | 说明 |
