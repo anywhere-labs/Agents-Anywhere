@@ -28,3 +28,24 @@ export function nextSilentLaunchState(
   if (ownershipNeedsWindow(status)) return "revealed";
   return status === "owned" ? "settled" : "holding";
 }
+
+export interface SilentLaunchDecision {
+  /** From the settings file or the Connector. `undefined` means "not known yet". */
+  silentLaunch: boolean | undefined;
+  /** True when the OS login item or an updater started this process. */
+  openedAsLoginItem: boolean;
+  /** Set when a web build is being pointed at explicitly (dev/staging). */
+  webUrlOverride: string | undefined;
+}
+
+/**
+ * Decide whether this launch should stay hidden. Kept separate from the main
+ * process so the three inputs can be tested directly: the settings value is not
+ * available from the Connector until long after startup, and treating that gap
+ * as `false` reveals the window on every login-item start.
+ */
+export function shouldLaunchSilently(decision: SilentLaunchDecision): boolean {
+  return decision.silentLaunch === true
+    && decision.openedAsLoginItem
+    && !decision.webUrlOverride;
+}
