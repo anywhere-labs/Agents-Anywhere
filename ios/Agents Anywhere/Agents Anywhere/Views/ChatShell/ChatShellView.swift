@@ -2,6 +2,23 @@ import SwiftUI
 import UIKit
 
 struct ChatShellView: View {
+    /// iPhone Duo (iPhone19,4) so far. Read once: a device does not change
+    /// model at runtime. Simulators report the host arch as the machine id,
+    /// so they are identified through the model identifier the simulator
+    /// injects — that keeps the Duo simulator testable.
+    private static let hasFoldableCoverScreen: Bool = {
+        #if targetEnvironment(simulator)
+        ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] == "iPhone19,4"
+        #else
+        var system = utsname()
+        uname(&system)
+        let machine = withUnsafeBytes(of: &system.machine) {
+            String(decoding: $0.prefix(while: { $0 != 0 }), as: UTF8.self)
+        }
+        return machine == "iPhone19,4"
+        #endif
+    }()
+
     @Environment(AppState.self) private var appState
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -20,11 +37,14 @@ struct ChatShellView: View {
         let layout = ChatSidebarState.Layout.resolve(
             hasRegularWidth: horizontalSizeClass == .regular
         )
-        // Regular width keeps the native split sidebar. Compact width uses
-        // the two-tab shell (phone + foldable outer screen); the drawer code
-        // path stays for rollback and other SidebarDrawer users.
+        // Regular width keeps the native split sidebar. The two-tab shell is
+        // exclusive to the iPhone Duo cover screen: its narrow strip is the
+        // only compact width where the drawer hurts. Bar phones share the
+        // compact trait with it, so the model id is the one reliable signal —
+        // the "never a device model" rule above cannot express this split.
+        // Extend the set when more foldables land.
         Group {
-            if layout == .regularSplit {
+            if layout == .regularSplit || !Self.hasFoldableCoverScreen {
                 sidebarLayout(layout)
             } else {
                 CompactChatShellView()
