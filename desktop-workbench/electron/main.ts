@@ -34,7 +34,7 @@ import {
   type DesktopOnboardingEntry,
 } from "./desktop-onboarding";
 import { DesktopUpdateService } from "./desktop-updates";
-import { nextSilentLaunchState, type SilentLaunchState } from "./silent-launch";
+import { nextSilentLaunchState, shouldLaunchSilently, type SilentLaunchState } from "./silent-launch";
 import { validateTitleBarColors } from "./title-bar";
 import type { BackendInit } from "./backend/protocol";
 import { DesktopBackendClient } from "./backend-client";
@@ -1030,9 +1030,17 @@ if (hasSingleInstanceLock) {
     // A silent login-item launch never reveals its window on its own: the tray is
     // the entry point. It is only shown when ownership settles into a state the
     // user has to resolve, so a slow cold start stays invisible.
-    const silentLoginLaunch = backend?.getSettings()?.silentLaunch === true
-      && launchedAsLoginItem()
-      && !process.env.WORKBENCH_WEB_URL;
+    //
+    // `backend.getSettings()` is null until the Connector reports its settings,
+    // which on a cold boot happens long after this decision. Reading it too early
+    // used to make every login-item launch look like a manual one and reveal the
+    // window immediately. The settings file is the same source, available now.
+    const launchSettings = backend?.getSettings() ?? readDesktopSettings(desktopSettingsPath());
+    const silentLoginLaunch = shouldLaunchSilently({
+      silentLaunch: launchSettings.silentLaunch,
+      openedAsLoginItem: launchedAsLoginItem(),
+      webUrlOverride: process.env.WORKBENCH_WEB_URL,
+    });
     const showOnLaunch = !silentLoginLaunch;
     createMainWindow(showOnLaunch, await resolveLaunchRoute(silentLoginLaunch));
     if (silentLoginLaunch) {
