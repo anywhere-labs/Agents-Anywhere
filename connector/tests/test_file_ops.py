@@ -80,3 +80,20 @@ def test_read_dir_reports_final_symlink_target_type_and_path(tmp_path) -> None:
     assert broken_result["targetPath"] == str(missing_target.resolve())
     assert broken_result["targetType"] == "missing"
     assert broken_result["path"] == str(tmp_path.resolve())
+
+
+def test_plan_document_create_and_save_respect_file_revisions(tmp_path) -> None:
+    from connector.local.common import StaleFileError
+
+    async def run() -> None:
+        files = FileOps()
+        params = {"root": str(tmp_path), "path": ".agents-anywhere-plan-test.md"}
+        created = await files.write_file({**params, "content": "# Original", "ifMatch": ""})
+        with pytest.raises(StaleFileError):
+            await files.write_file({**params, "content": "# Duplicate create", "ifMatch": ""})
+        await files.write_file({**params, "content": "# Updated", "ifMatch": created["sha256"]})
+        with pytest.raises(StaleFileError):
+            await files.write_file({**params, "content": "# Stale write", "ifMatch": created["sha256"]})
+        loaded = await files.read_text(params)
+        assert loaded["content"] == "# Updated"
+    asyncio.run(run())

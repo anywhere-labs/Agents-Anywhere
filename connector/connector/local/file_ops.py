@@ -74,7 +74,7 @@ class FileOps:
                 raise StaleFileError(
                     f"file disappeared (expected sha256={if_match})"
                 )
-            if if_match and current_hash != if_match:
+            if current_hash != if_match:
                 raise StaleFileError(
                     f"file changed on disk (expected sha256={if_match}, found sha256={current_hash or 'none'})"
                 )
