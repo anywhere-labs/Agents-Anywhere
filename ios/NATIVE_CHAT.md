@@ -131,8 +131,12 @@ Semantic error and availability colors remain separate from the primary color.
   subtree without repeatedly mapping and sorting sidebar data or constructing
   the current page. Real selection, environment and size changes still propagate.
   Sidebar session sections and project lists use lazy stacks for their plain
-  text rows. The main conversation keeps its ordinary stacks and measured
-  Markdown geometry, avoiding a new estimated-height/scroll-restoration path.
+  text rows. Conversation groups use a native `LazyVStack` with stable scroll
+  targets, so offscreen Markdown and tool views need not all be mounted. History
+  prompts and tail visibility probes stay outside the lazy stack. Prepending a
+  page resolves the previous anchor by identity before restoring the measured
+  offset inside it; cancelling restoration waits for presentation, not an
+  offscreen geometry callback. Markdown layout within each group is unchanged.
 - Both history prompts support a fresh 24-point outward pull and release when
   already visible: pulling past the top loads older messages, and pulling past
   the bottom loads newer records. The prompt changes to “松开加载”; tapping remains
@@ -790,3 +794,16 @@ keyboard layout and real mobile-network behavior still need manual validation:
     client message identity after confirmation, and failure editing/retry. Kill
     the app during a send: reopen must retain an uncertain record without sending
     again. Verify that the earlier completed reply keeps Copy/Share throughout.
+
+### Lazy timeline regression checks
+
+On an iPhone/iPad, load several older pages containing long Markdown replies,
+code blocks, attachments and tool groups. Profile opening and scrolling with
+Instruments; compare mounted Markdown work and frame hitches with the base branch.
+Check tap/pull pagination while reading inside a tall message, an all-tools page
+that merges into the previous first group, and the final/failed history page.
+Drag away during a fetch: the spinner must finish without pulling the reader back.
+Verify returning to the bottom, streaming while following/reading, disclosure
+state after scrolling away and back, Dynamic Type, rotation and the sidebar.
+Core state-machine tests do not establish device frame rate or native lazy-layout
+behavior; these checks require Xcode and a device/simulator.

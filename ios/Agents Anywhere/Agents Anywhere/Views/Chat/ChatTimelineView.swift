@@ -10,7 +10,7 @@ struct ChatTimelineView: View {
     @State private var historyLayout: TimelineHistoryLayout?
     @State private var historyPosition: TimelineHistoryPosition?
     @State private var hasRequestedOlder = false
-    @State private var position = ScrollPosition()
+    @State private var position = ScrollPosition(idType: String.self)
     @State private var scrolling = TimelineScrollState()
     @State private var viewportSample = ChatViewportSample()
     @State private var viewportUpdates = ChatLayoutUpdate<TimelineViewport>()
@@ -47,7 +47,7 @@ struct ChatTimelineView: View {
                     olderPullReady: olderPull.isReady, isLoadingOlder: olderLoadRequest != nil,
                     keepsOlderPrompt: hasRequestedOlder, historyAnchor: historyPosition?.origin,
                     onLoadOlder: loadOlder, onLoadLatest: loadLatest,
-                    onHistoryLayout: historyDidLayOut,
+                    onHistoryLayout: historyDidLayOut, onHistoryPage: historyPagePresented,
                     onPromptVisibility: { latestPromptVisible = $0 },
                     onOlderPromptVisibility: { olderPromptVisible = $0 },
                     onTailVisibility: { region, visible in scrolling.tailVisibilityChanged(region, visible: visible) })
@@ -138,6 +138,7 @@ struct ChatTimelineView: View {
                 viewportUpdates.cancel()
                 scrolling.setNavigationSuspended(suspended)
                 if suspended {
+                    historyPosition?.cancelRestoration()
                     releaseScrollPosition()
                     latestPull.cancel(); olderPull.cancel()
                 } else {
@@ -157,8 +158,9 @@ struct ChatTimelineView: View {
             .onChange(of: model.isOpeningReady, initial: true) { _, ready in
                 if ready { scrolling.open(interactionPresented: hasInteractions) }
             }
-            .onChange(of: scrolling.navigationGeneration) { _, _ in
+            .onChange(of: scrolling.navigationGeneration) { _, generation in
                 releaseScrollPosition()
+                historyPosition?.navigationChanged(generation: generation)
             }
             .task(id: scrolling.pendingBottomRequest) {
                 guard let request = scrolling.pendingBottomRequest, !navigationIsSuspended else { return }
@@ -183,6 +185,7 @@ struct ChatTimelineView: View {
                 guard !Task.isCancelled, historyPosition?.id == request else { return }
                 if !model.session.isValid { historyPosition = nil; olderLoadRequest = nil; return }
                 historyPosition?.receivedPage(firstRowID: model.session.timeline.first { $0.value.isVisibleInChat }?.id)
+                historyPosition?.recordPresentation(firstRowID: model.timeline.rows.first?.id)
             }
             .task(id: HistorySettlement(id: historyPosition?.id, ready: historyPosition?.isReadyToFinish == true,
                 offset: historyPosition?.restoredOffset)) {
@@ -191,7 +194,7 @@ struct ChatTimelineView: View {
                 // its target or ending the spinner. A new measurement restarts this.
                 do { try await Task.sleep(for: .milliseconds(64)) } catch { return }
                 guard !Task.isCancelled, historyPosition?.id == request else { return }
-                if scrolling.navigationGeneration == request, historyPosition?.restoredOffset != nil {
+                if scrolling.navigationGeneration == request {
                     position.isPositionedByUser = true
                 }
                 historyPosition = nil; olderLoadRequest = nil
@@ -261,10 +264,25 @@ struct ChatTimelineView: View {
         }
     }
     private func releaseScrollPosition() {
-        guard position.edge != nil || position.point != nil else { return }
+        guard !position.isPositionedByUser else { return }
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) { position.isPositionedByUser = true }
+    }
+    private func historyPagePresented(_ firstRowID: String?, anchorGroupID: String?) {
+        guard var restoration = historyPosition else { return }
+        let needsAnchor = restoration.presentedPage(firstRowID: firstRowID)
+        historyPosition = restoration
+        guard needsAnchor, !navigationIsSuspended,
+              scrolling.navigationGeneration == restoration.id, let anchorGroupID else { return }
+        // A prepended page can evict the old anchor from the lazy stack. Resolve
+        // its identity first; its measured geometry then restores the offset
+        // inside the message, including messages taller than the viewport.
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            position.scrollTo(id: anchorGroupID, anchor: restoration.origin?.edge == .bottom ? .bottom : .top)
+        }
     }
     private func historyDidLayOut(_ layout: TimelineHistoryLayout) {
         historyUpdates.submit(layout) { layout in
@@ -331,6 +349,7 @@ private struct ChatTimelineContent: View, Equatable {
     let onLoadOlder: () -> Void
     let onLoadLatest: () -> Void
     let onHistoryLayout: (TimelineHistoryLayout) -> Void
+    let onHistoryPage: (String?, String?) -> Void
     let onPromptVisibility: (Bool) -> Void
     let onOlderPromptVisibility: (Bool) -> Void
     let onTailVisibility: (TimelineTailVisibility.Region, Bool) -> Void
@@ -349,13 +368,13 @@ private struct ChatTimelineContent: View, Equatable {
         let noticesByTarget = Dictionary(grouping: visibleNotices.filter { $0.timelineTargetID != nil }) { $0.timelineTargetID! }
         let actions = TimelineTurnActions.build(groups: groups, suppressLatest: model.isRunning || model.session.hasNewerItems,
             hasPendingUserMessage: !model.session.hasNewerItems && (!model.timeline.pendingMessages.isEmpty || !model.session.pendingMessages.isEmpty))
-        // Prefer a message whose start cannot move into a prefixed tool group.
-        // For an all-tools page, retain the existing group's trailing edge.
+        // The first group is materialized beside the older-history prompt.
+        // Retain its trailing edge if older tools can merge into that group.
         let anchorGroup = historyAnchor.flatMap { anchor in groups.first { $0.rows.contains { $0.id == anchor.anchorRowID } } }
-            ?? groups.first { $0.rows.first?.structure.groupKind == .single } ?? groups.last
+            ?? groups.first
         let anchorEdge = historyAnchor?.edge ?? (anchorGroup?.rows.first?.structure.groupKind == .single ? .top : .bottom)
-        // Keep actual row geometry available as Markdown grows and tool groups
-        // change height. Hidden tool details own their deferred work separately.
+        // Keep prompts and tail probes mounted; only the unbounded history is
+        // lazy. SwiftUI owns offscreen height estimates and view lifetimes.
         VStack(alignment: .leading, spacing: 20) {
             if model.session.hasOlderItems || keepsOlderPrompt {
                 Group {
@@ -379,22 +398,27 @@ private struct ChatTimelineContent: View, Equatable {
                 .font(.footnote).frame(maxWidth: .infinity, minHeight: 44)
                 .onScrollVisibilityChange(threshold: 0.9) { onOlderPromptVisibility($0) }
             }
-            ForEach(groups) { group in
-                SessionTimelineGroupView(group: group, chat: model, onAttachment: onAttachment, onFile: onFile,
-                    turnAction: actions[group.id],
-                    inlineNotices: group.rows.flatMap { noticesByTarget[$0.id] ?? [] })
-                    .equatable()
-                    .id(group.id)
-                    .background {
-                        if group.id == anchorGroup?.id, let firstRowID = model.timeline.rows.first?.id {
-                            Color.clear.onGeometryChange(for: TimelineHistoryLayout.self) { geometry in
-                                let frame = geometry.frame(in: .named("chat.timeline.content"))
-                                return TimelineHistoryLayout(firstRowID: firstRowID,
-                                    anchorRowID: historyAnchor?.anchorRowID ?? group.id, edge: anchorEdge,
-                                    y: anchorEdge == .top ? frame.minY : frame.maxY)
-                            } action: { onHistoryLayout($0) }
-                        }
+            if !groups.isEmpty {
+                LazyVStack(alignment: .leading, spacing: 20) {
+                    ForEach(groups) { group in
+                        SessionTimelineGroupView(group: group, chat: model, onAttachment: onAttachment, onFile: onFile,
+                            turnAction: actions[group.id],
+                            inlineNotices: group.rows.flatMap { noticesByTarget[$0.id] ?? [] })
+                            .equatable()
+                            .id(group.id)
+                            .background {
+                                if group.id == anchorGroup?.id, let firstRowID = model.timeline.rows.first?.id {
+                                    Color.clear.onGeometryChange(for: TimelineHistoryLayout.self) { geometry in
+                                        let frame = geometry.frame(in: .named("chat.timeline.content"))
+                                        return TimelineHistoryLayout(firstRowID: firstRowID,
+                                            anchorRowID: historyAnchor?.anchorRowID ?? group.id, edge: anchorEdge,
+                                            y: anchorEdge == .top ? frame.minY : frame.maxY)
+                                    } action: { onHistoryLayout($0) }
+                                }
+                            }
                     }
+                }
+                .scrollTargetLayout()
             }
             ForEach(visibleNotices.filter { notice in
                 notice.timelineTargetID.map { !rowIDs.contains($0) } ?? true
@@ -440,6 +464,9 @@ private struct ChatTimelineContent: View, Equatable {
         }
         .modifier(ChatPageContentColumn(horizontalInset: nil))
         .coordinateSpace(name: "chat.timeline.content")
+        .onChange(of: model.timeline.rows.first?.id) { _, firstRowID in
+            onHistoryPage(firstRowID, anchorGroup?.id)
+        }
         .traceChatLayout("timeline-content", state: "groups=\(groups.count), footers=\(actions.count), running=\(model.isRunning)")
     }
 
