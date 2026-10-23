@@ -13,6 +13,7 @@ data class DeviceRuntimeList(
 )
 
 data class DeviceRuntime(
+    val capabilities: Map<String, Any?> = emptyMap(),
     val connectorId: String,
     val id: String,
     val type: String,
@@ -239,6 +240,7 @@ internal fun RemoteDeviceRuntimeList.toDeviceRuntimeList(): DeviceRuntimeList {
 
 internal fun RemoteDeviceRuntime.toDeviceRuntime(): DeviceRuntime {
     return DeviceRuntime(
+        capabilities = capabilities,
         connectorId = connectorId,
         id = runtimeId,
         type = runtimeType,

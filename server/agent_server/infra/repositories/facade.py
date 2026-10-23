@@ -23,6 +23,7 @@ from agent_server.infra.repositories.store_support import *
 from agent_server.infra.repositories.timeline import TimelineRepositoryMixin
 from agent_server.infra.repositories.usage import UsageRepositoryMixin
 from agent_server.infra.repositories.users import UserRepositoryMixin
+from agent_server.infra.repositories.workspaces import WorkspaceRepositoryMixin
 
 _MAX_TRACKED_LOCKS = 4096
 _TRACKED_LOCK_IDLE_SECONDS = 900.0
@@ -36,6 +37,7 @@ class Store(
     InstanceSettingsRepositoryMixin,
     ConnectorRepositoryMixin,
     ProjectRepositoryMixin,
+    WorkspaceRepositoryMixin,
     SessionRepositoryMixin,
     SessionShareRepositoryMixin,
     AttachmentRepositoryMixin,

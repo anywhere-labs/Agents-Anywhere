@@ -56,6 +56,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import com.agentsanywhere.app.ui.designsystem.localizedProjectMessage
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalFocusManager
@@ -775,7 +776,7 @@ fun SessionDetailScreen(
                         attachments = pendingAttachments
                         retryClientMessageId = clientMessageId
                         saveComposerDraft(message, pendingAttachments, clientMessageId)
-                        val rawMessage = outcome.error.message
+                        val rawMessage = outcome.error.localizedProjectMessage(context)
                         val errorMessage = rawMessage
                             ?.takeUnless(::isInternalRuntimeError)
                             ?: context.getString(R.string.new_session_create_failed)

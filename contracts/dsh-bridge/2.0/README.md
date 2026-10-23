@@ -65,7 +65,19 @@ API key 形如 `mk_<id>_<随机 hex>`，Router 按 id 查表并比对 SHA-256。
 
 ## 操作类型（`operations[]`）
 
-与 1.0 相同：`notifications`（`timeline.itemUpsert`、`session.meta.upsert`、`session.state.updated`、`session.source.updated`、`session.turnEnded`、`session.inventory.begin/complete`、`notice.upsert`、`runtime.capability.updated`、`session.capability.updated`、`catalog.model.update`、`catalog.permission.update`）、`workspace.inventory`（忽略）。`snapshot.*` 与 `checkpoint.*` 不再是操作，改用上表的方法。
+`notifications` 包含 `timeline.itemUpsert`、`session.meta.upsert`、`session.state.updated`、`session.source.updated`、`session.turnEnded`、`session.inventory.begin/complete`、`notice.upsert`、`runtime.capability.updated`、`session.capability.updated`、`catalog.model.update`、`catalog.permission.update`。`snapshot.*` 与 `checkpoint.*` 不再是操作，改用上表的方法。
+
+`workspace.inventory` 的 version 1 扩展用于工作区成员同步（#301）：
+
+```json
+{"kind":"workspace.inventory","version":1,"complete":true,"snapshotId":"unique-id","observedAt":"2026-10-22T00:00:00.000Z","workspaces":[{"id":"native-workspace-id","title":"Project","path":"/workspace","sessionIds":["native-session-id"]}]}
+```
+
+Host 在会话初始同步前及工作区登记/成员变更后发送完整清单。读取失败时不得发送空清单；空数组只表示成功读到零个登记。Connector 只转发明确 version 1、complete true 的完整清单为 `runtime.workspaces.updated`，由宿主绑定真实 runtimeId。旧版无版本的 `workspace.inventory` 继续忽略。旧 Connector 忽略此扩展，保持原行为；完整工作区同步需先升级 Server，再升级 Connector 与插件。
+
+清单保留原生工作区 ID 与原生会话 ID；不能仅按 cwd 推断成员。Server 按设备、Runtime 保存已确认清单，旧快照不能覆盖新快照。后续导入只复用成员所对应的项目；不在清单中的该 Runtime 会话保持未分组。归属变化不改变会话 cwd、历史、附件或 AA 归档状态。其他设备、其他 Runtime 的会话不受影响。成员清单不会触发从未导入的隐藏/归档会话的历史导入。
+
+单次完整清单限制为 10000 个工作区、合计 50000 个成员且必须小于现有 6 MiB 批次上限。超限或非法清单使同步失败并保留最后有效清单，不允许截断后标记 complete。
 
 ## 生成客户端
 

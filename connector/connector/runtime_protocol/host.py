@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Any
 
 from connector.core.json_kv import JsonKeyValueStore
@@ -170,7 +170,7 @@ class RuntimeHostClient(ABC):
         machine. Hosts that are not bound to an instance ignore it.
         """
 
-        return None
+        return
 
     async def attachment_download(
         self,
@@ -184,6 +184,9 @@ class RuntimeHostClient(ABC):
         key: str,
     ) -> Mapping[str, Any] | None:
         raise NotImplementedError
+
+    async def sync_state_flush(self) -> None:
+        """Durably commit native-operation receipts before executing side effects."""
 
     async def sync_state_write(
         self,

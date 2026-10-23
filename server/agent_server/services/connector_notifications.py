@@ -23,7 +23,11 @@ from agent_server.core.protocol import (
     ProtocolPermissionCatalog,
 )
 from agent_server.core.runtime_identity import RuntimeIdentity, RuntimeIdentityError
-from agent_server.infra.repositories.projects import MissingWorkspaceError
+from agent_server.core.workspace_inventory import (
+    RuntimeWorkspaceInventory,
+    WorkspaceInventoryChunk,
+    WorkspaceSyncResult,
+)
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.ingest_effects import IngestEffect
 from agent_server.services.repository_ports import ConnectorNotificationRepository
@@ -90,6 +94,7 @@ class ConnectorNotificationService:
             ),
             SessionSourceNotificationHandler(store),
             SessionInventoryNotificationHandler(store),
+            WorkspaceInventoryNotificationHandler(store),
             SessionNotificationHandler(store),
             TimelineNotificationHandler(store, timeline_write_buffer),
             InteractionNotificationHandler(store, usage_recorder=usage),
@@ -241,6 +246,7 @@ class ConnectorProtocolNotificationHandler:
             session_id=session_id,
             session_changed=session_id is not None,
             protocol_changed=True,
+            dashboard_changed=session_id is None,
         )
 
 
@@ -366,8 +372,6 @@ class SessionNotificationHandler:
                     last_activity_at=params.get("lastActivityAt"),
                     source_state=None,
                 )
-            except MissingWorkspaceError:
-                return IngestEffect()
             except ValueError as exc:
                 raise NotificationValidationError(
                     "session_identity_conflict",
@@ -429,16 +433,13 @@ class SessionSourceNotificationHandler:
                 runtime_id=runtime_id,
             )
         except KeyError:
-            try:
-                session = await self._store.upsert_connector_session(
-                    connector_id=connector_id,
-                    session_id=session_id,
-                    runtime=runtime,
-                    runtime_id=runtime_id,
-                    external_session_id=external_session_id,
-                )
-            except MissingWorkspaceError:
-                return IngestEffect()
+            session = await self._store.upsert_connector_session(
+                connector_id=connector_id,
+                session_id=session_id,
+                runtime=runtime,
+                runtime_id=runtime_id,
+                external_session_id=external_session_id,
+            )
             previous_session = None
         else:
             previous_session = session
@@ -455,6 +456,45 @@ class SessionSourceNotificationHandler:
 
     def __init__(self, store: ConnectorNotificationRepository) -> None:
         self._store = store
+
+
+class WorkspaceInventoryNotificationHandler:
+    def __init__(self, store: ConnectorNotificationRepository) -> None:
+        self._store = store
+
+    async def apply(
+        self, *, connector_id: str, method: str, params: dict[str, Any],
+    ) -> IngestEffect | None:
+        if method not in {"runtime.workspaces.updated", "runtime.workspaces.chunk", "runtime.workspaces.unavailable"}:
+            return None
+        runtime, runtime_id = runtime_identity_from_params(params)
+        if method == "runtime.workspaces.unavailable":
+            changed = await self._store.mark_workspace_source_unavailable(connector_id=connector_id,
+                runtime_id=runtime_id, runtime=runtime, epoch=params.get("epoch", ""))
+            return IngestEffect(dashboard_changed=changed)
+        if method == "runtime.workspaces.chunk":
+            chunk = WorkspaceInventoryChunk.model_validate({k: v for k, v in params.items() if k not in {"runtime", "runtimeId"}})
+            assembled = await self._store.collect_workspace_chunk(connector_id=connector_id,
+                runtime_id=runtime_id, runtime=runtime, chunk=chunk)
+            if assembled is None:
+                return IngestEffect()
+            if isinstance(assembled, WorkspaceSyncResult):
+                return IngestEffect(session_ids=assembled.session_ids, session_changed=bool(assembled.session_ids),
+                    needs_refetch=bool(assembled.session_ids), dashboard_changed=assembled.dashboard_changed)
+            params = assembled
+        if params.get("version") != 2:
+            raise NotificationValidationError("invalid_workspace_inventory", "workspace synchronization requires protocol version 2")
+        try:
+            inventory = RuntimeWorkspaceInventory.model_validate({
+                key: value for key, value in params.items() if key not in {"runtime", "runtimeId"}
+            })
+        except ValidationError as exc:
+            raise NotificationValidationError("invalid_workspace_inventory", str(exc)) from exc
+        result = await self._store.sync_runtime_workspaces(
+            connector_id=connector_id, runtime_id=runtime_id, inventory=inventory, runtime=runtime,
+        )
+        return IngestEffect(session_ids=result.session_ids, session_changed=bool(result.session_ids),
+                            needs_refetch=bool(result.session_ids), dashboard_changed=result.dashboard_changed)
 
 
 class SessionInventoryNotificationHandler:
@@ -619,8 +659,6 @@ class SessionStateNotificationHandler:
                     runtime_id=runtime_id,
                     external_session_id=external_session_id,
                 )
-            except MissingWorkspaceError:
-                return IngestEffect()
             except ValueError as exc:
                 raise NotificationValidationError(
                     "session_identity_conflict",
@@ -724,8 +762,6 @@ class SessionTurnEndedNotificationHandler:
                     runtime_id=runtime_id,
                     external_session_id=external_session_id,
                 )
-            except MissingWorkspaceError:
-                return IngestEffect()
             except ValueError as exc:
                 raise NotificationValidationError(
                     "session_identity_conflict",

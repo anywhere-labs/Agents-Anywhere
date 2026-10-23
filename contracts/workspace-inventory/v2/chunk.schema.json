@@ -1,0 +1,54 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "epoch": {
+      "maxLength": 128,
+      "minLength": 16,
+      "title": "Epoch",
+      "type": "string"
+    },
+    "sequence": {
+      "minimum": 1,
+      "title": "Sequence",
+      "type": "integer"
+    },
+    "snapshotId": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Snapshotid",
+      "type": "string"
+    },
+    "digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Digest",
+      "type": "string"
+    },
+    "index": {
+      "minimum": 0,
+      "title": "Index",
+      "type": "integer"
+    },
+    "count": {
+      "maximum": 256,
+      "minimum": 1,
+      "title": "Count",
+      "type": "integer"
+    },
+    "data": {
+      "maxLength": 700000,
+      "title": "Data",
+      "type": "string"
+    }
+  },
+  "required": [
+    "epoch",
+    "sequence",
+    "snapshotId",
+    "digest",
+    "index",
+    "count",
+    "data"
+  ],
+  "title": "WorkspaceInventoryChunk",
+  "type": "object"
+}

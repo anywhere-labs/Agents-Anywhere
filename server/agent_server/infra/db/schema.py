@@ -51,6 +51,18 @@ connectors = Table(
     # preferences (e.g. ~/.claude/settings.json fields). Read-only from the
     # backend's perspective; the daemon owns the write loop.
     Column("user_preferences", Text),
+    Column("workspace_epoch", Text),
+)
+
+
+runtime_workspace_inventories = Table(
+    "runtime_workspace_inventories",
+    metadata,
+    Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), primary_key=True),
+    Column("runtime_id", Text, primary_key=True),
+    Column("snapshot_id", Text, nullable=False),
+    Column("observed_at", Text, nullable=False),
+    Column("snapshot_json", Text, nullable=False),
 )
 
 
@@ -353,6 +365,12 @@ projects = Table(
     Column("name", Text, nullable=False),
     Column("workspace_path", Text, nullable=False),
     Column("workspace_key", Text, nullable=False),
+    Column("runtime", Text),
+    Column("runtime_id", Text),
+    Column("native_project_id", Text),
+    Column("identity_kind", Text, nullable=False, server_default="legacy"),
+    Column("roots_json", Text, nullable=False, server_default="[]"),
+    Column("source_state", Text, nullable=False, server_default="pending"),
     Column("manually_created", Boolean, nullable=False, server_default=false()),
     Column("pinned", Integer, nullable=False, server_default="0"),
     Column("pinned_at", Text),
@@ -370,17 +388,7 @@ projects = Table(
         "connector_id",
         "workspace_key",
     ),
-    UniqueConstraint(
-        "user_id",
-        "connector_id",
-        "workspace_key",
-        name="uq_projects_user_connector_workspace",
-    ),
-    UniqueConstraint(
-        "user_id",
-        "name",
-        name="uq_projects_user_name",
-    ),
+    UniqueConstraint("connector_id", "runtime_id", "native_project_id", name="uq_projects_native_identity"),
 )
 
 
@@ -412,6 +420,8 @@ sessions = Table(
     Column("title", Text),
     Column("title_source", Text),
     Column("cwd", Text),
+    Column("native_project_id", Text),
+    Column("project_sync_reason", Text),
     Column("status", Text, nullable=False),
     Column("takeover", Integer, nullable=False),
     Column("pinned", Integer, nullable=False, server_default="0"),
@@ -587,4 +597,17 @@ pairing_codes = Table(
     Column("created_at", Text, nullable=False),
     Column("claimed_at", Text),
     Column("consumed_at", Text),
+)
+
+
+project_operations = Table(
+    "project_operations", metadata,
+    Column("id", Text, primary_key=True),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
+    Column("runtime", Text, nullable=False), Column("runtime_id", Text, nullable=False),
+    Column("request_id", Text, nullable=False), Column("request_json", Text, nullable=False),
+    Column("status", Text, nullable=False), Column("result_json", Text),
+    Column("created_at", Text, nullable=False), Column("updated_at", Text, nullable=False),
+    UniqueConstraint("user_id", "request_id", name="uq_project_operation_request"),
 )

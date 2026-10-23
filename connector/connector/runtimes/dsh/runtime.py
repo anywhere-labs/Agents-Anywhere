@@ -66,6 +66,22 @@ class DshRuntime(AgentRuntime):
         self._relay_restart_task: asyncio.Task[None] | None = None
         self._sync_mode = "events"
 
+    async def create_workspace(self, name: str, path: str, request_id: str) -> dict[str, Any]:
+        return await self._request("createWorkspace", {"name": name, "path": path, "requestId": request_id})
+
+    async def workspace_inventory(self, full: bool = True) -> dict[str, Any] | None:
+        first = await self._request("listWorkspaces", {"full": full})
+        second = await self._request("listWorkspaces", {"full": full})
+        if first != second:
+            raise RuntimeUnavailableError("DSH registry changed during collection")
+        if not isinstance(first, dict) or not isinstance(first.get("workspaces"), list):
+            raise RuntimeUnavailableError("DSH registry returned an incomplete inventory")
+        return {"catalogComplete": True, "membersComplete": full,
+                "workspaces": [{"id": p["id"], "title": p["title"], "path": p["path"],
+                                "roots": [p["path"]], "identityKind": "native"}
+                               for p in first["workspaces"]],
+                "members": first["members"] if full else []}
+
     @property
     def sync_mode(self) -> str:
         return self._sync_mode
@@ -368,11 +384,11 @@ class DshRuntime(AgentRuntime):
         *, runtime_options: Mapping[str, Any] | None = None,
     ) -> RuntimeOperationResult:
         options = dict(runtime_options or {})
-        if set(options) - {"agentPreset"}:
+        if set(options) - {"agentPreset", "nativeProjectId"}:
             raise RuntimeInvalidRequestError("Unsupported DSH creation option")
         preset = options.get("agentPreset", self.config.values.get("defaultAgentPreset"))
         return await self._send_text("createAndStartSession", session_id, None, content, cwd, attachments, client_message_id,
-                                     selections=selections, agent_preset=preset)
+                                     selections=selections, agent_preset=preset, native_project_id=options.get("nativeProjectId"))
 
     async def start_turn(
         self, session_id: str, external_session_id: str | None, content: str,
@@ -387,6 +403,7 @@ class DshRuntime(AgentRuntime):
         self, method: str, session_id: str, external_id: str | None, content: str,
         cwd: str | None, attachments: tuple[RuntimeAttachment, ...], client_message_id: str | None,
         *, selections: Mapping[str, str | None] | None = None, agent_preset: str | None = None,
+        native_project_id: str | None = None,
     ) -> RuntimeOperationResult:
         if (not content.strip() and not attachments) or not client_message_id:
             raise RuntimeInvalidRequestError("A message and a stable clientMessageId are required")
@@ -395,6 +412,7 @@ class DshRuntime(AgentRuntime):
                   "selections": dict(selections or {})}
         if method == "createAndStartSession":
             params["agentPreset"] = agent_preset
+            params["nativeProjectId"] = native_project_id
         if attachments:
             capability_set = _object(await self._request("getRuntimeCapabilities"))
             if not provider_config.dsh_capabilities(capability_set)["attachments"]:

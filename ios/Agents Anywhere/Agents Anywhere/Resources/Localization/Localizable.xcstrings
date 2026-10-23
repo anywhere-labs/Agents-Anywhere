@@ -78,13 +78,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "%@ will be stopped and removed from the configured list. All associated sessions, message history, and attachments will be permanently deleted. You can configure the runtime again later; the local installation is kept."
+            "value": "%@ will be stopped and removed from the configured list. All associated sessions, message history, and attachments will be permanently deleted. You can configure the agent again later; the local installation is kept."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "%@ 会停止并从已配置列表移除，其关联的所有会话、消息记录和附件将被永久删除。之后仍可重新配置 Runtime，本机安装会保留。"
+            "value": "%@ 会停止并从已配置列表移除，其关联的所有会话、消息记录和附件将被永久删除。之后仍可重新配置 Agent，本机安装会保留。"
           }
         }
       }
@@ -102,6 +102,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ · %@"
+          }
+        }
+      }
+    },
+    "%@ 正在处理…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is working…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 正在处理…"
+          }
+        }
+      }
+    },
+    "%@ 正在处理任务…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is working…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 正在处理任务…"
+          }
+        }
+      }
+    },
+    "%@ 正在处理回应…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is processing your response…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 正在处理回应…"
           }
         }
       }
@@ -265,6 +316,23 @@
         }
       }
     },
+    "%lld 个文件": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld files"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 个文件"
+          }
+        }
+      }
+    },
     "%lld 个问题": {
       "extractionState": "manual",
       "localizations": {
@@ -394,6 +462,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "%lld/%lld"
+          }
+        }
+      }
+    },
+    "+%lld": {
+      "comment": "Signed line count in Git change summaries.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "+%lld"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "+%lld"
           }
         }
       }
@@ -695,6 +781,23 @@
         }
       }
     },
+    "Agent 忙碌中，暂时不能执行": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The agent is busy; try again when it is idle"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent 忙碌中，暂时不能执行"
+          }
+        }
+      }
+    },
     "Agent 操作未完成": {
       "comment": "Shared with Web: dashboard.device.runtimeActionFailed. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -702,13 +805,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Failed to update runtime state."
+            "value": "Failed to update agent state."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "无法更新 Runtime 状态。"
+            "value": "无法更新 Agent 状态。"
           }
         }
       }
@@ -720,13 +823,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Runtime type"
+            "value": "Agent type"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Runtime 类型"
+            "value": "Agent 类型"
           }
         }
       }
@@ -1455,6 +1558,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "验证码已发送，请查看邮箱。"
+          }
+        }
+      }
+    },
+    "Codex 当前不可用。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex is currently unavailable."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex 当前不可用。"
           }
         }
       }
@@ -4511,6 +4631,23 @@
         }
       }
     },
+    "Runtime 实例": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent"
+          }
+        }
+      }
+    },
     "Save": {
       "comment": "Shared with Web: common.save. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -4965,6 +5102,23 @@
         }
       }
     },
+    "Single-line sessions": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Single-line sessions"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "单行显示会话"
+          }
+        }
+      }
+    },
     "Some files are not shown.": {
       "extractionState": "manual",
       "localizations": {
@@ -5346,13 +5500,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The runtime configuration schema is unavailable or invalid."
+            "value": "The agent configuration schema is unavailable or invalid."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "运行时配置结构不可用或格式无效。"
+            "value": "Agent 配置结构不可用或格式无效。"
           }
         }
       }
@@ -5363,7 +5517,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The runtime did not accept this operation."
+            "value": "The agent did not accept this operation."
           }
         },
         "zh-Hans": {
@@ -5380,7 +5534,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The runtime did not accept this selection."
+            "value": "The agent did not accept this selection."
           }
         },
         "zh-Hans": {
@@ -6416,13 +6570,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Agent runtimes"
+            "value": "Agents"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Agent Runtime"
+            "value": "Agent"
           }
         }
       }
@@ -6560,13 +6714,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Environment variables added or overridden when this runtime starts."
+            "value": "Environment variables added or overridden when this agent starts."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "启动这个 Runtime 时追加或覆盖的环境变量。"
+            "value": "启动这个 Agent 时追加或覆盖的环境变量。"
           }
         }
       }
@@ -6596,13 +6750,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Route this runtime's model requests through a compatible custom gateway. Leave both fields empty to use the runtime's default endpoint and authentication."
+            "value": "Route this agent's model requests through a compatible custom gateway. Leave both fields empty to use the agent's default endpoint and authentication."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "让这个 Runtime 通过兼容的自定义 Gateway 发送模型请求。两个字段都留空时，继续使用 Runtime 默认的模型地址和认证。"
+            "value": "让这个 Agent 通过兼容的自定义 Gateway 发送模型请求。两个字段都留空时，继续使用 Agent 默认的模型地址和认证。"
           }
         }
       }
@@ -6769,42 +6923,6 @@
         }
       }
     },
-    "dashboard.device.runtimeConfigFields.modelGatewayApiKey.description": {
-      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.modelGatewayApiKey.description. Sync with ios/scripts/web_copy.py.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The API key sent to this gateway. It is stored and returned as part of the runtime configuration."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "发送给这个 Gateway 的 API Key。它会作为 Runtime 配置的一部分被存储并返回。"
-          }
-        }
-      }
-    },
-    "dashboard.device.runtimeConfigFields.modelGatewayApiKey.label": {
-      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.modelGatewayApiKey.label. Sync with ios/scripts/web_copy.py.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Gateway API key"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Gateway API Key"
-          }
-        }
-      }
-    },
     "dashboard.device.runtimeConfigFields.ipcDeeplinkHandoff.description": {
       "comment": "Shared with Web: dashboard.device.runtimeConfigFields.ipcDeeplinkHandoff.description. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -6873,6 +6991,42 @@
           "stringUnit": {
             "state": "translated",
             "value": "跟随 Codex App / IDE 会话（IPC）"
+          }
+        }
+      }
+    },
+    "dashboard.device.runtimeConfigFields.modelGatewayApiKey.description": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.modelGatewayApiKey.description. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The API key sent to this gateway. It is stored and returned as part of the agent configuration."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "发送给这个 Gateway 的 API Key。它会作为 Agent 配置的一部分被存储并返回。"
+          }
+        }
+      }
+    },
+    "dashboard.device.runtimeConfigFields.modelGatewayApiKey.label": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.modelGatewayApiKey.label. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gateway API key"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gateway API Key"
           }
         }
       }
@@ -6956,13 +7110,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Runtime instance name"
+            "value": "Agent instance name"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Runtime 实例名称"
+            "value": "Agent 实例名称"
           }
         }
       }
@@ -7489,6 +7643,60 @@
         }
       }
     },
+    "dashboard.new.permissionModes.dsh.fullAccess.label": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.dsh.fullAccess.label. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Full access"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完全权限"
+          }
+        }
+      }
+    },
+    "dashboard.new.permissionModes.dsh.readOnly.label": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.dsh.readOnly.label. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Read Only"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅可查看"
+          }
+        }
+      }
+    },
+    "dashboard.new.permissionModes.dsh.workspaceWrite.label": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.dsh.workspaceWrite.label. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Workspace Write"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作区内修改"
+          }
+        }
+      }
+    },
     "dashboard.new.permissionModes.fullAccess.description": {
       "comment": "Shared with Web: dashboard.new.permissionModes.fullAccess.description. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -7920,23 +8128,6 @@
         }
       }
     },
-    "·": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "·"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "·"
-          }
-        }
-      }
-    },
     "privacyPolicy.agents.body": {
       "comment": "Privacy policy for the native iOS and Mac Catalyst client.",
       "extractionState": "manual",
@@ -8239,6 +8430,41 @@
           "stringUnit": {
             "state": "translated",
             "value": "更新日期：2026 年 9 月 7 日"
+          }
+        }
+      }
+    },
+    "·": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "·"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "·"
+          }
+        }
+      }
+    },
+    "−%lld": {
+      "comment": "Signed line count in Git change summaries.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "−%lld"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "−%lld"
           }
         }
       }
@@ -8624,6 +8850,23 @@
         }
       }
     },
+    "会话目录不存在": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Session directory missing"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "会话目录不存在"
+          }
+        }
+      }
+    },
     "会话菜单": {
       "comment": "Shared with Web: dashboard.actions.sessionOptions. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -8690,6 +8933,91 @@
           "stringUnit": {
             "state": "translated",
             "value": "你的任务将在所选设备上运行"
+          }
+        }
+      }
+    },
+    "使用 %@ 实现一个新功能。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Build a new feature with %@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用 %@ 实现一个新功能。"
+          }
+        }
+      }
+    },
+    "使用 %@ 审查最近的改动。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Review recent changes with %@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用 %@ 审查最近的改动。"
+          }
+        }
+      }
+    },
+    "使用 %@ 排查一个问题。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Track down an issue with %@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用 %@ 排查一个问题。"
+          }
+        }
+      }
+    },
+    "使用 %@ 推进下一步。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Take the next step with %@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用 %@ 推进下一步。"
+          }
+        }
+      }
+    },
+    "使用 %@ 构建接下来的内容。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Build what's next with %@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用 %@ 构建接下来的内容。"
           }
         }
       }
@@ -8976,6 +9304,23 @@
         }
       }
     },
+    "关闭": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭"
+          }
+        }
+      }
+    },
     "关闭侧栏": {
       "extractionState": "manual",
       "localizations": {
@@ -9111,6 +9456,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "其他打开方式…"
+          }
+        }
+      }
+    },
+    "再次新建": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Create another"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再次新建"
           }
         }
       }
@@ -9279,13 +9641,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Delete runtime configuration?"
+            "value": "Delete agent configuration?"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "删除 Runtime 配置？"
+            "value": "删除 Agent 配置？"
           }
         }
       }
@@ -9537,6 +9899,57 @@
         }
       }
     },
+    "原生会话未分组": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No native project membership"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "原生会话未分组"
+          }
+        }
+      }
+    },
+    "原生创建结果尚未确认，请稍后核对": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The source has not confirmed the creation result. Check again later."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "原生创建结果尚未确认，请稍后核对"
+          }
+        }
+      }
+    },
+    "原生结果尚未确认": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The source has not confirmed the result."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "原生结果尚未确认"
+          }
+        }
+      }
+    },
     "发送": {
       "comment": "Shared with Web: dashboard.new.sendTask. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -9742,6 +10155,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "可用选项已变化，请检查模型和权限后再次发送。"
+          }
+        }
+      }
+    },
+    "可继续核对旧操作；再次新建会单独创建一个项目。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continue checking the existing operation, or create another project separately."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可继续核对旧操作；再次新建会单独创建一个项目。"
           }
         }
       }
@@ -9952,6 +10382,23 @@
         }
       }
     },
+    "在浏览器中打开": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open in Browser"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在浏览器中打开"
+          }
+        }
+      }
+    },
     "在电脑上安装桌面应用，使用以下服务器地址登录当前账号。连接后，可以在设备管理中添加 Agent。": {
       "comment": "Shared with Web: dashboard.pairDevice.desktopInstallStepLogin. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -10053,6 +10500,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "在这里继续你的任务"
+          }
+        }
+      }
+    },
+    "处理中": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Processing"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "处理中"
           }
         }
       }
@@ -10419,13 +10883,30 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No additional runtimes were discovered."
+            "value": "No additional agents were discovered."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "没有发现其他 Runtime。"
+            "value": "没有发现其他 Agent。"
+          }
+        }
+      }
+    },
+    "尚未完成": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not yet completed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚未完成"
           }
         }
       }
@@ -10581,6 +11062,108 @@
           "stringUnit": {
             "state": "translated",
             "value": "已停止生成"
+          }
+        }
+      }
+    },
+    "已创建 PR": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Created PR"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已创建 PR"
+          }
+        }
+      }
+    },
+    "已创建分支": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Created branch"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已创建分支"
+          }
+        }
+      }
+    },
+    "已创建分支 %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Created branch %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已创建分支 %@"
+          }
+        }
+      }
+    },
+    "已创建草稿 PR": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Created draft PR"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已创建草稿 PR"
+          }
+        }
+      }
+    },
+    "已创建，正在同步；请稍后刷新项目列表": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Created and syncing. Refresh the project list shortly."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已创建，正在同步；请稍后刷新项目列表"
+          }
+        }
+      }
+    },
+    "已创建，等待同步": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Created, awaiting sync"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已创建，等待同步"
           }
         }
       }
@@ -10757,6 +11340,91 @@
         }
       }
     },
+    "已推送": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pushed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已推送"
+          }
+        }
+      }
+    },
+    "已推送 %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pushed %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已推送 %@"
+          }
+        }
+      }
+    },
+    "已提交": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Committed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已提交"
+          }
+        }
+      }
+    },
+    "已提交，等待 %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Submitted. Waiting for %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已提交，等待 %@"
+          }
+        }
+      }
+    },
+    "已暂存": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Staged"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已暂存"
+          }
+        }
+      }
+    },
     "已检查，允许再次回应": {
       "extractionState": "manual",
       "localizations": {
@@ -10839,6 +11507,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "开启接管"
+          }
+        }
+      }
+    },
+    "开启接管后才能执行指令": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Take over the session to run commands"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "开启接管后才能执行指令"
           }
         }
       }
@@ -10950,6 +11635,23 @@
         }
       }
     },
+    "当前 Runtime 版本还不支持指令，升级后可用": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This agent version does not support commands yet; upgrade it to use them"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前 Agent 版本还不支持指令，升级后可用"
+          }
+        }
+      }
+    },
     "当前不可用": {
       "extractionState": "manual",
       "localizations": {
@@ -10974,13 +11676,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No more runtime types can be added on this device."
+            "value": "No more agent types can be added on this device."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "这个设备暂时没有可继续添加的 Runtime 类型。"
+            "value": "这个设备暂时没有可继续添加的 Agent 类型。"
           }
         }
       }
@@ -11043,7 +11745,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Attachments are not supported in the current runtime state"
+            "value": "Attachments are not supported in the current agent state"
           }
         },
         "zh-Hans": {
@@ -11067,6 +11769,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "待回应交互"
+          }
+        }
+      }
+    },
+    "待核对的项目操作": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pending project operations"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "待核对的项目操作"
           }
         }
       }
@@ -11173,6 +11892,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "所有盘符"
+          }
+        }
+      }
+    },
+    "所选项目不可用，请刷新": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The selected project is unavailable. Refresh the list."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所选项目不可用，请刷新"
           }
         }
       }
@@ -11310,6 +12046,74 @@
           "stringUnit": {
             "state": "translated",
             "value": "拒绝"
+          }
+        }
+      }
+    },
+    "指令": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Commands"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "指令"
+          }
+        }
+      }
+    },
+    "指令已完成。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Command completed."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "指令已完成。"
+          }
+        }
+      }
+    },
+    "指令已接受，后台任务可能仍在进行。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Command accepted; background work may still be running."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "指令已接受，后台任务可能仍在进行。"
+          }
+        }
+      }
+    },
+    "指令结果尚不确定": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Command result unknown"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "指令结果尚不确定"
           }
         }
       }
@@ -11517,6 +12321,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "操作详情"
+          }
+        }
+      }
+    },
+    "收起": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show less"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收起"
           }
         }
       }
@@ -11731,6 +12552,57 @@
         }
       }
     },
+    "无法打开浏览器，请重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not open the browser. Please try again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法打开浏览器，请重试。"
+          }
+        }
+      }
+    },
+    "无法执行指令": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not run command"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法执行指令"
+          }
+        }
+      }
+    },
+    "无法执行指令。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not run the command."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法执行指令。"
+          }
+        }
+      }
+    },
     "无法更改设置": {
       "comment": "Shared with Web: dashboard.session.updateSelectionsFailed. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -11756,13 +12628,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Failed to create runtime instance."
+            "value": "Failed to create agent instance."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "无法创建 Runtime 实例。"
+            "value": "无法创建 Agent 实例。"
           }
         }
       }
@@ -11801,6 +12673,23 @@
         }
       }
     },
+    "无法读取指令。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not load commands."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法读取指令。"
+          }
+        }
+      }
+    },
     "无法预览文件": {
       "comment": "Shared with Web: preview.unavailable. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -11815,6 +12704,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "无法预览"
+          }
+        }
+      }
+    },
+    "显示更多（%lld）": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show %lld more"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示更多（%lld）"
           }
         }
       }
@@ -11853,6 +12759,23 @@
         }
       }
     },
+    "最近核对：%@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last checked: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最近核对：%@"
+          }
+        }
+      }
+    },
     "服务器是否已创建设备尚未确认。请先关闭此页并刷新设备列表，确认结果后再创建。": {
       "extractionState": "manual",
       "localizations": {
@@ -11887,23 +12810,6 @@
         }
       }
     },
-    "未启用，请在设备管理中启动": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Disabled. Start it in device management"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "未启用，请在设备管理中启动"
-          }
-        }
-      }
-    },
     "未分组会话": {
       "extractionState": "manual",
       "localizations": {
@@ -11917,6 +12823,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "未分组会话"
+          }
+        }
+      }
+    },
+    "未启用，请在设备管理中启动": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disabled. Start it in device management"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未启用，请在设备管理中启动"
           }
         }
       }
@@ -11973,13 +12896,30 @@
         }
       }
     },
+    "未能加载待核对操作；提交相同参数仍会恢复已有操作。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not load pending operations. Submitting the same details will still recover the existing operation."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未能加载待核对操作；提交相同参数仍会恢复已有操作。"
+          }
+        }
+      }
+    },
     "未能完成创建，请检查设备连接和运行选项。": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Could not finish creating the session. Check the device connection and runtime options."
+            "value": "Could not finish creating the session. Check the device connection and agent options."
           }
         },
         "zh-Hans": {
@@ -12025,6 +12965,23 @@
         }
       }
     },
+    "本轮文件变更": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turn changes"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本轮文件变更"
+          }
+        }
+      }
+    },
     "权限": {
       "comment": "Shared with Web: dashboard.new.permissionMode. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -12039,6 +12996,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "权限模式"
+          }
+        }
+      }
+    },
+    "来源暂不可用，保留上次结果": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Source temporarily unavailable; showing the last known state"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "来源暂不可用，保留上次结果"
           }
         }
       }
@@ -12128,6 +13102,23 @@
         }
       }
     },
+    "查看本轮文件和 diff": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "View files and diffs for this turn"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看本轮文件和 diff"
+          }
+        }
+      }
+    },
     "标识与时间线": {
       "comment": "Shared with Web: dashboard.session.timeline. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -12160,6 +13151,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "标题"
+          }
+        }
+      }
+    },
+    "核对原生来源": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Refresh project source"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "核对原生来源"
           }
         }
       }
@@ -12475,6 +13483,23 @@
         }
       }
     },
+    "正在打开浏览器": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opening browser"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在打开浏览器"
+          }
+        }
+      }
+    },
     "正在提交…": {
       "extractionState": "manual",
       "localizations": {
@@ -12580,6 +13605,23 @@
         }
       }
     },
+    "正在读取指令…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Loading commands…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在读取指令…"
+          }
+        }
+      }
+    },
     "正在连接，首次同步后即可保留本地内容": {
       "extractionState": "manual",
       "localizations": {
@@ -12593,6 +13635,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在连接，首次同步后即可保留本地内容"
+          }
+        }
+      }
+    },
+    "此 Codex 版本尚不支持所需的指令操作。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This Codex version does not support the required command operations yet."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此 Codex 版本尚不支持所需的指令操作。"
           }
         }
       }
@@ -12648,6 +13707,57 @@
         }
       }
     },
+    "此会话暂时无法使用指令": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Commands are unavailable in this session right now"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此会话暂时无法使用指令"
+          }
+        }
+      }
+    },
+    "此指令不接受这些参数。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This command does not accept these arguments."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此指令不接受这些参数。"
+          }
+        }
+      }
+    },
+    "此指令不支持多行输入。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This command does not support multiline input."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此指令不支持多行输入。"
+          }
+        }
+      }
+    },
     "此操作的表单版本暂未支持，请在 Web 中处理。": {
       "extractionState": "manual",
       "localizations": {
@@ -12683,6 +13793,23 @@
         }
       }
     },
+    "此轮较早的记录尚未载入，当前显示已加载的文件变更。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Earlier records for this turn have not loaded. Showing changes from loaded records."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此轮较早的记录尚未载入，当前显示已加载的文件变更。"
+          }
+        }
+      }
+    },
     "每条消息最多添加 5 个附件。": {
       "extractionState": "manual",
       "localizations": {
@@ -12696,6 +13823,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "每条消息最多添加 5 个附件。"
+          }
+        }
+      }
+    },
+    "没有匹配的指令": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No matching commands"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有匹配的指令"
           }
         }
       }
@@ -12714,6 +13858,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "无设备。"
+          }
+        }
+      }
+    },
+    "浏览文件": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Browse files"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "浏览文件"
           }
         }
       }
@@ -12960,6 +14121,40 @@
         }
       }
     },
+    "登记已存在的目录，不创建物理文件夹。项目允许同名、同目录。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Register an existing directory. No folder is created. Projects may share a name or directory."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "登记已存在的目录，不创建物理文件夹。项目允许同名、同目录。"
+          }
+        }
+      }
+    },
+    "目录暂不可用": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Directory temporarily unavailable"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目录暂不可用"
+          }
+        }
+      }
+    },
     "目标设备离线": {
       "extractionState": "manual",
       "localizations": {
@@ -13082,6 +14277,23 @@
         }
       }
     },
+    "等待 %@ 回应…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for %@…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等待 %@ 回应…"
+          }
+        }
+      }
+    },
     "等待 Agent": {
       "extractionState": "manual",
       "localizations": {
@@ -13168,6 +14380,40 @@
         }
       }
     },
+    "等待来源升级或首次核对": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for a source upgrade or initial sync"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等待来源升级或首次核对"
+          }
+        }
+      }
+    },
+    "等待来源核对": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Awaiting source sync"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等待来源核对"
+          }
+        }
+      }
+    },
     "等待设备连接…": {
       "comment": "Shared with Web: dashboard.pairDevice.waitingOnline. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -13220,6 +14466,40 @@
         }
       }
     },
+    "结果尚不确定，请先检查会话状态再决定是否重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The result is not certain yet. Check the session state before retrying."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "结果尚不确定，请先检查会话状态再决定是否重试。"
+          }
+        }
+      }
+    },
+    "结果待确认": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Awaiting confirmation"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "结果待确认"
+          }
+        }
+      }
+    },
     "结果未确认 · 查看详情": {
       "extractionState": "manual",
       "localizations": {
@@ -13233,6 +14513,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "结果未确认 · 查看详情"
+          }
+        }
+      }
+    },
+    "统计来自本轮记录的 diff；同一文件的多次修改按顺序保留。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Counts come from this turn’s recorded diffs. Repeated changes to a file appear in chronological order."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "统计来自本轮记录的 diff；同一文件的多次修改按顺序保留。"
           }
         }
       }
@@ -13286,6 +14583,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "继续使用命令行"
+          }
+        }
+      }
+    },
+    "继续核对": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continue checking"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "继续核对"
           }
         }
       }
@@ -13452,7 +14766,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Your draft and runtime target are kept. They will be checked again when the network returns."
+            "value": "Your draft and agent target are kept. They will be checked again when the network returns."
           }
         },
         "zh-Hans": {
@@ -13774,6 +15088,23 @@
         }
       }
     },
+    "设备详情": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Device details"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备详情"
+          }
+        }
+      }
+    },
     "询问 Agents": {
       "comment": "Shared with Web: dashboard.new.placeholder. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -13792,6 +15123,23 @@
         }
       }
     },
+    "该目录已有项目，请从项目列表明确选择": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This directory already has a project. Select it from the project list."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "该目录已有项目，请从项目列表明确选择"
+          }
+        }
+      }
+    },
     "请先从侧栏添加并连接设备。": {
       "extractionState": "manual",
       "localizations": {
@@ -13805,6 +15153,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "请先从侧栏添加并连接设备。"
+          }
+        }
+      }
+    },
+    "请先打开此会话，再运行指令。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open this session before running commands."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请先打开此会话，再运行指令。"
           }
         }
       }
@@ -13860,6 +15225,23 @@
         }
       }
     },
+    "请在新建对话中选择目录并发送首条消息，以建立此来源的项目。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a directory in a new conversation and send the first message to create a project for this source."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请在新建对话中选择目录并发送首条消息，以建立此来源的项目。"
+          }
+        }
+      }
+    },
     "请等待当前 Agent 操作完成。": {
       "extractionState": "manual",
       "localizations": {
@@ -13890,6 +15272,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "请输入设备上的完整绝对路径。"
+          }
+        }
+      }
+    },
+    "请选择 Runtime 实例": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select an agent instance."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请选择 Agent 实例"
           }
         }
       }
@@ -13930,6 +15329,23 @@
         }
       }
     },
+    "请选择支持创建项目的 Runtime；目录型来源请通过首次对话创建": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select an agent that supports project creation. Directory-based sources create projects with the first conversation."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请选择支持创建项目的 Agent；目录型来源请通过首次对话创建"
+          }
+        }
+      }
+    },
     "调用 Agent": {
       "extractionState": "manual",
       "localizations": {
@@ -13943,6 +15359,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "调用 Agent"
+          }
+        }
+      }
+    },
+    "轻点关闭": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap to dismiss"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "轻点关闭"
           }
         }
       }
@@ -13978,6 +15411,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "运行中"
+          }
+        }
+      }
+    },
+    "运行指令前请移除附件；草稿会保留。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove attachments before running a command; your draft is kept."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "运行指令前请移除附件；草稿会保留。"
           }
         }
       }
@@ -14130,13 +15580,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "This runtime type cannot create another instance."
+            "value": "This agent type cannot create another instance."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "这个 Runtime 类型暂时不能再创建实例。"
+            "value": "这个 Agent 类型暂时不能再创建实例。"
           }
         }
       }
@@ -14201,13 +15651,30 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No runtimes have been configured."
+            "value": "No agents have been configured."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "还没有配置 Runtime。"
+            "value": "还没有配置 Agent。"
+          }
+        }
+      }
+    },
+    "这条文件变更记录未提供 diff。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This file change did not include a diff."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这条文件变更记录未提供 diff。"
           }
         }
       }
@@ -14376,6 +15843,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "选择代理"
+          }
+        }
+      }
+    },
+    "选择 Runtime": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select an agent"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择 Agent"
           }
         }
       }
@@ -14655,13 +16139,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Rename runtime instance"
+            "value": "Rename agent instance"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "重命名 Runtime 实例"
+            "value": "重命名 Agent 实例"
           }
         }
       }
@@ -14893,19 +16377,53 @@
         }
       }
     },
+    "项目已移除": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Project removed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "项目已移除"
+          }
+        }
+      }
+    },
     "项目或设备状态已变化，请检查运行目标后再次发送。草稿已保留。": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The project or device state changed. Check the runtime target before sending again. Your draft is kept."
+            "value": "The project or device state changed. Check the agent target before sending again. Your draft is kept."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
             "value": "项目或设备状态已变化，请检查运行目标后再次发送。草稿已保留。"
+          }
+        }
+      }
+    },
+    "项目目录不存在": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Project directory missing"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "项目目录不存在"
           }
         }
       }
@@ -14993,1014 +16511,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "默认模型"
-          }
-        }
-      }
-    },
-    "已暂存": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Staged"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已暂存"
-          }
-        }
-      }
-    },
-    "已提交": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Committed"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已提交"
-          }
-        }
-      }
-    },
-    "已创建分支": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Created branch"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已创建分支"
-          }
-        }
-      }
-    },
-    "已创建分支 %@": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Created branch %@"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已创建分支 %@"
-          }
-        }
-      }
-    },
-    "已推送": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Pushed"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已推送"
-          }
-        }
-      }
-    },
-    "已推送 %@": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Pushed %@"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已推送 %@"
-          }
-        }
-      }
-    },
-    "已创建草稿 PR": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Created draft PR"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已创建草稿 PR"
-          }
-        }
-      }
-    },
-    "已创建 PR": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Created PR"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已创建 PR"
-          }
-        }
-      }
-    },
-    "%lld 个文件": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld files"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld 个文件"
-          }
-        }
-      }
-    },
-    "查看本轮文件和 diff": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "View files and diffs for this turn"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "查看本轮文件和 diff"
-          }
-        }
-      }
-    },
-    "本轮文件变更": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Turn changes"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "本轮文件变更"
-          }
-        }
-      }
-    },
-    "此轮较早的记录尚未载入，当前显示已加载的文件变更。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Earlier records for this turn have not loaded. Showing changes from loaded records."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此轮较早的记录尚未载入，当前显示已加载的文件变更。"
-          }
-        }
-      }
-    },
-    "统计来自本轮记录的 diff；同一文件的多次修改按顺序保留。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Counts come from this turn’s recorded diffs. Repeated changes to a file appear in chronological order."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "统计来自本轮记录的 diff；同一文件的多次修改按顺序保留。"
-          }
-        }
-      }
-    },
-    "这条文件变更记录未提供 diff。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This file change did not include a diff."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "这条文件变更记录未提供 diff。"
-          }
-        }
-      }
-    },
-    "dashboard.new.permissionModes.dsh.fullAccess.label": {
-      "comment": "Shared with Web: dashboard.new.permissionModes.dsh.fullAccess.label. Sync with ios/scripts/web_copy.py.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Full access"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "完全权限"
-          }
-        }
-      }
-    },
-    "dashboard.new.permissionModes.dsh.readOnly.label": {
-      "comment": "Shared with Web: dashboard.new.permissionModes.dsh.readOnly.label. Sync with ios/scripts/web_copy.py.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Read Only"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "仅可查看"
-          }
-        }
-      }
-    },
-    "dashboard.new.permissionModes.dsh.workspaceWrite.label": {
-      "comment": "Shared with Web: dashboard.new.permissionModes.dsh.workspaceWrite.label. Sync with ios/scripts/web_copy.py.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Workspace Write"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "工作区内修改"
-          }
-        }
-      }
-    },
-    "+%lld": {
-      "comment": "Signed line count in Git change summaries.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "+%lld"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "+%lld"
-          }
-        }
-      }
-    },
-    "−%lld": {
-      "comment": "Signed line count in Git change summaries.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "−%lld"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "−%lld"
-          }
-        }
-      }
-    },
-    "在浏览器中打开": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Open in Browser"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在浏览器中打开"
-          }
-        }
-      }
-    },
-    "正在打开浏览器": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Opening browser"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在打开浏览器"
-          }
-        }
-      }
-    },
-    "无法打开浏览器，请重试。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Could not open the browser. Please try again."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "无法打开浏览器，请重试。"
-          }
-        }
-      }
-    },
-    "显示更多（%lld）": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Show %lld more"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "显示更多（%lld）"
-          }
-        }
-      }
-    },
-    "收起": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Show less"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "收起"
-          }
-        }
-      }
-    },
-    "Single-line sessions": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Single-line sessions"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "单行显示会话"
-          }
-        }
-      }
-    },
-    "等待 %@ 回应…": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Waiting for %@…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "等待 %@ 回应…"
-          }
-        }
-      }
-    },
-    "%@ 正在处理任务…": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ is working…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ 正在处理任务…"
-          }
-        }
-      }
-    },
-    "%@ 正在处理…": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ is working…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ 正在处理…"
-          }
-        }
-      }
-    },
-    "%@ 正在处理回应…": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ is processing your response…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ 正在处理回应…"
-          }
-        }
-      }
-    },
-    "已提交，等待 %@": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Submitted. Waiting for %@"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已提交，等待 %@"
-          }
-        }
-      }
-    },
-    "使用 %@ 构建接下来的内容。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Build what's next with %@."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "使用 %@ 构建接下来的内容。"
-          }
-        }
-      }
-    },
-    "使用 %@ 排查一个问题。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Track down an issue with %@."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "使用 %@ 排查一个问题。"
-          }
-        }
-      }
-    },
-    "使用 %@ 推进下一步。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Take the next step with %@."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "使用 %@ 推进下一步。"
-          }
-        }
-      }
-    },
-    "设备详情": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Device details"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "设备详情"
-          }
-        }
-      }
-    },
-    "浏览文件": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Browse files"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "浏览文件"
-          }
-        }
-      }
-    },
-    "使用 %@ 实现一个新功能。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Build a new feature with %@."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "使用 %@ 实现一个新功能。"
-          }
-        }
-      }
-    },
-    "使用 %@ 审查最近的改动。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Review recent changes with %@."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "使用 %@ 审查最近的改动。"
-          }
-        }
-      }
-    },
-    "Agent 忙碌中，暂时不能执行": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The agent is busy; try again when it is idle"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Agent 忙碌中，暂时不能执行"
-          }
-        }
-      }
-    },
-    "Codex 当前不可用。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Codex is currently unavailable."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Codex 当前不可用。"
-          }
-        }
-      }
-    },
-    "关闭": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Close"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "关闭"
-          }
-        }
-      }
-    },
-    "开启接管后才能执行指令": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Take over the session to run commands"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "开启接管后才能执行指令"
-          }
-        }
-      }
-    },
-    "当前 Runtime 版本还不支持指令，升级后可用": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This runtime version does not support commands yet; upgrade it to use them"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "当前 Runtime 版本还不支持指令，升级后可用"
-          }
-        }
-      }
-    },
-    "指令": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Commands"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "指令"
-          }
-        }
-      }
-    },
-    "指令已完成。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Command completed."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "指令已完成。"
-          }
-        }
-      }
-    },
-    "指令已接受，后台任务可能仍在进行。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Command accepted; background work may still be running."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "指令已接受，后台任务可能仍在进行。"
-          }
-        }
-      }
-    },
-    "指令结果尚不确定": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Command result unknown"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "指令结果尚不确定"
-          }
-        }
-      }
-    },
-    "无法执行指令": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Could not run command"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "无法执行指令"
-          }
-        }
-      }
-    },
-    "无法执行指令。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Could not run the command."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "无法执行指令。"
-          }
-        }
-      }
-    },
-    "无法读取指令。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Could not load commands."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "无法读取指令。"
-          }
-        }
-      }
-    },
-    "正在读取指令…": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Loading commands…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在读取指令…"
-          }
-        }
-      }
-    },
-    "此 Codex 版本尚不支持所需的指令操作。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This Codex version does not support the required command operations yet."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此 Codex 版本尚不支持所需的指令操作。"
-          }
-        }
-      }
-    },
-    "此会话暂时无法使用指令": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Commands are unavailable in this session right now"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此会话暂时无法使用指令"
-          }
-        }
-      }
-    },
-    "此指令不接受这些参数。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This command does not accept these arguments."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此指令不接受这些参数。"
-          }
-        }
-      }
-    },
-    "此指令不支持多行输入。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This command does not support multiline input."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此指令不支持多行输入。"
-          }
-        }
-      }
-    },
-    "没有匹配的指令": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No matching commands"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "没有匹配的指令"
-          }
-        }
-      }
-    },
-    "结果尚不确定，请先检查会话状态再决定是否重试。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The result is not certain yet. Check the session state before retrying."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "结果尚不确定，请先检查会话状态再决定是否重试。"
-          }
-        }
-      }
-    },
-    "请先打开此会话，再运行指令。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Open this session before running commands."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "请先打开此会话，再运行指令。"
-          }
-        }
-      }
-    },
-    "轻点关闭": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Tap to dismiss"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "轻点关闭"
-          }
-        }
-      }
-    },
-    "运行指令前请移除附件；草稿会保留。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Remove attachments before running a command; your draft is kept."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "运行指令前请移除附件；草稿会保留。"
           }
         }
       }

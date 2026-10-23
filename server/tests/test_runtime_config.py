@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from conftest import ApiV2TestClient as TestClient
+from runtime_fixtures import describe_inventory, seed_runtime_inventory
+
 from agent_server.app import create_app
 from agent_server.infra.connector_rpc import ConnectorRpcError
 from agent_server.services.connector_ingest import ConnectorIngestService
 from agent_server.services.connector_notifications import ConnectorNotificationService
 from agent_server.services.device_runtimes import DeviceRuntimeService
-from conftest import ApiV2TestClient as TestClient
-from runtime_fixtures import describe_inventory, seed_runtime_inventory
 
 ADMIN_USER = "user1"
 ADMIN_PASSWORD = "secret"
@@ -200,13 +201,10 @@ def _runtime_url(connector_id: str) -> str:
 
 
 def _create_project(client: TestClient, connector_id: str, headers: dict[str, str]) -> str:
-    response = client.post(
-        "/projects",
-        headers=headers,
-        json={"connectorId": connector_id, "name": "repo", "workspacePath": "/repo"},
-    )
-    assert response.status_code == 200, response.text
-    return response.json()["project"]["id"]
+    from runtime_fixtures import seed_workspace_project
+
+    user_id = client.get("/auth/me", headers=headers).json()["userId"]
+    return asyncio.run(seed_workspace_project(client.app.state.store, connector_id, user_id)).id
 
 
 def _assert_runtime_start_config_revision(

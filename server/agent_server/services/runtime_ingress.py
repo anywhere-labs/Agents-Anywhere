@@ -22,7 +22,7 @@ def runtime_notification_is_allowed(
     This cannot distinguish delayed HTTP messages after reconfiguration. Local
     WebSocket queues separately invalidate work accepted before deletion.
     """
-    if not method.startswith(("session.", "timeline.")):
+    if not method.startswith(("session.", "timeline.")) and method not in {"runtime.workspaces.updated", "runtime.workspaces.chunk", "runtime.workspaces.unavailable"}:
         return True
     runtime_id = notification_runtime_id(params)
     if runtime_id is None:

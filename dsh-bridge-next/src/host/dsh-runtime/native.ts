@@ -32,7 +32,7 @@ export type NativeChange = { type: 'stream', id: string, turn: number, step: num
   | { type: 'session', id: string } | { type: 'status', id: string }
   | { type: 'refresh', id: string }
   | { type: 'question', id: string } | { type: 'approval', id: string } | { type: 'capabilities' }
-  | { type: 'visibility' } | { type: 'catalogs', catalogType: 'model' | 'permission' } | { type: 'commands' }
+  | { type: 'visibility' } | { type: 'workspaces' } | { type: 'catalogs', catalogType: 'model' | 'permission' } | { type: 'commands' }
 export interface NativeWorkspace { id: string, title: string, path: string, sessionIds: string[] }
 
 /** Configuration facts a session state read needs, without retaining the event log. */
@@ -115,6 +115,7 @@ export class NativeRuntime {
     ctx.on('agent/status', ({ agent }) => this.emit({ type: 'status', id: agent.id }), { global: true })
     ctx.on('domain/changed', change => {
       if (change.domain !== 'workspace') return
+      this.emit({ type: 'workspaces' })
       if (change.table === '' && change.operation === 'put') {
         const ids = record(change.value).archivedSessionIds
         if (Array.isArray(ids)) {
@@ -226,7 +227,7 @@ export class NativeRuntime {
 
   async send(id: SessionId, text: string, requestId: string, cwd?: string, create = false,
     selections: Selections = {}, agentPreset?: string, signal = new AbortController().signal,
-    images: readonly StagedAttachment[] = [], platformId?: string): Promise<void> {
+    images: readonly StagedAttachment[] = [], platformId?: string, nativeProjectId?: string): Promise<void> {
     if ((!text.trim() && !images.length) || text.length > 1_000_000 || !requestId || requestId.length > 512) {
       throw new BridgeError('INVALID_PARAMS', 'A text message and stable client message ID are required.')
     }
@@ -253,7 +254,7 @@ export class NativeRuntime {
           path = await realpath(cwd)
           if (!(await stat(path)).isDirectory()) throw new Error('not a directory')
         } catch { throw new BridgeError('INVALID_PARAMS', 'The workspace must be an accessible directory on the DSH device.') }
-        fingerprint = digest(canonicalJson({ requestId, content: text, cwd: path, agentPreset: agentPreset ?? null,
+        fingerprint = digest(canonicalJson({ requestId, content: text, cwd: path, nativeProjectId: nativeProjectId ?? null, agentPreset: agentPreset ?? null,
           model: selections.model ?? null, permission: selections.permission ?? null,
           ...(images.length ? { attachments: attachmentReferences(images).map(image => ({ ...image })) } : {}) }))
         if (intent && (intent.requestId !== requestId || intent.fingerprint !== fingerprint)) {
@@ -276,8 +277,11 @@ export class NativeRuntime {
         if (log?.events.some(event => event.type === 'turn/start')) throw new BridgeError('INVALID_PARAMS', 'This session has already started. Continue it with a new message.')
         const preset = await this.configuration.validatePreset(agentPreset)
         if (!intent) await this.creations.write(id, { requestId, fingerprint: fingerprint! })
-        await this.configuration.controller().create({ sessionId: id, cwd: path!, agentPreset: preset })
+        const selected = nativeProjectId ? this.ctx.workspaceRegistry.list().find(w => w.id === nativeProjectId) : undefined
+        if (nativeProjectId && (!selected || selected.path !== path)) throw new BridgeError('INVALID_PARAMS', 'The selected native workspace is unavailable or has a different directory.')
         const workspace = await this.ctx.workspaceRegistry.create(path!)
+        if (nativeProjectId && workspace.id !== nativeProjectId) throw new BridgeError('INVALID_PARAMS', 'The selected native workspace changed during creation.')
+        await this.configuration.controller().create({ sessionId: id, cwd: path!, agentPreset: preset })
         await workspace.attachSession(id)
       }
       const agent = await this.configuration.agent(id)

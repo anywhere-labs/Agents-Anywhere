@@ -70,6 +70,10 @@ class ConnectorRpcManager:
         """Serialize rare credential/deletion transitions with HTTP admission."""
         return self._coordinator.lock(f"connector-lifecycle:{connector_id}")
 
+    def workspace_guard(self, connector_id: str, runtime_id: str):
+        """Serialize workspace application per source without blocking device admission."""
+        return self._coordinator.lock(f"workspace-sync:{connector_id}:{runtime_id}")
+
     def accepts_notifications(self, connection: ConnectorConnection) -> bool:
         return (
             self._connections.get(connection.connector_id) is connection

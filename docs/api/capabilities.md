@@ -265,3 +265,7 @@ source of truth changes:
 
 The target client reads effective capabilities from scoped live endpoints and
 listens for scoped `runtime.capability.updated` events.
+
+### 项目协议能力（2.2）
+
+`runtime.project.create` 与 `runtime.project.sync` 为 Runtime 作用域能力，必须携带 `runtimeId`。Codex 类型发现默认不宣称这两项能力；实际实例确认项目读取协议后才发布可用。`supported=false` 表示当前二进制不支持，`supported=true, available=false` 表示尚未确认或暂时不可用；`metadata.projectSupport` 区分 `unknown/unsupported/unavailable/available`，`unavailableReason` 给出原因。设备 Runtime 列表中的 `projectCreate/projectSync` 布尔值投影自同一实例的有效能力。

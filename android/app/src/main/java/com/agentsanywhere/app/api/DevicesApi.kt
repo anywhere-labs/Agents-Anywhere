@@ -263,6 +263,7 @@ class DevicesApi(
             ?: optNullableString("name")
             ?: runtimeType
         return RemoteDeviceRuntime(
+            capabilities = optJSONObject("capabilities").toMap(),
             connectorId = optString("connectorId", fallbackConnectorId).ifBlank { fallbackConnectorId },
             runtimeId = runtimeId,
             runtimeType = runtimeType,

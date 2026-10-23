@@ -48,7 +48,6 @@ import { dashboardApi } from "@/features/dashboard/api"
 import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
 import { defaultFilter } from "@/lib/demo-api"
 import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
-import { availableProjectName, findWorkspaceProject, workspaceName } from "@/features/dashboard/project-workspaces"
 import type { ProjectView } from "@/features/dashboard/types"
 import { useMobileConnectionsSidebarVisibility } from "@/features/mobile-connections/sidebar-visibility"
 import { useTranslations } from "next-intl"
@@ -70,8 +69,8 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     navigateToDevice,
     startProjectSession,
     sidebarShowsSessions,
-    setFilter,
     setSidebarShowsSessions,
+    setFilter,
     createProject,
     updateProject,
     archiveProjectSessions,
@@ -227,18 +226,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
       }
       const token = authSession?.accessToken
       if (!token) return
-      const latestProjects = (await dashboardApi.listProjects(token)).projects
-      const existing = findWorkspaceProject(latestProjects, connector.id, folder, connector.deviceOs)
-      if (existing?.manuallyCreated) {
-        toast.info(t("projects.folderAlreadyAdded"))
-        return
-      }
-      const name = existing?.name ?? availableProjectName(workspaceName(folder), latestProjects)
-      const created = await createProject({ name, connectorId: connector.id, workspacePath: folder, manuallyCreated: true })
-      if (!created) throw new Error(t("projects.createFailed"))
-      setSidebarShowsSessions(false)
-      setProjectsExpanded(true)
-      toast.success(t("projects.folderAdded"))
+      setProjectEditor({ mode: "create", connectorId: connector.id, path: folder })
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("projects.createFailed"))
     }
@@ -297,7 +285,6 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     onExpandedChange: setProjectExpanded,
     onOpenSession: openSession,
     onNewSession: startProjectSession,
-    onEdit: (project) => setProjectEditor({ mode: "edit", project }),
     onTogglePin: (project) => void toggleProjectPin(project),
     onArchiveAll: setProjectToArchive,
     onToggleSessionPin: togglePinSession,
@@ -469,8 +456,11 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
         onOpenChange={(open) => {
           if (!open) setProjectEditor(null)
         }}
-        onCreate={createProject}
-        onUpdate={updateProject}
+        onCreate={async payload => {
+          const created = await createProject(payload)
+          if (created) setSidebarShowsSessions(false)
+          return created
+        }}
       />
 
       <ProjectConfirmationDialogs

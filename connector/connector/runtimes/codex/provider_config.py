@@ -155,6 +155,9 @@ def codex_config_schema() -> dict[str, Any]:
 
 def codex_capabilities() -> dict[str, bool]:
     return {
+        "projectCreate": False,
+        "directoryProjects": False,
+        "projectSync": False,
         "modelCatalog": True,
         "permissionCatalog": True,
         "sessionDiscovery": True,

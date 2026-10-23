@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from runtime_fixtures import seed_workspace_project
 from sqlalchemy import create_engine, insert, select, text, update
 from sqlalchemy.exc import DBAPIError
 
@@ -70,51 +71,29 @@ async def add_session(store, project_id, session_id, **values):
         )
 
 
-def test_synced_project_is_not_manual_and_client_creation_claims_it(store):
+def test_synced_project_metadata_is_owned_by_its_source(store):
     async def scenario():
-        synced = await store.ensure_project_for_workspace(
-            connector_id="device",
-            workspace_path="/repo",
-        )
+        synced = await seed_workspace_project(store, "device", "owner", name="Native name")
         assert synced.manuallyCreated is False
         assert synced.sidebarSessionCounts.model_dump() == {"active": 0, "archived": 0}
-        manual = await store.create_project(
-            user_id="owner",
-            connector_id="device",
-            name="My project",
-            workspace_path="/repo",
-        )
-        assert manual.id == synced.id
-        assert manual.manuallyCreated is True
-        refreshed = await store.ensure_project_for_workspace(
-            connector_id="device",
-            workspace_path="/repo",
-        )
-        assert refreshed.manuallyCreated is True
-        fresh = await store.create_project(
-            user_id="owner",
-            connector_id="device",
-            name="Fresh",
-            workspace_path="/fresh",
-        )
-        assert fresh.manuallyCreated is True
+        with pytest.raises(ValueError, match="owned by the native runtime"):
+            await store.update_project(synced.id, user_id="owner", name="Local rename")
+        refreshed = await seed_workspace_project(store, "device", "owner", name="Source rename")
+        assert refreshed.id == synced.id
+        assert refreshed.name == "Source rename"
+        assert refreshed.manuallyCreated is False
 
     asyncio.run(scenario())
 
 
-def test_concurrent_workspace_resolution_reuses_one_project(store):
+def test_same_path_keeps_distinct_native_project_identities(store):
     async def scenario():
-        resolved = await asyncio.gather(
-            *[
-                store.ensure_project_for_workspace(
-                    user_id="owner", connector_id="device", workspace_path="/repo"
-                )
-                for _ in range(4)
-            ]
-        )
-        assert len({project.id for project in resolved}) == 1
-        assert all(not project.manuallyCreated for project in resolved)
-        assert len(await store.list_projects(user_id="owner")) == 1
+        first = await seed_workspace_project(store, "device", "owner", native_id="first")
+        second = await seed_workspace_project(store, "device", "owner", native_id="second")
+        assert first.id != second.id
+        assert first.workspacePath == second.workspacePath
+        projects = await store.list_projects(user_id="owner")
+        assert {p.nativeProjectId for p in projects} == {"first", "second"}
 
     asyncio.run(scenario())
 
@@ -156,7 +135,7 @@ def test_archiving_project_clears_manual_flag_even_when_empty(store, session_cou
             name="Manual",
             workspace_path="/repo",
         )
-        assert recreated.id == project.id
+        assert recreated.id != project.id
         assert recreated.manuallyCreated is True
 
     asyncio.run(scenario())
@@ -188,9 +167,7 @@ def test_archive_checks_ownership_before_changing_project_or_sessions(store):
 
 def test_sidebar_counts_match_session_visibility_across_all_pages(store):
     async def scenario():
-        project = await store.ensure_project_for_workspace(
-            connector_id="device", workspace_path="/repo"
-        )
+        project = await seed_workspace_project(store, "device", "owner")
         for index in range(105):
             await add_session(store, project.id, f"active-{index}")
         await add_session(store, project.id, "pinned-active", pinned=1)

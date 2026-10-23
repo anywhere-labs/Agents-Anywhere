@@ -136,6 +136,9 @@ def dsh_capabilities(reported: dict[str, Any] | None = None) -> dict[str, bool]:
         if isinstance(row, dict) and row.get("supported") and row.get("available") and row.get("allowed")
     }
     return {
+        "projectCreate": True,
+        "directoryProjects": False,
+        "projectSync": True,
         "modelCatalog": "catalog.model" in enabled,
         "permissionCatalog": "catalog.permission" in enabled,
         "sessionDiscovery": True,

@@ -96,19 +96,23 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         self, runtime: str, notifications: list[dict[str, Any]], *, runtime_id: str | None = None,
         on_progress: UploadProgress | None = None,
     ) -> None:
-        if self._ingest_notifications is None:
-            raise RuntimeError("Synchronous notification ingestion is unavailable")
         allowed = {"session.meta.upsert", "session.source.updated", "session.state.updated",
                    "session.turnEnded", "session.inventory.begin", "session.inventory.complete",
-                   "timeline.sync", "timeline.itemUpsert"}
+                   "timeline.sync", "timeline.itemUpsert", "runtime.workspaces.updated"}
         bound = []
         for notice in notifications:
+            if notice.get("method") == "runtime.workspaces.invalidated":
+                await self._notify_server("runtime.workspaces.invalidated", {"runtime": runtime, "runtimeId": runtime_id or runtime})
+                continue
             if notice.get("method") not in allowed or not isinstance(notice.get("params"), dict):
                 raise ValueError("Invalid runtime notification")
             params = {**notice["params"], "runtime": runtime, "runtimeId": runtime_id or runtime}
             bound.append({"method": notice["method"], "params": server_payload_without_turn_data(params)})
-        kwargs = {"on_progress": on_progress} if on_progress is not None else {}
-        await self._ingest_notifications(bound, **kwargs)
+        if bound:
+            if self._ingest_notifications is None:
+                raise RuntimeError("Synchronous notification ingestion is unavailable")
+            kwargs = {"on_progress": on_progress} if on_progress is not None else {}
+            await self._ingest_notifications(bound, **kwargs)
 
     @property
     def connector_id(self) -> str:
@@ -400,6 +404,10 @@ class ConnectorRuntimeHost(RuntimeHostClient):
             return self._memory_sync_state.get(key)
         state = self._sync_state_store.get(*self._sync_state_key(key))
         return _sync_state_value(state)
+
+    async def sync_state_flush(self) -> None:
+        if self._sync_state_store is not None:
+            await asyncio.to_thread(self._sync_state_store.flush)
 
     async def sync_state_write(
         self,

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from agent_server.core.models import (
@@ -9,26 +12,36 @@ from agent_server.core.models import (
     ProjectCreateResponse,
     ProjectDeleteResponse,
     ProjectListResponse,
+    ProjectOperationListResponse,
     ProjectPatchRequest,
+    ProjectPendingOperation,
     ProjectResponse,
     ProjectSessionListResponse,
 )
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
     current_user_id,
+    get_device_runtime_service,
     get_rpc,
     get_session_runtime_state_cache,
     get_store,
     get_timeline_broker,
 )
-from agent_server.infra.connector_rpc import ConnectorRpcManager
+from agent_server.infra.connector_rpc import (
+    ConnectorOfflineError,
+    ConnectorRpcError,
+    ConnectorRpcManager,
+)
 from agent_server.infra.repositories.facade import Store
-from agent_server.infra.repositories.projects import ProjectNameConflictError
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.connector_presence import (
     with_effective_session_connector_statuses,
 )
 from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.device_runtimes import (
+    DeviceRuntimeError,
+    DeviceRuntimeService,
+)
 from agent_server.services.session_meta_projection import (
     project_session_meta_for_dashboard,
 )
@@ -48,45 +61,142 @@ async def list_projects(
     )
 
 
+async def _operation_response(store: Store, operation: dict, user_id: str) -> ProjectCreateResponse:
+    result = json.loads(operation["result_json"] or "{}")
+    native_id = result.get("nativeProjectId")
+    project = await store.find_native_project(user_id=user_id, connector_id=operation["connector_id"],
+        runtime_id=operation["runtime_id"], native_project_id=native_id) if native_id else None
+    return ProjectCreateResponse(operationId=operation["id"], status=operation["status"],
+        project=project, nativeProjectId=native_id, roots=result.get("roots", []),
+        syncState="synced" if project else "pending", message=result.get("message"), serverTime=utc_now())
+
+
 @router.post("", response_model=ProjectCreateResponse)
 async def create_project(
     payload: ProjectCreateRequest,
     user_id: str = Depends(current_user_id),
     store: Store = Depends(get_store),
-    broker: TimelineBroker = Depends(get_timeline_broker),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+    runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
 ) -> ProjectCreateResponse:
+    if not payload.runtime or not payload.runtimeId or not payload.requestId:
+        raise HTTPException(426, detail={"code": "upgrade_required", "message": "runtime, runtimeId and requestId are required"})
     try:
-        project = await store.create_project(
-            user_id=user_id,
-            connector_id=payload.connectorId,
-            name=payload.name,
-            workspace_path=payload.workspacePath,
-            manually_created=payload.manuallyCreated,
-        )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="connector not found") from None
-    except ProjectNameConflictError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "project_name_conflict",
-                "message": str(exc),
-            },
-        ) from exc
+        prior = await store.recover_project_operation(user_id=user_id, request=payload.model_dump())
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    await publish_dashboard_changed(
-        store,
-        broker,
-        user_id=user_id,
-        connector_id=project.connectorId,
-        reason="project.created",
-    )
-    return ProjectCreateResponse(
-        project=project,
-        attachedSessions=0,
-        serverTime=utc_now(),
-    )
+        raise HTTPException(409, detail=str(exc)) from exc
+    if prior is not None:
+        return await _operation_response(store, prior, user_id)
+    if payload.runtime == "claude":
+        raise HTTPException(422, detail={"code": "first_session_required", "message": "Choose a directory and send the first Claude message to create this project"})
+    try:
+        bound = await runtimes.get_runtime(payload.connectorId, payload.runtimeId, user_id=user_id)
+        if bound.runtimeType != payload.runtime:
+            raise HTTPException(422, detail="project Runtime instance type mismatch")
+        routed = await runtimes.ensure_session_routable(payload.connectorId, runtime_type=payload.runtime,
+            runtime_id=payload.runtimeId, user_id=user_id, ensure_running=True)
+        if routed is not None and not routed.capabilities.get("projectCreate", False):
+            raise HTTPException(422, detail={"code": "project_capability_unavailable",
+                "message": routed.metadata.get("projectSupportMessage") or "此 Runtime 实例尚未确认项目创建能力，请核对状态或升级支持项目协议的版本"})
+    except DeviceRuntimeError as exc:
+        raise HTTPException(exc.status_code, detail=exc.detail) from exc
+    if not await manager.is_online(payload.connectorId):
+        raise HTTPException(409, detail={"code": "connector_offline", "message": "工作设备离线，无法创建项目"})
+    try:
+        operation, created = await store.begin_project_operation(user_id=user_id,
+            connector_id=payload.connectorId, runtime=payload.runtime, runtime_id=payload.runtimeId,
+            request_id=payload.requestId, request=payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(409, detail=str(exc)) from exc
+    if created:
+        try:
+            result = await manager.request(payload.connectorId, "project.create", {
+                "runtime": payload.runtime, "runtimeId": payload.runtimeId, "name": payload.name,
+                "path": payload.workspacePath, "requestId": operation["id"],
+            }, timeout=30)
+            if not isinstance(result, dict) or not result.get("nativeProjectId"):
+                raise ValueError("Native creation did not return a project identity")
+            await store.finish_project_operation(operation["id"], "succeeded", result)
+        except ConnectorRpcError as exc:
+            await store.finish_project_operation(operation["id"],
+                "failed" if exc.code in {"runtime_invalid_request", "runtime_unsupported"} else "unknown",
+                {"message": exc.message})
+        except (TimeoutError, ConnectorOfflineError, ValueError):
+            # A timeout is not evidence that the native mutation failed. Repeated
+            # request IDs return this receipt rather than issuing another create.
+            await store.finish_project_operation(operation["id"], "unknown", {"message": "原生结果尚未确认，请稍后核对"})
+        operation = await store.get_project_operation(operation["id"], user_id=user_id)
+    return await _operation_response(store, operation, user_id)
+
+
+@router.get("/operations", response_model=ProjectOperationListResponse)
+async def pending_project_operations(user_id: str = Depends(current_user_id),
+    store: Store = Depends(get_store)) -> ProjectOperationListResponse:
+    values = await store.list_pending_project_operations(user_id=user_id)
+    return ProjectOperationListResponse(operations=[ProjectPendingOperation(
+        request=ProjectCreateRequest.model_validate(json.loads(value["request_json"])),
+        operation=await _operation_response(store, value, user_id),
+    ) for value in values], serverTime=utc_now())
+
+
+@router.post("/operations/{operation_id}/ack")
+async def acknowledge_project_operation(operation_id: str, user_id: str = Depends(current_user_id),
+    store: Store = Depends(get_store)) -> dict[str, bool]:
+    try:
+        await store.acknowledge_project_operation(operation_id, user_id=user_id)
+    except KeyError:
+        raise HTTPException(404, detail="operation not found") from None
+    except ValueError as exc:
+        raise HTTPException(409, detail=str(exc)) from exc
+    return {"acknowledged": True}
+
+
+@router.get("/operations/{operation_id}", response_model=ProjectCreateResponse)
+async def project_operation(operation_id: str, user_id: str = Depends(current_user_id),
+    store: Store = Depends(get_store), manager: ConnectorRpcManager = Depends(get_rpc)) -> ProjectCreateResponse:
+    try:
+        operation = await store.get_project_operation(operation_id, user_id=user_id)
+    except KeyError:
+        raise HTTPException(404, detail="operation not found") from None
+    now = datetime.now(UTC)
+    if operation["status"] == "pending" and (now - datetime.fromisoformat(operation["created_at"].replace("Z", "+00:00"))).total_seconds() > 30:
+        await store.finish_project_operation(operation_id, "unknown", {"message": "原生结果尚未确认，请稍后核对"})
+        operation = await store.get_project_operation(operation_id, user_id=user_id)
+    poll_age = (now - datetime.fromisoformat(operation["updated_at"].replace("Z", "+00:00"))).total_seconds()
+    if operation["status"] in {"pending", "unknown"} and poll_age >= 1 and await manager.is_online(operation["connector_id"]):
+        try:
+            receipt = await manager.request(operation["connector_id"], "project.operation", {
+                "runtime": operation["runtime"], "runtimeId": operation["runtime_id"], "requestId": operation_id,
+            }, timeout=5)
+            if receipt.get("status") == "succeeded" and receipt.get("result", {}).get("nativeProjectId"):
+                await store.finish_project_operation(operation_id, "succeeded", receipt["result"])
+                operation = await store.get_project_operation(operation_id, user_id=user_id)
+            elif receipt.get("status") == "failed":
+                await store.finish_project_operation(operation_id, "failed", receipt.get("result", {}))
+                operation = await store.get_project_operation(operation_id, user_id=user_id)
+            else:
+                await store.finish_project_operation(operation_id, operation["status"], json.loads(operation["result_json"] or "{}"))
+        except (TimeoutError, ConnectorOfflineError, ConnectorRpcError):
+            pass
+    return await _operation_response(store, operation, user_id)
+
+
+@router.post("/refresh")
+async def refresh_projects(connectorId: str, runtime: str, runtimeId: str,
+    user_id: str = Depends(current_user_id), store: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+    runtimes: DeviceRuntimeService = Depends(get_device_runtime_service)) -> dict:
+    try:
+        bound = await runtimes.get_runtime(connectorId, runtimeId, user_id=user_id)
+        if bound.runtimeType != runtime:
+            raise HTTPException(422, detail="project Runtime instance type mismatch")
+        await runtimes.ensure_session_routable(connectorId, runtime_type=runtime,
+            runtime_id=runtimeId, user_id=user_id, ensure_running=True)
+        return await manager.request(connectorId, "workspace.refresh", {"runtime": runtime, "runtimeId": runtimeId})
+    except DeviceRuntimeError as exc:
+        raise HTTPException(exc.status_code, detail=exc.detail) from exc
+    except ConnectorOfflineError:
+        raise HTTPException(409, detail="connector is offline") from None
 
 
 @router.patch("/{project_id}", response_model=ProjectResponse)
@@ -106,14 +216,6 @@ async def patch_project(
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="project not found") from None
-    except ProjectNameConflictError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "project_name_conflict",
-                "message": str(exc),
-            },
-        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     await publish_dashboard_changed(

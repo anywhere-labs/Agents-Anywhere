@@ -28,6 +28,10 @@ from agent_server.core.usage import (
     UsageSessionRow,
     UsageUserRow,
 )
+from agent_server.core.workspace_inventory import (
+    RuntimeWorkspaceInventory,
+    WorkspaceSyncResult,
+)
 
 
 class InstanceSettingsRepository(Protocol):
@@ -217,6 +221,8 @@ class InteractionResolutionRepository(
 
 
 class ConnectorIngestRepository(DashboardEventRepository, Protocol):
+    async def ack_runtime_workspaces(self, *, connector_id: str, runtime_id: str, snapshot_id: str) -> None: ...
+
     async def get_unconfigured_runtime_ids(self, connector_id: str) -> set[str]: ...
 
     def session_revision_fence(
@@ -255,6 +261,15 @@ class ConnectorNotificationRepository(
     TimelineEffectRepository,
     Protocol,
 ):
+    async def mark_workspace_source_unavailable(self, *, connector_id: str, runtime_id: str, runtime: str, epoch: str) -> bool: ...
+
+    async def collect_workspace_chunk(self, *, connector_id: str, runtime_id: str, runtime: str, chunk: Any) -> Any: ...
+
+    async def sync_runtime_workspaces(
+        self, *, connector_id: str, runtime_id: str, inventory: RuntimeWorkspaceInventory,
+        runtime: str,
+    ) -> WorkspaceSyncResult: ...
+
     async def refresh_unchanged_session_source(
         self, session_id: str, *, connector_id: str, runtime: str, runtime_id: str,
         availability: str, reason: str | None, observed_at: str | None,

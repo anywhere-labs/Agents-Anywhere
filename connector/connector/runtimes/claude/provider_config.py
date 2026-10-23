@@ -71,6 +71,9 @@ def claude_config_schema() -> dict[str, Any]:
 
 def claude_capabilities() -> dict[str, bool]:
     return {
+        "projectCreate": False,
+        "directoryProjects": True,
+        "projectSync": True,
         "modelCatalog": True,
         "permissionCatalog": True,
         "sessionDiscovery": True,

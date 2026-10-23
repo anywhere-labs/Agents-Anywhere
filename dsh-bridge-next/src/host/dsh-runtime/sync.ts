@@ -8,7 +8,7 @@ import type { SessionLogSnapshot } from '@deepseek-ai/dsh-session-query'
 import { createProjection, replayHistory, PROJECTION_VERSION, type SessionProjection } from './history.js'
 import { sessionId } from './identity.js'
 import type { NativeChange, NativeRuntime } from './native.js'
-import { record, type TimelineItem } from './types.js'
+import { record, wellFormedJson, type TimelineItem } from './types.js'
 import type { SourceState } from './sessions/source.js'
 
 export type SyncOperation = { kind: string, [key: string]: unknown }
@@ -51,6 +51,7 @@ export class SyncFeed {
   private bufferedOperations: SyncOperation[] | undefined
   private bufferedBytes = 0
   private checkpointDirty = new Set<string>()
+  private workspaceSnapshot: string | undefined
 
   constructor(private native: NativeRuntime, private namespace: string, readonly id: string,
     private transport: SyncTransport, private failed: (error: unknown) => void,
@@ -320,10 +321,12 @@ export class SyncFeed {
     }
   }
   private async changes(changes: NativeChange[]): Promise<void> {
+    if (changes.some(change => change.type === 'workspaces')) await this.workspaces()
     const touched = new Set<string>(), statuses = new Set<string>(), capabilities = new Set<string>()
     const ended: [string, Record<string, unknown>][] = []
     let reconcile = false, runtimeCapabilities = false, allSessionCapabilities = false
     for (const change of changes) {
+      if (change.type === 'workspaces') continue
       if (change.type === 'capabilities' || change.type === 'commands') {
         runtimeCapabilities = true; allSessionCapabilities = true
         continue
@@ -400,6 +403,7 @@ export class SyncFeed {
     if (reconcile) await this.reconcile()
   }
   private async run(): Promise<void> {
+    await this.workspaces()
     await this.notification('session.inventory.begin', { scanToken: this.id })
     await this.native.inventory(this.abort.signal, async entry => {
       await this.baseline(entry.header.id, true)
@@ -432,6 +436,21 @@ export class SyncFeed {
       await this.rememberCheckpoints()
       this.bufferedOperations = undefined
     }
+  }
+  private async workspaces(): Promise<void> {
+    // Read the registry in one synchronous cut; exceptions abort the feed.
+    // Never turn an unavailable registry into an authoritative empty list.
+    const workspaces = this.native.workspaces().map(workspace => ({ ...workspace,
+      title: wellFormedJson((workspace.title.trim() || workspace.path).slice(0, 255)) as string,
+    }))
+    if (workspaces.length > 10_000 || workspaces.reduce((count, workspace) => count + workspace.sessionIds.length, 0) > 50_000) {
+      throw new Error('DSH workspace inventory exceeds the supported size')
+    }
+    const snapshot = JSON.stringify(workspaces)
+    if (snapshot === this.workspaceSnapshot) return
+    await this.send([{ kind: 'workspace.inventory', version: 1, complete: true,
+      snapshotId: randomUUID(), observedAt: new Date().toISOString(), workspaces }])
+    this.workspaceSnapshot = snapshot
   }
   private async rememberCheckpoints(): Promise<void> {
     if (!this.durableCheckpoints) { this.checkpointDirty.clear(); return }

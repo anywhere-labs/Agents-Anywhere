@@ -121,21 +121,25 @@ class CodexSessionReader:
         self,
         page_size: int = 100,
         force: bool = False,
+        shared_threads: dict[bool, tuple] | None = None,
     ) -> tuple[SessionMeta, ...]:
         if self.client is None:
             return ()
         await self.ensure_started()
         observed_at = _utc_now()
-        active_threads = await list_all_codex_threads(
-            self.client,
-            archived=False,
-            page_size=page_size,
-        )
-        archived_threads = await list_all_codex_threads(
-            self.client,
-            archived=True,
-            page_size=page_size,
-        )
+        if shared_threads is not None:
+            active_threads, archived_threads = shared_threads[False], shared_threads[True]
+        else:
+            active_threads = await list_all_codex_threads(
+                self.client,
+                archived=False,
+                page_size=page_size,
+            )
+            archived_threads = await list_all_codex_threads(
+                self.client,
+                archived=True,
+                page_size=page_size,
+            )
         sessions_by_thread_id: dict[str, SessionMeta] = {}
         for availability, threads in (
             ("available", active_threads),
