@@ -382,6 +382,7 @@ internal fun MessageList(
                 autoFollowLatest = autoFollowLatest,
                 userPaused = userPausedAutoFollow,
                 scrolling = listState.isScrollInProgress,
+                atLatest = listState.isAtLatest(),
             )
         ) {
             listState.scrollToItem(0)
@@ -545,7 +546,8 @@ internal fun shouldAutoFollowRealtime(
     autoFollowLatest: Boolean,
     userPaused: Boolean,
     scrolling: Boolean,
-): Boolean = hasRealtimeUpdate && autoFollowLatest && !userPaused && !scrolling
+    atLatest: Boolean,
+): Boolean = hasRealtimeUpdate && autoFollowLatest && !userPaused && !scrolling && atLatest
 
 private fun LazyListState.isAtLatest(): Boolean {
     return firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0
@@ -793,9 +795,13 @@ private fun ToolRunGroup(
     val haptic = LocalHapticFeedback.current
     val active = messages.any { it.status in setOf("pending", "running", "waiting_approval") }
     val failed = messages.any { it.status in setOf("failed", "cancelled", "interrupted") }
-    var expanded by remember(messages.joinToString(":") { it.id }) { mutableStateOf(false) }
-    var cardTop by remember(messages.joinToString(":") { it.id }) { mutableStateOf<Float?>(null) }
-    var lockedTop by remember(messages.joinToString(":") { it.id }) { mutableStateOf<Float?>(null) }
+    // The run keeps its LazyColumn key when streaming appends items. Key the
+    // expansion state the same way so a newly arrived tool call does not collapse
+    // details the user is already reading.
+    val stateKey = messages.firstOrNull()?.id ?: "empty"
+    var expanded by remember(stateKey) { mutableStateOf(false) }
+    var cardTop by remember(stateKey) { mutableStateOf<Float?>(null) }
+    var lockedTop by remember(stateKey) { mutableStateOf<Float?>(null) }
 
     fun toggleExpanded() {
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
