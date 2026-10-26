@@ -19,14 +19,14 @@ export interface SessionReader {
   query: Pick<SessionQueryEngine, 'listSessions' | 'readSession' | 'readTitleSnapshots'>
   status(id: SessionId): 'idle' | 'running' | undefined
 }
-interface Page<T> { id: string, values: T[], expires: number }
+interface Page<T> { id: string, values: T[], expires: number, timer?: ReturnType<typeof setTimeout> }
 interface HistoryPage extends Page<TimelineItem> {
   externalId: string
   platformId: string
   watermark: { seq: number, revision: string }
   truncated: boolean
 }
-const PAGE_LIFETIME = 120_000
+export const PAGE_LIFETIME = 120_000
 
 function integer(value: unknown, fallback: number, max: number): number {
   if (value === undefined || value === null) return fallback
@@ -42,22 +42,61 @@ export class RuntimeRouter {
   private inventory: Page<SessionRecord> | undefined
   private history: HistoryPage | undefined
 
-  constructor(private readonly reader: SessionReader, readonly namespace: string) {}
+  constructor(
+    private readonly reader: SessionReader,
+    readonly namespace: string,
+    private readonly pageLifetimeMs = PAGE_LIFETIME,
+  ) {}
 
   private readonly closing = new AbortController()
   /** Aborted once this router is torn down; open sync streams end with it. */
   get closed(): AbortSignal { return this.closing.signal }
+  get hasInventoryPage(): boolean { return this.inventory !== undefined }
+  get hasHistoryPage(): boolean { return this.history !== undefined }
 
+  /** End the event feed. Paged reads belong to RPC callers, so a resubscription keeps their cursors. */
   close(): void {
     this.feed?.close()
     this.feed = undefined
+  }
+
+  private clearInventory(): void {
+    if (!this.inventory) return
+    if (this.inventory.timer) clearTimeout(this.inventory.timer)
     this.inventory = undefined
+  }
+
+  private clearHistory(): void {
+    if (!this.history) return
+    if (this.history.timer) clearTimeout(this.history.timer)
     this.history = undefined
+  }
+
+  private retainInventory(page: Page<SessionRecord>): void {
+    if (page.timer) clearTimeout(page.timer)
+    page.expires = Date.now() + this.pageLifetimeMs
+    page.timer = setTimeout(() => {
+      if (this.inventory === page) this.clearInventory()
+    }, this.pageLifetimeMs)
+    page.timer.unref?.()
+    this.inventory = page
+  }
+
+  private retainHistory(page: HistoryPage): void {
+    if (page.timer) clearTimeout(page.timer)
+    page.expires = Date.now() + this.pageLifetimeMs
+    page.timer = setTimeout(() => {
+      if (this.history === page) this.clearHistory()
+    }, this.pageLifetimeMs)
+    page.timer.unref?.()
+    this.history = page
   }
 
   /** Stop this namespace for good: open streams end instead of waiting for drain. */
   shutdown(): void {
     this.close()
+    this.clearInventory()
+    this.clearHistory()
     this.closing.abort()
   }
 
@@ -232,8 +271,8 @@ export class RuntimeRouter {
 
   private offset(cursor: unknown, page: Page<unknown> | undefined): number {
     if (page && page.expires < Date.now()) {
-      if (this.inventory === page) this.inventory = undefined
-      if (this.history === page) this.history = undefined
+      if (this.inventory === page) this.clearInventory()
+      if (this.history === page) this.clearHistory()
       page = undefined
     }
     if (typeof cursor !== 'string' || !page) {
@@ -250,9 +289,14 @@ export class RuntimeRouter {
   private async list(params: Record<string, unknown>, signal: AbortSignal) {
     const limit = integer(params.limit, 100, 1000)
     let offset = 0
-    if (params.cursor != null) offset = this.offset(params.cursor, this.inventory)
-    else this.inventory = { id: randomUUID(), values: await this.reader.query.listSessions(signal), expires: Date.now() + PAGE_LIFETIME }
-    const page = this.inventory!
+    let page: Page<SessionRecord>
+    if (params.cursor != null) {
+      offset = this.offset(params.cursor, this.inventory)
+      page = this.inventory!
+    } else {
+      this.clearInventory()
+      page = { id: randomUUID(), values: await this.reader.query.listSessions(signal), expires: Date.now() + this.pageLifetimeMs }
+    }
     const slice = page.values.slice(offset, offset + limit)
     const records = []
     for (const entry of slice) {
@@ -277,15 +321,20 @@ export class RuntimeRouter {
     })
     const next = offset + slice.length
     const nextCursor = next < page.values.length ? `${page.id}:${next}` : null
-    if (params.cursor == null && nextCursor === null && this.inventory === page) this.inventory = undefined
+    if (nextCursor === null) {
+      if (this.inventory === page) this.clearInventory()
+    } else {
+      this.retainInventory(page)
+    }
     return { sessions, nextCursor }
   }
 
   private async snapshot(params: Record<string, unknown>, signal: AbortSignal) {
     let offset = 0
+    let page: HistoryPage
     if (params.cursor != null) {
       if (this.reader.native && this.history && !await this.reader.native.visible(this.history.externalId)) {
-        this.history = undefined
+        this.clearHistory()
         throw new BridgeError('SESSION_NOT_FOUND', 'The session is no longer visible in DSH.')
       }
       offset = this.offset(params.cursor, this.history)
@@ -293,31 +342,43 @@ export class RuntimeRouter {
           (params.externalSessionId != null && params.externalSessionId !== this.history!.externalId)) {
         throw new BridgeError('INVALID_PARAMS', 'The cursor belongs to a different session.')
       }
+      page = this.history!
     } else {
+      this.clearHistory()
       const id = await this.resolve(params, signal)
-      const log = this.reader.native ? await this.reader.native.read(id) : await this.reader.query.readSession(id)
-      signal.throwIfAborted()
-      const platformId = sessionId(this.namespace, id)
-      const all = await projectHistoryAsync(log, platformId, signal)
-      const limit = integer(params.limit, Math.max(all.length, 1), 1_000_000)
-      const values = all.slice(-limit)
-      const seq = Number(log.events.at(-1)?.seq ?? -1)
-      this.history = { id: randomUUID(), values, expires: Date.now() + PAGE_LIFETIME, externalId: id,
-        platformId, watermark: { seq, revision: `projection-2:${seq}` }, truncated: values.length < all.length }
+      try {
+        const log = this.reader.native ? await this.reader.native.read(id) : await this.reader.query.readSession(id)
+        signal.throwIfAborted()
+        const platformId = sessionId(this.namespace, id)
+        const all = await projectHistoryAsync(log, platformId, signal)
+        const limit = integer(params.limit, Math.max(all.length, 1), 1_000_000)
+        const values = all.slice(-limit)
+        const seq = Number(log.events.at(-1)?.seq ?? -1)
+        page = { id: randomUUID(), values, expires: Date.now() + this.pageLifetimeMs, externalId: id,
+          platformId, watermark: { seq, revision: `projection-2:${seq}` }, truncated: values.length < all.length }
+      } finally {
+        this.reader.native?.source.release(id)
+      }
     }
-    const page = this.history!
     const items: TimelineItem[] = []
     let bytes = 0
     for (const item of page.values.slice(offset, offset + 1000)) {
       const size = jsonBytes(item) + 1
-      if (size > 7 * 1024 * 1024) throw new BridgeError('FRAME_TOO_LARGE', 'One DSH history item exceeds the transport limit.')
+      if (size > 7 * 1024 * 1024) {
+        if (this.history === page) this.clearHistory()
+        throw new BridgeError('FRAME_TOO_LARGE', 'One DSH history item exceeds the transport limit.')
+      }
       if (bytes + size > 7 * 1024 * 1024) break
       bytes += size
       items.push(item)
     }
     const next = offset + items.length
     const nextCursor = next < page.values.length ? `${page.id}:${next}` : null
-    if (params.cursor == null && nextCursor === null && this.history === page) this.history = undefined
+    if (nextCursor === null) {
+      if (this.history === page) this.clearHistory()
+    } else {
+      this.retainHistory(page)
+    }
     return {
       sessionId: page.platformId, externalSessionId: page.externalId, runtime: 'dsh', items,
       complete: offset === 0 && nextCursor === null && !page.truncated,

@@ -67,7 +67,7 @@ Connector 先验证发现文件、进程与回环地址，再执行限时鉴权�
 
 读取、投影、图片回执和配置状态异常按会话隔离；快照不能完成时撤销该捕获，保留 AA 已接收的历史。全局清单或交付失败只替换同步订阅，Connector 延迟后重新订阅；普通 RPC 继续使用同一连接。会话刷新、后续原生事件和新的清单均可触发重试，不需要重启进程来清除错误。
 
-主动读取的历史按同一捕获分页，每帧最多 1,000 条且内容小于 7 MiB；单条超限明确失败。游标绑定连接、会话和捕获，120 秒后过期。Python 收齐所有页才返回完整快照；指定 limit 截断时 complete=false。事件订阅的初始历史每页最多 250 条，收齐后通过现有 timeline.sync 完整替换；随后只推增量，断线重连重新校准，不再定时扫描 DSH。详见 [事件同步方案](https://github.com/anywhere-labs/Agents-Anywhere/blob/edeb4f6c/dsh-bridge-next/RUNTIME_SYNC_PLAN.md)。
+主动读取的历史按同一捕获分页，每帧最多 1,000 条且内容小于 7 MiB；单条超限明确失败。游标绑定连接、会话和捕获：读完最后一页（`nextCursor === null`）即释放捕获；未读完的捕获在最后一次读页 120 秒后过期释放。sync 重订阅不影响在途分页，Bridge 关闭时一并释放。按需 `getSessionSnapshot` 完成投影后即释放对应的 observation。Python 收齐所有页才返回完整快照；指定 limit 截断时 complete=false。事件订阅的初始历史每页最多 250 条，收齐后通过现有 timeline.sync 完整替换；随后只推增量，断线重连重新校准，不再定时扫描 DSH。详见 [事件同步方案](https://github.com/anywhere-labs/Agents-Anywhere/blob/edeb4f6c/dsh-bridge-next/RUNTIME_SYNC_PLAN.md)。
 
 ## 验证与本地试用
 
