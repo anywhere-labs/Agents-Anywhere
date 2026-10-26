@@ -129,7 +129,7 @@
 ### 文档
 
 - README 补回 iOS TestFlight 下载入口，并注明 DeepSeek 官方的 DeepSeek Harness Desktop 不内置 AA 插件。（[#250](https://github.com/anywhere-labs/Agents-Anywhere/pull/250)、[#388](https://github.com/anywhere-labs/Agents-Anywhere/pull/388)）
-- DSH 插件说明补充在 DeepSeek Harness Desktop 中安装插件的两种方式：在「插件」页面输入包名，或把提供的提示词发给 DSH 里的 AI 代装；同时说明了升级和卸载的方法。（#PR）
+- DSH 插件说明补充在 DeepSeek Harness Desktop 中安装插件的两种方式：在「插件」页面输入包名，或把提供的提示词发给 DSH 里的 AI 代装；同时说明了升级和卸载的方法。（[#457](https://github.com/anywhere-labs/Agents-Anywhere/pull/457)）
 
 ## 2.0.3 及更早
 
