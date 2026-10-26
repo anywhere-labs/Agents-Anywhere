@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -41,6 +43,7 @@ import io.github.rosemoe.sora.lang.styling.line.LineBackground
 import io.github.rosemoe.sora.lang.styling.line.LineGutterBackground
 import io.github.rosemoe.sora.lang.util.PlainTextSpans
 import io.github.rosemoe.sora.text.Content
+import io.github.rosemoe.sora.event.SelectionChangeEvent
 import io.github.rosemoe.sora.event.EventReceiver
 import io.github.rosemoe.sora.event.PublishSearchResultEvent
 import io.github.rosemoe.sora.event.SubscriptionReceipt
@@ -82,11 +85,23 @@ internal fun SoraCodeBlock(
     scalable: Boolean = true,
 ) {
     val context = LocalContext.current
+    val reading = LocalTimelineReading.current
+    val message = LocalReadingMessage.current
+    val part = LocalReadingPart.current
+    val codeKey = "$message:$part:${languageHint.orEmpty()}"
+    val editorRef = remember(reading, codeKey) { arrayOfNulls<CodeEditor>(1) }
+    DisposableEffect(reading, codeKey) {
+        onDispose {
+            editorRef[0]?.let { reading?.codePositions?.set(codeKey, it.offsetX to it.offsetY) }
+            reading?.selectionReaders?.remove(codeKey)
+        }
+    }
     val shape = RoundedCornerShape(12.dp)
     val border = if (darkMode) Color(0xFF27272A) else Color(0xFFE4E1DB)
     val viewModifier = (fixedHeight?.let { modifier.fillMaxWidth().height(it) }
         ?: modifier.fillMaxWidth().heightIn(min = 64.dp, max = maxHeight))
         .then(if (framed) Modifier.clip(shape).border(1.dp, border, shape) else Modifier)
+        .readingRegion("code:$codeKey")
     AndroidView(
         modifier = viewModifier,
         factory = { ctx ->
@@ -95,6 +110,9 @@ internal fun SoraCodeBlock(
                     FrameLayout.LayoutParams.MATCH_PARENT,
                     FrameLayout.LayoutParams.WRAP_CONTENT,
                 )
+                editorRef[0] = this
+                reading?.selectionReaders?.set(codeKey) { cursor.isSelected }
+                subscribeEvent(SelectionChangeEvent::class.java) { _, _ -> reading?.invalidate() }
                 configureReadOnlyCodeEditor(
                     darkMode = darkMode,
                     editorBackground = editorBackground,
@@ -113,7 +131,8 @@ internal fun SoraCodeBlock(
             if (previous?.darkMode != darkMode) {
                 editor.colorScheme = SoraTextMate.colorScheme(darkMode)
             }
-            editor.configureReadOnlyCodeEditor(
+            val configuration = listOf(darkMode, editorBackground?.toArgb(), verticalScrollEnabled, horizontalTouchOnly, scalable)
+            if (previous?.configuration != configuration) editor.configureReadOnlyCodeEditor(
                 darkMode = darkMode,
                 editorBackground = editorBackground,
                 verticalScrollEnabled = verticalScrollEnabled,
@@ -121,7 +140,20 @@ internal fun SoraCodeBlock(
                 scalable = scalable,
             )
             if (textChanged) {
+                val previousText = editor.text.toString()
+                val position = if (previous != null) editor.offsetX to editor.offsetY
+                    else reading?.codePositions?.get(codeKey) ?: (0 to 0)
+                val cursor = editor.cursor
+                val selection = if (cursor.isSelected && text.startsWith(previousText))
+                    intArrayOf(cursor.leftLine, cursor.leftColumn, cursor.rightLine, cursor.rightColumn) else null
                 editor.setText(text)
+                if (selection != null) editor.setSelectionRegion(selection[0], selection[1], selection[2], selection[3])
+                val x = position.first.coerceIn(0, editor.scrollMaxX)
+                val y = position.second.coerceIn(0, editor.scrollMaxY)
+                editor.scroller.forceFinished(true)
+                editor.scroller.startScroll(x, y, 0, 0, 0)
+                editor.invalidate()
+                reading?.codePositions?.set(codeKey, x to y)
             }
             if (previous?.languageKey != languageKey || previous.highlights != highlights) {
                 val language = TracingLanguage(
@@ -141,7 +173,7 @@ internal fun SoraCodeBlock(
                     },
                 )
             }
-            editor.tag = SoraEditorState(darkMode = darkMode, languageKey = languageKey, highlights = highlights)
+            editor.tag = SoraEditorState(darkMode = darkMode, languageKey = languageKey, highlights = highlights, configuration = configuration)
         },
     )
 }
@@ -310,6 +342,7 @@ private data class SoraEditorState(
     val darkMode: Boolean,
     val languageKey: String,
     val highlights: Map<Int, DiffLineTone>,
+    val configuration: List<Any?>,
 )
 
 internal enum class DiffLineTone {
