@@ -125,6 +125,7 @@ class CodexIpcClient:
         default_factory=dict, init=False
     )
     _handler_tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False)
+    _connection_generation: int = field(default=0, init=False)
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -147,6 +148,10 @@ class CodexIpcClient:
     @property
     def is_router(self) -> bool:
         return self._router is not None and self._router.listening
+
+    @property
+    def connection_generation(self) -> int:
+        return self._connection_generation
 
     async def start(self) -> None:
         """Start the connection loop in the background.
@@ -426,12 +431,14 @@ class CodexIpcClient:
             pending.future.set_result(response)
 
     def _mark_initialized(self, client_id: str) -> None:
+        self._connection_generation += 1
         self.client_id = client_id
         self._initialized.set()
         logger.info(
-            "codex ipc client initialized client_id={} router={}",
+            "codex ipc client initialized client_id={} router={} generation={}",
             client_id,
             self.is_router,
+            self._connection_generation,
         )
         self._emit_local_broadcast(
             "client-status-changed",
