@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -43,6 +44,7 @@ class CodexTimelineAccumulator:
         self._next_order = 0
         self._pending_messages = pending_messages
         self._active_turn_positions: dict[tuple[str, str], ActiveTurnPositions] = {}
+        self._async_input_call_ids_by_thread: dict[str, set[str]] = {}
 
     def begin_turn(self, external_session_id: str, turn_id: str) -> None:
         """Start bounded live-item position tracking for one active turn."""
@@ -135,6 +137,9 @@ class CodexTimelineAccumulator:
             event
         ) or codex_timeline.timeline_projection_from_event(event)
         if projection is None:
+            return None
+        self._remember_async_input_call(external_session_id, projection)
+        if self._is_accepted_async_input_output(external_session_id, projection):
             return None
         projection = self._attach_client_message_id(external_session_id, projection)
         projection = self._assign_live_turn_position(
@@ -246,7 +251,14 @@ class CodexTimelineAccumulator:
     ) -> tuple[RuntimeTimelineItem, ...]:
         prepared: list[tuple[codex_timeline.CodexTimelineProjection, int]] = []
         index_by_id: dict[str, int] = {}
+        for projection in projections:
+            self._remember_async_input_call(external_session_id, projection)
         for index, projection in enumerate(projections):
+            if self._is_accepted_async_input_output(
+                external_session_id,
+                projection,
+            ):
+                continue
             projection = self._attach_client_message_id(external_session_id, projection)
             projection = self.stabilize_projection_identity(
                 external_session_id=external_session_id,
@@ -310,6 +322,41 @@ class CodexTimelineAccumulator:
                 )
             )
         return tuple(items)
+
+    def _remember_async_input_call(
+        self,
+        external_session_id: str,
+        projection: codex_timeline.CodexTimelineProjection,
+    ) -> None:
+        if (
+            projection.raw_type == "function_call"
+            and projection.name == "request_user_input_async"
+            and projection.call_id is not None
+        ):
+            self._async_input_call_ids_by_thread.setdefault(
+                external_session_id,
+                set(),
+            ).add(projection.call_id)
+
+    def _is_accepted_async_input_output(
+        self,
+        external_session_id: str,
+        projection: codex_timeline.CodexTimelineProjection,
+    ) -> bool:
+        if (
+            projection.raw_type not in {"function_call_output", "functionCallOutput"}
+            or projection.call_id is None
+            or projection.call_id
+            not in self._async_input_call_ids_by_thread.get(external_session_id, set())
+        ):
+            return False
+        output = projection.output
+        if isinstance(output, str):
+            try:
+                output = json.loads(output)
+            except json.JSONDecodeError:
+                return False
+        return isinstance(output, Mapping) and output.get("accepted") is True
 
     def stabilize_projection_identity(
         self,

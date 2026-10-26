@@ -488,6 +488,22 @@ class CodexIpcTurnController:
         """
 
         notice = self.notices.get(notice_id)
+        if notice is not None and notice.status in {
+            "closed",
+            "resolved",
+            "cancelled",
+            "expired",
+        }:
+            return RuntimeOperationResult(
+                ok=True,
+                result={
+                    "resolved": True,
+                    "alreadyProcessed": True,
+                    "noticeId": notice_id,
+                    "sessionId": session_id,
+                    "transport": "ipc",
+                },
+            )
         context: dict[str, Any] = dict(notice.context) if notice is not None else {}
         data = dict(input_data or {})
         request_id = data.get("requestId")
@@ -495,6 +511,8 @@ class CodexIpcTurnController:
             source = context.get("approvalSource")
             if isinstance(source, Mapping):
                 request_id = source.get("requestId")
+        if not isinstance(request_id, str | int):
+            request_id = context.get("requestId")
         if not isinstance(request_id, str | int):
             raise TypeError("requestId is required to respond to a Codex interaction")
         if is_input_request_context(context):

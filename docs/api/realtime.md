@@ -223,6 +223,13 @@ turn.steer
 turn.interrupt
 ```
 
+`interaction.respond` also answers Runtime questionnaires projected as
+`input_request` notices. Codex synchronous questions reply to the pending
+app-server request. Codex asynchronous questions use the same Notice/Form
+contract, while Connector converts the submitted answers into the native
+question-reply message and sends it to the active turn or starts a new turn.
+No separate client endpoint is required.
+
 `runtime.configSchema` performs a live provider read for UI/CLI configuration
 forms. `runtime.config` returns saved raw values when the runtime is stopped,
 and the running runtime's read-only effective `RuntimeConfig` projection when

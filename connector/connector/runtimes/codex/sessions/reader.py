@@ -34,6 +34,7 @@ from connector.runtimes.codex.domain.pending_messages import (
     PendingClientMessageRegistry,
 )
 from connector.runtimes.codex.domain.selections import selections_from_thread_state
+from connector.runtimes.codex.notifications.notices import CodexNoticeHandler
 from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.sessions.history_index import (
     NativeThreadActivity,
@@ -70,11 +71,13 @@ class CodexSessionReader:
     list_permission_catalog: ListPermissionCatalog
     pending_messages: PendingClientMessageRegistry | None = None
     timeline: CodexTimelineAccumulator | None = None
+    notice_handler: CodexNoticeHandler | None = None
     _pending_sync_states: dict[str, tuple[str, dict[str, Any]]] = field(
         default_factory=dict,
         init=False,
     )
     _observed_threads: dict[str, dict[str, Any]] = field(default_factory=dict, init=False)
+    _async_notice_threads: set[str] = field(default_factory=set, init=False)
 
     async def list_sessions(
         self,
@@ -371,6 +374,12 @@ class CodexSessionReader:
         projected = await asyncer.asyncify(self.timeline.items_from_thread_snapshot)(
             session_id=session_id, external_session_id=external_session_id,
             thread={"turns": turns}, limit=None)
+        if self.notice_handler is not None:
+            await self.notice_handler.sync_async_input_items(
+                session_id=session_id,
+                thread_id=external_session_id,
+                items=projected,
+            )
         prefix_ids = ids[:start]
         counts = {id: old["counts"][id] for id in prefix_ids} if usable else {}
         item_ids = {id: old["itemIds"][id] for id in prefix_ids} if usable else {}
@@ -564,6 +573,14 @@ class CodexSessionReader:
                 pending_messages=self.pending_messages,
             )
         project_elapsed_ms = (time.monotonic() - project_started_at) * 1000
+        if self.notice_handler is not None:
+            await self.notice_handler.sync_async_input_items(
+                session_id=session_id,
+                thread_id=external_session_id,
+                items=items,
+            )
+            if limit is None:
+                self._async_notice_threads.add(external_session_id)
         logger.info(
             "codex session snapshot built session_id={} external_session_id={} limit={} items={} read_elapsed_ms={:.1f} project_elapsed_ms={:.1f}",
             session_id,
@@ -581,6 +598,34 @@ class CodexSessionReader:
             complete=False,
             metadata={"source": snapshot_source},
         )
+
+    async def refresh_async_input_notices(
+        self,
+        session_id: str,
+        external_session_id: str | None,
+        *,
+        force: bool = False,
+    ) -> None:
+        if (
+            self.notice_handler is None
+            or self.client is None
+            or external_session_id is None
+            or (not force and external_session_id in self._async_notice_threads)
+        ):
+            return
+        try:
+            await self.get_session_snapshot(
+                session_id=session_id,
+                external_session_id=external_session_id,
+                limit=None,
+            )
+        except RuntimeInvalidRequestError as exc:
+            logger.debug(
+                "codex async input notice refresh skipped thread_id={} error={}",
+                external_session_id,
+                exc,
+            )
+            return
 
 
 def reconcile_native_activity(

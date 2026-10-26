@@ -29,6 +29,13 @@ from connector.runtimes.codex.domain.approvals import (
     approval_notice_from_request,
     is_approval_request,
 )
+from connector.runtimes.codex.domain.async_inputs import AsyncInputSubmissions
+from connector.runtimes.codex.domain.input_requests import (
+    codex_input_request,
+    is_input_request_context,
+    is_user_input_request,
+    user_input_notice,
+)
 from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
 from connector.runtimes.codex.domain.selections import (
     ModelCatalogReader,
@@ -41,6 +48,7 @@ from connector.runtimes.codex.ipc.timeline import (
     thread_snapshot_from_conversation_state,
     touches_turn_history,
 )
+from connector.runtimes.codex.notifications.notices import CodexNoticeHandler
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
 
 IPC_SOURCE = "codex.ipc"
@@ -74,12 +82,27 @@ class CodexIpcSessionProjector:
     timeline: CodexTimelineAccumulator | None = None
     read_model_catalog: ModelCatalogReader | None = None
     read_permission_catalog: PermissionCatalogReader | None = None
+    async_submissions: AsyncInputSubmissions | None = None
     _published_meta: dict[str, tuple[Any, ...]] = field(default_factory=dict, init=False)
     _notice_ids: dict[str, set[str]] = field(default_factory=dict, init=False)
     _timeline_items: dict[str, dict[str, RuntimeTimelineItem]] = field(
         default_factory=dict, init=False
     )
     _active_turns: dict[str, str] = field(default_factory=dict, init=False)
+    _notice_handler: CodexNoticeHandler = field(init=False)
+
+    def __post_init__(self) -> None:
+        self._notice_handler = CodexNoticeHandler(
+            host=self.host,
+            session_states=self.session_states,
+            active_turn_ids=(
+                self.active_turn_ids
+                if self.active_turn_ids is not None
+                else {}
+            ),
+            notices=self.notices,
+            async_submissions=self.async_submissions,
+        )
 
     @property
     def namespace(self) -> str:
@@ -224,6 +247,12 @@ class CodexIpcSessionProjector:
             thread=snapshot,
             limit=None,
         )
+        await self._notice_handler.sync_async_input_items(
+            session_id=session_id,
+            thread_id=thread.thread_id,
+            items=items,
+            transport="ipc",
+        )
         known = self._timeline_items.get(session_id)
         if full or known is None:
             await self.host.timeline_sync(
@@ -284,21 +313,33 @@ class CodexIpcSessionProjector:
             request_id = request.get("requestId", request.get("id"))
             if not method or not isinstance(params, Mapping) or request_id is None:
                 continue
-            if not is_approval_request(method):
+            if is_approval_request(method):
+                notice = approval_notice_from_request(
+                    session_id=session_id,
+                    thread_id=thread.thread_id,
+                    method=method,
+                    params=params,
+                    request_id=request_id,
+                    turn_id=_first_string(params, "turnId", "turn_id"),
+                )
+            elif is_user_input_request(method):
+                parsed = codex_input_request(params)
+                notice = user_input_notice(
+                    session_id=session_id,
+                    thread_id=thread.thread_id,
+                    turn_id=_first_string(params, "turnId", "turn_id"),
+                    item_id=_first_string(params, "itemId", "item_id"),
+                    request_id=str(request_id),
+                    request=parsed,
+                    is_blocking=params.get("isBlocking", True) is not False,
+                )
+            else:
                 logger.debug(
                     "codex ipc pending request not projected method={} thread={}",
                     method,
                     thread.thread_id,
                 )
                 continue
-            notice = approval_notice_from_request(
-                session_id=session_id,
-                thread_id=thread.thread_id,
-                method=method,
-                params=params,
-                request_id=request_id,
-                turn_id=_first_string(params, "turnId", "turn_id"),
-            )
             notice = _with_ipc_source(notice, thread)
             current.add(notice.notice_id)
             existing = self.notices.get(notice.notice_id)
@@ -318,7 +359,11 @@ class CodexIpcSessionProjector:
                 response_required=False,
                 blocking=None,
                 actions=(),
-                context={"approvalStatus": "resolved"},
+                context={
+                    "inputStatus"
+                    if is_input_request_context(existing.context)
+                    else "approvalStatus": "resolved"
+                },
                 metadata={"source": IPC_SOURCE, "close_reason": "request no longer pending"},
             )
             if closed is not None:

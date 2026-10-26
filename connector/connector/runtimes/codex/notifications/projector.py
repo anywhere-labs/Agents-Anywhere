@@ -178,6 +178,11 @@ class CodexNotificationProjector:
                 event=event,
                 item=item,
             )
+            await self.notice_handler.sync_async_input_items(
+                session_id=session_id,
+                thread_id=thread_id,
+                items=(item,),
+            )
         if (
             event.event_type == "thread/compacted"
             and session_id not in self.active_turn_ids
