@@ -349,7 +349,8 @@ class CodexRuntime(AgentRuntime):
         writer lock exists. Once an external writer lock is observed, failure
         to reach its owner is a terminal routing result: resuming the thread in
         our own app-server would only wait again and then collide with the same
-        lock.
+        lock. When no window answers for the locked thread, the running desktop
+        app is asked to take it over first (``_ipc_handoff_locked_thread``).
         """
 
         thread = self._ipc_attached_thread(session_id, external_session_id)
@@ -429,17 +430,9 @@ class CodexRuntime(AgentRuntime):
                 started_at=started_at,
                 detail=f"{type(exc).__name__}: {exc}",
             )
-        thread = controller.attached_thread(thread_id)
-        wait_until_state = getattr(controller.follower, "wait_until_state", None)
-        if (
-            thread is None
-            and discovered.status == "following"
-            and callable(wait_until_state)
-        ):
-            remaining = max(0.0, deadline - loop.time())
-            if remaining > 0:
-                await wait_until_state(thread_id, timeout=remaining)
-                thread = controller.attached_thread(thread_id)
+        thread = await self._ipc_thread_with_state(controller, discovered, deadline)
+        if thread is None and discovered.status in {"no_owner", "unreachable"}:
+            thread = await self._ipc_handoff_locked_thread(thread_id)
         if thread is not None:
             logger.info(
                 "codex ipc write route followed thread={} owner_client_id={} elapsed_ms={:.1f}",
@@ -489,16 +482,52 @@ class CodexRuntime(AgentRuntime):
         thread = controller.attached_thread(thread_id)
         if thread is not None:
             return _CodexIpcWriteRoute(kind="followed", thread=thread)
-        if not self.ipc_deeplink_handoff:
-            return _CodexIpcWriteRoute(kind="local")
-        if await ipc_deeplink.desktop_app_running() is not True:
-            return _CodexIpcWriteRoute(kind="local")
-        thread = await self._ipc_handoff_to_desktop(thread_id)
+        thread = await self._ipc_handoff_locked_thread(thread_id)
         return (
             _CodexIpcWriteRoute(kind="followed", thread=thread)
             if thread is not None
             else _CodexIpcWriteRoute(kind="local")
         )
+
+    @staticmethod
+    async def _ipc_thread_with_state(
+        controller: CodexIpcTurnController,
+        discovered: FollowedThread,
+        deadline: float,
+    ) -> FollowedThread | None:
+        """Return the followed thread once its owner's first snapshot arrived.
+
+        Discovery answers before the owner sends its snapshot and writes need
+        that state, so wait for it until ``deadline`` (event-loop time).
+        """
+
+        thread = controller.attached_thread(discovered.thread_id)
+        wait_until_state = getattr(controller.follower, "wait_until_state", None)
+        if (
+            thread is None
+            and discovered.status == "following"
+            and callable(wait_until_state)
+        ):
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining > 0:
+                await wait_until_state(discovered.thread_id, timeout=remaining)
+                thread = controller.attached_thread(discovered.thread_id)
+        return thread
+
+    async def _ipc_handoff_locked_thread(self, thread_id: str) -> FollowedThread | None:
+        """Hand a locked thread that no window answers for to the desktop app.
+
+        Typically the desktop app's app-server still has the thread loaded
+        without a page showing it. Asking the running app to open the thread
+        makes it the owner within a fraction of a second, so AA follows it
+        instead of failing the write. Never launches the app.
+        """
+
+        if not self.ipc_deeplink_handoff:
+            return None
+        if await ipc_deeplink.desktop_app_running() is not True:
+            return None
+        return await self._ipc_handoff_to_desktop(thread_id)
 
     def _ipc_blocked_write_route(
         self,
@@ -576,13 +605,15 @@ class CodexRuntime(AgentRuntime):
         if not await ipc_deeplink.open_deeplink(url):
             return None
         logger.info("codex ipc handed thread={} to the desktop app via deeplink", thread_id)
+        deadline = asyncio.get_running_loop().time() + self.ipc_handoff_timeout_ms / 1000
         try:
-            await controller.follower.follow(
+            discovered = await controller.follower.follow(
                 thread_id, discovery_timeout_ms=self.ipc_handoff_timeout_ms
             )
         except Exception as exc:  # noqa: BLE001 - the window may still be resuming
             logger.debug("codex ipc follow after handoff failed thread={} error={}", thread_id, exc)
-        return controller.attached_thread(thread_id)
+            return controller.attached_thread(thread_id)
+        return await self._ipc_thread_with_state(controller, discovered, deadline)
 
     async def _execute_kill_chatgpt(
         self,
