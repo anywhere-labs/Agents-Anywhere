@@ -2,9 +2,9 @@
 
 ## 修复说明
 
-Connector 2.1.1 修复 Codex 工具在实时事件与原始历史回读之间的身份差异。
-Desktop 2.1.2 随安装包携带此 Connector 修复；这些版本号描述本分支的制品，
-不表示制品已经发布或完成真实设备验收。
+本次修复 Codex 工具在实时事件与原始历史回读之间的身份差异，Desktop 通过
+内置 Connector 获得该修复。本次不调整组件版本号，正式发版版本由发布流程确定。
+源码修复不表示制品已经发布或完成真实设备验收。
 
 原始历史解析曾遗漏 `webSearch`、`mcpToolCall`、`dynamicToolCall` 和
 `collabAgentToolCall` 的工具角色。例如同一个搜索被实时事件投影到
