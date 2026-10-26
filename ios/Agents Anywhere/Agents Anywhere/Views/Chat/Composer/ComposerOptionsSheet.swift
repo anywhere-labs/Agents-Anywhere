@@ -140,36 +140,44 @@ struct ComposerOptionsSheet: View {
 
     private var models: some View {
         List {
-            Section {
-                ForEach(settings.catalog.models) { model in
-                    if model.reasoning.isEmpty {
-                        InlineSelectionButton(title: model.option.title, detail: detail(model.option),
-                            isSelected: settings.modelID == model.id) {
-                            apply { settings.selectModel(model.id) }
-                        }
-                        .disabled(!model.option.isEnabled)
-                    } else {
-                        InlineSelectionGroup(title: model.option.title, detail: detail(model.option),
-                            isSelected: settings.modelID == model.id,
-                            isExpanded: Binding(get: { expandedModelID == model.id }, set: { expandedModelID = $0 ? model.id : nil })) {
-                            Text(String(localized: "思考强度"))
-                                .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                            ForEach(model.reasoning) { option in
-                                InlineSelectionButton(title: option.title, detail: detail(option),
-                                    isSelected: settings.modelID == model.id && settings.reasoningID == option.id) {
-                                    apply { settings.selectModel(model.id, reasoning: option.id) }
-                                }
-                                .disabled(!option.isEnabled)
-                            }
-                        }
-                        .disabled(!model.option.isEnabled)
+            ForEach(settings.catalog.modelSections) { section in
+                Section {
+                    ForEach(section.models) { model in
+                        modelRow(model, title: section.rowTitle(model))
                     }
+                } header: {
+                    if let title = section.title { Text(title) }
                 }
             }
         }
         .disabled(isLoading || !canSelectModel)
         .navigationTitle(String(localized: "模型"))
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    @ViewBuilder private func modelRow(_ model: ChatModelOption, title: String) -> some View {
+        if model.reasoning.isEmpty {
+            InlineSelectionButton(title: title, detail: detail(model.option),
+                isSelected: settings.modelID == model.id) {
+                apply { settings.selectModel(model.id) }
+            }
+            .disabled(!model.option.isEnabled)
+        } else {
+            InlineSelectionGroup(title: title, detail: detail(model.option),
+                isSelected: settings.modelID == model.id,
+                isExpanded: Binding(get: { expandedModelID == model.id }, set: { expandedModelID = $0 ? model.id : nil })) {
+                Text(String(localized: "思考强度"))
+                    .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                ForEach(model.reasoning) { option in
+                    InlineSelectionButton(title: option.title, detail: detail(option),
+                        isSelected: settings.modelID == model.id && settings.reasoningID == option.id) {
+                        apply { settings.selectModel(model.id, reasoning: option.id) }
+                    }
+                    .disabled(!option.isEnabled)
+                }
+            }
+            .disabled(!model.option.isEnabled)
+        }
     }
 
     private var permissions: some View {
