@@ -11,8 +11,6 @@ import pytest
 from openai_codex import InvalidRequestError
 from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
-    ApprovalsReviewer,
-    AskForApprovalValue,
     ContextCompactedNotification,
     ContextCompactionThreadItem,
     LocalImageUserInput,
@@ -5718,9 +5716,11 @@ async def _test_codex_sdk_start_turn_initializes_before_low_level_detection() ->
     assert sdk_client.low_level.turn_starts
     assert not sdk_client.high_level_turns
     turn_params = sdk_client.low_level.turn_starts[0][2]
-    assert turn_params.approval_policy.root == AskForApprovalValue.on_request
-    assert turn_params.approvals_reviewer == ApprovalsReviewer.user
-    assert turn_params.sandbox_policy.root.type == "workspaceWrite"
+    assert turn_params["approvalPolicy"] == "on-request"
+    assert turn_params["approvalsReviewer"] == "user"
+    # The profile by name keeps activePermissionProfile; sandboxPolicy clears it.
+    assert turn_params["permissions"] == ":workspace"
+    assert "sandboxPolicy" not in turn_params
     assert result.turn_id == "turn_low"
 
 
@@ -5769,7 +5769,7 @@ async def _test_codex_sdk_start_turn_uses_low_level_for_attachments() -> None:
         "inspect these\n\n[Attached file: note.txt (text/plain, 9 bytes) at /tmp/note.txt]"
     )
     assert wire_input[1]["path"] == "/tmp/image.png"
-    assert [item.root.type for item in turn_params.input] == [
+    assert [item["type"] for item in turn_params["input"]] == [
         "text",
         "localImage",
     ]
@@ -5792,9 +5792,10 @@ async def _test_codex_sdk_start_thread_initializes_before_low_level_detection() 
     assert sdk_client.low_level.thread_starts
     assert not sdk_client.high_level_thread_starts
     thread_params = sdk_client.low_level.thread_starts[0]
-    assert thread_params.approval_policy.root == AskForApprovalValue.on_request
-    assert thread_params.approvals_reviewer == ApprovalsReviewer.user
-    assert thread_params.sandbox.value == "workspace-write"
+    assert thread_params["approvalPolicy"] == "on-request"
+    assert thread_params["approvalsReviewer"] == "user"
+    assert thread_params["permissions"] == ":workspace"
+    assert "sandbox" not in thread_params
     assert result.thread_id == "thread_low"
 
 

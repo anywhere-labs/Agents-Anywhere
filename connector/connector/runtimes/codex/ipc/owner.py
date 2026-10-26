@@ -677,7 +677,12 @@ class CodexIpcOwnerService:
     async def _update_thread_settings(
         self, session_id: str, thread_id: str, params: Mapping[str, Any]
     ) -> bool:
-        """Apply a window's thread settings as our next-turn selections."""
+        """Apply a window's thread settings as our selections.
+
+        The selection update changes our app-server's thread settings at once,
+        as the desktop owner does. Windows send the permission by profile name
+        (``permissions``) or as ``sandboxPolicy``.
+        """
 
         settings = params.get("threadSettings")
         if (
@@ -688,7 +693,14 @@ class CodexIpcOwnerService:
         ):
             return False
         flat: dict[str, Any] = {}
-        for key in ("model", "approvalPolicy", "approvalsReviewer", "sandboxPolicy"):
+        for key in (
+            "model",
+            "approvalPolicy",
+            "approvalsReviewer",
+            "sandboxPolicy",
+            "permissions",
+            "activePermissionProfile",
+        ):
             if settings.get(key) is not None:
                 flat[key] = settings[key]
         effort = settings.get("effort")
