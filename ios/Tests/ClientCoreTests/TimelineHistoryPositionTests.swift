@@ -86,4 +86,86 @@ import Testing
         let unrelated = history.laidOut(layout(first: "earlier-tool", anchor: "other-tool", y: 900, edge: .bottom), generation: 8)
         #expect(unrelated == nil)
     }
+
+    @Test func lazyAnchorIsRequestedOncePerPresentedPage() {
+        var history = TimelineHistoryPosition(id: 9, layout: layout(), offsetY: 420, topInset: 80)
+        history.receivedPage(firstRowID: "earlier")
+        // HTTP completion can see the new presentation before the View's callback.
+        history.recordPresentation(firstRowID: "earlier")
+        let needsAnchor = history.presentedPage(firstRowID: "earlier")
+        #expect(needsAnchor)
+        let repeatedOrCancelled = history.presentedPage(firstRowID: "earlier")
+        #expect(!repeatedOrCancelled)
+        #expect(!history.isReadyToFinish)
+        let correction = history.laidOut(layout(first: "earlier", y: 1080), generation: 9)
+        #expect(correction == 1420)
+        #expect(history.isReadyToFinish)
+    }
+
+    @Test func cancelledLazyAnchorDoesNotNeedToMaterializeToFinish() {
+        var history = TimelineHistoryPosition(id: 10, layout: layout(), offsetY: 20, topInset: 80)
+        history.cancelRestoration()
+        history.receivedPage(firstRowID: "earlier")
+        #expect(!history.isReadyToFinish)
+        let repeatedOrCancelled = history.presentedPage(firstRowID: "earlier")
+        #expect(!repeatedOrCancelled)
+        #expect(history.isReadyToFinish)
+        let correction = history.laidOut(layout(first: "earlier", y: 1080), generation: 10)
+        #expect(correction == nil)
+    }
+
+    @Test func materializedPageKeepsItsPointRestorationWhenPresentationArrivesLater() {
+        var history = TimelineHistoryPosition(id: 14, layout: layout(), offsetY: 420, topInset: 80)
+        // SwiftUI can measure a still-mounted anchor before delivering onChange.
+        let correction = history.laidOut(layout(first: "earlier", y: 1080), generation: 14)
+        #expect(correction == 1420)
+        let needsAnchor = history.presentedPage(firstRowID: "earlier")
+        #expect(!needsAnchor)
+        // A previous page's measurement cannot suppress a new page's target.
+        let nextPageNeedsAnchor = history.presentedPage(firstRowID: "earliest")
+        #expect(nextPageNeedsAnchor)
+    }
+
+    @Test func missingLazyAnchorFinishesAfterPresentationInEitherOrder() {
+        for presentationFirst in [false, true] {
+            var history = TimelineHistoryPosition(id: 11, layout: nil, offsetY: 0, topInset: 80)
+            if presentationFirst { history.recordPresentation(firstRowID: "earlier") }
+            history.receivedPage(firstRowID: "earlier")
+            if !presentationFirst {
+                #expect(!history.isReadyToFinish)
+                history.recordPresentation(firstRowID: "earlier")
+            }
+            #expect(history.isReadyToFinish)
+        }
+    }
+
+    @Test func identityNavigationStillRestoresAnUnchangedMeasuredOffset() {
+        var history = TimelineHistoryPosition(id: 12, layout: layout(), offsetY: 420, topInset: 80)
+        let needsAnchor = history.presentedPage(firstRowID: "earlier")
+        #expect(needsAnchor)
+        // Native identity navigation may align the anchor even when lazy height
+        // estimates leave its content coordinate unchanged. Restore the inset.
+        let correction = history.laidOut(layout(first: "earlier"), generation: 12)
+        let repeated = history.laidOut(layout(first: "earlier"), generation: 12)
+        #expect(correction == 420)
+        #expect(repeated == nil)
+    }
+
+    @Test func newerNavigationFinishesWithoutRematerializingTheHistoryAnchor() {
+        var history = TimelineHistoryPosition(id: 13, layout: layout(), offsetY: 20, topInset: 80)
+        // Creating the history request itself changes the navigation generation.
+        history.navigationChanged(generation: 13)
+        history.receivedPage(firstRowID: "earlier")
+        history.recordPresentation(firstRowID: "earlier")
+        #expect(!history.isReadyToFinish)
+        // Sending a message can return to the tail while the history request is
+        // in flight. Its now-offscreen anchor may never report another layout.
+        history.navigationChanged(generation: 14)
+        #expect(history.isReadyToFinish)
+        let needsAnchor = history.presentedPage(firstRowID: "earlier")
+        #expect(!needsAnchor)
+        let correction = history.laidOut(layout(first: "earlier", y: 1080), generation: 14)
+        #expect(correction == nil)
+    }
+
 }
