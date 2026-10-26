@@ -120,6 +120,11 @@ Selections are part of `SessionState`, not `SessionMeta` and not message payload
 ```
 
 Runtime can update selections at any time. User-initiated selection changes may be limited by runtime/session state.
+Presence is significant: a missing scope means the Runtime has not confirmed
+that value, while a present `null` means the Runtime explicitly selected its
+default. Clients must not turn a missing scope into the first catalog option.
+`metadata.pendingSelectionScopes` lists accepted values that apply on the next
+turn and is cleared when that turn starts.
 
 For model catalogs, a `selectionId` must identify one concrete executable choice. If a model exposes reasoning or effort variants, the model item itself must not have a `selectionId`; each reasoning item carries the concrete `selectionId`. If a model has no reasoning variants, the model item carries the concrete `selectionId`.
 
@@ -144,7 +149,7 @@ update_session_selections(...)
 start_turn(content, selections, attachments, client_message_id)
 ```
 
-Model and permission state must be updated before sending. The public message
+Only an explicit selector action updates model or permission state. The public message
 send request must not carry one-off model or permission fields; Server may pass
 current `SessionState.selections` to runtime `start_turn` so runtimes that only
 support per-turn SDK options can apply current state at dispatch time.

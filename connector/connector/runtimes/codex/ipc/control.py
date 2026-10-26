@@ -21,6 +21,7 @@ from connector.runtime_protocol import (
     RuntimeInvalidRequestError,
     RuntimeOperationResult,
     RuntimeSessionStateCache,
+    SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain.approvals import (
@@ -223,7 +224,11 @@ class CodexIpcTurnController:
             session_id=session_id,
             external_session_id=thread.thread_id,
             status="waiting",
-            metadata={"attachment": "ipc", "source": f"{IPC_SOURCE}.turn/start.requested"},
+            metadata={
+                "attachment": "ipc",
+                "source": f"{IPC_SOURCE}.turn/start.requested",
+                "pendingSelectionScopes": [],
+            },
         )
         params = {
             "conversationId": thread.thread_id,
@@ -448,15 +453,26 @@ class CodexIpcTurnController:
         result = response.result if isinstance(response.result, Mapping) else {}
         applied = bool(result.get("applied", True))
         cached = self.session_states.get(session_id)
+        updated_state = cached
         if applied:
-            await self.session_states.update(
+            apply_thread_settings = getattr(
+                self.follower,
+                "apply_thread_settings",
+                None,
+            )
+            if callable(apply_thread_settings):
+                await apply_thread_settings(thread.thread_id, thread_settings)
+            updated_state = await self.session_states.update(
                 session_id=session_id,
                 external_session_id=thread.thread_id,
                 status=cached.status if cached is not None else "idle",
-                selections={
-                    scope: value for scope, value in selections.items() if value is not None
+                selections=dict(selections),
+                metadata={
+                    "attachment": "ipc",
+                    "source": f"{IPC_SOURCE}.selections/updated",
+                    "selection_effect": "next_turn",
+                    "pendingSelectionScopes": sorted(selections),
                 },
-                metadata={"attachment": "ipc", "source": f"{IPC_SOURCE}.selections/updated"},
             )
         return RuntimeOperationResult(
             ok=applied,
@@ -467,6 +483,11 @@ class CodexIpcTurnController:
                 "selections": dict(selections),
                 "applied": applied,
                 "transport": "ipc",
+                **(
+                    {"state": _session_state_payload(updated_state)}
+                    if applied and updated_state is not None
+                    else {}
+                ),
             },
         )
 
@@ -838,7 +859,20 @@ def _turn_from_result(result: Any) -> Mapping[str, Any] | None:
         return inner["turn"]
     if isinstance(result.get("turn"), Mapping):
         return result["turn"]
-    return None
+
+
+def _session_state_payload(state: SessionState) -> dict[str, Any]:
+    return {
+        "sessionId": state.session_id,
+        "runtime": state.runtime,
+        **({"runtimeId": state.runtime_id} if state.runtime_id is not None else {}),
+        "externalSessionId": state.external_session_id,
+        "status": state.status,
+        "selections": dict(state.selections),
+        "statusReason": state.status_reason,
+        "error": dict(state.error) if state.error is not None else None,
+        "metadata": dict(state.metadata),
+    }
 
 
 def _writable_roots(policy: Any) -> list[str] | None:

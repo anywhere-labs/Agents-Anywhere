@@ -10,6 +10,7 @@ from connector.runtime_protocol import (
     RuntimePermissionCatalog,
     RuntimeSessionStateCache,
     RuntimeUnsupportedError,
+    SessionState,
 )
 from connector.runtimes.codex.domain.selections import (
     model_settings_from_selection,
@@ -89,7 +90,7 @@ class CodexSelectionController:
                 },
             )
         cached = self.session_states.get(session_id)
-        await self.session_states.update(
+        state = await self.session_states.update(
             session_id=session_id,
             external_session_id=external_session_id,
             status=cached.status if cached is not None else "idle",
@@ -97,8 +98,8 @@ class CodexSelectionController:
             error=cached.error if cached is not None else None,
             metadata={
                 "source": "codex.session.selections.update",
-                "selection_scopes": tuple(selections.keys()),
                 "selection_effect": "next_turn",
+                "pendingSelectionScopes": sorted(selections),
             },
         )
         return RuntimeOperationResult(
@@ -108,5 +109,28 @@ class CodexSelectionController:
                 "sessionId": session_id,
                 "externalSessionId": external_session_id,
                 "selections": dict(selections),
+                "state": _session_state_payload(state),
             },
         )
+
+
+def _session_state_payload(state: SessionState) -> dict[str, object]:
+    return {
+        "sessionId": state.session_id,
+        "runtime": state.runtime,
+        **(
+            {"runtimeId": state.runtime_id}
+            if state.runtime_id is not None
+            else {}
+        ),
+        "externalSessionId": state.external_session_id,
+        "status": state.status,
+        "selections": dict(state.selections),
+        "statusReason": state.status_reason,
+        "error": (
+            dict(state.error)
+            if state.error is not None
+            else None
+        ),
+        "metadata": dict(state.metadata),
+    }

@@ -106,7 +106,10 @@ class CodexTurnActions:
             external_session_id=external_session_id,
             status="waiting",
             selections=effective_selections,
-            metadata={"source": "codex.turn/start.requested"},
+            metadata={
+                "source": "codex.turn/start.requested",
+                "pendingSelectionScopes": [],
+            },
         )
         self.pending_messages.register(
             external_session_id=external_session_id,

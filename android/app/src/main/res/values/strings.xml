@@ -541,6 +541,9 @@
     <string name="session_runtime_no_settings">No settings available</string>
     <string name="session_dsh_concurrent_writer">Stop the other process using this DSH session, wait for it to exit, then refresh.</string>
     <string name="session_runtime_permission_mode">Permission mode</string>
+    <string name="session_runtime_permission_unsynced">Permission not synced</string>
+    <string name="session_runtime_model_unsynced">Model not synced</string>
+    <string name="session_runtime_next_turn">Applies next turn</string>
     <string name="session_runtime_effort_for">Effort for %1$s</string>
     <string name="runtime_permission_accept_edits">Accept edits</string>
     <string name="runtime_permission_read_only">Read only</string>

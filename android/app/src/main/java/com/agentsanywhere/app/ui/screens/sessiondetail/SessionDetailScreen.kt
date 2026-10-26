@@ -914,7 +914,10 @@ fun SessionDetailScreen(
                             .map { it.toRemoteRuntimeModel() }
                             .modelSelectionOptions()
                         preparedSelections = preparedSelections.copy(
-                            model = preparedModelOptions.validatedSelection(preparedSelections.model),
+                            model = preparedModelOptions.validatedSelection(
+                                preparedSelections.model,
+                                defaultWhenMissing = true,
+                            ),
                         )
                     }
                     .onFailure { preparedModelError = it.message ?: context.getString(R.string.session_runtime_model_catalog_failed) }
@@ -966,7 +969,10 @@ fun SessionDetailScreen(
                                 )
                             }
                         preparedSelections = preparedSelections.copy(
-                            permission = options.validatedSelection(preparedSelections.permission),
+                            permission = options.validatedSelection(
+                                preparedSelections.permission,
+                                defaultWhenMissing = true,
+                            ),
                         )
                     }
                     .onFailure { preparedPermissionError = it.message ?: context.getString(R.string.session_runtime_permission_catalog_failed) }
@@ -1842,6 +1848,10 @@ fun SessionDetailScreen(
             permissionOptions = permissionOptions,
             selectedModelId = modelSelection,
             selectedPermissionId = permissionSelection,
+            pendingSelectionScopes = (state.runtime.metadata["pendingSelectionScopes"] as? List<*>)
+                ?.filterIsInstance<String>()
+                ?.toSet()
+                .orEmpty(),
             modelLoading = if (isPreparedSession) preparedModelLoading else state.catalogs.modelLoading,
             permissionLoading = if (isPreparedSession) preparedPermissionLoading else state.catalogs.permissionLoading,
             modelErrorMessage = if (isPreparedSession) preparedModelError else state.catalogs.modelErrorMessage,

@@ -206,6 +206,30 @@ class ThreadFollower:
             return
         await self._announce(thread_id, thread.owner_client_id, following=True)
 
+    async def apply_thread_settings(
+        self,
+        thread_id: str,
+        thread_settings: Mapping[str, Any],
+    ) -> FollowedThread | None:
+        """Atomically expose owner-accepted settings to the next local write.
+
+        The owner confirms the settings request before its state broadcast is
+        guaranteed to arrive.  Updating the followed snapshot here prevents an
+        immediately following turn from being constructed with stale values;
+        the next owner snapshot remains authoritative and will replace it.
+        """
+
+        lock = self._locks.setdefault(thread_id, asyncio.Lock())
+        async with lock:
+            thread = self._threads.get(thread_id)
+            if thread is None or thread.state is None:
+                return thread
+            state = dict(thread.state)
+            state["latestThreadSettings"] = dict(thread_settings)
+            updated = replace(thread, state=state, updated_at=time.time())
+            self._threads[thread_id] = updated
+            return updated
+
     async def refollow_all(self) -> None:
         for thread_id in list(self._threads):
             try:

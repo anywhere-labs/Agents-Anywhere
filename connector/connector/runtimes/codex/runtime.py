@@ -53,10 +53,10 @@ from connector.runtimes.codex.ipc import (
     CodexIpcSessionProjector,
     CodexIpcTurnController,
     FollowedThread,
+    desktop_app,
     thread_snapshot_from_conversation_state,
 )
 from connector.runtimes.codex.ipc import deeplink as ipc_deeplink
-from connector.runtimes.codex.ipc import desktop_app
 from connector.runtimes.codex.lifecycle.runtime_lifecycle import CodexRuntimeLifecycle
 from connector.runtimes.codex.notifications import CodexNotificationProjector
 from connector.runtimes.codex.notifications.projector import notification_event
@@ -234,6 +234,31 @@ class CodexRuntime(AgentRuntime):
             getattr(self.host, "session_namespace", self.host.connector_id),
             thread_id,
         )
+
+    async def _bind_state_session(
+        self,
+        session_id: str,
+        external_session_id: str | None,
+    ) -> None:
+        if external_session_id is None:
+            return
+        current = self._session_states.get_by_external_session_id(
+            external_session_id
+        )
+        derived_session_id = codex_sessions.stable_session_id(
+            getattr(self.host, "session_namespace", self.host.connector_id),
+            external_session_id,
+        )
+        if (
+            current is not None
+            and current.session_id not in {session_id, derived_session_id}
+            and self._session_states.get(session_id) is None
+        ):
+            # A different authoritative Server binding already owns this
+            # external thread. Only derived identities may be migrated merely
+            # because another caller supplies a session id.
+            return
+        await self._session_states.rebind(session_id, external_session_id)
 
     def _ipc_controller(self) -> CodexIpcTurnController | None:
         """Return the IPC turn controller once a follower service exists."""
@@ -511,6 +536,22 @@ class CodexRuntime(AgentRuntime):
         session_id: str,
         external_session_id: str | None = None,
     ) -> SessionState | None:
+        await self._bind_state_session(session_id, external_session_id)
+        if (
+            external_session_id is not None
+            and self._session_states.get(session_id) is None
+            and self._ipc_attached_thread(session_id, external_session_id) is None
+            and not (
+                self.ipc_service is not None
+                and self.ipc_service.thread_is_held(external_session_id)
+            )
+        ):
+            resumed = await self._session_reader.resume_session_state(
+                session_id,
+                external_session_id,
+            )
+            if resumed is not None:
+                return resumed
         return await self._session_reader.get_session_state(
             session_id,
             external_session_id,
@@ -521,7 +562,7 @@ class CodexRuntime(AgentRuntime):
         session_id: str,
         external_session_id: str | None = None,
     ) -> tuple[SessionNotice, ...]:
-        _ = external_session_id
+        await self._bind_state_session(session_id, external_session_id)
         return self._notices.current_for_session(session_id)
 
     async def get_session_capabilities(
@@ -536,6 +577,7 @@ class CodexRuntime(AgentRuntime):
         this set never uses, so the cache is the only state source.
         """
 
+        await self._bind_state_session(session_id, external_session_id)
         state = self._session_states.get(session_id)
         if state is None and external_session_id is not None:
             state = self._session_states.get_by_external_session_id(
@@ -592,6 +634,7 @@ class CodexRuntime(AgentRuntime):
         external_session_id: str | None = None,
         limit: int | None = None,
     ) -> RuntimeTimelineSnapshot:
+        await self._bind_state_session(session_id, external_session_id)
         thread = self._ipc_attached_thread(session_id, external_session_id)
         if thread is not None and thread.state is not None:
             items = self._timeline.items_from_thread_snapshot(
@@ -663,6 +706,7 @@ class CodexRuntime(AgentRuntime):
         cwd: str | None = None,
     ) -> RuntimeOperationResult:
         _ = cwd
+        await self._bind_state_session(session_id, external_session_id)
         thread = await self._ipc_attach_for_write(session_id, external_session_id)
         if thread is not None:
             controller = self._ipc_controller()
@@ -691,6 +735,7 @@ class CodexRuntime(AgentRuntime):
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
     ) -> RuntimeOperationResult:
+        await self._bind_state_session(session_id, external_session_id)
         thread = await self._ipc_attach_for_write(session_id, external_session_id)
         if thread is not None:
             controller = self._ipc_controller()
@@ -731,6 +776,7 @@ class CodexRuntime(AgentRuntime):
         external_session_id: str | None,
         selections: Mapping[str, str | None],
     ) -> RuntimeOperationResult:
+        await self._bind_state_session(session_id, external_session_id)
         thread = await self._ipc_attach_for_write(session_id, external_session_id)
         if thread is not None:
             controller = self._ipc_controller()
