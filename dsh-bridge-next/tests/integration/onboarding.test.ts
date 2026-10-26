@@ -109,6 +109,25 @@ async function until(check: () => Promise<boolean>) {
   assert.fail('expected state did not arrive')
 }
 
+test('connection failure diagnostics survive cleanup and clear after a successful retry', async () => {
+  const h = await fixture()
+  h.api.online = true
+  h.connector.startError = Object.assign(new Error('PRIVATE_TOKEN'), { code: 'CONNECTOR_SYNC_STATE_INVALID' })
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'error')
+    const failure = h.manager.startupDiagnostic()
+    assert.equal(failure?.event, 'connector.start_failed')
+    assert.match(failure!.details, /CONNECTOR_SYNC_STATE_INVALID/)
+    assert.doesNotMatch(JSON.stringify(failure), /PRIVATE_TOKEN/)
+    await h.manager.controlConnector('stop')
+    assert.deepEqual(h.manager.startupDiagnostic(), failure)
+    h.connector.startError = null
+    await h.manager.controlConnector('start')
+    assert.equal(h.manager.startupDiagnostic(), null)
+  } finally { await h.close() }
+})
+
 test('Connector controls preserve identity and startup restores the connection despite retired settings', async () => {
   const h = await fixture()
   h.api.online = true

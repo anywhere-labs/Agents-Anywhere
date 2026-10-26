@@ -67,6 +67,8 @@ DSH_INTERACTION_RUNTIME_ROOT=/path/to/dsh-installation \
 
 ## 本地构建与安装
 
+Connector 启动后立即停止时，先查看“运行日志 → 启动前诊断”。连接阶段的失败快照会在停止进程后保留，成功重试后清除；控制接口返回的 `lastError` 会脱敏写入诊断输出。`CONNECTOR_SYNC_STATE_INVALID` 表示同步状态文件无法解析。历史插件配置可能使用 `<connectorId>.sqlite3` 作为文件名，当前内容仍按 JSON 检查点读取；零字节占位文件视为没有检查点，非空损坏文件继续报错，不自动覆盖。进程退出码 `0` 可能来自失败后的主动清理，不能据此判断连接成功。
+
 需要 Node.js `^22.19.0 || >=24`、Corepack，插件通过 npm 依赖 `@dataiku/uv` 提供 uv，运行 Connector 时按需准备 Python 3.12+。开发 Python 子项目时仍可使用本机 uv。项目使用 Yarn；DSH 安装命令内部使用其自己的包管理器。
 
 ```bash

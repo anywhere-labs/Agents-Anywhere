@@ -16,7 +16,8 @@ import { acquireManagerLock, readJson, writeJson } from '../storage/files.js'
 import { migrateStateRoot } from '../storage/migration.js'
 import { LoopbackFlow } from './loopback.js'
 import type { ConnectorAction, ConnectorFolder, ConnectorSettings } from '../../contracts/connector.js'
-import type { RuntimeLogPage, RuntimeLogQuery } from '../../contracts/logs.js'
+import type { RuntimeLogPage, RuntimeLogQuery, StartupFailureDiagnostic } from '../../contracts/logs.js'
+import { startupFailure, startupFailureDiagnostic } from '../dsh-runtime/startup-status.js'
 import { ConnectorSettingsStore, validateConnectorSettings } from '../connector/settings.js'
 import { canOpenFolders, openFolder, resolveUv } from '../connector/environment.js'
 import { MobileLogin } from '../account/mobile.js'
@@ -41,6 +42,18 @@ interface Dependencies {
 }
 
 export class OnboardingManager {
+  private connectionFailure: StartupFailureDiagnostic | null = null
+  startupDiagnostic(): StartupFailureDiagnostic | null { return this.connectionFailure ? { ...this.connectionFailure } : null }
+
+  private recordConnectionFailure(error: unknown): void {
+    const status = startupFailure(error)
+    const invalidState = error instanceof Error && 'code' in error && error.code === 'CONNECTOR_SYNC_STATE_INVALID'
+    this.connectionFailure = startupFailureDiagnostic(error, 'plugin', 'connector.start_failed', {
+      ...status, code: invalidState ? 'CONNECTOR_SYNC_STATE_INVALID' : 'CONNECTOR_START_FAILED',
+      message: invalidState ? 'Connector 同步状态文件无效，请检查启动前诊断输出。' : 'Connector 连接失败，请检查启动前诊断输出。',
+    })
+    this.diagnostics.log('error', 'connector.start_failed', {}, error)
+  }
   private settings: ConnectionSettings
   private account: Account | null = null
   private binding: BoundDevice | null = null
@@ -229,7 +242,9 @@ export class OnboardingManager {
     const key = JSON.stringify(input ?? null)
     if (this.beginning) return this.beginning.key === key
       ? this.beginning.promise : Promise.reject(new Error('正在开始另一次登录，请稍候。'))
-    const promise = this.serial(() => this.startFlow(input)).finally(() => { this.beginning = null })
+    const promise = this.serial(() => this.startFlow(input))
+      .catch(error => { this.recordConnectionFailure(error); throw error })
+      .finally(() => { this.beginning = null })
     this.beginning = { key, promise }
     return promise
   }
@@ -372,6 +387,7 @@ export class OnboardingManager {
   }
 
   private async connectionFailed(error: unknown): Promise<void> {
+    this.recordConnectionFailure(error)
     if (error instanceof DeviceRecoveryRequired) this.setRecovery(error.connectorId, error.reason, error.message)
     else if (error instanceof ConnectorCredentialError && this.binding) await this.checkDeviceRecovery(this.binding.connectorId)
     else if (error instanceof ApiError && error.status === 401 && this.binding) this.setRecovery(this.binding.connectorId, 'login_required', '账号登录已失效，请重新登录后恢复设备连接。')
@@ -464,7 +480,7 @@ export class OnboardingManager {
         if (!this.connector.running) await this.startConnector()
       }
       return null
-    })
+    }).catch(error => { this.recordConnectionFailure(error); throw error })
   }
 
   private async startConnector(): Promise<void> {
@@ -678,6 +694,7 @@ export class OnboardingManager {
   }
 
   private setProgress(stage: FlowStage, message: string): void {
+    if (stage === 'ready' || (stage === 'idle' && !this.account)) this.connectionFailure = null
     const changed = this.stage !== stage || this.message !== message
     this.stage = stage
     this.message = message
