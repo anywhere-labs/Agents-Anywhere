@@ -9,7 +9,7 @@ import pytest
 
 from connector.runtime_protocol import RuntimeConfig
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.codex.ipc import FollowedThread, IpcResponse
+from connector.runtimes.codex.ipc import CodexIpcOwnerService, FollowedThread, IpcResponse
 from connector.runtimes.codex.ipc import deeplink as ipc_deeplink
 from connector.runtimes.codex.runtime import CodexRuntime
 
@@ -482,5 +482,43 @@ def test_service_scans_once_without_periodic_rescan() -> None:
             await asyncio.sleep(0.01)
         assert service.scan_count == 2  # events still trigger a scan
         await service.stop()
+
+    asyncio.run(run())
+
+
+class _Sdk:
+    def __init__(self, loaded: tuple[str, ...] = ()) -> None:
+        self.loaded = set(loaded)
+
+    def thread_loaded(self, thread_id: str) -> bool:
+        return thread_id in self.loaded
+
+
+def test_safe_write_route_follows_a_window_held_thread_that_aa_only_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    desktop = _Desktop()
+    desktop.install(monkeypatch)
+
+    async def run() -> None:
+        follower = _Follower(["following"])
+        client = _Client()
+        runtime = _runtime(follower, client, safe_ipc_write_routing=True)
+        runtime.ipc_owner = CodexIpcOwnerService(
+            client=client,  # type: ignore[arg-type]
+            sdk=_Sdk(),  # type: ignore[arg-type]
+            session_states=runtime._session_states,
+            notices=runtime._notices,
+            active_turn_ids={},
+            session_id_for=lambda thread_id: "sess_1",
+        )
+        # A state AA read or synced is not ownership; the window holds the lock.
+        await runtime._session_states.update(
+            "sess_1", THREAD, status="idle", metadata={"source": "codex.thread/read.state"}
+        )
+
+        result = await runtime.start_turn("sess_1", THREAD, "hi")
+
+        assert result.ok and result.result["transport"] == "ipc"
+        assert client.calls == ["thread-follower-start-turn"]
+        assert desktop.opened == []
 
     asyncio.run(run())

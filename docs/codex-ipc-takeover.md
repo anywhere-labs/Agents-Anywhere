@@ -17,6 +17,7 @@
 
 - **主方向是层 B（IpcRouter owner/follower）**，桌面 App 和 VS Code 都已在真机上端到端验证：discovery 毫秒级、snapshot、patch 流、`thread-follower-start-turn` 发起回合。Connector 两个方向都实现了：窗口持有的线程由 connector 跟随并代发；connector 持有的线程也对窗口应答 owner 发现并供给 snapshot，窗口可通过 `thread-follower-*` 操控（见 4.5）。下午一度得出“桌面不可用”的结论，后来确认是旧桌面实例里一个 IPC client 挂死造成的意外，重启后一切正常；VS Code 当时也因此接管不了，证明那是实例故障而不是协议限制。
 - 持有关系的权威判据是 `~/.codex/thread-writer-locks/<id>.lock` 的 flock 持有者。三种接管模式：有 owner 且可达 → IPC follower；无人持有 → 自家 app-server `thread/resume` 独占接管（任何来源的线程都适用）；有人持有但 discovery 找不到 owner → 只读等待，绝不 resume。
+- **只有写入才会接管**：读取会话状态、快照和后台同步只用 `thread/read`，绝不 `thread/resume`。resume 会拿走写锁，AA 只是看了一眼或同步了一下，桌面 App 再打开就提示“已在另一个应用中打开”。`thread/read` 不返回审批和沙箱设置，权限取自 rollout 末尾最新的 `turn_context` 或 `thread_settings_applied` 记录，读不到就不报告（客户端显示“未同步”）。Connector 是否持有线程，只看自家 app-server 这一代进程是否 `thread/start` / `thread/resume` 过它；读取或同步留下的缓存状态不算，否则 Connector 会替窗口持有的线程应答 discovery，AA 的写入也会被误判为本地。
 - **discovery 的实际语义（真机复核）**：窗口只对自己持有的线程应答 `canHandle: true`，对其它线程根本不应答，于是只要桌面或 VS Code 在线，所有非持有线程的 discovery 都会在 router 的 10 s 超时后返回 `no-client-found`。因此“10 s 超时”不能用来区分“无人持有”和“持有者挂死”，实现里统一按 `no_owner` 处理，持有与否要看写锁。
 - 层 A（daemon）保留给终端 TUI 会话，协议公开、成本低，但不在当前主线。“让桌面 App 改走 daemon”的隐藏开关方案已放弃。
 - 实现上必须处理：router 随进程生死动态转移（`ipc-connection-reset` 后重连并重发 `following`，必要时自己当 router）；revision 是 owner 进程内计数，owner 变化就重新拿 snapshot；方法版本表随 Codex 升级重新提取。

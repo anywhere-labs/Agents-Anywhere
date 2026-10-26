@@ -731,21 +731,8 @@ class CodexRuntime(AgentRuntime):
         external_session_id: str | None = None,
     ) -> SessionState | None:
         await self._bind_state_session(session_id, external_session_id)
-        if (
-            external_session_id is not None
-            and self._session_states.get(session_id) is None
-            and self._ipc_attached_thread(session_id, external_session_id) is None
-            and not (
-                self.ipc_service is not None
-                and self.ipc_service.thread_is_held(external_session_id)
-            )
-        ):
-            resumed = await self._session_reader.resume_session_state(
-                session_id,
-                external_session_id,
-            )
-            if resumed is not None:
-                return resumed
+        # Reads never resume: thread/resume takes the writer lock and would lock
+        # Codex Desktop out of a thread that AA only displayed or synced.
         return await self._session_reader.get_session_state(
             session_id,
             external_session_id,

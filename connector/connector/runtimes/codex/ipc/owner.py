@@ -169,18 +169,18 @@ class CodexIpcOwnerService:
     def owns(self, thread_id: str) -> bool:
         """Whether this Connector's app-server is the holder of ``thread_id``.
 
-        Threads reached through the IPC follower belong to another window. Any
-        other thread this runtime has projected from its own app-server events
-        counts as ours; if the app-server unloaded it meanwhile, follower
-        requests simply resume it here.
+        Threads reached through the IPC follower belong to another window.
+        Ownership needs positive evidence that our app-server started or resumed
+        the thread: a cached state from a read, a sync or a selection update is
+        not enough. Claiming such a thread would answer owner discovery that a
+        Codex window should resolve by resuming it, and would route AA writes
+        into the window's writer lock. If the app-server unloaded a thread it
+        loaded, follower requests simply resume it here.
         """
 
         if self.is_followed_elsewhere(thread_id):
             return False
-        state = self.session_states.get_by_external_session_id(thread_id)
-        if state is None:
-            return False
-        return state.metadata.get("attachment") != "ipc"
+        return self.sdk.thread_loaded(thread_id)
 
     def owned_threads_with_followers(self) -> list[str]:
         return [thread_id for thread_id, clients in self.followers.items() if clients]

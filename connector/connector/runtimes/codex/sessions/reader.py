@@ -44,6 +44,9 @@ from connector.runtimes.codex.sessions.history_index import (
     valid_read_state,
 )
 from connector.runtimes.codex.sessions.inventory import list_all_codex_threads
+from connector.runtimes.codex.sessions.rollout_settings import (
+    rollout_permission_settings,
+)
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
 
 ListModelCatalog = Callable[[str | None, int], Awaitable[RuntimeModelCatalog]]
@@ -461,10 +464,17 @@ class CodexSessionReader:
         )
         if isinstance(result.thread, Thread):
             thread_state = thread_state_from_sdk_thread(result.thread)
+            rollout_path: Any = result.thread.path
         else:
             thread_state = dict(result.thread)
+            rollout_path = thread_state.get("path")
         if not thread_state:
             return {}
+        # thread/read reports no approval or sandbox settings and thread/resume
+        # would take the writer lock, so permission comes from the rollout.
+        if isinstance(rollout_path, str):
+            permission = await asyncer.asyncify(rollout_permission_settings)(rollout_path)
+            thread_state = {**permission, **thread_state}
         selections = await selections_from_thread_state(
             thread_state,
             lambda: self.list_model_catalog(None, 100),
@@ -478,36 +488,6 @@ class CodexSessionReader:
             elapsed_ms,
         )
         return selections
-
-    async def resume_session_state(
-        self,
-        session_id: str,
-        external_session_id: str,
-    ) -> SessionState | None:
-        """Resume a thread only after the caller established that it is safe."""
-
-        if self.client is None:
-            return None
-        resume = getattr(self.client, "resume_thread_state", None)
-        if not callable(resume):
-            return None
-        await self.ensure_started()
-        resumed = await resume(external_session_id)
-        if not isinstance(resumed, Mapping) or not resumed:
-            return None
-        selections = await selections_from_thread_state(
-            dict(resumed),
-            lambda: self.list_model_catalog(None, 100),
-            lambda: self.list_permission_catalog(None, 100),
-        )
-        return await self.session_states.update(
-            session_id=session_id,
-            external_session_id=external_session_id,
-            status="idle",
-            selections=selections,
-            metadata={"source": "codex.thread/resume.state", "attachment": "sdk"},
-            replace_selections=True,
-        )
 
     async def get_session_snapshot(
         self,
