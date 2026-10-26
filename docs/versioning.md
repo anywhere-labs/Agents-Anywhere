@@ -1,5 +1,15 @@
 # 版本号规则
 
+## 当前统一版本与变更授权
+
+当前 Server、Connector、Web、Desktop、Android、iOS 和 DSH 插件的统一产品版本为 **`2.1.0`**。#393 随 Web / Desktop 会话状态修复引入的 `2.1.1` 已恢复为 `2.1.0`；功能修复保留，说明合并至 [2.1.0 发布说明](releases/2.1.0.md)。
+
+只有用户明确要求修改产品版本号，才能按授权的版本和范围执行。修复、功能或接口变更、提交、PR、构建、打包、发布或部署请求本身都不授权版本变更；未获授权时不得升级、降级、跨端对齐或通过脚本顺带改写版本，也不得用发布文档名称或标题暗示新产品版本。此规则包含 Android `versionName` / `versionCode`、iOS `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` 及其他发布或构建编号。
+
+以下规则用于确定**已获明确授权的发布**应使用哪一段版本号，不是自动升版指令。先核对实际主线和分支历史，不以未合并分支的升版作为已发布基线，也不按提交或 PR 数量递增版本。若必要检查或发布机制要求未经授权的版本变更，应先说明冲突并询问用户，其他独立工作可继续。依赖版本、协议或契约 revision、数据库迁移编号独立演进，不自动触发产品版本变更。
+
+## 版本号含义
+
 Agents Anywhere 的产品版本使用 `MAJOR.MINOR.PATCH`，三段各有明确含义：
 
 | 段 | 示例 | 含义 | 兼容性承诺 |
@@ -18,7 +28,7 @@ Agents Anywhere 的产品版本使用 `MAJOR.MINOR.PATCH`，三段各有明确�
 
 ## MINOR：接口更新
 
-以下变化都需要升 MINOR：
+用户明确授权发布以下接口变化时，应选择 MINOR，而不是 PATCH：
 
 - `/api/v2` 下端点、请求或响应字段的新增、删除或语义变化。
 - 实时事件（WebSocket）类型或载荷的变化。
@@ -46,7 +56,8 @@ Agents Anywhere 的产品版本使用 `MAJOR.MINOR.PATCH`，三段各有明确�
 | --- | --- | --- |
 | 数据库 revision / schema version | `server/migrations/versions/v2_N.py` | 每次迁移递增，前缀跟随 MAJOR |
 | 契约版本 | `contracts/<name>/<version>/` | 按各契约自身演进；有不兼容变化时新建版本目录 |
-| Android `versionCode` | `android/app/build.gradle.kts` | 每次发布安装包必须递增的整数 |
+| Android `versionCode` | `android/app/build.gradle.kts` | 每次正式发布安装包必须递增的整数；仍须用户明确授权，普通构建或打包不得自动修改 |
+| iOS `CURRENT_PROJECT_VERSION` | `ios/Agents Anywhere/Agents Anywhere.xcodeproj/project.pbxproj` | 构建编号；仍须用户明确授权，不因构建或打包自动修改 |
 
 ## 各端版本号的位置
 
@@ -55,7 +66,7 @@ Agents Anywhere 的产品版本使用 `MAJOR.MINOR.PATCH`，三段各有明确�
 | Server | `server/pyproject.toml`、`server/agent_server/app.py` | `version`（两处都要改；`/health` 返回 `app.py` 中的值） |
 | Desktop | `desktop-workbench/package.json`、`desktop-workbench/renderer/package.json` | `version` |
 | Android | `android/app/build.gradle.kts` | `versionName`、`versionCode` |
-| iOS | `ios/Agents Anywhere/Agents Anywhere.xcodeproj/project.pbxproj` | `MARKETING_VERSION` |
+| iOS | `ios/Agents Anywhere/Agents Anywhere.xcodeproj/project.pbxproj` | `MARKETING_VERSION`、`CURRENT_PROJECT_VERSION` |
 | Web | `web-next/package.json` | `version`（`src/lib/demo-api.ts` 中的演示版本号也要同步） |
 | Connector | `connector/pyproject.toml` | `version` |
 | DSH 插件 | `dsh-bridge-next/package.json` | `version` |
