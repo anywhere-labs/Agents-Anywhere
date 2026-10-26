@@ -67,7 +67,7 @@ Connector 先验证发现文件、进程与回环地址，再执行限时鉴权�
 
 读取、投影、图片回执和配置状态异常按会话隔离；快照不能完成时撤销该捕获，保留 AA 已接收的历史。全局清单或交付失败只替换同步订阅，Connector 延迟后重新订阅；普通 RPC 继续使用同一连接。会话刷新、后续原生事件和新的清单均可触发重试，不需要重启进程来清除错误。
 
-主动读取的历史按同一捕获分页，每帧最多 1,000 条且内容小于 7 MiB；单条超限明确失败。游标绑定连接、会话和捕获，120 秒后过期。Python 收齐所有页才返回完整快照；指定 limit 截断时 complete=false。事件订阅的初始历史每页最多 250 条，收齐后通过现有 timeline.sync 完整替换；随后只推增量，断线重连重新校准，不再定时扫描 DSH。详见 [事件同步方案](https://github.com/anywhere-labs/Agents-Anywhere/blob/edeb4f6c/dsh-bridge-next/RUNTIME_SYNC_PLAN.md)。
+主动读取的历史按同一捕获分页，每帧最多 1,000 条且内容小于 7 MiB；单条超限明确失败。游标绑定连接、会话和捕获：读完最后一页（`nextCursor === null`）即释放捕获；未读完的捕获在最后一次读页 120 秒后过期释放。sync 重订阅不影响在途分页，Bridge 关闭时一并释放。按需 `getSessionSnapshot` 完成投影后即释放对应的 observation。Python 收齐所有页才返回完整快照；指定 limit 截断时 complete=false。事件订阅的初始历史每页最多 250 条，收齐后通过现有 timeline.sync 完整替换；随后只推增量，断线重连重新校准，不再定时扫描 DSH。详见 [事件同步方案](https://github.com/anywhere-labs/Agents-Anywhere/blob/edeb4f6c/dsh-bridge-next/RUNTIME_SYNC_PLAN.md)。
 
 ## 验证与本地试用
 
@@ -88,7 +88,7 @@ uv run pytest tests/test_dsh_contracts.py tests/test_dsh_provider.py tests/test_
 ## 性能优化（2026-09-10）
 
 - 首次订阅仍完整同步历史。并发初始化共享一次清单读取；同步逐个读取、投影和提交会话，使可见性检查与快照生成复用同一个 observation。
-- observation、配置结果和 feed 投影缓存暂不设置容量上限。原生事件使对应 observation 失效，冷会话目标文件变化使缓存失效；关闭 Host/feed 时释放缓存和 observation lease。缓存不持久化。
+- observation（最多 `MAX_RETAINED_LOGS = 8` 个）、配置结果 `facts`（最多 `MAX_RETAINED_FACTS = 128` 个）和已结算的 feed 投影（最多 `MAX_RETAINED_PROJECTIONS = 8` 个）都按 LRU 淘汰。空白会话判定可见性后、会话基线同步后和按需快照后都立即释放 observation。在持久 checkpoint 订阅（`checkpointVersion: 1`）中，冷会话的已结算投影在 checkpoint 提交后立即释放，活跃会话保留最近使用的 8 个；被淘汰的会话再收到原生事件时，按 Connector checkpoint 恢复并只发送增量。没有持久 checkpoint 的订阅不淘汰投影，否则恢复时只能重传整份历史。运行中、有未提交增量或等待问答/审批的会话始终保留投影。单个会话同步或快照重放时的峰值仍取决于该会话自身的历史大小。原生事件使对应 observation 失效，冷会话文件变化使缓存失效；关闭 Host/feed 时释放缓存和 observation lease。缓存不持久化。
 - 同一 Host、同一 session namespace 的已确认同步 revision 在重订阅时复用：未变化会话只校准状态，变化会话补快照。显式单会话刷新先删除其 checkpoint，失败重试不会误判为已同步。新 Host 没有 checkpoint，仍完整导入。
 - 流式工具参数只在 drain/snapshot 或非 chunk 事件边界解析，避免每个 token 重复解析增长中的 JSON。历史投影以约 5 ms 为目标分片让出事件循环；单个原生读取、单个事件处理和最终内容哈希仍可能超过此时间。
 - 同步/RPC 字节预算直接遍历 JSON 数据计数，不再为计数分配完整 JSON 字符串。socket 写入仍序列化一次，跨语言内容哈希校验保留。

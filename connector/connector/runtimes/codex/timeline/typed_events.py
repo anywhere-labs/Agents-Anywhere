@@ -59,6 +59,7 @@ from connector.runtimes.codex.timeline.identity import (
     uses_turn_position_identity,
 )
 from connector.runtimes.codex.timeline.projection import CodexTimelineProjection
+from connector.runtimes.codex.timeline.web_search import web_search_values
 
 
 def timeline_projection_from_sdk_event(
@@ -294,14 +295,18 @@ def timeline_projection_from_thread_item(
             ),
         )
     if isinstance(root, WebSearchThreadItem):
+        query, action = web_search_values(
+            root.query,
+            root.action.root.type if root.action is not None else None,
+        )
         return CodexTimelineProjection(
             native_id=root.id,
             raw_type="webSearch",
             status=event_status,
             role="tool",
             turn_id=turn_id,
-            message=root.query,
-            arguments=web_search_action_value(root),
+            message=query,
+            arguments=action,
         )
     if isinstance(root, FileChangeThreadItem):
         return CodexTimelineProjection(
@@ -431,12 +436,6 @@ def collab_agent_tool_output(states: dict[str, CollabAgentState]) -> dict[str, o
         }
         for agent_id, state in states.items()
     }
-
-
-def web_search_action_value(item: WebSearchThreadItem) -> object | None:
-    if item.action is None:
-        return None
-    return item.action.root.type
 
 
 def user_input_text(items: Sequence[UserInput]) -> str | None:

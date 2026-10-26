@@ -1,0 +1,69 @@
+{
+  "models": [
+    {
+      "default": false,
+      "description": null,
+      "displayName": "deepseek-v4\uff08DeepSeek\uff09",
+      "group": {
+        "displayName": "DeepSeek",
+        "id": "deepseek",
+        "itemDisplayName": "deepseek-v4"
+      },
+      "id": "deepseek/deepseek-v4",
+      "metadata": {
+        "enabled": true,
+        "model": "deepseek-v4",
+        "modelName": "deepseek-v4",
+        "provider": "deepseek",
+        "providerName": "DeepSeek",
+        "reasoningEffort": null
+      },
+      "reasoningItems": [],
+      "selectionId": "dsh:model:WyJkZWVwc2VlayIsImRlZXBzZWVrLXY0IixudWxsXQ"
+    },
+    {
+      "default": false,
+      "description": null,
+      "displayName": "deepseek-v4-flash",
+      "group": {
+        "displayName": "DeepSeek",
+        "id": "deepseek",
+        "itemDisplayName": "deepseek-v4-flash"
+      },
+      "id": "deepseek/deepseek-v4-flash",
+      "metadata": {
+        "enabled": true,
+        "model": "deepseek-v4-flash",
+        "modelName": "deepseek-v4-flash",
+        "provider": "deepseek",
+        "providerName": "DeepSeek",
+        "reasoningEffort": null
+      },
+      "reasoningItems": [],
+      "selectionId": "dsh:model:WyJkZWVwc2VlayIsImRlZXBzZWVrLXY0LWZsYXNoIixudWxsXQ"
+    },
+    {
+      "default": false,
+      "description": null,
+      "displayName": "deepseek-v4\uff08Relay A\uff09",
+      "group": {
+        "displayName": "Relay A",
+        "id": "relay-a",
+        "itemDisplayName": "deepseek-v4"
+      },
+      "id": "relay-a/deepseek-v4",
+      "metadata": {
+        "enabled": true,
+        "model": "deepseek-v4",
+        "modelName": "deepseek-v4",
+        "provider": "relay-a",
+        "providerName": "Relay A",
+        "reasoningEffort": null
+      },
+      "reasoningItems": [],
+      "selectionId": "dsh:model:WyJyZWxheS1hIiwiZGVlcHNlZWstdjQiLG51bGxd"
+    }
+  ],
+  "revision": 7,
+  "runtime": "dsh"
+}

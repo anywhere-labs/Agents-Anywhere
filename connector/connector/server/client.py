@@ -15,6 +15,7 @@ from connector.core.config import ConnectorConfig
 from connector.core.preferences import read_local_preferences
 from connector.local import create_local_ops
 from connector.logging import logger
+from connector.operations.remote import RemoteOperations
 from connector.runtime_protocol import (
     RuntimeHostClient,
 )
@@ -140,6 +141,7 @@ class BackendRpcClient:
         )
         self._workspace_sync = WorkspaceSyncRunner(config, self.agent_runtime_supervisor, self._publish_workspace_inventory)
         self._workspace_connection_token = ""
+        self._remote_operations = RemoteOperations(self)
         self._runtime_sync_task: asyncio.Task[None] | None = None
 
     async def run_forever(self) -> None:
@@ -224,6 +226,7 @@ class BackendRpcClient:
             finally:
                 self._ingest.close()
                 await self._timeline_notifications.abort()
+            await self._remote_operations.close()
             ingest_flush_task.cancel()
             sync_state_flush_task.cancel()
             if self._runtime_sync_task is not None:
@@ -269,6 +272,7 @@ class BackendRpcClient:
                 self._publish_runtime_capabilities(request_session)
             )
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+            mesh_task = asyncio.create_task(self._remote_operations.run())
             workspace_task = asyncio.create_task(self._run_workspace_sync())
             recovery_task = asyncio.create_task(self._runtime_sync.reconnect_event_runtimes())
             reader_task = asyncio.create_task(self._read_backend_messages(ws, request_session))
@@ -287,13 +291,14 @@ class BackendRpcClient:
                     await heartbeat_task
                     raise ConnectorNetworkError("backend heartbeat stopped")
             finally:
+                mesh_task.cancel()
                 capabilities_task.cancel()
                 heartbeat_task.cancel()
                 workspace_task.cancel()
                 recovery_task.cancel()
                 reader_task.cancel()
                 await asyncio.gather(
-                    capabilities_task, heartbeat_task, recovery_task, reader_task, workspace_task, return_exceptions=True
+                    capabilities_task, heartbeat_task, recovery_task, reader_task, workspace_task, mesh_task, return_exceptions=True
                 )
                 await self._rpc.close_connection()
 
@@ -370,7 +375,7 @@ class BackendRpcClient:
         dispatcher = request_session or self._dispatcher
         async def dispatch(method: str, params: dict[str, Any]) -> Any:
             if method == "workspace.connection":
-                return {"connectionToken": self._workspace_connection_token}
+                return {"connectionToken": self._workspace_connection_token, "operationsProtocol": "1.0"}
             return await dispatcher.dispatch(method, params)
         self._rpc.start_request(message, dispatch)
 

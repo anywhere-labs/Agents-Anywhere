@@ -609,5 +609,13 @@ project_operations = Table(
     Column("request_id", Text, nullable=False), Column("request_json", Text, nullable=False),
     Column("status", Text, nullable=False), Column("result_json", Text),
     Column("created_at", Text, nullable=False), Column("updated_at", Text, nullable=False),
+    Column("execution_json", Text),
+    Column("execution_status", Text, nullable=False, server_default="reconciling"),
+    Column("dispatch_generation", Integer, nullable=False, server_default="0"),
+    Column("lease_until", BigInteger, nullable=False, server_default="0"),
+    Column("next_dispatch_at", BigInteger, nullable=False, server_default="0"),
+    Column("delivery_accepted", Integer, nullable=False, server_default="0"),
+    Column("result_received", Integer, nullable=False, server_default="0"),
+    Index("idx_project_operations_dispatch", "status", "next_dispatch_at", "lease_until"),
     UniqueConstraint("user_id", "request_id", name="uq_project_operation_request"),
 )

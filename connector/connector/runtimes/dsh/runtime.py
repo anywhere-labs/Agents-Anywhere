@@ -69,6 +69,64 @@ class DshRuntime(AgentRuntime):
     async def create_workspace(self, name: str, path: str, request_id: str) -> dict[str, Any]:
         return await self._request("createWorkspace", {"name": name, "path": path, "requestId": request_id})
 
+    async def execute_workspace_operation(self, request: dict[str, Any], *, recover: bool = False) -> dict[str, Any]:
+        from pydantic import BaseModel
+
+        from connector.mesh.hub import DSH_OPERATIONS_SERVICE
+        from connector.operations.models import OperationRecord, OperationRequest
+        class Params(BaseModel):
+            request: OperationRequest
+        class Lookup(BaseModel):
+            operationId: str
+        await self._ensure_client()
+        # Use the bridge client belonging to this runtime instance.
+        client = self._client
+        if client is None:
+            raise RuntimeUnavailableError("DSH bridge is unavailable")
+        features = (client.initialize_result or {}).get("features", {})
+        if features.get("workspaceOperations") != "1.0":
+            raise RuntimeUnsupportedError("请升级 DSH 插件以使用 MeshCall Operations 1.0")
+        record = await client.mesh.call_unary(DSH_OPERATIONS_SERVICE, "get",
+            Lookup(operationId=request["operationId"]), OperationRecord | None,
+            timeout=10, metadata=client.metadata)
+        if record is None:
+            if recover:
+                raise RuntimeUnavailableError("DSH receipt is missing; native outcome requires reconciliation")
+            record = await client.mesh.call_unary(DSH_OPERATIONS_SERVICE, "submit",
+                Params(request=OperationRequest.model_validate(request)), OperationRecord,
+                timeout=10, metadata=client.metadata, idempotency_key=OperationRequest.model_validate(request).fingerprint())
+        while record.status not in {"succeeded", "failed", "unknown"}:
+            await asyncio.sleep(1)
+            record = await client.mesh.call_unary(DSH_OPERATIONS_SERVICE, "get",
+                Lookup(operationId=request["operationId"]), OperationRecord | None,
+                timeout=10, metadata=client.metadata)
+            if record is None:
+                raise RuntimeUnavailableError("DSH operation receipt disappeared")
+        if record.request.model_dump() != OperationRequest.model_validate(request).model_dump():
+            raise RuntimeInvalidRequestError("DSH operation source mismatch")
+        if record.status == "failed":
+            raise RuntimeInvalidRequestError(record.message or "DSH operation failed")
+        if record.status != "succeeded" or record.result is None:
+            raise RuntimeUnavailableError(record.message or "DSH native result unknown")
+        return record.result.model_dump()
+
+    async def ack_workspace_operation(self, request: dict[str, Any]) -> None:
+        from pydantic import BaseModel
+
+        from connector.mesh.hub import DSH_OPERATIONS_SERVICE
+        from connector.operations.models import OperationRecord, OperationRequest
+        class Lookup(BaseModel):
+            operationId: str
+        await self._ensure_client()
+        client = self._client
+        if client is None:
+            raise RuntimeUnavailableError("DSH bridge is unavailable")
+        record = await client.mesh.call_unary(DSH_OPERATIONS_SERVICE, "ackResult",
+            Lookup(operationId=request["operationId"]), OperationRecord | None,
+            timeout=10, metadata=client.metadata)
+        if record is None or not record.resultReceived or record.request.fingerprint() != OperationRequest.model_validate(request).fingerprint():
+            raise RuntimeInvalidRequestError("DSH acknowledgement source mismatch")
+
     async def workspace_inventory(self, full: bool = True) -> dict[str, Any] | None:
         first = await self._request("listWorkspaces", {"full": full})
         second = await self._request("listWorkspaces", {"full": full})
@@ -387,8 +445,28 @@ class DshRuntime(AgentRuntime):
         if set(options) - {"agentPreset", "nativeProjectId"}:
             raise RuntimeInvalidRequestError("Unsupported DSH creation option")
         preset = options.get("agentPreset", self.config.values.get("defaultAgentPreset"))
+        if preset is None:
+            preset = await self._initial_agent_preset()
         return await self._send_text("createAndStartSession", session_id, None, content, cwd, attachments, client_message_id,
                                      selections=selections, agent_preset=preset, native_project_id=options.get("nativeProjectId"))
+
+    async def _initial_agent_preset(self) -> str | None:
+        """The plugin's declared initial mode when this Runtime has none saved.
+
+        ``defaultAgentPreset`` is only filled in when the Runtime config was
+        validated while DSH was reachable. The plugin owns the initial rule
+        (the mode DSH itself uses for new sessions, when it is loadable), so
+        read it from the catalog the config form uses; when it declares none,
+        the plugin asks the user to choose a mode.
+        """
+
+        try:
+            catalog = _object(await self._request("listAgentPresets"))
+        except RuntimeUnsupportedError:
+            return None
+        field = catalog.get("configField")
+        default = field.get("default") if isinstance(field, dict) else None
+        return default if isinstance(default, str) and default else None
 
     async def start_turn(
         self, session_id: str, external_session_id: str | None, content: str,

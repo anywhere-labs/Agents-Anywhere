@@ -252,7 +252,7 @@ class ProjectRepositoryMixin:
 
     async def begin_project_operation(self, *, user_id: str, connector_id: str,
                                       runtime: str, runtime_id: str, request_id: str,
-                                      request: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+                                      request: dict[str, Any], execution: dict[str, Any] | None = None) -> tuple[dict[str, Any], bool]:
         encoded = json.dumps(request, sort_keys=True)
         async with self._engine.begin() as conn:
             # Serialize receipts per user; concurrent retries cannot execute twice.
@@ -288,9 +288,76 @@ class ProjectRepositoryMixin:
                     return recoverable[0], False
             value = {'id': f"pop_{secrets.token_urlsafe(16)}", 'user_id': user_id, 'connector_id': connector_id,
                          'runtime': runtime, 'runtime_id': runtime_id, 'request_id': request_id, 'request_json': encoded,
-                         'status': "pending", 'result_json': None, 'created_at': utc_now(), 'updated_at': utc_now()}
+                         'status': "pending", 'execution_status': 'queued' if execution is not None else 'reconciling', 'result_json': None, 'created_at': utc_now(), 'updated_at': utc_now()}
+            if execution is not None:
+                pending = (await conn.execute(select(func.count()).select_from(project_operations).where(
+                    project_operations.c.connector_id == connector_id,
+                    project_operations.c.status.in_(["pending", "unknown"]),
+                ))).scalar_one()
+                if pending >= 256:
+                    raise ValueError("工作设备未完成操作已达到 256 个，请先核对已有操作")
+                value["execution_json"] = json.dumps({**execution, "operationId": value["id"]})
             await conn.execute(insert(project_operations).values(**value))
             return value, True
+
+    async def operation_server_identity(self) -> str:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from agent_server.infra.db import instance_settings as settings
+        async with self._engine.begin() as conn:
+            await conn.execute(pg_insert(settings).values(key="mesh-operation-server-id",
+                value=secrets.token_hex(32), updated_at=utc_now()).on_conflict_do_nothing(index_elements=[settings.c.key]))
+            return str((await conn.execute(select(settings.c.value).where(
+                settings.c.key == "mesh-operation-server-id"))).scalar_one())
+
+    async def claim_mesh_operations(self, *, limit: int = 16) -> list[dict[str, Any]]:
+        import time
+        now = int(time.time())
+        async with self._engine.begin() as conn:
+            rows = (await conn.execute(select(project_operations).where(
+                or_(project_operations.c.status.in_(["pending", "unknown"]),
+                    and_(project_operations.c.status.in_(["succeeded", "failed"]),
+                         project_operations.c.delivery_accepted == 1, project_operations.c.result_received == 0)),
+                project_operations.c.execution_status != "preparing",
+                project_operations.c.lease_until < now,
+                project_operations.c.next_dispatch_at <= now,
+            ).order_by(project_operations.c.next_dispatch_at).limit(limit).with_for_update(skip_locked=True))).mappings().all()
+            claimed = []
+            for row in rows:
+                generation = row["dispatch_generation"] + 1
+                await conn.execute(update(project_operations).where(project_operations.c.id == row["id"]).values(
+                    dispatch_generation=generation, lease_until=now + 60, next_dispatch_at=now + 5))
+                claimed.append({**dict(row), "dispatch_generation": generation})
+            return claimed
+
+    async def acknowledge_mesh_result(self, operation_id: str, generation: int) -> None:
+        async with self._engine.begin() as conn:
+            await conn.execute(update(project_operations).where(project_operations.c.id == operation_id,
+                project_operations.c.dispatch_generation == generation,
+                project_operations.c.status.in_(["succeeded", "failed"])).values(result_received=1, lease_until=0))
+
+    async def finish_mesh_attempt(self, operation_id: str, generation: int, *,
+                                  execution_status: str, result: dict[str, Any] | None = None,
+                                  accepted: bool = False, message: str | None = None) -> None:
+        import time
+        async with self._engine.begin() as conn:
+            row = (await conn.execute(select(project_operations).where(
+                project_operations.c.id == operation_id, project_operations.c.dispatch_generation == generation,
+                project_operations.c.status.in_(["pending", "unknown"]),
+            ).with_for_update())).mappings().first()
+            if row is None:
+                return
+            previous = json.loads(row["result_json"] or "{}")
+            value = result if result is not None else previous
+            if message:
+                value = {**value, "message": message}
+            if previous.get("clientAcknowledged"):
+                value["clientAcknowledged"] = True
+            public = execution_status if execution_status in {"succeeded", "failed", "unknown"} else "pending"
+            # An unknown attempt cannot erase evidence of device reception.
+            await conn.execute(update(project_operations).where(project_operations.c.id == operation_id).values(
+                status=public, execution_status=execution_status, result_json=json.dumps(value),
+                delivery_accepted=int(accepted or bool(row["delivery_accepted"])), lease_until=0,
+                next_dispatch_at=int(time.time()) + (30 if execution_status == "unknown" else 5), updated_at=utc_now()))
 
     async def finish_project_operation(self, operation_id: str, status: str, result: dict[str, Any]) -> None:
         # Client receipt acknowledgement is Server-owned, never a Runtime result field.

@@ -1,3 +1,4 @@
+import { assertSessionCreationAccepted } from "@/lib/api/session-creation-result";
 import type { ProjectSyncTranslator } from "./project-workspaces";
 import { ApiClient, apiClient, apiPath } from "@/lib/api";
 import { shouldAuthorizeDownloadUrl } from "@/lib/api/download-auth";
@@ -263,11 +264,13 @@ export class DashboardApi {
     return this.client.post<SessionCreateResponse>("/sessions", body, { token });
   }
 
-  createAndStartSession(
+  async createAndStartSession(
     token: string,
     body: SessionCreateAndStartRequest,
   ): Promise<SessionCreateResponse> {
-    return this.client.post<SessionCreateResponse>("/sessions/create-and-start", body, { token });
+    const response = await this.client.post<SessionCreateResponse>("/sessions/create-and-start", body, { token });
+    assertSessionCreationAccepted(response);
+    return response;
   }
 
   patchSession(

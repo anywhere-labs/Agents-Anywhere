@@ -106,3 +106,15 @@ yarn dist:win   # 在 Windows 构建 x64 NSIS 安装包
 ```
 
 签名、公证、架构选择及缓存重试见 [Desktop Packaging](../desktop-workbench/README.md#packaging)。凭据从环境或安全存储注入，不能提交到源码或文档。Android 的命令和签名边界见 [Android README](../android/README.md)。发布步骤见 [2.0.0 发布说明](releases/2.0.0.md)。
+
+### MeshCall 创建链路（2.3）
+
+Server 应通过 `uv run python -m agent_server.main` 启动，或使用仓库联调脚本。
+该入口在 API worker 外管理一个共享 Router；直接启动裸 uvicorn 不会启动 Router，
+创建接口将返回通道不可用。Router 不公开监听，远程连接使用已有 HTTP 服务的同源
+`/api/v2/connector/mesh` WebSocket 路径；反向代理需允许该路径升级 WebSocket。
+
+重新生成操作契约和客户端：在根目录运行
+`PYTHONPATH=connector connector/.venv/bin/python connector/tools/generate_operations.py`。
+MeshCall 固定 0.3.0；该版本 Python CLI 对当前契约返回 written:null，因此 Python
+模型和薄客户端由同一脚本确定性生成，TypeScript 客户端使用官方生成器。

@@ -13,6 +13,8 @@ export interface SourceState {
   observedAt: string
 }
 
+export const MAX_RETAINED_LOGS = 8
+
 /** The official query includes persisted sessions; absence from memory is not archival. */
 export class NativeSessionSource {
   archived: Set<string>
@@ -40,6 +42,22 @@ export class NativeSessionSource {
     cached.observation[Symbol.dispose]()
   }
 
+  release(id: string): void {
+    this.evict(id)
+  }
+
+  get retainedLogCount(): number {
+    return this.logs.size
+  }
+
+  private trimLogs(max = MAX_RETAINED_LOGS): void {
+    while (this.logs.size > max) {
+      const oldest = this.logs.keys().next().value
+      if (oldest === undefined) break
+      this.evict(oldest)
+    }
+  }
+
   close(): void {
     this.closed = true
     for (const id of this.logs.keys()) this.evict(id)
@@ -59,6 +77,10 @@ export class NativeSessionSource {
     const revision = await this.freshRevisionOf(id)
     let cached = this.logs.get(id)
     if (cached && cached.revision !== revision) { this.evict(id); cached = undefined }
+    if (cached) {
+      this.logs.delete(id)
+      this.logs.set(id, cached)
+    }
     let observation = cached?.observation
     if (!observation) observation = await this.ctx.sessionQuery.observeSession(id, { projectionMode: 'none' })
     try {
@@ -68,7 +90,9 @@ export class NativeSessionSource {
         events: [...observation.events] }
       if (!cached && !this.closed && actualRevision !== undefined) {
         // Do not associate a newer live cut with an older event cursor.
+        this.logs.delete(id)
         this.logs.set(id, { revision: actualRevision, observation: observation.retain() })
+        this.trimLogs()
       }
       return log
     } finally { if (!cached) observation[Symbol.dispose]() }
@@ -174,6 +198,7 @@ export class NativeSessionSource {
           this.emptyLogs.delete(id)
         } else if (revision !== undefined) {
           this.emptyLogs.set(id, revision)
+          this.evict(id)
         }
       }
     }

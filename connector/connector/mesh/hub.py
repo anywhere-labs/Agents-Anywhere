@@ -37,6 +37,7 @@ CONTROL_SERVICE = "aa.local.v2.Control"
 LOGS_SERVICE = "aa.local.v2.Logs"
 DSH_SYNC_SERVICE = "aa.dsh.v2.Sync"
 DSH_BRIDGE_SERVICE = "aa.dsh.v2.Bridge"
+DSH_OPERATIONS_SERVICE = "aa.dsh.v2.Operations"
 REGISTRY_SERVICE = "meshcall.router.v1.Registry"
 
 HOST_ROLE = "host"
@@ -47,7 +48,7 @@ DSH_BRIDGE_ROLE = "dsh-bridge"
 ROLE_PERMISSIONS: dict[str, dict[str, list[str]]] = {
     CONNECTOR_ROLE: {
         "register": [CONTROL_SERVICE, LOGS_SERVICE, DSH_SYNC_SERVICE],
-        "call": [f"{DSH_BRIDGE_SERVICE}/*", f"{REGISTRY_SERVICE}/*"],
+        "call": [f"{DSH_BRIDGE_SERVICE}/*", f"{DSH_OPERATIONS_SERVICE}/*", f"{REGISTRY_SERVICE}/*"],
     },
     # The Registry lets `meshcall router inspect` / `call` describe the services.
     HOST_ROLE: {
@@ -55,7 +56,7 @@ ROLE_PERMISSIONS: dict[str, dict[str, list[str]]] = {
         "call": [f"{CONTROL_SERVICE}/*", f"{LOGS_SERVICE}/*", f"{REGISTRY_SERVICE}/*"],
     },
     DSH_BRIDGE_ROLE: {
-        "register": [DSH_BRIDGE_SERVICE],
+        "register": [DSH_BRIDGE_SERVICE, DSH_OPERATIONS_SERVICE],
         "call": [f"{DSH_SYNC_SERVICE}/*", *[f"{LOGS_SERVICE}/{method}" for method in ("write", "read", "tail")]],
     },
 }

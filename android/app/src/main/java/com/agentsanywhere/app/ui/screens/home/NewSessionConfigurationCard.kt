@@ -21,8 +21,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.agentsanywhere.app.api.RemoteRuntimeModelGroup
+import com.agentsanywhere.app.feature.sessiondetail.rowLabel
+import com.agentsanywhere.app.feature.sessiondetail.sectionByModelGroup
 import com.agentsanywhere.app.ui.designsystem.AADropdownMenu
 import com.agentsanywhere.app.ui.designsystem.AADropdownMenuItem
+import com.agentsanywhere.app.ui.designsystem.AADropdownMenuLabel
 import com.agentsanywhere.app.ui.designsystem.DownGlyph
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
@@ -41,6 +45,8 @@ internal data class NewSessionConfigurationOption(
     val label: String,
     val description: String? = null,
     val enabled: Boolean = true,
+    /** Model provider group; drives section headers when the options span 2+ groups. */
+    val group: RemoteRuntimeModelGroup? = null,
 )
 
 internal data class NewSessionConfigurationField(
@@ -178,14 +184,17 @@ private fun NewSessionConfigurationMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
     ) {
-        options.forEach { option ->
-            AADropdownMenuItem(
-                text = option.label,
-                selected = option.id == selectedId,
-                enabled = option.enabled,
-                supportingText = option.description,
-                onClick = { onSelect(option.id); onDismiss() },
-            )
+        options.sectionByModelGroup(NewSessionConfigurationOption::group).forEach { section ->
+            section.header?.let { AADropdownMenuLabel(it) }
+            section.items.forEach { option ->
+                AADropdownMenuItem(
+                    text = section.rowLabel(option.label, option.group),
+                    selected = option.id == selectedId,
+                    enabled = option.enabled,
+                    supportingText = option.description,
+                    onClick = { onSelect(option.id); onDismiss() },
+                )
+            }
         }
     }
 }

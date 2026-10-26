@@ -54,6 +54,15 @@ data class RemoteRuntimeModel(
     val metadata: Map<String, Any?>,
     val enabled: Boolean = true,
     val disabledReason: String? = null,
+    val group: RemoteRuntimeModelGroup? = null,
+)
+
+/** Provider / relay that routes a model (DSH only); Codex and Claude send null or omit it. */
+data class RemoteRuntimeModelGroup(
+    val id: String,
+    val displayName: String,
+    /** Row text under this group's header, without the provider the header shows. */
+    val itemDisplayName: String? = null,
 )
 
 data class RemoteRuntimeReasoning(
@@ -142,6 +151,17 @@ private fun JSONObject.parseRemoteRuntimeModel(): RemoteRuntimeModel {
         metadata = metadata,
         enabled = catalogItemEnabled(metadata),
         disabledReason = catalogItemDisabledReason(metadata),
+        group = optJSONObject("group")?.parseRemoteRuntimeModelGroup(),
+    )
+}
+
+private fun JSONObject.parseRemoteRuntimeModelGroup(): RemoteRuntimeModelGroup? {
+    val id = optNullableString("id") ?: return null
+    val displayName = optNullableString("displayName") ?: return null
+    return RemoteRuntimeModelGroup(
+        id = id,
+        displayName = displayName,
+        itemDisplayName = optNullableString("itemDisplayName"),
     )
 }
 

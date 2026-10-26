@@ -18,6 +18,11 @@ export class BridgeError extends Error {
   }
 }
 
+/** Only thrown before any native creation intent or message admission. */
+export class CreationNotStartedError extends BridgeError {
+  constructor(error: BridgeError) { super(error.code, error.message, error.retryable) }
+}
+
 export function publicError(error: unknown): BridgeError {
   if (error instanceof BridgeError) return error
   const nativeCode = record(error).code

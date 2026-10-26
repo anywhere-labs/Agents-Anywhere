@@ -14,6 +14,7 @@ import {
   DrawerTrigger,
 } from "@/components/ui/drawer"
 import { Separator } from "@/components/ui/separator"
+import { groupModelOptions, modelSectionRows, type ModelOptionGroup } from "@/components/session/catalog-selection"
 import { cn } from "@/lib/utils"
 
 export type SelectionOption = {
@@ -26,6 +27,7 @@ export type SelectionOption = {
 }
 
 export type ModelSelectionOption = SelectionOption & {
+  group?: ModelOptionGroup | null
   reasoningItems: SelectionOption[]
 }
 
@@ -80,6 +82,54 @@ export function SelectionSettingsDrawer({
     if (!nextOpen) setExpandedModelId(null)
   }
 
+  const renderModel = (model: ModelSelectionOption) => {
+    const hasReasoning = model.reasoningItems.length > 0
+    const expanded = expandedModelId === model.id
+    return (
+      <div key={model.id} className="flex flex-col gap-1">
+        <SelectionRow
+          selected={selectedModel === model.id}
+          label={model.label}
+          helper={model.enabled === false ? model.disabledReason ?? undefined : model.description ?? undefined}
+          disabled={modelDisabled || model.enabled === false}
+          trailing={hasReasoning
+            ? expanded
+              ? <ChevronDown className="size-4" />
+              : <ChevronRight className="size-4" />
+            : null}
+          onClick={() => {
+            if (hasReasoning) {
+              setExpandedModelId(expanded ? null : model.id)
+              return
+            }
+            onModelChange(model.id, "")
+            setDrawerOpen(false)
+          }}
+        />
+        {expanded ? (
+          <div className="ml-7 flex flex-col gap-1 border-l border-border pl-2">
+            <p className="px-3 py-1 text-xs font-medium text-muted-foreground">
+              {reasoningLabel}
+            </p>
+            {model.reasoningItems.map((reasoning) => (
+              <SelectionRow
+                key={reasoning.id}
+                selected={selectedModel === model.id && selectedReasoning === reasoning.id}
+                label={reasoning.label}
+                helper={reasoning.enabled === false ? reasoning.disabledReason ?? undefined : reasoning.description ?? undefined}
+                disabled={modelDisabled || reasoningDisabled || reasoning.enabled === false}
+                onClick={() => {
+                  onModelChange(model.id, reasoning.id)
+                  setDrawerOpen(false)
+                }}
+              />
+            ))}
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+
   return (
     <Drawer open={open} onOpenChange={setDrawerOpen} direction="bottom">
       <DrawerTrigger asChild>
@@ -102,53 +152,23 @@ export function SelectionSettingsDrawer({
         <div className="flex max-h-[58vh] flex-col gap-5 overflow-y-auto px-4 pb-4">
           {modelItems.length > 0 ? (
             <SelectionSection title={modelLabel}>
-              {modelItems.map((model) => {
-                const hasReasoning = model.reasoningItems.length > 0
-                const expanded = expandedModelId === model.id
-                return (
-                  <div key={model.id} className="flex flex-col gap-1">
-                    <SelectionRow
-                      selected={selectedModel === model.id}
-                      label={model.label}
-                      helper={model.enabled === false ? model.disabledReason ?? undefined : model.description ?? undefined}
-                      disabled={modelDisabled || model.enabled === false}
-                      trailing={hasReasoning
-                        ? expanded
-                          ? <ChevronDown className="size-4" />
-                          : <ChevronRight className="size-4" />
-                        : null}
-                      onClick={() => {
-                        if (hasReasoning) {
-                          setExpandedModelId(expanded ? null : model.id)
-                          return
-                        }
-                        onModelChange(model.id, "")
-                        setDrawerOpen(false)
-                      }}
-                    />
-                    {expanded ? (
-                      <div className="ml-7 flex flex-col gap-1 border-l border-border pl-2">
-                        <p className="px-3 py-1 text-xs font-medium text-muted-foreground">
-                          {reasoningLabel}
-                        </p>
-                        {model.reasoningItems.map((reasoning) => (
-                          <SelectionRow
-                            key={reasoning.id}
-                            selected={selectedModel === model.id && selectedReasoning === reasoning.id}
-                            label={reasoning.label}
-                            helper={reasoning.enabled === false ? reasoning.disabledReason ?? undefined : reasoning.description ?? undefined}
-                            disabled={modelDisabled || reasoningDisabled || reasoning.enabled === false}
-                            onClick={() => {
-                              onModelChange(model.id, reasoning.id)
-                              setDrawerOpen(false)
-                            }}
-                          />
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                )
-              })}
+              {groupModelOptions(modelItems).map((section) => section.displayName ? (
+                <div
+                  key={`group:${section.id}`}
+                  role="group"
+                  aria-label={section.displayName}
+                  className="flex flex-col gap-1"
+                >
+                  <p className="px-3 py-1 text-xs font-medium text-muted-foreground">
+                    {section.displayName}
+                  </p>
+                  {modelSectionRows(section).map(renderModel)}
+                </div>
+              ) : (
+                <React.Fragment key="ungrouped">
+                  {section.items.map(renderModel)}
+                </React.Fragment>
+              ))}
             </SelectionSection>
           ) : null}
 

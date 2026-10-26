@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agent_server.core.models import (
     ArchiveAllRequest,
@@ -18,6 +17,7 @@ from agent_server.core.models import (
     ProjectResponse,
     ProjectSessionListResponse,
 )
+from agent_server.core.operations import OperationRequest
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
     current_user_id,
@@ -73,6 +73,7 @@ async def _operation_response(store: Store, operation: dict, user_id: str) -> Pr
 
 @router.post("", response_model=ProjectCreateResponse)
 async def create_project(
+    request: Request,
     payload: ProjectCreateRequest,
     user_id: str = Depends(current_user_id),
     store: Store = Depends(get_store),
@@ -103,29 +104,27 @@ async def create_project(
     if not await manager.is_online(payload.connectorId):
         raise HTTPException(409, detail={"code": "connector_offline", "message": "工作设备离线，无法创建项目"})
     try:
-        operation, created = await store.begin_project_operation(user_id=user_id,
+        connection, _ = await manager.request_bound(payload.connectorId, "workspace.connection", {}, timeout=5)
+        if connection.get("operationsProtocol") != "1.0":
+            raise HTTPException(426, detail={"code": "upgrade_required", "message": "请升级 Connector 以使用 MeshCall 创建链路"})
+        client, _ = await request.app.state.mesh_operations.client(payload.connectorId)
+        await client.ping()
+        config = await manager.request(payload.connectorId, "runtime.config", {
+            "runtime": payload.runtime, "runtimeId": payload.runtimeId}, timeout=5)
+        envelope = OperationRequest(operationId="pending",
+            server=await store.operation_server_identity(), userId=user_id,
+            connectorId=payload.connectorId, runtimeId=payload.runtimeId, runtime=payload.runtime,
+            configRevision=config["config"]["revision"], name=payload.name, path=payload.workspacePath)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, detail="MeshCall 创建通道暂不可用，请确认配套组件已启动") from exc
+    try:
+        operation, _ = await store.begin_project_operation(user_id=user_id,
             connector_id=payload.connectorId, runtime=payload.runtime, runtime_id=payload.runtimeId,
-            request_id=payload.requestId, request=payload.model_dump())
+            request_id=payload.requestId, request=payload.model_dump(), execution=envelope.model_dump())
     except ValueError as exc:
         raise HTTPException(409, detail=str(exc)) from exc
-    if created:
-        try:
-            result = await manager.request(payload.connectorId, "project.create", {
-                "runtime": payload.runtime, "runtimeId": payload.runtimeId, "name": payload.name,
-                "path": payload.workspacePath, "requestId": operation["id"],
-            }, timeout=30)
-            if not isinstance(result, dict) or not result.get("nativeProjectId"):
-                raise ValueError("Native creation did not return a project identity")
-            await store.finish_project_operation(operation["id"], "succeeded", result)
-        except ConnectorRpcError as exc:
-            await store.finish_project_operation(operation["id"],
-                "failed" if exc.code in {"runtime_invalid_request", "runtime_unsupported"} else "unknown",
-                {"message": exc.message})
-        except (TimeoutError, ConnectorOfflineError, ValueError):
-            # A timeout is not evidence that the native mutation failed. Repeated
-            # request IDs return this receipt rather than issuing another create.
-            await store.finish_project_operation(operation["id"], "unknown", {"message": "原生结果尚未确认，请稍后核对"})
-        operation = await store.get_project_operation(operation["id"], user_id=user_id)
     return await _operation_response(store, operation, user_id)
 
 
@@ -158,26 +157,6 @@ async def project_operation(operation_id: str, user_id: str = Depends(current_us
         operation = await store.get_project_operation(operation_id, user_id=user_id)
     except KeyError:
         raise HTTPException(404, detail="operation not found") from None
-    now = datetime.now(UTC)
-    if operation["status"] == "pending" and (now - datetime.fromisoformat(operation["created_at"].replace("Z", "+00:00"))).total_seconds() > 30:
-        await store.finish_project_operation(operation_id, "unknown", {"message": "原生结果尚未确认，请稍后核对"})
-        operation = await store.get_project_operation(operation_id, user_id=user_id)
-    poll_age = (now - datetime.fromisoformat(operation["updated_at"].replace("Z", "+00:00"))).total_seconds()
-    if operation["status"] in {"pending", "unknown"} and poll_age >= 1 and await manager.is_online(operation["connector_id"]):
-        try:
-            receipt = await manager.request(operation["connector_id"], "project.operation", {
-                "runtime": operation["runtime"], "runtimeId": operation["runtime_id"], "requestId": operation_id,
-            }, timeout=5)
-            if receipt.get("status") == "succeeded" and receipt.get("result", {}).get("nativeProjectId"):
-                await store.finish_project_operation(operation_id, "succeeded", receipt["result"])
-                operation = await store.get_project_operation(operation_id, user_id=user_id)
-            elif receipt.get("status") == "failed":
-                await store.finish_project_operation(operation_id, "failed", receipt.get("result", {}))
-                operation = await store.get_project_operation(operation_id, user_id=user_id)
-            else:
-                await store.finish_project_operation(operation_id, operation["status"], json.loads(operation["result_json"] or "{}"))
-        except (TimeoutError, ConnectorOfflineError, ConnectorRpcError):
-            pass
     return await _operation_response(store, operation, user_id)
 
 

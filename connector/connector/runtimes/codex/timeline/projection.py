@@ -51,6 +51,7 @@ from connector.runtimes.codex.timeline.raw_item import (
     timeline_raw_status,
     timeline_raw_type,
 )
+from connector.runtimes.codex.timeline.web_search import web_search_values
 
 
 @dataclass(frozen=True, slots=True)
@@ -434,6 +435,13 @@ def timeline_projection_from_event(
 def timeline_projection_from_raw(raw: Mapping[str, Any]) -> CodexTimelineProjection:
     raw_dict = dict(raw)
     raw_type = timeline_raw_type(raw_dict)
+    search_query, search_action = (
+        web_search_values(
+            raw_dict.get("query", raw_dict.get("message")), raw_dict.get("action")
+        )
+        if raw_type == "webSearch"
+        else (None, None)
+    )
     return CodexTimelineProjection(
         native_id=native_item_id(raw_dict),
         raw_type=raw_type,
@@ -444,7 +452,11 @@ def timeline_projection_from_raw(raw: Mapping[str, Any]) -> CodexTimelineProject
         or user_message_text_from_raw(raw_dict, raw_type)
         or text_from_value(raw_dict),
         input_value=raw_dict.get("input"),
-        message=first_string_from_mapping(raw_dict, "message"),
+        message=(
+            search_query
+            if raw_type == "webSearch"
+            else first_string_from_mapping(raw_dict, "message")
+        ),
         name=(
             subagent_activity_native_action(
                 first_string_from_mapping(raw_dict, "kind", "activityKind")
@@ -454,7 +466,9 @@ def timeline_projection_from_raw(raw: Mapping[str, Any]) -> CodexTimelineProject
         ),
         server=first_string_from_mapping(raw_dict, "server"),
         arguments=(
-            collab_agent_arguments_from_raw(raw_dict)
+            search_action
+            if raw_type == "webSearch"
+            else collab_agent_arguments_from_raw(raw_dict)
             if raw_type == "collabAgentToolCall"
             else subagent_activity_arguments_from_raw(raw_dict)
             if raw_type in {"SubAgentActivityThreadItem", "subAgentActivity"}

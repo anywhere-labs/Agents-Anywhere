@@ -1,0 +1,783 @@
+{
+  "protocol": "meshcall/1",
+  "services": [
+    {
+      "name": "aa.remote.v1.Operations",
+      "version": "1",
+      "source_module": "connector.operations.service",
+      "source_qualname": "OperationsService",
+      "balance": {
+        "kind": "round_robin",
+        "key": null
+      },
+      "description": "Persist, execute and reconcile runtime operations.",
+      "targeted": true,
+      "methods": [
+        {
+          "name": "ping",
+          "stream": "unary",
+          "request": {
+            "module": "connector.operations.service",
+            "qualname": "OperationsServicePingRequest",
+            "schema": {
+              "properties": {},
+              "title": "OperationsServicePingRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [],
+          "response": {
+            "module": "connector.operations.models",
+            "qualname": "ProtocolInfo",
+            "schema": {
+              "properties": {
+                "protocolVersion": {
+                  "const": "1.0",
+                  "default": "1.0",
+                  "title": "Protocolversion",
+                  "type": "string"
+                }
+              },
+              "title": "ProtocolInfo",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Check the registered operations protocol without reading business data.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": true,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "submit",
+          "stream": "unary",
+          "request": {
+            "module": "connector.operations.service",
+            "qualname": "OperationsServiceSubmitRequest",
+            "schema": {
+              "$defs": {
+                "OperationRequest": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "operationId": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Operationid",
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "workspace.create",
+                      "default": "workspace.create",
+                      "title": "Type",
+                      "type": "string"
+                    },
+                    "server": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "title": "Server",
+                      "type": "string"
+                    },
+                    "userId": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Userid",
+                      "type": "string"
+                    },
+                    "connectorId": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Connectorid",
+                      "type": "string"
+                    },
+                    "runtimeId": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Runtimeid",
+                      "type": "string"
+                    },
+                    "runtime": {
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "title": "Runtime",
+                      "type": "string"
+                    },
+                    "configRevision": {
+                      "minimum": 0,
+                      "title": "Configrevision",
+                      "type": "integer"
+                    },
+                    "name": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "title": "Name",
+                      "type": "string"
+                    },
+                    "path": {
+                      "maxLength": 8192,
+                      "minLength": 1,
+                      "title": "Path",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "operationId",
+                    "server",
+                    "userId",
+                    "connectorId",
+                    "runtimeId",
+                    "runtime",
+                    "configRevision",
+                    "name",
+                    "path"
+                  ],
+                  "title": "OperationRequest",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/OperationRequest"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "OperationsServiceSubmitRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.operations.models",
+            "qualname": "OperationRecord",
+            "schema": {
+              "$defs": {
+                "OperationRequest": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "operationId": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Operationid",
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "workspace.create",
+                      "default": "workspace.create",
+                      "title": "Type",
+                      "type": "string"
+                    },
+                    "server": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "title": "Server",
+                      "type": "string"
+                    },
+                    "userId": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Userid",
+                      "type": "string"
+                    },
+                    "connectorId": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Connectorid",
+                      "type": "string"
+                    },
+                    "runtimeId": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Runtimeid",
+                      "type": "string"
+                    },
+                    "runtime": {
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "title": "Runtime",
+                      "type": "string"
+                    },
+                    "configRevision": {
+                      "minimum": 0,
+                      "title": "Configrevision",
+                      "type": "integer"
+                    },
+                    "name": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "title": "Name",
+                      "type": "string"
+                    },
+                    "path": {
+                      "maxLength": 8192,
+                      "minLength": 1,
+                      "title": "Path",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "operationId",
+                    "server",
+                    "userId",
+                    "connectorId",
+                    "runtimeId",
+                    "runtime",
+                    "configRevision",
+                    "name",
+                    "path"
+                  ],
+                  "title": "OperationRequest",
+                  "type": "object"
+                },
+                "OperationResult": {
+                  "properties": {
+                    "nativeProjectId": {
+                      "minLength": 1,
+                      "title": "Nativeprojectid",
+                      "type": "string"
+                    },
+                    "name": {
+                      "default": "",
+                      "title": "Name",
+                      "type": "string"
+                    },
+                    "roots": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "title": "Roots",
+                      "type": "array"
+                    },
+                    "identityKind": {
+                      "default": "native",
+                      "title": "Identitykind",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "nativeProjectId"
+                  ],
+                  "title": "OperationResult",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/OperationRequest"
+                },
+                "status": {
+                  "enum": [
+                    "queued",
+                    "accepted",
+                    "running",
+                    "reconciling",
+                    "succeeded",
+                    "failed",
+                    "unknown"
+                  ],
+                  "title": "Status",
+                  "type": "string"
+                },
+                "result": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/OperationResult"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "message": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Message"
+                },
+                "resultReceived": {
+                  "default": false,
+                  "title": "Resultreceived",
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "request",
+                "status"
+              ],
+              "title": "OperationRecord",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Persist reception and return before native execution finishes.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": false,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "get",
+          "stream": "unary",
+          "request": {
+            "module": "connector.operations.service",
+            "qualname": "OperationsServiceGetRequest",
+            "schema": {
+              "properties": {
+                "operationId": {
+                  "title": "Operationid",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "operationId"
+              ],
+              "title": "OperationsServiceGetRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "operationId"
+          ],
+          "response": {
+            "module": "types",
+            "qualname": "connector.operations.models.OperationRecord | None",
+            "schema": {
+              "$defs": {
+                "OperationRecord": {
+                  "properties": {
+                    "request": {
+                      "$ref": "#/$defs/OperationRequest"
+                    },
+                    "status": {
+                      "enum": [
+                        "queued",
+                        "accepted",
+                        "running",
+                        "reconciling",
+                        "succeeded",
+                        "failed",
+                        "unknown"
+                      ],
+                      "title": "Status",
+                      "type": "string"
+                    },
+                    "result": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/OperationResult"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null
+                    },
+                    "message": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Message"
+                    },
+                    "resultReceived": {
+                      "default": false,
+                      "title": "Resultreceived",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "request",
+                    "status"
+                  ],
+                  "title": "OperationRecord",
+                  "type": "object"
+                },
+                "OperationRequest": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "operationId": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Operationid",
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "workspace.create",
+                      "default": "workspace.create",
+                      "title": "Type",
+                      "type": "string"
+                    },
+                    "server": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "title": "Server",
+                      "type": "string"
+                    },
+                    "userId": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Userid",
+                      "type": "string"
+                    },
+                    "connectorId": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Connectorid",
+                      "type": "string"
+                    },
+                    "runtimeId": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Runtimeid",
+                      "type": "string"
+                    },
+                    "runtime": {
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "title": "Runtime",
+                      "type": "string"
+                    },
+                    "configRevision": {
+                      "minimum": 0,
+                      "title": "Configrevision",
+                      "type": "integer"
+                    },
+                    "name": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "title": "Name",
+                      "type": "string"
+                    },
+                    "path": {
+                      "maxLength": 8192,
+                      "minLength": 1,
+                      "title": "Path",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "operationId",
+                    "server",
+                    "userId",
+                    "connectorId",
+                    "runtimeId",
+                    "runtime",
+                    "configRevision",
+                    "name",
+                    "path"
+                  ],
+                  "title": "OperationRequest",
+                  "type": "object"
+                },
+                "OperationResult": {
+                  "properties": {
+                    "nativeProjectId": {
+                      "minLength": 1,
+                      "title": "Nativeprojectid",
+                      "type": "string"
+                    },
+                    "name": {
+                      "default": "",
+                      "title": "Name",
+                      "type": "string"
+                    },
+                    "roots": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "title": "Roots",
+                      "type": "array"
+                    },
+                    "identityKind": {
+                      "default": "native",
+                      "title": "Identitykind",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "nativeProjectId"
+                  ],
+                  "title": "OperationResult",
+                  "type": "object"
+                }
+              },
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/OperationRecord"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Read a durable receipt without causing native side effects.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": true,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "ackResult",
+          "stream": "unary",
+          "request": {
+            "module": "connector.operations.service",
+            "qualname": "OperationsServiceAckResultRequest",
+            "schema": {
+              "properties": {
+                "operationId": {
+                  "title": "Operationid",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "operationId"
+              ],
+              "title": "OperationsServiceAckResultRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "operationId"
+          ],
+          "response": {
+            "module": "types",
+            "qualname": "connector.operations.models.OperationRecord | None",
+            "schema": {
+              "$defs": {
+                "OperationRecord": {
+                  "properties": {
+                    "request": {
+                      "$ref": "#/$defs/OperationRequest"
+                    },
+                    "status": {
+                      "enum": [
+                        "queued",
+                        "accepted",
+                        "running",
+                        "reconciling",
+                        "succeeded",
+                        "failed",
+                        "unknown"
+                      ],
+                      "title": "Status",
+                      "type": "string"
+                    },
+                    "result": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/OperationResult"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null
+                    },
+                    "message": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Message"
+                    },
+                    "resultReceived": {
+                      "default": false,
+                      "title": "Resultreceived",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "request",
+                    "status"
+                  ],
+                  "title": "OperationRecord",
+                  "type": "object"
+                },
+                "OperationRequest": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "operationId": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Operationid",
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "workspace.create",
+                      "default": "workspace.create",
+                      "title": "Type",
+                      "type": "string"
+                    },
+                    "server": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "title": "Server",
+                      "type": "string"
+                    },
+                    "userId": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Userid",
+                      "type": "string"
+                    },
+                    "connectorId": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Connectorid",
+                      "type": "string"
+                    },
+                    "runtimeId": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Runtimeid",
+                      "type": "string"
+                    },
+                    "runtime": {
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "title": "Runtime",
+                      "type": "string"
+                    },
+                    "configRevision": {
+                      "minimum": 0,
+                      "title": "Configrevision",
+                      "type": "integer"
+                    },
+                    "name": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "title": "Name",
+                      "type": "string"
+                    },
+                    "path": {
+                      "maxLength": 8192,
+                      "minLength": 1,
+                      "title": "Path",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "operationId",
+                    "server",
+                    "userId",
+                    "connectorId",
+                    "runtimeId",
+                    "runtime",
+                    "configRevision",
+                    "name",
+                    "path"
+                  ],
+                  "title": "OperationRequest",
+                  "type": "object"
+                },
+                "OperationResult": {
+                  "properties": {
+                    "nativeProjectId": {
+                      "minLength": 1,
+                      "title": "Nativeprojectid",
+                      "type": "string"
+                    },
+                    "name": {
+                      "default": "",
+                      "title": "Name",
+                      "type": "string"
+                    },
+                    "roots": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "title": "Roots",
+                      "type": "array"
+                    },
+                    "identityKind": {
+                      "default": "native",
+                      "title": "Identitykind",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "nativeProjectId"
+                  ],
+                  "title": "OperationResult",
+                  "type": "object"
+                }
+              },
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/OperationRecord"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Record upstream reception while retaining the deduplication receipt.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": false,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        }
+      ]
+    }
+  ]
+}

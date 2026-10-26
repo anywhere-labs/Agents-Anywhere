@@ -165,7 +165,13 @@ class JsonSyncStateStore(SyncStateStore):
         if not self.path.exists():
             return {"version": STATE_FILE_VERSION, "states": {}}
         try:
-            document = json.loads(self.path.read_text(encoding="utf-8"))
+            content = self.path.read_text(encoding="utf-8")
+            # A zero-byte file holds no checkpoints, so it starts empty instead
+            # of failing startup. Any non-empty damaged document still fails
+            # rather than being silently replaced.
+            if content == "":
+                return {"version": STATE_FILE_VERSION, "states": {}}
+            document = json.loads(content)
         except (OSError, json.JSONDecodeError) as exc:
             raise RuntimeError(
                 f"invalid connector sync state file: {self.path}"

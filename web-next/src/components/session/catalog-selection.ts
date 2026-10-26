@@ -164,6 +164,63 @@ export function permissionIdForSelectionId(
   )?.id ?? ""
 }
 
+export type ModelOptionGroup = {
+  id: string
+  displayName: string
+  /** Row text under this group's header, without the provider the header shows. */
+  itemDisplayName?: string | null
+}
+
+export type ModelOptionSection<T> = {
+  /** Group id, or null for the headerless section. */
+  id: string | null
+  /** Header text, or null when the section renders without a header. */
+  displayName: string | null
+  items: T[]
+}
+
+/**
+ * Splits model options into provider sections in first-appearance order of
+ * `group.id`. With fewer than two distinct groups the list stays flat (one
+ * headerless section in catalog order); otherwise ungrouped models trail in a
+ * final headerless section.
+ */
+export function groupModelOptions<T extends { group?: ModelOptionGroup | null }>(
+  items: readonly T[],
+): ModelOptionSection<T>[] {
+  const sections = new Map<string, ModelOptionSection<T>>()
+  const ungrouped: T[] = []
+  for (const item of items) {
+    const group = item.group
+    if (!group) {
+      ungrouped.push(item)
+      continue
+    }
+    let section = sections.get(group.id)
+    if (!section) {
+      section = { id: group.id, displayName: group.displayName, items: [] }
+      sections.set(group.id, section)
+    }
+    section.items.push(item)
+  }
+  if (sections.size < 2) return [{ id: null, displayName: null, items: [...items] }]
+  const result = [...sections.values()]
+  if (ungrouped.length > 0) result.push({ id: null, displayName: null, items: ungrouped })
+  return result
+}
+
+/**
+ * Rows of one section. Under a provider header a row drops the provider the
+ * header already shows; flat lists and the selected-model label keep the
+ * catalog display name, which stays unique on its own.
+ */
+export function modelSectionRows<T extends { label: string; group?: ModelOptionGroup | null }>(
+  section: ModelOptionSection<T>,
+): T[] {
+  if (!section.displayName) return section.items
+  return section.items.map((item) => item.group?.itemDisplayName ? { ...item, label: item.group.itemDisplayName } : item)
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }

@@ -2,7 +2,7 @@
 
 在 DeepSeek Harness（DSH）中连接 Agents Anywhere，从手机、平板或 Web 查看 DSH 会话、继续对话、回复提问和审批请求。Agent 仍在安装 DSH 的工作设备上运行；远程使用时，这台设备需要保持开机、联网，并让 DSH 与 Connector 正常运行。
 
-插件随 **DSH Desktop** 提供，也可从 **npm** 安装到兼容的独立 DSH 环境。两种安装方式选其一；使用 DSH Desktop 时无需重复安装 npm 包。
+插件随开源客户端 [DSH Desktop](https://github.com/anywhere-labs/dsh-desktop) 提供，也可从 **npm** 安装到兼容的独立 DSH 环境。DeepSeek 官方的 DeepSeek Harness Desktop **没有内置**本插件。两种安装方式选其一；使用内置本插件的 DSH Desktop 时无需重复安装 npm 包。
 
 ## 可以做什么
 
@@ -14,7 +14,7 @@
 
 ## 在 DSH Desktop 中启用
 
-DSH Desktop 已集成此插件，**不需要另行下载或执行 npm 安装命令**。在 DSH Desktop 的“插件”页面找到“远程控制”并启用，然后从左侧边栏“设置”上方打开“远程控制”。部分 Desktop 版本的开关位于“桌面设置”的“手机连接”区域；请以当前应用显示的入口为准。
+本节适用于内置本插件的 [DSH Desktop](https://github.com/anywhere-labs/dsh-desktop)。该应用已集成此插件，**不需要另行下载或执行 npm 安装命令**。在 DSH Desktop 的“插件”页面找到“远程控制”并启用，然后从左侧边栏“设置”上方打开“远程控制”。部分 Desktop 版本的开关位于“桌面设置”的“手机连接”区域；请以当前应用显示的入口为准。
 
 ![DSH Desktop 中的 Agents Anywhere 连接面板，显示账号和 Connector 运行状态](docs/images/remote-control-desktop.webp)
 
@@ -39,6 +39,8 @@ dsh plugin --profile desktop add @agents-anywhere/dsh-bridge-next
 完成连接后，在 Agents Anywhere 的设备页面可以看到设备在线，以及 DSH 运行时的状态。下图展示了 DSH 正在运行的设备；如果状态未出现或显示断开，先检查工作设备上的 DSH 和 Connector。
 
 ![Agents Anywhere 设备页面显示设备在线，DSH Agent Runtime 正在运行](docs/images/dsh-runtime-connected.webp)
+
+插件提示“连接服务器超时”时，表示请求 Agents Anywhere 服务端超过 20 秒仍未完成，不代表 Connector 进程崩溃；检查所选后端地址和本机网络后，在插件中重新启动 Connector。Connector 启动后立即停止时，在插件“运行日志 → 启动前诊断”中查看原因。
 
 ## 使用条件与数据范围
 

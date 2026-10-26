@@ -98,6 +98,16 @@ class RuntimeReasoningItem:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeModelGroup:
+    """Where a model is routed from; clients section the picker by it when a catalog has 2+."""
+
+    id: str
+    title: str
+    # Row text under this group's header, without the provider; None keeps the item title.
+    item_title: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeModelItem:
     id: str
     title: str
@@ -107,6 +117,7 @@ class RuntimeModelItem:
     enabled: bool = True
     disabled_reason: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    group: RuntimeModelGroup | None = None
 
 
 @dataclass(frozen=True, slots=True)

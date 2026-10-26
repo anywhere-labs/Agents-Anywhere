@@ -4,6 +4,7 @@
       "default": true,
       "description": "Current model",
       "displayName": "GPT Example",
+      "group": null,
       "id": "gpt-example",
       "metadata": {
         "vendor": {

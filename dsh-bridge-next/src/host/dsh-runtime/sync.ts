@@ -29,6 +29,7 @@ function matchesCheckpoint(value: unknown, projection: SessionProjection): boole
 }
 const MAX_BUFFER = 10_000
 const MAX_BYTES = 6 * 1024 * 1024
+export const MAX_RETAINED_PROJECTIONS = 8
 export const SYNC_FLUSH_MS = Math.ceil(1000 / 30)
 
 class SyncTransportError extends Error {}
@@ -52,6 +53,8 @@ export class SyncFeed {
   private bufferedBytes = 0
   private checkpointDirty = new Set<string>()
   private workspaceSnapshot: string | undefined
+
+  get retainedProjectionCount(): number { return this.projections.size }
 
   constructor(private native: NativeRuntime, private namespace: string, readonly id: string,
     private transport: SyncTransport, private failed: (error: unknown) => void,
@@ -187,65 +190,69 @@ export class SyncFeed {
       return
     }
     const platformId = sessionId(this.namespace, id)
-    const projection = createProjection(id, platformId, this.durableCheckpoints)
-    let resumed = false
-    if (restore && this.durableCheckpoints) {
-      const checkpoint = record(await this.delivery(() => this.transport.loadCheckpoint(id)) ?? {})
-      if (Number.isSafeInteger(checkpoint.throughSeq) && Number(checkpoint.throughSeq) >= -1) {
-        await replayHistory(projection, log, this.abort.signal, Number(checkpoint.throughSeq))
-        resumed = matchesCheckpoint(checkpoint, projection)
-        if (resumed) projection.drain()
+    try {
+      const projection = createProjection(id, platformId, this.durableCheckpoints)
+      let resumed = false
+      if (restore && this.durableCheckpoints) {
+        const checkpoint = record(await this.delivery(() => this.transport.loadCheckpoint(id)) ?? {})
+        if (Number.isSafeInteger(checkpoint.throughSeq) && Number(checkpoint.throughSeq) >= -1) {
+          await replayHistory(projection, log, this.abort.signal, Number(checkpoint.throughSeq))
+          resumed = matchesCheckpoint(checkpoint, projection)
+          if (resumed) projection.drain()
+        }
       }
-    }
-    await replayHistory(projection, log, this.abort.signal)
-    const title = log.events.findLast(event => event.type === 'session/title')
-    const meta = { externalSessionId: id, title: title?.type === 'session/title' ? title.data.title : null,
-      sourceState: await this.native.source.state(id), cwd: log.session.cwd ?? null,
-      lastActivityAt: new Date(log.events.at(-1)?.time ?? log.session.createdAt).toISOString() }
-    if (resumed) {
-      const delta = projection.drain()
-      if (!delta.removed.length && await this.native.visible(id)) {
-        this.projections.set(id, projection)
-        this.published.set(id, platformId)
-        this.sourceAvailability.set(id, 'available')
-        await this.notification('session.meta.upsert', { sessionId: platformId, ...meta })
-        await this.items(id, delta.items)
-        this.checkpointDirty.add(id)
-        await this.notices(id)
-        await this.state(id, log)
-        this.native.diagnostics.log('info', 'sync.checkpoint_restored', { streamId: this.id, sessionId: id })
+      await replayHistory(projection, log, this.abort.signal)
+      const title = log.events.findLast(event => event.type === 'session/title')
+      const meta = { externalSessionId: id, title: title?.type === 'session/title' ? title.data.title : null,
+        sourceState: await this.native.source.state(id), cwd: log.session.cwd ?? null,
+        lastActivityAt: new Date(log.events.at(-1)?.time ?? log.session.createdAt).toISOString() }
+      if (resumed) {
+        const delta = projection.drain()
+        if (!delta.removed.length && await this.native.visible(id)) {
+          this.projections.delete(id); this.projections.set(id, projection)
+          this.published.set(id, platformId)
+          this.sourceAvailability.set(id, 'available')
+          await this.notification('session.meta.upsert', { sessionId: platformId, ...meta })
+          await this.items(id, delta.items)
+          this.checkpointDirty.add(id)
+          await this.notices(id)
+          await this.state(id, log)
+          this.native.diagnostics.log('info', 'sync.checkpoint_restored', { streamId: this.id, sessionId: id })
+          return
+        }
+      }
+      if (!await this.native.visible(id)) return
+      this.native.diagnostics.log('debug', 'snapshot.started', { streamId: this.id, sessionId: id })
+      const snapshotItems = contentItems(projection.snapshot())
+      // The capture replaces the timeline: earlier notifications must land first.
+      if (this.bufferedOperations?.length) await this.flushOperations()
+      // A capture id keeps a cancelled stream's pages from landing in the next capture.
+      const captureId = randomUUID()
+      const result = await this.delivery(() => this.transport.ingestSnapshot({ captureId, subscriptionId: this.id, sessionId: platformId,
+        meta, throughSeq: projection.throughSeq }, this.pages(snapshotItems, captureId), this.abort.signal))
+      if (!result.accepted) {
+        // Permanently refused: the Connector already published the session as unavailable.
+        this.failedSessions.set(id, { availability: 'unavailable', reason: (result.reason ?? 'sync_failed') as string, observedAt: new Date().toISOString() })
+        this.native.diagnostics.log('warn', 'snapshot.quarantined', { streamId: this.id, sessionId: id, reason: result.reason ?? undefined })
         return
       }
+      this.failedSessions.delete(id)
+      projection.drain()
+      this.projections.delete(id); this.projections.set(id, projection)
+      this.checkpointDirty.add(id)
+      this.published.set(id, platformId)
+      this.sourceAvailability.set(id, 'available')
+      await this.notices(id)
+      await this.state(id, log)
+      this.native.diagnostics.log('info', 'snapshot.completed', { streamId: this.id, sessionId: id, items: snapshotItems.length, elapsedMs: Math.round(performance.now() - start) })
+    } finally {
+      this.native.source.release(id)
     }
-    if (!await this.native.visible(id)) return
-    this.native.diagnostics.log('debug', 'snapshot.started', { streamId: this.id, sessionId: id })
-    const snapshotItems = contentItems(projection.snapshot())
-    // The capture replaces the timeline: earlier notifications must land first.
-    if (this.bufferedOperations?.length) await this.flushOperations()
-    // A capture id keeps a cancelled stream's pages from landing in the next capture.
-    const captureId = randomUUID()
-    const result = await this.delivery(() => this.transport.ingestSnapshot({ captureId, subscriptionId: this.id, sessionId: platformId,
-      meta, throughSeq: projection.throughSeq }, this.pages(snapshotItems, captureId), this.abort.signal))
-    if (!result.accepted) {
-      // Permanently refused: the Connector already published the session as unavailable.
-      this.failedSessions.set(id, { availability: 'unavailable', reason: (result.reason ?? 'sync_failed') as string, observedAt: new Date().toISOString() })
-      this.native.diagnostics.log('warn', 'snapshot.quarantined', { streamId: this.id, sessionId: id, reason: result.reason ?? undefined })
-      return
-    }
-    this.failedSessions.delete(id)
-    projection.drain()
-    this.projections.set(id, projection)
-    this.checkpointDirty.add(id)
-    this.published.set(id, platformId)
-    this.sourceAvailability.set(id, 'available')
-    await this.notices(id)
-    await this.state(id, log)
-    this.native.diagnostics.log('info', 'snapshot.completed', { streamId: this.id, sessionId: id, items: snapshotItems.length, elapsedMs: Math.round(performance.now() - start) })
   }
   private async notices(id: string): Promise<void> {
     for (const notice of [...this.native.questions.notices(this.namespace, id), ...this.native.approvals.notices(this.namespace, id)]) await this.notification('notice.upsert', notice)
   }
-  private async state(id: string, snapshot?: SessionLogSnapshot): Promise<void> {
+  private async state(id: string, snapshot?: SessionLogSnapshot & { bridgeRevision?: string }): Promise<void> {
     if (!this.published.has(id) || !await this.native.visible(id)) return
     const log = this.native.ctx.sessions.get(id as SessionId)
     const pending = new Set<string>()
@@ -258,7 +265,7 @@ export class SyncFeed {
       ?? (last?.type === 'turn/end' && last.data.reason.kind === 'error' ? 'error' : 'idle')
     let configuration: Awaited<ReturnType<NativeRuntime['configuration']['state']>>
     try {
-      configuration = await this.native.diagnostics.measure('session.configuration_read', { sessionId: id }, async () => snapshot ? this.native.configuration.state(id as SessionId, snapshot) : (await this.native.stateFacts(id as SessionId)).configuration)
+      configuration = await this.native.diagnostics.measure('session.configuration_read', { sessionId: id }, async () => (await this.native.stateFacts(id as SessionId, snapshot)).configuration)
     } catch (error) {
       if (this.closed || error instanceof Error && error.name === 'AbortError') throw error
       this.native.source.markReadFailed(id)
@@ -355,7 +362,12 @@ export class SyncFeed {
         if (!this.published.has(id)) return
         if (change.type === 'question' || change.type === 'approval') await this.notices(id)
         if (change.type === 'stream') {
-          this.projections.get(id)?.stream(change.turn, change.step, change.chunk, change.time, change.throughSeq)
+          // Running sessions are never evicted. A chunk without a projection waits
+          // for the next event to restore it instead of rereading the log per chunk.
+          const projection = this.projections.get(id)
+          if (!projection) return
+          this.projections.delete(id); this.projections.set(id, projection)
+          projection.stream(change.turn, change.step, change.chunk, change.time, change.throughSeq)
           touched.add(id)
           return
         }
@@ -369,8 +381,9 @@ export class SyncFeed {
           }])
           if (['turn/start', 'turn/end', 'approval/asked', 'approval/decided', 'model/selection', 'request/header',
             'permission/preset', 'sandbox/mode', 'approval/policy', 'agent-preset/selected'].includes(change.event.type)) statuses.add(id)
+          // An evicted projection resumes from its committed checkpoint; the replayed log already holds this event.
           const projection = this.projections.get(id)
-          if (!projection) { await this.baseline(id); return }
+          if (!projection) { await this.baseline(id, true); return }
           this.projections.delete(id); this.projections.set(id, projection)
           if (Number(change.event.seq) <= projection.throughSeq) return
           const key = receiptKey(change.event)
@@ -408,6 +421,7 @@ export class SyncFeed {
     await this.native.inventory(this.abort.signal, async entry => {
       await this.baseline(entry.header.id, true)
       await this.rememberCheckpoints()
+      this.trimProjections()
     })
     // Startup changes use the same batching as live changes. Otherwise one
     // capability update incurs a separate transport round trip per session.
@@ -421,6 +435,7 @@ export class SyncFeed {
     await this.flushOperations()
     // Checkpoints cover the data above: save only after the batch was ingested.
     await this.rememberCheckpoints()
+    this.trimProjections()
     this.bufferedOperations = undefined
     this.native.diagnostics.log('info', 'sync.inventory_completed', { streamId: this.id, sessions: this.published.size })
     while (!this.closed) {
@@ -434,6 +449,7 @@ export class SyncFeed {
       // The checkpoint covers this frame's data, so the batch must be ingested first.
       await this.flushOperations()
       await this.rememberCheckpoints()
+      this.trimProjections()
       this.bufferedOperations = undefined
     }
   }
@@ -462,6 +478,31 @@ export class SyncFeed {
       await this.transport.saveCheckpoint(id, checkpoint)
     }
     this.checkpointDirty.clear()
+  }
+  /**
+   * Only a committed durable checkpoint lets baseline(id, true) resume an evicted
+   * session with a delta; without one, eviction would re-upload its whole history.
+   * Running or interactive sessions keep their projection for continuous streaming.
+   */
+  private canEvictProjection(id: string, projection: SessionProjection): boolean {
+    if (!this.durableCheckpoints || this.checkpointDirty.has(id) || this.failedSessions.has(id)) return false
+    if (!projection.settled || projection.dirty || this.native.status(id as SessionId) === 'running') return false
+    return !this.native.questions.waiting(id) && !this.native.approvals.waiting(id)
+  }
+  private trimProjections(maxRetained = MAX_RETAINED_PROJECTIONS): void {
+    // Cold sessions cannot stream; live ones keep the most recently used projections.
+    for (const [id, projection] of this.projections) {
+      if (!this.native.ctx.sessions.get(id as SessionId) && this.canEvictProjection(id, projection)) {
+        this.projections.delete(id)
+      }
+    }
+    if (this.projections.size <= maxRetained) return
+    for (const [id, projection] of this.projections) {
+      if (this.projections.size <= maxRetained) break
+      if (this.canEvictProjection(id, projection)) {
+        this.projections.delete(id)
+      }
+    }
   }
   private takeChanges(): NativeChange[] {
     this.queuedBytes = 0; this.queuedInvalidations.clear()

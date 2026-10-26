@@ -349,6 +349,16 @@ class ConnectorRpcManager:
             stale.append(connection)
         return stale
 
+    async def current_connection_id(self, connector_id: str) -> str | None:
+        connection = self._connections.get(connector_id)
+        if connection is not None and self._is_local_online(connection):
+            return connection.connection_id
+        if self._coordinator.distributed:
+            lease = await self._get_lease(connector_id)
+            if lease is not None and lease.ready:
+                return lease.connection_id
+        return None
+
     async def request(
         self,
         connector_id: str,

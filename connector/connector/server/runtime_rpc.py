@@ -213,23 +213,7 @@ class RuntimeRpcHandler:
                 receipt = await self.agent_runtime_host.sync_state_read(receipt_key)
                 return receipt if isinstance(receipt, dict) else {"status": "unknown"}
             if method == "project.create":
-                if not all(isinstance(params.get(key), str) and params[key] for key in ("name", "path", "requestId")):
-                    raise RuntimeInvalidRequestError("name, path and requestId are required")
-                receipt = await self.agent_runtime_host.sync_state_read(receipt_key)
-                if isinstance(receipt, dict):
-                    if receipt.get("status") == "succeeded":
-                        return self._runtime_result(runtime, receipt["result"])
-                    raise RuntimeInvalidRequestError("Native creation is pending or unknown; query the operation first")
-                await self.agent_runtime_host.sync_state_write(receipt_key, {"status": "pending"})
-                await self.agent_runtime_host.sync_state_flush()
-                try:
-                    result = await runtime.create_workspace(name=params["name"], path=params["path"], request_id=params["requestId"])
-                except (RuntimeInvalidRequestError, RuntimeUnsupportedError) as exc:
-                    await self.agent_runtime_host.sync_state_write(receipt_key, {"status": "failed", "result": {"message": str(exc)}})
-                    await self.agent_runtime_host.sync_state_flush()
-                    raise
-                await self.agent_runtime_host.sync_state_write(receipt_key, {"status": "succeeded", "result": result})
-                await self.agent_runtime_host.sync_state_flush()
+                raise RuntimeUnsupportedError("Upgrade required: workspace creation uses MeshCall operations 1.0")
             await self._invalidate_workspaces(scoped_runtime(params))
             return self._runtime_result(runtime, result)
         if method == "session.create":

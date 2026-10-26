@@ -187,6 +187,18 @@ export class SourceConnector implements ConnectorProcess {
   private updateState(value: unknown): void {
     if (!value || typeof value !== 'object') return
     const state = value as Partial<ControlState> & { logsPath?: unknown }
+    // Credential failures also carry lastError; they are reported as authFailed, not as a runtime failure.
+    if (!state.running && !state.authFailed && typeof state.lastError === 'string' && state.lastError && !this.stopping) {
+      const invalidState = /^(invalid|unsupported) connector sync state file:/.test(state.lastError)
+      const code = invalidState ? 'CONNECTOR_SYNC_STATE_INVALID' : 'CONNECTOR_RUNTIME_FAILED'
+      if ((this.failure as (Error & { code?: string }) | null)?.code !== code) {
+        this.failure = Object.assign(new Error(invalidState
+          ? 'Connector 同步状态文件无效，请查看启动前诊断。'
+          : 'Connector 运行失败，请查看启动前诊断。'), { code })
+        this.logs.output(`[connector] ${state.lastError}\n`)
+        this.diagnostics.log('error', 'connector.runtime_failed', {}, this.failure)
+      }
+    }
     const resolvedLogsPath = deriveLogsPath(state)
     if (resolvedLogsPath) {
       this.cachedLogsPath = resolvedLogsPath
@@ -320,6 +332,7 @@ export class SourceConnector implements ConnectorProcess {
     const state = await this.requireControl().getState({ timeoutMs: 15_000 })
     this.updateState(state)
     if (state.authFailed) throw new ConnectorCredentialError()
+    if (this.failure) throw this.failure
     if (!state.running) throw new Error('Connector 尚未运行，请返回插件重试。')
   }
 

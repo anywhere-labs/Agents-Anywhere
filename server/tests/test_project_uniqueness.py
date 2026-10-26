@@ -6,11 +6,16 @@ from runtime_fixtures import seed_workspace_project
 from test_backend_mvp import auth_headers, make_client
 
 from agent_server.services.device_runtimes import DeviceRuntimeService
+from agent_server.core.operations import OperationRecord, OperationResult, ProtocolInfo
+from agent_server.infra.operation_transport import MeshOperationTransport
+from agent_server.services.operations import OperationDispatcher
 
 
 class ProjectSourceRpc:
     def __init__(self):
         self.requests = []
+        self.receipts = {}
+        self.rpc = self
 
     async def is_online(self, connector_id):
         return True
@@ -19,9 +24,37 @@ class ProjectSourceRpc:
         pass
 
     async def request(self, connector_id, method, params, **kwargs):
-        assert method == "project.create"
-        self.requests.append(params)
-        return {"nativeProjectId": f"native-{len(self.requests)}", "roots": [params["path"]]}
+        assert method == "runtime.config"
+        return {"config": {"revision": 1}}
+
+    async def request_bound(self, connector_id, method, params, **kwargs):
+        assert method == "workspace.connection"
+        return {"operationsProtocol": "1.0"}, "fixture-connection"
+
+    async def is_connection_id_current(self, connector_id, connection_id):
+        return connection_id == "fixture-connection"
+
+    async def client(self, connector_id):
+        return self, "fixture-connection"
+
+    async def ping(self):
+        return ProtocolInfo()
+
+    async def get(self, operation_id):
+        return self.receipts.get(operation_id)
+
+    async def submit(self, request):
+        self.requests.append({"requestId": request.operationId, "path": request.path})
+        receipt = OperationRecord(request=request, status="succeeded",
+            result=OperationResult(nativeProjectId=f"native-{len(self.requests)}", roots=[request.path]))
+        self.receipts[request.operationId] = receipt
+        return receipt
+
+    async def ackResult(self, operation_id):
+        record = self.receipts.get(operation_id)
+        if record is not None:
+            record.resultReceived = True
+        return record
 
 
 def _source(tmp_path):
@@ -37,9 +70,20 @@ def _source(tmp_path):
     }]}))
     rpc = ProjectSourceRpc()
     client.app.state.rpc = rpc
+    client.app.state.mesh_operations = rpc
+    client.app.state.operation_dispatcher = OperationDispatcher(store, MeshOperationTransport(rpc, store))
     client.app.state.device_runtime_service = DeviceRuntimeService(store, rpc)
     payload = {"name": "Same name", "connectorId": connector_id, "workspacePath": "/new", "runtime": "codex", "runtimeId": "codex", "requestId": "first"}
     return client, headers, user_id, rpc, payload
+
+
+def _settled_receipt(client, headers, receipt):
+    # Existing API fixture has no running lifespan; explicitly run its durable dispatcher.
+    async def dispatch():
+        for row in await client.app.state.store.claim_mesh_operations():
+            await client.app.state.operation_dispatcher.deliver(row)
+    asyncio.run(dispatch())
+    return client.get(f"/projects/operations/{receipt['operationId']}", headers=headers).json()
 
 
 def _project_from_receipt(client, headers, user_id, payload, receipt):
@@ -55,7 +99,8 @@ def test_project_creation_recovers_receipt_until_acknowledged_then_allows_same_n
     client, headers, user_id, rpc, payload = _source(tmp_path)
     first = client.post("/projects", headers=headers, json=payload)
     assert first.status_code == 200, first.text
-    receipt = first.json()
+    assert first.json()["status"] == "pending"
+    receipt = _settled_receipt(client, headers, first.json())
     assert receipt["status"] == "succeeded"
     assert receipt["project"] is None
     assert receipt["syncState"] == "pending"
@@ -72,7 +117,7 @@ def test_project_creation_recovers_receipt_until_acknowledged_then_allows_same_n
     second = client.post("/projects", headers=headers, json={**payload, "requestId": "second"})
     assert second.status_code == 200, second.text
     assert second.json()["operationId"] != receipt["operationId"]
-    second_project = _project_from_receipt(client, headers, user_id, payload, second.json())
+    second_project = _project_from_receipt(client, headers, user_id, payload, _settled_receipt(client, headers, second.json()))
     assert first_project.id != second_project.id
     assert first_project.name == second_project.name
     assert first_project.workspacePath == second_project.workspacePath
@@ -83,9 +128,9 @@ def test_project_creation_recovers_receipt_until_acknowledged_then_allows_same_n
 
 def test_explicit_new_operation_keeps_its_own_identity_on_retry(tmp_path):
     client, headers, _, rpc, payload = _source(tmp_path)
-    first = client.post("/projects", headers=headers, json=payload).json()
+    first = _settled_receipt(client, headers, client.post("/projects", headers=headers, json=payload).json())
     new_payload = {**payload, "requestId": "explicit-new", "newOperation": True}
-    second = client.post("/projects", headers=headers, json=new_payload).json()
+    second = _settled_receipt(client, headers, client.post("/projects", headers=headers, json=new_payload).json())
     assert first["operationId"] != second["operationId"]
     assert client.post("/projects", headers=headers, json=new_payload).json()["operationId"] == second["operationId"]
     assert len(rpc.requests) == 2
