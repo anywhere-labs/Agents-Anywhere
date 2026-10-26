@@ -74,3 +74,13 @@ red dot beside **Check for updates** whenever a newer version exists. Tapping it
 reopens the dialog even for an ignored version. Outside taps and Back do not
 close the prompt. Downloads show progress and continue through the existing APK
 installer flow.
+
+## 会话流式生成期间的阅读位置
+
+Android 会话列表在最新位置自动跟随生成；上翻或展开思维链、工具详情后，切换为阅读状态。
+新增消息、工具组追加、审批导致的重新分组和历史快照更新会按已有内容锚点保持阅读位置。
+展开状态按会话和消息身份保存，单条转分组、滚出视口再返回不会自动收起；代码输出增长保留内部滚动位置。
+点击回到底部、发送消息或手动滚回最新位置后恢复跟随。切换会话隔离展开和阅读状态。
+
+相关 Compose 真机回归位于 `app/src/androidTest/.../MessageListScrollFollowTest.kt`，验证可见文字行的像素坐标、
+分组状态及代码输出滚动；构建和 JVM 单测通过仍不等同于真实 DSH/Connector/Server 的流式链路验收。

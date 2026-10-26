@@ -34,8 +34,12 @@ internal fun SessionSelectionContainer(
         SessionSelectionClipboard(platformClipboard, copyTokens)
     }
     val platformTextToolbar = LocalTextToolbar.current
-    val copyOnlyTextToolbar = remember(platformTextToolbar) {
-        CopyOnlyTextToolbar(platformTextToolbar)
+    val reading = LocalTimelineReading.current
+    val copyOnlyTextToolbar = remember(platformTextToolbar, reading) {
+        CopyOnlyTextToolbar(platformTextToolbar) { selecting ->
+            reading?.selecting = selecting
+            if (selecting) reading?.pauseAt() else reading?.invalidate()
+        }
     }
 
     CompositionLocalProvider(
@@ -99,6 +103,7 @@ private class SessionSelectionClipboard(
 
 private class CopyOnlyTextToolbar(
     private val delegate: TextToolbar,
+    private val onSelectionChanged: (Boolean) -> Unit,
 ) : TextToolbar {
     override fun showMenu(
         rect: Rect,
@@ -107,6 +112,7 @@ private class CopyOnlyTextToolbar(
         onCutRequested: (() -> Unit)?,
         onSelectAllRequested: (() -> Unit)?,
     ) {
+        onSelectionChanged(true)
         delegate.showMenu(
             rect = rect,
             onCopyRequested = onCopyRequested,
@@ -124,6 +130,7 @@ private class CopyOnlyTextToolbar(
         onSelectAllRequested: (() -> Unit)?,
         onAutofillRequested: (() -> Unit)?,
     ) {
+        onSelectionChanged(true)
         delegate.showMenu(
             rect = rect,
             onCopyRequested = onCopyRequested,
@@ -135,6 +142,7 @@ private class CopyOnlyTextToolbar(
     }
 
     override fun hide() {
+        onSelectionChanged(false)
         delegate.hide()
     }
 
