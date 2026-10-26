@@ -124,6 +124,21 @@ Migration guide:
 target flow. Model and permission catalogs are read from live runtime catalog
 endpoints when the selector is opened.
 
+### Runtime selection state
+
+`SessionRuntimeState.selections` is a Runtime-owned snapshot, not a saved user
+preference. A present scope contains the value the Runtime has confirmed for
+the next turn. An absent scope is unknown and clients must display an
+unsynchronized state rather than choosing a catalog fallback. A present
+`null` value means the Runtime explicitly uses its own default.
+
+After a selection update is accepted, the Runtime may expose its scope in
+`metadata.pendingSelectionScopes` until the next turn starts. Clients should
+label those values as applying on the next turn. Existing-session message
+sends never derive or attach selection updates from the composer display.
+The Server may cache this state briefly for fan-out, but does not persist
+selection preferences in the session database.
+
 `POST /api/v2/sessions` is bind-only during the migration: callers must provide
 an existing `externalSessionId` and pass selections through `selections`.
 New user tasks must use

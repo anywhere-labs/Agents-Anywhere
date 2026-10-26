@@ -213,6 +213,15 @@ class CodexIpcService:
         if broadcast.method != "client-status-changed":
             return
         params = broadcast.params if isinstance(broadcast.params, Mapping) else {}
+        if params.get("isSelf") and params.get("status") == "connected":
+            self._extra_candidates.update(self.follower.threads)
+            logger.info(
+                "codex ipc reconnect scan requested generation={} candidate_count={}",
+                self.client.connection_generation,
+                len(self._extra_candidates),
+            )
+            self.request_scan()
+            return
         if params.get("status") == "connected" and not params.get("isSelf"):
             # A new window may own threads we could not reach before.
             for thread_id, thread in self.follower.threads.items():

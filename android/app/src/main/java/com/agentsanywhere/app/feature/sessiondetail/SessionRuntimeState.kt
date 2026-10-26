@@ -499,14 +499,17 @@ internal fun RemoteRuntimePermissionCatalog.selectionOptions(): List<RuntimeSele
         }
         .distinctBy { it.selectionId }
 
-internal fun List<RuntimeSelectionOption>.validatedSelection(hint: String?): String? {
+internal fun List<RuntimeSelectionOption>.validatedSelection(
+    hint: String?,
+    defaultWhenMissing: Boolean = false,
+): String? {
     val explicitSelection = hint?.takeIf(String::isNotBlank)
     return if (explicitSelection != null) {
         firstOrNull { it.enabled && it.selectionId == explicitSelection }?.selectionId
-    } else {
+    } else if (defaultWhenMissing) {
         firstOrNull { it.enabled && it.default }?.selectionId
             ?: firstOrNull { it.enabled }?.selectionId
-    }
+    } else null
 }
 
 internal fun sessionComposerEnabled(

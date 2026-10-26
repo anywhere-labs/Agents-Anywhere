@@ -49,7 +49,7 @@ from connector.runtimes.codex.sdk.command_notifications import (
     LowLevelTurnHandle,
     turn_identity,
 )
-from connector.runtimes.codex.sdk.events import CodexSdkEvent
+from connector.runtimes.codex.sdk.events import CodexSdkEvent, sdk_event_mapping
 from connector.runtimes.codex.sdk.model_gateway import (
     CODEX_MODEL_GATEWAY_PROVIDER_ID,
     codex_model_gateway_config,
@@ -162,6 +162,7 @@ class CodexSdkClient:
         self._entered_client: Any | None = None
         self._threads: dict[str, Any] = {}
         self._loaded_thread_ids: set[str] = set()
+        self._resume_states: dict[str, dict[str, Any]] = {}
         self._turns: dict[str, Any] = {}
         self._stream_tasks: dict[str, asyncio.Task[None]] = {}
         self._stream_states: dict[str, TurnStreamState] = {}
@@ -379,6 +380,7 @@ class CodexSdkClient:
     def _clear_native_ownership(self) -> None:
         self._generation += 1
         self._loaded_thread_ids.clear()
+        self._resume_states.clear()
         self._threads.clear()
         self._turns.clear()
         self._announced_turns.clear()
@@ -676,7 +678,7 @@ class CodexSdkClient:
         self,
         low_level_client: Any,
         request: CodexResumeThreadRequest,
-    ) -> None:
+    ) -> Mapping[str, Any]:
         """Resume an existing Codex thread before a thread-scoped operation.
 
         Side effects:
@@ -687,16 +689,16 @@ class CodexSdkClient:
 
         lock = self._resume_locks.setdefault(request.thread_id, asyncio.Lock())
         async with lock:
-            await self._resume_thread(low_level_client, request)
+            return await self._resume_thread(low_level_client, request)
 
     async def _resume_thread(
         self, low_level_client: Any, request: CodexResumeThreadRequest
-    ) -> None:
+    ) -> Mapping[str, Any]:
         if request.thread_id in self._loaded_thread_ids:
-            return
+            return self._resume_states.get(request.thread_id, {})
         thread_resume = getattr(low_level_client, "thread_resume", None)
         if not callable(thread_resume):
-            return
+            return {}
         generation = self._generation
         try:
             resumed = await thread_resume(
@@ -719,6 +721,23 @@ class CodexSdkClient:
             self._remember_thread(thread)
         if thread_id is not None:
             self._loaded_thread_ids.add(thread_id)
+            self._resume_states[thread_id] = sdk_event_mapping(resumed)
+        return self._resume_states.get(request.thread_id, {})
+
+    async def resume_thread_state(self, thread_id: str) -> Mapping[str, Any]:
+        """Safely resume an unowned thread and return its effective settings."""
+
+        async def resume(client: Any) -> Mapping[str, Any]:
+            await ensure_codex_initialized(client)
+            low_level_client = codex_low_level_client(client)
+            if low_level_client is None:
+                return {}
+            return await self.ensure_thread_resumed(
+                low_level_client,
+                CodexResumeThreadRequest(thread_id=thread_id),
+            )
+
+        return await self.call_read_with_recovery("thread/resume", resume)
 
     def _observe_command_thread(self, thread_id: str) -> None:
         if self._command_notifications:

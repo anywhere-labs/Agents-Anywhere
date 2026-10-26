@@ -42,12 +42,20 @@ struct ComposerOptionsSheet: View {
                     }
                     VStack(spacing: 0) {
                         NavigationLink(value: Page.models) {
-                            optionRow(String(localized: "dashboard.new.modelAndReasoning"), icon: "sparkles", value: settings.modelLabel)
+                            optionRow(
+                                String(localized: "dashboard.new.modelAndReasoning"),
+                                icon: "sparkles",
+                                value: pendingLabel(settings.modelLabel, scope: .model)
+                            )
                         }
                         .disabled(isLoading || !canSelectModel || settings.catalog.models.isEmpty)
                         Divider().padding(.leading, 52)
                         NavigationLink(value: Page.permissions) {
-                            optionRow(String(localized: "权限"), icon: "checkmark.shield", value: settings.permission?.title ?? String(localized: "默认"))
+                            optionRow(
+                                String(localized: "权限"),
+                                icon: "checkmark.shield",
+                                value: pendingLabel(settings.permissionLabel, scope: .permission)
+                            )
                         }
                         .disabled(isLoading || !canSelectPermission || settings.catalog.permissions.isEmpty)
                     }
@@ -95,6 +103,11 @@ struct ComposerOptionsSheet: View {
         .alert(String(localized: "无法更改设置"), isPresented: $showsApplyError) {
             Button(String(localized: "好"), role: .cancel) {}
         } message: { Text(applyError() ?? String(localized: "当前设置未保存，请稍后重试。")) }
+    }
+
+    private func pendingLabel(_ value: String, scope: V2RuntimeSelectionScope) -> String {
+        guard sessionChat?.pendingSelectionScopes.contains(scope) == true else { return value }
+        return "\(value) · \(String(localized: "下一轮生效"))"
     }
 
     private func attachmentTile(_ title: String, icon: String, action: @escaping () -> Void) -> some View {

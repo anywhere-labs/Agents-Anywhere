@@ -346,6 +346,10 @@
       "model": "Model",
       "modelAndReasoning": "Model and reasoning",
       "permissionMode": "Permission mode",
+      "permissionUnsynced": "Permission not synced",
+      "modelUnsynced": "Model not synced",
+      "runtimeDefault": "Runtime default",
+      "nextTurn": "Next turn",
       "permissionModes": {
         "dsh": {
           "readOnly": {

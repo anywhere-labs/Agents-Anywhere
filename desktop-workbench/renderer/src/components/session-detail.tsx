@@ -557,9 +557,7 @@ export function SessionDetail({
       return true
     } catch (err) {
       // An official operation can partially succeed. Read the actual selection before rolling back.
-      const actual = sessionRuntimeType(session) === "dsh"
-        ? await dashboardApi.getSessionRuntimeState(token, session.id).catch(() => null)
-        : null
+      const actual = await dashboardApi.getSessionRuntimeState(token, session.id).catch(() => null)
       if (selectionUpdateSeqRef.current === selectionUpdateSeq) {
         setState((current) =>
           current
@@ -1189,7 +1187,7 @@ export function SessionDetail({
   const handleSend = async (
     content: string,
     attachments: AttachedFile[],
-    selections: { model?: string; permission?: string },
+    _selections: { model?: string; permission?: string },
   ): Promise<boolean> => {
     if (!session || (!content.trim() && attachments.length === 0)) return false
     const uploadedAttachments = attachments.flatMap((attachment) =>
@@ -1223,23 +1221,7 @@ export function SessionDetail({
     })
     setSending(true)
     try {
-      const selectionPatch = selectionPatchFromComposerSelections(runtimeState?.selections ?? {}, selections)
-      if (Object.keys(selectionPatch).length > 0) {
-        const selectionResult = await dashboardApi.updateSessionSelections(token, session.id, selectionPatch)
-        setState((current) =>
-          current
-            ? {
-                ...current,
-                state: runtimeStateWithSelectionResult(
-                  current.state,
-                  current.session,
-                  selectionPatch,
-                  selectionResult.state,
-                ),
-              }
-            : current,
-        )
-      }
+      await selectionWritesRef.current.get(session.id)
       await dashboardApi.sendSessionMessage(token, session.id, messageText, {
         attachments: uploadedAttachments.map((attachment) => ({ fileId: attachment.fileId })),
         clientMessageId,

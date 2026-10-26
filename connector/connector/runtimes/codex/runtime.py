@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from connector.core.json_kv import JsonKeyValueStore
 from connector.logging import logger
@@ -53,10 +54,10 @@ from connector.runtimes.codex.ipc import (
     CodexIpcSessionProjector,
     CodexIpcTurnController,
     FollowedThread,
+    desktop_app,
     thread_snapshot_from_conversation_state,
 )
 from connector.runtimes.codex.ipc import deeplink as ipc_deeplink
-from connector.runtimes.codex.ipc import desktop_app
 from connector.runtimes.codex.lifecycle.runtime_lifecycle import CodexRuntimeLifecycle
 from connector.runtimes.codex.notifications import CodexNotificationProjector
 from connector.runtimes.codex.notifications.projector import notification_event
@@ -68,6 +69,19 @@ from connector.runtimes.codex.sessions.reader import CodexSessionReader
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
 from connector.runtimes.codex.turns.command_input import command_input
 from connector.runtimes.codex.turns.controller import CodexTurnController
+
+IPC_WRITE_ROUTE_TIMEOUT_SECONDS = 4.0
+IPC_WRITE_INITIALIZE_TIMEOUT_SECONDS = 1.0
+IPC_WRITE_DISCOVERY_TIMEOUT_MS = 3000
+
+
+@dataclass(frozen=True, slots=True)
+class _CodexIpcWriteRoute:
+    kind: Literal["local", "followed", "blocked"]
+    thread: FollowedThread | None = None
+    code: str | None = None
+    message: str | None = None
+    status: str | None = None
 
 
 @dataclass(slots=True)
@@ -84,6 +98,7 @@ class CodexRuntime(AgentRuntime):
     ipc_owner: CodexIpcOwnerService | None = None
     ipc_deeplink_handoff: bool = True
     ipc_handoff_timeout_ms: int = 5000
+    safe_ipc_write_routing: bool = False
 
     def __post_init__(self) -> None:
         self._active_turn_ids: dict[str, str] = {}
@@ -235,6 +250,31 @@ class CodexRuntime(AgentRuntime):
             thread_id,
         )
 
+    async def _bind_state_session(
+        self,
+        session_id: str,
+        external_session_id: str | None,
+    ) -> None:
+        if external_session_id is None:
+            return
+        current = self._session_states.get_by_external_session_id(
+            external_session_id
+        )
+        derived_session_id = codex_sessions.stable_session_id(
+            getattr(self.host, "session_namespace", self.host.connector_id),
+            external_session_id,
+        )
+        if (
+            current is not None
+            and current.session_id not in {session_id, derived_session_id}
+            and self._session_states.get(session_id) is None
+        ):
+            # A different authoritative Server binding already owns this
+            # external thread. Only derived identities may be migrated merely
+            # because another caller supplies a session id.
+            return
+        await self._session_states.rebind(session_id, external_session_id)
+
     def _ipc_controller(self) -> CodexIpcTurnController | None:
         """Return the IPC turn controller once a follower service exists."""
 
@@ -278,50 +318,209 @@ class CodexRuntime(AgentRuntime):
             thread_id = state.external_session_id if state is not None else None
         return controller.attached_thread(thread_id)
 
-    async def _ipc_attach_for_write(
+    async def _ipc_route_for_write(
         self,
         session_id: str,
         external_session_id: str | None = None,
-    ) -> FollowedThread | None:
-        """Like ``_ipc_attached_thread`` but probes once when a window may hold it.
+    ) -> _CodexIpcWriteRoute:
+        """Choose exactly one writer without falling through from IPC to SDK.
 
-        A thread opened in a Codex window seconds ago may not be followed yet;
-        resuming it in our own app-server would fail on the writer lock, so a
-        quick owner discovery (owners answer in milliseconds) runs first.
+        ``local`` is returned only when the Connector owns the thread or no
+        writer lock exists. Once an external writer lock is observed, failure
+        to reach its owner is a terminal routing result: resuming the thread in
+        our own app-server would only wait again and then collide with the same
+        lock.
         """
 
         thread = self._ipc_attached_thread(session_id, external_session_id)
         if thread is not None:
-            return thread
+            return _CodexIpcWriteRoute(kind="followed", thread=thread)
         controller = self._ipc_controller()
         service = self.ipc_service
         if controller is None or service is None:
-            return None
+            return _CodexIpcWriteRoute(kind="local")
         thread_id = external_session_id
         if thread_id is None:
             state = self._session_states.get(session_id)
             thread_id = state.external_session_id if state is not None else None
-        if not thread_id or not getattr(service, "thread_is_held", lambda _: False)(thread_id):
-            return None
+        if not thread_id:
+            return _CodexIpcWriteRoute(kind="local")
+        if not self.safe_ipc_write_routing:
+            return await self._legacy_ipc_write_route(thread_id, controller, service)
+        if self.ipc_owner is not None and self.ipc_owner.owns(thread_id):
+            logger.debug("codex ipc write route local owner thread={}", thread_id)
+            return _CodexIpcWriteRoute(kind="local")
+        lock_probe = getattr(service, "thread_is_held", None)
+        if not callable(lock_probe) or not lock_probe(thread_id):
+            return _CodexIpcWriteRoute(kind="local")
+
+        loop = asyncio.get_running_loop()
+        started_at = loop.time()
+        deadline = started_at + IPC_WRITE_ROUTE_TIMEOUT_SECONDS
+        client = self.ipc
+        if client is None:
+            return self._ipc_blocked_write_route(
+                thread_id,
+                code="codex_ipc_unavailable",
+                status="offline",
+                message="Codex IPC is unavailable while another process holds this session.",
+                started_at=started_at,
+            )
+        if not getattr(client, "initialized", True):
+            remaining = max(0.0, deadline - loop.time())
+            try:
+                await client.wait_until_initialized(
+                    min(IPC_WRITE_INITIALIZE_TIMEOUT_SECONDS, remaining)
+                )
+            except TimeoutError:
+                return self._ipc_blocked_write_route(
+                    thread_id,
+                    code="codex_ipc_unavailable",
+                    status="offline",
+                    message=(
+                        "Codex IPC is still reconnecting while another process holds this "
+                        "session. Retry after reconnecting Codex Desktop."
+                    ),
+                    started_at=started_at,
+                )
+
+        remaining_ms = max(1, int((deadline - loop.time()) * 1000))
         try:
-            await controller.follower.follow(thread_id, discovery_timeout_ms=3000)
-        except Exception as exc:  # noqa: BLE001 - fall back to the SDK path
-            logger.debug("codex ipc attach-for-write failed thread={} error={}", thread_id, exc)
-            return None
+            discovered = await controller.follower.follow(
+                thread_id,
+                discovery_timeout_ms=min(IPC_WRITE_DISCOVERY_TIMEOUT_MS, remaining_ms),
+            )
+        except Exception as exc:  # noqa: BLE001 - preserve the external writer lock
+            logger.warning(
+                "codex ipc write route discovery failed thread={} elapsed_ms={:.1f} error={}",
+                thread_id,
+                (loop.time() - started_at) * 1000,
+                exc,
+            )
+            return self._ipc_blocked_write_route(
+                thread_id,
+                code="codex_ipc_owner_unreachable",
+                status="unreachable",
+                message=(
+                    "The Codex session is held by another process, but its IPC owner could "
+                    "not be reached. Reopen or quit Codex Desktop, then retry."
+                ),
+                started_at=started_at,
+            )
         thread = controller.attached_thread(thread_id)
-        if thread is not None or not self.ipc_deeplink_handoff:
-            return thread
-        # The lock is held but no window answers for the thread: typically the
-        # desktop app's app-server still has it loaded without a page showing
-        # it. Asking the running desktop app to open the thread makes it the
-        # owner within a fraction of a second, so AA can follow instead of
-        # fighting over the writer lock.
+        wait_until_state = getattr(controller.follower, "wait_until_state", None)
+        if (
+            thread is None
+            and discovered.status == "following"
+            and callable(wait_until_state)
+        ):
+            remaining = max(0.0, deadline - loop.time())
+            if remaining > 0:
+                await wait_until_state(thread_id, timeout=remaining)
+                thread = controller.attached_thread(thread_id)
+        if thread is not None:
+            logger.info(
+                "codex ipc write route followed thread={} owner_client_id={} elapsed_ms={:.1f}",
+                thread_id,
+                thread.owner_client_id,
+                (loop.time() - started_at) * 1000,
+            )
+            return _CodexIpcWriteRoute(kind="followed", thread=thread)
+        return self._ipc_blocked_write_route(
+            thread_id,
+            code=(
+                "codex_ipc_unavailable"
+                if discovered.status == "offline"
+                else "codex_ipc_owner_unreachable"
+            ),
+            status=discovered.status,
+            message=(
+                "The Codex session is held by another process, but its IPC owner is not "
+                "available. Reopen or quit Codex Desktop, then retry."
+            ),
+            started_at=started_at,
+        )
+
+    async def _legacy_ipc_write_route(
+        self,
+        thread_id: str,
+        controller: CodexIpcTurnController,
+        service: CodexIpcService,
+    ) -> _CodexIpcWriteRoute:
+        """Compatibility path for direct runtime construction outside the provider."""
+
+        lock_probe = getattr(service, "thread_is_held", None)
+        if not callable(lock_probe) or not lock_probe(thread_id):
+            return _CodexIpcWriteRoute(kind="local")
+        try:
+            await controller.follower.follow(
+                thread_id,
+                discovery_timeout_ms=IPC_WRITE_DISCOVERY_TIMEOUT_MS,
+            )
+        except Exception as exc:  # noqa: BLE001 - legacy behavior falls through
+            logger.debug("codex ipc legacy attach-for-write failed thread={} error={}", thread_id, exc)
+            return _CodexIpcWriteRoute(kind="local")
+        thread = controller.attached_thread(thread_id)
+        if thread is not None:
+            return _CodexIpcWriteRoute(kind="followed", thread=thread)
+        if not self.ipc_deeplink_handoff:
+            return _CodexIpcWriteRoute(kind="local")
         if await ipc_deeplink.desktop_app_running() is not True:
-            return None
-        return await self._ipc_handoff_to_desktop(thread_id)
+            return _CodexIpcWriteRoute(kind="local")
+        thread = await self._ipc_handoff_to_desktop(thread_id)
+        return (
+            _CodexIpcWriteRoute(kind="followed", thread=thread)
+            if thread is not None
+            else _CodexIpcWriteRoute(kind="local")
+        )
+
+    def _ipc_blocked_write_route(
+        self,
+        thread_id: str,
+        *,
+        code: str,
+        status: str,
+        message: str,
+        started_at: float,
+    ) -> _CodexIpcWriteRoute:
+        elapsed_ms = (asyncio.get_running_loop().time() - started_at) * 1000
+        logger.warning(
+            "codex ipc write route blocked thread={} status={} code={} elapsed_ms={:.1f}",
+            thread_id,
+            status,
+            code,
+            elapsed_ms,
+        )
+        return _CodexIpcWriteRoute(
+            kind="blocked",
+            code=code,
+            status=status,
+            message=message,
+        )
+
+    @staticmethod
+    def _ipc_blocked_operation(
+        route: _CodexIpcWriteRoute,
+        external_session_id: str | None,
+    ) -> RuntimeOperationResult:
+        return RuntimeOperationResult(
+            ok=False,
+            code=route.code or "codex_ipc_owner_unreachable",
+            message=route.message or "The Codex session owner is unavailable.",
+            result={
+                "externalSessionId": external_session_id,
+                "transport": "ipc",
+                "ownerStatus": route.status,
+                "executionState": "rejected",
+            },
+        )
 
     def _ipc_handoff_supported(self) -> bool:
-        return (self.ipc is not None or self.ipc_enabled) and ipc_deeplink.deeplink_supported()
+        return (
+            self.ipc_deeplink_handoff
+            and (self.ipc is not None or self.ipc_enabled)
+            and ipc_deeplink.deeplink_supported()
+        )
 
     async def _ipc_handoff_to_desktop(self, thread_id: str) -> FollowedThread | None:
         """Open ``codex://threads/<id>`` in the desktop app and follow the result.
@@ -511,6 +710,22 @@ class CodexRuntime(AgentRuntime):
         session_id: str,
         external_session_id: str | None = None,
     ) -> SessionState | None:
+        await self._bind_state_session(session_id, external_session_id)
+        if (
+            external_session_id is not None
+            and self._session_states.get(session_id) is None
+            and self._ipc_attached_thread(session_id, external_session_id) is None
+            and not (
+                self.ipc_service is not None
+                and self.ipc_service.thread_is_held(external_session_id)
+            )
+        ):
+            resumed = await self._session_reader.resume_session_state(
+                session_id,
+                external_session_id,
+            )
+            if resumed is not None:
+                return resumed
         return await self._session_reader.get_session_state(
             session_id,
             external_session_id,
@@ -521,7 +736,7 @@ class CodexRuntime(AgentRuntime):
         session_id: str,
         external_session_id: str | None = None,
     ) -> tuple[SessionNotice, ...]:
-        _ = external_session_id
+        await self._bind_state_session(session_id, external_session_id)
         return self._notices.current_for_session(session_id)
 
     async def get_session_capabilities(
@@ -536,6 +751,7 @@ class CodexRuntime(AgentRuntime):
         this set never uses, so the cache is the only state source.
         """
 
+        await self._bind_state_session(session_id, external_session_id)
         state = self._session_states.get(session_id)
         if state is None and external_session_id is not None:
             state = self._session_states.get_by_external_session_id(
@@ -592,6 +808,7 @@ class CodexRuntime(AgentRuntime):
         external_session_id: str | None = None,
         limit: int | None = None,
     ) -> RuntimeTimelineSnapshot:
+        await self._bind_state_session(session_id, external_session_id)
         thread = self._ipc_attached_thread(session_id, external_session_id)
         if thread is not None and thread.state is not None:
             items = self._timeline.items_from_thread_snapshot(
@@ -663,13 +880,16 @@ class CodexRuntime(AgentRuntime):
         cwd: str | None = None,
     ) -> RuntimeOperationResult:
         _ = cwd
-        thread = await self._ipc_attach_for_write(session_id, external_session_id)
-        if thread is not None:
+        await self._bind_state_session(session_id, external_session_id)
+        route = await self._ipc_route_for_write(session_id, external_session_id)
+        if route.kind == "blocked":
+            return self._ipc_blocked_operation(route, external_session_id)
+        if route.thread is not None:
             controller = self._ipc_controller()
             assert controller is not None
             return await controller.start_turn(
                 session_id=session_id,
-                thread=thread,
+                thread=route.thread,
                 content=content,
                 attachments=attachments,
                 client_message_id=client_message_id,
@@ -691,13 +911,16 @@ class CodexRuntime(AgentRuntime):
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
     ) -> RuntimeOperationResult:
-        thread = await self._ipc_attach_for_write(session_id, external_session_id)
-        if thread is not None:
+        await self._bind_state_session(session_id, external_session_id)
+        route = await self._ipc_route_for_write(session_id, external_session_id)
+        if route.kind == "blocked":
+            return self._ipc_blocked_operation(route, external_session_id)
+        if route.thread is not None:
             controller = self._ipc_controller()
             assert controller is not None
             return await controller.steer_turn(
                 session_id=session_id,
-                thread=thread,
+                thread=route.thread,
                 content=content,
                 attachments=attachments,
                 client_message_id=client_message_id,
@@ -731,12 +954,15 @@ class CodexRuntime(AgentRuntime):
         external_session_id: str | None,
         selections: Mapping[str, str | None],
     ) -> RuntimeOperationResult:
-        thread = await self._ipc_attach_for_write(session_id, external_session_id)
-        if thread is not None:
+        await self._bind_state_session(session_id, external_session_id)
+        route = await self._ipc_route_for_write(session_id, external_session_id)
+        if route.kind == "blocked":
+            return self._ipc_blocked_operation(route, external_session_id)
+        if route.thread is not None:
             controller = self._ipc_controller()
             assert controller is not None
             return await controller.update_selections(
-                session_id=session_id, thread=thread, selections=selections
+                session_id=session_id, thread=route.thread, selections=selections
             )
         return await self._turns.update_session_selections(
             session_id=session_id,

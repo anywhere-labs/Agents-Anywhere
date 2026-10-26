@@ -56,13 +56,21 @@ final class ConversationSettings {
     private(set) var modelID = ""
     private(set) var reasoningID = ""
     private(set) var permissionID = ""
+    private(set) var defaultScopes: Set<V2RuntimeSelectionScope> = []
 
     var model: ChatModelOption? { catalog.models.first { $0.id == modelID } }
     var reasoning: CatalogOption? { model?.reasoning.first { $0.id == reasoningID } }
     var permission: CatalogOption? { catalog.permissions.first { $0.id == permissionID } }
     var modelLabel: String {
         let parts = [model?.option.title, reasoning?.title].compactMap { $0 }
-        return parts.isEmpty ? String(localized: "默认模型") : parts.joined(separator: " · ")
+        if !parts.isEmpty { return parts.joined(separator: " · ") }
+        if defaultScopes.contains(.model) { return String(localized: "Runtime 默认值") }
+        return String(localized: "模型未同步")
+    }
+    var permissionLabel: String {
+        if let permission { return permission.title }
+        if defaultScopes.contains(.permission) { return String(localized: "Runtime 默认值") }
+        return String(localized: "权限未同步")
     }
     var selections: [V2RuntimeSelectionScope: V2SelectionID] {
         var result: [V2RuntimeSelectionScope: V2SelectionID] = [:]
@@ -76,9 +84,25 @@ final class ConversationSettings {
     }
 
     func replace(_ catalog: ChatSettingsCatalog, selections: [V2RuntimeSelectionScope: V2SelectionID] = [:], defaults: Bool = true) {
+        replaceCatalog(catalog, selections: selections.mapValues { .some($0) }, defaults: defaults)
+    }
+
+    func replaceRuntime(
+        _ catalog: ChatSettingsCatalog,
+        selections: [V2RuntimeSelectionScope: V2SelectionID?]
+    ) {
+        replaceCatalog(catalog, selections: selections, defaults: false)
+    }
+
+    private func replaceCatalog(
+        _ catalog: ChatSettingsCatalog,
+        selections: [V2RuntimeSelectionScope: V2SelectionID?],
+        defaults: Bool
+    ) {
         self.catalog = catalog
         modelID = ""; reasoningID = ""; permissionID = ""
-        let selection = selections[.model]
+        defaultScopes = Set(selections.compactMap { scope, value in value == nil ? scope : nil })
+        let selection = selections[.model] ?? nil
         for model in catalog.models where model.option.isEnabled {
             if let selection, model.option.selectionID == selection {
                 modelID = model.id; break
@@ -92,7 +116,8 @@ final class ConversationSettings {
                ?? catalog.models.first(where: { $0.option.isEnabled }) {
             _ = selectModel(model.id)
         }
-        permissionID = catalog.permissions.first { $0.isEnabled && $0.selectionID == selections[.permission] }?.id ?? ""
+        let permissionSelection = selections[.permission] ?? nil
+        permissionID = catalog.permissions.first { $0.isEnabled && $0.selectionID == permissionSelection }?.id ?? ""
         if permissionID.isEmpty, defaults {
             permissionID = catalog.permissions.first { $0.isDefault && $0.isEnabled }?.id
                 ?? catalog.permissions.first { $0.isEnabled }?.id ?? ""

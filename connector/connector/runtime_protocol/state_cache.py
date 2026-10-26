@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from typing import Any
 
 from connector.logging import logger
@@ -54,17 +55,24 @@ class RuntimeSessionStateCache:
         selections: Mapping[str, str | None] | None = None,
         error: Mapping[str, Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
+        *,
+        replace_selections: bool = False,
     ) -> SessionState:
         previous = self._states.get(session_id)
+        next_selections = (
+            dict(selections or {})
+            if replace_selections
+            else {
+                **dict(previous.selections if previous is not None else {}),
+                **dict(selections or {}),
+            }
+        )
         state = SessionState(
             session_id=session_id,
             external_session_id=external_session_id,
             runtime=self._runtime,
             status=status,
-            selections={
-                **dict(previous.selections if previous is not None else {}),
-                **dict(selections or {}),
-            },
+            selections=next_selections,
             error=error,
             metadata={
                 **dict(previous.metadata if previous is not None else {}),
@@ -107,6 +115,62 @@ class RuntimeSessionStateCache:
         if self._on_state_updated is not None:
             await self._on_state_updated(state)
         return state
+
+    async def rebind(
+        self,
+        session_id: str,
+        external_session_id: str,
+    ) -> SessionState | None:
+        """Atomically bind native identity to the Server session identity.
+
+        A Runtime publisher may observe a native session before the Server RPC
+        supplies its authoritative session id.  If only that derived state
+        exists, migrate it; if both exist, retain the authoritative state.
+        Future native events then resolve directly to ``session_id``.
+        """
+
+        current_session_id = self._session_ids_by_external_id.get(external_session_id)
+        authoritative = self._states.get(session_id)
+        changed = current_session_id != session_id
+        derived = (
+            self._states.get(current_session_id)
+            if current_session_id is not None and current_session_id != session_id
+            else None
+        )
+        if authoritative is None and derived is not None:
+            authoritative = replace(
+                derived,
+                session_id=session_id,
+                external_session_id=external_session_id,
+            )
+            self._states[session_id] = authoritative
+            changed = True
+        if current_session_id is not None and current_session_id != session_id:
+            self._states.pop(current_session_id, None)
+        self._session_ids_by_external_id[external_session_id] = session_id
+        if authoritative is None:
+            return None
+        if authoritative.external_session_id != external_session_id:
+            authoritative = replace(
+                authoritative,
+                external_session_id=external_session_id,
+            )
+            self._states[session_id] = authoritative
+            changed = True
+        if not changed:
+            return authoritative
+        await self._host.session_state_update(
+            session_id=session_id,
+            runtime=self._runtime,
+            external_session_id=external_session_id,
+            status=authoritative.status,
+            selections=authoritative.selections,
+            error=authoritative.error,
+            metadata=authoritative.metadata,
+        )
+        if self._on_state_updated is not None:
+            await self._on_state_updated(authoritative)
+        return authoritative
 
 
 class RuntimeSessionSourceStateCache:

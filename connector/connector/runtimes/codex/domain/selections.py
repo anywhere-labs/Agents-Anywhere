@@ -100,6 +100,8 @@ async def model_selection_from_thread_state(
         ("threadSettings", "model"),
         ("settings", "model"),
         ("latestTurnStartParams", "model"),
+        ("collaborationMode", "settings", "model"),
+        ("collaboration_mode", "settings", "model"),
     )
     if model_id is None:
         return None
@@ -125,6 +127,9 @@ async def model_selection_from_thread_state(
         ("latestTurnStartParams", "reasoning"),
         ("latestTurnStartParams", "reasoningEffort"),
         ("latestTurnStartParams", "reasoning_effort"),
+        ("collaborationMode", "settings", "reasoning_effort"),
+        ("collaborationMode", "settings", "reasoningEffort"),
+        ("collaboration_mode", "settings", "reasoning_effort"),
     )
     catalog = await read_catalog()
     for model in catalog.models:
