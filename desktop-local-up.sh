@@ -507,9 +507,7 @@ start_service server "${CYAN}" "${SERVER_DIR}" \
   AGENT_SERVER_PUBLIC_ORIGIN="${WEB_URL}" \
   AGENT_SERVER_CORS_ORIGINS="${SERVER_CORS_ORIGINS}" \
   LOGURU_LEVEL="${LOGURU_LEVEL:-INFO}" \
-  "${SERVER_DIR}/.venv/bin/uvicorn" \
-  agent_server.app:create_app \
-  --factory \
+  "${SERVER_DIR}/.venv/bin/python" -m agent_server.main \
   --host 127.0.0.1 \
   --port "${SERVER_PORT}" \
   --no-access-log

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from typing import Any
@@ -33,6 +34,7 @@ from connector.server.dispatch import (
 )
 from connector.server.errors import ConnectorNetworkError
 from connector.server.ingest import ConnectorIngestClient
+from connector.server.mesh_transport import RemoteConnectorControl
 from connector.server.notification_coalescer import (
     TimelineItemNotificationCoalescer,
 )
@@ -137,6 +139,8 @@ class BackendRpcClient:
             flush_sync_state=self._flush_sync_state,
         )
         self._runtime_sync_task: asyncio.Task[None] | None = None
+        self._mesh_connection_token = ""
+        self._remote_control = RemoteConnectorControl(self)
 
     async def run_forever(self) -> None:
         self._http_client = self._new_http_client(timeout=60)
@@ -259,11 +263,13 @@ class BackendRpcClient:
             },
             proxy=None if is_loopback_url(self.config.server_url) else True,
         ) as ws:
+            self._mesh_connection_token = secrets.token_urlsafe(24)
             self._rpc.set_connection(ws)
             capabilities_task = asyncio.create_task(
                 self._publish_runtime_capabilities(request_session)
             )
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+            mesh_task = asyncio.create_task(self._remote_control.run())
             recovery_task = asyncio.create_task(self._runtime_sync.reconnect_event_runtimes())
             reader_task = asyncio.create_task(self._read_backend_messages(ws, request_session))
             try:
@@ -281,12 +287,13 @@ class BackendRpcClient:
                     await heartbeat_task
                     raise ConnectorNetworkError("backend heartbeat stopped")
             finally:
+                mesh_task.cancel()
                 capabilities_task.cancel()
                 heartbeat_task.cancel()
                 recovery_task.cancel()
                 reader_task.cancel()
                 await asyncio.gather(
-                    capabilities_task, heartbeat_task, recovery_task, reader_task, return_exceptions=True
+                    capabilities_task, heartbeat_task, recovery_task, reader_task, mesh_task, return_exceptions=True
                 )
                 await self._rpc.close_connection()
 
@@ -324,7 +331,7 @@ class BackendRpcClient:
         request_session: ConnectorRequestSession | None = None,
     ) -> None:
         dispatcher = request_session or self._dispatcher
-        await self._rpc.handle_message(message, dispatcher.dispatch)
+        await self._rpc.handle_message(message, self._control_dispatch(dispatcher))
 
     def start_message(
         self,
@@ -332,7 +339,14 @@ class BackendRpcClient:
         request_session: ConnectorRequestSession | None = None,
     ) -> None:
         dispatcher = request_session or self._dispatcher
-        self._rpc.start_request(message, dispatcher.dispatch)
+        self._rpc.start_request(message, self._control_dispatch(dispatcher))
+
+    def _control_dispatch(self, dispatcher):
+        async def dispatch(method: str, params: dict[str, Any]) -> Any:
+            if method == "connector.mesh.connection":
+                return {"connectionToken": self._mesh_connection_token}
+            return await dispatcher.dispatch(method, params)
+        return dispatch
 
     async def dispatch(self, method: str, params: dict[str, Any]) -> Any:
         return await self._dispatcher.dispatch(method, params)

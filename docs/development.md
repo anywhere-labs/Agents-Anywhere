@@ -1,5 +1,12 @@
 # v2 开发指南
 
+Server 的控制面通过 MeshCall 调用 Connector，契约见
+[connector-control/1.0](../contracts/connector-control/1.0/README.md)。请使用
+`cd server && uv run python -m agent_server.main` 或仓库启动脚本，由父进程维护
+共享 Router。直接启动 `uvicorn agent_server.app:create_app` 不会启动 Router。
+反向代理需允许 `/api/v2/connector/mesh` WebSocket 升级。使用
+`GET /api/v2/health/mesh` 检查 Router 就绪；Server 与 Connector 须配套更新。
+
 ## 分支与环境
 
 `main` 是 v2 主线，新功能从最新 `main` 创建分支，分支名为 `<type>/<domain>/<topic>`（type 如 `feat`、`fix`、`docs`；domain 缩写为 `fe`、`be`、`con`、`dsk`、`apk`、`ios`、`dsh`、`docs`，多个 domain 用 `+` 连接），如 `feat/con+be/<topic>`。`v2` 保留用于发布过渡，不再把旧 `main` 的 API 和数据库假定套用到当前主线。历史资料见[升级指南](upgrading.md)。

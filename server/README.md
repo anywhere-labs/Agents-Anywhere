@@ -35,7 +35,7 @@ AGENT_SERVER_DB_URL=postgresql+asyncpg://agents:password@127.0.0.1:5432/agents_a
 
 AGENT_SERVER_DB_URL=postgresql+asyncpg://agents:password@127.0.0.1:5432/agents_anywhere \
 AGENT_SERVER_REDIS_URL=redis://127.0.0.1:6379/0 \
-  uv run uvicorn agent_server.app:create_app --factory --host 127.0.0.1 --port 8000
+  uv run python -m agent_server.main --host 127.0.0.1 --port 8000
 ```
 
 The Server requires the database to be at its exact Alembic schema revision and
@@ -198,7 +198,7 @@ A manually prepared static export can be served with:
 
 ```bash
 AGENT_SERVER_STATIC_DIR=/path/to/web-next/out \
-  uv run uvicorn agent_server.app:create_app --factory --host 127.0.0.1 --port 8000
+  uv run python -m agent_server.main --host 127.0.0.1 --port 8000
 ```
 
 ## Verify
