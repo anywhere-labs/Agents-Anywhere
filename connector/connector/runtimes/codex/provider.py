@@ -255,6 +255,7 @@ class CodexProvider(RuntimeProvider):
             client_message_kv=runtime_kv_store(host),
             ipc_enabled=config.values.get("ipcEnabled", True) is not False,
             ipc_deeplink_handoff=config.values.get("ipcDeeplinkHandoff", True) is not False,
+            safe_ipc_write_routing=True,
         )
 
     def resource_claims(
