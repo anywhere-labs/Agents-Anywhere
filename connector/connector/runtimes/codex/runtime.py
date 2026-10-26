@@ -402,6 +402,7 @@ class CodexRuntime(AgentRuntime):
                         "session. Retry after reconnecting Codex Desktop."
                     ),
                     started_at=started_at,
+                    detail="ipc client not initialized",
                 )
 
         remaining_ms = max(1, int((deadline - loop.time()) * 1000))
@@ -426,6 +427,7 @@ class CodexRuntime(AgentRuntime):
                     "not be reached. Reopen or quit Codex Desktop, then retry."
                 ),
                 started_at=started_at,
+                detail=f"{type(exc).__name__}: {exc}",
             )
         thread = controller.attached_thread(thread_id)
         wait_until_state = getattr(controller.follower, "wait_until_state", None)
@@ -446,6 +448,9 @@ class CodexRuntime(AgentRuntime):
                 (loop.time() - started_at) * 1000,
             )
             return _CodexIpcWriteRoute(kind="followed", thread=thread)
+        detail = discovered.error
+        if discovered.status == "following":
+            detail = f"owner {discovered.owner_client_id} sent no state in time"
         return self._ipc_blocked_write_route(
             thread_id,
             code=(
@@ -459,6 +464,7 @@ class CodexRuntime(AgentRuntime):
                 "available. Reopen or quit Codex Desktop, then retry."
             ),
             started_at=started_at,
+            detail=detail,
         )
 
     async def _legacy_ipc_write_route(
@@ -502,14 +508,25 @@ class CodexRuntime(AgentRuntime):
         status: str,
         message: str,
         started_at: float,
+        detail: str | None = None,
     ) -> _CodexIpcWriteRoute:
         elapsed_ms = (asyncio.get_running_loop().time() - started_at) * 1000
+        # Owner discovery runs through whichever process routes Codex IPC, so a
+        # stall reads differently when that is this Connector than when it is
+        # Codex Desktop or an IDE extension.
+        if self.ipc is None:
+            router = "none"
+        else:
+            router = "self" if getattr(self.ipc, "is_router", False) else "external"
         logger.warning(
-            "codex ipc write route blocked thread={} status={} code={} elapsed_ms={:.1f}",
+            "codex ipc write route blocked thread={} status={} code={} elapsed_ms={:.1f} "
+            "ipc_router={} detail={}",
             thread_id,
             status,
             code,
             elapsed_ms,
+            router,
+            detail,
         )
         return _CodexIpcWriteRoute(
             kind="blocked",

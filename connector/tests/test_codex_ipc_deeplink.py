@@ -7,6 +7,7 @@ import sys
 
 import pytest
 
+from connector.logging import logger
 from connector.runtime_protocol import RuntimeConfig
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.ipc import FollowedThread, IpcResponse
@@ -216,6 +217,28 @@ def test_handoff_falls_back_to_sdk_when_owner_never_appears(monkeypatch: pytest.
         assert follower.follow_calls == [3000, 5000]
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize(("is_router", "role"), [(True, "self"), (False, "external")])
+def test_blocked_write_logs_router_role_and_discovery_error(is_router: bool, role: str) -> None:
+    messages: list[str] = []
+
+    async def run() -> None:
+        client = _Client()
+        client.is_router = is_router  # type: ignore[attr-defined]
+        runtime = _runtime(_Follower(["no_owner"]), client, safe_ipc_write_routing=True)
+        result = await runtime.start_turn("sess_1", THREAD, "hi")
+        assert not result.ok and result.code == "codex_ipc_owner_unreachable"
+
+    sink = logger.add(lambda message: messages.append(message.record["message"]), level="WARNING")
+    try:
+        asyncio.run(run())
+    finally:
+        logger.remove(sink)
+    blocked = [message for message in messages if message.startswith("codex ipc write route blocked")]
+    assert len(blocked) == 1
+    assert f"ipc_router={role}" in blocked[0]
+    assert "detail=no-client-found" in blocked[0]
 
 
 # -- explicit command --------------------------------------------------------------
