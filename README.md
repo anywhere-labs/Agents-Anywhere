@@ -49,7 +49,7 @@
 - iOS / iPadOS：在 App Store 下载安装；也可以通过 TestFlight 安装测试版，以邀请页显示的可用状态为准。
 - Linux / headless：运行 Connector 接入工作设备，通过其他客户端操作。
 
-macOS、Windows 和 Android 的下载文件均为 **Agents Anywhere** 安装包，托管在 ModelScope 的 `t4wefan/deepseek-harness-desktop` 仓库中，同样的文件也发布在 GitHub 的 [v2.0.3 Release](https://github.com/anywhere-labs/Agents-Anywhere/releases/tag/v2.0.3)。历史 GitHub Releases 中的 0.1.x 安装包不作为 2.0 下载入口。当前发布客户端的应用内更新地址仍是占位配置，请通过上面的链接手动下载。
+macOS、Windows 和 Android 的下载文件均为 **Agents Anywhere** 安装包，托管在 ModelScope 的 `t4wefan/deepseek-harness-desktop` 仓库中，同样的文件也发布在 GitHub 的 [v2.0.3 Release](https://github.com/anywhere-labs/Agents-Anywhere/releases/tag/v2.0.3)。历史 GitHub Releases 中的 0.1.x 安装包不作为 2.0 下载入口。2.0.3 及更早版本的应用内更新地址是占位配置，请通过上面的链接手动下载；从 2.1.0 起，Desktop（macOS、Windows）和 Android 的「立即更新」会从官网下载最新安装包。
 
 `main` 是当前开发主线。源码中的新修复不一定已进入上面的 2.0.3 安装包；各端的 PATCH 版本独立发布，数据库 schema revision 单独编号，见[版本号规则](docs/versioning.md)。发布范围见 [2.0.3 发布说明](docs/releases/2.0.3.md)。
 

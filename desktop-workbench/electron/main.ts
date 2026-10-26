@@ -1022,7 +1022,7 @@ if (hasSingleInstanceLock) {
       directory: path.join(app.getPath("userData"), "updates"),
       currentVersion: app.getVersion(),
       serverVersion: buildInfo.serverVersion,
-      downloadUrl: config.updates.downloadUrl,
+      downloadUrls: config.updates.downloadUrls,
       platform: process.platform,
       healthTimeoutMs: config.healthTimeoutMs,
       fetcher: (input, init) => net.fetch(String(input), init),

@@ -299,9 +299,12 @@ icon. Ignoring persists the exact server version in
 version prompts again. The download icon beside the account avatar remains
 visible whenever the Server is ahead of the build baseline, including after ignoring a version.
 
-Set `updates.downloadUrl` in `config.json` to the fixed HTTPS installer address
-before distribution. The `.invalid` URL is an explicit placeholder and does not
-download an installer. Downloads stream into `<Electron userData>/updates/downloads`
+`updates.downloadUrls` in `config.json` maps `process.platform` to the fixed
+HTTPS installer address. `darwin` and `win32` point at
+`https://www.agents-anywhere.com/api/download/<mac|windows>/latest`, which the
+official site redirects to the latest installer. The site has no Linux
+installer, so Linux and `.invalid` placeholder addresses report that the
+download is not available. Downloads stream into `<Electron userData>/updates/downloads`
 with progress, remove incomplete files on failure/quit, and open the completed
 installer with the OS. Installing the new app remains an installer operation.
 

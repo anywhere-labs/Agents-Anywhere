@@ -49,7 +49,7 @@ See the [download page](https://www.agents-anywhere.com/en/download) for platfor
 - iOS / iPadOS: download from the App Store, or install the beta through TestFlight; beta availability is shown on the invitation page.
 - Linux / headless: run the Connector on the work machine and control it from another client.
 
-The macOS, Windows and Android files are **Agents Anywhere** installers hosted in the ModelScope repository `t4wefan/deepseek-harness-desktop`; the same files are also attached to the [v2.0.3 GitHub Release](https://github.com/anywhere-labs/Agents-Anywhere/releases/tag/v2.0.3). Historical 0.1.x GitHub Releases are not the 2.0 download channel. In-app update addresses in the current released clients are still placeholders; download manually using the links above.
+The macOS, Windows and Android files are **Agents Anywhere** installers hosted in the ModelScope repository `t4wefan/deepseek-harness-desktop`; the same files are also attached to the [v2.0.3 GitHub Release](https://github.com/anywhere-labs/Agents-Anywhere/releases/tag/v2.0.3). Historical 0.1.x GitHub Releases are not the 2.0 download channel. In-app update addresses in 2.0.3 and earlier clients are placeholders; download manually using the links above. Starting with 2.1.0, **Update now** in Desktop (macOS, Windows) and Android downloads the latest installer from the official site.
 
 `main` is the current development branch. New source fixes may not yet be included in the 2.0.3 installers. Each client and service releases PATCH versions independently, and database schema revisions are numbered separately; see the [versioning rules](docs/versioning.md). See the [2.0.3 release notes](docs/releases/2.0.3.md) for release scope.
 

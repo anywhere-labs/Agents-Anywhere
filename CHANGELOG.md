@@ -67,6 +67,7 @@
 - 启动之后的错误、后台进程退出、Connector 崩溃都会显示出来，后台退出后可以一键重新启动；后台起不来时立即报错，退出也不会再卡住。（[#450](https://github.com/anywhere-labs/Agents-Anywhere/pull/450)、[#383](https://github.com/anywhere-labs/Agents-Anywhere/pull/383)）
 - 修复 Windows 中文用户名下首次启动卡在状态检查，以及 Node 或项目路径带空格时开发启动和打包失败。（[#380](https://github.com/anywhere-labs/Agents-Anywhere/pull/380)、[#384](https://github.com/anywhere-labs/Agents-Anywhere/pull/384)）
 - 打包时排除用不到的 Router 二进制，修复 macOS universal 打包冲突，安装包也更小。（[#353](https://github.com/anywhere-labs/Agents-Anywhere/pull/353)）
+- 「立即更新」会从官网 www.agents-anywhere.com 下载对应系统的最新安装包（macOS、Windows），不再提示「更新下载暂未开放」。（[#458](https://github.com/anywhere-labs/Agents-Anywhere/pull/458)）
 
 ### 本机连接、所有权与日志
 
@@ -107,6 +108,7 @@
 - Markdown 支持 LaTeX 公式；修复引用块里含代码块或公式时闪退。（[#382](https://github.com/anywhere-labs/Agents-Anywhere/pull/382)、[#390](https://github.com/anywhere-labs/Agents-Anywhere/pull/390)）
 - 流式生成时保持当前的阅读位置。（[#428](https://github.com/anywhere-labs/Agents-Anywhere/pull/428)）
 - 长会话流式输出的开销降低；模型设置里，不同供应商的同名模型不再被合成一项。（[#394](https://github.com/anywhere-labs/Agents-Anywhere/pull/394)、[#411](https://github.com/anywhere-labs/Agents-Anywhere/pull/411)）
+- 「立即更新」会从官网 www.agents-anywhere.com 下载最新 APK。（[#458](https://github.com/anywhere-labs/Agents-Anywhere/pull/458)）
 
 ### iOS
 
