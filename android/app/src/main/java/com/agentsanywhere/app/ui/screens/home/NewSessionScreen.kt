@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
@@ -299,8 +300,8 @@ fun NewSessionScreen(
     val selectedDeviceOs = selectedDevice?.deviceOs
     val isWindowsDevice = isWindowsDeviceOs(selectedDeviceOs)
     val selectedRuntime = runtimeSelection.selectedRuntime
-    LaunchedEffect(selectedProject?.id, runtimeSelection.runtimes) {
-        selectedProject?.runtimeId?.let { runtimeSelection = runtimeSelection.selectRuntime(it) }
+    LaunchedEffect(selectedProject?.id, selectedProject?.runtimeId, runtimeSelection.runtimes, creatingProject) {
+        if (!creatingProject) selectedProject?.runtimeId?.let { runtimeSelection = runtimeSelection.selectRuntime(it) }
     }
     val hasAvailableSelectedRuntime = selectedDevice != null && selectedDevice.id !in inventory.errors &&
         runtimeSelection.connectorId == selectedDevice.id &&
@@ -387,7 +388,8 @@ fun NewSessionScreen(
         } else {
             val next = runtimeSelection.beginRuntimeInventory(connectorId)
             runtimeSelection = inventory.results[connectorId]?.let {
-                next.replaceRuntimeInventory(it, preference?.runtimeId?.takeIf { preference?.connectorId == connectorId })
+                next.replaceRuntimeInventory(it, selectedProject?.runtimeId
+                    ?: preference?.runtimeId?.takeIf { preference?.connectorId == connectorId })
             } ?: next
             inventory.errors[connectorId]?.let {
                 runtimeSelection = runtimeSelection.failRuntimeInventory(connectorId, it)
@@ -710,6 +712,19 @@ fun NewSessionScreen(
         selectedDeviceId = preferredDeviceId
     }
 
+    fun selectCreatedProject(project: AgentProject) {
+        localProject = project
+        selectDevice(project.connectorId)
+        selectedProjectId = project.id
+        runtimeSelection = runtimeSelection.selectRuntime(project.runtimeId)
+        persistSelection(NewSessionConfigurationKey.Agent)
+        selectedWorkspacePath = project.preferredWorkspacePath
+        currentPath = project.preferredWorkspacePath
+        expandedConfiguration = null
+        choosePath = false
+        if (projectOnly) navigate(AppDestination.Sessions) else creatingProject = false
+    }
+
     fun createProject() {
         val device = selectedDevice ?: return
         val inputPath = selectedWorkspacePath.trim()
@@ -736,15 +751,7 @@ fun NewSessionScreen(
                 projectName = attemptedName
                 val project = onCreateProject(attemptedName, device.id, path, projectRuntime.type, projectRuntime.id,
                     java.util.UUID.nameUUIDFromBytes("$projectRequestId:$attemptedName:$path:${projectRuntime.id}".toByteArray()).toString()).getOrThrow()
-                localProject = project
-                selectDevice(project.connectorId, persist = true)
-                selectedProjectId = project.id
-                selectedDeviceId = project.connectorId
-                selectedWorkspacePath = project.preferredWorkspacePath
-                currentPath = project.preferredWorkspacePath
-                expandedConfiguration = null
-                if (projectOnly) navigate(AppDestination.Sessions) else creatingProject = false
-                choosePath = false
+                selectCreatedProject(project)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -799,7 +806,13 @@ fun NewSessionScreen(
             Column {
                 if (pendingProjectOperations.isNotEmpty()) Text(stringResource(R.string.project_pending_description))
                 pendingProjectOperations.forEach { entry ->
-                    Text(entry.name + " · " + (if (entry.status == "succeeded") stringResource(R.string.project_awaiting_sync) else if (entry.status == "pending") stringResource(R.string.project_processing) else stringResource(R.string.project_unconfirmed)))
+                    val statusLabel = when {
+                        entry.status == "succeeded" && entry.syncState == "synced" -> R.string.project_synced_pending_confirmation
+                        entry.status == "succeeded" -> R.string.project_awaiting_sync
+                        entry.status == "pending" -> R.string.project_processing
+                        else -> R.string.project_unconfirmed
+                    }
+                    Text(entry.name + " · " + stringResource(statusLabel))
                     Text(entry.workspacePath)
                     androidx.compose.foundation.layout.Row {
                         listOf(false, true).forEach { again ->
@@ -808,11 +821,7 @@ fun NewSessionScreen(
                                 scope.launch {
                                     try {
                                         val project = onResumeProjectOperation(entry, again).getOrThrow()
-                                        localProject = project; selectedProjectId = project.id
-                                        selectDevice(project.connectorId, persist = true)
-                                        selectedWorkspacePath = project.preferredWorkspacePath
-                                        currentPath = project.preferredWorkspacePath
-                                        if (projectOnly) navigate(AppDestination.Sessions) else creatingProject = false
+                                        selectCreatedProject(project)
                                     } catch (error: CancellationException) { throw error }
                                     catch (error: Exception) { projectCreateError = error.localizedProjectMessage(context) }
                                     finally {
@@ -846,7 +855,8 @@ fun NewSessionScreen(
                 collapsible = true,
                 directoryBorderColor = Color(0xFFE7E6E2).takeUnless { darkMode },
                 enabled = selectedDevice != null && !projectCreating,
-                modifier = Modifier.weight(1f),
+                // The editor scrolls as a whole; keep the nested directory list bounded.
+                modifier = Modifier.height(320.dp),
                 onBack = null,
                 onParent = { parent?.let(::browseDirectory) },
                 onOpenEntry = { browseDirectory(it.path) },

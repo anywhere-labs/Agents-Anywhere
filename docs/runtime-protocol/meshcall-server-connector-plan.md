@@ -95,3 +95,12 @@ Desktop UI、浏览器或模型提供商参与。远程 Supervisor/配置发现�
 - Web / Desktop renderer / DSH 类型检查通过；Web / Desktop renderer 协议一致性检查通过。
 - 版本直接核对通过；87 个变更 Python 文件语法、变更 JSON 解析、启动脚本 shell 语法及 Git 空白检查通过。
 - 本轮未重新进行 Android/iOS 编译、真实 Runtime 或四端真机验收；前述原实现的运行证据保留历史范围。未推送、创建 PR 或部署。
+
+## Android 真机发现项修复（2026-10-26）
+
+- 新建项目编辑区整体滚动，目录列表使用有界高度；历史待确认操作较多或路径较长时，仍能访问 Agent 和目录选择，底部提交按钮固定保留。
+- Android 保留现有操作响应的 `syncState`，将“已创建并同步，待确认”和“已创建，等待同步”分开展示；未修改 Server 契约。
+- 创建与恢复共用项目选择逻辑，同时绑定设备、项目和 Runtime 实例并保存选择；清单刷新优先使用项目所属实例，创建编辑期间不套用旧项目的 Agent。
+- 小米 2304FPN6DC / Android 16 真机：三条长路径历史操作可滚动访问 Agent、目录；已同步状态显示正确；从 DSH 选择创建 Codex 项目、恢复 Codex 操作后均正确选中 Codex。原生 Codex 项目和持久操作回执已核对，未发送模型会话。
+- Debug 构建及 58 项现有单元测试通过；完整 Android lint 仍被未改动的 `AgentMarkdownText.kt:162` 中 `RememberReturnType` 错误阻塞。未修改测试、产品版本或其他端代码；版本保持 2.1.0 / Android versionCode 10。
+- 本地截图、APK 哈希、检查日志和回执位于忽略目录 `.local-dev/qa-meshcall-ui-20261026/`。本次修复不包含全链路日志补齐，亦未进行推送或发布。

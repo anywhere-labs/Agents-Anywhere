@@ -62,7 +62,8 @@ class SessionsApi(
             val operation = getJSONObject("operation")
             RemotePendingProjectOperation(operation.getString("operationId"), operation.getString("status"),
                 request.getString("name"), request.getString("connectorId"), request.getString("runtime"),
-                request.getString("runtimeId"), request.getString("workspacePath"))
+                request.getString("runtimeId"), request.getString("workspacePath"),
+                syncState = operation.optNullableString("syncState"))
         }
     }
 

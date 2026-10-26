@@ -44,4 +44,5 @@ data class RemoteProjectCreateResponse(
 data class RemotePendingProjectOperation(
     val operationId: String, val status: String, val name: String,
     val connectorId: String, val runtime: String, val runtimeId: String, val workspacePath: String,
+    val syncState: String? = null,
 )

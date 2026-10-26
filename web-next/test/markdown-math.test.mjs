@@ -17,7 +17,10 @@ const stubs = {
   "@/lib/markdown-math": { remarkStandaloneDisplayMath },
   "@/lib/clipboard": { copyText() {} },
   "@/lib/utils": { cn: (...args) => args.filter(Boolean).join(" ") },
-  "@/lib/code-highlight": { highlightCode: code => code },
+  "@/components/source-code-block": {
+    SourceCodeBlock: passthrough,
+    SourceCodeContent: ({ code }) => React.createElement("pre", null, code),
+  },
   "@/lib/file-preview-window": { openNativeFilePreviewWindow() {} },
   "@/components/ui/badge": { Badge: passthrough },
   "@/components/ui/scroll-area": { ScrollArea: passthrough, ScrollBar: () => null },

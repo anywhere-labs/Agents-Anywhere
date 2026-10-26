@@ -720,6 +720,7 @@
     <string name="project_recovery_failed">未能加载待核对操作；相同参数的提交仍会恢复旧操作。</string>
     <string name="project_pending_description">待核对的项目操作；再次新建会单独创建项目。</string>
     <string name="project_awaiting_sync">已创建，等待同步</string>
+    <string name="project_synced_pending_confirmation">已创建并同步，待确认</string>
     <string name="project_processing">处理中</string>
     <string name="project_unconfirmed">结果待确认</string>
     <string name="project_create_again">再次新建</string>

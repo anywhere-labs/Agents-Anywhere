@@ -722,6 +722,7 @@
     <string name="project_recovery_failed">Could not load pending operations. Submitting the same details will still recover the existing operation.</string>
     <string name="project_pending_description">Project operations are awaiting confirmation. Creating another will create a separate project.</string>
     <string name="project_awaiting_sync">Created, awaiting sync</string>
+    <string name="project_synced_pending_confirmation">Created and synced, awaiting confirmation</string>
     <string name="project_processing">Processing</string>
     <string name="project_unconfirmed">Awaiting confirmation</string>
     <string name="project_create_again">Create another</string>
