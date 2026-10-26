@@ -67,8 +67,6 @@ DSH_INTERACTION_RUNTIME_ROOT=/path/to/dsh-installation \
 
 ## 本地构建与安装
 
-Connector 启动后立即停止时，先查看“运行日志 → 启动前诊断”。连接阶段的失败快照会在停止进程后保留，成功重试后清除；控制接口返回的 `lastError` 会脱敏写入诊断输出。`CONNECTOR_SYNC_STATE_INVALID` 表示同步状态文件无法解析。历史插件配置可能使用 `<connectorId>.sqlite3` 作为文件名，当前内容仍按 JSON 检查点读取；零字节占位文件视为没有检查点，非空损坏文件继续报错，不自动覆盖。进程退出码 `0` 可能来自失败后的主动清理，不能据此判断连接成功。
-
 需要 Node.js `^22.19.0 || >=24`、Corepack，插件通过 npm 依赖 `@dataiku/uv` 提供 uv，运行 Connector 时按需准备 Python 3.12+。开发 Python 子项目时仍可使用本机 uv。项目使用 Yarn；DSH 安装命令内部使用其自己的包管理器。
 
 ```bash
@@ -171,6 +169,8 @@ Python 下载镜像独立于 PyPI 镜像，提供官方源与 npmmirror。首次
 日志页可以切换 Bridge 和 Connector。运行日志通过生成的 Logs 客户端从 Connector 读取，保留全局 seq，支持来源过滤和分页。Connector 不可用时，Connector 页仍可显示本地启动诊断（uv/Python stderr 与进程状态，`<stateRoot>/logs/connector-output.json`）；该日志仅用于启动排错，不复制已接收的运行日志。stdout 只用于 `anywhere-cli rpc` 启动时的一行就绪信息。
 
 “启动前诊断”还通过插件管理 RPC `readStartupDiagnostics()` 展示当前插件初始化和 Bridge 启动失败的故障快照（每个来源至多一条），保留错误码、调用栈位置和 cause 链，沿用运行诊断的脱敏规则。此快照不依赖 Connector 或日志目录可读写；即使终端输出读取失败，已捕获的权限错误仍可展开查看。成功重试后移除对应故障，插件重新加载后重新采集；历史排查仍使用现有安装引导和 Host 日志。快照与终端输出独立读取，均不冒充中央运行日志、不混用分页游标。
+
+连接阶段（登录后连接、启动或恢复 Connector）的失败同样保留一条快照：停止进程后仍可查看，连接成功或退出登录后清除。登录前的地址检查、uv 检查等错误由发起的操作直接提示，不写入快照。Connector 运行失败时（控制接口返回 `lastError`，凭据失效除外），原始错误写入终端输出，其中凭据已脱敏、路径保留。`CONNECTOR_SYNC_STATE_INVALID` 表示同步状态文件无法解析：插件为 Connector 配置的状态文件是 `connector/<connectorId>.sqlite3`（沿用旧文件名，内容是 JSON），各 Runtime 首次启动时复制为 `connector/<connectorId>/<runtimeId>/sync-state.json`。零字节文件视为没有检查点；非空的损坏文件继续报错、不自动覆盖，按终端输出中的路径移走该文件后重启 Connector 即可。进程退出码 `0` 可能来自失败后的主动清理，不能据此判断连接成功。
 
 受限权限请求通过 DSH 官方 `approval/request` 转成 AA 交互通知，显示工具名与申请原因，提供“允许一次”和“拒绝”。结果通过官方待处理请求返回 DSH，不修改会话权限模式或批准策略。原生客户端作答或请求取消后，远端通知同步关闭；重连恢复同一个待处理请求，重复提交不会重复批准。计划审批 `plan-review` 复用问答卡片，展示完整计划正文和 DSH 提供的选项，也可填写修改意见。批准选项按 DSH 声明的标签匹配，不按位置推断；原生客户端作答、取消和重连沿用同一待处理请求。
 

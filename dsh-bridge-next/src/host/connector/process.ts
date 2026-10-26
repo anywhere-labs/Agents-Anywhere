@@ -187,7 +187,8 @@ export class SourceConnector implements ConnectorProcess {
   private updateState(value: unknown): void {
     if (!value || typeof value !== 'object') return
     const state = value as Partial<ControlState> & { logsPath?: unknown }
-    if (!state.running && typeof state.lastError === 'string' && state.lastError && !this.stopping) {
+    // Credential failures also carry lastError; they are reported as authFailed, not as a runtime failure.
+    if (!state.running && !state.authFailed && typeof state.lastError === 'string' && state.lastError && !this.stopping) {
       const invalidState = /^(invalid|unsupported) connector sync state file:/.test(state.lastError)
       const code = invalidState ? 'CONNECTOR_SYNC_STATE_INVALID' : 'CONNECTOR_RUNTIME_FAILED'
       if ((this.failure as (Error & { code?: string }) | null)?.code !== code) {

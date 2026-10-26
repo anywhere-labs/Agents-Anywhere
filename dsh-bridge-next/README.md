@@ -40,9 +40,9 @@ dsh plugin --profile desktop add @agents-anywhere/dsh-bridge-next
 
 ![Agents Anywhere 设备页面显示设备在线，DSH Agent Runtime 正在运行](docs/images/dsh-runtime-connected.webp)
 
-## 使用条件与数据范围
+插件提示“连接服务器超时”时，表示请求 Agents Anywhere 服务端超过 20 秒仍未完成，不代表 Connector 进程崩溃；检查所选后端地址和本机网络后，在插件中重新启动 Connector。Connector 启动后立即停止时，在插件“运行日志 → 启动前诊断”中查看原因。
 
-若 Connector 区域提示“连接服务器超时”，表示插件请求 AA 服务端超过 20 秒仍未完成。请检查所选后端地址和本机网络，恢复后在插件中重新启动 Connector；此提示本身不代表 Connector 进程崩溃。
+## 使用条件与数据范围
 
 - 远程连接需要 Agents Anywhere 账号和可访问的服务端。自托管时输入后端地址；手机扫码时，手机也需要能够访问该服务。
 - 会话、时间线和附件等数据会按所用功能经过或保存在 Agents Anywhere Server；自托管时由你部署的服务处理。模型账号与费用遵循所用模型服务的规则。

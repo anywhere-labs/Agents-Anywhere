@@ -45,12 +45,14 @@ export class OnboardingManager {
   private connectionFailure: StartupFailureDiagnostic | null = null
   startupDiagnostic(): StartupFailureDiagnostic | null { return this.connectionFailure ? { ...this.connectionFailure } : null }
 
+  /** Connection-phase failures only; earlier errors are answered by the call that raised them. */
   private recordConnectionFailure(error: unknown): void {
     const status = startupFailure(error)
     const invalidState = error instanceof Error && 'code' in error && error.code === 'CONNECTOR_SYNC_STATE_INVALID'
     this.connectionFailure = startupFailureDiagnostic(error, 'plugin', 'connector.start_failed', {
       ...status, code: invalidState ? 'CONNECTOR_SYNC_STATE_INVALID' : 'CONNECTOR_START_FAILED',
-      message: invalidState ? 'Connector 同步状态文件无效，请检查启动前诊断输出。' : 'Connector 连接失败，请检查启动前诊断输出。',
+      message: invalidState ? 'Connector 同步状态文件无效。终端输出中列出了文件路径；请在“设置 → 维护”中打开数据目录，移走该文件后重新启动 Connector。'
+        : 'Connector 连接失败，详情见下方错误信息和终端输出。',
     })
     this.diagnostics.log('error', 'connector.start_failed', {}, error)
   }
@@ -242,9 +244,7 @@ export class OnboardingManager {
     const key = JSON.stringify(input ?? null)
     if (this.beginning) return this.beginning.key === key
       ? this.beginning.promise : Promise.reject(new Error('正在开始另一次登录，请稍候。'))
-    const promise = this.serial(() => this.startFlow(input))
-      .catch(error => { this.recordConnectionFailure(error); throw error })
-      .finally(() => { this.beginning = null })
+    const promise = this.serial(() => this.startFlow(input)).finally(() => { this.beginning = null })
     this.beginning = { key, promise }
     return promise
   }
@@ -432,6 +432,7 @@ export class OnboardingManager {
         if (!controller.signal.aborted) {
           if (error instanceof DeviceRecoveryRequired || error instanceof ConnectorCredentialError) await this.connectionFailed(error)
           else {
+            this.recordConnectionFailure(error)
             this.setRecovery(this.binding?.connectorId ?? recovery.connectorId,
               error instanceof ApiError && error.status === 401 ? 'login_required' : 'unavailable',
               error instanceof ApiError && error.status === 401 ? '账号登录已失效，请重新登录后恢复设备连接。' : '恢复连接失败，请检查设备状态后重试。')
@@ -480,7 +481,7 @@ export class OnboardingManager {
         if (!this.connector.running) await this.startConnector()
       }
       return null
-    }).catch(error => { this.recordConnectionFailure(error); throw error })
+    })
   }
 
   private async startConnector(): Promise<void> {

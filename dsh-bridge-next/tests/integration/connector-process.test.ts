@@ -67,7 +67,10 @@ class FakeControlBackend {
 
   startClock(): void {
     // The plugin subscribes to `events` after `start` returns; emit later so it sees the change.
-    if (this.mode === 'auth-failed') setTimeout(() => { this.running = false; this.authFailed = true; this.emit() }, 100)
+    // Like the Python controller, a credential failure also records lastError.
+    if (this.mode === 'auth-failed') setTimeout(() => {
+      this.running = false; this.authFailed = true; this.lastError = 'invalid connector credential'; this.emit()
+    }, 100)
   }
 
   async *events(since?: number | null): AsyncIterable<{ seq: number, kind: 'state', state: ConnectorState }> {
@@ -285,6 +288,7 @@ test('auth failure is delivered over the unsolicited Control events stream while
     assert.equal(h.child?.exitCode, null)
     assert.equal(h.connector.running, false)
     await assert.rejects(h.connector.assertHealthy(), /本机设备连接已失效/)
+    assert.equal(h.connector.lastError, null, 'a credential failure is not reported as a runtime failure')
   } finally { detach(); await h.close() }
 })
 

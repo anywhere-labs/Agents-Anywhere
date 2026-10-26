@@ -166,9 +166,9 @@ class JsonSyncStateStore(SyncStateStore):
             return {"version": STATE_FILE_VERSION, "states": {}}
         try:
             content = self.path.read_text(encoding="utf-8")
-            # Older launchers can leave a zero-byte state placeholder. There
-            # are no checkpoints to recover; retain strict checks for any
-            # non-empty document rather than discarding damaged state.
+            # A zero-byte file holds no checkpoints, so it starts empty instead
+            # of failing startup. Any non-empty damaged document still fails
+            # rather than being silently replaced.
             if content == "":
                 return {"version": STATE_FILE_VERSION, "states": {}}
             document = json.loads(content)
