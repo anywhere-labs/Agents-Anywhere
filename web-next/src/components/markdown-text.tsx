@@ -1,15 +1,13 @@
 "use client"
 
 import * as React from "react"
-import { toast } from "sonner"
-import { copyText } from "@/lib/clipboard"
 import ReactMarkdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
 import { MermaidPreview } from "@/components/mermaid-preview"
 import rehypeKatex from "rehype-katex"
 import { remarkStandaloneDisplayMath } from "@/lib/markdown-math"
-import { Copy, Check, ExternalLink, GitBranch, Maximize2 } from "lucide-react"
+import { ExternalLink, GitBranch, Maximize2 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
@@ -19,7 +17,7 @@ import {
   useSessionFilePreviewOpener,
 } from "@/components/session/session-file-preview-context"
 import { cn } from "@/lib/utils"
-import { highlightCode } from "@/lib/code-highlight"
+import { SourceCodeBlock, SourceCodeContent } from "@/components/source-code-block"
 import { openNativeFilePreviewWindow } from "@/lib/file-preview-window"
 import type { SessionView } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
@@ -570,47 +568,11 @@ function safeExternalUrl(value?: string): string | null {
 }
 
 function MarkdownCodeBlock({ code, language }: { code: string; language: string }) {
-  const tSession = useTranslations("dashboard.session")
-  const tCommon = useTranslations("common")
-  const [copied, setCopied] = React.useState(false)
-  const source = (
-    <ScrollArea
-      contentWide
-      className="min-w-0 max-w-full overflow-hidden"
-      viewportProps={{ className: "max-h-96" }}
-    >
-      <pre className="w-max min-w-full p-3 text-sm leading-relaxed">
-        <code>{highlightCode(code, language)}</code>
-      </pre>
-      <ScrollBar orientation="horizontal" />
-    </ScrollArea>
-  )
+  const source = <SourceCodeContent code={code} language={language} />
   return (
-    <div className="my-3 min-w-0 max-w-full overflow-hidden rounded-xl border border-border bg-background">
-      <div className="flex h-9 items-center justify-between border-b bg-muted/25 px-3">
-        <span className="text-xs text-muted-foreground">{language || "text"}</span>
-        <button
-          type="button"
-          className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-          onClick={async () => {
-            setCopied(false)
-            try {
-              await copyText(code)
-              setCopied(true)
-              setTimeout(() => setCopied(false), 1200)
-            } catch {
-              toast.error(tCommon("copyFailed"))
-            }
-          }}
-          aria-label={copied ? tCommon("copied") : tSession("copyCode")}
-        >
-          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-        </button>
-      </div>
-      {language.toLowerCase() === "mermaid" ? (
-        <MermaidPreview code={code}>{source}</MermaidPreview>
-      ) : source}
-    </div>
+    <SourceCodeBlock code={code} language={language}>
+      {language.toLowerCase() === "mermaid" ? <MermaidPreview code={code}>{source}</MermaidPreview> : source}
+    </SourceCodeBlock>
   )
 }
 
