@@ -24,6 +24,7 @@ from connector.runtimes.claude.sdk.history import (
     read_sdk_session_info,
     read_sdk_session_messages,
 )
+from connector.runtimes.claude.sdk.history_source import ClaudeHistorySource
 from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
 from connector.runtimes.claude.sessions.reader import (
     _history_items_from_messages,
@@ -50,6 +51,7 @@ class ClaudeHistorySyncer:
     cursor_store: ClaudeHistoryCursorStore
     sync_states: ClaudeSessionSyncStateStore
     pending_messages: ClaudePendingClientMessageRegistry
+    history_source: ClaudeHistorySource | None = None
 
     async def sync_session_timeline(
         self,
@@ -204,7 +206,7 @@ class ClaudeHistorySyncer:
         external_session_id: str,
         cwd: str | None = None,
     ) -> tuple[object | None, tuple[object, ...]]:
-        sdk = load_sdk(self.sdk_loader)
+        sdk = self.history_source or load_sdk(self.sdk_loader)
         info = await read_sdk_session_info(
             sdk,
             session_id=external_session_id,

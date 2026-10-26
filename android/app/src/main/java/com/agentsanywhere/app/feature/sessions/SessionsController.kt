@@ -1,5 +1,7 @@
 package com.agentsanywhere.app.feature.sessions
 
+import com.agentsanywhere.app.R
+import com.agentsanywhere.app.api.ProjectOperationException
 import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.DevicesApi
 import com.agentsanywhere.app.api.FilesApi
@@ -33,6 +35,7 @@ class SessionsController(
     private val devicesApi: DevicesApi,
     private val filesApi: FilesApi,
     private val sessionStore: AuthSessionReader,
+    private val projectSyncReasonLabel: (String) -> String? = { null },
 ) {
     fun dashboardSnapshotState(snapshot: RemoteDashboardSnapshot): SessionsState {
         return toState(
@@ -78,7 +81,7 @@ class SessionsController(
                     archivedPage = archivedPage.pageInfo(),
                 )
             }.recoverCatching { error ->
-                if (error is CancellationException || error is ApiException) throw error
+                if (error is CancellationException || error is ApiException || error is ProjectOperationException) throw error
                 throw IllegalStateException(error.message ?: "Could not load sessions.", error)
             }
         }
@@ -104,13 +107,13 @@ class SessionsController(
                 )
                 val devicesById = devices.associateBy { it.id }
                 SessionPageAppend(
-                    sessions = page.sessions.map { it.toAgentSession(devicesById) },
+                    sessions = page.sessions.map { it.toAgentSession(devicesById, projectSyncReasonLabel) },
                     archived = archived,
                     hasMore = page.hasMore,
                     nextCursor = page.nextCursor,
                 )
             }.recoverCatching { error ->
-                if (error is CancellationException || error is ApiException) throw error
+                if (error is CancellationException || error is ApiException || error is ProjectOperationException) throw error
                 throw IllegalStateException(error.message ?: "Could not load more sessions.", error)
             }
         }
@@ -147,16 +150,18 @@ class SessionsController(
         return withContext(Dispatchers.IO) {
             val resolved = try {
                 val path = resolveDirectory(serverUrl, accessToken, draft.connectorId, draft.cwd.orEmpty())
-                val project = resolveWorkspaceProject(
-                    connectorId = draft.connectorId, path = path,
-                    deviceOs = devices.firstOrNull { it.id == draft.connectorId }?.deviceOs,
-                    knownProjects = projects,
-                    list = { sessionsApi.listProjects(serverUrl, accessToken).projects.map(RemoteProject::toAgentProject) },
-                    create = { name, workspace -> sessionsApi.createProject(
-                        serverUrl, accessToken, name, draft.connectorId, workspace, manuallyCreated = false,
-                    ).project.toAgentProject() },
-                )
-                draft.copy(projectId = project.id, cwd = project.workspacePath)
+                val runtime = devicesApi.listDeviceRuntimes(serverUrl, accessToken, draft.connectorId).runtimes
+                    .first { it.runtimeId == draft.runtimeId }
+                if (draft.projectId.isBlank() && runtime.capabilities["directoryProjects"] == true) {
+                    draft.copy(cwd = path)
+                } else {
+                    val project = projects.firstOrNull { it.id == draft.projectId && it.runtimeId == draft.runtimeId && it.connectorId == draft.connectorId }
+                        ?: if (draft.projectId.isNotBlank()) throw ProjectOperationException(R.string.project_unavailable) else sessionsApi.createProject(
+                            serverUrl, accessToken, workspaceProjectName(path), draft.connectorId, path,
+                            runtime = draft.runtimeType, runtimeId = draft.runtimeId, requestId = "project:" + draft.clientMessageId,
+                        ).project.toAgentProject()
+                    draft.copy(projectId = project.id, cwd = if (draft.projectId.isNotBlank()) path else project.preferredWorkspacePath)
+                }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -181,7 +186,7 @@ class SessionsController(
                     ),
                 )
                 NewSessionCreateOutcome.Created(
-                    session = response.session.toAgentSession(devices.associateBy { it.id }),
+                    session = response.session.toAgentSession(devices.associateBy { it.id }, projectSyncReasonLabel),
                 )
             } catch (error: CancellationException) {
                 throw error
@@ -276,7 +281,7 @@ class SessionsController(
                         .sortedBy { it.name.lowercase() },
                 )
             }.recoverCatching { error ->
-                if (error is CancellationException || error is ApiException) throw error
+                if (error is CancellationException || error is ApiException || error is ProjectOperationException) throw error
                 throw IllegalStateException(error.message ?: "Could not load this directory.", error)
             }
         }
@@ -386,7 +391,7 @@ class SessionsController(
             runCatching {
                 val page = if (projectId == null) sessionsApi.listSessions(auth.serverUrl, auth.accessToken, archived = true, limit = 100, cursor = cursor)
                     else sessionsApi.listProjectSessions(auth.serverUrl, auth.accessToken, projectId, archived = true, limit = 100, cursor = cursor)
-                SessionPageAppend(page.sessions.map { it.toAgentSession(devices.associateBy(AgentDevice::id)) }, true, page.hasMore, page.nextCursor)
+                SessionPageAppend(page.sessions.map { it.toAgentSession(devices.associateBy(AgentDevice::id), projectSyncReasonLabel) }, true, page.hasMore, page.nextCursor)
             }.wrapNewSessionFailure("Could not load archived sessions.")
         }
     }
@@ -431,7 +436,7 @@ class SessionsController(
                     cursor = nextCursor
                 } while (shouldContinue)
                 val devicesById = devices.associateBy { it.id }
-                sessions.distinctBy { it.id }.map { it.toAgentSession(devicesById) }
+                sessions.distinctBy { it.id }.map { it.toAgentSession(devicesById, projectSyncReasonLabel) }
             }.wrapNewSessionFailure("Could not load project sessions.")
         }
     }
@@ -440,6 +445,7 @@ class SessionsController(
         name: String,
         connectorId: String,
         workspacePath: String,
+        runtime: String, runtimeId: String, requestId: String,
     ): Result<AgentProject> {
         val normalizedName = name.trim()
         val normalizedPath = workspacePath.trim()
@@ -453,12 +459,33 @@ class SessionsController(
                 sessionsApi.createProject(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
+                    runtime = runtime, runtimeId = runtimeId, requestId = requestId,
                     name = normalizedName,
                     connectorId = connectorId,
                     workspacePath = resolveDirectory(auth.serverUrl, auth.accessToken, connectorId, normalizedPath),
                 ).project.toAgentProject()
             }.wrapNewSessionFailure("Could not create this project.")
         }
+    }
+
+    suspend fun pendingProjectOperations(): Result<List<com.agentsanywhere.app.api.RemotePendingProjectOperation>> = withContext(Dispatchers.IO) {
+        val auth = newSessionAuth() ?: return@withContext Result.failure(IllegalStateException("Sign in again."))
+        runCatching { sessionsApi.pendingProjectOperations(auth.serverUrl, auth.accessToken) }
+    }
+
+    suspend fun resumeProjectOperation(entry: com.agentsanywhere.app.api.RemotePendingProjectOperation, again: Boolean): Result<AgentProject> = withContext(Dispatchers.IO) {
+        val auth = newSessionAuth() ?: return@withContext Result.failure(IllegalStateException("Sign in again."))
+        runCatching {
+            val result = if (again) sessionsApi.createProject(auth.serverUrl, auth.accessToken, entry.name,
+                entry.connectorId, entry.workspacePath, entry.runtime, entry.runtimeId,
+                java.util.UUID.randomUUID().toString(), newOperation = true)
+            else sessionsApi.resumeProjectOperation(auth.serverUrl, auth.accessToken, entry.operationId)
+            result.project.toAgentProject()
+        }
+    }
+
+    suspend fun refreshProjectSource(project: AgentProject): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching { sessionsApi.refreshProjectSource(sessionStore.readServerUrl(), sessionStore.readAccessToken(), project) }
     }
 
     suspend fun updateProject(
@@ -512,7 +539,7 @@ class SessionsController(
                     projectId = projectId,
                     archived = archived,
                     scope = scope,
-                ).map { it.toAgentSession(devicesById) }
+                ).map { it.toAgentSession(devicesById, projectSyncReasonLabel) }
             }.wrapNewSessionFailure("Could not update project sessions.")
         }
     }
@@ -543,7 +570,7 @@ class SessionsController(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     sessionId = sessionId,
-                ).session.toAgentSession(devices.associateBy { it.id })
+                ).session.toAgentSession(devices.associateBy { it.id }, projectSyncReasonLabel)
             }.wrapNewSessionFailure("Could not load this session.")
         }
     }
@@ -560,7 +587,7 @@ class SessionsController(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     sessionId = sessionId,
-                ).session.toAgentSession(devices.associateBy { it.id })
+                ).session.toAgentSession(devices.associateBy { it.id }, projectSyncReasonLabel)
             }.wrapNewSessionFailure("Could not mark this session as read.")
         }
     }
@@ -608,9 +635,9 @@ class SessionsController(
                     deviceId = connectorId,
                     archived = archived,
                     scope = scope,
-                ).map { it.toAgentSession(devices.associateBy { device -> device.id }) }
+                ).map { it.toAgentSession(devices.associateBy { device -> device.id }, projectSyncReasonLabel) }
             }.recoverCatching { error ->
-                if (error is CancellationException || error is ApiException) throw error
+                if (error is CancellationException || error is ApiException || error is ProjectOperationException) throw error
                 throw IllegalStateException(error.message ?: "Could not update sessions.", error)
             }
         }
@@ -638,9 +665,9 @@ class SessionsController(
                     title = title,
                     pinned = pinned,
                     archived = archived,
-                ).session.toAgentSession(devices.associateBy { it.id })
+                ).session.toAgentSession(devices.associateBy { it.id }, projectSyncReasonLabel)
             }.recoverCatching { error ->
-                if (error is CancellationException || error is ApiException) throw error
+                if (error is CancellationException || error is ApiException || error is ProjectOperationException) throw error
                 throw IllegalStateException(error.message ?: "Could not update this session.", error)
             }
         }
@@ -659,7 +686,7 @@ class SessionsController(
         val allSessions = remoteSessions
             .sortedWith(sessionComparator())
             .map { session ->
-                session.toAgentSession(devicesById)
+                session.toAgentSession(devicesById, projectSyncReasonLabel)
             }
         val sessions = allSessions
             .filterNot { it.archived }.sortedWith(sessionListComparator())
@@ -709,7 +736,7 @@ class SessionsController(
                 val response = request(auth.serverUrl, auth.accessToken, normalized)
                 val devicesById = devices.associateBy { it.id }
                 SessionBatchUpdate(
-                    sessions = response.sessions.map { it.toAgentSession(devicesById) },
+                    sessions = response.sessions.map { it.toAgentSession(devicesById, projectSyncReasonLabel) },
                     notFound = response.notFound,
                     serverTime = response.serverTime,
                 )
@@ -734,7 +761,7 @@ class SessionsController(
 
     private fun <T> Result<T>.wrapNewSessionFailure(fallbackMessage: String): Result<T> {
         return recoverCatching { error ->
-            if (error is CancellationException || error is ApiException) throw error
+            if (error is CancellationException || error is ApiException || error is ProjectOperationException) throw error
             throw IllegalStateException(error.message ?: fallbackMessage, error)
         }
     }

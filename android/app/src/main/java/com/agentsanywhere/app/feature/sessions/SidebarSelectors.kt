@@ -55,6 +55,10 @@ fun projectHasVisibleSessions(
     status: ProjectSessionStatusFilter,
     filter: ProjectDeviceAgentFilter = ProjectDeviceAgentFilter(),
 ): Boolean {
+    if (project.nativeProjectId != null && status != ProjectSessionStatusFilter.Archived && project.sourceState in setOf("active", "unknown")) {
+        return (filter.connectorId == null || project.connectorId == filter.connectorId) &&
+            (filter.runtime == null || project.runtime == filter.runtime)
+    }
     if (filter.active) {
         if (filter.connectorId != null && project.connectorId != filter.connectorId) return false
         return sessions.any { session ->

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
@@ -27,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
+import com.agentsanywhere.app.ui.designsystem.localizedProjectMessage
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -54,9 +56,7 @@ import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeSelectionState
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.model.AgentSession
-import com.agentsanywhere.app.feature.sessions.availableProjectName
 import com.agentsanywhere.app.feature.sessions.activeNewSessionRuntimes
-import com.agentsanywhere.app.feature.sessions.workspaceProject
 import com.agentsanywhere.app.feature.sessions.workspaceProjectName
 import com.agentsanywhere.app.feature.sessions.workspacePathKey
 import com.agentsanywhere.app.api.ApiException
@@ -92,7 +92,9 @@ fun NewSessionScreen(
     devicesRefreshing: Boolean,
     initialProjectId: String? = null,
     projectOnly: Boolean = false,
-    onCreateProject: suspend (String, String, String) -> Result<AgentProject> = { _, _, _ ->
+    onPendingProjectOperations: suspend () -> Result<List<com.agentsanywhere.app.api.RemotePendingProjectOperation>> = { Result.success(emptyList()) },
+    onResumeProjectOperation: suspend (com.agentsanywhere.app.api.RemotePendingProjectOperation, Boolean) -> Result<AgentProject> = { _, _ -> Result.failure(IllegalStateException("Project recovery is not connected.")) },
+    onCreateProject: suspend (String, String, String, String, String, String) -> Result<AgentProject> = { _, _, _, _, _, _ ->
         Result.failure(IllegalStateException("Project creation is not connected."))
     },
 ) {
@@ -164,10 +166,17 @@ fun NewSessionScreen(
         device.id !in inventory.errors && activeNewSessionRuntimes(inventory.results[device.id]?.runtimes.orEmpty()).isNotEmpty()
     }
     var projectName by rememberSaveable { mutableStateOf("") }
+    var projectRequestId by rememberSaveable { mutableStateOf(java.util.UUID.randomUUID().toString()) }
     var projectCreating by remember { mutableStateOf(false) }
     var projectCreateError by remember { mutableStateOf<String?>(null) }
+    var pendingProjectOperations by remember { mutableStateOf<List<com.agentsanywhere.app.api.RemotePendingProjectOperation>>(emptyList()) }
+    var projectRecoveryError by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(creatingProject, serverUrl, userId) {
+        pendingProjectOperations = emptyList(); projectRecoveryError = null
+        if (creatingProject) onPendingProjectOperations().onSuccess { pendingProjectOperations = it }
+            .onFailure { projectRecoveryError = context.getString(R.string.project_recovery_failed) }
+    }
     var nameEdited by rememberSaveable { mutableStateOf(false) }
-    var workspaceConflict by remember { mutableStateOf<AgentProject?>(null) }
     var previousDeviceId by rememberSaveable { mutableStateOf<String?>(null) }
     var previousProjectId by rememberSaveable { mutableStateOf<String?>(null) }
     var previousPath by rememberSaveable { mutableStateOf("") }
@@ -231,7 +240,6 @@ fun NewSessionScreen(
         expandedConfiguration = null
         creatingProject = false
         projectCreateError = null
-        workspaceConflict = null
     }
 
     BackHandler {
@@ -261,11 +269,11 @@ fun NewSessionScreen(
         }
     }
 
-    LaunchedEffect(selectedProject?.id, selectedProject?.connectorId, selectedProject?.workspacePath, creatingProject) {
+    LaunchedEffect(selectedProject?.id, selectedProject?.connectorId, selectedProject?.preferredWorkspacePath, creatingProject) {
         if (!creatingProject && selectedProject != null) {
             selectedDeviceId = selectedProject.connectorId
-            selectedWorkspacePath = selectedProject.workspacePath
-            currentPath = selectedProject.workspacePath
+            selectedWorkspacePath = selectedProject.preferredWorkspacePath
+            currentPath = selectedProject.preferredWorkspacePath
         }
     }
 
@@ -292,6 +300,9 @@ fun NewSessionScreen(
     val selectedDeviceOs = selectedDevice?.deviceOs
     val isWindowsDevice = isWindowsDeviceOs(selectedDeviceOs)
     val selectedRuntime = runtimeSelection.selectedRuntime
+    LaunchedEffect(selectedProject?.id, selectedProject?.runtimeId, runtimeSelection.runtimes, creatingProject) {
+        if (!creatingProject) selectedProject?.runtimeId?.let { runtimeSelection = runtimeSelection.selectRuntime(it) }
+    }
     val hasAvailableSelectedRuntime = selectedDevice != null && selectedDevice.id !in inventory.errors &&
         runtimeSelection.connectorId == selectedDevice.id &&
         !runtimeSelection.runtimesLoading && runtimeSelection.runtimesErrorMessage == null &&
@@ -377,7 +388,8 @@ fun NewSessionScreen(
         } else {
             val next = runtimeSelection.beginRuntimeInventory(connectorId)
             runtimeSelection = inventory.results[connectorId]?.let {
-                next.replaceRuntimeInventory(it, preference?.runtimeId?.takeIf { preference?.connectorId == connectorId })
+                next.replaceRuntimeInventory(it, selectedProject?.runtimeId
+                    ?: preference?.runtimeId?.takeIf { preference?.connectorId == connectorId })
             } ?: next
             inventory.errors[connectorId]?.let {
                 runtimeSelection = runtimeSelection.failRuntimeInventory(connectorId, it)
@@ -431,7 +443,7 @@ fun NewSessionScreen(
                 if (error is CancellationException) throw error
                 if (requestId != directoryRequestId || selectedDeviceId != device.id) return@onFailure
                 pathEntries = emptyList()
-                pathError = error.message ?: context.getString(R.string.new_session_load_directory_failed)
+                pathError = error.localizedProjectMessage(context) ?: context.getString(R.string.new_session_load_directory_failed)
             }
         if (requestId == directoryRequestId && selectedDeviceId == device.id) pathLoading = false
     }
@@ -464,19 +476,15 @@ fun NewSessionScreen(
         val resolved = homePath ?: return@LaunchedEffect
         // Do not lock onto a home-directory project before an available Agent determines the device.
         if (!creatingProject && !choosePath && hasAvailableSelectedRuntime && selectedWorkspacePath.isBlank()) {
-            val project = workspaceProject(projects, deviceId, resolved, selectedDeviceOs)
-            selectedProjectId = project?.id
-            selectedWorkspacePath = project?.workspacePath ?: resolved
+            selectedProjectId = null
+            selectedWorkspacePath = resolved
             currentPath = selectedWorkspacePath
         }
     }
 
     LaunchedEffect(selectedWorkspacePath, selectedDeviceId, projects, creatingProject) {
         if (!creatingProject || nameEdited) return@LaunchedEffect
-        val existing = workspaceProject(projects, selectedDeviceId.orEmpty(), selectedWorkspacePath, selectedDeviceOs)
-        projectName = if (selectedWorkspacePath.isBlank()) "" else availableProjectName(
-            existing?.name ?: workspaceProjectName(selectedWorkspacePath), projects, existing?.id,
-        )
+        projectName = if (selectedWorkspacePath.isBlank()) "" else workspaceProjectName(selectedWorkspacePath)
     }
 
     LaunchedEffect(editingTitle) {
@@ -650,11 +658,7 @@ fun NewSessionScreen(
         val device = selectedDevice ?: return
         val runtime = selectedRuntime ?: return
         if (!canStart) return
-        val project = if (choosePath) {
-            workspaceProject(projects, device.id, effectiveWorkspacePath, device.deviceOs)
-        } else {
-            selectedProject
-        }
+        val project = if (choosePath) null else selectedProject
         preferenceStore.save(
             connectorId = device.id,
             runtimeId = runtime.id,
@@ -698,6 +702,7 @@ fun NewSessionScreen(
         projectCreateError = null
         projectCreating = false
         choosePath = false
+        projectRequestId = java.util.UUID.randomUUID().toString()
         creatingProject = true
         expandedConfiguration = null
         val preferredDeviceId = selectedDeviceId
@@ -707,11 +712,25 @@ fun NewSessionScreen(
         selectedDeviceId = preferredDeviceId
     }
 
-    fun createProject(confirmRename: Boolean = false) {
+    fun selectCreatedProject(project: AgentProject) {
+        localProject = project
+        selectDevice(project.connectorId)
+        selectedProjectId = project.id
+        runtimeSelection = runtimeSelection.selectRuntime(project.runtimeId)
+        persistSelection(NewSessionConfigurationKey.Agent)
+        selectedWorkspacePath = project.preferredWorkspacePath
+        currentPath = project.preferredWorkspacePath
+        expandedConfiguration = null
+        choosePath = false
+        if (projectOnly) navigate(AppDestination.Sessions) else creatingProject = false
+    }
+
+    fun createProject() {
         val device = selectedDevice ?: return
         val inputPath = selectedWorkspacePath.trim()
         val inputName = projectName.trim()
         val useDirectoryName = !nameEdited
+        val projectRuntime = selectedRuntime ?: return
         if (projectCreating || inputPath.isBlank() || inputName.isBlank()) return
         focusManager.clearFocus()
         keyboard?.hide()
@@ -719,7 +738,6 @@ fun NewSessionScreen(
         projectCreateError = null
         scope.launch {
             var attemptedName = inputName
-            var existingProjectId: String? = null
             try {
                 val path = if (inputPath.startsWith("~")) {
                     onListDirectory(device.id, inputPath, ".").getOrThrow().path.also {
@@ -728,53 +746,21 @@ fun NewSessionScreen(
                         }
                     }
                 } else inputPath
-                // Refresh before checking the workspace so another client's project is not silently renamed.
-                val latest = onLoadProjects().getOrThrow()
-                val existing = workspaceProject(latest, device.id, path, device.deviceOs)
-                existingProjectId = existing?.id
-                attemptedName = availableProjectName(
-                    if (useDirectoryName) existing?.name ?: workspaceProjectName(path) else inputName,
-                    latest, existingProjectId,
-                )
+                attemptedName = if (useDirectoryName) workspaceProjectName(path) else inputName
                 selectedWorkspacePath = path
                 projectName = attemptedName
-                if (!confirmRename && existing != null && existing.name != attemptedName) {
-                    workspaceConflict = existing
-                    return@launch
-                }
-                val project = onCreateProject(attemptedName, device.id, path).getOrThrow()
-                localProject = project
-                selectDevice(project.connectorId, persist = true)
-                selectedProjectId = project.id
-                selectedDeviceId = project.connectorId
-                selectedWorkspacePath = project.workspacePath
-                currentPath = project.workspacePath
-                expandedConfiguration = null
-                if (projectOnly) navigate(AppDestination.Sessions) else creatingProject = false
-                choosePath = false
+                val project = onCreateProject(attemptedName, device.id, path, projectRuntime.type, projectRuntime.id,
+                    java.util.UUID.nameUUIDFromBytes("$projectRequestId:$attemptedName:$path:${projectRuntime.id}".toByteArray()).toString()).getOrThrow()
+                selectCreatedProject(project)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                if (error is ApiException && error.errorCode == "project_name_conflict") {
-                    val latest = onLoadProjects().getOrDefault(projects)
-                    projectName = availableProjectName(attemptedName, latest, existingProjectId, setOf(attemptedName))
-                    nameEdited = true
-                    projectCreateError = context.getString(R.string.project_name_adjusted)
-                } else {
-                    projectCreateError = error.message ?: context.getString(R.string.new_session_project_create_failed)
-                }
-            } finally { projectCreating = false }
+                projectCreateError = error.localizedProjectMessage(context) ?: context.getString(R.string.new_session_project_create_failed)
+            } finally {
+                projectCreating = false
+                if (creatingProject) onPendingProjectOperations().onSuccess { pendingProjectOperations = it }
+            }
         }
-    }
-
-    workspaceConflict?.let { project ->
-        AlertDialog(
-            onDismissRequest = { workspaceConflict = null },
-            title = { Text(stringResource(R.string.project_workspace_conflict_title)) },
-            text = { Text(stringResource(R.string.project_workspace_conflict_message, project.name, projectName)) },
-            confirmButton = { TextButton(onClick = { workspaceConflict = null; createProject(confirmRename = true) }) { Text(stringResource(R.string.project_rename_existing)) } },
-            dismissButton = { TextButton(onClick = { workspaceConflict = null }) { Text(stringResource(R.string.common_cancel)) } },
-        )
     }
 
     if (creatingProject) {
@@ -812,11 +798,50 @@ fun NewSessionScreen(
                 projectCreateError = null
             },
             creating = projectCreating,
-            canCreate = projectName.isNotBlank() && directoryReady && directorySelected && !projectCreating,
+            canCreate = selectedRuntime?.capabilities?.get("projectCreate") == true && projectName.isNotBlank() && directoryReady && directorySelected && !projectCreating,
             error = projectCreateError,
             onBack = ::cancelProjectCreation,
             onCreate = { createProject() },
         ) {
+            Column {
+                if (pendingProjectOperations.isNotEmpty()) Text(stringResource(R.string.project_pending_description))
+                pendingProjectOperations.forEach { entry ->
+                    val statusLabel = when {
+                        entry.status == "succeeded" && entry.syncState == "synced" -> R.string.project_synced_pending_confirmation
+                        entry.status == "succeeded" -> R.string.project_awaiting_sync
+                        entry.status == "pending" -> R.string.project_processing
+                        else -> R.string.project_unconfirmed
+                    }
+                    Text(entry.name + " · " + stringResource(statusLabel))
+                    Text(entry.workspacePath)
+                    androidx.compose.foundation.layout.Row {
+                        listOf(false, true).forEach { again ->
+                            androidx.compose.material3.TextButton(enabled = !projectCreating, onClick = {
+                                projectCreating = true
+                                scope.launch {
+                                    try {
+                                        val project = onResumeProjectOperation(entry, again).getOrThrow()
+                                        selectCreatedProject(project)
+                                    } catch (error: CancellationException) { throw error }
+                                    catch (error: Exception) { projectCreateError = error.localizedProjectMessage(context) }
+                                    finally {
+                                        projectCreating = false
+                                        if (creatingProject) onPendingProjectOperations().onSuccess { pendingProjectOperations = it }
+                                    }
+                                }
+                            }) { Text(if (again) stringResource(R.string.project_create_again) else stringResource(R.string.project_resume)) }
+                        }
+                    }
+                }
+                projectRecoveryError?.let { Text(it) }
+                Text(stringResource(R.string.project_runtime_instance))
+                runtimeSelection.runtimes.forEach { runtime ->
+                    androidx.compose.material3.TextButton(onClick = { runtimeSelection = runtimeSelection.selectRuntime(runtime.id) }) {
+                        Text((if (runtime.id == selectedRuntime?.id) "✓ " else "") + runtime.name + " · " + runtime.id)
+                    }
+                }
+                if (selectedRuntime?.capabilities?.get("directoryProjects") == true) Text(stringResource(R.string.project_first_session_required))
+            }
             ChoosePathSection(
                 title = stringResource(R.string.new_session_project_directory),
                 currentPath = currentPath,
@@ -830,7 +855,8 @@ fun NewSessionScreen(
                 collapsible = true,
                 directoryBorderColor = Color(0xFFE7E6E2).takeUnless { darkMode },
                 enabled = selectedDevice != null && !projectCreating,
-                modifier = Modifier.weight(1f),
+                // The editor scrolls as a whole; keep the nested directory list bounded.
+                modifier = Modifier.height(320.dp),
                 onBack = null,
                 onParent = { parent?.let(::browseDirectory) },
                 onOpenEntry = { browseDirectory(it.path) },
@@ -961,7 +987,7 @@ fun NewSessionScreen(
                             if (canUseCurrentPath) {
                                 selectedWorkspacePath = currentPath
                                 projectCreateError = null
-                                if (!creatingProject) selectedProjectId = workspaceProject(projects, selectedDeviceId.orEmpty(), currentPath, selectedDeviceOs)?.id
+                                if (!creatingProject) selectedProjectId = null
                             }
                         },
                         onOpenEntry = { entry ->
@@ -975,6 +1001,7 @@ fun NewSessionScreen(
                     )
                 } else {
                     WorkspaceSection(
+                        projectId = selectedProjectId,
                         path = selectedWorkspacePath,
                         connectorId = selectedDeviceId,
                         deviceOs = selectedDeviceOs,

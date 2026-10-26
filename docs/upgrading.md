@@ -2,9 +2,21 @@
 
 ## 先区分三个版本
 
-本次产品版本为 **2.1.0**；当前源码中的数据库 revision 为 **`v2_44`**，schema version 为 **`2.44`**。各端的 PATCH 版本可以不同，数据库 revision 独立编号，不能用来推断兼容性，见[版本号规则](versioning.md)。
+本次产品版本为 **2.1.0**；当前源码中的数据库 revision 为 **`v2_46`**，schema version 为 **`2.46`**。各端的 PATCH 版本可以不同，数据库 revision 独立编号，不能用来推断兼容性，见[版本号规则](versioning.md)。
 
 `main` 现在承载 v2。本文所说的 **v1 / 旧主线** 指主线切换前的实现，源代码提交为 `6c47e419`，不再指当前 `main`。早期 [main-to-v2 文档](migrations/main-to-v2/README.md)保留作历史参考。
+
+## 原生工作区与会话来源同步（#301）
+
+按设备、Runtime 实例及原生身份保存独立项目；名称与目录不再唯一。当前原生状态决定归属，目录失效进入未分组，历史与用户归档保留。首次完整有效清单前冻结旧结果，不再由 cwd 自动创建项目。Claude 全量元数据核对不扩大正文导入范围。
+
+配套要求、创建接口变化与回退限制见[原生项目同步](api/project-archiving.md)。
+
+## MeshCall 工作区创建
+
+本次沿用产品版本 2.1.0，Server、Connector、DSH 插件及客户端仍须配套更新到包含本次契约的构建；相同产品版本号不代表旧构建具备新能力。契约版本见 [runtime-operations/1.0](../contracts/runtime-operations/1.0/README.md)，不匹配时明确提示升级。Server 使用 `python -m agent_server.main` 启动，由父进程管理共享 Router。
+
+`v2_45` 保存原生项目与成员事实，`v2_46` 扩展持久操作及调度租约。创建请求先落盘，再由后台投递；MeshCall 故障不切回旧创建 RPC。回退前停止新派发，保留 Server、Connector 和 DSH 回执；尚未核对的操作不得交给旧执行器重做。
 
 ## 已经运行 v2 的部署
 
@@ -20,7 +32,7 @@
    uv run python -m agent_server.infra.db.migrations current --verbose
    ```
 
-   以上命令使用该环境的 `AGENT_SERVER_DB_URL`。当前目标应为 `v2_44`；以后升级时，以待部署源码的 `CURRENT_SCHEMA_REVISION` 为准。
+   以上命令使用该环境的 `AGENT_SERVER_DB_URL`。当前目标应为 `v2_46`；以后升级时，以待部署源码的 `CURRENT_SCHEMA_REVISION` 为准。
 4. 启动同一版本的 Server/Web，检查 `/api/v2/health/ready`，再恢复入口流量和 Connector。验证账号登录、设备连接、会话恢复、消息、审批、文件和终端。
 5. 使用 [2.0.3 下载入口](../README.md#下载与入口)升级客户端。当前安装包没有可用的应用内下载地址，需手动分发。
 

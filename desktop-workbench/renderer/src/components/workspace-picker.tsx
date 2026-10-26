@@ -28,7 +28,7 @@ import { dashboardApi } from "@/features/dashboard/api"
 import { useTranslations } from "next-intl"
 import { FileBrowserDialog } from "@/components/workspace-file-browser-dialog"
 import { Separator } from "@/components/ui/separator"
-import { findWorkspaceProject, workspaceName, workspacePathKey } from "@/features/dashboard/project-workspaces"
+import { workspaceName, workspacePathKey, projectWorkspacePath } from "@/features/dashboard/project-workspaces"
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -57,6 +57,7 @@ export function WorkspacePicker({
   value,
   onChange,
   includeProjects = false,
+  allowDirectorySelection = false,
   onCreateProject,
   disabled = false,
 }: {
@@ -64,6 +65,7 @@ export function WorkspacePicker({
   value?: WorkspaceSelection | null
   onChange?: (workspace: WorkspaceSelection | null) => void
   includeProjects?: boolean
+  allowDirectorySelection?: boolean
   onCreateProject?: () => void
   disabled?: boolean
 } = {}) {
@@ -126,7 +128,7 @@ export function WorkspacePicker({
       const key = workspacePathKey(project.workspacePath, activeConnector?.deviceOs)
       if (seen.has(key)) continue
       seen.add(key)
-      result.push({ label: workspaceName(project.workspacePath), path: project.workspacePath, connectorId: activeConnectorId })
+      result.push({ label: workspaceName(project.workspacePath), path: projectWorkspacePath(project), connectorId: activeConnectorId })
     }
     return result
   }, [activeConnectorId, activeConnector?.deviceOs, projects, resolvedHomePath, sessions])
@@ -138,15 +140,9 @@ export function WorkspacePicker({
     [activeConnectorId, includeProjects, projects],
   )
 
-  const homeWorkspace: WorkspaceEntry = React.useMemo(() => {
-    const project = activeConnectorId && resolvedHomePath
-      ? findWorkspaceProject(availableProjects, activeConnectorId, resolvedHomePath, activeConnector?.deviceOs)
-      : undefined
-    if (project) {
-      return { label: project.name, path: project.workspacePath, connectorId: project.connectorId, projectId: project.id }
-    }
-    return { label: t("home"), path: resolvedHomePath, connectorId: activeConnectorId }
-  }, [activeConnectorId, activeConnector?.deviceOs, availableProjects, resolvedHomePath, t])
+  const homeWorkspace: WorkspaceEntry = React.useMemo(() => (
+    { label: t("home"), path: resolvedHomePath, connectorId: activeConnectorId }
+  ), [activeConnectorId, resolvedHomePath, t])
 
   const [internalWorkspace, setInternalWorkspace] = React.useState<WorkspaceEntry>(homeWorkspace)
   const [dialogOpen, setDialogOpen] = React.useState(false)
@@ -179,7 +175,7 @@ export function WorkspacePicker({
   }, [activeConnectorId, homeWorkspace, onChange, value])
 
   const selectedProject = includeProjects && activeConnectorId
-    ? findWorkspaceProject(availableProjects, activeConnectorId, workspace.path, activeConnector?.deviceOs)
+    ? availableProjects.find(project => project.id === workspace.projectId)
     : null
   const isProject = Boolean(selectedProject)
   const isHome = Boolean(!isProject && homeWorkspace.path && workspace.path === homeWorkspace.path)
@@ -301,6 +297,12 @@ export function WorkspacePicker({
                       </span>
                       {isHome ? <Check /> : null}
                     </DropdownMenuItem>
+                    {allowDirectorySelection ? (
+                      <DropdownMenuItem onSelect={() => setDialogOpen(true)}>
+                        <FolderOpen />
+                        <span>{t("browseFilesystem")}</span>
+                      </DropdownMenuItem>
+                    ) : null}
                   </DropdownMenuGroup>
                   <DropdownMenuSeparator />
                 </>
@@ -316,7 +318,7 @@ export function WorkspacePicker({
                       onPointerLeave={() => setHoveredProjectId(null)}
                       onSelect={() => updateWorkspace({
                         label: project.name,
-                        path: project.workspacePath,
+                        path: projectWorkspacePath(project),
                         connectorId: project.connectorId,
                         projectId: project.id,
                       })}
@@ -325,7 +327,7 @@ export function WorkspacePicker({
                       <span className="min-w-0 flex-1 overflow-hidden">
                         <span className="block truncate font-medium">{project.name}</span>
                         <OverflowMarquee
-                          text={project.workspacePath}
+                          text={`${project.runtimeId ?? "等待核对"} · ${project.workspacePath} · ${project.nativeProjectId ?? project.id}`}
                           active={hoveredProjectId === project.id}
                           className="block code-mono text-xs text-muted-foreground"
                         />
@@ -356,7 +358,7 @@ export function WorkspacePicker({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {!includeProjects ? <FileBrowserDialog
+      {!includeProjects || allowDirectorySelection ? <FileBrowserDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         connectorId={activeConnector?.id ?? ""}

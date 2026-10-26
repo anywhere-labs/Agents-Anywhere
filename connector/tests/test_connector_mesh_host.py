@@ -69,7 +69,7 @@ def test_hub_keys_are_random_per_process_and_scoped_by_role() -> None:
     assert first.key("host") != second.key("host")
     entries = {entry["id"]: entry for entry in first.auth_document()["api_keys"]}
     assert entries["host"]["roles"] == ["client"]
-    assert entries["dsh-bridge"]["register"] == ["aa.dsh.v2.Bridge"]
+    assert entries["dsh-bridge"]["register"] == ["aa.dsh.v2.Bridge", "aa.dsh.v2.Operations"]
     assert all(first.key(role) not in json.dumps(entries) for role in entries)
 
 

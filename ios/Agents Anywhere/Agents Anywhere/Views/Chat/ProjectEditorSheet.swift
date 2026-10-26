@@ -5,134 +5,134 @@ struct ProjectEditorSheet: View {
     var onSaved: (V2Project) -> Void
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
-    @State private var draft: ProjectEditorDraft
+    @State private var connectorID: String
+    @State private var path = ""
+    @State private var name = ""
+    @State private var nameEdited = false
     @State private var saving = false
     @State private var error: String?
-    @State private var reuse: V2Project?
+    @State private var runtimes: [V2DeviceRuntime] = []
+    @State private var runtimeID = ""
+    @State private var requestID = UUID().uuidString
     @State private var showsFiles = false
-    @State private var confirmsDiscard = false
+    @State private var pendingOperations: [V2PendingProjectOperation] = []
+    @State private var recoveryError: String?
 
-    init(repository: V2DashboardRepository, project: V2Project? = nil, connectorID: String = "", onSaved: @escaping (V2Project) -> Void = { _ in }) {
-        self.repository = repository; self.onSaved = onSaved
+    init(repository: V2DashboardRepository, connectorID: String = "", onSaved: @escaping (V2Project) -> Void = { _ in }) {
+        self.repository = repository
+        self.onSaved = onSaved
         let online = repository.connectors.filter { $0.status == .online }
-        let initialDevice = online.first { $0.id == connectorID }?.id ?? online.first?.id ?? ""
-        _draft = State(initialValue: ProjectEditorDraft(project: project, connectorID: initialDevice))
+        _connectorID = State(initialValue: online.first { $0.id == connectorID }?.id ?? online.first?.id ?? "")
     }
-    private var device: V2Connector? { repository.connectors.first { $0.id == draft.connectorID } }
+    private var device: V2Connector? { repository.connectors.first { $0.id == connectorID } }
+    private var runtime: V2DeviceRuntime? { runtimes.first { $0.id == runtimeID } }
     private var valid: Bool {
-        repository.canWrite && device != nil && !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && (draft.original != nil || (device?.status == .online && validPath))
-    }
-    private var validPath: Bool {
-        let path = draft.path.trimmingCharacters(in: .whitespacesAndNewlines)
-        return path == "~" || path.hasPrefix("~/") || path.hasPrefix("~\\") || ProjectWorkspacePath.key(path, deviceOS: device?.deviceOs) != nil
+        repository.canWrite && device?.status == .online && runtime?.capabilities["projectCreate"] == true
+            && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (path.hasPrefix("~") || ProjectWorkspacePath.key(path, deviceOS: device?.deviceOs) != nil)
     }
     var body: some View {
         NavigationStack {
             Form {
-                Section(String(localized: "运行设备")) {
-                    if draft.original != nil {
-                        LabeledContent(String(localized: "设备"), value: device?.name ?? draft.connectorID)
-                    } else {
-                        Picker(String(localized: "设备"), selection: Binding(get: { draft.connectorID }, set: { draft.selectDevice($0) })) {
-                            Text(String(localized: "选择设备")).tag("")
-                            ForEach(repository.connectors.filter { $0.status == .online || $0.id == draft.connectorID }) { device in
-                                Text(device.name).tag(device.id).disabled(device.status != .online)
+                if !pendingOperations.isEmpty {
+                    Section(String(localized: "待核对的项目操作")) {
+                        Text(String(localized: "可继续核对旧操作；再次新建会单独创建一个项目。"))
+                        ForEach(pendingOperations) { entry in
+                            VStack(alignment: .leading) {
+                                Text(entry.request.name)
+                                Text(entry.operation.status == "succeeded" ? String(localized: "已创建，等待同步") : entry.operation.status == "pending" ? String(localized: "处理中") : String(localized: "结果待确认"))
+                                Text(entry.request.workspacePath).font(.caption)
+                                HStack {
+                                    Button(String(localized: "继续核对")) { Task { await resume(entry) } }.buttonStyle(.bordered)
+                                    Button(String(localized: "再次新建")) { Task { await resume(entry, again: true) } }.buttonStyle(.borderless)
+                                }
                             }
-                        }.pickerStyle(.navigationLink)
-                        if device?.status != .online {
-                            Text(String(localized: "请选择在线设备后创建项目。"))
-                                .font(.footnote).foregroundStyle(.secondary)
                         }
                     }
                 }
-                Section {
-                    HStack(spacing: 12) {
-                        if draft.original != nil {
-                            Text(draft.path).textSelection(.enabled)
-                                .font(.system(.body, design: .monospaced))
-                        } else {
-                            TextField(String(localized: "设备上的完整路径"), text: Binding(get: { draft.path }, set: updatePath), axis: .vertical)
-                                .font(.system(.body, design: .monospaced))
-                                .textInputAutocapitalization(.never).autocorrectionDisabled().disabled(device == nil)
-                        }
-                        if draft.original == nil {
-                            Button(String(localized: "浏览目录"), appSymbol: "folder") { showsFiles = true }
-                                .labelStyle(.iconOnly).buttonStyle(.borderless).frame(width: 44, height: 44)
-                                .disabled(device?.status != .online || !repository.canWrite)
-                        }
+                if let recoveryError { Text(recoveryError).foregroundStyle(.secondary) }
+                Section(String(localized: "运行设备")) {
+                    Picker(String(localized: "设备"), selection: $connectorID) {
+                        Text(String(localized: "选择设备")).tag("")
+                        ForEach(repository.connectors.filter { $0.status == .online }) { Text($0.name).tag($0.id) }
                     }
-                } header: { Text(String(localized: "dashboard.projects.workspace")) } footer: {
-                    Text(draft.original == nil ? String(localized: "项目关联这个目录，不会在设备上新建文件夹。") : String(localized: "编辑项目时，设备和工作目录保持不变。"))
+                    Picker(String(localized: "Runtime 实例"), selection: $runtimeID) {
+                        Text(String(localized: "选择 Runtime")).tag("")
+                        ForEach(runtimes) { Text($0.name + " · " + $0.id).tag($0.id) }
+                    }
+                    if runtime?.capabilities["directoryProjects"] == true {
+                        Text(String(localized: "请在新建对话中选择目录并发送首条消息，以建立此来源的项目。"))
+                    }
                 }
                 Section {
-                    TextField(String(localized: "例如 Agents Anywhere"), text: Binding(get: { draft.name }, set: draft.editName))
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                } header: { Text(String(localized: "项目名称")) } footer: {
-                    if draft.original == nil { Text(String(localized: "按目录自动填写名称，重名时添加数字后缀。也可以自行修改。")) }
-                }
-                if let error { Section { Text(error).foregroundStyle(.secondary) } }
+                    HStack {
+                        TextField(String(localized: "设备上的完整路径"), text: $path)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        Button(String(localized: "浏览目录"), appSymbol: "folder") { showsFiles = true }
+                            .labelStyle(.iconOnly).disabled(device?.status != .online)
+                    }
+                    TextField(String(localized: "项目名称"), text: Binding(get: { name }, set: { name = $0; nameEdited = true }))
+                } footer: { Text(String(localized: "登记已存在的目录，不创建物理文件夹。项目允许同名、同目录。")) }
+                if let error { Text(error).foregroundStyle(.secondary) }
             }
-            .textFieldStyle(.plain)
             .disabled(saving)
-            .navigationTitle(draft.original == nil ? String(localized: "创建项目") : String(localized: "编辑项目"))
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationTitle(String(localized: "创建项目"))
             .toolbar {
-                SheetEditorToolbar(saveTitle: draft.original == nil ? String(localized: "Create") : String(localized: "Save"),
-                    isWorking: saving, saveDisabled: !valid,
-                    onCancel: { if draft.hasChanges { confirmsDiscard = true } else { dismiss() } },
-                    onSave: {
-                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                        Task { await Task.yield(); await save() }
-                    })
+                SheetEditorToolbar(saveTitle: String(localized: "Create"), isWorking: saving, saveDisabled: !valid,
+                    onCancel: { dismiss() }, onSave: { Task { await save() } })
             }
-            .onChange(of: repository.projects) { _, projects in draft.suggestName(projects: projects, deviceOS: device?.deviceOs) }
+            .task {
+                do { pendingOperations = try await repository.pendingProjectOperations() }
+                catch { recoveryError = String(localized: "未能加载待核对操作；提交相同参数仍会恢复已有操作。") }
+            }
+            .task(id: connectorID) {
+                do { runtimes = try await repository.projectRuntimes(connectorID); runtimeID = runtimes.first?.id ?? "" }
+                catch { self.error = error.localizedDescription }
+            }
+            .onChange(of: path) { _, value in if !nameEdited { name = ProjectWorkspacePath.name(value) }; requestID = UUID().uuidString }
+            .onChange(of: name) { _, _ in requestID = UUID().uuidString }
+            .onChange(of: runtimeID) { _, _ in requestID = UUID().uuidString }
         }
-        .appSheetPresentation(.compact).interactiveDismissDisabled(saving || draft.hasChanges)
-        .confirmDiscardChanges($confirmsDiscard) { dismiss() }
-        .alert(String(localized: "这个目录已有项目"), isPresented: Binding(get: { reuse != nil }, set: { if !$0 { reuse = nil } })) {
-            Button(String(localized: "取消"), role: .cancel) { reuse = nil }
-            Button(String(localized: "使用此项目并保存名称")) {
-                let id = reuse?.id; reuse = nil
-                Task { await save(reusing: id) }
-            }
-        } message: { Text(String(localized: "The workspace “\(draft.path)” already belongs to “\(reuse?.name ?? "")”. Continuing will rename that project to “\(draft.name)” instead of creating a duplicate. Its sessions and settings will be preserved.")) }
+        .appSheetPresentation(.compact).interactiveDismissDisabled(saving)
         .sheet(isPresented: $showsFiles) {
             if let device, let service = appState.workspaceFilesService {
                 WorkspaceFilesSheet(connectorId: device.id, deviceName: device.name,
                     workspace: .init(path: "~", name: "", sessionCount: 0, lastActiveAt: nil), service: service,
                     permitsReading: device.status == .online && repository.canWrite,
-                    onSelectDirectory: { updatePath($0); showsFiles = false }, initialPath: draft.path.isEmpty ? "." : draft.path)
+                    onSelectDirectory: { path = $0; showsFiles = false }, initialPath: path.isEmpty ? "." : path)
             }
         }
     }
-
-    private func updatePath(_ value: String) { draft.editPath(value, projects: repository.projects, deviceOS: device?.deviceOs) }
-
-    private func save(reusing id: String? = nil) async {
+    private func resume(_ entry: V2PendingProjectOperation, again: Bool = false) async {
+        guard !saving else { return }
+        saving = true; error = nil
+        defer { saving = false }
+        do {
+            let project = try await repository.resumeProjectOperation(entry, again: again)
+            onSaved(project); dismiss()
+        } catch {
+            self.error = error.localizedDescription
+            if let values = try? await repository.pendingProjectOperations() { pendingOperations = values }
+        }
+    }
+    private func save() async {
         guard valid, !saving else { return }
         saving = true; error = nil
         defer { saving = false }
         do {
-            if draft.original == nil, draft.path.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("~") {
+            var resolved = path
+            if path.hasPrefix("~") {
                 guard let service = appState.workspaceFilesService else { throw HTTPError.invalidResponse }
-                let result = try await service.directory(connectorId: draft.connectorID, root: "~", path: draft.path)
-                guard result.targetType == nil || result.targetType == "directory" else {
-                    throw V2BusinessError.workspaceFilesUnavailable(message: String(localized: "请选择一个已成功加载的目录。"))
-                }
-                updatePath(result.path)
+                let result = try await service.directory(connectorId: connectorID, root: "~", path: path)
+                guard result.targetType == nil || result.targetType == "directory" else { throw HTTPError.invalidResponse }
+                resolved = result.path
             }
-            guard valid, !Task.isCancelled else { return }
-            draft.normalizeName(projects: repository.projects, deviceOS: device?.deviceOs)
-            let value: V2Project
-            if let project = draft.original {
-                try await repository.updateProject(project.id, name: draft.name)
-                value = repository.projects.first { $0.id == project.id } ?? project
-            } else {
-                value = try await repository.createProject(name: draft.name, connectorID: draft.connectorID, path: draft.path, reusing: id)
-            }
+            let value = try await repository.createProject(name: name, connectorID: connectorID, path: resolved,
+                runtime: runtime, requestID: requestID)
             onSaved(value); dismiss()
-        } catch let needsReuse as ProjectReuseRequired { reuse = needsReuse.project }
-        catch { self.error = error.localizedDescription }
+        } catch {
+            self.error = error.localizedDescription
+            if let values = try? await repository.pendingProjectOperations() { pendingOperations = values }
+        }
     }
 }

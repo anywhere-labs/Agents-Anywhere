@@ -42,6 +42,7 @@ from connector.runtimes.claude.sdk.history import (
     read_sdk_session_info,
     read_sdk_session_messages,
 )
+from connector.runtimes.claude.sdk.history_source import ClaudeHistorySource
 from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
 from connector.runtimes.claude.sessions.sync_state import ClaudeSessionSyncStateStore
 from connector.runtimes.claude.timeline.messages import (
@@ -66,6 +67,7 @@ class ClaudeSessionReader:
     sdk_loader: SdkLoader | None
     sync_states: ClaudeSessionSyncStateStore
     pending_messages: ClaudePendingClientMessageRegistry
+    history_source: ClaudeHistorySource | None = None
 
     async def list_sessions(
         self,
@@ -152,7 +154,7 @@ class ClaudeSessionReader:
         force: bool,
     ) -> tuple[SessionMeta, ...]:
         try:
-            sdk = load_sdk(self.sdk_loader)
+            sdk = self.history_source or load_sdk(self.sdk_loader)
             sdk_sessions = await list_sdk_sessions(
                 sdk,
                 limit=limit,
@@ -245,7 +247,7 @@ class ClaudeSessionReader:
         limit: int | None,
     ) -> RuntimeTimelineSnapshot:
         try:
-            sdk = load_sdk(self.sdk_loader)
+            sdk = self.history_source or load_sdk(self.sdk_loader)
             info = await read_sdk_session_info(
                 sdk,
                 session_id=external_session_id,
@@ -306,7 +308,7 @@ class ClaudeSessionReader:
 
     async def _read_history_session_info(self, external_session_id: str) -> Any | None:
         try:
-            sdk = load_sdk(self.sdk_loader)
+            sdk = self.history_source or load_sdk(self.sdk_loader)
             return await read_sdk_session_info(sdk, session_id=external_session_id)
         except Exception:  # noqa: BLE001
             logger.exception(

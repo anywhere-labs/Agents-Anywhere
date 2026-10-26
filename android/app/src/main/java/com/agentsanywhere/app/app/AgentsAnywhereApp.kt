@@ -17,6 +17,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.setValue
+import com.agentsanywhere.app.ui.designsystem.projectSyncReasonLabel
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.Lifecycle
@@ -138,6 +139,7 @@ fun AgentsAnywhereApp(
     }
     val sessionsController = remember(context, sessionStore, apiClient) {
         SessionsController(
+            projectSyncReasonLabel = { context.projectSyncReasonLabel(it) },
             sessionsApi = SessionsApi(apiClient),
             devicesApi = DevicesApi(apiClient),
             filesApi = FilesApi(apiClient),
@@ -770,6 +772,7 @@ fun AgentsAnywhereApp(
                     reloadProjects()
                 }
         },
+        onRefreshProject = { project -> sessionsController.refreshProjectSource(project) },
         onUpdateProject = { projectId, name, pinned ->
             if (!hasAuthSession) {
                 Result.failure(IllegalStateException("Sign in again to update this project."))
@@ -801,15 +804,22 @@ fun AgentsAnywhereApp(
                     }
             }
         },
-        onCreateProject = { name, connectorId, workspacePath ->
+        onCreateProject = { name, connectorId, workspacePath, runtime, runtimeId, requestId ->
             if (!hasAuthSession) {
                 Result.failure(IllegalStateException("Sign in again to create a project."))
             } else {
-                sessionsController.createProject(name, connectorId, workspacePath)
+                sessionsController.createProject(name, connectorId, workspacePath, runtime, runtimeId, requestId)
                     .onSuccess { project ->
                         projectsRequestVersion++
                         sessionsState = sessionsState.withPatchedProject(project)
                     }
+            }
+        },
+        onPendingProjectOperations = { sessionsController.pendingProjectOperations() },
+        onResumeProjectOperation = { entry, again ->
+            sessionsController.resumeProjectOperation(entry, again).onSuccess { project ->
+                projectsRequestVersion++
+                sessionsState = sessionsState.withPatchedProject(project)
             }
         },
         onNewSessionInProject = { project ->

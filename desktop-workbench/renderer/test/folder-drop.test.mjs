@@ -6,9 +6,10 @@ import { JSDOM } from "jsdom"
 import { registerSource } from "./helpers/onboarding-source.mjs"
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "https://fixture.example/", pretendToBeVisual: true })
-for (const name of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Event", "CustomEvent", "MutationObserver", "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame"]) {
+for (const name of ["window", "document", "navigator", "HTMLElement", "HTMLInputElement", "HTMLButtonElement", "HTMLFormElement", "DocumentFragment", "Element", "Node", "NodeFilter", "Event", "CustomEvent", "MutationObserver", "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame"]) {
   Object.defineProperty(globalThis, name, { configurable: true, value: dom.window[name] })
 }
+window.HTMLElement.prototype.scrollIntoView = function() {}
 window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} })
 globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -56,6 +57,8 @@ async function render(t, { locale = "zh-CN", projects = [], folder = "/work/proj
   }
   window.desktopWorkbench = desktop ? { files: { droppedFolderPath: async file => { calls.paths.push(file.name); return folder } } } : undefined
   t.mock.method(dashboardApi, "listProjects", async () => { calls.lists++; return { projects } })
+  t.mock.method(dashboardApi, "pendingProjectOperations", async () => ({ operations: [] }))
+  t.mock.method(dashboardApi, "getConnectorRuntimes", async () => ({ runtimes: [{ runtimeId: "rti_local", runtimeType: "codex", displayName: "Codex", configured: true, active: true, capabilities: { projectCreate: true } }] }))
   const messages = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url), "utf8"))
   const container = document.createElement("div")
   document.body.append(container)
@@ -85,17 +88,14 @@ async function drag(container, type, names = ["project"], types = ["Files"], ent
 }
 
 for (const locale of ["zh-CN", "en"]) {
-  test(`${locale}: dropping an existing manual project displays the duplicate message without creating`, async t => {
+  test(`${locale}: dropping a known directory opens explicit Runtime creation without silently merging projects`, async t => {
     const { calls, container, messages } = await render(t, { locale, projects: [project] })
     const event = await drag(container, "drop")
     assert.equal(event.defaultPrevented, true)
-    const notification = container.querySelector("[data-sonner-toast]")
-    assert.ok(notification.textContent.includes(messages.folderAlreadyAdded))
-    assert.ok(notification.classList.contains("cn-toast"))
-    const toaster = container.querySelector("[data-sonner-toaster]")
-    assert.equal(toaster.dataset.yPosition, "top")
-    assert.equal(toaster.dataset.xPosition, "center")
-    assert.notEqual(notification.dataset.richColors, "true")
+    const dialog = document.querySelector('[role="dialog"]')
+    assert.ok(dialog)
+    assert.equal(dialog.querySelector('#project-path').value, project.workspacePath)
+    assert.equal(calls.lists, 0)
     assert.deepEqual(calls.creates, [])
   })
 
@@ -116,12 +116,22 @@ for (const locale of ["zh-CN", "en"]) {
   })
 }
 
-test("a single folder creates a manual project and switches to the project list", async t => {
-  const { calls, container, messages } = await render(t)
+test("a dropped folder requires explicit creation and binds the selected Runtime", async t => {
+  const { calls, container } = await render(t)
   await drag(container, "drop")
-  assert.deepEqual(calls.creates, [{ name: "project", connectorId: "local", workspacePath: "/work/project", manuallyCreated: true }])
+  assert.deepEqual(calls.creates, [])
+  const dialog = document.querySelector('[role="dialog"]')
+  assert.equal(dialog.querySelector('#project-path').value, "/work/project")
+  assert.equal(dialog.querySelector('#project-name').value, "project")
+  await act(async () => {
+    dialog.querySelector('form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 10))
+  })
+  assert.equal(calls.creates.length, 1)
+  const { requestId, ...request } = calls.creates[0]
+  assert.ok(requestId)
+  assert.deepEqual(request, { name: "project", connectorId: "local", workspacePath: "/work/project", runtime: "codex", runtimeId: "rti_local" })
   assert.equal(calls.view, false)
-  assert.ok(container.textContent.includes(messages.folderAdded))
 })
 
 test("an offline local device displays guidance without listing or creating projects", async t => {

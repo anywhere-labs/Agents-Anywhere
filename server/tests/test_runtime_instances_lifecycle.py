@@ -4,15 +4,16 @@ import asyncio
 from typing import Any
 
 import pytest
+from conftest import ApiV2TestClient as TestClient
+from runtime_fixtures import seed_workspace_project
+from sqlalchemy import insert
 
 from agent_server.app import create_app
 from agent_server.infra.db import device_runtimes
 from agent_server.services.device_runtimes import (
-    DeviceRuntimeStartingError,
     DeviceRuntimeService,
+    DeviceRuntimeStartingError,
 )
-from conftest import ApiV2TestClient as TestClient
-from sqlalchemy import insert
 
 ADMIN_USER = "user1"
 ADMIN_PASSWORD = "secret"
@@ -304,7 +305,7 @@ def test_v2_create_and_rename_enforce_identity_and_name_invariants(
     assert runtime["status"] == "stopped"
     assert runtime["available"] is False
     assert runtime["defaults"] == {"home": "/tmp/codex"}
-    assert runtime["capabilities"] == {"modelCatalog": True}
+    assert runtime["capabilities"] == {"modelCatalog": True, "projectCreate": False, "projectSync": False}
     assert runtime["createdAt"]
     assert rpc.requests[0][1] == "runtime.validateConfig"
 
@@ -794,15 +795,7 @@ def test_named_session_create_starts_an_active_stopped_instance(
             "runtime": "codex",
             "runtimeId": runtime_id,
             "content": "start this instance",
-            "projectId": client.post(
-                "/projects",
-                headers=headers,
-                json={
-                    "connectorId": connector_id,
-                    "name": "Work",
-                    "workspacePath": "/work",
-                },
-            ).json()["project"]["id"],
+            "projectId": asyncio.run(seed_workspace_project(client.app.state.store, connector_id, client.get("/auth/me", headers=headers).json()["userId"], "/work", runtime="codex", runtime_id=runtime_id)).id,
         },
     )
 
@@ -847,15 +840,7 @@ def test_discovered_custom_provider_type_routes_named_sessions(
             "runtime": runtime_type,
             "runtimeId": runtime_id,
             "content": "custom provider",
-            "projectId": client.post(
-                "/projects",
-                headers=headers,
-                json={
-                    "connectorId": connector_id,
-                    "name": "Work",
-                    "workspacePath": "/work",
-                },
-            ).json()["project"]["id"],
+            "projectId": asyncio.run(seed_workspace_project(client.app.state.store, connector_id, client.get("/auth/me", headers=headers).json()["userId"], "/work", runtime=runtime_type, runtime_id=runtime_id)).id,
         },
     )
 
@@ -905,15 +890,7 @@ def test_named_session_create_rejects_mismatched_connector_identity(
             "runtime": "codex",
             "runtimeId": runtime_id,
             "content": "wrong instance must fail",
-            "projectId": client.post(
-                "/projects",
-                headers=headers,
-                json={
-                    "connectorId": connector_id,
-                    "name": "Work",
-                    "workspacePath": "/work",
-                },
-            ).json()["project"]["id"],
+            "projectId": asyncio.run(seed_workspace_project(client.app.state.store, connector_id, client.get("/auth/me", headers=headers).json()["userId"], "/work", runtime="codex", runtime_id=runtime_id)).id,
         },
     )
 

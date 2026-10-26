@@ -46,6 +46,7 @@ nonisolated struct V2SessionMeta: Codable, Identifiable, Hashable {
     let lastItemOrderSeq: Int?
     let sortAt: String?
     let updatedSeq: Int
+    var projectSyncReason: String? = nil
     var createdAt: String? = nil
 
     var effectiveRuntimeId: V2RuntimeID { runtimeId ?? runtime }
@@ -76,7 +77,7 @@ nonisolated struct V2SessionMetaPatchRequest: Encodable, Hashable {
 
 nonisolated struct V2SessionCreateRequest: Encodable, Hashable {
     let connectorId: V2ConnectorID
-    let projectId: String
+    let projectId: String?
     let runtime: V2RuntimeID
     var runtimeId: V2RuntimeID? = nil
     let externalSessionId: String?
@@ -122,7 +123,7 @@ nonisolated struct V2InlineAttachment: Encodable, Hashable {
 
 nonisolated struct V2SessionCreateAndStartRequest: Encodable, Hashable {
     let connectorId: V2ConnectorID
-    let projectId: String
+    let projectId: String?
     let runtime: V2RuntimeID
     var runtimeId: V2RuntimeID? = nil
     let title: String?

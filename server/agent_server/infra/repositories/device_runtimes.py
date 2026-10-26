@@ -14,12 +14,20 @@ from agent_server.core.runtime_identity import (
     runtime_instance_name_key,
 )
 from agent_server.core.utc import utc_now
+from agent_server.infra.db import (
+    connector_protocol_capabilities as protocol_capabilities_t,
+)
 from agent_server.infra.db import connector_runtime_catalogs as catalogs_t
 from agent_server.infra.db import connector_runtime_types as runtime_types_t
 from agent_server.infra.db import connector_terminal_roots as terminal_roots_t
 from agent_server.infra.db import connectors as connectors_t
 from agent_server.infra.db import device_runtimes as device_runtimes_t
+from agent_server.infra.db import project_operations as project_operations_t
+from agent_server.infra.db import projects as projects_t
 from agent_server.infra.db import retired_device_runtimes as retired_runtimes_t
+from agent_server.infra.db import (
+    runtime_workspace_inventories as workspace_inventories_t,
+)
 from agent_server.infra.db import sessions as sessions_t
 
 _CONTROL_V2_DESCRIPTOR_KEY = "__runtimeControlV2Descriptor"
@@ -497,6 +505,10 @@ class DeviceRuntimeRepositoryMixin:
             sessions_t.c.runtime_id == runtime_id,
         )
         async with self._engine.begin() as conn:
+            # Serialize with each workspace projection stage, including late HTTP uploads.
+            await conn.execute(select(connectors_t.c.id).where(
+                connectors_t.c.id == connector_id,
+            ).with_for_update())
             result = await conn.execute(
                 update(device_runtimes_t)
                 .where(
@@ -516,7 +528,7 @@ class DeviceRuntimeRepositoryMixin:
                 raise KeyError(runtime_id)
             session_ids = list((await conn.execute(session_query)).scalars())
             # Terminal roots have no session FK. Timeline, active runs and shares
-            # cascade from sessions; projects can be shared by other instances.
+            # cascade from sessions. Projects belong to this exact Runtime source.
             await conn.execute(
                 delete(terminal_roots_t).where(
                     terminal_roots_t.c.connector_id == connector_id,
@@ -529,6 +541,19 @@ class DeviceRuntimeRepositoryMixin:
                     sessions_t.c.runtime_id == runtime_id,
                 )
             )
+            await conn.execute(update(projects_t).where(
+                projects_t.c.connector_id == connector_id,
+                projects_t.c.runtime_id == runtime_id,
+            ).values(source_state="historical", updated_at=utc_now()))
+            await conn.execute(update(project_operations_t).where(
+                project_operations_t.c.connector_id == connector_id,
+                project_operations_t.c.runtime_id == runtime_id,
+                project_operations_t.c.status.in_(["pending", "unknown"]),
+            ).values(status="failed", result_json=_json_dumps({"message": "项目来源已移除"}), updated_at=utc_now()))
+            await conn.execute(delete(workspace_inventories_t).where(
+                workspace_inventories_t.c.connector_id == connector_id,
+                workspace_inventories_t.c.runtime_id == runtime_id,
+            ))
             # As with connector deletion, retain the DB records for retry if
             # attachment cleanup fails before the transaction commits.
             if cleanup_files:
@@ -598,6 +623,9 @@ def _runtime_instance_select() -> Any:
             runtime_types_t.c.defaults_json.label("type_defaults_json"),
             runtime_types_t.c.capabilities_json.label("type_capabilities_json"),
             runtime_types_t.c.last_discovered_at.label("type_last_discovered_at"),
+            select(protocol_capabilities_t.c.capabilities_json).where(
+                protocol_capabilities_t.c.connector_id == device_runtimes_t.c.connector_id,
+            ).correlate(device_runtimes_t).scalar_subquery().label("instance_capabilities_json"),
         )
         .join(
             runtime_types_t,
@@ -652,6 +680,22 @@ def _runtime_row(row: Any) -> dict[str, Any]:
     phase = _json_loads(row["phase_json"]) if "phase_json" in row else None
     if not isinstance(phase, dict):
         phase = None
+    capabilities = _json_loads(row["type_capabilities_json"]) or {}
+    metadata = _json_loads(row["type_metadata_json"]) or {}
+    # Project support belongs to the configured binary, never just its provider type.
+    if row["runtime_type"] == "codex":
+        capabilities.update(projectCreate=False, projectSync=False)
+        metadata["projectSupport"] = "unknown"
+    protocol = _json_loads(row.get("instance_capabilities_json")) or {}
+    for capability in protocol.get("capabilities", []):
+        source = capability.get("runtimeId") or capability.get("metadata", {}).get("runtimeId")
+        if source != row["runtime_id"] or capability.get("scope") != "runtime":
+            continue
+        key = {"runtime.project.create": "projectCreate", "runtime.project.sync": "projectSync"}.get(capability.get("capabilityId"))
+        if key:
+            capabilities[key] = configured and status == "running" and all(capability.get(flag, True) for flag in ("supported", "available", "allowed"))
+            metadata["projectSupport"] = capability.get("metadata", {}).get("projectSupport", "unknown")
+            metadata["projectSupportMessage"] = capability.get("unavailableReason")
     return {
         "connectorId": str(row["connector_id"]),
         "runtimeId": str(row["runtime_id"]),
@@ -675,11 +719,11 @@ def _runtime_row(row: Any) -> dict[str, Any]:
         "active": bool(row["active"]),
         "status": status,
         "discovery": {} if _stored_v2_descriptor(discovery) is not None else discovery,
-        "metadata": _json_loads(row["type_metadata_json"]) or {},
+        "metadata": metadata,
         "schema": _json_loads(row["type_config_schema_json"]),
         "uiSchema": _json_loads(row["type_ui_schema_json"]) or {},
         "defaults": _json_loads(row["type_defaults_json"]) or {},
-        "capabilities": _json_loads(row["type_capabilities_json"]) or {},
+        "capabilities": capabilities,
         "config": _json_loads(row["config_json"]),
         "error": error,
         "phase": phase,

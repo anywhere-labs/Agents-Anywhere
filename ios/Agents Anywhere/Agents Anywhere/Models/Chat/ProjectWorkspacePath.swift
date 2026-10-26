@@ -2,11 +2,6 @@ import Foundation
 
 /// Remote path comparison follows the server, not the filesystem of this phone.
 nonisolated enum ProjectWorkspacePath {
-    static func project(in projects: [V2Project], connectorID: String, path: String, deviceOS: String?) -> V2Project? {
-        guard let key = key(path, deviceOS: deviceOS) else { return nil }
-        return projects.first { $0.connectorId == connectorID && self.key($0.workspacePath, deviceOS: deviceOS) == key }
-    }
-
     static func name(_ path: String) -> String {
         let value = path.trimmingCharacters(in: .whitespacesAndNewlines)
         let windows = value.range(of: "^[A-Za-z]:[/\\\\]", options: .regularExpression) != nil || value.hasPrefix("\\\\")
@@ -15,20 +10,6 @@ nonisolated enum ProjectWorkspacePath {
             return "Workspace"
         }
         return String(parts.last!)
-    }
-
-    static func availableName(_ name: String, projects: [V2Project], ignoring id: String? = nil) -> String {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let base = String((trimmed.isEmpty ? "Workspace" : trimmed).unicodeScalars.prefix(255))
-        let names = Set(projects.filter { $0.id != id }.map(\.name))
-        var candidate = base
-        var suffix = 1
-        while names.contains(candidate) {
-            let ending = " (\(suffix))"
-            candidate = String(base.unicodeScalars.prefix(255 - ending.count)) + ending
-            suffix += 1
-        }
-        return candidate
     }
 
     static func parent(_ path: String) -> String? {
@@ -84,9 +65,4 @@ nonisolated enum ProjectWorkspacePath {
         }
         return (path.hasPrefix("//") && !path.hasPrefix("///") ? "//" : "/") + parts.joined(separator: "/")
     }
-}
-
-struct ProjectReuseRequired: LocalizedError {
-    let project: V2Project
-    var errorDescription: String? { String(localized: "这个目录已属于项目「\(project.name)」。") }
 }

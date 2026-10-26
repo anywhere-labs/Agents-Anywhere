@@ -6,12 +6,15 @@ struct NewSessionSubmission {
     let session: V2SessionMeta
     let pending: V2PendingMessage
     init(project: V2Project, runtime: V2DeviceRuntime, text: String, attachments: [ChatAttachment]) {
+        self.init(project: project, connectorID: project.connectorId, path: project.preferredWorkspacePath, runtime: runtime, text: text, attachments: attachments)
+    }
+    init(project: V2Project?, connectorID: String, path: String, runtime: V2DeviceRuntime, text: String, attachments: [ChatAttachment]) {
         let id = "local:" + UUID().uuidString
         let now = Date().ISO8601Format()
-        session = V2SessionMeta(id: id, connectorId: project.connectorId, projectId: project.id,
+        session = V2SessionMeta(id: id, connectorId: connectorID, projectId: project?.id,
             runtime: runtime.runtimeType, runtimeId: runtime.id, runtimeType: runtime.runtimeType,
             runtimeName: runtime.name, runtimeTypeDisplayName: runtime.typeDisplayName,
-            externalSessionId: nil, title: String(text.prefix(80)), cwd: project.workspacePath, status: .waiting,
+            externalSessionId: nil, title: String(text.prefix(80)), cwd: path, status: .waiting,
             takeover: true, connectorStatus: .online, pinned: false, pinnedAt: nil, archived: false,
             archivedAt: nil, userArchived: false, sourceAvailability: "available", sourceAvailabilityReason: nil,
             sourceAvailabilityUpdatedAt: nil, sourceObservationOrigin: nil, archiveSource: nil, unread: false,

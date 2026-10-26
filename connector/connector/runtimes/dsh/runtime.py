@@ -66,6 +66,80 @@ class DshRuntime(AgentRuntime):
         self._relay_restart_task: asyncio.Task[None] | None = None
         self._sync_mode = "events"
 
+    async def create_workspace(self, name: str, path: str, request_id: str) -> dict[str, Any]:
+        return await self._request("createWorkspace", {"name": name, "path": path, "requestId": request_id})
+
+    async def execute_workspace_operation(self, request: dict[str, Any], *, recover: bool = False) -> dict[str, Any]:
+        from pydantic import BaseModel
+
+        from connector.mesh.hub import DSH_OPERATIONS_SERVICE
+        from connector.operations.models import OperationRecord, OperationRequest
+        class Params(BaseModel):
+            request: OperationRequest
+        class Lookup(BaseModel):
+            operationId: str
+        await self._ensure_client()
+        # Use the bridge client belonging to this runtime instance.
+        client = self._client
+        if client is None:
+            raise RuntimeUnavailableError("DSH bridge is unavailable")
+        features = (client.initialize_result or {}).get("features", {})
+        if features.get("workspaceOperations") != "1.0":
+            raise RuntimeUnsupportedError("请升级 DSH 插件以使用 MeshCall Operations 1.0")
+        record = await client.mesh.call_unary(DSH_OPERATIONS_SERVICE, "get",
+            Lookup(operationId=request["operationId"]), OperationRecord | None,
+            timeout=10, metadata=client.metadata)
+        if record is None:
+            if recover:
+                raise RuntimeUnavailableError("DSH receipt is missing; native outcome requires reconciliation")
+            record = await client.mesh.call_unary(DSH_OPERATIONS_SERVICE, "submit",
+                Params(request=OperationRequest.model_validate(request)), OperationRecord,
+                timeout=10, metadata=client.metadata, idempotency_key=OperationRequest.model_validate(request).fingerprint())
+        while record.status not in {"succeeded", "failed", "unknown"}:
+            await asyncio.sleep(1)
+            record = await client.mesh.call_unary(DSH_OPERATIONS_SERVICE, "get",
+                Lookup(operationId=request["operationId"]), OperationRecord | None,
+                timeout=10, metadata=client.metadata)
+            if record is None:
+                raise RuntimeUnavailableError("DSH operation receipt disappeared")
+        if record.request.model_dump() != OperationRequest.model_validate(request).model_dump():
+            raise RuntimeInvalidRequestError("DSH operation source mismatch")
+        if record.status == "failed":
+            raise RuntimeInvalidRequestError(record.message or "DSH operation failed")
+        if record.status != "succeeded" or record.result is None:
+            raise RuntimeUnavailableError(record.message or "DSH native result unknown")
+        return record.result.model_dump()
+
+    async def ack_workspace_operation(self, request: dict[str, Any]) -> None:
+        from pydantic import BaseModel
+
+        from connector.mesh.hub import DSH_OPERATIONS_SERVICE
+        from connector.operations.models import OperationRecord, OperationRequest
+        class Lookup(BaseModel):
+            operationId: str
+        await self._ensure_client()
+        client = self._client
+        if client is None:
+            raise RuntimeUnavailableError("DSH bridge is unavailable")
+        record = await client.mesh.call_unary(DSH_OPERATIONS_SERVICE, "ackResult",
+            Lookup(operationId=request["operationId"]), OperationRecord | None,
+            timeout=10, metadata=client.metadata)
+        if record is None or not record.resultReceived or record.request.fingerprint() != OperationRequest.model_validate(request).fingerprint():
+            raise RuntimeInvalidRequestError("DSH acknowledgement source mismatch")
+
+    async def workspace_inventory(self, full: bool = True) -> dict[str, Any] | None:
+        first = await self._request("listWorkspaces", {"full": full})
+        second = await self._request("listWorkspaces", {"full": full})
+        if first != second:
+            raise RuntimeUnavailableError("DSH registry changed during collection")
+        if not isinstance(first, dict) or not isinstance(first.get("workspaces"), list):
+            raise RuntimeUnavailableError("DSH registry returned an incomplete inventory")
+        return {"catalogComplete": True, "membersComplete": full,
+                "workspaces": [{"id": p["id"], "title": p["title"], "path": p["path"],
+                                "roots": [p["path"]], "identityKind": "native"}
+                               for p in first["workspaces"]],
+                "members": first["members"] if full else []}
+
     @property
     def sync_mode(self) -> str:
         return self._sync_mode
@@ -368,13 +442,13 @@ class DshRuntime(AgentRuntime):
         *, runtime_options: Mapping[str, Any] | None = None,
     ) -> RuntimeOperationResult:
         options = dict(runtime_options or {})
-        if set(options) - {"agentPreset"}:
+        if set(options) - {"agentPreset", "nativeProjectId"}:
             raise RuntimeInvalidRequestError("Unsupported DSH creation option")
         preset = options.get("agentPreset", self.config.values.get("defaultAgentPreset"))
         if preset is None:
             preset = await self._initial_agent_preset()
         return await self._send_text("createAndStartSession", session_id, None, content, cwd, attachments, client_message_id,
-                                     selections=selections, agent_preset=preset)
+                                     selections=selections, agent_preset=preset, native_project_id=options.get("nativeProjectId"))
 
     async def _initial_agent_preset(self) -> str | None:
         """The plugin's declared initial mode when this Runtime has none saved.
@@ -407,6 +481,7 @@ class DshRuntime(AgentRuntime):
         self, method: str, session_id: str, external_id: str | None, content: str,
         cwd: str | None, attachments: tuple[RuntimeAttachment, ...], client_message_id: str | None,
         *, selections: Mapping[str, str | None] | None = None, agent_preset: str | None = None,
+        native_project_id: str | None = None,
     ) -> RuntimeOperationResult:
         if (not content.strip() and not attachments) or not client_message_id:
             raise RuntimeInvalidRequestError("A message and a stable clientMessageId are required")
@@ -415,6 +490,7 @@ class DshRuntime(AgentRuntime):
                   "selections": dict(selections or {})}
         if method == "createAndStartSession":
             params["agentPreset"] = agent_preset
+            params["nativeProjectId"] = native_project_id
         if attachments:
             capability_set = _object(await self._request("getRuntimeCapabilities"))
             if not provider_config.dsh_capabilities(capability_set)["attachments"]:

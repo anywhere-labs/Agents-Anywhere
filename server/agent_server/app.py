@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import uvicorn
+import uvicorn  # noqa: F401 - preserve the public launcher module alias
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -24,6 +24,7 @@ from agent_server.api import (
     client_ws,
     connector_files,
     connector_ingress,
+    connector_mesh,
     connector_runtimes,
     connector_shell,
     connector_terminal,
@@ -44,6 +45,9 @@ from agent_server.core.process_settings import ProcessSettings
 from agent_server.core.setup_token import SetupToken
 from agent_server.core.utc import utc_now
 from agent_server.infra.connector_rpc import ConnectorRpcManager
+from agent_server.infra.mesh_operations import MeshOperations
+from agent_server.infra.operation_transport import MeshOperationTransport
+from agent_server.services.operations import OperationDispatcher
 from agent_server.infra.db.migrations import (
     database_schema_version,
     require_current_database,
@@ -127,6 +131,7 @@ def create_app(
         presence_task: asyncio.Task[None] | None = None
         deletion_task: asyncio.Task[None] | None = None
         usage_task: asyncio.Task[None] | None = None
+        operations_task: asyncio.Task[None] | None = None
         try:
             logger.info(
                 "server concurrency pid={} workers={} event_workers={}",
@@ -146,11 +151,15 @@ def create_app(
             presence_task = asyncio.create_task(_connector_presence_watchdog(app))
             deletion_task = asyncio.create_task(app.state.connector_deletion_recovery.run())
             usage_task = asyncio.create_task(app.state.usage_maintenance.run())
+            operations_task = asyncio.create_task(app.state.operation_dispatcher.run())
             # Generate the bootstrap token early so operators see it in logs.
             if await app.state.store.count_users() == 0:
                 await SetupTokenService(app.state.setup_token, app.state.redis).snapshot()
             yield
         finally:
+            if operations_task is not None:
+                operations_task.cancel()
+                await asyncio.gather(operations_task, return_exceptions=True)
             if usage_task is not None:
                 usage_task.cancel()
                 await asyncio.gather(usage_task, return_exceptions=True)
@@ -169,6 +178,7 @@ def create_app(
             except Exception:  # noqa: BLE001 - shutdown must continue
                 logger.exception("failed to flush usage events on shutdown")
             try:
+                await app.state.mesh_operations.close()
                 await app.state.rpc.close()
             finally:
                 try:
@@ -227,6 +237,9 @@ def create_app(
         app.state.redis,
         instance_id=process_settings.instance_id(),
     )
+    app.state.mesh_operations = MeshOperations(app.state.rpc, app.state.redis)
+    app.state.operation_transport = MeshOperationTransport(app.state.mesh_operations, app.state.store)
+    app.state.operation_dispatcher = OperationDispatcher(app.state.store, app.state.operation_transport)
     app.state.store.bind_connector_lifecycle(app.state.rpc.lifecycle_guard)
     app.state.fs_downloads = FsDownloadRelayManager(app.state.redis)
     app.state.shell_tasks = ShellTaskManager(app.state.redis)
@@ -373,6 +386,7 @@ def create_app(
     app.include_router(connector_shell.router, prefix=API_V2_PREFIX)
     app.include_router(connector_terminal.router, prefix=API_V2_PREFIX)
     app.include_router(client_ws.router, prefix=API_V2_PREFIX)
+    app.include_router(connector_mesh.router, prefix=API_V2_PREFIX)
     app.include_router(connector_ingress.router, prefix=API_V2_PREFIX)
     app.include_router(agents.router, prefix=API_V2_PREFIX)
     app.include_router(pairing.router, prefix=API_V2_PREFIX)
@@ -449,15 +463,5 @@ def create_app(
 
 
 def main() -> None:
-    settings = ProcessSettings.from_environment()
-    settings.validate_shared_state(
-        redis_configured=bool(os.environ.get("AGENT_SERVER_REDIS_URL"))
-    )
-    uvicorn.run(
-        "agent_server.app:create_app",
-        factory=True,
-        host=settings.host,
-        port=settings.port,
-        workers=settings.workers,
-        reload=False,
-    )
+    from agent_server.main import main as run
+    run([])

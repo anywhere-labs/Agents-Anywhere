@@ -92,6 +92,13 @@ class AgentRuntime(ABC):
             is not AgentRuntime.list_complete_session_inventory
         )
 
+    async def create_workspace(self, name: str, path: str, request_id: str) -> dict[str, Any]:
+        raise RuntimeUnsupportedError("native project creation")
+
+    async def workspace_inventory(self, full: bool = True) -> dict[str, Any] | None:
+        """Return authoritative native membership, or None without changing ownership."""
+        return None
+
     async def get_session_snapshot(
         self,
         session_id: str,

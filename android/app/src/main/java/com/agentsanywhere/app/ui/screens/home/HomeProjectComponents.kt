@@ -83,7 +83,7 @@ import com.composables.icons.lucide.Folder
 import com.composables.icons.lucide.FolderOpen
 import com.composables.icons.lucide.Ellipsis
 import com.composables.icons.lucide.Lucide
-import com.composables.icons.lucide.Pencil
+import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.Pin
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.SquarePen
@@ -112,6 +112,7 @@ internal fun HomeProjectList(
     onRetryProject: (String) -> Unit,
     onCreateProject: () -> Unit,
     pinnedSessions: List<AgentSession>,
+    ungroupedSessions: List<AgentSession>,
     sessionsByProject: Map<String, List<AgentSession>>,
     loadingProjectIds: Set<String>,
     expandedProjectIds: Set<String>,
@@ -122,6 +123,7 @@ internal fun HomeProjectList(
     onOpenSession: (AgentSession) -> Unit,
 ) {
     var pinnedExpanded by remember { mutableStateOf(true) }
+    var ungroupedExpanded by remember { mutableStateOf(true) }
     var filterAnchor by remember { mutableStateOf<Rect?>(null) }
     val projectsExpanded = projectPreferences.projectsExpanded
     val ordered = remember(projects, allSessions) {
@@ -132,7 +134,7 @@ internal fun HomeProjectList(
     val agentLabel = deviceAgentFilter.runtime?.runtimeTypeLabel()
     val filtersActive = deviceAgentFilter.active || projectSessionStatus != ProjectSessionStatusFilter.Active
 
-    if (projects.isEmpty() && pinnedSessions.isEmpty()) {
+    if (projects.isEmpty() && pinnedSessions.isEmpty() && ungroupedSessions.isEmpty()) {
         Box(Modifier.fillMaxSize()) {
             AppEmptyState(
                 message = stringResource(
@@ -189,6 +191,29 @@ internal fun HomeProjectList(
                     HomeProjectSessionRow(
                         session = session,
                         inset = false,
+                        onClick = { onOpenSession(session) },
+                        onLongPress = { onSessionLongPress(session, it) },
+                    )
+                }
+            }
+        }
+
+        if (ungroupedSessions.isNotEmpty()) {
+            item("ungrouped-title") {
+                HomeListSectionHeader(
+                    label = stringResource(R.string.home_ungrouped),
+                    expanded = ungroupedExpanded,
+                    onClick = { ungroupedExpanded = !ungroupedExpanded },
+                )
+            }
+            if (ungroupedExpanded) {
+                items(ungroupedSessions, key = { "ungrouped-session-${it.id}" }) { session ->
+                    HomeSessionRow(
+                        session = session,
+                        contextLabel = session.sidebarContextLabel(
+                            projectName = null,
+                            deviceName = devices.firstOrNull { it.id == session.connectorId }?.name,
+                        ),
                         onClick = { onOpenSession(session) },
                         onLongPress = { onSessionLongPress(session, it) },
                     )
@@ -276,6 +301,11 @@ private fun HomeProjectTreeItem(
         onNewSession = onNewSession,
     )
     if (expanded) {
+        Text(listOfNotNull(project.connectorId, project.runtime, project.runtimeId, project.workspacePath, project.nativeProjectId,
+            if (project.sourceState == "unknown") stringResource(R.string.project_source_unknown) else if (project.sourceState == "pending") stringResource(R.string.project_source_pending) else null,
+            stringResource(R.string.project_last_checked, project.lastSyncedAt ?: stringResource(R.string.project_never_checked))).joinToString(" · "),
+            fontSize = 11.sp, color = LocalAAColors.current.faint,
+            modifier = Modifier.padding(start = 34.dp, end = 16.dp, bottom = 8.dp))
         if (error != null) {
             Text(
                 text = stringResource(R.string.home_project_load_retry),
@@ -402,7 +432,7 @@ private fun HomeProjectRow(
 @Composable
 private fun HomeProjectTitle(project: AgentProject, modifier: Modifier = Modifier) {
     Text(
-        text = project.name,
+        text = listOfNotNull(project.name, project.runtime, project.runtimeId, project.nativeProjectId).joinToString(" · "),
         modifier = modifier,
         color = LocalAAColors.current.inkSoft,
         fontSize = 16.sp,
@@ -527,13 +557,13 @@ private fun HomeProjectEmptyText(message: String) {
 internal fun HomeProjectActionOverlay(
     menu: HomeProjectActionMenu,
     onDismiss: () -> Unit,
-    onEdit: () -> Unit,
+    onRefresh: () -> Unit,
     onTogglePinned: () -> Unit,
     onArchive: () -> Unit,
 ) {
     menu.anchorBounds?.let { anchor ->
         HomeProjectAnchoredPopup(anchor, onDismiss) {
-            HomeProjectActionCard(menu.project, Modifier, onEdit, onTogglePinned, onArchive)
+            HomeProjectActionCard(menu.project, Modifier, onRefresh, onTogglePinned, onArchive)
         }
         return
     }
@@ -577,7 +607,7 @@ internal fun HomeProjectActionOverlay(
         HomeProjectActionCard(
             project = menu.project,
             modifier = Modifier.offset { IntOffset(menuX.roundToInt(), menuY.roundToInt()) },
-            onEdit = onEdit,
+            onRefresh = onRefresh,
             onTogglePinned = onTogglePinned,
             onArchive = onArchive,
         )
@@ -613,7 +643,7 @@ private fun HomeProjectHighlightRow(project: AgentProject, expanded: Boolean) {
 private fun HomeProjectActionCard(
     project: AgentProject,
     modifier: Modifier,
-    onEdit: () -> Unit,
+    onRefresh: () -> Unit,
     onTogglePinned: () -> Unit,
     onArchive: () -> Unit,
 ) {
@@ -630,13 +660,13 @@ private fun HomeProjectActionCard(
             .border(1.dp, border, RoundedCornerShape(22.dp))
             .padding(vertical = 7.dp),
     ) {
-        HomeProjectActionRow(Lucide.Pencil, stringResource(R.string.home_project_edit), false, onEdit)
         HomeProjectActionRow(
             Lucide.Pin,
             stringResource(if (project.pinned) R.string.home_project_unpin else R.string.home_project_pin),
             false,
             onTogglePinned,
         )
+        HomeProjectActionRow(Lucide.RefreshCw, stringResource(R.string.project_refresh_source), false, onRefresh)
         HomeProjectActionRow(Lucide.Archive, stringResource(R.string.home_project_archive), true, onArchive)
     }
 }
@@ -674,137 +704,6 @@ private fun HomeProjectActionRow(
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable
-internal fun HomeProjectEditSheet(
-    project: AgentProject,
-    deviceName: String,
-    name: String,
-    onNameChange: (String) -> Unit,
-    busy: Boolean,
-    errorMessage: String?,
-    onDismiss: () -> Unit,
-    onSave: () -> Unit,
-) {
-    val colors = LocalAAColors.current
-    val darkMode = colors.canvas == Color(0xFF09090B)
-    val canSave = !busy && name.trim().isNotEmpty() && name.trim() != project.name
-
-    ModalBottomSheet(
-        onDismissRequest = { if (!busy) onDismiss() },
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        containerColor = colors.raisedSurface,
-        contentColor = colors.ink,
-        dragHandle = null,
-        scrimColor = if (darkMode) Color(0x99000000) else Color(0x66000000),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(start = 22.dp, end = 22.dp, top = 12.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Box(modifier = Modifier.fillMaxWidth().height(12.dp), contentAlignment = Alignment.Center) {
-                Box(
-                    modifier = Modifier
-                        .width(40.dp)
-                        .height(4.dp)
-                        .clip(CircleShape)
-                        .background(if (darkMode) Color(0xFF3F3F46) else Color(0xFFD8D6D0)),
-                )
-            }
-            Text(
-                text = stringResource(R.string.home_project_edit_title),
-                color = colors.ink,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.ExtraBold,
-            )
-            ProjectFieldLabel(stringResource(R.string.home_project_name))
-            BasicTextField(
-                value = name,
-                onValueChange = { if (it.codePointCount(0, it.length) <= 255) onNameChange(it) },
-                enabled = !busy,
-                singleLine = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(if (darkMode) Color(0xFF111113) else Color(0xFFF7F7F5))
-                    .border(1.dp, colors.border, RoundedCornerShape(12.dp))
-                    .padding(horizontal = 14.dp),
-                textStyle = TextStyle(color = colors.ink, fontSize = 16.sp, fontWeight = FontWeight.Bold),
-                cursorBrush = SolidColor(colors.ink),
-                decorationBox = { inner -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) { inner() } },
-            )
-            ProjectFieldLabel(stringResource(R.string.home_project_device))
-            ProjectReadOnlyField(deviceName)
-            ProjectFieldLabel(stringResource(R.string.home_project_path))
-            ProjectReadOnlyField(project.workspacePath, monospace = true)
-            Text(
-                text = stringResource(R.string.home_project_path_immutable),
-                color = colors.faint,
-                fontSize = 12.5.sp,
-                lineHeight = 17.sp,
-            )
-            errorMessage?.let {
-                Text(it, color = colors.errorText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-            }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                ProjectSheetButton(
-                    label = stringResource(R.string.common_cancel),
-                    enabled = !busy,
-                    primary = false,
-                    modifier = Modifier.weight(1f),
-                    onClick = onDismiss,
-                )
-                ProjectSheetButton(
-                    label = if (busy) stringResource(R.string.common_saving) else stringResource(R.string.common_save),
-                    enabled = canSave,
-                    primary = true,
-                    modifier = Modifier.weight(1f),
-                    onClick = onSave,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ProjectFieldLabel(label: String) {
-    Text(label, color = LocalAAColors.current.inkSoft, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-}
-
-@Composable
-private fun ProjectReadOnlyField(value: String, monospace: Boolean = false) {
-    val colors = LocalAAColors.current
-    val darkMode = colors.canvas == Color(0xFF09090B)
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(50.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (darkMode) Color(0xFF111113) else Color(0xFFF7F7F5))
-            .border(1.dp, colors.border, RoundedCornerShape(12.dp))
-            .padding(horizontal = 14.dp),
-        contentAlignment = Alignment.CenterStart,
-    ) {
-        Text(
-            text = value,
-            color = colors.faint,
-            fontSize = if (monospace) 13.sp else 15.sp,
-            fontFamily = if (monospace) FontFamily.Monospace else FontFamily.Default,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
 @Composable
 private fun ProjectSheetButton(
     label: String,

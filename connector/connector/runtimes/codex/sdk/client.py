@@ -24,6 +24,7 @@ from openai_codex.generated.v2_all import (
     TextUserInput,
     ThreadResumeParams,
     ThreadSortKey,
+    ThreadSourceKind,
     ThreadStartParams,
     TurnStartParams,
     UserInput,
@@ -132,6 +133,16 @@ class CodexRawThreadReadResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     thread: dict[str, Any]
+
+
+class CodexNativeProjectResponse(BaseModel):
+    project: dict[str, Any]
+
+
+class CodexNativeProjectsResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, strict=True)
+    data: list[dict[str, Any]]
+    next_cursor: str | None = Field(default=None, alias="nextCursor")
 
 
 class CodexSdkClient:
@@ -429,6 +440,82 @@ class CodexSdkClient:
         result = await self.call_read_with_recovery("thread/list", read_threads)
         return thread_list_result(result)
 
+    async def list_native_project_threads(
+        self, limit: int = 100, cursor: str | None = None,
+        archived: bool | None = None,
+    ) -> CodexThreadListResult:
+        """Keep explicit projectId:null, which SDK event serialization drops."""
+        async def read_threads(client: Any) -> CodexThreadListResult:
+            await ensure_codex_initialized(client)
+            result = await client._client.request(
+                "thread/list", {
+                    "limit": limit, "cursor": cursor, "archived": archived,
+                    "modelProviders": [], "sortKey": "recency_at", "sortDirection": "desc",
+                    "sourceKinds": [kind.value for kind in ThreadSourceKind],
+                }, response_model=CodexThreadTurnsListResponse,
+            )
+            return CodexThreadListResult(threads=tuple(result.data), next_cursor=result.next_cursor)
+
+        return await self.call_read_with_recovery("thread/list", read_threads)
+
+    async def read_native_project_thread(self, thread_id: str) -> dict[str, Any]:
+        await ensure_codex_initialized(self._client)
+        low_level = codex_low_level_client(self._client)
+        if low_level is None:
+            raise RuntimeInvalidRequestError("native thread project reads unavailable")
+        result = await low_level.request("thread/read", {"threadId": thread_id, "includeTurns": False},
+            response_model=CodexRawThreadReadResponse)
+        return result.thread
+
+    async def create_native_project(self, name: str, path: str, request_id: str) -> dict[str, Any]:
+        await ensure_codex_initialized(self._client)
+        low_level = codex_low_level_client(self._client)
+        if low_level is None:
+            raise RuntimeInvalidRequestError("Codex native project protocol is unavailable")
+        result = await low_level.request("project/create", {
+            "name": name, "roots": [{"path": path}], "idempotencyKey": request_id,
+        }, response_model=CodexNativeProjectResponse)
+        return result.project
+
+    async def list_native_projects(self) -> tuple[dict[str, Any], ...] | None:
+        async def read_projects(client: Any) -> tuple[dict[str, Any], ...] | None:
+            low_level = getattr(client, "_client", None)
+            request = getattr(low_level, "request", None)
+            if not callable(request):
+                return None
+            await ensure_codex_initialized(client)
+            cursor: str | None = None
+            cursors: set[str] = set()
+            projects: list[dict[str, Any]] = []
+            while True:
+                try:
+                    page = await request(
+                        "project/list", {"limit": 100, "cursor": cursor},
+                        response_model=CodexNativeProjectsResponse,
+                    )
+                except MethodNotFoundError:
+                    return None
+                except JsonRpcError as exc:
+                    # Older binaries can report an unknown enum variant rather
+                    # than method-not-found. Other failures must remain failures.
+                    message = str(exc)
+                    if "experimentalApi capability" in message or (
+                        "project/list" in message and "unknown variant" in message
+                    ):
+                        return None
+                    raise
+                projects.extend(page.data)
+                if len(projects) > 10_000:
+                    raise RuntimeInvalidRequestError("Codex project inventory exceeds 10000 entries")
+                cursor = page.next_cursor
+                if cursor is None:
+                    return tuple(projects)
+                if cursor in cursors:
+                    raise RuntimeInvalidRequestError("Codex project inventory repeated a cursor")
+                cursors.add(cursor)
+
+        return await self.call_read_with_recovery("project/list", read_projects)
+
     async def read_thread(
         self,
         thread_id: str,
@@ -524,10 +611,14 @@ class CodexSdkClient:
         low_level_client = codex_low_level_client(self._client)
         if low_level_client is not None:
             generation = self._generation
-            started = await low_level_client.thread_start(
-                codex_thread_start_params(request, self._model_gateway)
-            )
-            thread_id = id_of(started.thread)
+            params = codex_thread_start_params(request, self._model_gateway)
+            if request.project_id is not None:
+                raw = params.model_dump(mode="json", by_alias=True, exclude_none=True)
+                raw["projectId"] = request.project_id
+                started = await low_level_client.request("thread/start", raw, response_model=CodexRawThreadReadResponse)
+            else:
+                started = await low_level_client.thread_start(params)
+            thread_id = started.thread.get("id") if isinstance(started.thread, dict) else id_of(started.thread)
             if generation != self._generation:
                 raise RuntimeError("Codex disconnected while starting the thread")
             thread = codex_async_thread(self._sdk, self._client, thread_id)
@@ -539,6 +630,8 @@ class CodexSdkClient:
                 thread_id=thread_id,
                 payload={"id": thread_id} if thread_id is not None else {},
             )
+        if request.project_id is not None:
+            raise RuntimeInvalidRequestError("Codex native project binding requires the experimental low-level protocol")
         if self._model_gateway is not None:
             raise RuntimeInvalidRequestError(
                 "Codex low-level client is required for model gateway configuration"
@@ -1289,6 +1382,7 @@ def _sdk_config(sdk: Any, config: RuntimeConfig) -> Any:
         **launch_options,
         codex_bin=binary_selection.codex_bin,
         env=runtime_environment,
+        experimental_api=True,
         client_name="agents_anywhere_connector",
         client_title="Agents Anywhere Connector",
     )

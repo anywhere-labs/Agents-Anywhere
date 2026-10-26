@@ -2,7 +2,7 @@ import Foundation
 
 enum ProjectSidebarPresentation {
     static func visible(_ project: V2Project, filter: V2DeviceSessionFilter, sessions: [V2SessionMeta] = []) -> Bool {
-        if project.manuallyCreated { return true }
+        if project.manuallyCreated || (project.nativeProjectId != nil && filter != .archived) { return true }
         return sessions.contains { $0.projectId == project.id && matches($0, filter: filter) }
     }
     private static func matches(_ session: V2SessionMeta, filter: V2DeviceSessionFilter) -> Bool {
@@ -40,7 +40,7 @@ enum ProjectSidebarPresentation {
                 && project.activeSessionCount == 0 && project.sidebarSessionCounts.active == 0 && project.sidebarSessionCounts.archived == 0
             return (project.id, (empty: empty, activity: max(timestamp(project.lastActivityAt), activity[project.id] ?? 0), created: timestamp(project.createdAt)))
         })
-        return values.filter { $0.manuallyCreated || projectsWithMatches.contains($0.id) }.sorted {
+        return values.filter { $0.manuallyCreated || ($0.nativeProjectId != nil && filter != .archived) || projectsWithMatches.contains($0.id) }.sorted {
             if $0.pinned != $1.pinned { return $0.pinned }
             let left = order[$0.id]!, right = order[$1.id]!
             if left.empty != right.empty { return left.empty }

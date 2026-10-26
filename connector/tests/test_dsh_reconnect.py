@@ -146,7 +146,8 @@ def test_initially_offline_runtime_recovers_through_supervisor(monkeypatch):
                 recovered.set()
 
         host = SimpleNamespace(
-            connector_id="test", runtime_capabilities_update=AsyncMock()
+            connector_id="test", runtime_capabilities_update=AsyncMock(),
+            publish_runtime_notifications=AsyncMock()
         )
         supervisor = RuntimeSupervisor(
             (DshProvider(prober=offline_probe),), host, status_sink

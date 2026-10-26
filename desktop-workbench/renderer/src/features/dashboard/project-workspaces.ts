@@ -1,4 +1,5 @@
-import { isApiError } from "../../lib/api/errors.ts"
+export type ProjectSyncTranslator = (key: "createFailed" | "resultUnknown" | "createdPending" | "runtimeRequired" | "projectUnavailable" | "explicitSelectionRequired") => string
+
 import type { ProjectCreateRequest, ProjectView } from "./types"
 
 export function isWindowsWorkspace(path: string, deviceOs?: string | null): boolean {
@@ -29,55 +30,25 @@ export function workspaceName(path: string, fallback = "Workspace"): string {
   return clean.split("/").at(-1) || fallback
 }
 
-export function availableProjectName(name: string, projects: Pick<ProjectView, "id" | "name">[], ignoreId?: string): string {
-  const base = Array.from(name.trim() || "Workspace").slice(0, 255).join("")
-  const names = new Set(projects.filter((project) => project.id !== ignoreId).map((project) => project.name))
-  let candidate = base
-  for (let suffix = 1; names.has(candidate); suffix++) {
-    const ending = ` (${suffix})`
-    candidate = Array.from(base).slice(0, 255 - ending.length).join("") + ending
-  }
-  return candidate
+export function projectWorkspacePath(project: ProjectView, selectedPath?: string): string {
+  if (selectedPath && project.roots?.some(root => workspacePathKey(root) === workspacePathKey(selectedPath))) return selectedPath;
+  return project.roots?.find(root => project.rootStates?.[root] === "present") ?? project.workspacePath;
 }
 
-export function findWorkspaceProject(
-  projects: ProjectView[], connectorId: string, path: string, deviceOs?: string | null,
-): ProjectView | undefined {
-  const key = workspacePathKey(path, deviceOs)
-  if (!key) return undefined
-  return projects.find((project) => project.connectorId === connectorId
-    && workspacePathKey(project.workspacePath, deviceOs) === key)
-}
-
-export async function resolveWorkspaceProject({
-  projects, connectorId, path, deviceOs, list, create,
-}: {
-  projects: ProjectView[]
-  connectorId: string
-  path: string
-  deviceOs?: string | null
-  list: () => Promise<ProjectView[]>
-  create: (payload: ProjectCreateRequest) => Promise<ProjectView>
+export async function resolveWorkspaceProject({ projects, connectorId, path, deviceOs, runtime, runtimeId, projectId, requestId, create, translate }: {
+  projects: ProjectView[]; connectorId: string; path: string; deviceOs?: string | null;
+  runtime?: string; runtimeId?: string; projectId?: string; requestId: string;
+  translate: ProjectSyncTranslator;
+  create: (payload: ProjectCreateRequest) => Promise<ProjectView>;
 }): Promise<ProjectView> {
-  if (!connectorId || !path.trim()) throw new Error("A device and workspace are required")
-  const existing = findWorkspaceProject(projects, connectorId, path, deviceOs)
-  if (existing) return existing
-
-  let currentProjects = await list()
-  for (let attempt = 0; ; attempt++) {
-    const current = findWorkspaceProject(currentProjects, connectorId, path, deviceOs)
-    if (current) return current
-    try {
-      return await create({
-        name: availableProjectName(workspaceName(path), currentProjects),
-        connectorId,
-        workspacePath: path.trim(),
-        manuallyCreated: false,
-      })
-    } catch (error) {
-      if (attempt >= 2 || !isApiError(error) || error.status !== 409 || error.code !== "project_name_conflict") throw error
-      // Another client may have created this workspace or claimed its name.
-      currentProjects = await list()
-    }
+  if (!runtime || !runtimeId) throw new Error(translate("runtimeRequired"))
+  if (projectId) {
+    const selected = projects.find(p => p.id === projectId && p.connectorId === connectorId && p.runtimeId === runtimeId)
+    if (!selected || selected.sourceState !== "active") throw new Error(translate("projectUnavailable"))
+    return selected
   }
+  const matches = projects.filter(p => p.connectorId === connectorId && p.runtimeId === runtimeId
+    && workspacePathKey(p.workspacePath, deviceOs) === workspacePathKey(path, deviceOs))
+  if (matches.length > 0) throw new Error(translate("explicitSelectionRequired"))
+  return create({ name: workspaceName(path), connectorId, workspacePath: path, runtime, runtimeId, requestId })
 }

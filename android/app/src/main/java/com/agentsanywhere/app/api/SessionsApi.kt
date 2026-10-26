@@ -1,5 +1,6 @@
 package com.agentsanywhere.app.api
 
+import com.agentsanywhere.app.R
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
@@ -8,6 +9,14 @@ import java.util.Base64
 class SessionsApi(
     private val client: ApiClient = ApiClient(),
 ) {
+    fun refreshProjectSource(serverUrl: String, authorizationToken: String, project: com.agentsanywhere.app.model.AgentProject) {
+        if (project.runtime == null || project.runtimeId == null) throw ProjectOperationException(R.string.project_source_upgrade_required)
+        fun encode(value: String) = java.net.URLEncoder.encode(value, "UTF-8")
+        client.postJson(serverUrl = serverUrl, authorizationToken = authorizationToken,
+            path = "/projects/refresh?connectorId=${encode(project.connectorId)}&runtime=${encode(project.runtime)}&runtimeId=${encode(project.runtimeId)}",
+            body = JSONObject())
+    }
+
     fun listProjects(
         serverUrl: String,
         authorizationToken: String,
@@ -29,22 +38,60 @@ class SessionsApi(
         name: String,
         connectorId: String,
         workspacePath: String,
-        manuallyCreated: Boolean = true,
+        runtime: String = "", runtimeId: String = "", requestId: String = java.util.UUID.randomUUID().toString(),
+        newOperation: Boolean = false,
     ): RemoteProjectCreateResponse {
         val body = JSONObject()
             .put("name", name)
             .put("connectorId", connectorId)
             .put("workspacePath", workspacePath)
-            .put("manuallyCreated", manuallyCreated)
-        val response = client.postJson(
+            .put("runtime", runtime).put("runtimeId", runtimeId).put("requestId", requestId).put("newOperation", newOperation)
+        var response = client.postJson(
             serverUrl = serverUrl,
             path = "/projects",
             body = body,
             authorizationToken = authorizationToken,
         )
+        return awaitProjectOperation(serverUrl, authorizationToken, response)
+    }
+
+    fun pendingProjectOperations(serverUrl: String, authorizationToken: String): List<RemotePendingProjectOperation> {
+        val response = client.getJson(serverUrl = serverUrl, path = "/projects/operations", authorizationToken = authorizationToken)
+        return response.optJSONArray("operations").toObjectList {
+            val request = getJSONObject("request")
+            val operation = getJSONObject("operation")
+            RemotePendingProjectOperation(operation.getString("operationId"), operation.getString("status"),
+                request.getString("name"), request.getString("connectorId"), request.getString("runtime"),
+                request.getString("runtimeId"), request.getString("workspacePath"),
+                syncState = operation.optNullableString("syncState"))
+        }
+    }
+
+    fun resumeProjectOperation(serverUrl: String, authorizationToken: String, operationId: String): RemoteProjectCreateResponse {
+        val response = client.getJson(serverUrl = serverUrl, path = "/projects/operations/${operationId.urlEncode()}", authorizationToken = authorizationToken)
+        return awaitProjectOperation(serverUrl, authorizationToken, response)
+    }
+
+    private fun awaitProjectOperation(serverUrl: String, authorizationToken: String, initial: JSONObject): RemoteProjectCreateResponse {
+        var response = initial
+        val operationId = response.getString("operationId")
+        for (attempt in 0 until 20) {
+            if (response.optJSONObject("project") != null) break
+            if (response.optString("status") == "failed") throw ProjectOperationException(R.string.project_result_unconfirmed, response.optNullableString("message"))
+            Thread.sleep(500)
+            response = client.getJson(serverUrl = serverUrl,
+                path = "/projects/operations/${operationId.urlEncode()}", authorizationToken = authorizationToken)
+        }
+        if (response.optJSONObject("project") == null) {
+            throw ProjectOperationException(if (response.optString("status") == "succeeded")
+                R.string.project_created_pending else R.string.project_result_unknown)
+        }
+        runCatching {
+            client.postJson(serverUrl = serverUrl, path = "/projects/operations/${operationId.urlEncode()}/ack",
+                body = JSONObject(), authorizationToken = authorizationToken)
+        }
         return RemoteProjectCreateResponse(
             project = response.getJSONObject("project").toRemoteProject(),
-            attachedSessions = response.optInt("attachedSessions", 0),
             serverTime = response.optNullableString("serverTime"),
         )
     }
@@ -146,7 +193,7 @@ class SessionsApi(
     ): RemoteSessionCreateResponse {
         val body = JSONObject().apply {
             put("connectorId", request.connectorId)
-            put("projectId", request.projectId)
+            put("projectId", request.projectId.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
             put("runtime", request.runtimeType)
             request.runtimeId.takeIf { it.isNotBlank() && it != request.runtimeType }?.let {
                 put("runtimeId", it)
@@ -681,6 +728,7 @@ class SessionsApi(
             lastReadSeq = optInt("lastReadSeq", 0),
             lastSyncedAt = optNullableString("lastSyncedAt"),
             sourceObservedAt = optNullableString("sourceObservedAt"),
+            projectSyncReason = optNullableString("projectSyncReason"),
             lastActivityAt = optNullableString("lastActivityAt"),
             lastItemAt = optNullableString("lastItemAt"),
             lastItemOrderSeq = optNullableInt("lastItemOrderSeq"),
@@ -694,6 +742,13 @@ class SessionsApi(
 
     private fun JSONObject.toRemoteProject(): RemoteProject {
         return RemoteProject(
+            runtime = optNullableString("runtime"), runtimeId = optNullableString("runtimeId"),
+            nativeProjectId = optNullableString("nativeProjectId"), identityKind = optString("identityKind", "legacy"),
+            roots = optJSONArray("roots")?.let { values -> (0 until values.length()).map { values.getString(it) } }.orEmpty(),
+            sourceState = optString("sourceState", "pending"),
+            sourceAvailability = optString("sourceAvailability", "unknown"),
+            rootStates = optJSONObject("rootStates")?.let { states -> states.keys().asSequence().associateWith { states.getString(it) } }.orEmpty(),
+            lastSyncedAt = optNullableString("lastSyncedAt"),
             id = getString("id"),
             userId = getString("userId"),
             connectorId = getString("connectorId"),

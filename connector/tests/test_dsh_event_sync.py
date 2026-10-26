@@ -216,13 +216,15 @@ def test_instance_binds_existing_notifications_and_propagates_ingest_failure():
 def test_legacy_workspace_inventory_does_not_write_projects_or_local_state():
     async def exercise():
         ingest = AsyncMock()
-        base = ConnectorRuntimeHost("device", AsyncMock(), AsyncMock(), ingest_notifications=ingest)
+        notify = AsyncMock()
+        base = ConnectorRuntimeHost("device", notify, AsyncMock(), ingest_notifications=ingest)
         host = RuntimeInstanceHost(base, RuntimeInstanceSpec(runtime_id="rti_dsh", runtime_type="dsh", name="DSH"))
         relay = SyncRelay(Mock(), host)
         base.sync_state_write = AsyncMock()
         projects = [{"id": "native", "title": "DSH name", "path": "/repo", "sessionIds": ["session"]}]
         await relay.operation({"kind": "workspace.inventory", "complete": True, "workspaces": projects})
         ingest.assert_not_awaited()
+        notify.assert_awaited_once_with("runtime.workspaces.invalidated", {"runtime": "dsh", "runtimeId": "rti_dsh"})
         base.sync_state_write.assert_not_awaited()
     asyncio.run(exercise())
 

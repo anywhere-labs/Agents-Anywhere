@@ -31,6 +31,7 @@ class CodexTurnInputAttachment:
 
 @dataclass(frozen=True, slots=True)
 class CodexStartThreadRequest:
+    project_id: str | None = None
     cwd: str | None = None
     model: str | None = None
     approval_policy: str | None = None

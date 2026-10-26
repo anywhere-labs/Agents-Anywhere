@@ -17,6 +17,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -85,7 +87,9 @@ internal fun NewProjectScreen(
                 )
             }
             Column(
-                modifier = Modifier.fillMaxWidth().weight(1f).padding(start = 18.dp, top = 12.dp, end = 18.dp),
+                modifier = Modifier.fillMaxWidth().weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 18.dp, top = 12.dp, end = 18.dp, bottom = 18.dp),
                 verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
                 NewSessionConfigurationCard(
