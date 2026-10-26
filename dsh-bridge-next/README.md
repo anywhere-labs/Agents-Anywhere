@@ -2,7 +2,13 @@
 
 在 DeepSeek Harness（DSH）中连接 Agents Anywhere，从手机、平板或 Web 查看 DSH 会话、继续对话、回复提问和审批请求。Agent 仍在安装 DSH 的工作设备上运行；远程使用时，这台设备需要保持开机、联网，并让 DSH 与 Connector 正常运行。
 
-插件随开源客户端 [DSH Desktop](https://github.com/anywhere-labs/dsh-desktop) 提供，也可从 **npm** 安装到兼容的独立 DSH 环境。DeepSeek 官方的 DeepSeek Harness Desktop **没有内置**本插件。两种安装方式选其一；使用内置本插件的 DSH Desktop 时无需重复安装 npm 包。
+插件以 npm 包 `@agents-anywhere/dsh-bridge-next` 发布，按你使用的 DSH 选择一种方式：
+
+| 你在用 | 怎么装 |
+| --- | --- |
+| DeepSeek 官方的 DeepSeek Harness Desktop | 没有内置本插件，[在「插件」页面输入包名安装](#在-deepseek-harness-desktop-中安装)，或把一段提示词交给 DSH 里的 AI 代装 |
+| 开源客户端 [DSH Desktop](https://github.com/anywhere-labs/dsh-desktop) | 已内置，[直接启用](#在-dsh-desktop-中启用)，不要再装 npm 包 |
+| 命令行安装的 DSH | [用 `dsh plugin` 命令安装](#用命令行安装) |
 
 ## 可以做什么
 
@@ -22,17 +28,70 @@
 
 插件随 DSH Desktop 一同打包和更新；请通过 Desktop 的发布渠道升级，不要对内置插件叠加独立 npm 安装。
 
-## 从 npm 安装到独立 DSH
+## 在 DeepSeek Harness Desktop 中安装
 
-如果使用独立安装的 DSH，可以通过官方插件命令从 npm 安装。先确认目标 Profile 的名称，以及当前 npm 包声明的 DSH 依赖是否与你的环境相容。下面以 `desktop` Profile 为例：
+DeepSeek 官方的 DeepSeek Harness Desktop 没有内置本插件，需要从 npm 安装。两种方式任选其一。
+
+### 方式一：在「插件」页面输入包名
+
+1. 在左侧边栏打开「插件」，点击「添加插件」。
+2. 在包名输入框中填入：
+
+   ```text
+   @agents-anywhere/dsh-bridge-next
+   ```
+
+   然后点击「安装」。下载慢或连不上时，在「安装源」中改选「中国大陆镜像源」再试。
+3. 如果安装停下并提示「允许这些脚本并重试」，列表中应只有 `@dataiku/uv`（它为插件提供 uv 程序），点击该按钮继续。列表里出现其他包名时，先不要允许，到 [Issues](https://github.com/anywhere-labs/Agents-Anywhere/issues) 反馈。
+4. 安装完成后点击「立即启用」，然后重启 DeepSeek Harness Desktop。
+5. 从左侧边栏「设置」上方打开「远程控制」，按提示登录并连接。
+
+### 方式二：让 DSH 里的 AI 代为安装
+
+DSH 的 AI 通过 `plugin_manager` 工具管理插件，这个工具在 Creator 模式下可用，每次安装都会先请求你批准。新建一个会话，把下面这段提示词原样发给它：
+
+```text
+请帮我在当前 DSH profile 中安装 Agents Anywhere 插件，要求如下：
+
+1. 插件的 npm 包名是 @agents-anywhere/dsh-bridge-next，安装 npm 上的最新版本，不要改用其他包名。
+2. 使用 plugin_manager 工具。如果当前会话没有这个工具，告诉我切换到 Creator 模式，或者改到「插件」页面手动安装；不要用 shell 命令修改 profile 文件。
+3. 先用 list_bundles 检查是否已经安装。已安装时告诉我当前版本；需要升级时，经我同意后先用 remove_bundle 卸载旧版本，再安装新版本。
+4. 用 install_bundle 安装并启用。如果因为依赖的安装脚本被拦下而失败，把等待允许的包名告诉我；只有列表中只有 @dataiku/uv 时，才在我确认后批准它并重试。
+5. 如果提示版本不兼容（incompatible-version），不要添加版本豁免，告诉我当前的 DSH 版本和插件要求的版本范围。
+6. 不要改动其他插件、profile 配置或会话文件。
+7. 完成后告诉我安装的插件版本，并提醒我重启 DeepSeek Harness Desktop，然后从左侧边栏打开「远程控制」登录。
+```
+
+### 升级与卸载
+
+- 通过「插件」页面安装的插件暂时不会自动更新。升级时在「插件」页面卸载 Agents Anywhere for DSH，再按上面的步骤重新安装；也可以把上面的提示词再发给 AI，它会先卸载旧版本。
+- 升级 Agents Anywhere Desktop 或 Connector 的 MINOR 版本（例如从 2.0.x 升到 2.1.0）时，插件要一起升级，否则本机连接会一直停在等待状态。
+- 卸载插件不会删除账号、设备连接和设置，它们保存在用户目录的 `~/.agents-anywhere/dsh-bridge-next/`，重新安装后可以继续使用。想同时清除这些数据，先在插件的「设置 → 维护」中执行「恢复出厂设置」，再卸载。
+
+## 用命令行安装
+
+使用命令行安装的 DSH 时，用官方插件命令从 npm 安装。下面以 `desktop` Profile 为例，Profile 名称不同时替换掉：
 
 ```bash
 dsh plugin --profile desktop add @agents-anywhere/dsh-bridge-next
 ```
 
-安装完成后重启对应的 DSH 实例，从左侧边栏打开“远程控制”，按提示登录并连接。若你的 Profile 不是 `desktop`，请替换命令中的 Profile 名称。
+安装完成后重启对应的 DSH 实例，从左侧边栏打开「远程控制」，按提示登录并连接。升级时先卸载再安装：
 
-安装命令不锁定插件版本，会获取 npm 当前的默认发布版本。插件包与 DSH 的兼容范围请以所安装版本的 `peerDependencies` 为准；较新的 DSH 不代表旧插件包自动兼容。当前仓库源码声明支持 DSH `0.2.0-rc.1` 及之后的 0.2.x 版本（peer 范围 `>=0.2.0-rc.1 <0.3.0-0`），开发与测试基线为 `0.2.1-rc.2`；范围内的其他版本（包括 `0.2.0-rc.x`）只做 peer 声明，不在自动化检查中验证。DSH 在安装和启动插件时都会按这个范围检查，不满足时拒绝安装或跳过加载；DSH Desktop 使用与自身版本配套的内置构建，不能简单等同于 npm 上的包。需要固定可复现的部署时，再在包名后添加经过验证的版本号。
+```bash
+dsh plugin --profile desktop remove @agents-anywhere/dsh-bridge-next
+```
+
+```bash
+dsh plugin --profile desktop add @agents-anywhere/dsh-bridge-next
+```
+
+## 版本兼容
+
+- 不写版本号时，安装的是 npm 上的最新版本。需要固定版本时，在包名后加上版本号，例如 `@agents-anywhere/dsh-bridge-next@2.1.0`。
+- 插件支持的 DSH 版本以所装插件版本的 `peerDependencies` 为准。当前源码支持 DSH `0.2.0-rc.1` 及之后的 0.2.x 版本（`>=0.2.0-rc.1 <0.3.0-0`），开发与测试基线为 `0.2.1-rc.2`；范围内的其他版本只做声明，不在自动化检查中验证。
+- DSH 在安装和启动插件时都会检查这个范围，不满足时拒绝安装或跳过加载。不要为本插件添加版本豁免；更新 DSH 或换用兼容的插件版本。
+- DSH Desktop 内置的插件和自身版本配套，版本号带 `-desktop` 后缀，和 npm 上的包不是同一个构建。
 
 ## 确认 DSH 已接入
 

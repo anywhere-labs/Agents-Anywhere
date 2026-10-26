@@ -20,7 +20,7 @@
 - **iOS / iPadOS：** 在 [App Store](https://apps.apple.com/cn/app/agents-anywhere/id6787125178) 下载安装；也可以通过 [TestFlight](https://testflight.apple.com/join/GKGaut99) 安装测试版，以邀请页的可用状态为准。
 - **Web：** 打开 [web.agents-anywhere.com](https://web.agents-anywhere.com)。
 
-在工作设备上使用桌面客户端，或按 [Connector CLI 说明](../connector/README.md#run)接入无图形界面的机器。手机、平板和 Web 用于访问已连接的工作设备。
+在工作设备上使用桌面客户端，或按 [Connector CLI 说明](../connector/README.md#run)接入无图形界面的机器。使用 DSH 时，也可以在 DSH 中安装 Agents Anywhere 插件，直接从 DSH 连接本机，步骤见 [DSH 插件说明](../dsh-bridge-next/README.md)。手机、平板和 Web 用于访问已连接的工作设备。
 
 ## 2. 登录服务
 
