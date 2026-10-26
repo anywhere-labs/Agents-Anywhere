@@ -20,6 +20,7 @@
 - **discovery 的实际语义（真机复核）**：窗口只对自己持有的线程应答 `canHandle: true`，对其它线程根本不应答，于是只要桌面或 VS Code 在线，所有非持有线程的 discovery 都会在 router 的 10 s 超时后返回 `no-client-found`。因此“10 s 超时”不能用来区分“无人持有”和“持有者挂死”，实现里统一按 `no_owner` 处理，持有与否要看写锁。
 - 层 A（daemon）保留给终端 TUI 会话，协议公开、成本低，但不在当前主线。“让桌面 App 改走 daemon”的隐藏开关方案已放弃。
 - 实现上必须处理：router 随进程生死动态转移（`ipc-connection-reset` 后重连并重发 `following`，必要时自己当 router）；revision 是 owner 进程内计数，owner 变化就重新拿 snapshot；方法版本表随 Codex 升级重新提取。
+- **自己当 router 时，为请求找处理方不能卡住这条连接的读取**（Codex 自己的 router 也不等）。否则某个 client 的请求还在 discovery 时，它对别人 discovery 的回答只能排在后面；两个 client 同时等对方回答，就会一起卡到 10 s 超时，结果要么晚 10 s，要么把有人持有的线程误判成 `no-client-found`。桌面 App 打开着会话时，任何 client 连上或断开都会让它发一次 `ide-context` 请求（没有 IDE 插件在线时无人处理），所以很容易撞上（2026-10-27 在本机遇到，并用隔离 socket 复现）。
 
 两层都已在本机验证握手：A 完成 `initialize` + `thread/loaded/list`；B 完成 `initialize`、`thread-owner-discovery`、following、snapshot/patch、start-turn（详见 3.5）。
 
