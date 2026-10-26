@@ -80,6 +80,7 @@ internal fun SessionRuntimeSettingsSheet(
     permissionOptions: List<RuntimeSelectionOption>,
     selectedModelId: String?,
     selectedPermissionId: String?,
+    pendingSelectionScopes: Set<String>,
     modelLoading: Boolean,
     permissionLoading: Boolean,
     modelErrorMessage: String?,
@@ -96,15 +97,19 @@ internal fun SessionRuntimeSettingsSheet(
     val groupedModels = remember(modelOptions) { modelOptions.groupByModel() }
     val selectedModelGroup = groupedModels.firstOrNull { group ->
         group.options.any { it.selectionId == selectedModelId }
-    } ?: groupedModels.firstOrNull()
-    val selectedPermissionLabel = permissionOptions
+    }
+    val nextTurnLabel = stringResource(R.string.session_runtime_next_turn)
+    val selectedPermissionLabel = (permissionOptions
         .firstOrNull { it.selectionId == selectedPermissionId }
-        ?.label
+        ?.label ?: stringResource(R.string.session_runtime_permission_unsynced))
+        .let { if ("permission" in pendingSelectionScopes) "$it · $nextTurnLabel" else it }
     val defaultEffortLabel = stringResource(R.string.session_runtime_effort_default)
     val selectedModelOption = selectedModelGroup
         ?.options
         ?.firstOrNull { it.selectionId == selectedModelId }
-    val selectedEffortLabel = selectedModelOption?.effortDisplayLabel(defaultEffortLabel)
+    val selectedEffortLabel = (selectedModelOption?.effortDisplayLabel(defaultEffortLabel)
+        ?: stringResource(R.string.session_runtime_model_unsynced))
+        .let { if ("model" in pendingSelectionScopes) "$it · $nextTurnLabel" else it }
 
     AABottomSheet(
         title = stringResource(
@@ -129,7 +134,6 @@ internal fun SessionRuntimeSettingsSheet(
                 onSelect = onSelectModel,
             )
             RuntimeSettingsPage.ModeEffort -> ModeEffortPage(
-                runtimeLabel = runtimeLabel,
                 selectedModelGroup = selectedModelGroup,
                 selectedModelId = selectedModelId,
                 permissionOptions = permissionOptions,
@@ -138,6 +142,9 @@ internal fun SessionRuntimeSettingsSheet(
                 permissionLoading = permissionLoading,
                 permissionErrorMessage = permissionErrorMessage,
                 busy = busy,
+                modelPending = "model" in pendingSelectionScopes,
+                permissionPending = "permission" in pendingSelectionScopes,
+                nextTurnLabel = nextTurnLabel,
                 palette = palette,
                 onRetryPermissions = onRetryPermissions,
                 onSelectModel = onSelectModel,
@@ -240,7 +247,6 @@ private fun ModelOptions(
 
 @Composable
 private fun ModeEffortPage(
-    runtimeLabel: String,
     selectedModelGroup: ModelOptionGroup?,
     selectedModelId: String?,
     permissionOptions: List<RuntimeSelectionOption>,
@@ -249,12 +255,16 @@ private fun ModeEffortPage(
     permissionLoading: Boolean,
     permissionErrorMessage: String?,
     busy: Boolean,
+    modelPending: Boolean,
+    permissionPending: Boolean,
+    nextTurnLabel: String,
     palette: AABottomSheetColors,
     onRetryPermissions: () -> Unit,
     onSelectModel: (String) -> Unit,
     onSelectPermission: (String) -> Unit,
 ) {
-    val modelLabel = selectedModelGroup?.label ?: runtimeLabel
+    val modelLabel = selectedModelGroup?.label
+        ?: stringResource(R.string.session_runtime_model_unsynced)
     val effortOptions = selectedModelGroup?.options.orEmpty().takeIf { it.size > 1 }
 
     PermissionSection(
@@ -263,6 +273,8 @@ private fun ModeEffortPage(
         loading = permissionLoading,
         errorMessage = permissionErrorMessage,
         busy = busy,
+        pending = permissionPending,
+        nextTurnLabel = nextTurnLabel,
         palette = palette,
         onRetry = onRetryPermissions,
         onSelect = onSelectPermission,
@@ -278,6 +290,12 @@ private fun ModeEffortPage(
             palette = palette,
             onSelect = onSelectModel,
         )
+    } else if (modelPending) {
+        Text(
+            text = nextTurnLabel,
+            color = palette.secondaryContent,
+            fontSize = 11.5.sp,
+        )
     }
 }
 
@@ -288,12 +306,20 @@ private fun PermissionSection(
     loading: Boolean,
     errorMessage: String?,
     busy: Boolean,
+    pending: Boolean,
+    nextTurnLabel: String,
     palette: AABottomSheetColors,
     onRetry: () -> Unit,
     onSelect: (String) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        SectionLabel(stringResource(R.string.session_runtime_permission_mode), palette)
+        SectionLabel(
+            listOfNotNull(
+                stringResource(R.string.session_runtime_permission_mode),
+                nextTurnLabel.takeIf { pending },
+            ).joinToString(" · "),
+            palette,
+        )
         when {
             loading && options.isEmpty() -> SheetLoading(palette = palette, height = 72.dp)
             errorMessage != null && options.isEmpty() -> SheetError(

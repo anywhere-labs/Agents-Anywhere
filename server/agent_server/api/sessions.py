@@ -238,6 +238,7 @@ def runtime_state_semantically_equal(
         and left.externalSessionId == right.externalSessionId
         and left.statusReason == right.statusReason
         and left.error == right.error
+        and left.metadata == right.metadata
     )
 
 
@@ -810,6 +811,7 @@ async def patch_session_selections(
         )
     except SessionRunError as exc:
         _raise_session_run_error(exc)
+    await runtime_state_cache.put(state)
     await _best_effort_publish_session_protocol_update(
         db,
         broker,

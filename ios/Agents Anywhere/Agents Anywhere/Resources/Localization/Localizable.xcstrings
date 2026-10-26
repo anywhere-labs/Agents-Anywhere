@@ -12025,6 +12025,40 @@
         }
       }
     },
+    "Runtime 默认值": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime default"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime 默认值"
+          }
+        }
+      }
+    },
+    "下一轮生效": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applies next turn"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下一轮生效"
+          }
+        }
+      }
+    },
     "权限": {
       "comment": "Shared with Web: dashboard.new.permissionMode. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -12039,6 +12073,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "权限模式"
+          }
+        }
+      }
+    },
+    "权限未同步": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permission not synced"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "权限未同步"
           }
         }
       }
@@ -14976,6 +15027,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "默认"
+          }
+        }
+      }
+    },
+    "模型未同步": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model not synced"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型未同步"
           }
         }
       }

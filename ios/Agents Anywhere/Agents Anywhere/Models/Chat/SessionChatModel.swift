@@ -250,12 +250,22 @@ final class SessionChatModel {
         do {
             let catalogs = try await repository.catalogs(sessionId: session.id, capabilities: session.runtime.capabilities)
             guard session.isValid, !Task.isCancelled else { return }
-            settings.replace(ChatSettingsCatalog(catalogs), selections: currentSelections, defaults: false)
+            settings.replaceRuntime(ChatSettingsCatalog(catalogs), selections: currentSelections)
         } catch { if session.isValid { self.settingsError = error.localizedDescription } }
     }
 
-    private var currentSelections: [V2RuntimeSelectionScope: V2SelectionID] {
-        (session.runtime.state?.selections ?? [:]).compactMapValues { $0 }
+    private var currentSelections: [V2RuntimeSelectionScope: V2SelectionID?] {
+        session.runtime.state?.selections ?? [:]
+    }
+
+    var pendingSelectionScopes: Set<V2RuntimeSelectionScope> {
+        guard let state = session.runtime.state,
+              case let .object(metadata) = state.metadata,
+              let pending = metadata["pendingSelectionScopes"],
+              case let .array(values) = pending else { return [] }
+        return Set(values.compactMap { value in
+            value.stringValue.map(V2RuntimeSelectionScope.init(rawValue:))
+        })
     }
 
     func applySettings() async -> Bool {
@@ -272,7 +282,7 @@ final class SessionChatModel {
             return session.isValid
         } catch {
             self.settingsError = error.localizedDescription
-            settings.replace(settings.catalog, selections: currentSelections, defaults: false)
+            settings.replaceRuntime(settings.catalog, selections: currentSelections)
             return false
         }
     }

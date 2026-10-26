@@ -168,13 +168,14 @@ class CodexIpcSessionProjector:
         pending = _pending_requests(state)
         notice_ids = await self._sync_notices(session_id, thread, pending)
         status = _runtime_status(state, has_pending=bool(notice_ids))
+        previous_turn_id = self._active_turns.get(session_id)
         turn_id = await self._track_turn(session_id, thread, status)
         selections = await self._selections(state)
         await self.session_states.update(
             session_id=session_id,
             external_session_id=thread.thread_id,
             status=status,
-            selections=selections or None,
+            selections=selections,
             metadata={
                 "source": IPC_SOURCE,
                 "attachment": "ipc",
@@ -186,7 +187,13 @@ class CodexIpcSessionProjector:
                 },
                 **({"notice_id": min(notice_ids)} if notice_ids else {}),
                 **({"turn_id": turn_id} if turn_id else {}),
+                **(
+                    {"pendingSelectionScopes": []}
+                    if turn_id is not None and turn_id != previous_turn_id
+                    else {}
+                ),
             },
+            replace_selections=True,
         )
 
     async def _selections(self, state: Mapping[str, Any]) -> dict[str, str]:
