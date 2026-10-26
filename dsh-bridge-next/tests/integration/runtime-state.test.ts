@@ -7,6 +7,7 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Context } from '@deepseek-ai/cordis'
 import { nativeRuntime } from '../fixtures/native-runtime.js'
 import { RuntimeRouter } from '../../src/host/dsh-runtime/router.js'
+import { MAX_RETAINED_LOGS } from '../../src/host/dsh-runtime/sessions/source.js'
 import { sessionId } from '../../src/host/dsh-runtime/identity.js'
 
 type StateResult = { status: string, selections: Record<string, string>, metadata: Record<string, unknown> }
@@ -80,6 +81,7 @@ test('a blank visibility verdict is reused until that log changes', { timeout: 6
     const reads = countLogReads(f.ctx)
     const before = reads.count()
     assert.equal(await f.runtime.visible('cold-empty'), false)
+    assert.equal(f.runtime.source.retainedLogCount, 0, 'blank cold logs are evicted immediately after recording their empty revision')
     const afterFirst = reads.count()
     assert.equal(afterFirst, before + 1, 'the first check reads the log')
 
@@ -134,5 +136,32 @@ test('cold observation cache detects file changes without an inventory scan', { 
     const next = await f.runtime.read(id)
     assert.equal(next.events.length, first.events.length + 1)
     assert.equal(next.events.at(-1)?.type, 'session/title')
+  } finally { await f.close() }
+})
+
+test('session observation cache bounds retained logs by LRU capacity', { timeout: 60_000 }, async () => {
+  const f = await fixture('aa-dsh-log-lru-')
+  try {
+    const total = MAX_RETAINED_LOGS + 4
+    for (let i = 0; i < total; i++) {
+      const cold = f.ctx.sessions.prepare(SessionId(`cold-lru-${i}`), { meta: { cwd: f.home, createdAt: i + 1 } })
+      const detach = f.ctx.sessions.enter(cold)
+      f.ctx.sessions.announce(cold)
+      cold.append('turn/start', { turn: 1 })
+      cold.append('user/message', {
+        id: `msg-${i}`,
+        role: 'user',
+        source: { kind: 'user' },
+        content: [{ type: 'text', text: `session ${i}` }],
+      }, { surfaceOp: 'append' })
+      cold.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+      await f.ctx.sessions.flush(cold)
+      detach()
+    }
+    await f.runtime.source.refresh()
+    for (let i = 0; i < total; i++) {
+      await f.runtime.read(SessionId(`cold-lru-${i}`))
+    }
+    assert.equal(f.runtime.source.retainedLogCount, MAX_RETAINED_LOGS, 'retained logs never exceed MAX_RETAINED_LOGS')
   } finally { await f.close() }
 })

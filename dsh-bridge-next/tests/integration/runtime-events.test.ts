@@ -13,7 +13,7 @@ import { LocalRouter, Mesh, Router } from 'meshcall'
 import { bridgePath, nativeRuntime } from '../fixtures/native-runtime.js'
 import { corruptHistory } from '../fixtures/corrupt-history.js'
 import { mountAgents, TextAdapter, initialSelections } from '../fixtures/agent-runtime.js'
-import { SyncFeed, SYNC_FLUSH_MS, type SyncOperation, type SyncTransport } from '../../src/host/dsh-runtime/sync.js'
+import { MAX_RETAINED_PROJECTIONS, SyncFeed, SYNC_FLUSH_MS, type SyncOperation, type SyncTransport } from '../../src/host/dsh-runtime/sync.js'
 import type { SnapshotRequest, SnapshotResult } from '../../src/host/generated/dsh-sync.js'
 import { projectHistory } from '../../src/host/dsh-runtime/history.js'
 import { nativeSessionId, sessionId } from '../../src/host/dsh-runtime/identity.js'
@@ -622,6 +622,43 @@ test('checkpoint mismatches and active turns recalibrate only the affected sessi
     assert.deepEqual(stream.captures.map(capture => capture.request.sessionId), [sessionId('test', 'native-main')])
     native.refresh('persisted-only')
     await until(() => stream.captures.some(capture => capture.request.sessionId === sessionId('test', 'persisted-only')), 'manual refresh bypasses a matching checkpoint')
+    assert.deepEqual(stream.errors, [])
+  } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
+
+test('startup scan releases cold observations and bounds projections while rehydrating evicted sessions incrementally', { timeout: 30_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-scan-memory-'))
+  const fixture = await nativeRuntime(home)
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  const liveSessions = []
+  for (let i = 0; i < MAX_RETAINED_PROJECTIONS + 3; i++) {
+    const live = fixture.ctx.sessions.create(SessionId(`live-extra-${i}`), { meta: { cwd: home, createdAt: i + 10 } })
+    live.append('turn/start', { turn: 1 })
+    live.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: `initial-${i}` }] }), { surfaceOp: 'append' })
+    live.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    await fixture.ctx.sessions.flush(live)
+    liveSessions.push(live)
+  }
+  const checkpoints = new Map<string, unknown>()
+  const stream = follow(native, { checkpoints })
+  const notes = () => notifications(stream.ops())
+  try {
+    await until(() => notes().some(n => n.method === 'session.inventory.complete'), 'inventory completes')
+    assert.equal(native.source.retainedLogCount, 0, 'cold session observations are released after baseline')
+    assert.ok(stream.feed.retainedProjectionCount <= MAX_RETAINED_PROJECTIONS, 'retained projections are bounded by MAX_RETAINED_PROJECTIONS')
+    const capturesAfterScan = stream.captures.length
+
+    // Append a live message to the earliest session, whose settled projection was evicted by LRU trimming.
+    const evicted = liveSessions[0]!
+    evicted.append('turn/start', { turn: 2 })
+    evicted.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'after-eviction-delta' }] }), { surfaceOp: 'append' })
+    evicted.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
+
+    await until(
+      () => notes().some(n => n.method === 'timeline.itemUpsert' && JSON.stringify(n.params).includes('after-eviction-delta')),
+      'evicted session rehydrates from checkpoint and emits incremental delta',
+    )
+    assert.equal(stream.captures.length, capturesAfterScan, 'rehydrated session does not re-upload a full snapshot')
     assert.deepEqual(stream.errors, [])
   } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })

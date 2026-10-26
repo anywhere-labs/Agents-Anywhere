@@ -88,7 +88,7 @@ uv run pytest tests/test_dsh_contracts.py tests/test_dsh_provider.py tests/test_
 ## 性能优化（2026-09-10）
 
 - 首次订阅仍完整同步历史。并发初始化共享一次清单读取；同步逐个读取、投影和提交会话，使可见性检查与快照生成复用同一个 observation。
-- observation、配置结果和 feed 投影缓存暂不设置容量上限。原生事件使对应 observation 失效，冷会话目标文件变化使缓存失效；关闭 Host/feed 时释放缓存和 observation lease。缓存不持久化。
+- observation、配置结果（`facts`）和 feed 投影缓存均采用按容量淘汰（LRU）与按需释放策略：空白会话完成可见性判定后立即释放 observation，冷会话在同步基线提交并缓存派生状态后立即释放 observation 与已结算投影；活跃会话仅保留有限数量的最近 observation 与已结算投影，被淘汰会话后续收到实时事件时按本地或 Connector checkpoint 重建投影并仅发送增量更新。原生事件使对应 observation 失效，冷会话目标文件变化使缓存失效；关闭 Host/feed 时释放缓存和 observation lease。缓存不持久化。
 - 同一 Host、同一 session namespace 的已确认同步 revision 在重订阅时复用：未变化会话只校准状态，变化会话补快照。显式单会话刷新先删除其 checkpoint，失败重试不会误判为已同步。新 Host 没有 checkpoint，仍完整导入。
 - 流式工具参数只在 drain/snapshot 或非 chunk 事件边界解析，避免每个 token 重复解析增长中的 JSON。历史投影以约 5 ms 为目标分片让出事件循环；单个原生读取、单个事件处理和最终内容哈希仍可能超过此时间。
 - 同步/RPC 字节预算直接遍历 JSON 数据计数，不再为计数分配完整 JSON 字符串。socket 写入仍序列化一次，跨语言内容哈希校验保留。

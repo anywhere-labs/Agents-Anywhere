@@ -29,6 +29,7 @@ function matchesCheckpoint(value: unknown, projection: SessionProjection): boole
 }
 const MAX_BUFFER = 10_000
 const MAX_BYTES = 6 * 1024 * 1024
+export const MAX_RETAINED_PROJECTIONS = 8
 export const SYNC_FLUSH_MS = Math.ceil(1000 / 30)
 
 class SyncTransportError extends Error {}
@@ -51,6 +52,9 @@ export class SyncFeed {
   private bufferedOperations: SyncOperation[] | undefined
   private bufferedBytes = 0
   private checkpointDirty = new Set<string>()
+  private localCheckpoints = new Map<string, { throughSeq: number, historyHash?: string }>()
+
+  get retainedProjectionCount(): number { return this.projections.size }
 
   constructor(private native: NativeRuntime, private namespace: string, readonly id: string,
     private transport: SyncTransport, private failed: (error: unknown) => void,
@@ -90,7 +94,7 @@ export class SyncFeed {
     this.abort.abort()
     this.unwatch()
     this.wake?.(); this.wake = undefined
-    this.queue = []; this.queuedBytes = 0; this.projections.clear()
+    this.queue = []; this.queuedBytes = 0; this.projections.clear(); this.localCheckpoints.clear()
     this.queuedInvalidations.clear()
     this.failedSessions.clear()
     this.bufferedOperations = undefined; this.bufferedBytes = 0
@@ -186,65 +190,71 @@ export class SyncFeed {
       return
     }
     const platformId = sessionId(this.namespace, id)
-    const projection = createProjection(id, platformId, this.durableCheckpoints)
-    let resumed = false
-    if (restore && this.durableCheckpoints) {
-      const checkpoint = record(await this.delivery(() => this.transport.loadCheckpoint(id)) ?? {})
-      if (Number.isSafeInteger(checkpoint.throughSeq) && Number(checkpoint.throughSeq) >= -1) {
-        await replayHistory(projection, log, this.abort.signal, Number(checkpoint.throughSeq))
-        resumed = matchesCheckpoint(checkpoint, projection)
-        if (resumed) projection.drain()
+    try {
+      const projection = createProjection(id, platformId, this.durableCheckpoints)
+      let resumed = false
+      if (restore && this.durableCheckpoints) {
+        const checkpoint = record(await this.delivery(() => this.transport.loadCheckpoint(id)) ?? {})
+        if (Number.isSafeInteger(checkpoint.throughSeq) && Number(checkpoint.throughSeq) >= -1) {
+          await replayHistory(projection, log, this.abort.signal, Number(checkpoint.throughSeq))
+          resumed = matchesCheckpoint(checkpoint, projection)
+          if (resumed) projection.drain()
+        }
       }
-    }
-    await replayHistory(projection, log, this.abort.signal)
-    const title = log.events.findLast(event => event.type === 'session/title')
-    const meta = { externalSessionId: id, title: title?.type === 'session/title' ? title.data.title : null,
-      sourceState: await this.native.source.state(id), cwd: log.session.cwd ?? null,
-      lastActivityAt: new Date(log.events.at(-1)?.time ?? log.session.createdAt).toISOString() }
-    if (resumed) {
-      const delta = projection.drain()
-      if (!delta.removed.length && await this.native.visible(id)) {
-        this.projections.set(id, projection)
-        this.published.set(id, platformId)
-        this.sourceAvailability.set(id, 'available')
-        await this.notification('session.meta.upsert', { sessionId: platformId, ...meta })
-        await this.items(id, delta.items)
-        this.checkpointDirty.add(id)
-        await this.notices(id)
-        await this.state(id, log)
-        this.native.diagnostics.log('info', 'sync.checkpoint_restored', { streamId: this.id, sessionId: id })
+      await replayHistory(projection, log, this.abort.signal)
+      const title = log.events.findLast(event => event.type === 'session/title')
+      const meta = { externalSessionId: id, title: title?.type === 'session/title' ? title.data.title : null,
+        sourceState: await this.native.source.state(id), cwd: log.session.cwd ?? null,
+        lastActivityAt: new Date(log.events.at(-1)?.time ?? log.session.createdAt).toISOString() }
+      if (resumed) {
+        const delta = projection.drain()
+        if (!delta.removed.length && await this.native.visible(id)) {
+          this.projections.delete(id); this.projections.set(id, projection)
+          this.published.set(id, platformId)
+          this.sourceAvailability.set(id, 'available')
+          this.recordLocalCheckpoint(id, projection)
+          await this.notification('session.meta.upsert', { sessionId: platformId, ...meta })
+          await this.items(id, delta.items)
+          this.checkpointDirty.add(id)
+          await this.notices(id)
+          await this.state(id, log)
+          this.native.diagnostics.log('info', 'sync.checkpoint_restored', { streamId: this.id, sessionId: id })
+          return
+        }
+      }
+      if (!await this.native.visible(id)) return
+      this.native.diagnostics.log('debug', 'snapshot.started', { streamId: this.id, sessionId: id })
+      const snapshotItems = contentItems(projection.snapshot())
+      // The capture replaces the timeline: earlier notifications must land first.
+      if (this.bufferedOperations?.length) await this.flushOperations()
+      // A capture id keeps a cancelled stream's pages from landing in the next capture.
+      const captureId = randomUUID()
+      const result = await this.delivery(() => this.transport.ingestSnapshot({ captureId, subscriptionId: this.id, sessionId: platformId,
+        meta, throughSeq: projection.throughSeq }, this.pages(snapshotItems, captureId), this.abort.signal))
+      if (!result.accepted) {
+        // Permanently refused: the Connector already published the session as unavailable.
+        this.failedSessions.set(id, { availability: 'unavailable', reason: (result.reason ?? 'sync_failed') as string, observedAt: new Date().toISOString() })
+        this.native.diagnostics.log('warn', 'snapshot.quarantined', { streamId: this.id, sessionId: id, reason: result.reason ?? undefined })
         return
       }
+      this.failedSessions.delete(id)
+      projection.drain()
+      this.projections.delete(id); this.projections.set(id, projection)
+      this.checkpointDirty.add(id)
+      this.published.set(id, platformId)
+      this.sourceAvailability.set(id, 'available')
+      this.recordLocalCheckpoint(id, projection)
+      await this.notices(id)
+      await this.state(id, log)
+      this.native.diagnostics.log('info', 'snapshot.completed', { streamId: this.id, sessionId: id, items: snapshotItems.length, elapsedMs: Math.round(performance.now() - start) })
+    } finally {
+      this.native.source.release(id)
     }
-    if (!await this.native.visible(id)) return
-    this.native.diagnostics.log('debug', 'snapshot.started', { streamId: this.id, sessionId: id })
-    const snapshotItems = contentItems(projection.snapshot())
-    // The capture replaces the timeline: earlier notifications must land first.
-    if (this.bufferedOperations?.length) await this.flushOperations()
-    // A capture id keeps a cancelled stream's pages from landing in the next capture.
-    const captureId = randomUUID()
-    const result = await this.delivery(() => this.transport.ingestSnapshot({ captureId, subscriptionId: this.id, sessionId: platformId,
-      meta, throughSeq: projection.throughSeq }, this.pages(snapshotItems, captureId), this.abort.signal))
-    if (!result.accepted) {
-      // Permanently refused: the Connector already published the session as unavailable.
-      this.failedSessions.set(id, { availability: 'unavailable', reason: (result.reason ?? 'sync_failed') as string, observedAt: new Date().toISOString() })
-      this.native.diagnostics.log('warn', 'snapshot.quarantined', { streamId: this.id, sessionId: id, reason: result.reason ?? undefined })
-      return
-    }
-    this.failedSessions.delete(id)
-    projection.drain()
-    this.projections.set(id, projection)
-    this.checkpointDirty.add(id)
-    this.published.set(id, platformId)
-    this.sourceAvailability.set(id, 'available')
-    await this.notices(id)
-    await this.state(id, log)
-    this.native.diagnostics.log('info', 'snapshot.completed', { streamId: this.id, sessionId: id, items: snapshotItems.length, elapsedMs: Math.round(performance.now() - start) })
   }
   private async notices(id: string): Promise<void> {
     for (const notice of [...this.native.questions.notices(this.namespace, id), ...this.native.approvals.notices(this.namespace, id)]) await this.notification('notice.upsert', notice)
   }
-  private async state(id: string, snapshot?: SessionLogSnapshot): Promise<void> {
+  private async state(id: string, snapshot?: SessionLogSnapshot & { bridgeRevision?: string }): Promise<void> {
     if (!this.published.has(id) || !await this.native.visible(id)) return
     const log = this.native.ctx.sessions.get(id as SessionId)
     const pending = new Set<string>()
@@ -257,7 +267,7 @@ export class SyncFeed {
       ?? (last?.type === 'turn/end' && last.data.reason.kind === 'error' ? 'error' : 'idle')
     let configuration: Awaited<ReturnType<NativeRuntime['configuration']['state']>>
     try {
-      configuration = await this.native.diagnostics.measure('session.configuration_read', { sessionId: id }, async () => snapshot ? this.native.configuration.state(id as SessionId, snapshot) : (await this.native.stateFacts(id as SessionId)).configuration)
+      configuration = await this.native.diagnostics.measure('session.configuration_read', { sessionId: id }, async () => (await this.native.stateFacts(id as SessionId, snapshot)).configuration)
     } catch (error) {
       if (this.closed || error instanceof Error && error.name === 'AbortError') throw error
       this.native.source.markReadFailed(id)
@@ -285,7 +295,7 @@ export class SyncFeed {
       this.sourceAvailability.set(id, source.availability)
     }
     if (this.durableCheckpoints) await this.delivery(() => this.transport.deleteCheckpoint(id))
-    this.published.delete(id); this.projections.delete(id)
+    this.published.delete(id); this.projections.delete(id); this.localCheckpoints.delete(id)
   }
   private async sourceState(id: string): Promise<SourceState> {
     const source = await this.native.source.state(id)
@@ -347,12 +357,15 @@ export class SyncFeed {
           if (this.published.has(id)) reconcile = true
           return
         }
-        if (change.type === 'refresh') { await this.baseline(id); return }
+        if (change.type === 'refresh') { this.localCheckpoints.delete(id); await this.baseline(id); return }
         if (!this.published.has(id)) await this.baseline(id)
         if (!this.published.has(id)) return
         if (change.type === 'question' || change.type === 'approval') await this.notices(id)
         if (change.type === 'stream') {
-          this.projections.get(id)?.stream(change.turn, change.step, change.chunk, change.time, change.throughSeq)
+          const projection = this.projections.get(id) ?? await this.rehydrateProjection(id, change.throughSeq)
+          if (!projection) { await this.baseline(id, true); return }
+          this.projections.delete(id); this.projections.set(id, projection)
+          projection.stream(change.turn, change.step, change.chunk, change.time, change.throughSeq)
           touched.add(id)
           return
         }
@@ -366,8 +379,8 @@ export class SyncFeed {
           }])
           if (['turn/start', 'turn/end', 'approval/asked', 'approval/decided', 'model/selection', 'request/header',
             'permission/preset', 'sandbox/mode', 'approval/policy', 'agent-preset/selected'].includes(change.event.type)) statuses.add(id)
-          const projection = this.projections.get(id)
-          if (!projection) { await this.baseline(id); return }
+          const projection = this.projections.get(id) ?? await this.rehydrateProjection(id, Number(change.event.seq) - 1)
+          if (!projection) { await this.baseline(id, true); return }
           this.projections.delete(id); this.projections.set(id, projection)
           if (Number(change.event.seq) <= projection.throughSeq) return
           const key = receiptKey(change.event)
@@ -404,6 +417,7 @@ export class SyncFeed {
     await this.native.inventory(this.abort.signal, async entry => {
       await this.baseline(entry.header.id, true)
       await this.rememberCheckpoints()
+      this.trimProjections()
     })
     // Startup changes use the same batching as live changes. Otherwise one
     // capability update incurs a separate transport round trip per session.
@@ -417,6 +431,7 @@ export class SyncFeed {
     await this.flushOperations()
     // Checkpoints cover the data above: save only after the batch was ingested.
     await this.rememberCheckpoints()
+    this.trimProjections()
     this.bufferedOperations = undefined
     this.native.diagnostics.log('info', 'sync.inventory_completed', { streamId: this.id, sessions: this.published.size })
     while (!this.closed) {
@@ -430,6 +445,7 @@ export class SyncFeed {
       // The checkpoint covers this frame's data, so the batch must be ingested first.
       await this.flushOperations()
       await this.rememberCheckpoints()
+      this.trimProjections()
       this.bufferedOperations = undefined
     }
   }
@@ -441,8 +457,83 @@ export class SyncFeed {
       const checkpoint: SyncCheckpoint = { version: 1, projectionVersion: PROJECTION_VERSION,
         throughSeq: projection.throughSeq, historyHash: projection.historyHash!, settled: projection.settled }
       await this.transport.saveCheckpoint(id, checkpoint)
+      this.recordLocalCheckpoint(id, projection)
     }
     this.checkpointDirty.clear()
+  }
+  private recordLocalCheckpoint(id: string, projection: SessionProjection): void {
+    if (!projection.settled || projection.dirty || !this.published.has(id) || this.failedSessions.has(id)) {
+      this.localCheckpoints.delete(id)
+      return
+    }
+    this.localCheckpoints.set(id, {
+      throughSeq: projection.throughSeq,
+      ...(projection.historyHash !== undefined ? { historyHash: projection.historyHash } : {}),
+    })
+  }
+  private canEvictProjection(id: string, projection: SessionProjection): boolean {
+    if (!projection.settled || projection.dirty || this.checkpointDirty.has(id)) return false
+    if (this.native.status(id as SessionId) === 'running') return false
+    if (this.native.questions.waiting(id) || this.native.approvals.waiting(id)) return false
+    return this.localCheckpoints.has(id)
+  }
+  private trimProjections(maxRetained = MAX_RETAINED_PROJECTIONS): void {
+    for (const [id, projection] of this.projections) {
+      this.recordLocalCheckpoint(id, projection)
+      if (!this.native.ctx.sessions.get(id as SessionId) && this.canEvictProjection(id, projection)) {
+        this.projections.delete(id)
+      }
+    }
+    if (this.projections.size <= maxRetained) return
+    for (const [id, projection] of this.projections) {
+      if (this.projections.size <= maxRetained) break
+      if (this.canEvictProjection(id, projection)) {
+        this.projections.delete(id)
+      }
+    }
+  }
+  private async rehydrateProjection(id: string, beforeSeq: number): Promise<SessionProjection | undefined> {
+    const platformId = this.published.get(id)
+    if (!platformId) return undefined
+    let checkpoint = this.localCheckpoints.get(id)
+    if (!checkpoint && this.durableCheckpoints) {
+      const loaded = record(await this.delivery(() => this.transport.loadCheckpoint(id)) ?? {})
+      if (loaded.version === 1 && loaded.projectionVersion === PROJECTION_VERSION && loaded.settled === true
+        && Number.isSafeInteger(loaded.throughSeq) && Number(loaded.throughSeq) >= -1 && typeof loaded.historyHash === 'string') {
+        checkpoint = { throughSeq: Number(loaded.throughSeq), historyHash: loaded.historyHash }
+      }
+    }
+    if (!checkpoint) return undefined
+    let log: Awaited<ReturnType<NativeRuntime['read']>>
+    try {
+      log = await this.native.read(id as SessionId)
+    } catch (error) {
+      if (this.closed || error instanceof Error && error.name === 'AbortError') throw error
+      return undefined
+    } finally {
+      this.native.source.release(id)
+    }
+    const projection = createProjection(id, platformId, this.durableCheckpoints || checkpoint.historyHash !== undefined)
+    try {
+      await replayHistory(projection, log, this.abort.signal, checkpoint.throughSeq)
+    } catch (error) {
+      if (this.closed || error instanceof Error && error.name === 'AbortError') throw error
+      return undefined
+    }
+    if (!projection.settled || projection.throughSeq !== checkpoint.throughSeq) return undefined
+    if (checkpoint.historyHash !== undefined && projection.historyHash !== checkpoint.historyHash) return undefined
+    projection.drain()
+    if (beforeSeq > projection.throughSeq) {
+      try {
+        await replayHistory(projection, log, this.abort.signal, beforeSeq)
+      } catch (error) {
+        if (this.closed || error instanceof Error && error.name === 'AbortError') throw error
+        return undefined
+      }
+      if (projection.throughSeq > checkpoint.throughSeq) this.checkpointDirty.add(id)
+    }
+    this.projections.set(id, projection)
+    return projection
   }
   private takeChanges(): NativeChange[] {
     this.queuedBytes = 0; this.queuedInvalidations.clear()

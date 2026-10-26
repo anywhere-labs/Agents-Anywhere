@@ -48,7 +48,12 @@ export class RuntimeRouter {
   /** Aborted once this router is torn down; open sync streams end with it. */
   get closed(): AbortSignal { return this.closing.signal }
 
-  close(): void { this.feed?.close(); this.feed = undefined }
+  close(): void {
+    this.feed?.close()
+    this.feed = undefined
+    this.inventory = undefined
+    this.history = undefined
+  }
 
   /** Stop this namespace for good: open streams end instead of waiting for drain. */
   shutdown(): void {
@@ -226,7 +231,12 @@ export class RuntimeRouter {
   }
 
   private offset(cursor: unknown, page: Page<unknown> | undefined): number {
-    if (typeof cursor !== 'string' || !page || page.expires < Date.now()) {
+    if (page && page.expires < Date.now()) {
+      if (this.inventory === page) this.inventory = undefined
+      if (this.history === page) this.history = undefined
+      page = undefined
+    }
+    if (typeof cursor !== 'string' || !page) {
       throw new BridgeError('INVALID_PARAMS', 'The read cursor expired. Start a new read.')
     }
     const [id, offset] = cursor.split(':')
@@ -266,7 +276,9 @@ export class RuntimeRouter {
       }
     })
     const next = offset + slice.length
-    return { sessions, nextCursor: next < page.values.length ? `${page.id}:${next}` : null }
+    const nextCursor = next < page.values.length ? `${page.id}:${next}` : null
+    if (params.cursor == null && nextCursor === null && this.inventory === page) this.inventory = undefined
+    return { sessions, nextCursor }
   }
 
   private async snapshot(params: Record<string, unknown>, signal: AbortSignal) {
@@ -305,6 +317,7 @@ export class RuntimeRouter {
     }
     const next = offset + items.length
     const nextCursor = next < page.values.length ? `${page.id}:${next}` : null
+    if (params.cursor == null && nextCursor === null && this.history === page) this.history = undefined
     return {
       sessionId: page.platformId, externalSessionId: page.externalId, runtime: 'dsh', items,
       complete: offset === 0 && nextCursor === null && !page.truncated,
