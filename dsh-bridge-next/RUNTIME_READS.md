@@ -88,7 +88,7 @@ uv run pytest tests/test_dsh_contracts.py tests/test_dsh_provider.py tests/test_
 ## 性能优化（2026-09-10）
 
 - 首次订阅仍完整同步历史。并发初始化共享一次清单读取；同步逐个读取、投影和提交会话，使可见性检查与快照生成复用同一个 observation。
-- observation、配置结果（`facts`）和 feed 投影缓存均采用按容量淘汰（LRU）与按需释放策略：空白会话完成可见性判定后立即释放 observation，冷会话在同步基线提交并缓存派生状态后立即释放 observation 与已结算投影；活跃会话仅保留有限数量的最近 observation 与已结算投影，被淘汰会话后续收到实时事件时按本地或 Connector checkpoint 重建投影并仅发送增量更新。原生事件使对应 observation 失效，冷会话目标文件变化使缓存失效；关闭 Host/feed 时释放缓存和 observation lease。缓存不持久化。
+- observation（最多 `MAX_RETAINED_LOGS = 8` 个）、配置结果 `facts`（最多 `MAX_RETAINED_FACTS = 128` 个）和已结算的 feed 投影（最多 `MAX_RETAINED_PROJECTIONS = 8` 个）都按 LRU 淘汰。空白会话判定可见性后、会话基线同步后和按需快照后都立即释放 observation。在持久 checkpoint 订阅（`checkpointVersion: 1`）中，冷会话的已结算投影在 checkpoint 提交后立即释放，活跃会话保留最近使用的 8 个；被淘汰的会话再收到原生事件时，按 Connector checkpoint 恢复并只发送增量。没有持久 checkpoint 的订阅不淘汰投影，否则恢复时只能重传整份历史。运行中、有未提交增量或等待问答/审批的会话始终保留投影。单个会话同步或快照重放时的峰值仍取决于该会话自身的历史大小。原生事件使对应 observation 失效，冷会话文件变化使缓存失效；关闭 Host/feed 时释放缓存和 observation lease。缓存不持久化。
 - 同一 Host、同一 session namespace 的已确认同步 revision 在重订阅时复用：未变化会话只校准状态，变化会话补快照。显式单会话刷新先删除其 checkpoint，失败重试不会误判为已同步。新 Host 没有 checkpoint，仍完整导入。
 - 流式工具参数只在 drain/snapshot 或非 chunk 事件边界解析，避免每个 token 重复解析增长中的 JSON。历史投影以约 5 ms 为目标分片让出事件循环；单个原生读取、单个事件处理和最终内容哈希仍可能超过此时间。
 - 同步/RPC 字节预算直接遍历 JSON 数据计数，不再为计数分配完整 JSON 字符串。socket 写入仍序列化一次，跨语言内容哈希校验保留。

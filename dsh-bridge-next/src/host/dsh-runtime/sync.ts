@@ -52,7 +52,6 @@ export class SyncFeed {
   private bufferedOperations: SyncOperation[] | undefined
   private bufferedBytes = 0
   private checkpointDirty = new Set<string>()
-  private localCheckpoints = new Map<string, { throughSeq: number, historyHash?: string }>()
 
   get retainedProjectionCount(): number { return this.projections.size }
 
@@ -94,7 +93,7 @@ export class SyncFeed {
     this.abort.abort()
     this.unwatch()
     this.wake?.(); this.wake = undefined
-    this.queue = []; this.queuedBytes = 0; this.projections.clear(); this.localCheckpoints.clear()
+    this.queue = []; this.queuedBytes = 0; this.projections.clear()
     this.queuedInvalidations.clear()
     this.failedSessions.clear()
     this.bufferedOperations = undefined; this.bufferedBytes = 0
@@ -212,7 +211,6 @@ export class SyncFeed {
           this.projections.delete(id); this.projections.set(id, projection)
           this.published.set(id, platformId)
           this.sourceAvailability.set(id, 'available')
-          this.recordLocalCheckpoint(id, projection)
           await this.notification('session.meta.upsert', { sessionId: platformId, ...meta })
           await this.items(id, delta.items)
           this.checkpointDirty.add(id)
@@ -243,7 +241,6 @@ export class SyncFeed {
       this.checkpointDirty.add(id)
       this.published.set(id, platformId)
       this.sourceAvailability.set(id, 'available')
-      this.recordLocalCheckpoint(id, projection)
       await this.notices(id)
       await this.state(id, log)
       this.native.diagnostics.log('info', 'snapshot.completed', { streamId: this.id, sessionId: id, items: snapshotItems.length, elapsedMs: Math.round(performance.now() - start) })
@@ -295,7 +292,7 @@ export class SyncFeed {
       this.sourceAvailability.set(id, source.availability)
     }
     if (this.durableCheckpoints) await this.delivery(() => this.transport.deleteCheckpoint(id))
-    this.published.delete(id); this.projections.delete(id); this.localCheckpoints.delete(id)
+    this.published.delete(id); this.projections.delete(id)
   }
   private async sourceState(id: string): Promise<SourceState> {
     const source = await this.native.source.state(id)
@@ -357,13 +354,15 @@ export class SyncFeed {
           if (this.published.has(id)) reconcile = true
           return
         }
-        if (change.type === 'refresh') { this.localCheckpoints.delete(id); await this.baseline(id); return }
+        if (change.type === 'refresh') { await this.baseline(id); return }
         if (!this.published.has(id)) await this.baseline(id)
         if (!this.published.has(id)) return
         if (change.type === 'question' || change.type === 'approval') await this.notices(id)
         if (change.type === 'stream') {
-          const projection = this.projections.get(id) ?? await this.rehydrateProjection(id, change.throughSeq)
-          if (!projection) { await this.baseline(id, true); return }
+          // Running sessions are never evicted. A chunk without a projection waits
+          // for the next event to restore it instead of rereading the log per chunk.
+          const projection = this.projections.get(id)
+          if (!projection) return
           this.projections.delete(id); this.projections.set(id, projection)
           projection.stream(change.turn, change.step, change.chunk, change.time, change.throughSeq)
           touched.add(id)
@@ -379,7 +378,8 @@ export class SyncFeed {
           }])
           if (['turn/start', 'turn/end', 'approval/asked', 'approval/decided', 'model/selection', 'request/header',
             'permission/preset', 'sandbox/mode', 'approval/policy', 'agent-preset/selected'].includes(change.event.type)) statuses.add(id)
-          const projection = this.projections.get(id) ?? await this.rehydrateProjection(id, Number(change.event.seq) - 1)
+          // An evicted projection resumes from its committed checkpoint; the replayed log already holds this event.
+          const projection = this.projections.get(id)
           if (!projection) { await this.baseline(id, true); return }
           this.projections.delete(id); this.projections.set(id, projection)
           if (Number(change.event.seq) <= projection.throughSeq) return
@@ -457,29 +457,22 @@ export class SyncFeed {
       const checkpoint: SyncCheckpoint = { version: 1, projectionVersion: PROJECTION_VERSION,
         throughSeq: projection.throughSeq, historyHash: projection.historyHash!, settled: projection.settled }
       await this.transport.saveCheckpoint(id, checkpoint)
-      this.recordLocalCheckpoint(id, projection)
     }
     this.checkpointDirty.clear()
   }
-  private recordLocalCheckpoint(id: string, projection: SessionProjection): void {
-    if (!projection.settled || projection.dirty || !this.published.has(id) || this.failedSessions.has(id)) {
-      this.localCheckpoints.delete(id)
-      return
-    }
-    this.localCheckpoints.set(id, {
-      throughSeq: projection.throughSeq,
-      ...(projection.historyHash !== undefined ? { historyHash: projection.historyHash } : {}),
-    })
-  }
+  /**
+   * Only a committed durable checkpoint lets baseline(id, true) resume an evicted
+   * session with a delta; without one, eviction would re-upload its whole history.
+   * Running or interactive sessions keep their projection for continuous streaming.
+   */
   private canEvictProjection(id: string, projection: SessionProjection): boolean {
-    if (!projection.settled || projection.dirty || this.checkpointDirty.has(id)) return false
-    if (this.native.status(id as SessionId) === 'running') return false
-    if (this.native.questions.waiting(id) || this.native.approvals.waiting(id)) return false
-    return this.localCheckpoints.has(id)
+    if (!this.durableCheckpoints || this.checkpointDirty.has(id) || this.failedSessions.has(id)) return false
+    if (!projection.settled || projection.dirty || this.native.status(id as SessionId) === 'running') return false
+    return !this.native.questions.waiting(id) && !this.native.approvals.waiting(id)
   }
   private trimProjections(maxRetained = MAX_RETAINED_PROJECTIONS): void {
+    // Cold sessions cannot stream; live ones keep the most recently used projections.
     for (const [id, projection] of this.projections) {
-      this.recordLocalCheckpoint(id, projection)
       if (!this.native.ctx.sessions.get(id as SessionId) && this.canEvictProjection(id, projection)) {
         this.projections.delete(id)
       }
@@ -491,49 +484,6 @@ export class SyncFeed {
         this.projections.delete(id)
       }
     }
-  }
-  private async rehydrateProjection(id: string, beforeSeq: number): Promise<SessionProjection | undefined> {
-    const platformId = this.published.get(id)
-    if (!platformId) return undefined
-    let checkpoint = this.localCheckpoints.get(id)
-    if (!checkpoint && this.durableCheckpoints) {
-      const loaded = record(await this.delivery(() => this.transport.loadCheckpoint(id)) ?? {})
-      if (loaded.version === 1 && loaded.projectionVersion === PROJECTION_VERSION && loaded.settled === true
-        && Number.isSafeInteger(loaded.throughSeq) && Number(loaded.throughSeq) >= -1 && typeof loaded.historyHash === 'string') {
-        checkpoint = { throughSeq: Number(loaded.throughSeq), historyHash: loaded.historyHash }
-      }
-    }
-    if (!checkpoint) return undefined
-    let log: Awaited<ReturnType<NativeRuntime['read']>>
-    try {
-      log = await this.native.read(id as SessionId)
-    } catch (error) {
-      if (this.closed || error instanceof Error && error.name === 'AbortError') throw error
-      return undefined
-    } finally {
-      this.native.source.release(id)
-    }
-    const projection = createProjection(id, platformId, this.durableCheckpoints || checkpoint.historyHash !== undefined)
-    try {
-      await replayHistory(projection, log, this.abort.signal, checkpoint.throughSeq)
-    } catch (error) {
-      if (this.closed || error instanceof Error && error.name === 'AbortError') throw error
-      return undefined
-    }
-    if (!projection.settled || projection.throughSeq !== checkpoint.throughSeq) return undefined
-    if (checkpoint.historyHash !== undefined && projection.historyHash !== checkpoint.historyHash) return undefined
-    projection.drain()
-    if (beforeSeq > projection.throughSeq) {
-      try {
-        await replayHistory(projection, log, this.abort.signal, beforeSeq)
-      } catch (error) {
-        if (this.closed || error instanceof Error && error.name === 'AbortError') throw error
-        return undefined
-      }
-      if (projection.throughSeq > checkpoint.throughSeq) this.checkpointDirty.add(id)
-    }
-    this.projections.set(id, projection)
-    return projection
   }
   private takeChanges(): NativeChange[] {
     this.queuedBytes = 0; this.queuedInvalidations.clear()
