@@ -12,6 +12,7 @@
 | 版本号含义与发版规则 | [版本号规则](versioning.md) |
 | 源码运行与 headless 验证 | [开发指南](development.md) |
 | Desktop 开发、打包、签名 | [Desktop Workbench](../desktop-workbench/README.md) |
+| Desktop 环境准备与故障恢复 | [Connector 环境](desktop-connector-environment.md) |
 | 接入无图形界面的机器 | [Connector](../connector/README.md) |
 | Android 构建 | [Android](../android/README.md) |
 | 架构和 API | [Server 架构](server-architecture.md)、[API](api/README.md) |

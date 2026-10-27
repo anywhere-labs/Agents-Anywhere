@@ -20,7 +20,37 @@
     "retry": "Retry",
     "backendStoppedTitle": "The Desktop background service stopped",
     "backendStoppedDescription": "The local Connector, devices and settings all depend on it. Click Restart to recover. If this keeps happening, report it with the error and logs below.",
-    "restartBackend": "Restart"
+    "restartBackend": "Restart",
+    "startingRpc": "Environment ready. Starting Connector…",
+    "preparingDescription": "Dependency installation can take a while. Connector will start when it finishes.",
+    "cancelled": "Environment preparation cancelled",
+    "cancelledDescription": "The installer has stopped. You can start again.",
+    "cancel": "Cancel preparation",
+    "cancelling": "Stopping…",
+    "stalled": "No activity detected recently. Installation may be stalled. View logs, or cancel and retry with another mirror.",
+    "packageProgress": "{completed} installed / {total} resolved dependencies",
+    "environmentPhase": {
+      "checking": "Checking environment",
+      "downloading": "Downloading dependencies",
+      "resolving": "Resolving dependencies",
+      "building": "Building dependencies",
+      "syncing": "Syncing environment",
+      "ready": "Environment ready",
+      "failed": "Preparation failed",
+      "cancelled": "Cancelled"
+    },
+    "environmentError": {
+      "network": "Download failed. Try another mirror.",
+      "resolution": "Dependency resolution failed. See conflict details below.",
+      "permission": "Permission denied. Check access to the path below.",
+      "disk": "Not enough disk space. Free space and retry.",
+      "process": "Installer failed. See exit code and logs below.",
+      "busy": "Another Desktop or installer is using this environment. Retry after it exits.",
+      "unknown": "Environment preparation failed. See logs for details."
+    },
+    "preparingTitle": "Preparing Connector environment",
+    "copyOutput": "Copy output",
+    "environmentFailedDescription": "The environment is incomplete. Use the error below to resolve the problem and retry, or view the logs."
   },
   "app": {
     "name": "Agents Anywhere"

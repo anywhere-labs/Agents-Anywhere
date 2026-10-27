@@ -9,7 +9,7 @@ import { Field, FieldContent, FieldGroup } from "@/components/ui/field"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { LoadingState } from "@/components/loading-state"
 import { copyText } from "@/lib/clipboard"
-import { getDesktopWorkbenchBridge, type LocalOwnershipRecovery, type LocalOwnershipState } from "./bridge"
+import { getDesktopWorkbenchBridge, type ConnectorEnvironmentState, type LocalOwnershipRecovery, type LocalOwnershipState } from "./bridge"
 import { PYPI_MIRROR_OPTIONS, PYTHON_MIRROR_OPTIONS } from "./package-mirrors"
 
 type ProvisioningRecovery = Extract<LocalOwnershipRecovery, { kind: "provisioning" }>
@@ -21,6 +21,9 @@ export function LocalOwnershipGate({ children }: { children: ReactNode }) {
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [environment, setEnvironment] = useState<ConnectorEnvironmentState | null>(null)
+  const [cancelling, setCancelling] = useState(false)
+  const [mirrorSaving, setMirrorSaving] = useState(false)
 
   useEffect(() => {
     const api = getDesktopWorkbenchBridge()?.ownership
@@ -31,20 +34,26 @@ export function LocalOwnershipGate({ children }: { children: ReactNode }) {
     const initialRevision = revision
     void api.getState().then(next => { if (active && revision === initialRevision) setState(next) })
       .catch(error => { if (active) setState(failedState(error)) })
-    return () => { active = false; unsubscribe() }
+    const envApi = getDesktopWorkbenchBridge()?.environment
+    let envRevision = 0
+    const unsubscribeEnvironment = envApi?.onState(next => { envRevision++; if (active) setEnvironment(next) })
+    const initialEnvRevision = envRevision
+    void envApi?.getState().then(next => { if (active && envRevision === initialEnvRevision) setEnvironment(next) })
+      .catch(error => { if (active) setActionError(errorMessage(error)) })
+    return () => { active = false; unsubscribe(); unsubscribeEnvironment?.() }
   }, [])
 
-  if (state?.status === "owned") return children
-  // `checking` means the first probe has not answered yet.
-  if (!state || state.status === "checking") return <LoadingState className="min-h-screen bg-background" label={state ? t("checkingConnector") : undefined} />
-  // Building the Connector environment installs every dependency (and, without
-  // a bundled interpreter, Python) before the Connector can answer; that is
-  // progress, not a failure to report.
-  if (state.status === "preparing") return <LoadingState className="min-h-screen bg-background" label={t("preparing")} />
+  const backendUnavailable = state?.recovery?.kind === "backendStopped"
+  const preparing = !backendUnavailable && (environment?.status === "preparing" || environment?.status === "checking")
+  const environmentFailure = !backendUnavailable && (environment?.status === "failed" || environment?.status === "cancelled")
+  if (state?.status === "owned" && !preparing && !environmentFailure) return children
+  if (!preparing && !environmentFailure && (!state || state.status === "checking" || state.status === "preparing")) {
+    return <LoadingState className="min-h-screen bg-background" label={environment?.status === "ready" ? t("startingRpc") : state?.status === "preparing" ? t("preparing") : t("checkingConnector")} />
+  }
 
   const run = async (action: (api: NonNullable<ReturnType<typeof getDesktopWorkbenchBridge>>) => Promise<LocalOwnershipState | void>) => {
     const bridge = getDesktopWorkbenchBridge()
-    if (!bridge?.ownership || busy) return
+    if (!bridge?.ownership || busy || mirrorSaving) return
     setBusy(true)
     setCopied(false)
     setActionError(null)
@@ -58,22 +67,32 @@ export function LocalOwnershipGate({ children }: { children: ReactNode }) {
   const recheck = () => run(bridge => bridge.ownership!.recheck())
   // Clearing first stops the half-built environment, so the recheck downloads everything again.
   const resetAndRecheck = () => run(async bridge => {
-    await bridge.ownership!.resetEnvironment!()
+    await (bridge.environment?.reset() ?? bridge.ownership!.resetEnvironment!())
     return bridge.ownership!.recheck()
   })
 
-  const conflict = state.status === "conflict"
-  const provisioning = state.recovery?.kind === "provisioning" ? state.recovery : null
-  const backendStopped = state.recovery?.kind === "backendStopped"
-  const detail = state.message?.trim() ?? ""
+  const cancel = async () => {
+    const api = getDesktopWorkbenchBridge()?.environment
+    if (!api || cancelling) return
+    setCancelling(true)
+    try { setEnvironment(await api.cancel()) }
+    catch (error) { setActionError(errorMessage(error)) }
+    finally { setCancelling(false) }
+  }
+  const conflict = !environmentFailure && state?.status === "conflict"
+  const provisioning: ProvisioningRecovery | null = environmentFailure && environment?.mirrors
+    ? { kind: "provisioning", ...environment.mirrors }
+    : state?.recovery?.kind === "provisioning" ? state.recovery : null
+  const backendStopped = state?.recovery?.kind === "backendStopped"
+  const detail = (preparing || environmentFailure ? environment?.message : state?.message)?.trim() ?? ""
   const connector = getDesktopWorkbenchBridge()?.connector
-  const canReset = Boolean(provisioning && getDesktopWorkbenchBridge()?.ownership?.resetEnvironment)
+  const canReset = Boolean(environmentFailure && environment?.error?.kind !== "busy" && (getDesktopWorkbenchBridge()?.environment?.reset || getDesktopWorkbenchBridge()?.ownership?.resetEnvironment))
   const copyDetail = async () => {
     try { await copyText(detail); setCopied(true) }
     catch { /* The detail stays selectable. */ }
   }
-  const title = conflict ? "title" : provisioning ? "provisioningTitle" : backendStopped ? "backendStoppedTitle" : "errorTitle"
-  const description = conflict ? "description"
+  const title = preparing ? "preparingTitle" : environmentFailure && environment?.status === "cancelled" ? "cancelled" : conflict ? "title" : provisioning ? "provisioningTitle" : backendStopped ? "backendStoppedTitle" : "errorTitle"
+  const description = preparing ? "preparingDescription" : environmentFailure ? environment?.status === "cancelled" ? "cancelledDescription" : "environmentFailedDescription" : conflict ? "description"
     : provisioning ? "provisioningDescription"
     : backendStopped ? "backendStoppedDescription"
     : detail ? "errorDescription" : "errorWithoutDetail"
@@ -85,13 +104,20 @@ export function LocalOwnershipGate({ children }: { children: ReactNode }) {
           <AlertDialogTitle>{t(title)}</AlertDialogTitle>
           <AlertDialogDescription>{t(description)}</AlertDialogDescription>
         </AlertDialogHeader>
-        {provisioning ? <MirrorChoices recovery={provisioning} disabled={busy} onError={setActionError} /> : null}
+        {preparing ? <div role="status" aria-live="polite" className="grid min-w-0 gap-2">
+          <p className="text-sm">{t(`environmentPhase.${environment!.phase}`)}</p>
+          {environment?.progress?.package ? <p className="text-sm text-muted-foreground">{environment.progress.package}{environment.progress.totalBytes ? ` (${(environment.progress.totalBytes / 1024 / 1024).toFixed(1)} MiB)` : ""}</p> : null}
+          {environment?.progress?.totalPackages ? <p className="text-sm text-muted-foreground">{t("packageProgress", { completed: environment.progress.completedPackages ?? 0, total: environment.progress.totalPackages })}</p> : null}
+          {environment?.stalled ? <p className="text-sm text-destructive">{t("stalled")}</p> : null}
+        </div> : null}
+        {environmentFailure && environment?.error ? <p className="text-sm">{t(`environmentError.${environment.error.kind}`)}</p> : null}
+        {!preparing && provisioning ? <MirrorChoices recovery={provisioning} disabled={busy} onError={setActionError} onSaving={setMirrorSaving} /> : null}
         {detail || connector?.openLogsFolder ? <div className="grid min-w-0 gap-2">
           {detail ? <pre className="code-mono max-h-48 overflow-auto rounded-lg bg-muted px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap break-words select-text">{detail}</pre> : null}
           <div className="flex flex-wrap gap-2">
             {detail ? <Button variant="outline" size="sm" onClick={() => void copyDetail()}>
               {copied ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
-              {t(copied ? "copied" : "copyError")}
+              {t(copied ? "copied" : preparing ? "copyOutput" : "copyError")}
             </Button> : null}
             {connector?.openLogsFolder ? <Button variant="outline" size="sm" onClick={() => void connector.openLogsFolder?.()}>
               <FolderOpen data-icon="inline-start" />
@@ -102,10 +128,11 @@ export function LocalOwnershipGate({ children }: { children: ReactNode }) {
         {actionError ? <p className="text-sm text-destructive select-text">{actionError}</p> : null}
         <AlertDialogFooter>
           <Button variant="outline" onClick={() => void getDesktopWorkbenchBridge()?.ownership?.quit()}>{t("quit")}</Button>
-          {canReset ? <Button variant="outline" disabled={busy} onClick={() => void resetAndRecheck()}>{t("resetEnvironment")}</Button> : null}
-          <Button disabled={busy} onClick={() => void recheck()}>
+          {canReset ? <Button variant="outline" disabled={busy || mirrorSaving} onClick={() => void resetAndRecheck()}>{t("resetEnvironment")}</Button> : null}
+          {preparing ? <Button variant="outline" disabled={cancelling} onClick={() => void cancel()}>{t(cancelling ? "cancelling" : "cancel")}</Button> : null}
+          {!preparing ? <Button disabled={busy || cancelling || mirrorSaving} onClick={() => void recheck()}>
             {t(busy ? "checking" : provisioning ? "retry" : backendStopped ? "restartBackend" : "recheck")}
-          </Button>
+          </Button> : null}
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
@@ -117,10 +144,11 @@ export function LocalOwnershipGate({ children }: { children: ReactNode }) {
  * until the environment exists. Each change is saved at once and used by the
  * next retry.
  */
-function MirrorChoices({ recovery, disabled, onError }: {
+function MirrorChoices({ recovery, disabled, onError, onSaving }: {
   recovery: ProvisioningRecovery
   disabled: boolean
   onError: (message: string | null) => void
+  onSaving: (saving: boolean) => void
 }) {
   const t = useTranslations("localOwnership")
   const labels = useTranslations("pages.settings")
@@ -134,10 +162,11 @@ function MirrorChoices({ recovery, disabled, onError }: {
     const connector = getDesktopWorkbenchBridge()?.connector
     if (!connector) return
     setSaving(true)
+    onSaving(true)
     onError(null)
     try { await connector.saveSettings(patch) }
     catch (error) { revert(); onError(errorMessage(error)) }
-    finally { setSaving(false) }
+    finally { setSaving(false); onSaving(false) }
   }
   // A saved URL outside the presets keeps its value; the trigger then shows it as is.
   const pypiValue = pypi || "default"

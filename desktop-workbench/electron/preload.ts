@@ -1,3 +1,4 @@
+import type { ConnectorEnvironmentState } from "../shared/connector-environment";
 import { windowMaterial } from "./window-material";
 import type { OwnershipState } from "./local-runtime";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
@@ -169,6 +170,13 @@ contextBridge.exposeInMainWorld("desktopWorkbench", {
     setTheme: (theme: "light" | "dark"): Promise<void> => ipcRenderer.invoke("workbench:window:setTheme", theme),
     setTitleBarColors: (colors: { color: string; symbolColor: string }): Promise<void> =>
       ipcRenderer.invoke("workbench:window:setTitleBarColors", colors),
+  },
+  environment: {
+    getState: (): Promise<ConnectorEnvironmentState> => api("/environment"),
+    prepare: (): Promise<ConnectorEnvironmentState> => api("/environment/prepare", { method: "POST", body: "{}" }),
+    cancel: (): Promise<ConnectorEnvironmentState> => api("/environment/cancel", { method: "POST", body: "{}" }),
+    reset: (): Promise<unknown> => api("/environment/reset", { method: "POST", body: "{}" }),
+    onState: (callback: (state: ConnectorEnvironmentState) => void) => onEvent("environment", state => callback(state as ConnectorEnvironmentState)),
   },
   ownership: {
     getState: (): Promise<OwnershipState> => ipcRenderer.invoke("workbench:ownership:getState"),

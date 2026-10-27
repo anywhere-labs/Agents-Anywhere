@@ -74,7 +74,11 @@ export function materializeConnectorProject(source: string, dataPath: string): s
   const digest = payloadDigest(source, files);
   const root = path.join(dataPath, "connector-source");
   const target = path.join(root, digest);
-  if (complete(target)) return target;
+  if (complete(target)) {
+    try { if (payloadDigest(target, files) === digest) return target; } catch { /* Repair incomplete payloads below. */ }
+  }
+  // The supervisor holds the environment lease before materializing or repairing.
+  if (fs.existsSync(target)) fs.rmSync(target, { recursive: true, force: true });
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   const staging = fs.mkdtempSync(`${target}.partial-`);
   try {
