@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import tempfile
 import time
 from collections import defaultdict
@@ -16,6 +17,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from agent_server.api import connector_mesh as proxy_api
+from agent_server.infra.connector_control_log import _FIELDS, control_log
+from agent_server.infra.connector_mesh_contract import CONTROL_METHODS
+from agent_server.infra.connector_mesh_control import MeshConnectorControlTransport
+from agent_server.infra.connector_mesh_routes import MeshRoute
+from agent_server.infra.connector_rpc import ConnectorTransportTimeout
 from connector.logging import CONTROL_LOG_FIELDS, install_rpc_log_sink
 from connector.mesh.logs import LogHub
 from connector.runtime_protocol import RuntimeInvalidRequestError
@@ -25,13 +32,6 @@ from connector.server.mesh_services import (
     _DomainService,
 )
 from loguru import logger
-
-from agent_server.api import connector_mesh as proxy_api
-from agent_server.infra.connector_control_log import _FIELDS, control_log
-from agent_server.infra.connector_mesh_contract import CONTROL_METHODS
-from agent_server.infra.connector_mesh_control import MeshConnectorControlTransport
-from agent_server.infra.connector_mesh_routes import MeshRoute
-from agent_server.infra.connector_rpc import ConnectorTransportTimeout
 
 CANARY = "private-payload-must-not-appear"
 ROUTE = MeshRoute(
@@ -355,6 +355,20 @@ async def run_probe() -> tuple[list[dict], list[dict]]:
             "Structured control identifiers/timings survive real log persistence without payload fields"
         )
 
+        with tempfile.TemporaryDirectory(prefix="aa-log-format-") as directory:
+            paths = []
+            for colored in (False, True):
+                path = Path(directory) / f"colored-{colored}.log"
+                paths.append(path)
+                file_sink = logger.add(path, format="probe - <level>{message}</level>", colorize=colored)
+                try:
+                    control_log("parser.probe", callId=f"parser-{colored}")
+                finally:
+                    logger.remove(file_sink)
+            assert "\x1b[" in paths[1].read_text()
+            assert {row["callId"] for row in read_control_records(paths)} == {"parser-False", "parser-True"}
+        passed("Real Loguru file records parse identically with and without forced ANSI colors")
+
         def broken_sink(_message):
             raise OSError(CANARY)
 
@@ -383,19 +397,28 @@ async def run_probe() -> tuple[list[dict], list[dict]]:
         logger.remove(sink)
 
 
-def verify_transport_logs(
-    directory: Path, connector_log: Path
-) -> tuple[list[dict], list[dict]]:
-    """Check real cross-instance correlation after the existing transport probe."""
+def read_control_records(paths: list[Path]) -> list[dict]:
     records = []
-    for path in [connector_log, *directory.glob("*.log")]:
+    for path in paths:
         for line in path.read_text(errors="replace").splitlines():
+            # GitHub runners can force Loguru colors even when redirected to a
+            # file. Formatting codes may sit between the separator and marker.
+            line = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", line)
             if " - connector.control " not in line:
                 continue
             row, _ = json.JSONDecoder().raw_decode(
                 line.split(" - connector.control ", 1)[1]
             )
             records.append(row)
+    return records
+
+
+def verify_transport_logs(
+    directory: Path, connector_log: Path
+) -> tuple[list[dict], list[dict]]:
+    """Check real cross-instance correlation after the existing transport probe."""
+    records = read_control_records([connector_log, *directory.glob("*.log")])
+    assert records, "no control records parsed; check captured log paths and format"
     by_call = defaultdict(list)
     by_route = defaultdict(set)
     for row in records:
