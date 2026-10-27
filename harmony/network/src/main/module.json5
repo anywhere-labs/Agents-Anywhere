@@ -1,0 +1,9 @@
+{
+  "module": {
+    "name": "network",
+    "type": "har",
+    "deviceTypes": [
+      "phone"
+    ]
+  }
+}
