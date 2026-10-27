@@ -58,13 +58,13 @@ CONTROL_METHODS: dict[str, tuple[str, str]] = {
 }
 
 
-def service_prefix(connector_id: str, connection_id: str) -> str:
-    identity = hashlib.sha256(f"{connector_id}:{connection_id}".encode()).hexdigest()
+def service_prefix(connector_id: str, connection_id: str, link_id: str = "") -> str:
+    identity = hashlib.sha256(f"{connector_id}:{connection_id}:{link_id}".encode()).hexdigest()
     return f"aa.remote.v1.c{identity}"
 
 
-def service_names(connector_id: str, connection_id: str) -> dict[str, str]:
-    prefix = service_prefix(connector_id, connection_id)
+def service_names(connector_id: str, connection_id: str, link_id: str = "") -> dict[str, str]:
+    prefix = service_prefix(connector_id, connection_id, link_id)
     return {
         domain: f"{prefix}.{domain}" for domain in REMOTE_SERVICE_DOMAINS
     }

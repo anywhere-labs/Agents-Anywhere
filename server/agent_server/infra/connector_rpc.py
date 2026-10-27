@@ -5,18 +5,39 @@ import json
 import secrets
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
+from functools import wraps
 from typing import Any, Protocol
 
 from fastapi import WebSocket
 from loguru import logger
 
 from agent_server.core.connector_presence import ConnectorLease
+from agent_server.infra.connector_control_log import (
+    business_fields,
+    control_log,
+    error_fields,
+    result_fields,
+)
 from agent_server.infra.redis_coordinator import RedisCoordinator
 
 
 class ConnectorOfflineError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.details = details
+
+
+class ConnectorNotDispatchedError(ConnectorOfflineError):
+    """Positive evidence that this transport attempt did not reach a handler."""
+
+
+class ConnectorTransportTimeout(TimeoutError):
+    def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.details = details
 
 
 class DuplicateConnectorConnectionError(RuntimeError):
@@ -24,14 +45,93 @@ class DuplicateConnectorConnectionError(RuntimeError):
 
 
 class ConnectorRpcError(RuntimeError):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, *, details: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
+        self.details = details
+
+
+@dataclass
+class ConnectorRequestDeadline:
+    when: float
+    call_id: str = field(default_factory=lambda: f"ctl_{secrets.token_urlsafe(12)}")
+    delivery_state: str = "not_dispatched"
+
+    def remaining(self) -> float:
+        return max(0.0, self.when - asyncio.get_running_loop().time())
+
+    def timeout_error(self) -> ConnectorTransportTimeout:
+        return ConnectorTransportTimeout("connector RPC timed out", details={
+            "deliveryState": self.delivery_state, "controlCallId": self.call_id,
+        })
+
+
+_request_deadline: ContextVar[ConnectorRequestDeadline | None] = ContextVar("connector_request_deadline", default=None)
+
+
+def current_request_deadline() -> ConnectorRequestDeadline | None:
+    return _request_deadline.get()
+
+
+@asynccontextmanager
+async def connector_request_timeout(timeout: float, *, call_id: str | None = None):
+    """One caller budget, including lookup and sending, without remote replay.
+
+    Cancellation only ends the Server's wait. Connector-admitted execution is
+    shielded by its adapter and remains owned by the base connection lifecycle.
+    """
+    inherited = current_request_deadline()
+    if inherited is not None:
+        if inherited.remaining() <= 0:
+            raise inherited.timeout_error()
+        yield inherited
+        return
+    deadline = ConnectorRequestDeadline(asyncio.get_running_loop().time() + max(0.0, timeout))
+    if call_id:
+        deadline.call_id = call_id
+    token = _request_deadline.set(deadline)
+    timer = asyncio.timeout_at(deadline.when)
+    try:
+        if deadline.remaining() <= 0:
+            raise deadline.timeout_error()
+        async with timer:
+            yield deadline
+    except TimeoutError as exc:
+        if timer.expired():
+            raise deadline.timeout_error() from exc
+        raise
+    finally:
+        _request_deadline.reset(token)
+
+
+def bounded_connector_request(function):
+    @wraps(function)
+    async def bounded(*args, timeout: float = 30, **kwargs):
+        owner = current_request_deadline() is None
+        async with connector_request_timeout(timeout) as deadline:
+            try:
+                return await function(*args, timeout=deadline.remaining(), **kwargs)
+            except asyncio.CancelledError:
+                if owner and deadline.remaining() <= 0:
+                    control_log("request.deadline_expired", level="WARNING", callId=deadline.call_id,
+                                method=kwargs.get("method") or (args[2] if len(args) > 2 and isinstance(args[2], str) else None),
+                                reason="deadline_expired", deliveryState=deadline.delivery_state)
+                raise
+    return bounded
+
+
+def routed_request_timeout(payload: dict[str, Any]) -> float:
+    remaining = float(payload.get("timeout", 30))
+    if "deadlineAt" in payload:
+        remaining = min(remaining, float(payload["deadlineAt"]) - time.time())
+    return max(0.0, remaining)
 
 
 class ConnectorRequestTransport(Protocol):
     def supports(self, method: str) -> bool: ...
+
+    async def request_routed(self, payload: dict[str, Any]) -> Any: ...
 
     async def request_bound(
         self,
@@ -60,6 +160,7 @@ class ConnectorConnection:
     connected_at_monotonic: float
     last_seen_monotonic: float
     ready: bool = False
+    mesh_capable: bool = False
     draining: bool = False
     invalidated: bool = False
     abort_notifications: Callable[[], Awaitable[None]] | None = None
@@ -205,6 +306,7 @@ class ConnectorRpcManager:
         websocket: WebSocket,
         *,
         ready: bool = True,
+        mesh_capable: bool = False,
     ) -> ConnectorConnection:
         now = self._clock()
         old = self._connections.get(connector_id)
@@ -228,6 +330,7 @@ class ConnectorRpcManager:
             connected_at_monotonic=now,
             last_seen_monotonic=now,
             ready=ready,
+            mesh_capable=mesh_capable,
         )
         if self._coordinator.distributed:
             claimed = await self._coordinator.claim(
@@ -399,6 +502,7 @@ class ConnectorRpcManager:
         )
         return result
 
+    @bounded_connector_request
     async def request_bound(
         self,
         connector_id: str,
@@ -410,6 +514,7 @@ class ConnectorRpcManager:
         if (
             self._request_transport is not None
             and self._request_transport.supports(method)
+            and await self._uses_mesh(connector_id)
         ):
             return await self._request_transport.request_bound(
                 connector_id,
@@ -444,6 +549,7 @@ class ConnectorRpcManager:
         )
         return result, lease.connection_id
 
+    @bounded_connector_request
     async def request_on_connection(
         self,
         connection: ConnectorConnection,
@@ -457,6 +563,7 @@ class ConnectorRpcManager:
         if (
             self._request_transport is not None
             and self._request_transport.supports(method)
+            and connection.mesh_capable
         ):
             return await self._request_transport.request_on_connection(
                 connection,
@@ -512,6 +619,7 @@ class ConnectorRpcManager:
             future.set_result(message)
         return None
 
+    @bounded_connector_request
     async def _request_local(
         self,
         connection: ConnectorConnection,
@@ -534,6 +642,11 @@ class ConnectorRpcManager:
                 ) is not connection or not self._is_local_online(connection):
                     raise ConnectorOfflineError("connector is offline")
                 try:
+                    deadline = current_request_deadline()
+                    if deadline is not None:
+                        if deadline.remaining() <= 0:
+                            raise deadline.timeout_error()
+                        deadline.delivery_state = "outcome_unknown"
                     await connection.websocket.send_json(
                         {
                             "id": request_id,
@@ -572,6 +685,7 @@ class ConnectorRpcManager:
             error.get("message", "connector error"),
         )
 
+    @bounded_connector_request
     async def _route(
         self,
         lease: ConnectorLease,
@@ -584,32 +698,95 @@ class ConnectorRpcManager:
             asyncio.get_running_loop().create_future()
         )
         self._routed_pending[request_id] = future
+        deadline = current_request_deadline()
         envelope = {
             **payload,
+            **({"timeout": deadline.remaining(), "deadlineAt": time.time() + deadline.remaining()}
+               if deadline is not None and payload.get("type") in {"request", "meshRequest"} else {}),
             "requestId": request_id,
             "sourceInstanceId": self.instance_id,
             "connectionId": lease.connection_id,
         }
+        diagnostics = self._route_log_fields(envelope)
+        mesh_request = payload.get("type") == "meshRequest"
+        started_at = time.monotonic()
+        outcome, delivery = "cancelled", "outcome_unknown"
+        details = {"phase": "publish"}
+        if mesh_request:
+            control_log("redis.request.sent", level="DEBUG", **diagnostics, sourceWorkerId=self.instance_id,
+                        targetWorkerId=lease.instance_id)
         try:
+            if deadline is not None:
+                if deadline.remaining() <= 0:
+                    raise deadline.timeout_error()
+                deadline.delivery_state = "outcome_unknown"
             subscribers = await self._coordinator.client.publish(
                 self._instance_channel(lease.instance_id),
                 json.dumps(envelope, ensure_ascii=False, separators=(",", ":")),
             )
+            details.update(subscriberCount=subscribers)
             if not subscribers:
+                delivery = "not_dispatched"
+                if deadline is not None:
+                    deadline.delivery_state = delivery
+                if mesh_request:
+                    raise ConnectorNotDispatchedError("connector mesh owner is unavailable")
                 raise ConnectorOfflineError("connector owner is unavailable")
+            details["phase"] = "wait_response"
             response = await asyncio.wait_for(future, timeout=timeout)
+            details["phase"] = "response_received"
+            outcome = "returned" if response.get("ok") is True else "failed"
+            delivery = "response_received"
+            if outcome == "returned":
+                details.update(result_fields(response.get("result")))
+            else:
+                error = response.get("error") or {}
+                details.update(errorCode=error.get("code"), reason=error.get("type"))
+                delivery = (error.get("details") or {}).get("deliveryState", delivery)
+        except asyncio.CancelledError:
+            if deadline is not None and deadline.remaining() <= 0:
+                outcome = "timeout"
+                details["reason"] = "deadline_expired"
+            raise
+        except Exception as exc:
+            outcome = "timeout" if isinstance(exc, TimeoutError) else "failed"
+            details.update(error_fields(exc, stack=not isinstance(exc, (ConnectorOfflineError, TimeoutError))))
+            raise
         finally:
             self._routed_pending.pop(request_id, None)
+            if mesh_request:
+                control_log("redis.request.finished", level="INFO" if outcome == "returned" else "WARNING",
+                            **{**diagnostics, **details}, sourceWorkerId=self.instance_id,
+                            targetWorkerId=lease.instance_id, outcome=outcome, deliveryState=delivery,
+                            elapsedMs=(time.monotonic() - started_at) * 1000)
         if response.get("ok") is True:
             return response.get("result")
         error = response.get("error") or {}
         error_type = error.get("type")
         message = error.get("message") or "connector RPC routing failed"
         if error_type == "offline":
-            raise ConnectorOfflineError(message)
+            raise ConnectorOfflineError(message, details=error.get("details"))
+        if error_type == "not_dispatched":
+            raise ConnectorNotDispatchedError(message, details=error.get("details"))
         if error_type == "timeout":
-            raise TimeoutError(message)
-        raise ConnectorRpcError(error.get("code", "connector_error"), message)
+            raise ConnectorTransportTimeout(message, details=error.get("details"))
+        raise ConnectorRpcError(error.get("code", "connector_error"), message, details=error.get("details"))
+
+    async def route_mesh_request(
+        self, worker_id: str, connection_id: str, payload: dict[str, Any], *, timeout: float,
+    ) -> Any:
+        """Use the existing request/response channel without recursive routing."""
+        try:
+            return await self._route(
+                ConnectorLease(instance_id=worker_id, connection_id=connection_id, ready=True),
+                {**payload, "type": "meshRequest"}, timeout=timeout,
+            )
+        except ConnectorTransportTimeout:
+            raise
+        except TimeoutError as exc:
+            raise ConnectorTransportTimeout("connector RPC timed out", details={
+                "deliveryState": "outcome_unknown", "controlCallId": payload.get("controlCallId"),
+            }) from exc
 
     async def _listen(self) -> None:
         assert self._pubsub is not None
@@ -625,12 +802,50 @@ class ConnectorRpcManager:
                 future = self._routed_pending.get(request_id)
                 if future is not None and not future.done():
                     future.set_result(payload)
+                elif payload.get("controlCallId"):
+                    control_log("redis.response.late", **{**self._route_log_fields(payload),
+                                **result_fields(payload.get("result"))}, sourceWorkerId=self.instance_id,
+                                targetWorkerId=payload.get("responderInstanceId"), callerDetached=True,
+                                outcome="returned" if payload.get("ok") else "failed")
                 continue
             task = asyncio.create_task(self._handle_routed(payload))
             self._routing_tasks.add(task)
             task.add_done_callback(self._routing_tasks.discard)
 
+    @staticmethod
+    def _route_log_fields(payload: dict[str, Any]) -> dict[str, Any]:
+        route = payload.get("meshRoute")
+        route = route if isinstance(route, dict) else {}
+        return {**business_fields(payload.get("params")), "callId": payload.get("controlCallId"),
+                "routeRequestId": payload.get("requestId"), "connectorId": payload.get("connectorId"),
+                "connectionId": payload.get("connectionId"), "method": payload.get("method"),
+                "linkId": route.get("link_id"), "routerId": route.get("router_id"),
+                "generation": route.get("generation")}
+
     async def _handle_routed(self, payload: dict[str, Any]) -> None:
+        if payload.get("type") != "meshRequest":
+            await self._handle_routed_impl(payload)
+            return
+        fields = self._route_log_fields(payload)
+        fields.update(sourceWorkerId=payload.get("sourceInstanceId"), targetWorkerId=self.instance_id)
+        details = {"phase": "execute"}
+        started_at = time.monotonic()
+        outcome, delivery = "cancelled", "outcome_unknown"
+        control_log("redis.target.received", level="DEBUG", **fields)
+        try:
+            response = await self._handle_routed_impl(payload, diagnostics=details)
+            outcome = "returned" if response and response.get("ok") is True else "failed"
+            delivery = "response_published" if response else "not_dispatched"
+        except Exception as exc:
+            outcome = "failed"
+            details.update(error_fields(exc))
+            raise
+        finally:
+            control_log("redis.target.finished", level="INFO" if outcome == "returned" else "WARNING",
+                        **{**fields, **details}, outcome=outcome, deliveryState=delivery,
+                        elapsedMs=(time.monotonic() - started_at) * 1000)
+
+    async def _handle_routed_impl(self, payload: dict[str, Any], *, diagnostics: dict | None = None) -> dict | None:
         request_id = payload.get("requestId")
         source_instance_id = payload.get("sourceInstanceId")
         if not isinstance(request_id, str) or not isinstance(source_instance_id, str):
@@ -641,10 +856,16 @@ class ConnectorRpcManager:
             if not isinstance(connector_id, str) or not isinstance(connection_id, str):
                 raise ConnectorOfflineError("invalid connector route")
             connection = self._connections.get(connector_id)
-            if connection is None or connection.connection_id != connection_id:
+            if payload.get("type") != "meshRequest" and (
+                connection is None or connection.connection_id != connection_id
+            ):
                 raise ConnectorOfflineError("connector ownership changed")
 
-            if payload.get("type") == "disconnect":
+            if payload.get("type") == "meshRequest":
+                if self._request_transport is None:
+                    raise ConnectorNotDispatchedError("connector mesh transport is unavailable")
+                result = await self._request_transport.request_routed(payload)
+            elif payload.get("type") == "disconnect":
                 result = await self._disconnect_local(
                     connector_id,
                     reason=str(payload.get("reason") or "connector disconnected"),
@@ -668,7 +889,7 @@ class ConnectorRpcManager:
                     connection,
                     method,
                     params,
-                    timeout=float(payload.get("timeout") or 30),
+                    timeout=routed_request_timeout(payload),
                 )
             else:
                 raise ConnectorRpcError("invalid_route", "unsupported routed operation")
@@ -678,30 +899,51 @@ class ConnectorRpcManager:
                 "ok": True,
                 "result": result,
             }
+        except ConnectorNotDispatchedError as exc:
+            response = self._route_error(
+                request_id, "not_dispatched", "connector_offline", str(exc), details=exc.details,
+            )
         except ConnectorOfflineError as exc:
             response = self._route_error(
-                request_id, "offline", "connector_offline", str(exc)
+                request_id, "offline", "connector_offline", str(exc), details=exc.details,
             )
-        except TimeoutError:
+        except TimeoutError as exc:
             response = self._route_error(
-                request_id, "timeout", "connector_timeout", "connector RPC timed out"
+                request_id, "timeout", "connector_timeout", "connector RPC timed out",
+                details=getattr(exc, "details", None),
             )
         except ConnectorRpcError as exc:
-            response = self._route_error(request_id, "rpc", exc.code, exc.message)
-        except Exception:  # noqa: BLE001 - isolate malformed cross-instance requests
-            logger.exception(
-                "failed to handle routed connector RPC request_id={}", request_id
-            )
+            response = self._route_error(request_id, "rpc", exc.code, exc.message, details=exc.details)
+        except Exception as exc:  # noqa: BLE001 - isolate malformed cross-instance requests
+            if diagnostics is not None:
+                diagnostics.update(error_fields(exc))
+            else:
+                logger.exception("failed to handle routed connector RPC request_id={}", request_id)
             response = self._route_error(
                 request_id,
                 "rpc",
                 "routing_error",
                 "connector RPC routing failed",
             )
-        await self._coordinator.client.publish(
+        if diagnostics is not None:
+            response.update(controlCallId=payload.get("controlCallId"), connectorId=payload.get("connectorId"),
+                            connectionId=payload.get("connectionId"), method=payload.get("method"),
+                            responderInstanceId=self.instance_id)
+            diagnostics.update(phase="reply_publish")
+            if response.get("ok") is True:
+                diagnostics.update(result_fields(response.get("result")))
+            else:
+                error = response.get("error") or {}
+                diagnostics.update(errorCode=error.get("code"), reason=error.get("type"))
+        subscribers = await self._coordinator.client.publish(
             self._instance_channel(source_instance_id),
             json.dumps(response, ensure_ascii=False, separators=(",", ":")),
         )
+        if diagnostics is not None:
+            diagnostics.update(phase="reply_sent", subscriberCount=subscribers)
+            if not subscribers:
+                diagnostics["reason"] = "response_subscriber_missing"
+        return response
 
     async def _disconnect_local(
         self,
@@ -744,6 +986,15 @@ class ConnectorRpcManager:
         raw = await self._coordinator.client.get(self._lease_key(connector_id))
         return self._parse_lease(raw)
 
+    async def _uses_mesh(self, connector_id: str) -> bool:
+        connection = self._connections.get(connector_id)
+        if connection is not None and self._is_local_online(connection):
+            return connection.mesh_capable
+        if self._coordinator.distributed:
+            lease = await self._get_lease(connector_id)
+            return bool(lease and lease.mesh_capable)
+        return False
+
     @staticmethod
     def _parse_lease(raw: object) -> ConnectorLease | None:
         if not isinstance(raw, str):
@@ -753,18 +1004,21 @@ class ConnectorRpcManager:
             instance_id = payload["instanceId"]
             connection_id = payload["connectionId"]
             ready = payload.get("ready", True)
+            mesh_capable = payload.get("meshCapable", False)
         except (KeyError, TypeError, json.JSONDecodeError):
             return None
         if (
             not isinstance(instance_id, str)
             or not isinstance(connection_id, str)
             or not isinstance(ready, bool)
+            or not isinstance(mesh_capable, bool)
         ):
             return None
         return ConnectorLease(
             instance_id=instance_id,
             connection_id=connection_id,
             ready=ready,
+            mesh_capable=mesh_capable,
         )
 
     async def _release_lease(self, connection: ConnectorConnection) -> bool:
@@ -798,6 +1052,7 @@ class ConnectorRpcManager:
                 "instanceId": self.instance_id,
                 "connectionId": connection.connection_id,
                 "ready": (connection.ready and not connection.draining) if ready is None else ready,
+                **({"meshCapable": True} if connection.mesh_capable else {}),
             },
             separators=(",", ":"),
             sort_keys=True,
@@ -808,13 +1063,15 @@ class ConnectorRpcManager:
 
     @staticmethod
     def _route_error(
-        request_id: str, error_type: str, code: str, message: str
+        request_id: str, error_type: str, code: str, message: str,
+        *, details: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return {
             "type": "response",
             "requestId": request_id,
             "ok": False,
-            "error": {"type": error_type, "code": code, "message": message},
+            "error": {"type": error_type, "code": code, "message": message,
+                      **({"details": details} if details is not None else {})},
         }
 
     @staticmethod

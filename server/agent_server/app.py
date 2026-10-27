@@ -140,6 +140,7 @@ def create_app(
                 app.state.store.engine
             )
             await app.state.redis.start()
+            await app.state.connector_mesh.ensure_router()
             await app.state.timeline_broker.start()
             await app.state.timeline_write_buffer.start()
             await app.state.terminal_stream_hub.start()
@@ -356,6 +357,15 @@ def create_app(
         else:
             ready = False
             checks["realtime"] = {"status": "error", "message": "subscription unavailable"}
+        # Preserve the public health response shape. Realtime readiness now
+        # includes the control Router started by the application lifecycle.
+        if app.state.connector_mesh.router_url:
+            try:
+                async with asyncio.timeout(2):
+                    await app.state.connector_mesh.health()
+            except Exception:  # noqa: BLE001 - readiness reports Router dependency failures
+                ready = False
+                checks["realtime"] = {"status": "error", "message": "MeshCall Router unavailable"}
         return JSONResponse(
             status_code=200 if ready else 503,
             content={

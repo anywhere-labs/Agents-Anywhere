@@ -43,6 +43,11 @@ from agent_server.deps import (
     get_timeline_broker,
     get_timeline_write_buffer,
 )
+from agent_server.infra.connector_control_log import (
+    business_fields,
+    control_log,
+    error_fields,
+)
 from agent_server.infra.connector_rpc import (
     ConnectorConnection,
     ConnectorRpcManager,
@@ -359,31 +364,15 @@ class _ConnectorNotificationPump:
                 params=params,
                 connection_id=self._connection_id,
             )
-        except Exception:
-            logger.exception(
-                "connector notification rejected connector_id={} method={}",
-                self._connector_id,
-                method,
-            )
+        except Exception as exc:  # noqa: BLE001 - isolate a rejected notification from other lanes
+            control_log("notification.rejected", level="ERROR", **business_fields(params),
+                        connectorId=self._connector_id, connectionId=self._connection_id,
+                        method=method, **error_fields(exc))
             return
         elapsed_ms = (time.monotonic() - started_at) * 1000
-        if elapsed_ms >= 100:
-            logger.info(
-                "connector notification handled connector_id={} method={} session_id={} elapsed_ms={:.1f}",
-                self._connector_id,
-                method,
-                params.get("sessionId"),
-                elapsed_ms,
-            )
-        elif method == "timeline.itemUpsert":
-            # High-frequency streaming path: only useful while debugging.
-            logger.debug(
-                "connector notification handled connector_id={} method={} session_id={} elapsed_ms={:.1f}",
-                self._connector_id,
-                method,
-                params.get("sessionId"),
-                elapsed_ms,
-            )
+        control_log("notification.handled", level="INFO" if elapsed_ms >= 100 else "DEBUG",
+                    **business_fields(params), connectorId=self._connector_id, connectionId=self._connection_id,
+                    method=method, phase="ingest_completed", elapsedMs=elapsed_ms)
 
     @staticmethod
     def _lane_key(params: dict[str, Any]) -> str:
@@ -535,7 +524,10 @@ async def connector_ws(
         connector_id = _access_token_connector_id(auth_header)
         async with db.connector_lifecycle(connector_id):
             await _require_active_connector(auth_header, db)
-            connection = await manager.register(connector_id, websocket, ready=False)
+            if websocket.headers.get("x-aa-control-transport") == "meshcall/1.0":
+                connection = await manager.register(connector_id, websocket, ready=False, mesh_capable=True)
+            else:
+                connection = await manager.register(connector_id, websocket, ready=False)
             ingest_service = ConnectorIngestService(
                 db, ConnectorNotificationService(
                     db, realtime, timeline_write_buffer,

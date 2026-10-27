@@ -76,7 +76,7 @@ jobs:
             git diff --name-only --no-renames "$BASE_SHA" "$GITHUB_SHA" > "$RUNNER_TEMP/changed-paths"
             while IFS= read -r path; do
               case "$path" in
-                .github/workflows/*|contracts/*)
+                .github/workflows/*|.github/actions/*|contracts/*)
                   run_everything "shared file changed: $path"
                   ;;
                 dsh-bridge-next/*) plugin=true ;;
@@ -111,6 +111,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s
           --health-timeout 5s
@@ -122,10 +123,14 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - name: Install plugin dependencies
+        uses: ./.github/actions/setup-yarn
         with:
+          project: dsh-bridge-next
           node-version: ${{ env.NODE_VERSION }}
+        env:
+          # Validate explicitly pinned DSH release candidates immediately after publication.
+          YARN_NPM_MINIMAL_AGE_GATE: "0"
       - name: Set up uv and Python
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
@@ -135,20 +140,16 @@ jobs:
           cache-dependency-glob: |
             connector/pyproject.toml
             server/pyproject.toml
-      - name: Enable Corepack
-        run: corepack enable
       - name: Prepare Python integration fixtures
         run: |
           uv sync --project connector
           uv sync --project server
-      - name: Install plugin dependencies
-        working-directory: dsh-bridge-next
-        env:
-          # Validate explicitly pinned DSH release candidates immediately after publication.
-          YARN_NPM_MINIMAL_AGE_GATE: "0"
-        run: corepack yarn install
+          uv pip install --python server/.venv/bin/python --editable ./connector
       - name: Typecheck, build and test plugin
         working-directory: dsh-bridge-next
+        env:
+          # Nested Python probes reuse the prepared environments, without repeated resolution.
+          UV_NO_SYNC: "true"
         run: corepack yarn check
 
   connector:
@@ -173,7 +174,7 @@ jobs:
         working-directory: connector
         # `timeout` ends a stalled run with the faulthandler stacks still in the
         # log; the job timeout alone would discard them.
-        run: timeout 900 uv run --frozen pytest -q -o faulthandler_timeout=120
+        run: timeout --kill-after=30s 900 uv run --no-sync pytest -q --durations=20 -o faulthandler_timeout=120
 
   server:
     name: Server tests
@@ -191,6 +192,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s
           --health-timeout 5s
@@ -215,10 +217,94 @@ jobs:
         # and its dependencies have to live in the Server environment.
         run: |
           uv sync --project server
-          uv pip install --python server/.venv/bin/python ./connector
+          uv pip install --python server/.venv/bin/python --editable ./connector
       - name: Test Server
         working-directory: server
-        run: timeout 1200 uv run --frozen pytest -q -o faulthandler_timeout=120
+        # Verbose names identify a stalled WebSocket test before the outer timeout.
+        run: timeout --kill-after=30s 1200 uv run --no-sync pytest -v --durations=20 -o faulthandler_timeout=120
+
+  mesh:
+    name: Mesh transport probes
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PYTHONPATH: .:../connector
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: |
+            connector/pyproject.toml
+            server/pyproject.toml
+      - name: Prepare transport probe environment
+        working-directory: .
+        run: |
+          uv sync --project server
+          uv pip install --python server/.venv/bin/python --editable ./connector
+      - name: Check remote control contract
+        run: uv run --no-sync python ../connector/tools/generate_remote_control.py --check
+      - name: Check control diagnostics and private-data boundaries
+        run: >-
+          timeout --kill-after=30s 60 uv run --no-sync python -m tools.probe_connector_control_logs
+          --output "$RUNNER_TEMP/mesh-logs"
+      - name: Check connection generations in Redis and memory
+        run: >-
+          timeout --kill-after=30s 120 uv run --no-sync python -m tools.probe_connector_mesh_state
+          --redis-url redis://127.0.0.1:6379/15 --output "$RUNNER_TEMP/mesh-state"
+      - name: Check request budgets and bounded diagnostic writes
+        run: >-
+          timeout --kill-after=30s 60 uv run --no-sync python -m tools.probe_connector_request_limits
+          --output "$RUNNER_TEMP/mesh-request-limits"
+      - name: Check separated entrypoints and cross-Router recovery
+        shell: bash
+        run: |
+          timeout --kill-after=30s 300 uv run --no-sync python tools/probe_connector_mesh.py \
+            --redis-url redis://127.0.0.1:6379/15 \
+            --redis-container "${{ job.services.redis.id }}" --output "$RUNNER_TEMP/mesh-distributed" \
+            2>&1 | tee "$RUNNER_TEMP/mesh-distributed-connector.log"
+      - name: Check cross-instance diagnostic correlation
+        run: >-
+          timeout --kill-after=30s 60 uv run --no-sync python -m tools.probe_connector_control_logs
+          --transport-output "$RUNNER_TEMP/mesh-distributed"
+          --connector-log "$RUNNER_TEMP/mesh-distributed-connector.log" --output "$RUNNER_TEMP/mesh-log-chain"
+      - name: Check transport without Redis
+        run: >-
+          timeout --kill-after=30s 300 uv run --no-sync python tools/probe_connector_mesh.py
+          --single-process --output "$RUNNER_TEMP/mesh-local"
+      - name: Save transport results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mesh-transport-results
+          path: |
+            ${{ runner.temp }}/mesh-logs/results.json
+            ${{ runner.temp }}/mesh-log-chain/results.json
+            ${{ runner.temp }}/mesh-state/results.json
+            ${{ runner.temp }}/mesh-request-limits/results.json
+            ${{ runner.temp }}/mesh-distributed/results.json
+            ${{ runner.temp }}/mesh-local/results.json
+          if-no-files-found: ignore
+          retention-days: 7
 
   web:
     name: Web headless checks
@@ -232,14 +318,11 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      - name: Enable Corepack
-        run: corepack enable
       - name: Install client dependencies
-        run: corepack yarn install
+        uses: ./.github/actions/setup-yarn
+        with:
+          project: web-next
+          node-version: ${{ env.NODE_VERSION }}
       - name: Verify Web
         run: |
           corepack yarn test
@@ -258,14 +341,11 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      - name: Enable Corepack
-        run: corepack enable
       - name: Install client dependencies
-        run: corepack yarn install
+        uses: ./.github/actions/setup-yarn
+        with:
+          project: desktop-workbench
+          node-version: ${{ env.NODE_VERSION }}
       - name: Verify Desktop renderer and main process
         run: |
           corepack yarn workspace agents-anywhere-desktop-renderer test

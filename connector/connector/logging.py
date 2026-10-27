@@ -1,16 +1,28 @@
 from __future__ import annotations
 
-import asyncio
-import inspect
 import json
+import math
 import sys
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from loguru import logger
 
-# Loguru calls sinks from whichever thread logged, so a synchronous, thread-safe
-# notifier is preferred; a coroutine notifier needs a running loop there.
+from connector.core.logging_queue import QueuedLogWriter
+
+CONTROL_LOG_FIELDS = frozenset({
+    'event', 'callId', 'meshCallId', 'routeRequestId', 'connectorId', 'connectionId',
+    'linkId', 'routerId', 'workerId', 'sourceWorkerId', 'targetWorkerId', 'generation',
+    'method', 'phase', 'outcome', 'businessOutcome', 'businessCode', 'deliveryState',
+    'reason', 'errorType', 'errorCode', 'errorStack', 'elapsedMs', 'queueWaitMs',
+    'runMs', 'queueDepth', 'activeCount', 'lane', 'callerDetached', 'lookupCount',
+    'routeRetries', 'registrationWaits', 'subscriberCount', 'sessionId', 'messageId', 'runtimeId',
+    'terminalId', 'taskId', 'itemId', 'revision', 'updatedSeq', 'processId',
+    'leaseSeconds', 'itemCount',
+})
+
+# Producers only enqueue. The writer calls synchronous notifiers off-loop and
+# marshals coroutine notifiers back to the loop captured when installed.
 RpcLogNotifier = Callable[[str, Any], Awaitable[None] | None]
 DEFAULT_LOG_FORMAT = (
     "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
@@ -27,9 +39,10 @@ def configure_connector_logging(*, debug: bool = False) -> None:
 
 
 class RpcLogSink:
-    def __init__(self, notifier: RpcLogNotifier) -> None:
+    def __init__(self, notifier: RpcLogNotifier, **writer_options: Any) -> None:
         self.notifier = notifier
-        self._tasks: set[asyncio.Task[None]] = set()
+        self._writer_options = writer_options
+        self._writer: QueuedLogWriter | None = None
         self._sink_id: int | None = None
 
     def install(
@@ -40,17 +53,21 @@ class RpcLogSink:
     ) -> RpcLogSink:
         if remove_default_sink:
             logger.remove()
+        self._writer = QueuedLogWriter(self.notifier, **self._writer_options)
         self._sink_id = logger.add(self._write, level=level, format="{message}",
                                    filter=lambda record: record["extra"].get("meshcall_service") != "aa.local.v2.Logs"
                                    and not record["message"].startswith("RPC call aa.local.v2.Logs."))
         return self
 
-    async def close(self) -> None:
+    @property
+    def statistics(self) -> dict[str, int]:
+        return self._writer.statistics if self._writer is not None else {}
+
+    async def close(self) -> bool:
         if self._sink_id is not None:
             logger.remove(self._sink_id)
             self._sink_id = None
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
+        return await self._writer.close() if self._writer is not None else True
 
     def _write(self, message: Any) -> None:
         record = message.record
@@ -62,18 +79,23 @@ class RpcLogSink:
         }
         extra = {key.removeprefix("meshcall_"): value for key, value in record["extra"].items()
                  if key in {"meshcall_service", "meshcall_method", "meshcall_call_id"}}
+        control = record["extra"].get("control")
+        if isinstance(control, dict):
+            # The control logger constructs a bounded, payload-free field map.
+            # Keep it in the existing details string so readers/contracts stay compatible.
+            extra["control"] = {
+                key: value[:1500 if key == "errorStack" else 160] if isinstance(value, str) else value
+                for key, value in control.items() if key in CONTROL_LOG_FIELDS
+                and (isinstance(value, (str, bool, int)) or isinstance(value, float) and math.isfinite(value))
+            }
         if extra:
             payload["details"] = _clip(json.dumps(extra, default=str), 16000)
         exception = record.get("exception")
         if exception is not None:
             payload["exception"] = _clip(exception, 16000)
 
-        result = self.notifier("connector/log", payload)
-        if not inspect.isawaitable(result):
-            return
-        task = asyncio.ensure_future(result)
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        if self._writer is not None:
+            self._writer.write(payload)
 
 
 def install_rpc_log_sink(
@@ -81,8 +103,9 @@ def install_rpc_log_sink(
     *,
     level: str = "INFO",
     remove_default_sink: bool = False,
+    **writer_options: Any,
 ) -> RpcLogSink:
-    return RpcLogSink(notifier).install(
+    return RpcLogSink(notifier, **writer_options).install(
         level=level,
         remove_default_sink=remove_default_sink,
     )

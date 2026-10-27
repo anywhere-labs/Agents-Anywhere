@@ -260,6 +260,7 @@ class BackendRpcClient:
             additional_headers={
                 "Authorization": f"Bearer {access_token}",
                 "X-Device-OS": device_os(),
+                "X-AA-Control-Transport": "meshcall/1.0",
             },
             proxy=None if is_loopback_url(self.config.server_url) else True,
         ) as ws:
@@ -269,7 +270,7 @@ class BackendRpcClient:
                 self._publish_runtime_capabilities(request_session)
             )
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-            mesh_task = asyncio.create_task(self._remote_control.run())
+            mesh_task = asyncio.create_task(self._remote_control.run(request_session))
             recovery_task = asyncio.create_task(self._runtime_sync.reconnect_event_runtimes())
             reader_task = asyncio.create_task(self._read_backend_messages(ws, request_session))
             try:

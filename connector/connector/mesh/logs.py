@@ -66,7 +66,10 @@ class LogHub:
     def notify(self, _method: str, payload: dict[str, Any]) -> None:
         # Connector records are not acknowledged to anyone, so they skip fsync;
         # an acknowledged bridge batch always goes through LogsService.write.
-        self.append([LogRecord.model_validate(payload)], "connector", durable=False)
+        self.notify_batch([payload])
+
+    def notify_batch(self, payloads: list[dict[str, Any]]) -> None:
+        self.append([LogRecord.model_validate(payload) for payload in payloads], "connector", durable=False)
 
     def read(self, source: Source | None = None, beforeSeq: int | None = None,
              afterSeq: int | None = None, limit: int = 200) -> LogPage:

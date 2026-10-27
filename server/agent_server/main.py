@@ -4,6 +4,7 @@ import argparse
 import os
 
 import uvicorn
+from meshcall.transport import DEFAULT_MAX_FRAME_SIZE
 
 from agent_server.core.process_settings import ProcessSettings
 from agent_server.infra.mesh_router import ManagedRouter
@@ -29,6 +30,7 @@ def main(argv: list[str] | None = None) -> None:
             workers=settings.workers,
             reload=args.reload,
             access_log=not args.no_access_log,
+            ws_max_size=DEFAULT_MAX_FRAME_SIZE,
         )
 
 

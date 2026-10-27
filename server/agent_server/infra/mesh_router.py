@@ -15,17 +15,24 @@ from typing import Self
 from loguru import logger
 from meshcall import LocalRouter
 
+from agent_server.infra.connector_control_log import control_log, error_fields
+
 
 class ManagedRouter:
     def __init__(self) -> None:
         self.ready = threading.Event()
         self.stop = threading.Event()
         self.error: BaseException | None = None
+        self._environment: dict[str, str | None] = {}
+        self.router_id = secrets.token_hex(16)
         self.thread = threading.Thread(
             target=self._thread, name="aa-mesh-router", daemon=True
         )
 
     def __enter__(self) -> Self:
+        self._environment = {key: os.environ.get(key) for key in (
+            "AGENT_SERVER_MESH_URL", "AGENT_SERVER_MESH_KEY", "AGENT_SERVER_MESH_ID",
+        )}
         self.thread.start()
         if not self.ready.wait(20):
             self.stop.set()
@@ -37,6 +44,12 @@ class ManagedRouter:
     def __exit__(self, *args: object) -> None:
         self.stop.set()
         self.thread.join(15)
+        if os.environ.get("AGENT_SERVER_MESH_ID") == self.router_id:
+            for key, value in self._environment.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
     def _thread(self) -> None:
         try:
@@ -86,18 +99,18 @@ class ManagedRouter:
                 router.port = urlsplit(url).port or port
                 os.environ["AGENT_SERVER_MESH_URL"] = url
                 os.environ["AGENT_SERVER_MESH_KEY"] = key
+                os.environ["AGENT_SERVER_MESH_ID"] = self.router_id
                 self.ready.set()
-                logger.info("shared MeshCall Router ready")
+                control_log("router.ready", routerId=self.router_id)
                 while not self.stop.is_set():
                     await asyncio.sleep(1)
                     if not router.is_running:
                         try:
                             await router.stop()
                             await router.start()
-                            logger.warning(
-                                "shared MeshCall Router restarted; peers must bootstrap again"
-                            )
-                        except Exception:  # noqa: BLE001 - supervision retries a failed child
-                            logger.exception("shared MeshCall Router restart deferred")
+                            control_log("router.restarted", level="WARNING", routerId=self.router_id,
+                                        reason="router_process_exited")
+                        except Exception as exc:  # noqa: BLE001 - supervision retries a failed child
+                            control_log("router.restart_failed", level="ERROR", routerId=self.router_id, **error_fields(exc))
             finally:
                 await router.stop()

@@ -216,7 +216,7 @@ async def _run_cli_connector(
         from connector.mesh.logs import LogsService, open_log_hub
 
         logs = open_log_hub(runtime_owner.system_home() / ".agents-anywhere" / "logs")
-        sink = install_rpc_log_sink(logs.notify)
+        sink = install_rpc_log_sink(logs.notify, batch_notifier=logs.notify_batch, on_stopped=logs.close)
         hub = LocalHub()
         set_local_hub(hub)
         print(SHELL_LIFETIME_WARNING)
@@ -238,7 +238,6 @@ async def _run_cli_connector(
             finally:
                 set_local_hub(None)
                 await sink.close()
-                logs.close()
     finally:
         lease.release()
 

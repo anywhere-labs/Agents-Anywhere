@@ -8,6 +8,7 @@
 
 ### 升级须知
 
+- 新 Connector 的远程控制使用 MeshCall，请先更新 Server；旧 Connector 仍可连接新 Server。反向代理需允许设备控制连接的 WebSocket 升级；原有多进程和跨 Server 实例调用继续可用，无需开启粘性会话。（[#441](https://github.com/anywhere-labs/Agents-Anywhere/pull/441)）
 - **本机三端一起升级**：Desktop、Connector 和 DSH 插件之间的本机通道改用 MeshCall，2.0.x 与 2.1.0 互不兼容。只升级一端时，2.0.x Connector 会一直停在「等待 DSH」。（[#353](https://github.com/anywhere-labs/Agents-Anywhere/pull/353)）
 - **数据库迁移**：Server 需要执行迁移 `v2_42`–`v2_44`。`/api/v2/admin/dashboard/*` 已删除，2.0.x 的 Web / Desktop 打开看板会得到 404。（[#296](https://github.com/anywhere-labs/Agents-Anywhere/pull/296)、[#299](https://github.com/anywhere-labs/Agents-Anywhere/pull/299)、[#290](https://github.com/anywhere-labs/Agents-Anywhere/pull/290)）
 - **移除 SQLite 和 v1 导入工具**：Server 不再支持 SQLite 后端，也去掉了 v1 导入工具。仍在 v1 的部署要先用 2.0.x 完成导入；部署配置里的 `AGENT_SERVER_DB_BACKEND` 可以删除。（[#299](https://github.com/anywhere-labs/Agents-Anywhere/pull/299)）

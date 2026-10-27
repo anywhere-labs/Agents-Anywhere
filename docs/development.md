@@ -3,9 +3,14 @@
 Server 的控制面通过 MeshCall 调用 Connector，契约见
 [connector-control/1.0](../contracts/connector-control/1.0/README.md)。请使用
 `cd server && uv run python -m agent_server.main` 或仓库启动脚本，由父进程维护
-共享 Router。直接启动 `uvicorn agent_server.app:create_app` 不会启动 Router。
+共享 Router。直接以 ASGI/uvicorn 启动时，应用生命周期为当前 worker 管理 Router；
+多 worker/多实例继续使用 Redis 路由，不要求粘性会话。
 反向代理需允许 `/api/v2/connector/mesh` WebSocket 升级。使用
-`GET /api/v2/health/mesh` 检查 Router 就绪；Server 与 Connector 须配套更新。
+`GET /api/v2/health/mesh` 检查 Router 就绪，`/health/ready` 的实时通道检查也包含
+Router 健康。启用远程 MeshCall 控制时请先更新 Server；旧 Connector 可继续使用原 RPC。
+直接调用 uvicorn 时配置 `--ws-max-size 67108864`，与 Router、SDK、代理的编码后帧
+预算对齐。控制请求在 Redis 中转前检查同一帧预算，超限不分发。旧新传输对照步骤见
+[控制传输迁移说明](connector-control-transport.md)。
 
 ## 分支与环境
 
@@ -102,6 +107,26 @@ yarn workspace agents-anywhere-desktop-renderer protocol:check
 ```
 
 Server 测试应使用隔离测试环境，不要把生产数据库 URL 带入测试进程。Headless 检查通过不代表真实安装、OAuth 回调或远程 Runtime 会话已验证；这些按变更影响单独记录。
+
+### CI 入口与缓存
+
+`.github/workflows/ci.yml` 按路径选择 Connector、Server、DSH 插件、Web 和 Desktop
+检查。Connector 改动同时触发 Server、插件及 Mesh 探针；Server 改动触发 Server、
+插件及 Mesh 探针；契约、工作流和公共 action 的改动触发全部检查。Mesh 作业使用
+专用 Redis 7.4，依次核对只读控制契约、连接代次、跨实例/Router 故障恢复和无 Redis 单进程模式，
+结果 JSON 作为短期 artifact 保存，不依赖业务数据库。
+
+公共 `setup-yarn` action 仅缓存下载归档，按项目、Node、平台及依赖声明区分，
+不缓存 `node_modules` 或 lockfile；缓存命中后仍执行安装，从当前清单解析依赖。
+Python 环境在检查前准备一次，Server 中预装当前 Connector，之后以 `--no-sync`
+运行检查；DSH 集成探针通过 `UV_NO_SYNC=true` 复用已准备的两个环境。
+CI 的一次性 PostgreSQL 使用 tmpfs，减少每个用例清表的磁盘开销；不修改生产数据库
+配置。pytest 保留外层硬超时，并输出慢项，Server 另外打印用例名用于定位等待。
+
+DSH 的 PR/push 检查统一在 CI 中执行。独立 `dsh-bridge.yml` 使用当前
+`dsh-bridge-next/`，仅负责手动验包和既有 `dsh-bridge-v<包版本>` release 发布：
+先完成类型、构建和测试，再用 `npm pack --ignore-scripts` 打包已验证的产物，
+发布作业下载同一份归档，不重复安装、构建或触发 `prepack`。手动运行不会发布。
 
 ## 构建安装包
 
