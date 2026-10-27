@@ -1,0 +1,11 @@
+{
+  "name": "network",
+  "version": "1.0.0",
+  "description": "网络层：API 客户端、领域 API、DTO 与实时 WebSocket 通道",
+  "main": "Index.ets",
+  "author": "",
+  "license": "",
+  "dependencies": {
+    "common": "file:../common"
+  }
+}
