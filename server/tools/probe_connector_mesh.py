@@ -27,17 +27,6 @@ import httpx
 import psutil
 import uvicorn
 import websockets
-from connector.runtime_protocol import RuntimeInvalidRequestError
-from connector.server.mesh_transport import RemoteConnectorControl
-from connector.server.rpc import ConnectorRpcChannel
-from fastapi import FastAPI, HTTPException, Request, WebSocket
-from fastapi.responses import JSONResponse, Response
-from meshcall import MeshCallError
-from meshcall.transport import DEFAULT_MAX_FRAME_SIZE
-from redis.asyncio import Redis
-from redis.exceptions import RedisError
-from websockets.exceptions import WebSocketException
-
 from agent_server.api.connector_mesh import router as mesh_api
 from agent_server.infra.connector_mesh import ConnectorMesh
 from agent_server.infra.connector_mesh_contract import CONTROL_METHODS
@@ -49,6 +38,16 @@ from agent_server.infra.connector_rpc import (
 )
 from agent_server.infra.mesh_router import ManagedRouter
 from agent_server.infra.redis_coordinator import RedisCoordinator
+from connector.runtime_protocol import RuntimeInvalidRequestError
+from connector.server.mesh_transport import RemoteConnectorControl
+from connector.server.rpc import ConnectorRpcChannel
+from fastapi import FastAPI, HTTPException, Request, WebSocket
+from fastapi.responses import JSONResponse, Response
+from meshcall import MeshCallError
+from meshcall.transport import DEFAULT_MAX_FRAME_SIZE
+from redis.asyncio import Redis
+from redis.exceptions import RedisError
+from websockets.exceptions import WebSocketException
 
 
 def create_probe_app() -> FastAPI:
@@ -256,6 +255,8 @@ class ProbeConnector:
         self.started: Counter = Counter()
         self.finished: Counter = Counter()
         self.cancelled: Counter = Counter()
+        self.active: Counter = Counter()
+        self.peak: Counter = Counter()
         self.legacy_calls: Counter = Counter()
         self.release = asyncio.Event()
         self.backend = SimpleNamespace(
@@ -272,6 +273,15 @@ class ProbeConnector:
         marker = params.get("marker", "")
         self.counts[marker] += 1
         self.started[marker] += 1
+        self.active[marker] += 1
+        self.peak[marker] = max(self.peak[marker], self.active[marker])
+        try:
+            return await self._dispatch(method, params)
+        finally:
+            self.active[marker] -= 1
+
+    async def _dispatch(self, method, params):
+        marker = params.get("marker", "")
         if params.get("block"):
             try:
                 await self.release.wait()
@@ -363,6 +373,24 @@ async def probe(args):
     redis = Redis.from_url(args.redis_url, decode_responses=True) if args.redis_url else None
     results = []
     connector_task = None
+    requests = []
+
+    def request(coroutine):
+        task = asyncio.create_task(coroutine)
+        requests.append(task)
+        return task
+
+    async def saturated(marker, limit, admitted, pending):
+        async def check():
+            assert connector.started[marker] <= limit, (marker, dict(connector.started))
+            for task in pending:
+                if task.done():
+                    response = task.result()
+                    raise AssertionError(f"{marker}: queued request ended before release: HTTP {response.status_code}")
+            return connector.started[marker] == limit and len(connector.control.executor._tasks) == admitted
+        # Arrival is scheduler/network dependent. Observe actual admission while
+        # blocked handlers make exceeding the concurrency limit deterministic.
+        await until(check, timeout=10)
 
     def start(port, *, front=False, workers=1):
         log = (output / f"process-{port}.log").open("w")
@@ -431,28 +459,34 @@ async def probe(args):
             assert (await call("session.send_message", {"refuse": True})).json()["result"]["ok"] is False
             results.append({"scenario": "business refusal and exception codes preserved", "passed": True})
 
-            waiting = [asyncio.create_task(call("shell.exec", {"block": True, "marker": "queue"}))
+            waiting = [request(call("shell.exec", {"block": True, "marker": "queue"}))
                        for _ in range(40)]
-            await asyncio.sleep(0.6)
-            assert connector.started["queue"] == 8, connector.started["queue"]
+            await saturated("queue", 8, 40, waiting)
             critical = await call("interaction.respond", {"marker": "critical"}, timeout=2)
             assert critical.status_code == 200, critical.text
             assert connector.started["queue"] == 8
-            critical_waiting = [asyncio.create_task(call("interaction.respond", {"block": True, "marker": "critical-queue"}))
+            critical_waiting = [request(call("interaction.respond", {"block": True, "marker": "critical-queue"}))
                                 for _ in range(3)]
-            async def critical_running():
-                return connector.started["critical-queue"] == 2
-            await until(critical_running)
-            await asyncio.sleep(0.2)
-            assert connector.started["critical-queue"] == 2
+            await saturated("critical-queue", 2, 43, critical_waiting)
             connector.release.set()
             responses = await asyncio.gather(*waiting, *critical_waiting)
             assert all(response.status_code == 200 for response in responses)
-            results.append({"scenario": "40 queued calls, 8 regular slots, independent critical slots", "passed": True})
+            assert connector.peak["queue"] == 8 and connector.peak["critical-queue"] == 2
+            results.append({"scenario": "40 queued calls, 8 regular slots, independent critical slots", "passed": True,
+                            "regularPeak": connector.peak["queue"], "criticalPeak": connector.peak["critical-queue"]})
 
-            response = await call("shell.exec", {"delay": 0.4, "marker": "deadline"}, timeout=0.08)
+            connector.release.clear()
+            pending = request(call("shell.exec", {"block": True, "marker": "deadline"}, timeout=2))
+            async def deadline_dispatched():
+                return connector.started["deadline"] == 1
+            await until(deadline_dispatched, timeout=2)
+            response = await pending
             assert response.status_code == 502, response.text
-            await asyncio.sleep(0.5)
+            assert connector.finished["deadline"] == 0
+            connector.release.set()
+            async def deadline_finished():
+                return connector.finished["deadline"] == 1
+            await until(deadline_finished)
             assert connector.counts["deadline"] == connector.finished["deadline"] == 1
             assert connector.legacy_calls["deadline"] == 0
             results.append({"scenario": "caller deadline: completes once without replay", "passed": True})
@@ -474,7 +508,7 @@ async def probe(args):
                     return info["pid"] if info["worker"] == route["worker_id"] else None
                 owner_pid = await until(owner_process)
                 assert owner_pid in {child.pid for child in psutil.Process(processes[2].pid).children()}
-                pending = asyncio.create_task(call("shell.exec", {"delay": 0.6, "marker": "worker-exit"}, timeout=2))
+                pending = request(call("shell.exec", {"delay": 0.6, "marker": "worker-exit"}, timeout=2))
                 async def worker_dispatched():
                     return connector.started["worker-exit"] == 1
                 await until(worker_dispatched)
@@ -491,7 +525,7 @@ async def probe(args):
                 assert (await call("fs.readText", {"marker": "worker-restored"})).status_code == 200
                 results.append({"scenario": "target API worker killed after dispatch; no replay; lease and link recovery", "passed": True})
 
-            pending = asyncio.create_task(call("shell.exec", {"delay": 0.6, "marker": "lost-response"}, timeout=2))
+            pending = request(call("shell.exec", {"delay": 0.6, "marker": "lost-response"}, timeout=2))
             async def dispatched():
                 return connector.started["lost-response"] == 1
             await until(dispatched)
@@ -520,7 +554,7 @@ async def probe(args):
             results.append({"scenario": "proxy authorization expiry and refresh", "passed": True})
 
             connector.release.clear()
-            queued = [asyncio.create_task(call("shell.exec", {"block": True, "marker": "disconnect"}))
+            queued = [request(call("shell.exec", {"block": True, "marker": "disconnect"}))
                       for _ in range(9)]
             async def running():
                 return connector.started["disconnect"] == 8
@@ -581,6 +615,10 @@ async def probe(args):
             assert connector.legacy_calls["legacy-capability"] == 1
             results.append({"scenario": "legacy Connector without Mesh capability remains routable", "passed": True})
     finally:
+        for task in requests:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*requests, return_exceptions=True)
         if connector_task:
             connector_task.cancel()
             await asyncio.gather(connector_task, return_exceptions=True)

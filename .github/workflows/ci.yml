@@ -306,6 +306,18 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Save failed transport probe logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mesh-transport-failure-logs
+          path: |
+            ${{ runner.temp }}/mesh-distributed/process-*.log
+            ${{ runner.temp }}/mesh-distributed-connector.log
+            ${{ runner.temp }}/mesh-local/process-*.log
+          if-no-files-found: ignore
+          retention-days: 3
+
   web:
     name: Web headless checks
     needs: changes
