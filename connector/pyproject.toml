@@ -41,15 +41,6 @@ dev = [
 url = "https://mirrors.aliyun.com/pypi/simple/"
 default = true
 
-# The mirror lags behind for recently published packages; get ours from PyPI.
-[[tool.uv.index]]
-name = "pypi"
-url = "https://pypi.org/simple/"
-explicit = true
-
-[tool.uv.sources]
-meshcall = { index = "pypi" }
-
 [tool.pytest.ini_options]
 pythonpath = ["."]
 

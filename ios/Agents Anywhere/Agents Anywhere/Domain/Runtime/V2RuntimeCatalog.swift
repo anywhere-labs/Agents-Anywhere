@@ -21,6 +21,15 @@ nonisolated struct V2ModelCatalogItem: Decodable, Identifiable, Hashable {
     let `default`: Bool
     let reasoningItems: [V2ReasoningCatalogItem]
     let metadata: JSONValue
+    /// Provider or relay that routes the model; null for Codex and Claude.
+    let group: V2ModelGroup?
+}
+
+nonisolated struct V2ModelGroup: Decodable, Hashable {
+    let id: String
+    let displayName: String
+    /// Row text under this group's header, without the provider the header shows.
+    let itemDisplayName: String?
 }
 
 nonisolated struct V2ReasoningCatalogItem: Decodable, Identifiable, Hashable {

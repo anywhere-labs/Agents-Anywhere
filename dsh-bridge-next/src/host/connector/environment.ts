@@ -26,6 +26,29 @@ export async function systemLanguages(): Promise<string[]> {
   return languages
 }
 
+const PYPI_SIMPLE = 'https://pypi.org/simple'
+
+/**
+ * The chosen PyPI mirror is uv's first index and the official PyPI its
+ * fallback: uv takes each package from the first index that has it, so a
+ * mirror that filters large wheels (TUNA, USTC and BFSU carry no
+ * openai-codex) still installs. Every index is set explicitly, because the
+ * bundled project and the inherited environment may declare others; an
+ * inherited `UV_INDEX` is dropped when no mirror is chosen. Desktop applies
+ * the same rule (desktop-workbench/electron/connector-supervisor.ts).
+ */
+export function withPackageIndexes(environment: NodeJS.ProcessEnv, pypiIndexUrl: string): NodeJS.ProcessEnv {
+  const mirror = pypiIndexUrl.trim().replace(/\/+$/, '')
+  const { UV_INDEX: _inherited, ...rest } = environment
+  return {
+    ...rest,
+    UV_DEFAULT_INDEX: PYPI_SIMPLE,
+    UV_INDEX_URL: PYPI_SIMPLE,
+    ...(mirror && mirror !== PYPI_SIMPLE ? { UV_INDEX: mirror } : {}),
+    PIP_INDEX_URL: mirror || PYPI_SIMPLE,
+  }
+}
+
 export async function resolveUv(config: ResolvedConfig, settings: ConnectorSettings): Promise<string | null> {
   const command = settings.uvPath || config.uvPath
   if (!settings.uvPath && config.uvPath === 'uv') {

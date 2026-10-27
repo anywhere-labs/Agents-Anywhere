@@ -120,6 +120,7 @@ export class BackendServer {
       if (path === "/stop") return this.state.stopConnector();
       if (path === "/restart") return this.state.restartConnector();
       if (path === "/ownership/recheck") return this.state.recheckOwnership();
+      if (path === "/environment/reset") return this.state.resetConnectorEnvironment();
       if (path === "/ownership/acquire") return this.state.acquireOwnershipOrThrow();
       if (path === "/server") return this.state.setServerConnection(body);
       if (path === "/logs/clear") return this.state.clearLogs();

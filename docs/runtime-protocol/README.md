@@ -124,7 +124,9 @@ Presence is significant: a missing scope means the Runtime has not confirmed
 that value, while a present `null` means the Runtime explicitly selected its
 default. Clients must not turn a missing scope into the first catalog option.
 `metadata.pendingSelectionScopes` lists accepted values that apply on the next
-turn and is cleared when that turn starts.
+turn and is cleared when that turn starts. A Runtime that applies a change to
+the live session at once (Codex does when it holds the thread) publishes it
+without pending scopes.
 
 For model catalogs, a `selectionId` must identify one concrete executable choice. If a model exposes reasoning or effort variants, the model item itself must not have a `selectionId`; each reasoning item carries the concrete `selectionId`. If a model has no reasoning variants, the model item carries the concrete `selectionId`.
 

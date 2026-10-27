@@ -579,6 +579,24 @@ export class OnboardingManager {
     })
   }
 
+  /** Rebuilds the Connector's dependency environment; account, device binding and settings stay. */
+  resetConnectorEnvironment(): Promise<null> {
+    // A stuck installation holds the queue, and clearing it is the reason to be here.
+    if (!this.disposed && this.desktop.status === 'absent') this.controller?.abort()
+    return this.serial(async () => {
+      await this.requireStandalone()
+      await this.cancelFlow()
+      await this.connector.resetEnvironment()
+      if (this.recovery || !this.account || this.account.expiresAt <= Date.now()) {
+        this.setProgress('idle', '依赖环境已清空，下次连接时会重新安装。')
+        return null
+      }
+      await this.connector.prepare()
+      await this.startConnector()
+      return null
+    })
+  }
+
   createMobileLogin(): Promise<MobileLoginSnapshot> {
     return this.serial(async () => {
       await this.requireStandalone()

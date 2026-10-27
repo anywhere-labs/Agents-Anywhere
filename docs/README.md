@@ -5,6 +5,7 @@
 | 目标 | 文档 |
 | --- | --- |
 | 安装客户端、登录、连接设备 | [安装与首次使用](getting-started.md) |
+| 查看每个版本改了什么 | [更新日志](../CHANGELOG.md) |
 | 查看 2.1.0 的接口变化与各端最低版本 | [2.1.0 发布说明](releases/2.1.0.md)；安装包记录见 [2.0.3](releases/2.0.3.md)，历史版本见 [2.0.0](releases/2.0.0.md) |
 | 部署自己的服务 | [Docker](../docker/README.md)、[Server](../server/README.md) |
 | 升级已有部署或从 v1 迁移 | [升级指南](upgrading.md) |

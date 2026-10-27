@@ -14,12 +14,51 @@ struct CatalogOption: Identifiable, Equatable {
 struct ChatModelOption: Identifiable, Equatable {
     let option: CatalogOption
     var reasoning: [CatalogOption] = []
+    var group: V2ModelGroup?
     var id: String { option.id }
+}
+
+/// One block of the model picker; `title` is nil for a headerless section.
+struct ChatModelSection: Identifiable, Equatable {
+    let id: String?
+    let title: String?
+    let models: [ChatModelOption]
+
+    /// Row text in this section. Under a provider header the row drops the provider the
+    /// header already shows; flat lists and the selected-model label keep the catalog name,
+    /// which stays unique on its own.
+    func rowTitle(_ model: ChatModelOption) -> String {
+        guard title != nil else { return model.option.title }
+        return model.group?.itemDisplayName ?? model.option.title
+    }
 }
 
 struct ChatSettingsCatalog: Equatable {
     var models: [ChatModelOption] = []
     var permissions: [CatalogOption] = []
+
+    /// Provider sections in first-appearance order of `group.id`, catalog order within each.
+    /// With fewer than two distinct groups the list stays flat; otherwise ungrouped models
+    /// trail in a final headerless section. Same rule as Web, Desktop and Android.
+    var modelSections: [ChatModelSection] {
+        guard !models.isEmpty else { return [] }
+        var order: [String] = []
+        var titles: [String: String] = [:]
+        var grouped: [String: [ChatModelOption]] = [:]
+        var ungrouped: [ChatModelOption] = []
+        for model in models {
+            guard let group = model.group else { ungrouped.append(model); continue }
+            if grouped[group.id] == nil {
+                order.append(group.id)
+                titles[group.id] = group.displayName
+            }
+            grouped[group.id, default: []].append(model)
+        }
+        guard order.count >= 2 else { return [ChatModelSection(id: nil, title: nil, models: models)] }
+        var sections = order.map { ChatModelSection(id: $0, title: titles[$0], models: grouped[$0] ?? []) }
+        if !ungrouped.isEmpty { sections.append(ChatModelSection(id: nil, title: nil, models: ungrouped)) }
+        return sections
+    }
 
     init() {}
     init(_ value: V2SessionCatalogs) {
@@ -31,7 +70,8 @@ struct ChatSettingsCatalog: Equatable {
                     Self.option(id: item.id, title: item.displayName, detail: item.description,
                         selection: item.selectionId, isDefault: item.default,
                         enabled: item.enabled, reason: item.disabledReason, metadata: item.metadata)
-                })
+                },
+                group: model.group)
         }
         permissions = value.permission.permissions.map { item in
             Self.option(id: item.id, title: item.displayName, detail: item.description,

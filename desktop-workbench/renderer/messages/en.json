@@ -12,7 +12,15 @@
     "preparing": "Preparing the local Connector environment: downloading its dependencies. This can take a few minutes…",
     "quit": "Quit Desktop",
     "recheck": "Check again",
-    "checking": "Checking…"
+    "checking": "Checking…",
+    "provisioningTitle": "Could not prepare the Connector environment",
+    "provisioningDescription": "Downloading Python or the dependencies failed, usually because of the network or the mirror. Try another mirror, or clear the dependency cache to download everything again if an earlier download stopped halfway.",
+    "pypiMirrorHint": "Packages come from here first; anything the mirror lacks comes from the official PyPI.",
+    "resetEnvironment": "Clear cache and retry",
+    "retry": "Retry",
+    "backendStoppedTitle": "The Desktop background service stopped",
+    "backendStoppedDescription": "The local Connector, devices and settings all depend on it. Click Restart to recover. If this keeps happening, report it with the error and logs below.",
+    "restartBackend": "Restart"
   },
   "app": {
     "name": "Agents Anywhere"
@@ -1556,7 +1564,7 @@
       "desktopPythonChosenByUv": "Chosen by uv (downloaded on first run when needed)",
       "desktopUvPypiIndexUrl": "uv PyPI mirror",
       "desktopUvPypiIndexUrlPlaceholder": "Leave empty to use the default PyPI index",
-      "desktopUvPypiIndexUrlDescription": "Used when uv installs or syncs Python packages.",
+      "desktopUvPypiIndexUrlDescription": "Used first when uv installs or syncs Python packages; anything the mirror lacks comes from the official PyPI.",
       "desktopPypiDefault": "Default",
       "desktopPypiTsinghua": "Tsinghua",
       "desktopPypiUstc": "USTC",

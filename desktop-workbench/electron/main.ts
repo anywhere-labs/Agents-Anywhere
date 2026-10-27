@@ -635,6 +635,7 @@ function registerIpcHandlers(): void {
     assertTrustedRenderer(event);
     recheckingOwnership ??= (async () => {
       if (isQuitting || !backend) return ownership;
+      if (!backend.running) return restartDesktopBackend();
       try {
         ownership = await backend.request<OwnershipState>("/ownership/recheck", { method: "POST", body: "{}" });
       } catch { return ownership; }
@@ -879,9 +880,15 @@ function backendInit(): BackendInit {
  */
 async function initializeDesktopServices(): Promise<void> {
   serverStore = new DesktopServerStore(path.join(app.getPath("userData"), "desktop-server.json"), activeDesktopServer());
+  await startDesktopBackend();
+}
+
+/** Starts the backend process; a recheck after it stopped starts a new one. */
+async function startDesktopBackend(): Promise<void> {
   const client = new DesktopBackendClient({
     fetcher: (input, init) => net.fetch(String(input), init),
     onEvent: (event) => {
+      if (backend !== client) return;
       if (event.event === "ownership") {
         publishOwnership(event.data as OwnershipState);
         return;
@@ -890,15 +897,30 @@ async function initializeDesktopServices(): Promise<void> {
     },
     onExit: (message) => {
       appendMainLog({ level: "ERROR", message });
-      // Nothing answers a recheck without the backend, so a launch that is
-      // still checking would otherwise wait forever.
-      if (ownership.status !== "owned") publishOwnership({ status: "error", message });
+      if (backend !== client || isQuitting) return;
+      // Every Connector, device and settings call goes through the backend,
+      // so an owned window would keep failing without saying why. The gate
+      // says it, and its recheck starts a new backend.
+      publishOwnership({ status: "error", message, recovery: { kind: "backendStopped" } });
     },
   });
   backend = client;
   await client.start(backendInit());
   ownership = client.getOwnership();
   applyLoginItemSettings();
+}
+
+/** The new backend probes ownership itself; its events replace this state. */
+async function restartDesktopBackend(): Promise<OwnershipState> {
+  appendMainLog({ level: "WARNING", message: "Restarting the Desktop backend." });
+  try {
+    await startDesktopBackend();
+    publishOwnership(ownership);
+  } catch (error) {
+    appendMainLog({ level: "ERROR", message: `Could not restart the Desktop backend: ${errorMessage(error)}` });
+    publishOwnership({ status: "error", message: errorMessage(error), recovery: { kind: "backendStopped" } });
+  }
+  return ownership;
 }
 
 function publishOwnership(state: OwnershipState): void {
@@ -1000,7 +1022,7 @@ if (hasSingleInstanceLock) {
       directory: path.join(app.getPath("userData"), "updates"),
       currentVersion: app.getVersion(),
       serverVersion: buildInfo.serverVersion,
-      downloadUrl: config.updates.downloadUrl,
+      downloadUrls: config.updates.downloadUrls,
       platform: process.platform,
       healthTimeoutMs: config.healthTimeoutMs,
       fetcher: (input, init) => net.fetch(String(input), init),

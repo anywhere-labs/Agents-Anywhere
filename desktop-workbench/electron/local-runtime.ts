@@ -10,11 +10,25 @@ export type RuntimeOwner = {
 };
 export type LocalState = Record<string, unknown> & { version: 2; connectorIds: string[]; runtime?: RuntimeOwner };
 /**
+ * What the gate can offer besides a recheck. `provisioning`: building the
+ * Connector environment failed, so a mirror switch or a clean download may
+ * help; the current choices let the gate preselect them. `backendStopped`: the
+ * Desktop backend process is gone and a recheck starts it again.
+ */
+export type OwnershipRecovery =
+  | { kind: "provisioning"; pypiIndexUrl: string; pythonInstallMirror: string; downloadsPython: boolean }
+  | { kind: "backendStopped" };
+/**
  * `checking` is the value before the first probe answers; `preparing` means the
  * first Connector environment install is still running. An `error` carries the
  * underlying failure in `message`, which the renderer quotes.
  */
-export type OwnershipState = { status: "owned" | "conflict" | "preparing" | "checking" | "error"; message?: string; owner?: RuntimeOwner };
+export type OwnershipState = {
+  status: "owned" | "conflict" | "preparing" | "checking" | "error";
+  message?: string;
+  owner?: RuntimeOwner;
+  recovery?: OwnershipRecovery;
+};
 export const localRuntimePath = (home = userInfo().homedir): string => path.join(home, ".agents-anywhere", "connector-runtime.json");
 
 function object(value: unknown): value is Record<string, unknown> {

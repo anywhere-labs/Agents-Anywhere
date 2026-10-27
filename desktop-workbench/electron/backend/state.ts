@@ -106,28 +106,39 @@ export class BackendState {
    * Startup work that must not block the window. Ownership failures stay
    * observable through the `ownership` event; the renderer shows the retry
    * action exactly as before.
+   *
+   * It runs after `ready`, where a rejection would only reach Main's log, so
+   * every failure lands where the renderer looks: the ownership gate while it
+   * still blocks the app, the Connector's `lastError` once it does not.
    */
   async initialize(): Promise<void> {
     if (this.initialized) return;
     this.initialized = true;
-    const shellEnvironment = await readShellEnvironment().catch(() => ({} as NodeJS.ProcessEnv));
-    if (this.closed) return;
-    this.connector.setShellEnvironment(shellEnvironment);
-    // The supervisor logs a failed probe and reports it as the `error` state.
-    await this.acquireOwnership().catch(() => undefined);
-    await this.recordInstallation().catch((error) => this.appendLog({
-      level: "ERROR",
-      message: `Could not record Desktop installation: ${errorMessage(error)}`,
-    }));
-    if (this.closed) return;
-    const config = this.connector.loadPrivateConfig();
-    if (config && !this.binding.get()) this.binding.adoptConfig(config);
-    this.connector.bindingChanged();
-    if (this.ownership.status === "owned") {
-      await this.startOwnedConnectorOnLaunch().catch((error) => this.appendLog({
+    try {
+      const shellEnvironment = await readShellEnvironment().catch(() => ({} as NodeJS.ProcessEnv));
+      if (Object.keys(shellEnvironment).length === 0) {
+        // Without it, a GUI launch on macOS may not find codex or claude on PATH.
+        this.appendLog({ level: "WARNING", message: "Could not read the login shell environment; the Connector starts with Desktop's own PATH." });
+      }
+      if (this.closed) return;
+      this.connector.setShellEnvironment(shellEnvironment);
+      // The supervisor logs a failed probe and reports it as the `error` state.
+      await this.acquireOwnership().catch(() => undefined);
+      await this.recordInstallation().catch((error) => this.appendLog({
         level: "ERROR",
-        message: `Could not start the local Connector on launch: ${errorMessage(error)}`,
+        message: `Could not record Desktop installation: ${errorMessage(error)}`,
       }));
+      if (this.closed) return;
+      const config = this.connector.loadPrivateConfig();
+      if (config && !this.binding.get()) this.binding.adoptConfig(config);
+      this.connector.bindingChanged();
+      if (this.ownership.status === "owned") {
+        await this.startOwnedConnectorOnLaunch().catch((error) => this.reportStartupError(
+          `Could not start the local Connector on launch: ${errorMessage(error)}`,
+        ));
+      }
+    } catch (error) {
+      this.reportStartupError(`Desktop backend initialization failed: ${errorMessage(error)}`);
     }
   }
 
@@ -152,6 +163,12 @@ export class BackendState {
   async acquireOwnershipOrThrow(): Promise<OwnershipState> {
     await this.requireOwnership();
     return this.ownership;
+  }
+
+  /** Clears the downloaded environment so the next recheck builds it from scratch. */
+  resetConnectorEnvironment(): Promise<ConnectorState> {
+    if (this.closed) throw new Error("Desktop backend is shutting down.");
+    return this.connector.resetEnvironment();
   }
 
   async recheckOwnership(): Promise<OwnershipState> {
@@ -278,6 +295,19 @@ export class BackendState {
     this.closed = true;
     this.logBatcher.dispose();
     await this.connector.shutdown().catch(() => undefined);
+  }
+
+  private reportStartupError(message: string): void {
+    this.appendLog({ level: "ERROR", message });
+    if (this.closed) return;
+    if (this.ownership.status === "owned") {
+      this.connector.reportError(message);
+      return;
+    }
+    // A conflict already explains itself; anything else would leave the gate on `checking`.
+    if (this.ownership.status === "conflict") return;
+    this.ownership = { status: "error", message };
+    this.emit("ownership", this.ownership);
   }
 
   private async requireOwnership(): Promise<void> {

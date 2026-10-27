@@ -151,6 +151,10 @@ class FakeSdk:
         self.calls: list[tuple[str, Any]] = []
         self.turns = list(_raw_turns())
         self.fail_turns_list = False
+        self.loaded: set[str] = set()
+
+    def thread_loaded(self, thread_id: str) -> bool:
+        return thread_id in self.loaded
 
     async def read_thread(self, thread_id: str, include_turns: bool = True) -> CodexThreadReadResult:
         self.calls.append(("read_thread", (thread_id, include_turns)))
@@ -246,6 +250,14 @@ def test_owner_serves_discovery_snapshots_and_follower_requests() -> None:
             missing = await window_client.request("thread-owner-discovery", {"hostId": "local", "conversationId": THREAD})
             assert missing.error == "no-client-found"
 
+            # A state AA only read or synced is not ownership: the window must be
+            # left to resume the thread itself.
+            await states.update(session_id, THREAD, status="idle", metadata={"source": "codex.thread/read.state"})
+            assert not owner.owns(THREAD)
+            unloaded = await window_client.request("thread-owner-discovery", {"hostId": "local", "conversationId": THREAD})
+            assert unloaded.error == "no-client-found"
+
+            sdk.loaded.add(THREAD)
             await states.update(session_id, THREAD, status="running", metadata={"source": "codex.turn/started"})
             active[session_id] = "turn-2"
             assert owner.owns(THREAD)

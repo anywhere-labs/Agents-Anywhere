@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process'
 import { resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
-import { resolveUv } from '../../src/host/connector/environment.js'
+import { resolveUv, withPackageIndexes } from '../../src/host/connector/environment.js'
 import { DEFAULT_CONNECTOR_SETTINGS } from '../../src/contracts/connector.js'
 
 const config = { stateRoot: '/unused', connectorSourceDir: '/unused', uvPath: 'uv', apiBaseUrl: 'https://example.test' }
@@ -23,4 +23,19 @@ test('npm uv resolves its native optional dependency with install scripts disabl
 test('explicit uv overrides take priority over the npm dependency', async () => {
   assert.equal(await resolveUv(config, { ...DEFAULT_CONNECTOR_SETTINGS, uvPath: process.execPath }), process.execPath)
   assert.equal(await resolveUv({ ...config, uvPath: process.execPath }, DEFAULT_CONNECTOR_SETTINGS), process.execPath)
+})
+
+test('the chosen PyPI mirror comes first and the official PyPI is the fallback', () => {
+  const inherited = { PATH: '/bin', UV_INDEX: 'https://inherited.example/simple', UV_DEFAULT_INDEX: 'https://inherited.example/simple' }
+  const pypi = 'https://pypi.org/simple'
+  // TUNA carries no openai-codex: uv resolves it from the PyPI fallback.
+  assert.deepEqual(withPackageIndexes(inherited, 'https://pypi.tuna.tsinghua.edu.cn/simple/'), {
+    PATH: '/bin', UV_DEFAULT_INDEX: pypi, UV_INDEX_URL: pypi,
+    UV_INDEX: 'https://pypi.tuna.tsinghua.edu.cn/simple', PIP_INDEX_URL: 'https://pypi.tuna.tsinghua.edu.cn/simple',
+  })
+  for (const official of ['', 'https://pypi.org/simple/']) {
+    const environment = withPackageIndexes(inherited, official)
+    assert.equal('UV_INDEX' in environment, false, `${official || 'default'} drops an inherited UV_INDEX`)
+    assert.deepEqual(environment, { PATH: '/bin', UV_DEFAULT_INDEX: pypi, UV_INDEX_URL: pypi, PIP_INDEX_URL: pypi })
+  }
 })

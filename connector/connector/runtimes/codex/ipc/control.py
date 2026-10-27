@@ -41,10 +41,12 @@ from connector.runtimes.codex.domain.pending_messages import (
     PendingClientMessageRegistry,
 )
 from connector.runtimes.codex.domain.selections import (
+    PERMISSION_PROFILE_IDS,
     ModelCatalogReader,
     PermissionCatalogReader,
     model_settings_from_selection,
     permission_settings_from_selection,
+    thread_settings_update,
 )
 from connector.runtimes.codex.ipc.client import (
     CodexIpcClient,
@@ -401,10 +403,15 @@ class CodexIpcTurnController:
     ) -> RuntimeOperationResult:
         """Push model / permission selections to the owner window.
 
-        The owner applies them to its thread settings for the next turn
-        (``thread-follower-update-thread-settings``); the resulting
-        ``latestThreadSettings`` patch flows back through the follower and
-        updates our cached selections.
+        The owner applies them to its thread at once
+        (``thread-follower-update-thread-settings`` → ``thread/settings/update``);
+        the resulting ``latestThreadSettings`` patch flows back through the
+        follower and updates our cached selections.
+
+        Only the changed fields go to the owner, the permission by profile
+        name, as Codex Desktop sends them. Resending the owner's own
+        ``sandboxPolicy`` would clear the thread's ``activePermissionProfile``
+        and the window would show the wrong permission mode.
         """
 
         if self.read_model_catalog is None or self.read_permission_catalog is None:
@@ -436,11 +443,17 @@ class CodexIpcTurnController:
             approvals_reviewer=permission.approvals_reviewer,
             sandbox=permission.sandbox,
         )
+        # A permission change also reaches the running turn's reviewer.
+        turn_id = (
+            self.active_turn_ids.get(session_id) or active_turn_id(thread.state or {})
+            if "permission" in selections
+            else None
+        )
         params = {
             "conversationId": thread.thread_id,
-            "threadSettings": thread_settings,
+            "threadSettings": thread_settings_update(model, permission),
             "condition": None,
-            "activeTurnId": None,
+            "activeTurnId": turn_id,
         }
         response = await self._send(thread, "thread-follower-update-thread-settings", params)
         if response is None or not response.ok:
@@ -470,8 +483,8 @@ class CodexIpcTurnController:
                 metadata={
                     "attachment": "ipc",
                     "source": f"{IPC_SOURCE}.selections/updated",
-                    "selection_effect": "next_turn",
-                    "pendingSelectionScopes": sorted(selections),
+                    "selection_effect": "applied",
+                    "pendingSelectionScopes": [],
                 },
             )
         return RuntimeOperationResult(
@@ -509,6 +522,22 @@ class CodexIpcTurnController:
         """
 
         notice = self.notices.get(notice_id)
+        if notice is not None and notice.status in {
+            "closed",
+            "resolved",
+            "cancelled",
+            "expired",
+        }:
+            return RuntimeOperationResult(
+                ok=True,
+                result={
+                    "resolved": True,
+                    "alreadyProcessed": True,
+                    "noticeId": notice_id,
+                    "sessionId": session_id,
+                    "transport": "ipc",
+                },
+            )
         context: dict[str, Any] = dict(notice.context) if notice is not None else {}
         data = dict(input_data or {})
         request_id = data.get("requestId")
@@ -516,6 +545,8 @@ class CodexIpcTurnController:
             source = context.get("approvalSource")
             if isinstance(source, Mapping):
                 request_id = source.get("requestId")
+        if not isinstance(request_id, str | int):
+            request_id = context.get("requestId")
         if not isinstance(request_id, str | int):
             raise TypeError("requestId is required to respond to a Codex interaction")
         if is_input_request_context(context):
@@ -718,13 +749,6 @@ class CodexIpcTurnController:
             )
         if updated is not None:
             await self.host.notice_upsert(updated)
-
-
-PERMISSION_PROFILE_IDS = {
-    "read-only": ":read-only",
-    "workspace-write": ":workspace",
-    "danger-full-access": ":danger-full-access",
-}
 
 
 def permission_block(

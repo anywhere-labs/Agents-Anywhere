@@ -16,6 +16,8 @@ from connector.runtimes.codex.domain.approvals import (
     approval_response_from_interaction,
 )
 from connector.runtimes.codex.domain.input_requests import (
+    async_input_call_from_context,
+    is_async_input_request_context,
     is_cancelled_input_action,
     is_input_request_context,
     user_input_response_from_interaction,
@@ -34,6 +36,7 @@ class CodexInteractionController:
     active_turn_ids: dict[str, str]
     notices: CodexNoticeRegistry
     ensure_started: EnsureStarted
+    turn_actions: Any | None = None
 
     async def respond_interaction(
         self,
@@ -45,14 +48,39 @@ class CodexInteractionController:
         if self.client is None:
             raise RuntimeUnsupportedError("respond_interaction")
         data = dict(input_data or {})
+        notice = self.notices.get(notice_id)
+        if notice is not None and notice.status in {
+            "closed",
+            "resolved",
+            "cancelled",
+            "expired",
+        }:
+            return RuntimeOperationResult(
+                ok=True,
+                result={
+                    "resolved": True,
+                    "alreadyProcessed": True,
+                    "noticeId": notice_id,
+                    "sessionId": session_id,
+                },
+            )
+        notice_context = self.notice_context_for_response(notice_id)
         request_id = data.get("requestId")
         if not isinstance(request_id, str | int):
             approval_source = data.get("approvalSource")
             if isinstance(approval_source, dict):
                 request_id = approval_source.get("requestId")
         if not isinstance(request_id, str | int):
+            request_id = notice_context.get("requestId")
+        if not isinstance(request_id, str | int):
             raise TypeError("requestId is required to respond to a Codex interaction")
-        notice_context = self.notice_context_for_response(notice_id)
+        if is_async_input_request_context(notice_context):
+            return await self._respond_async_input(
+                session_id=session_id,
+                notice_id=notice_id,
+                action_id=action_id,
+                context={**notice_context, "answers": data.get("answers")},
+            )
         response_context = interaction_response_context(notice_context, data)
         response = codex_interaction_response(action_id, response_context)
         logger.info(
@@ -133,6 +161,108 @@ class CodexInteractionController:
                 "sessionId": session_id,
                 "decision": response.decision,
                 "response": response.payload,
+            },
+        )
+
+    async def _respond_async_input(
+        self,
+        *,
+        session_id: str,
+        notice_id: str,
+        action_id: str,
+        context: Mapping[str, Any],
+    ) -> RuntimeOperationResult:
+        call = async_input_call_from_context(context)
+        if is_cancelled_input_action(action_id):
+            await self._notice_resolved(
+                notice_id=notice_id,
+                action_id=action_id,
+                decision="cancelled",
+                response_payload={},
+            )
+            return RuntimeOperationResult(
+                ok=True,
+                result={
+                    "resolved": True,
+                    "noticeId": notice_id,
+                    "sessionId": session_id,
+                    "decision": "cancelled",
+                },
+            )
+        if self.turn_actions is None:
+            raise RuntimeUnsupportedError("respond_async_input")
+        thread_id = context.get("threadId")
+        if not isinstance(thread_id, str) or not thread_id:
+            cached = self.session_states.get(session_id)
+            thread_id = cached.external_session_id if cached is not None else None
+        if not isinstance(thread_id, str) or not thread_id:
+            raise TypeError("threadId is required to answer request_user_input_async")
+        envelope = call.reply_envelope({"answers": context.get("answers")})
+        await self._notice_responding(
+            notice_id=notice_id,
+            action_id=action_id,
+            decision="answered",
+        )
+        try:
+            if self.active_turn_ids.get(session_id) is not None:
+                result = await self.turn_actions.steer_turn(
+                    session_id=session_id,
+                    external_session_id=thread_id,
+                    content=envelope,
+                    client_message_id=call.client_message_id,
+                )
+                if not result.ok and result.code in {
+                    "codex_no_active_turn",
+                    "turn_not_found",
+                }:
+                    result = await self.turn_actions.start_turn(
+                        session_id=session_id,
+                        external_session_id=thread_id,
+                        content=envelope,
+                        client_message_id=call.client_message_id,
+                    )
+            else:
+                result = await self.turn_actions.start_turn(
+                    session_id=session_id,
+                    external_session_id=thread_id,
+                    content=envelope,
+                    client_message_id=call.client_message_id,
+                )
+            if not result.ok:
+                await self._notice_response_failed(
+                    session_id=session_id,
+                    notice_id=notice_id,
+                    action_id=action_id,
+                    decision="answered",
+                    exc=RuntimeError(
+                        result.message or result.code or "Codex rejected answer"
+                    ),
+                )
+                return result
+        except Exception as exc:
+            await self._notice_response_failed(
+                session_id=session_id,
+                notice_id=notice_id,
+                action_id=action_id,
+                decision="answered",
+                exc=exc,
+            )
+            raise
+        await self._notice_resolved(
+            notice_id=notice_id,
+            action_id=action_id,
+            decision="answered",
+            response_payload={"message": envelope},
+        )
+        return RuntimeOperationResult(
+            ok=True,
+            result={
+                "resolved": True,
+                "noticeId": notice_id,
+                "sessionId": session_id,
+                "decision": "answered",
+                "clientMessageId": call.client_message_id,
+                "response": {"message": envelope},
             },
         )
 
@@ -223,10 +353,14 @@ class CodexInteractionController:
             await self.host.notice_upsert(notice)
         cached_state = self.session_states.get(session_id)
         if cached_state is not None:
+            notice = self.notices.get(notice_id)
+            async_input = notice is not None and is_async_input_request_context(
+                notice.context
+            )
             await self.session_states.update(
                 session_id=session_id,
                 external_session_id=cached_state.external_session_id,
-                status="waiting_approval",
+                status=cached_state.status if async_input else "waiting_approval",
                 metadata={
                     "source": "codex.approval/respond_failed",
                     "notice_id": notice_id,
@@ -244,7 +378,9 @@ def codex_interaction_response(
         return CodexApprovalResponse(
             payload=user_input_response_from_interaction(action_or_status, context),
             decision=(
-                "cancelled" if is_cancelled_input_action(action_or_status) else "answered"
+                "cancelled"
+                if is_cancelled_input_action(action_or_status)
+                else "answered"
             ),
         )
     return approval_response_from_interaction(action_or_status, context)

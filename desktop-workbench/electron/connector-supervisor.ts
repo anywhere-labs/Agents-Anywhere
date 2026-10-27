@@ -1,8 +1,8 @@
 import { localRuntimePath } from "./local-runtime";
-import type { OwnershipState, RuntimeOwner } from "./local-runtime";
+import type { OwnershipRecovery, OwnershipState, RuntimeOwner } from "./local-runtime";
 import { ConnectorRpcError, CONNECTOR_CONFLICT_MESSAGE } from "./connector-rpc-error";
 import { materializeConnectorProject } from "./connector-project";
-import { bundledPythonExecutable, environmentHome, environmentUsesPython } from "./connector-python";
+import { bundledPythonExecutable, environmentHasConnector, environmentHome, environmentUsesPython } from "./connector-python";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { Mesh as MeshConnection, Router as RouterEndpoint } from "meshcall" with { "resolution-mode": "import" };
@@ -42,6 +42,13 @@ const FIRST_RUN_TIMEOUT_MS = 15 * 60_000;
 const CONTROL_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_RPC_TIMEOUT_MS = 30_000;
 const PYTHON_BUILDS_GITHUB = "https://github.com/astral-sh/python-build-standalone/releases/download";
+const PYPI_SIMPLE = "https://pypi.org/simple";
+/**
+ * uv's own failure lines (`error: Failed to fetch …`, `× No solution found …`,
+ * `Caused by: …`). The Connector logs through loguru, so a match means uv
+ * failed before the Connector ran: a download, resolution or install.
+ */
+const UV_FAILURE_LINE = /^(?:error: |× |\s*Caused by: )/m;
 const UV_HTTP_TIMEOUT_SECONDS = "60";
 /** `exit` can arrive before stderr delivers the lines that explain it. */
 const OUTPUT_DRAIN_MS = 250;
@@ -117,6 +124,8 @@ export class ConnectorSupervisor {
   private crashCount = 0;
   private restartTimer: NodeJS.Timeout | null = null;
   private suppressProcessRestart = false;
+  /** Processes this supervisor is stopping on purpose; their exit is not an error. */
+  private readonly terminating = new WeakSet<ChildProcessWithoutNullStreams>();
   private shellEnvironment: NodeJS.ProcessEnv;
   private state: ConnectorState;
 
@@ -252,20 +261,65 @@ export class ConnectorSupervisor {
   }
 
   async acquireOwnership(): Promise<void> {
+    let provisioning = false;
     try {
       const timeoutMs = this.announceFirstRun();
+      provisioning = timeoutMs === FIRST_RUN_TIMEOUT_MS;
       await this.request("connector.acquireOwnership", undefined, { requiresConfig: false, timeoutMs });
       this.options.onOwnership?.({ status: "owned" });
     } catch (error) {
       const conflict = error instanceof ConnectorRpcError && error.ownershipConflict;
+      const message = errorMessage(error);
       // Every caller gets here, so rechecks and later acquisitions are logged too.
       this.log({
         level: conflict ? "WARNING" : "ERROR",
-        message: `Could not acquire Connector ownership: ${errorMessage(error)}`,
+        message: `Could not acquire Connector ownership: ${message}`,
       });
-      if (!conflict) this.options.onOwnership?.({ status: "error", message: errorMessage(error) });
+      if (!conflict) {
+        const recovery = this.provisioningRecovery(provisioning, message);
+        this.options.onOwnership?.({ status: "error", message, ...(recovery ? { recovery } : {}) });
+      }
       throw error;
     }
+  }
+
+  /**
+   * Deletes what `uv run` downloaded and built for this Desktop, so the next
+   * launch fetches everything again: the project environment and, when
+   * packaged, the uv cache and the project copy holding uv.lock. Development
+   * keeps the developer's own uv cache.
+   */
+  async resetEnvironment(): Promise<ConnectorState> {
+    if (this.resolveDirectConnectorCli()) throw new Error("This Connector runs without a Python environment, so there is nothing to clear.");
+    this.keepRuntimeRunning = false;
+    this.clearRestartTimer();
+    await this.terminateRpcProcess(true);
+    const environment = this.projectEnvironmentPath();
+    const targets: string[] = [];
+    // A configured UV_PROJECT_ENVIRONMENT can point anywhere; only remove a virtualenv.
+    if (fs.existsSync(path.join(environment, "pyvenv.cfg"))) targets.push(environment);
+    if (this.options.packaged) {
+      targets.push(path.join(this.options.dataPath, "uv-cache"), path.join(this.options.dataPath, "connector-source"));
+      this.projectDir = null;
+    }
+    for (const target of targets) {
+      // Windows releases a terminated interpreter's files a moment after it exits.
+      fs.rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    }
+    this.log({
+      level: "WARNING",
+      message: targets.length > 0
+        ? `Cleared the Connector environment; the next launch downloads it again: ${targets.join(", ")}`
+        : "There was no Connector environment to clear.",
+    });
+    this.refreshLocalState();
+    return this.emitState();
+  }
+
+  /** A failure outside any Connector request, such as the launch auto-start, still belongs in `lastError`. */
+  reportError(message: string): ConnectorState {
+    this.state.lastError = message;
+    return this.emitState();
   }
 
   getPublicConfig(): ConnectorPublicConfig {
@@ -653,12 +707,20 @@ export class ConnectorSupervisor {
     if (channel) this.options.onLogSourceChanged?.();
     void mesh?.close().catch(() => undefined);
     void channel?.close?.().catch(() => undefined);
-    if (ready) {
-      const drained = new Promise<void>(resolve => setTimeout(resolve, OUTPUT_DRAIN_MS));
-      void Promise.race([output?.closed ?? Promise.resolve(), drained]).then(() => {
-        ready.reject(new Error(withRecentOutput(message, output?.lines)));
-      });
-    }
+    const expected = this.shuttingDown || this.terminating.has(child);
+    const drained = Promise.race([
+      output?.closed ?? Promise.resolve(),
+      new Promise<void>(resolve => setTimeout(resolve, OUTPUT_DRAIN_MS)),
+    ]);
+    void drained.then(() => {
+      const reason = withRecentOutput(message, output?.lines);
+      ready?.reject(new Error(reason));
+      // The Connector reports its own errors while it runs; an exit nobody
+      // asked for leaves none, so record it until a new process reports.
+      if (expected || this.rpcProcess !== null) return;
+      this.state.lastError = reason;
+      this.emitState();
+    });
     this.mergeRuntimeState({ running: false, status: "stopped" });
     this.emitState();
     if (
@@ -707,6 +769,7 @@ export class ConnectorSupervisor {
     const child = this.rpcProcess;
     if (!child) return;
     const groupId = this.processGroupId ?? child.pid ?? null;
+    this.terminating.add(child);
     const previousSuppression = this.suppressProcessRestart;
     this.suppressProcessRestart = this.suppressProcessRestart || suppressRestart;
     const exited = new Promise<void>((resolve) => {
@@ -820,20 +883,40 @@ export class ConnectorSupervisor {
 
   /**
    * A prebuilt connector binary runs directly and never syncs an environment.
-   * Otherwise `uv run` builds the environment when there is none, and rebuilds
-   * it when another interpreter created it, e.g. the Python uv downloaded
-   * before this Desktop bundled one.
+   * Otherwise `uv run` builds the environment when there is none or a failed
+   * sync left it without the Connector, and rebuilds it when another
+   * interpreter created it, e.g. the Python uv downloaded before this Desktop
+   * bundled one.
    */
   private needsFirstRunProvisioning(): boolean {
     if (this.resolveDirectConnectorCli()) return false;
-    const home = environmentHome(this.projectEnvironmentPath());
-    if (home === null) return true;
+    const environment = this.projectEnvironmentPath();
+    const home = environmentHome(environment);
+    if (home === null || !environmentHasConnector(environment)) return true;
     const python = this.resolvePythonPath();
     return Boolean(python) && !environmentUsesPython(home, python);
   }
 
   private provisioningTimeoutMs(): number {
     return this.needsFirstRunProvisioning() ? FIRST_RUN_TIMEOUT_MS : DEFAULT_RPC_TIMEOUT_MS;
+  }
+
+  /**
+   * A failure while uv built the environment, or one uv itself reported (a
+   * changed dependency set syncs on a normal launch too), is usually the
+   * network or the mirror. The gate then offers another mirror and a clean
+   * download instead of only a recheck.
+   */
+  private provisioningRecovery(provisioning: boolean, message: string): OwnershipRecovery | null {
+    if (!this.state.resolvedUvPath || this.resolveDirectConnectorCli()) return null;
+    if (!provisioning && !UV_FAILURE_LINE.test(message)) return null;
+    const settings = this.options.settings.get();
+    return {
+      kind: "provisioning",
+      pypiIndexUrl: settings.uvPypiIndexUrl,
+      pythonInstallMirror: settings.uvPythonInstallMirror,
+      downloadsPython: !this.resolvePythonPath(),
+    };
   }
 
   /**
@@ -917,13 +1000,18 @@ export class ConnectorSupervisor {
       environment.UV_PROJECT_ENVIRONMENT = this.projectEnvironmentPath();
       environment.UV_CACHE_DIR = path.join(this.options.dataPath, "uv-cache");
     }
-    // Also make the official-index choice explicit: the bundled project or
-    // inherited shell environment may declare a different default index.
+    // The chosen mirror is the first index and PyPI the fallback: uv takes
+    // each package from the first index that has it, so a mirror that
+    // filters large wheels (TUNA, USTC and BFSU carry no openai-codex) still
+    // installs. Every index is explicit because the bundled project or the
+    // inherited shell environment may declare others.
     const settings = this.options.settings.get();
-    const pypiIndexUrl = settings.uvPypiIndexUrl || "https://pypi.org/simple";
-    environment.UV_DEFAULT_INDEX = pypiIndexUrl;
-    environment.UV_INDEX_URL = pypiIndexUrl;
-    environment.PIP_INDEX_URL = pypiIndexUrl;
+    const mirror = settings.uvPypiIndexUrl.replace(/\/+$/, "");
+    environment.UV_DEFAULT_INDEX = PYPI_SIMPLE;
+    environment.UV_INDEX_URL = PYPI_SIMPLE;
+    if (mirror && mirror !== PYPI_SIMPLE) environment.UV_INDEX = mirror;
+    else delete environment.UV_INDEX;
+    environment.PIP_INDEX_URL = mirror || PYPI_SIMPLE;
     // Without a bundled or saved interpreter uv downloads CPython itself; the default is GitHub.
     environment.UV_PYTHON_INSTALL_MIRROR = settings.uvPythonInstallMirror || PYTHON_BUILDS_GITHUB;
     environment.UV_HTTP_TIMEOUT ||= UV_HTTP_TIMEOUT_SECONDS;

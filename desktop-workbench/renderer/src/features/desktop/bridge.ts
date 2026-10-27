@@ -3,7 +3,15 @@
  * first Connector environment install is still running. An `error` carries the
  * underlying failure in `message`.
  */
-export type LocalOwnershipState = { status: "owned" | "conflict" | "preparing" | "checking" | "error"; message?: string }
+/** Mirrors `OwnershipRecovery` in electron/local-runtime.ts. */
+export type LocalOwnershipRecovery =
+  | { kind: "provisioning"; pypiIndexUrl: string; pythonInstallMirror: string; downloadsPython: boolean }
+  | { kind: "backendStopped" }
+export type LocalOwnershipState = {
+  status: "owned" | "conflict" | "preparing" | "checking" | "error"
+  message?: string
+  recovery?: LocalOwnershipRecovery
+}
 import type { DesktopUpdateState } from "../../../../shared/desktop-updates"
 export type { DesktopUpdateState } from "../../../../shared/desktop-updates"
 
@@ -144,6 +152,7 @@ export type DesktopWorkbenchBridge = {
   ownership?: {
     getState: () => Promise<LocalOwnershipState>
     recheck: () => Promise<LocalOwnershipState>
+    resetEnvironment?: () => Promise<void>
     quit: () => Promise<void>
     onState: (listener: (state: LocalOwnershipState) => void) => () => void
   }

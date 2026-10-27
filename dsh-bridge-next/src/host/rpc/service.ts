@@ -164,6 +164,8 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
   }
   @Remote('resetConnector')
   resetConnector(forceLocal: boolean): Promise<null> { return this.manager.resetConnector(forceLocal) }
+  @Remote('resetConnectorEnvironment')
+  resetConnectorEnvironment(): Promise<null> { return this.manager.resetConnectorEnvironment() }
   @Remote('createMobileLogin')
   createMobileLogin(): Promise<MobileLoginSnapshot> { return this.manager.createMobileLogin() }
   @Remote('inspectMobileLogin')

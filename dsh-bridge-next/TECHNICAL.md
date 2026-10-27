@@ -35,7 +35,7 @@ DSH 左侧边栏「设置」上方 → 远程控制 → 云端登录或连接自
 - **登录和连接**：登录前可选云端或自建服务器；登录后显示头像、账号和 Connector 运行状态，提供打开 Web、手机连接和退出登录。手机连接按钮下方直接展开二维码，不显示安装链接；扫码后可确认或拒绝，过期可刷新，完成后显示手机已连接。关闭或切换页签停止前端轮询，退出登录和 Host 卸载清除内存中的二维码流程。
 - **设置**：查看设备 ID 与服务器，启动、停止或重启 Connector；设置 uv 绝对路径（留空自动查找）、PyPI 镜像和同步间隔。插件启动时自动恢复已授权的本机连接，连接时始终同步已有会话，心跳与重连间隔分别固定为 20 秒和 3 秒。设置保存后重启正在运行的 Connector；停止状态下保存不会启动进程。
 - **桥接日志**：只读取 Anywhere Bridge 的运行日志，显示最近 200 条，每 2 秒刷新，可暂停或手动刷新。即使 CLI 正占用 Connector、尚未登录、安装检测失败或 AA Desktop 已安装，也可以查看。记录连接、RPC、会话读取、快照、同步批次和 ACK；错误带会话标识、阶段、错误码和调用栈位置，不记录请求正文、原生事件内容、令牌或原始异常消息。
-- **维护**：并排提供打开数据目录、打开日志目录和恢复出厂设置三个按钮，不展示数据与日志路径；headless 环境禁用打开目录。日志仅记录经过筛选的生命周期事件，滚动保留约两份 512 KiB 文件，不记录原始进程输出和凭据。恢复出厂设置先撤销当前设备凭据，再清理本插件的账号、绑定、同步缓存、日志及设置；服务端撤销失败时先保留本地状态，用户可另行确认仅清理本地。DSH 会话、运行时端点、共享 `connector-runtime.json` 和下载好的 Python 环境保留。
+- **维护**：并排提供打开数据目录、打开日志目录、重装依赖环境和恢复出厂设置四个按钮，不展示数据与日志路径；headless 环境禁用打开目录。日志仅记录经过筛选的生命周期事件，滚动保留约两份 512 KiB 文件，不记录原始进程输出和凭据。恢复出厂设置先撤销当前设备凭据，再清理本插件的账号、绑定、同步缓存、日志及设置；服务端撤销失败时先保留本地状态，用户可另行确认仅清理本地。DSH 会话、运行时端点、共享 `connector-runtime.json` 和下载好的 Python 环境保留。重装依赖环境用于依赖下载中断或环境损坏：确认后中断正在进行的安装、停止 Connector，删除 `connector-venv/` 和 `connector-source/`（项目副本及其 `uv.lock`），再执行 `uv cache prune` 清掉未完成的下载；uv 全局缓存中已完成的下载、账号、设备绑定、同步缓存和设置都保留。已登录且没有待恢复的设备时立即重新启动 Connector 并重新安装，否则在下次连接时安装。连接出错时，设置页会提示切换 PyPI 镜像或重装依赖环境。
 
 Bridge 与 Connector 运行日志统一由 Connector 保存到操作系统用户目录的 `~/.agents-anywhere/logs/`，使用分段 JSONL 文件；Connector 决定轮转、保留和持久确认。插件通过 `aa.local.v2.Logs.write/read/tail` 上报及读取，不再写 `dsh-runtime.jsonl` 或向 Cordis 重复输出运行日志。业务 logger 在入口注入；RPC 请求使用 MeshCall 的 dependency/meta 注入 namespace 和带调用上下文的 logger。断线时缓存最多 512 条未确认日志，重连带稳定事件 ID 重发；插件离线退出会丢失未确认部分，溢出会记录丢弃计数。安装引导日志仍本地保存到 `<stateRoot>/logs/onboarding.jsonl`。详细契约见 [日志服务](../contracts/dsh-bridge/2.0/logs.md)。
 
@@ -162,7 +162,7 @@ Host 配置位于 DSH 的插件配置行。常用项如下：
 | `connectorSourceDir` | 包内 `lib/bundled-connector`；覆盖时必须为绝对路径 |
 | `uvPath` | 优先使用显式配置或 `UV_PATH`，否则使用 npm 依赖 `@dataiku/uv` 中的平台二进制；依赖不可用时尝试系统 PATH |
 
-设置页将 uv 路径、Python 下载镜像、PyPI 镜像和同步间隔原子写入 `connector-settings.json`；下次启动时恢复，uv 路径覆盖配置行中的 `uvPath`。首次初始化且没有保存过镜像选择时，Host 根据系统首选语言自动设置镜像：包含中文时直接使用阿里云，否则使用官方 PyPI，不弹出询问。macOS 读取系统语言列表，其他平台使用 Intl / POSIX 语言环境，headless 启动同样生效。选择在创建 venv 前持久化，并通过 `UV_DEFAULT_INDEX`、`UV_INDEX_URL` 和 `PIP_INDEX_URL` 传给实际子进程；已保存的镜像（包括手动选择默认 PyPI）保持不变。恢复出厂设置会重新应用系统默认镜像。
+设置页将 uv 路径、Python 下载镜像、PyPI 镜像和同步间隔原子写入 `connector-settings.json`；下次启动时恢复，uv 路径覆盖配置行中的 `uvPath`。首次初始化且没有保存过镜像选择时，Host 根据系统首选语言自动设置镜像：包含中文时直接使用阿里云，否则使用官方 PyPI，不弹出询问。macOS 读取系统语言列表，其他平台使用 Intl / POSIX 语言环境，headless 启动同样生效。选择在创建 venv 前持久化后再传给实际子进程：所选镜像是 uv 的首选源（`UV_INDEX`），官方 PyPI 是后备源（`UV_DEFAULT_INDEX`、`UV_INDEX_URL`）；`PIP_INDEX_URL` 跟随所选镜像，选择官方 PyPI 时清除继承来的 `UV_INDEX`。uv 会从第一个有该包的源下载，所以镜像上没有的包会改从 PyPI 下载，例如清华、中科大、北外镜像都没有 `openai-codex`。镜像只有旧版本时不会回退到 PyPI。规则与 Desktop 相同；已保存的镜像（包括手动选择默认 PyPI）保持不变。恢复出厂设置会重新应用系统默认镜像。
 
 Python 下载镜像独立于 PyPI 镜像，提供官方源与 npmmirror。首次初始化缺少该设置时，中文系统默认使用 npmmirror，其他语言使用官方源；已有的手动选择保持不变，恢复出厂设置重新应用语言默认值。选择通过 `UV_PYTHON_INSTALL_MIRROR` 传给 uv，仅影响解释器下载。`@dataiku/uv` 的平台可选依赖由包管理器安装，Host 直接执行其中的原生二进制，不要求 postinstall 脚本运行。
 

@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from 'node:child_process'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
@@ -14,7 +14,7 @@ import { LogsServiceClient } from '../generated/connector-logs.js'
 import { RuntimeDiagnostics, RuntimeRpcLogger } from '../dsh-runtime/diagnostics.js'
 import { RpcLogOutput } from '../dsh-runtime/log-output.js'
 import { readRuntimeLogPage } from '../dsh-runtime/log-reader.js'
-import { resolveUv } from './environment.js'
+import { resolveUv, withPackageIndexes } from './environment.js'
 import { ConnectorLogs } from './logs.js'
 import { materializeConnectorProject } from './project.js'
 
@@ -82,6 +82,8 @@ export interface ConnectorProcess {
   prepare(settings?: ConnectorSettings): Promise<void>
   start(binding: BoundDevice, apiBaseUrl: string, signal: AbortSignal): Promise<void>
   stop(): Promise<void>
+  /** Stops the Connector and drops its dependency environment, so the next start reinstalls it. */
+  resetEnvironment(): Promise<void>
   assertHealthy(): Promise<void>
   hasRuntimeLogs?(): boolean
   resolveLogsPath?(): Promise<string | null>
@@ -256,7 +258,6 @@ export class SourceConnector implements ConnectorProcess {
     this.diagnostics.log('info', 'connector.starting', { connectorId: binding.connectorId, apiBaseUrl })
     const executable = await resolveUv(this.config, settings)
     const command = executable ?? (settings.uvPath || this.config.uvPath)
-    const pypiIndexUrl = settings.uvPypiIndexUrl || 'https://pypi.org/simple'
     signal.throwIfAborted()
     // 不依赖 prepare() 的调用顺序：start() 自己也要保证项目副本就位。
     const projectDir = this.projectDir ??= await materializeConnectorProject(this.config)
@@ -268,7 +269,7 @@ export class SourceConnector implements ConnectorProcess {
       cwd: projectDir,
       windowsHide: true,
       detached: process.platform !== 'win32',
-      env: {
+      env: withPackageIndexes({
         ...process.env,
         ...(typeof process.env['NO_PROXY'] === 'string' ? { NO_PROXY: process.env['NO_PROXY'].replaceAll('[::1]', '::1') } : {}),
         ...(typeof process.env['no_proxy'] === 'string' ? { no_proxy: process.env['no_proxy'].replaceAll('[::1]', '::1') } : {}),
@@ -280,10 +281,7 @@ export class SourceConnector implements ConnectorProcess {
         PYTHONUNBUFFERED: '1',
         UV_HTTP_TIMEOUT: process.env['UV_HTTP_TIMEOUT'] || UV_READ_TIMEOUT_SECONDS,
         UV_PYTHON_INSTALL_MIRROR: settings.uvPythonInstallMirror || 'https://github.com/astral-sh/python-build-standalone/releases/download',
-        UV_DEFAULT_INDEX: pypiIndexUrl,
-        UV_INDEX_URL: pypiIndexUrl,
-        PIP_INDEX_URL: pypiIndexUrl,
-      },
+      }, settings.uvPypiIndexUrl),
     })
     this.child = child
     child.stdout.setEncoding('utf8')
@@ -340,6 +338,24 @@ export class SourceConnector implements ConnectorProcess {
     if (this.stopping) return this.stopping
     this.stopping = this.stopChild().finally(async () => { await this.logs.flush(); this.failure = null; this.stopping = null })
     return this.stopping
+  }
+
+  /**
+   * A half-downloaded or broken install survives every restart, because uv reuses whatever the
+   * environment and the project copy already hold. Only the plugin-owned pieces go: the venv and
+   * the materialized project with its uv.lock. The uv cache is the user's and shared with other
+   * projects, so it is only pruned of the dangling entries an interrupted download left behind.
+   */
+  async resetEnvironment(): Promise<void> {
+    await this.stop()
+    this.projectDir = null
+    for (const name of ['connector-venv', 'connector-source']) {
+      // Windows can hold a file briefly after the child exits.
+      await rm(join(this.config.stateRoot, name), { recursive: true, force: true, maxRetries: 5 })
+    }
+    const executable = await resolveUv(this.config, this.settings()).catch(() => null)
+    if (executable) { try { await this.prune(executable) } catch { /* Housekeeping only. */ } }
+    this.diagnostics.log('info', 'connector.environment_reset', {})
   }
 
   private async stopChild(): Promise<void> {

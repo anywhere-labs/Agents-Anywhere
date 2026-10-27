@@ -56,6 +56,8 @@ class FakeConnector implements ConnectorProcess {
   startError: Error | null = null
   async start() { if (this.startError) throw this.startError; this.running = true; this.starts++ }
   async stop() { this.running = false; this.stops++ }
+  environmentResets = 0
+  async resetEnvironment() { await this.stop(); this.environmentResets++ }
   async assertHealthy() { if (!this.running) throw new Error('not running') }
   async resolveLogsPath() { return this.logsPath }
 }
@@ -255,6 +257,38 @@ test('reset preserves credentials on failed revoke and explicit local reset remo
   } finally { await h.close() }
 })
 
+test('reinstalling dependencies keeps the account and device, then starts the Connector again', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    const account = await readJson(join(h.root, 'account.json'))
+    await h.manager.resetConnectorEnvironment()
+    assert.equal(h.connector.environmentResets, 1)
+    assert.equal(h.connector.starts, 2)
+    assert.equal(h.connector.running, true)
+    const snapshot = await h.manager.inspect()
+    assert.equal(snapshot.stage, 'ready')
+    assert.equal(snapshot.connectorId, 'conn_test')
+    assert.deepEqual(await readJson(join(h.root, 'account.json')), account)
+    assert.equal(h.api.registrations, 1)
+    assert.equal(h.api.renewals, 0)
+  } finally { await h.close() }
+})
+
+test('reinstalling dependencies before sign-in only clears them', async () => {
+  const h = await fixture()
+  try {
+    await h.manager.resetConnectorEnvironment()
+    assert.equal(h.connector.environmentResets, 1)
+    assert.equal(h.connector.starts, 0)
+    const snapshot = await h.manager.inspect()
+    assert.equal(snapshot.stage, 'idle')
+    assert.match(snapshot.message, /下次连接时会重新安装/)
+  } finally { await h.close() }
+})
+
 test('installed Desktop blocks every new standalone management and phone endpoint', async () => {
   const h = await fixture()
   try {
@@ -262,7 +296,7 @@ test('installed Desktop blocks every new standalone management and phone endpoin
     for (const action of [
       () => h.manager.controlConnector('start'), () => h.manager.controlConnector('stop'),
       () => h.manager.saveConnectorSettings(DEFAULT_CONNECTOR_SETTINGS), () => h.manager.openConnectorFolder('data'),
-      () => h.manager.resetConnector(true), () => h.manager.createMobileLogin(),
+      () => h.manager.resetConnector(true), () => h.manager.resetConnectorEnvironment(), () => h.manager.createMobileLogin(),
       () => h.manager.inspectMobileLogin('qr'), () => h.manager.confirmMobileLogin('qr', true),
     ]) await assert.rejects(action, /managed by Desktop/)
     assert.equal(h.connector.starts, 0)

@@ -12,7 +12,15 @@
     "preparing": "正在准备本机 Connector 运行环境，正在下载依赖，可能需要几分钟…",
     "quit": "退出桌面端",
     "recheck": "重新检查",
-    "checking": "正在检查…"
+    "checking": "正在检查…",
+    "provisioningTitle": "Connector 运行环境准备失败",
+    "provisioningDescription": "下载 Python 或依赖时失败，通常是网络或镜像的问题。可以换一个镜像后重试；如果之前下载到一半，可以清空依赖缓存，重新完整下载。",
+    "pypiMirrorHint": "优先从这里下载，镜像缺少的包会改从官方 PyPI 下载。",
+    "resetEnvironment": "清空缓存并重试",
+    "retry": "重试",
+    "backendStoppedTitle": "桌面端后台服务已停止",
+    "backendStoppedDescription": "本机 Connector、设备和设置都依赖这个服务。点击“重新启动”恢复；如果反复出现，请附上下面的错误信息和日志反馈问题。",
+    "restartBackend": "重新启动"
   },
   "app": {
     "name": "Agents Anywhere"
@@ -1556,7 +1564,7 @@
       "desktopPythonChosenByUv": "由 uv 自动选择（需要时首次运行会下载）",
       "desktopUvPypiIndexUrl": "uv PyPI 镜像",
       "desktopUvPypiIndexUrlPlaceholder": "留空以使用默认 PyPI",
-      "desktopUvPypiIndexUrlDescription": "uv 安装或同步 Python 包时使用。",
+      "desktopUvPypiIndexUrlDescription": "uv 安装或同步 Python 包时优先使用，镜像缺少的包会改从官方 PyPI 下载。",
       "desktopPypiDefault": "默认",
       "desktopPypiTsinghua": "清华",
       "desktopPypiUstc": "中科大",

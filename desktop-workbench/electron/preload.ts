@@ -62,7 +62,14 @@ async function api<T>(route: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body !== undefined && !headers.has("content-type")) headers.set("content-type", "application/json");
   if (target.token) headers.set(BACKEND_TOKEN_HEADER, target.token);
-  const response = await fetch(`${target.base}${route}`, { ...init, headers });
+  let response: Response;
+  try {
+    response = await fetch(`${target.base}${route}`, { ...init, headers });
+  } catch (error) {
+    // A restarted backend listens on a new port with a new token.
+    devTarget = null;
+    throw error;
+  }
   const text = await response.text();
   let payload: unknown = null;
   if (text) {
@@ -113,7 +120,8 @@ function ensureEventStream(): void {
           }
         }
       } catch {
-        // The backend restarts with the app; reconnect below.
+        // A restarted backend listens on a new port with a new token; reconnect below.
+        devTarget = null;
       }
       if (controller.signal.aborted) return;
       await new Promise((resolve) => setTimeout(resolve, 1_000));
@@ -165,6 +173,9 @@ contextBridge.exposeInMainWorld("desktopWorkbench", {
   ownership: {
     getState: (): Promise<OwnershipState> => ipcRenderer.invoke("workbench:ownership:getState"),
     recheck: (): Promise<OwnershipState> => ipcRenderer.invoke("workbench:ownership:recheck"),
+    /** Deletes the downloaded Connector environment; the next recheck downloads it again. */
+    resetEnvironment: (): Promise<void> =>
+      api<unknown>("/environment/reset", { method: "POST", body: "{}" }).then(() => undefined),
     quit: (): Promise<void> => ipcRenderer.invoke("workbench:ownership:quit"),
     onState: (callback: (state: OwnershipState) => void): (() => void) => subscribe("workbench:ownership:state", callback),
   },

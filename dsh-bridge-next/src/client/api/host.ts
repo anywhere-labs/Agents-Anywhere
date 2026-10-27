@@ -23,6 +23,7 @@ export function createHostApi(rpc: HostRpc): OnboardingHostApi {
     saveConnectorSettings: settings => call('saveConnectorSettings', { settings }),
     openConnectorFolder: folder => call('openConnectorFolder', { folder }),
     resetConnector: forceLocal => call('resetConnector', { forceLocal }),
+    resetConnectorEnvironment: () => call('resetConnectorEnvironment'),
     createMobileLogin: () => call('createMobileLogin'),
     inspectMobileLogin: id => call('inspectMobileLogin', { id }),
     confirmMobileLogin: (id, approved) => call('confirmMobileLogin', { id, approved }),

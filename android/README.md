@@ -64,8 +64,9 @@ numerically. This also runs on launch with an existing login and when the saved
 server changes. Login screens and sessions without a saved server never check
 for updates; no default server is substituted. Signing out cancels pending
 checks and downloads and clears the visible update state.
-`AppConfig.UPDATE_DOWNLOAD_URL` is the fixed APK address and currently contains
-an explicit `.invalid` placeholder that must be replaced before distribution.
+`AppConfig.UPDATE_DOWNLOAD_URL` is the fixed APK address,
+`https://www.agents-anywhere.com/api/download/android/latest`, which the official
+site redirects to the latest release APK.
 
 **Ignore this version** saves the target version per server in the private
 `app-updates` SharedPreferences file. The same version stays quiet on later
