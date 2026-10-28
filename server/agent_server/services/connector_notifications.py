@@ -23,6 +23,11 @@ from agent_server.core.protocol import (
     ProtocolPermissionCatalog,
 )
 from agent_server.core.runtime_identity import RuntimeIdentity, RuntimeIdentityError
+from agent_server.core.timeline import (
+    TIMELINE_ORDER_SEQ_MAX,
+    TIMELINE_ORDER_SEQ_MIN,
+    timeline_order_seq_in_range,
+)
 from agent_server.infra.repositories.projects import MissingWorkspaceError
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.ingest_effects import IngestEffect
@@ -804,6 +809,7 @@ class TimelineNotificationHandler:
         items = [
             TimelineItemIn.model_validate(item) for item in params.get("items", [])
         ]
+        _require_storable_order_seq(items)
         runtime, runtime_id = await timeline_runtime_identity_from_params(
             self._store,
             params,
@@ -886,6 +892,7 @@ class TimelineNotificationHandler:
                 "turn lifecycle markers must use dedicated session notifications",
             )
         item = TimelineItemIn.model_validate(params["item"])
+        _require_storable_order_seq([item])
         resolution = await self._store.resolve_connector_session_binding(
             connector_id=connector_id,
             session_id=params["sessionId"],
@@ -1608,6 +1615,23 @@ def runtime_state_from_session_state_params(
         "error": _object_or_none(params.get("error")),
         "metadata": _object_or_none(params.get("metadata")) or {},
     }
+
+
+def _require_storable_order_seq(items: list[TimelineItemIn]) -> None:
+    """Refuse an item the timeline table cannot store before it is buffered.
+
+    An out-of-range ``orderSeq`` accepted into the shared pending projection
+    used to fail every later flush of the session, and later new items were
+    placed after it, so they could not be stored either.
+    """
+
+    for item in items:
+        if not timeline_order_seq_in_range(item.orderSeq):
+            raise NotificationValidationError(
+                "invalid_order_seq",
+                f"timeline item {item.id} orderSeq {item.orderSeq} is outside "
+                f"{TIMELINE_ORDER_SEQ_MIN}..{TIMELINE_ORDER_SEQ_MAX}",
+            )
 
 
 def _timeline_item_for_session(

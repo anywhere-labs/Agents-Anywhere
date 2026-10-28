@@ -293,6 +293,18 @@ protocol violations that are intentionally unsupported may still return HTTP
 400; unexpected processing failures should be logged and reported through
 `rejected` instead of surfacing as HTTP 500.
 
+时间线通知中的 `orderSeq` 必须在 PostgreSQL `integer` 范围内
+（−2147483648–2147483647）。单条通知请求中的越界值返回 HTTP 400
+`invalid_order_seq`；混合批次通过 `rejected` 返回该通知的原始索引和
+`invalid_order_seq`，继续处理同一批次的其他通知。`timeline.sync` 的任一条目
+越界时拒绝整条同步通知，避免部分应用完整快照。
+
+旧版本遗留在缓冲中的越界条目会按原顺序移到持久时间线末尾；接收新条目前
+先完成修复，滚动升级时已缓存的会话也遵循这一顺序。修复会在同一数据库
+事务中推进会话游标并记录时间线重置边界。客户端收到 `session.refetch_required`
+后，使用修复前游标请求 `/events` 将得到 `snapshotRequired: true`，随后读取
+快照获得新排序；断线重连也通过同一边界恢复。
+
 The target semantic connector notification methods are:
 
 ```text

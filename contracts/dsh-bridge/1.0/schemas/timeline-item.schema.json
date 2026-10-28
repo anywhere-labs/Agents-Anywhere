@@ -9,7 +9,7 @@
     "type": { "enum": ["message", "tool", "artifact", "marker", "system", "turn.start", "turn.end"] },
     "status": { "enum": ["pending", "inProgress", "running", "waiting_approval", "done", "failed", "cancelled", "interrupted", "hidden"] },
     "role": { "type": ["string", "null"], "enum": ["user", "assistant", "system", "tool", null] },
-    "orderSeq": { "type": "integer", "minimum": 0 },
+    "orderSeq": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
     "revision": { "type": "integer", "minimum": 1 },
     "contentHash": { "pattern": "^sha256:[0-9a-f]{64}$" },
     "content": { "type": "object" },
