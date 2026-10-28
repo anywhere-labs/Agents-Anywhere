@@ -8,6 +8,10 @@
 
 - Connector 上报的时间线条目序号超出范围时只拒绝这条上报，同批其他消息照常保存，不再让整个会话之后的消息都存不进数据库；升级前已经积压的条目会按原顺序排到时间线末尾保存，持续写入失败的会话也不再每秒重试刷屏日志。（[#464](https://github.com/anywhere-labs/Agents-Anywhere/pull/464)）
 
+### Android
+
+- 折叠屏展开或使用宽窗口时，可以在左侧切换项目和会话、在右侧查看消息，并按需收起侧栏；窄窗口保留手机单栏导航，切换会话或窗口宽度时保留各会话草稿和阅读位置。（[499dcd84](https://github.com/anywhere-labs/Agents-Anywhere/commit/499dcd844aea90783ff121add3abbd945b26d744)）
+
 ## 2.1.0（2026-10-27）
 
 [发布说明](docs/releases/2.1.0.md) · [GitHub Release](https://github.com/anywhere-labs/Agents-Anywhere/releases/tag/v2.1.0) · [与 2.0.3 的差异](https://github.com/anywhere-labs/Agents-Anywhere/compare/v2.0.3...v2.1.0)

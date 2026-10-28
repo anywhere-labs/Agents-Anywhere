@@ -172,7 +172,7 @@ val activeSessionId = selectedSessionId.takeIf {
 
 详情可见性使用目的地，而非ID非空；preparedSessionDraft存在且ID为空仍显示真实待创建详情。initialSession查找同时覆盖 active、archived和projectSessionsById，避免项目专属会话缺初始元数据。
 - [ ] SessionDetailHeader中224dp固定宽度换为 Row剩余空间的weight，并增加相邻按钮间距；原两按钮回调不变。展开入口不塞进固定标题。系统返回沿用现有详情BackHandler。
-- [ ] 将Task2移出的唯一ProfileSettingsDrawer调用放在NavHost整个Surface的Box最上层，传回全部原回调，新增对应全窗ToastHost；账号打开时最后注册BackHandler优先关闭账号，不能先返回会话列表。
+- [x] 将Task2移出的唯一ProfileSettingsDrawer调用放在NavHost整个Surface的Box最上层，传回全部原回调，新增对应全窗ToastHost；账号打开时显式禁用详情BackHandler，由Profile保留嵌套页优先返回，不能先返回会话列表。实际原生返回回归证明，仅依赖注册顺序不可靠。
 - [ ] 两种语言加入 `workspace_collapse_sidebar`/`workspace_expand_sidebar`，中文「收起侧栏」/「展开侧栏」，英文「Collapse sidebar」/「Expand sidebar」。以stringResource提供内容描述，触控目标>=48dp。
 - [ ] 运行窄测试、编译 androidTest，确认保存边界没有同键重复挂载。审查唯一详情的加载、实时订阅、草稿、发送及返回链路；提交 `feat(android): 接入自适应双栏会话工作台`。
 
@@ -211,3 +211,31 @@ android/gradlew -p android testDebugUnitTest assembleDebug assembleDebugAndroidT
 - 设计6–7：Task4–5覆盖恢复、实际检查、构建签名、中文日志及未验证范围。
 - 类型一致：宽度helper输入/输出为Float/Float?；选中ID为String?；selected为Boolean；compact为Boolean；折叠回调可空且不改导航。
 - 未新增协议、通用布局框架、持久化格式或依赖。读位置的条件修复必须先由可运行失败检查证明，不能以计划文档代替实际实现/验收。
+
+## 执行记录（2026-10-28）
+
+上文保留实施前的任务细分；实际交付状态以本节为准。Task 1–4 的实现和回归检查经独立规格、代码质量及最终集成审查后，合并为一个功能提交 [499dcd84](https://github.com/anywhere-labs/Agents-Anywhere/commit/499dcd844aea90783ff121add3abbd945b26d744)，未按原计划分别生成四个提交；本次记录与中文更新日志另作文档提交。没有改动协议、依赖、签名配置或应用标识。
+
+- [x] 实际父宽度规则、可收起双栏、唯一详情和账号保存边界完成；手机布局保留，prepared local ID 可展示真实待创建详情。
+- [x] 五种会话入口接回原打开/已读链路，选中语义、Home 列表位置、240/320dp 有偏移父容器中的两类原生长按菜单检查通过。
+- [x] 全窗 Profile、原生菜单返回、嵌套 Profile 返回、真实 IME、Files/Terminal 子页返回与最终列表返回通过真实 NavHost 集成测试。测试中对应控制器无登录/真实服务器；这不代表远程文件或终端连接已验收。
+- [x] A→B→A 阅读锚点、展开项、宽度变化、loading 中恢复、缺失历史多页补齐及失败后不重复自动请求通过；实际 ActivityScenario.recreate 覆盖阅读锚点，但不是登录后生产 Activity 的全状态重建。
+- [x] 真实草稿存储的 A/B/prepared 文本与附件隔离、新实例恢复通过；原生键盘集成测试另覆盖临时详情草稿。未将它们当作完整生产 NavHost 草稿的 Activity 重建验收。
+- [x] 最终命令执行 testDebugUnitTest、assembleDebug、assembleDebugAndroidTest 和五个相关 instrumentation 类，Gradle exit 0；XML 复核 JVM 12 suites / 60 tests，设备 29 tests，均为 0 failures / 0 errors / 0 skipped。
+- [x] 设备为 AA_Foldable_API35（Android 15、Pixel 9 Pro Fold 配置）模拟器；设备测试构成为 Workspace 3、真实 NavHost 4、Home 6、阅读恢复 4、既有滚动跟随 12。修复 Profile Back 后的单独完整 prepared 回归也为 1/1 通过。
+- [x] 独立规格与代码质量审查完成；最终集成审查无生产代码阻断项，git diff --check 通过。APK、SDK、日志、缓存与密钥均不提交。
+- [x] [Android 说明](../../../android/README.md#L79)及[更新日志](../../../CHANGELOG.md#L11)已更新；设计为用户最终批准状态。
+- [x] APK 通过 apksigner 验证（v2，Android Debug 证书），aapt 确认包名 com.agentsanywhere.app、版本 2.1.0（10）、minSdk 26、targetSdk 36，包含 arm64-v8a/armeabi-v7a/x86/x86_64。
+
+最终 APK 为 49,496,696 bytes，SHA-256：
+
+```text
+14e42ba74c4794f92bed634c0a7d0f4af1c23c4e86074b4289d804badbf994ed
+```
+
+### 未通过或未验证的边界
+
+- 最终 lintDebug 已运行，但 **exit 1**：1 error、348 warnings；唯一阻断错误是未修改的 [AgentMarkdownText:162](../../../android/app/src/main/java/com/agentsanywhere/app/ui/screens/sessiondetail/AgentMarkdownText.kt#L162) 的 RememberReturnType。该文件与实施前 e74265f5 的 blob 均为 6cf330657d1fde976dc16ea10c8b7ab5d55b4d07；未通过抑制检查或改无关代码掩盖它。警告不能统称为全部既有，其中包括新增测试的两处 Composable 命名提示。
+- 未验证物理折叠/展开、遮挡铰链、厂商多窗口/输入法、设备旋转、真实账号登录后的发送/审批/远程文件和终端，也未单独运行中文语言下完整的设备验收矩阵；中文和英文新增无障碍文案均已接入资源。
+- 首版不支持铰链避让、上下半折姿态或拖动分隔线。Debug 签名不能保证覆盖官方不同签名的已安装版本；本次未卸载或清除用户数据。
+- 最终仅本地 fast-forward 集成至 feat/apk/foldable-workspace；不推送远端、不建立 PR，并保留独立工作树中的实际 APK 供交付。
