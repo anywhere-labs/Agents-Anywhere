@@ -1014,9 +1014,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_44() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_44"
-    assert CURRENT_SCHEMA_VERSION == "2.44"
+def test_current_schema_version_is_v2_45() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_45"
+    assert CURRENT_SCHEMA_VERSION == "2.45"
 
 
 def _insert_required(connection, table: str, values: dict) -> None:
@@ -1030,6 +1030,79 @@ def _insert_required(connection, table: str, values: dict) -> None:
     names = ", ".join(row)
     params = ", ".join(f":{name}" for name in row)
     connection.execute(text(f"INSERT INTO {table} ({names}) VALUES ({params})"), row)
+
+
+def test_v2_45_backfills_hourly_usage_rollups(fresh_database_url) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_44")
+    engine = create_engine(_sync_url(url))
+    try:
+        with engine.begin() as connection:
+            _insert_required(connection, "users", {"id": "alice"})
+            events = [
+                ("e1", "2026-10-01T09", "message.sent", "alice", None, "s1", "codex", None, None, None),
+                ("e2", "2026-10-01T09", "message.sent", "alice", None, "s1", "codex", None, None, None),
+                ("e3", "2026-10-01T09", "session.viewed", "alice", None, "s2", "codex", None, None, None),
+                ("e4", "2026-10-01T09", "turn.ended", None, None, "s1", "codex", None, "completed", 1500),
+                ("e5", "2026-10-01T10", "connector.online", None, "c1", None, None, None, None, None),
+                ("e6", "2026-10-01T10", "connector.online", None, "c1", None, None, "macos", None, None),
+                ("e7", "2026-10-01T10", "user.active", "alice", None, None, None, None, None, None),
+            ]
+            for event_id, hour, event_type, user, connector, session, runtime, os_name, outcome, duration in events:
+                connection.execute(
+                    text(
+                        "INSERT INTO usage_events (id, occurred_at, hour_bucket, event_type, user_id,"
+                        " connector_id, session_id, runtime_type, device_os, outcome, duration_ms)"
+                        " VALUES (:id, :at, :hour, :type, :user, :connector, :session, :runtime, :os,"
+                        " :outcome, :duration)"
+                    ),
+                    {
+                        "id": event_id, "at": f"{hour}:00:00Z", "hour": hour, "type": event_type,
+                        "user": user, "connector": connector, "session": session, "runtime": runtime,
+                        "os": os_name, "outcome": outcome, "duration": duration,
+                    },
+                )
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=url)
+
+    engine = create_engine(_sync_url(url))
+    try:
+        with engine.connect() as connection:
+            def rows(sql: str) -> list[tuple]:
+                return [tuple(row) for row in connection.execute(text(sql)).all()]
+
+            assert rows(
+                "SELECT hour_bucket, event_type, runtime_type, outcome, count, duration_sum"
+                " FROM usage_hourly_counts ORDER BY 1, 2"
+            ) == [
+                ("2026-10-01T09", "message.sent", "codex", "", 2, 0),
+                ("2026-10-01T09", "session.viewed", "codex", "", 1, 0),
+                ("2026-10-01T09", "turn.ended", "codex", "completed", 1, 1500),
+                ("2026-10-01T10", "connector.online", "", "", 2, 0),
+                ("2026-10-01T10", "user.active", "", "", 1, 0),
+            ]
+            assert rows("SELECT hour_bucket, user_id, messages FROM usage_hourly_users ORDER BY 1") == [
+                ("2026-10-01T09", "alice", 2),
+                ("2026-10-01T10", "alice", 0),
+            ]
+            assert rows("SELECT session_id, messages, views FROM usage_hourly_sessions ORDER BY 1") == [
+                ("s1", 2, 0),
+                ("s2", 0, 1),
+            ]
+            assert rows("SELECT runtime_type, session_id FROM usage_hourly_runtime_sessions") == [("codex", "s1")]
+            assert rows("SELECT runtime_type, user_id FROM usage_hourly_runtime_users") == [("codex", "alice")]
+            assert rows("SELECT connector_id, device_os FROM usage_hourly_connectors") == [("c1", "macos")]
+    finally:
+        engine.dispose()
+
+    command.downgrade(_alembic_config(url), "v2_44")
+    engine = create_engine(_sync_url(url))
+    try:
+        assert not inspect(engine).has_table("usage_hourly_counts")
+    finally:
+        engine.dispose()
 
 
 def test_v2_44_drops_unconfigured_runtime_placeholders(fresh_database_url) -> None:

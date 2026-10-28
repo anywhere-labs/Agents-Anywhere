@@ -4,13 +4,17 @@
 
 ## 未发布
 
+### 升级须知
+
+- **数据库迁移**：Server 需要执行迁移 `v2_45`。迁移会根据已经记录的使用事件生成按小时的汇总，事件多的实例迁移耗时会更长。（[#473](https://github.com/anywhere-labs/Agents-Anywhere/pull/473)）
+
 ### 会话创建与消息交付
 
 - Connector 上报的时间线条目序号超出范围时只拒绝这条上报，同批其他消息照常保存，不再让整个会话之后的消息都存不进数据库；升级前已经积压的条目会按原顺序排到时间线末尾保存，持续写入失败的会话也不再每秒重试刷屏日志。（[#464](https://github.com/anywhere-labs/Agents-Anywhere/pull/464)）
 
 ### Web 与 Desktop 界面
 
-- 管理看板顶部的实时状态不再随设备数和使用事件增多而变慢；使用报表的轮次耗时和审批等待分位数改为统计范围内的全部样本，不再只取最新的 20 万条。（[#472](https://github.com/anywhere-labs/Agents-Anywhere/pull/472)）
+- 管理看板打开更快：使用报表改为读取按小时的汇总，耗时不再随使用事件增多而线性增长；顶部的实时状态也不再随设备数和事件数变慢。轮次耗时和审批等待分位数改为统计范围内的全部样本，不再只取最新的 20 万条。（[#472](https://github.com/anywhere-labs/Agents-Anywhere/pull/472)、[#473](https://github.com/anywhere-labs/Agents-Anywhere/pull/473)）
 
 ## 2.1.0（2026-10-27）
 

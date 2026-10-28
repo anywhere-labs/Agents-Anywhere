@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from runtime_fixtures import seed_runtime_inventory
@@ -30,6 +32,17 @@ from agent_server.infra.db import usage_events as usage_events_t
 from agent_server.services.usage_events import UsageRecorder
 from agent_server.services.usage_maintenance import UsageMaintenanceLoop
 from agent_server.services.usage_report import _rolling_active_counts
+
+
+def _load_migration(name: str) -> Any:
+    path = Path(__file__).resolve().parents[1] / "migrations" / "versions" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"migration_{name}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_V2_45 = _load_migration("v2_45")
 
 
 def _events(client, **filters: Any) -> list[dict[str, Any]]:
@@ -250,6 +263,73 @@ def test_duplicate_dedupe_keys_are_stored_once(tmp_path):
     _insert(client, [event, event])
 
     assert len(_events(client, dedupe_key="msg:same")) == 1
+
+
+def _rollup_rows(client) -> dict[str, list[tuple]]:
+    async def read() -> dict[str, list[tuple]]:
+        async with client.app.state.store.engine.connect() as conn:
+            return {
+                table: sorted(tuple(row) for row in (await conn.execute(text(f"SELECT * FROM {table}"))).all())
+                for table in _V2_45.TABLES
+            }
+
+    return asyncio.run(read())
+
+
+def _rebuilt_rollup_rows(client) -> dict[str, list[tuple]]:
+    """Rebuild the rollups from raw events with the migration's backfill, then
+    restore them, so a test can compare incremental maintenance to a rebuild."""
+
+    async def rebuild() -> dict[str, list[tuple]]:
+        async with client.app.state.store.engine.connect() as conn:
+            transaction = await conn.begin()
+            for table in _V2_45.TABLES:
+                await conn.execute(text(f"DELETE FROM {table}"))
+            params = {"message": EVENT_MESSAGE_SENT, "viewed": EVENT_SESSION_VIEWED, "online": EVENT_CONNECTOR_ONLINE}
+            for statement in _V2_45.BACKFILL:
+                await conn.execute(text(statement), params)
+            rows = {
+                table: sorted(tuple(row) for row in (await conn.execute(text(f"SELECT * FROM {table}"))).all())
+                for table in _V2_45.TABLES
+            }
+            await transaction.rollback()
+            return rows
+
+    return asyncio.run(rebuild())
+
+
+def test_rollups_stay_equal_to_a_rebuild_from_raw_events(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+    alice, bob = _seed_report_events(client, headers)
+    # Duplicates are dropped by the dedupe key and must not be added twice.
+    duplicate = UsageEvent(
+        EVENT_MESSAGE_SENT, "2026-10-02T01:30:00Z", user_id=bob, session_id="s2",
+        runtime_type="claude", dedupe_key="msg:dup",
+    )
+    _insert(client, [duplicate, duplicate])
+    _insert(client, [duplicate])
+    # A late event lands in an hour that already has rollup rows.
+    _insert(client, [
+        UsageEvent(
+            EVENT_APPROVAL_RESOLVED, "2026-10-02T01:59:00Z", session_id="s2", runtime_type="claude",
+            outcome="expired", duration_ms=9_000, dedupe_key="approval:late:resolved",
+        ),
+        UsageEvent(EVENT_CONNECTOR_ONLINE, "2026-10-01T23:10:00Z", connector_id="c1"),
+    ])
+
+    assert _rollup_rows(client) == _rebuilt_rollup_rows(client)
+    counts = {row[:4]: row[4] for row in _rollup_rows(client)["usage_hourly_counts"]}
+    assert counts[("2026-10-02T01", EVENT_MESSAGE_SENT, "claude", "")] == 2
+
+    # Deleting a user drops their rollup rows, as their raw events lose user_id.
+    client.delete(f"/admin/users/{bob}", headers=headers).raise_for_status()
+    assert _rollup_rows(client) == _rebuilt_rollup_rows(client)
+    body = _report(client, headers, **{"from": "2026-10-01", "to": "2026-10-02", "tz": "UTC"})
+    assert body["summary"]["activeUsers"] == 1
+    assert body["summary"]["messages"] == 3
+    assert {row["runtimeType"]: row["activeUsers"] for row in body["runtimes"]}["claude"] == 0
+    assert alice
 
 
 def test_usage_recorder_buffers_until_flush_and_throttles_presence():
@@ -678,6 +758,9 @@ def test_usage_maintenance_snapshots_inventory_and_prunes_old_events(tmp_path):
     assert snapshot[("users.total", "")] == 1.0
     assert snapshot[("connectors.total", "")] == 1.0
     assert [row["session_id"] for row in _events(client, event_type=EVENT_MESSAGE_SENT)] == ["recent"]
+    rollup_hours = {row[0] for rows in _rollup_rows(client).values() for row in rows}
+    assert "2026-01-01T00" not in rollup_hours
+    assert recent_at[:13] in rollup_hours
 
 
 def test_rolling_active_counts_merge_overlapping_windows():

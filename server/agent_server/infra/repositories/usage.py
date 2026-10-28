@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections import Counter, defaultdict
+from collections.abc import Mapping, Sequence
+
 from sqlalchemy import (
     TIMESTAMP,
     Date,
@@ -36,11 +39,17 @@ from agent_server.core.usage import (
     UsageUserDayRow,
 )
 from agent_server.infra.db import session_active_runs as session_active_runs_t
+from agent_server.infra.db import usage_hourly_connectors as hourly_connectors_t
+from agent_server.infra.db import usage_hourly_counts as hourly_counts_t
+from agent_server.infra.db import usage_hourly_runtime_sessions as runtime_sessions_t
+from agent_server.infra.db import usage_hourly_runtime_users as runtime_users_t
+from agent_server.infra.db import usage_hourly_sessions as hourly_sessions_t
+from agent_server.infra.db import usage_hourly_users as hourly_users_t
 from agent_server.infra.repositories.store_support import *
 
 
 class UsageRepositoryMixin:
-    """SQL access for usage events and inventory snapshots."""
+    """SQL access for usage events, their hourly rollups and inventory snapshots."""
 
     # --- event writes -------------------------------------------------------
 
@@ -48,15 +57,25 @@ class UsageRepositoryMixin:
         if not rows:
             return 0
         async with self._engine.begin() as conn:
-            upsert = pg_insert
-            result = await conn.execute(
-                upsert(usage_events_t).values(rows).on_conflict_do_nothing()
-            )
-            inserted = result.rowcount
-        return int(inserted) if inserted is not None and inserted >= 0 else len(rows)
+            # Only rows that survive the dedupe key reach the rollups, and both
+            # commit together, so the rollups never drift from the events.
+            inserted = (
+                await conn.execute(
+                    pg_insert(usage_events_t)
+                    .values(rows)
+                    .on_conflict_do_nothing()
+                    .returning(*_ROLLUP_SOURCE_COLUMNS)
+                )
+            ).mappings().all()
+            await _add_to_rollups(conn, inserted)
+        return len(inserted)
 
     async def delete_usage_events_before(self, cutoff_hour_bucket: str) -> int:
         async with self._engine.begin() as conn:
+            for table in _ROLLUP_TABLES:
+                await conn.execute(
+                    delete(table).where(table.c.hour_bucket < cutoff_hour_bucket)
+                )
             result = await conn.execute(
                 delete(usage_events_t).where(
                     usage_events_t.c.hour_bucket < cutoff_hour_bucket
@@ -94,27 +113,12 @@ class UsageRepositoryMixin:
     async def usage_event_counts(
         self, *, start_hour: str, end_hour: str, timezone: str
     ) -> list[UsageCountRow]:
-        hourly = (
-            select(
-                usage_events_t.c.hour_bucket,
-                usage_events_t.c.event_type,
-                usage_events_t.c.runtime_type,
-                usage_events_t.c.outcome,
-                func.count().label("count"),
-                func.coalesce(func.sum(usage_events_t.c.duration_ms), 0).label(
-                    "duration_sum"
-                ),
-            )
-            .where(_hour_range(start_hour, end_hour))
-            .group_by(
-                usage_events_t.c.hour_bucket,
-                usage_events_t.c.event_type,
-                usage_events_t.c.runtime_type,
-                usage_events_t.c.outcome,
-            )
-            .subquery()
+        local = _with_local_time(
+            timezone,
+            select(hourly_counts_t)
+            .where(_hour_range(hourly_counts_t, start_hour, end_hour))
+            .subquery(),
         )
-        local = _with_local_time(timezone, hourly)
         async with self._engine.connect() as conn:
             rows = (
                 await conn.execute(
@@ -134,8 +138,8 @@ class UsageRepositoryMixin:
                 local_date=row[0].isoformat(),
                 local_hour=int(row[1]),
                 event_type=str(row[2]),
-                runtime_type=row[3],
-                outcome=row[4],
+                runtime_type=row[3] or None,
+                outcome=row[4] or None,
                 count=int(row[5] or 0),
                 duration_sum=int(row[6] or 0),
             )
@@ -155,18 +159,8 @@ class UsageRepositoryMixin:
         report range) and distinct users per local hour of day in the range."""
 
         hourly = (
-            select(
-                usage_events_t.c.hour_bucket,
-                usage_events_t.c.user_id,
-                func.count()
-                .filter(usage_events_t.c.event_type == EVENT_MESSAGE_SENT)
-                .label("messages"),
-            )
-            .where(
-                _hour_range(days_start_hour, days_end_hour),
-                usage_events_t.c.user_id.is_not(None),
-            )
-            .group_by(usage_events_t.c.hour_bucket, usage_events_t.c.user_id)
+            select(hourly_users_t)
+            .where(_hour_range(hourly_users_t, days_start_hour, days_end_hour))
             .subquery()
         )
         local = _with_local_time(timezone, hourly)
@@ -207,22 +201,8 @@ class UsageRepositoryMixin:
         self, *, start_hour: str, end_hour: str, timezone: str
     ) -> list[UsageSessionTotalsRow]:
         hourly = (
-            select(
-                usage_events_t.c.hour_bucket,
-                usage_events_t.c.session_id,
-                func.count()
-                .filter(usage_events_t.c.event_type == EVENT_MESSAGE_SENT)
-                .label("messages"),
-                func.count()
-                .filter(usage_events_t.c.event_type == EVENT_SESSION_VIEWED)
-                .label("views"),
-            )
-            .where(
-                _hour_range(start_hour, end_hour),
-                usage_events_t.c.event_type.in_((EVENT_MESSAGE_SENT, EVENT_SESSION_VIEWED)),
-                usage_events_t.c.session_id.is_not(None),
-            )
-            .group_by(usage_events_t.c.hour_bucket, usage_events_t.c.session_id)
+            select(hourly_sessions_t)
+            .where(_hour_range(hourly_sessions_t, start_hour, end_hour))
             .subquery()
         )
         local = _with_local_time(timezone, hourly)
@@ -272,22 +252,31 @@ class UsageRepositoryMixin:
     async def usage_runtime_reach(
         self, *, start_hour: str, end_hour: str
     ) -> list[UsageRuntimeReachRow]:
+        sessions = (
+            select(
+                runtime_sessions_t.c.runtime_type,
+                func.count(func.distinct(runtime_sessions_t.c.session_id)).label("count"),
+            )
+            .where(_hour_range(runtime_sessions_t, start_hour, end_hour))
+            .group_by(runtime_sessions_t.c.runtime_type)
+            .subquery()
+        )
+        users = (
+            select(
+                runtime_users_t.c.runtime_type,
+                func.count(func.distinct(runtime_users_t.c.user_id)).label("count"),
+            )
+            .where(_hour_range(runtime_users_t, start_hour, end_hour))
+            .group_by(runtime_users_t.c.runtime_type)
+            .subquery()
+        )
         async with self._engine.connect() as conn:
             rows = (
                 await conn.execute(
-                    select(
-                        usage_events_t.c.runtime_type,
-                        func.count(func.distinct(usage_events_t.c.session_id)),
-                        func.count(func.distinct(usage_events_t.c.user_id)),
+                    # A runtime with users always has sessions in the same hours.
+                    select(sessions.c.runtime_type, sessions.c.count, users.c.count).select_from(
+                        sessions.outerjoin(users, users.c.runtime_type == sessions.c.runtime_type)
                     )
-                    .where(
-                        _hour_range(start_hour, end_hour),
-                        usage_events_t.c.event_type == EVENT_MESSAGE_SENT,
-                        usage_events_t.c.session_id.is_not(None),
-                        usage_events_t.c.runtime_type.is_not(None),
-                        usage_events_t.c.runtime_type != "",
-                    )
-                    .group_by(usage_events_t.c.runtime_type)
                 )
             ).all()
         return [
@@ -304,18 +293,13 @@ class UsageRepositoryMixin:
     ) -> list[UsageConnectorTotalsRow]:
         hourly = (
             select(
-                usage_events_t.c.hour_bucket,
-                usage_events_t.c.connector_id,
+                hourly_connectors_t.c.hour_bucket,
+                hourly_connectors_t.c.connector_id,
                 func.coalesce(
-                    func.max(usage_events_t.c.device_os), literal_column("'unknown'")
+                    hourly_connectors_t.c.device_os, literal_column("'unknown'")
                 ).label("device_os"),
             )
-            .where(
-                _hour_range(start_hour, end_hour),
-                usage_events_t.c.event_type == EVENT_CONNECTOR_ONLINE,
-                usage_events_t.c.connector_id.is_not(None),
-            )
-            .group_by(usage_events_t.c.hour_bucket, usage_events_t.c.connector_id)
+            .where(_hour_range(hourly_connectors_t, start_hour, end_hour))
             .subquery()
         )
         local = _with_local_time(timezone, hourly)
@@ -367,7 +351,7 @@ class UsageRepositoryMixin:
                 func.coalesce(usage_events_t.c.runtime_type, "").label("runtime_type"),
                 usage_events_t.c.duration_ms,
             )
-            .where(_hour_range(start_hour, end_hour), *conditions)
+            .where(_hour_range(usage_events_t, start_hour, end_hour), *conditions)
             .subquery(),
         )
         duration = events.c.duration_ms
@@ -655,11 +639,153 @@ def _with_local_time(timezone: str, rows: Any) -> Any:
     ).subquery()
 
 
-def _hour_range(start_hour: str, end_hour: str) -> Any:
-    return and_(
-        usage_events_t.c.hour_bucket >= start_hour,
-        usage_events_t.c.hour_bucket < end_hour,
+def _hour_range(table: Any, start_hour: str, end_hour: str) -> Any:
+    return and_(table.c.hour_bucket >= start_hour, table.c.hour_bucket < end_hour)
+
+
+# --- rollup maintenance -------------------------------------------------------
+
+_ROLLUP_TABLES = (
+    hourly_counts_t,
+    hourly_users_t,
+    hourly_sessions_t,
+    runtime_sessions_t,
+    runtime_users_t,
+    hourly_connectors_t,
+)
+
+_ROLLUP_SOURCE_COLUMNS = (
+    usage_events_t.c.hour_bucket,
+    usage_events_t.c.event_type,
+    usage_events_t.c.user_id,
+    usage_events_t.c.connector_id,
+    usage_events_t.c.session_id,
+    usage_events_t.c.runtime_type,
+    usage_events_t.c.device_os,
+    usage_events_t.c.outcome,
+    usage_events_t.c.duration_ms,
+)
+
+
+async def _add_to_rollups(conn: AsyncConnection, events: Sequence[Mapping[str, Any]]) -> None:
+    """Add newly inserted events to the hourly rollups.
+
+    The rules match the backfill in migration v2_45. Rows are upserted in key
+    order so concurrent flushes lock rollup rows in the same order.
+    """
+
+    counts: dict[tuple[str, str, str, str], list[int]] = defaultdict(lambda: [0, 0])
+    users: Counter[tuple[str, str]] = Counter()
+    sessions: dict[tuple[str, str], list[int]] = defaultdict(lambda: [0, 0])
+    runtime_sessions: set[tuple[str, str, str]] = set()
+    runtime_users: set[tuple[str, str, str]] = set()
+    connectors: dict[tuple[str, str], str | None] = {}
+    for event in events:
+        hour, event_type = event["hour_bucket"], event["event_type"]
+        user_id, session_id = event["user_id"], event["session_id"]
+        runtime_type = event["runtime_type"] or ""
+        message = event_type == EVENT_MESSAGE_SENT
+        count = counts[(hour, event_type, runtime_type, event["outcome"] or "")]
+        count[0] += 1
+        count[1] += event["duration_ms"] or 0
+        if user_id is not None:
+            users[(hour, user_id)] += 1 if message else 0
+        if session_id is not None and event_type in (EVENT_MESSAGE_SENT, EVENT_SESSION_VIEWED):
+            sessions[(hour, session_id)][0 if message else 1] += 1
+        if message and session_id is not None and runtime_type:
+            runtime_sessions.add((hour, runtime_type, session_id))
+            if user_id is not None:
+                runtime_users.add((hour, runtime_type, user_id))
+        if event_type == EVENT_CONNECTOR_ONLINE and event["connector_id"] is not None:
+            key = (hour, event["connector_id"])
+            current, device_os = connectors.get(key), event["device_os"]
+            connectors[key] = max(filter(None, (current, device_os)), default=None)
+
+    await _upsert_adding(
+        conn,
+        hourly_counts_t,
+        [
+            dict(zip(("hour_bucket", "event_type", "runtime_type", "outcome"), key))
+            | {"count": value[0], "duration_sum": value[1]}
+            for key, value in sorted(counts.items())
+        ],
+        ("count", "duration_sum"),
     )
+    await _upsert_adding(
+        conn,
+        hourly_users_t,
+        [
+            {"hour_bucket": hour, "user_id": user_id, "messages": messages}
+            for (hour, user_id), messages in sorted(users.items())
+        ],
+        ("messages",),
+    )
+    await _upsert_adding(
+        conn,
+        hourly_sessions_t,
+        [
+            {"hour_bucket": hour, "session_id": session_id, "messages": value[0], "views": value[1]}
+            for (hour, session_id), value in sorted(sessions.items())
+        ],
+        ("messages", "views"),
+    )
+    await _insert_missing(
+        conn,
+        runtime_sessions_t,
+        [
+            {"hour_bucket": hour, "runtime_type": runtime_type, "session_id": session_id}
+            for hour, runtime_type, session_id in sorted(runtime_sessions)
+        ],
+    )
+    await _insert_missing(
+        conn,
+        runtime_users_t,
+        [
+            {"hour_bucket": hour, "runtime_type": runtime_type, "user_id": user_id}
+            for hour, runtime_type, user_id in sorted(runtime_users)
+        ],
+    )
+    if connectors:
+        statement = pg_insert(hourly_connectors_t).values(
+            [
+                {"hour_bucket": hour, "connector_id": connector_id, "device_os": device_os}
+                for (hour, connector_id), device_os in sorted(connectors.items())
+            ]
+        )
+        # GREATEST ignores NULLs, so this keeps the per-hour max(device_os).
+        await conn.execute(
+            statement.on_conflict_do_update(
+                index_elements=_primary_key(hourly_connectors_t),
+                set_={
+                    "device_os": func.greatest(
+                        hourly_connectors_t.c.device_os, statement.excluded.device_os
+                    )
+                },
+            )
+        )
+
+
+async def _upsert_adding(
+    conn: AsyncConnection, table: Any, rows: list[dict[str, Any]], columns: tuple[str, ...]
+) -> None:
+    if not rows:
+        return
+    statement = pg_insert(table).values(rows)
+    await conn.execute(
+        statement.on_conflict_do_update(
+            index_elements=_primary_key(table),
+            set_={name: table.c[name] + statement.excluded[name] for name in columns},
+        )
+    )
+
+
+async def _insert_missing(conn: AsyncConnection, table: Any, rows: list[dict[str, Any]]) -> None:
+    if rows:
+        await conn.execute(pg_insert(table).values(rows).on_conflict_do_nothing())
+
+
+def _primary_key(table: Any) -> list[str]:
+    return [column.name for column in table.primary_key.columns]
 
 
 def _shift_iso(value: str, *, days: int) -> str:
