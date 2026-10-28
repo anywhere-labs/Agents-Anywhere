@@ -1,3 +1,4 @@
+import { ConnectorEnvironment } from "./connector-environment";
 import assert from "node:assert/strict";
 import childProcess from "node:child_process";
 import fs from "node:fs";
@@ -12,6 +13,10 @@ import { ConnectorLogStore } from "./log-store";
 import { ConnectorRpcError } from "./connector-rpc-error";
 import type { OwnershipState } from "./local-runtime";
 import type { ConnectorLogEntry } from "./connector-types";
+
+// Environment lifecycle is exercised with real subprocesses in connector-environment.test.ts.
+// These tests isolate RPC transport, credentials, mirrors and launcher selection.
+test.beforeEach(t => { (t as TestContext).mock.method(ConnectorEnvironment.prototype, "prepare", async () => {}); });
 
 /** What the supervisor needs from one Connector's control channel. */
 function fakeChannel(behavior: { conflict?: () => boolean } = {}): ConnectorChannel {
@@ -74,7 +79,7 @@ test("first pre-login provisioning asks the chosen mirror first and falls back t
     // Windows process-tree termination is not a Connector launch.
     if (command === "taskkill.exe") return spawn(command, args, options);
     assert.equal(command, process.execPath);
-    assert.deepEqual(args.slice(0, 5), ["run", "--project", root, "anywhere-cli", "rpc"]);
+    assert.deepEqual(args.slice(0, 6), ["run", "--no-sync", "--project", root, "anywhere-cli", "rpc"]);
     return spawn(process.execPath, [script, captured], options);
   });
   for (const [choice, expected] of [
@@ -211,8 +216,6 @@ process.stderr.write('Downloading claude-agent-sdk', () => setTimeout(() => {
     assert.deepEqual(ownership.at(-1), {
       status: "error",
       message: reason,
-      // A failed first install lets the gate switch mirrors or download from scratch.
-      recovery: { kind: "provisioning", pypiIndexUrl: "", pythonInstallMirror: "", downloadsPython: true },
     }, "the gate quotes the same reason");
     assert.equal(supervisor.publicState().lastError, reason, "an exit nobody asked for stays visible after the gate");
     const messages = logs.map(entry => entry.message);
@@ -263,97 +266,31 @@ process.stdin.on('end', () => process.exit(0));
     assert.equal(launches[0]?.command, bundledUv, "development must run the uv that packaging bundles");
     assert.deepEqual(
       [...(launches[0]?.args ?? [])],
-      ["run", "--project", root, "anywhere-cli", "rpc", "--config", path.join(root, "connector.json")],
+      ["run", "--no-sync", "--project", root, "anywhere-cli", "rpc", "--config", path.join(root, "connector.json")],
     );
   } finally { await supervisor.shutdown(); }
 });
 
-test("the bundled Python pins the Connector environment, and replacing another interpreter's is provisioning", { timeout: 15_000 }, async (t) => {
-  if (process.env.WORKBENCH_CONNECTOR_CLI?.trim() || process.env.UV_PROJECT_ENVIRONMENT?.trim()) {
-    t.skip("the environment overrides launcher or project environment resolution");
-    return;
-  }
+test("the bundled Python pins no-sync RPC and an explicit saved interpreter wins", async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-desktop-python-bundle-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(root, "pyproject.toml"), "");
-  const pythonBundleDir = path.join(root, "build", "python");
-  const bundledPython = bundledPythonExecutable(pythonBundleDir);
-  const savedPython = path.join(root, "custom-python", process.platform === "win32" ? "python.exe" : "python3");
-  for (const interpreter of [bundledPython, savedPython]) {
-    fs.mkdirSync(path.dirname(interpreter), { recursive: true });
-    fs.writeFileSync(interpreter, "");
-  }
-  const script = path.join(root, "runtime.cjs");
-  fs.writeFileSync(script, `
-process.stdout.write(JSON.stringify({ kind: 'connector.ready', version: 1, instanceId: 'fake', pid: process.pid, endpoint: { unixPath: '/nonexistent/fake.sock' }, key: 'mk_host_fake' }) + '\\n');
-process.stdin.resume();
-process.stdin.on('end', () => process.exit(0));
-`);
-  const configPath = path.join(root, "connector.json");
-  const settings = new DesktopSettingsStore(path.join(root, "settings.json"), ["en-US"]);
-  settings.save({ uvPath: process.execPath });
-  const spawn = childProcess.spawn;
+  const supervisor = supervisorFixture(root);
+  const bundleDir = path.join(root, "build", "python");
+  const python = bundledPythonExecutable(bundleDir);
+  fs.mkdirSync(path.dirname(python), { recursive: true });
+  fs.writeFileSync(python, "");
+  const script = path.join(root, "rpc.cjs");
+  fs.writeFileSync(script, READY_LINE + "process.stdin.resume();");
   const launches: Array<readonly string[]> = [];
+  const spawn = childProcess.spawn;
   t.mock.method(childProcess, "spawn", (command: string, args: readonly string[], options: childProcess.SpawnOptions) => {
-    // Windows process-tree termination is not a Connector launch.
     if (command === "taskkill.exe") return spawn(command, args, options);
-    launches.push(args);
-    return spawn(process.execPath, [script], options);
+    launches.push(args); return spawn(process.execPath, [script], options);
   });
-  const ownership: OwnershipState[] = [];
-  const supervisor = new ConnectorSupervisor({
-    configPath, dataPath: root, connectorDir: root, resourcesPath: root,
-    uvBundleDir: path.join(root, "build", "uv"), pythonBundleDir,
-    packaged: false, homePath: root, shellEnvironment: {}, settings,
-    binding: new DesktopBindingStore(path.join(root, "binding.json")),
-    logs: new ConnectorLogStore(path.join(root, "logs"), () => settings.get()),
-    onOwnership: state => ownership.push(state), onState: () => {}, onLog: () => {},
-    connectControl: async () => fakeChannel(),
-  });
-  // Acquire ownership over a project environment whose pyvenv.cfg records
-  // `home` (none when null) and report whether that counted as provisioning.
-  const environment = path.join(root, ".venv");
-  const provisions = async (home: string | null, installed = true) => {
-    fs.rmSync(environment, { recursive: true, force: true });
-    if (home !== null) {
-      fs.mkdirSync(environment);
-      fs.writeFileSync(path.join(environment, "pyvenv.cfg"), `home = ${home}\nimplementation = CPython\nversion_info = 3.12.14\n`);
-      if (installed) {
-        const script = process.platform === "win32" ? path.join(environment, "Scripts", "anywhere-cli.exe") : path.join(environment, "bin", "anywhere-cli");
-        fs.mkdirSync(path.dirname(script), { recursive: true });
-        fs.writeFileSync(script, "");
-      }
-    }
-    ownership.length = 0;
-    await supervisor.acquireOwnership();
-    assert.equal(ownership.at(-1)?.status, "owned");
-    return ownership[0]?.status === "preparing";
-  };
   try {
-    assert.equal(await provisions(null), true, "a missing environment is built first");
-    assert.deepEqual(
-      [...(launches[0] ?? [])],
-      ["run", "--project", root, "--python", bundledPython, "anywhere-cli", "rpc", "--config", configPath],
-    );
-    assert.equal(supervisor.publicState().resolvedPythonPath, bundledPython);
-    assert.equal(
-      await provisions(path.join(root, "uv", "python", "cpython-3.14-windows-x86_64-none")),
-      true,
-      "uv rebuilds an environment another interpreter created",
-    );
-    assert.equal(await provisions(path.dirname(bundledPython)), false, "the bundled interpreter's environment is ready");
-    assert.equal(
-      await provisions(path.dirname(bundledPython), false),
-      true,
-      "a sync that failed before installing the Connector left only pyvenv.cfg",
-    );
-
-    const previous = settings.get();
-    settings.save({ pythonPath: savedPython });
-    await supervisor.applySettings(previous);
-    assert.equal(supervisor.publicState().resolvedPythonPath, savedPython, "a saved pythonPath wins over the bundle");
-    assert.equal(await provisions(path.dirname(bundledPython)), true);
-    assert.deepEqual([...(launches.at(-1) ?? [])].slice(3, 5), ["--python", savedPython]);
+    await supervisor.acquireOwnership();
+    assert.deepEqual(launches[0]?.slice(0, 6), ["run", "--no-sync", "--project", root, "--python", python]);
+    assert.equal(supervisor.publicState().resolvedPythonPath, python);
   } finally { await supervisor.shutdown(); }
 });
 
@@ -415,6 +352,8 @@ test("runtime logs retain central sequences, paginate and export without a secon
 
 function supervisorFixture(root: string, options: { packaged?: boolean; onOwnership?: (state: OwnershipState) => void } = {}) {
   fs.writeFileSync(path.join(root, "pyproject.toml"), "");
+  fs.mkdirSync(path.join(root, "connector"), { recursive: true });
+  fs.writeFileSync(path.join(root, "connector", "cli.py"), "");
   const settings = new DesktopSettingsStore(path.join(root, "settings.json"), ["en-US"]);
   settings.save({ uvPath: process.execPath });
   return new ConnectorSupervisor({
@@ -469,35 +408,6 @@ if (process.env.AA_TEST_CRASH) setTimeout(() => process.stderr.write('Traceback:
     states.push(crashed.reportError("Could not start the local Connector on launch: offline").lastError);
     assert.deepEqual(states, ["Could not start the local Connector on launch: offline"]);
   } finally { await crashed.shutdown(); }
-});
-
-test("a uv failure on a normal launch also offers the provisioning recovery", { timeout: 15_000 }, async (t) => {
-  if (process.env.WORKBENCH_CONNECTOR_CLI?.trim() || process.env.UV_PROJECT_ENVIRONMENT?.trim()) {
-    t.skip("WORKBENCH_CONNECTOR_CLI or UV_PROJECT_ENVIRONMENT overrides the launch");
-    return;
-  }
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-desktop-rpc-sync-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  // An existing environment: the launch is not first-run provisioning.
-  fs.mkdirSync(path.join(root, ".venv", process.platform === "win32" ? "Scripts" : "bin"), { recursive: true });
-  fs.writeFileSync(path.join(root, ".venv", "pyvenv.cfg"), `home = ${path.dirname(process.execPath)}\n`);
-  fs.writeFileSync(path.join(root, ".venv", process.platform === "win32" ? "Scripts/anywhere-cli.exe" : "bin/anywhere-cli"), "");
-  const script = path.join(root, "runtime.cjs");
-  const ownership: OwnershipState[] = [];
-  launchScript(t, script);
-  for (const [output, recovers] of [
-    ["error: Request failed after 3 retries\\n  Caused by: dns error", true],
-    ["Traceback (most recent call last):\\nValueError: bad config", false],
-  ] as const) {
-    fs.writeFileSync(script, `process.stderr.write('${output}\\n', () => process.exit(1));`);
-    const supervisor = supervisorFixture(root, { onOwnership: state => ownership.push(state) });
-    try {
-      await assert.rejects(supervisor.acquireOwnership());
-      assert.equal(ownership.at(-1)?.status, "error");
-      assert.equal(ownership.at(-1)?.recovery?.kind, recovers ? "provisioning" : undefined, output);
-      assert.equal(ownership.some(state => state.status === "preparing"), false);
-    } finally { await supervisor.shutdown(); }
-  }
 });
 
 test("resetting the environment removes only what uv built for this Desktop", { timeout: 15_000 }, async (t) => {

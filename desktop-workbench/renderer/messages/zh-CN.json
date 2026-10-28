@@ -20,7 +20,37 @@
     "retry": "重试",
     "backendStoppedTitle": "桌面端后台服务已停止",
     "backendStoppedDescription": "本机 Connector、设备和设置都依赖这个服务。点击“重新启动”恢复；如果反复出现，请附上下面的错误信息和日志反馈问题。",
-    "restartBackend": "重新启动"
+    "restartBackend": "重新启动",
+    "startingRpc": "环境已就绪，正在启动 Connector…",
+    "preparingDescription": "依赖安装可以持续较长时间。完成后会自动启动 Connector。",
+    "cancelled": "环境准备已取消",
+    "cancelledDescription": "安装进程已停止，可以重新开始。",
+    "cancel": "取消准备",
+    "cancelling": "正在停止…",
+    "stalled": "已有一段时间未检测到活动，安装可能已卡住。可以查看日志，或取消后切换镜像重试。",
+    "packageProgress": "已安装 {completed} / 已解析 {total} 个依赖",
+    "environmentPhase": {
+      "checking": "检查环境",
+      "downloading": "下载依赖",
+      "resolving": "解析依赖",
+      "building": "构建依赖",
+      "syncing": "同步环境",
+      "ready": "环境已就绪",
+      "failed": "准备失败",
+      "cancelled": "已取消"
+    },
+    "environmentError": {
+      "network": "网络下载失败：可切换镜像后重试。",
+      "resolution": "依赖解析失败：请查看下面的冲突信息。",
+      "permission": "目录权限不足：请检查下面路径的读写权限。",
+      "disk": "磁盘空间不足：请释放空间后重试。",
+      "process": "安装进程失败：请查看退出码和日志。",
+      "busy": "另一个 Desktop 或安装任务正在使用此环境，请等待其退出后重试。",
+      "unknown": "环境准备失败：请查看详细日志。"
+    },
+    "preparingTitle": "正在准备 Connector 环境",
+    "copyOutput": "复制输出",
+    "environmentFailedDescription": "环境尚未准备完成。请根据下面的具体错误修复后重试，或查看日志。"
   },
   "app": {
     "name": "Agents Anywhere"

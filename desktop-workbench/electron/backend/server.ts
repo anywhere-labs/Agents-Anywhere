@@ -9,7 +9,7 @@ const MAX_BODY_BYTES = 1_024 * 1_024;
 const SSE_PING_MS = 15_000;
 const SSE_RETRY_MS = 1_000;
 
-const EVENTS: readonly BackendEventName[] = ["ownership", "state", "logs", "logsCleared", "settings"];
+const EVENTS: readonly BackendEventName[] = ["environment", "ownership", "state", "logs", "logsCleared", "settings"];
 
 /**
  * Loopback HTTP API for the Desktop backend.
@@ -103,6 +103,7 @@ export class BackendServer {
       if (path === "/config") return this.state.getPublicConfig();
       if (path === "/settings") return this.state.getSettings();
       if (path === "/onboarding") return this.state.getOnboarding();
+      if (path === "/environment") return this.state.environmentState();
       if (path === "/ownership") return this.state.ownershipState();
       if (path === "/logs") return this.state.readLogs({
         source: logSourceOrUndefined(url.searchParams.get("source")),
@@ -120,6 +121,8 @@ export class BackendServer {
       if (path === "/stop") return this.state.stopConnector();
       if (path === "/restart") return this.state.restartConnector();
       if (path === "/ownership/recheck") return this.state.recheckOwnership();
+      if (path === "/environment/prepare") return this.state.prepareEnvironment();
+      if (path === "/environment/cancel") return this.state.cancelEnvironment();
       if (path === "/environment/reset") return this.state.resetConnectorEnvironment();
       if (path === "/ownership/acquire") return this.state.acquireOwnershipOrThrow();
       if (path === "/server") return this.state.setServerConnection(body);
@@ -160,6 +163,7 @@ export class BackendServer {
     response.write(`retry: ${SSE_RETRY_MS}\n\n`);
     // Before the first probe answers, ownership is `checking`, which the
     // renderer shows as progress, so even the earliest frame is safe to send.
+    this.send(response, "environment", this.state.environmentState());
     this.send(response, "ownership", this.state.ownershipState());
     this.send(response, "settings", this.state.getSettings());
     this.clients.add(response);

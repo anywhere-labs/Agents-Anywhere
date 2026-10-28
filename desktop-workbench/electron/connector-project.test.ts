@@ -186,3 +186,14 @@ test("the bundle is mirrored under a non-ASCII data path in the Electron runtime
   assert.equal(result.status, 0, `exit ${result.status ?? result.signal}: ${result.stderr}`);
   assert.equal(fs.readFileSync(path.join(result.stdout, "connector", "子包", "模块.py"), "utf8"), "# 中文\n");
 });
+
+test("a previously published but corrupted payload is repaired before reuse", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-project-repair-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const source = bundle(root);
+  const data = path.join(root, "data");
+  const project = materializeConnectorProject(source, data);
+  fs.writeFileSync(path.join(project, "connector", "cli.py"), "corrupted");
+  assert.equal(materializeConnectorProject(source, data), project);
+  assert.equal(fs.readFileSync(path.join(project, "connector", "cli.py"), "utf8"), "print('v1')\n");
+});

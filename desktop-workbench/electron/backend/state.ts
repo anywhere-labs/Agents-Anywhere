@@ -62,6 +62,7 @@ export class BackendState {
     this.logs = new ConnectorLogStore(init.logsPath, () => this.settings.get());
     this.binding = new DesktopBindingStore(init.bindingPath);
     this.connector = new ConnectorSupervisor({
+      onEnvironment: state => this.emit("environment", state),
       onOwnership: (state) => {
         this.ownership = state;
         this.emit("ownership", state);
@@ -164,6 +165,15 @@ export class BackendState {
     await this.requireOwnership();
     return this.ownership;
   }
+
+  environmentState() { return this.connector.environmentState(); }
+
+  async prepareEnvironment() {
+    await this.connector.prepareEnvironment();
+    return this.connector.environmentState();
+  }
+
+  cancelEnvironment() { return this.connector.cancelEnvironment(); }
 
   /** Clears the downloaded environment so the next recheck builds it from scratch. */
   resetConnectorEnvironment(): Promise<ConnectorState> {
