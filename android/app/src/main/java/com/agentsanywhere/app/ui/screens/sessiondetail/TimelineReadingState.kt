@@ -42,12 +42,15 @@ internal class TimelineReadingState {
     var touching = false
     var selecting = false
     var towardsLatest = false
-    private var anchor: Anchor? = null
+    private var anchor by mutableStateOf<Anchor?>(null)
     private var viewport = Rect.Zero
-    private var viewportWidth = 0f
     private val regions = linkedMapOf<String, Region>()
-    private var owners = emptyMap<String, Pair<Int, String>>()
+    private var owners by mutableStateOf(emptyMap<String, Pair<Int, String>>())
+    private var hasMoreHistory = false
     private var correcting = false
+
+    val needsOlder: Boolean
+        get() = !following && owners.isNotEmpty() && anchor?.let { it.row !in owners } == true
 
     private data class Region(
         val bounds: Rect,
@@ -59,7 +62,7 @@ internal class TimelineReadingState {
 
     fun invalidate() { changes.trySend(Unit) }
 
-    fun items(items: List<TimelineRenderItem>, firstIndex: Int) {
+    fun items(items: List<TimelineRenderItem>, firstIndex: Int, hasMore: Boolean) {
         val next = buildMap {
             items.asReversed().forEachIndexed { index, item ->
                 val header = when (item) {
@@ -71,12 +74,14 @@ internal class TimelineReadingState {
                 item.messages.forEach { put(it.id, (firstIndex + index) to header) }
             }
         }
-        if (owners != next) { owners = next; invalidate() }
+        if (owners != next || hasMoreHistory != hasMore) {
+            owners = next
+            hasMoreHistory = hasMore
+            invalidate()
+        }
     }
 
     fun viewport(bounds: Rect) {
-        if (viewportWidth != 0f && abs(viewportWidth - bounds.width) > 1f) anchor = null
-        viewportWidth = bounds.width
         viewport = bounds
         invalidate()
     }
@@ -112,7 +117,7 @@ internal class TimelineReadingState {
 
     fun pauseAt(key: String? = null) {
         following = false
-        anchor = key?.let { k -> regions[k]?.let { Anchor(k, it.row, -1, "", it.bounds.top) } }
+        anchor = key?.let { k -> regions[k]?.let { Anchor(k, it.row, -1, "", it.bounds.top - viewport.top) } }
             ?: capture()
         invalidate()
     }
@@ -146,7 +151,7 @@ internal class TimelineReadingState {
             layout.getLineStart(layout.getLineForVerticalPosition((viewport.top - region.bounds.top).coerceAtLeast(0f)))
         } else -1
         val localY = if (layout != null && offset >= 0) layout.getLineTop(layout.getLineForOffset(offset.coerceAtMost(region.text.length))) else 0f
-        return Anchor(key, region.row, offset, if (offset >= 0) region.text.drop(offset).take(40) else "", region.bounds.top + localY)
+        return Anchor(key, region.row, offset, if (offset >= 0) region.text.drop(offset).take(40) else "", region.bounds.top + localY - viewport.top)
     }
 
     /** Called after a layout frame, never from a placement callback. */
@@ -168,6 +173,8 @@ internal class TimelineReadingState {
         val region = regions[held.key]
         if (region == null) {
             val owner = owners[held.row]
+            // Keep the saved identity while the existing history pager materializes it.
+            if (owner == null && (hasMoreHistory || owners.isEmpty())) return
             if (owner != null && list.layoutInfo.visibleItemsInfo.none { it.index == owner.first }) {
                 // Regrouping changes the outer lazy key. Materialize the same logical
                 // message before restoring its descendant coordinate, instead of
@@ -193,7 +200,7 @@ internal class TimelineReadingState {
         val localY = if (offset >= 0 && layout != null && layout.lineCount > 0) {
             layout.getLineTop(layout.getLineForOffset(offset.coerceIn(0, region.text.length)))
         } else 0f
-        val delta = held.y - (region.bounds.top + localY)
+        val delta = viewport.top + held.y - (region.bounds.top + localY)
         if (abs(delta) <= 1f) return
         correcting = true
         val consumed = try { list.scrollBy(delta) } finally { correcting = false }
@@ -204,11 +211,14 @@ internal class TimelineReadingState {
     companion object {
         val Saver = listSaver<TimelineReadingState, String>(
             save = { state ->
+                val held = state.anchor ?: if (!state.following) state.capture() else null
                 listOf("following:${state.following}") + state.expanded.map { "e:${it.key}:${it.value}" } + state.groupMembers.map { "g:${it.key}:${it.value}" } +
-                    state.codePositions.map { "c:${it.key}:${it.value.first}:${it.value.second}" }
+                    state.codePositions.map { "c:${it.key}:${it.value.first}:${it.value.second}" } +
+                    held?.let { listOf("a:key:${it.key}", "a:row:${it.row}", "a:offset:${it.offset}", "a:context:${it.context}", "a:y:${it.y}") }.orEmpty()
             },
             restore = { saved -> TimelineReadingState().apply {
                 saved.forEach { entry ->
+                    if (entry.startsWith("a:")) return@forEach
                     if (entry.startsWith("following:")) { following = entry.substringAfter(':').toBoolean(); return@forEach }
                     if (entry.startsWith("c:")) {
                         val yIndex = entry.lastIndexOf(':')
@@ -219,6 +229,17 @@ internal class TimelineReadingState {
                     val key = entry.substring(2, entry.lastIndexOf(':'))
                     val value = entry.substringAfterLast(':').toBoolean()
                     if (entry.startsWith("e:")) expanded[key] = value else groupMembers[key] = value
+                }
+                val fields = saved.filter { it.startsWith("a:") }.associate {
+                    val field = it.substring(2)
+                    field.substringBefore(':') to field.substringAfter(':')
+                }
+                val key = fields["key"]
+                val row = fields["row"]
+                val offset = fields["offset"]?.toIntOrNull()
+                val y = fields["y"]?.toFloatOrNull()?.takeIf { it.isFinite() }
+                if (!following && key != null && row != null && offset != null && y != null) {
+                    anchor = Anchor(key, row, offset, fields["context"].orEmpty(), y)
                 }
             } },
         )

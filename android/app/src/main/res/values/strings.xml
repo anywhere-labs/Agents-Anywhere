@@ -682,6 +682,8 @@
     <string name="profile_email_unverified">Not verified</string>
     <string name="home_sessions_title">Sessions</string>
     <string name="home_mark_all_read">Mark all as read</string>
+    <string name="workspace_collapse_sidebar">Collapse sidebar</string>
+    <string name="workspace_expand_sidebar">Expand sidebar</string>
     <string name="workspace_home">Home directory</string>
     <string name="workspace_resolving_home">Resolving home directory…</string>
     <string name="workspace_resolve_failed">Could not resolve this directory. Try again.</string>

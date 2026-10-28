@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -48,7 +47,7 @@ internal fun SessionDetailHeader(
             .fillMaxWidth()
             .height(58.dp)
             .padding(horizontal = 18.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         HeaderImageButton(
@@ -62,7 +61,7 @@ internal fun SessionDetailHeader(
         )
         Row(
             modifier = Modifier
-                .width(224.dp)
+                .weight(1f)
                 .height(42.dp)
                 .shadow(18.dp, CircleShape, ambientColor = Color(0x0A000000), spotColor = Color(0x0A000000))
                 .clip(CircleShape)
