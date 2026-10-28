@@ -3,6 +3,7 @@
 import * as React from "react"
 import { Check, CircleAlert, CircleCheck, Info, Loader2, ShieldCheck, TriangleAlert, X } from "lucide-react"
 
+import { PlanReviewCard } from "@/components/session/session-plan-review-card"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
@@ -21,7 +22,7 @@ import { cn } from "@/lib/utils"
 import type { Notice, NoticeAction } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 
-type InteractionCardProps = {
+export type InteractionCardProps = {
   notice: Notice
   resolvingNoticeId: string | null
   resolvingActionId: string | null
@@ -90,6 +91,10 @@ export function InteractionCard({
       })}
     </div>
   )
+
+  if (["claude.plan_review", "codex.plan_review"].includes(String(notice.source.component))) {
+    return <PlanReviewCard notice={notice} resolvingNoticeId={resolvingNoticeId} resolvingActionId={resolvingActionId} onRespondInteraction={onRespondInteraction} compact={compact} />
+  }
 
   return (
     <div className={cn(
