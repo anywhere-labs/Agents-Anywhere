@@ -29,7 +29,8 @@
                 "claude",
                 "opencode",
                 "acp",
-                "dsh"
+                "dsh",
+                "antigravity"
               ],
               "type": "string"
             },

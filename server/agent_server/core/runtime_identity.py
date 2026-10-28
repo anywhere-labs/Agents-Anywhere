@@ -20,7 +20,7 @@ RuntimeTypeId = NewType("RuntimeTypeId", str)
 RuntimeInstanceId = NewType("RuntimeInstanceId", str)
 ImplementationCategory = NewType("ImplementationCategory", str)
 
-KNOWN_RUNTIME_TYPES = frozenset({"codex", "claude", "opencode", "acp", "dsh"})
+KNOWN_RUNTIME_TYPES = frozenset({"codex", "claude", "opencode", "acp", "dsh", "antigravity"})
 MAX_RUNTIME_TYPE_LENGTH = 64
 MAX_RUNTIME_INSTANCE_ID_LENGTH = 128
 MAX_RUNTIME_INSTANCE_NAME_LENGTH = 128
