@@ -148,3 +148,57 @@ lint 问题修改业务代码或测试。所有数据库检查均使用本轮专
 短 TTL 只在探针内注入。旧格式计数器以冲突数值预置后，新状态仍独立分配，旧 key
 保持原值；生产代码没有旧格式读写或过渡双写。原授权校验和 Connector 传输源码
 相对本轮开始时保持不变。
+
+### 生命周期与故障验收矩阵（2026-10-28）
+
+每项同时核对正常路径、失败路径和恢复后的下一次请求。调用超时后结果未知时不
+切换通道重放；基础连接结束时才取消已接纳业务。资源清理失败要可观察，不能以
+清除本地引用或写出完成日志代替真实关闭。
+
+| 阶段 | 必须保持的约束 | 检查入口 |
+| --- | --- | --- |
+| 基础连接与能力协商 | 旧版本固定 WS，新版本共享执行器后声明回退能力；身份按连接固定 | fallback 探针、现有 Connector/Server pytest |
+| SDK 启动 | 注册前后取消、注册后错误、清理中重复取消均不留下 Router 实例、连接、binding 或 worker | control_edges 启动矩阵 |
+| 本地 Router 启动 | 取消不会丢弃仍运行的启动线程；关闭等待启动结束，迟到的启动不能重新发布地址或留下进程环境 | control_edges 真实 Router 启动矩阵 |
+| Bootstrap 与注册交错 | 基础会话关闭/替换后，迟到的 Bootstrap 或 SDK 注册不能归入新连接 | control_shutdown 探针 |
+| 并发与排队 | 普通8、关键2，共享额度；轮换不重置额度，引导握手不占业务队列 | renewal 探针、现有 executor pytest |
+| 选路与交付状态 | 明确未分发才允许单次 WS 回退，未知结果、领域错误和业务拒绝不重放 | mesh/fallback 探针、现有 transport pytest |
+| 跨 worker/Server | 基础连接 owner 与 Mesh owner 可不同；定向执行不递归选路，旧连接响应不能绑定新连接 | Redis mesh/fallback 探针 |
+| deadline | 同一预算覆盖查询、排队、连接、发送和等待；调用方结束等待不取消已接纳任务 | request_limits 探针、现有 deadline pytest |
+| 正常轮换与授权过期 | 新链路发布后排空旧链路；持续 Bootstrap 失败时独立提前排空，旧调用完成，新请求回退 | renewal/expiry 探针 |
+| Redis 状态机 | issued/published 独立单调，旧路由消失不会允许代次倒退，内存与 Lua 行为一致 | mesh_state 探针、现有 routes pytest |
+| 授权缓存容量 | 4097个并发读取只加载4097次，已完成缓存最多4096条；容量淘汰不触发凭据重查循环 | control_edges 容量检查 |
+| 撤销与结果消费 | SQL 完成后、等待方恢复前即使结果被淘汰，撤销仍有效；旧加载不能覆盖新凭据 | control_edges 撤销交错、mesh_auth 探针 |
+| 授权依赖故障 | SQL 失败不视为授权成功；订阅关闭失败仍可重订阅，恢复前拒绝使用缓存 | control_edges、mesh_auth 探针 |
+| 授权订阅启动 | 关闭与首次订阅共用生命周期锁，排队的启动在关闭后拒绝；清理中重复取消不能遗留监听任务 | control_edges 订阅启动矩阵 |
+| 组合时序 | LRU、单设备/全局撤销、调用方取消组合运行，不返回已撤销结果，不遗留加载任务 | control_edges 的10组固定种子交错 |
+| 大帧与订阅恢复 | 原64 MiB控制预算不撑断Redis32 MiB输出缓冲；分片丢失不执行业务，恢复不重放 | rpc_frames 探针、独立磁盘hash |
+| 代理握手与关闭 | 共用握手期限；删除路由或关闭连接停滞不能阻止其他收尾步骤；重复取消不丢子任务 | control_edges 代理矩阵 |
+| 连接释放 | 注销、心跳过期、旧连接替换和Server关闭均有释放期限；Redis异常仍关闭原socket | control_edges 释放矩阵 |
+| 日志 | 不输出正文或凭据；慢sink不阻塞业务，清理失败不记录成功完成 | control_logs/request_limits/control_shutdown 探针 |
+| 本机控制与多端契约 | 本机 Control/Logs、DSH交接继续可用；41个已实现方法和1个预留映射保持一致 | Desktop/DSH/Web现有检查、只读契约生成器 |
+
+上述工具位于 `server/tools/probe_connector_*.py`，具体命令见
+[控制传输说明](connector-control-transport.md#复核方式)。统一边界和关闭探针已纳入
+CI；它们最终检查所有自有后台任务已回收，并检查真实 SDK worker 已退出。
+
+### 本轮完整检查结果（2026-10-28）
+
+集成主线 `af8cbcff` 后运行完整 Server 回归；其余检查与受影响的真实传输探针也已通过。
+
+| 检查 | 结果 |
+| --- | --- |
+| Server 完整 pytest | 1118 通过、14 跳过，0 失败 |
+| Connector 完整 pytest | 1295 通过；1 条已有 Pydantic warning |
+| DSH `yarn check` | 类型、构建及构建检查通过；222 测试通过 |
+| Desktop | 157 个 main 测试、renderer typecheck 通过 |
+| Web | 415 个测试、typecheck、protocol check 通过 |
+| 单进程、分布式和故障探针 | 177 个场景通过，含 28 个启动、授权与收尾边界场景 |
+| 真实 PostgreSQL 授权查询 | 同一缓存周期 100 次读取产生 1 次指纹 SELECT |
+| 只读控制契约 | 41 个实现、1 个预留映射一致 |
+| 修改文件 Ruff | 53 个 Python 文件对照主线，23 条已有诊断，新增 0 |
+| 工作流与差异 | actionlint、`git diff --check` 通过 |
+
+DSH 检查中复现了 fixture 删除日志目录早于停止 Connector 导致的 `ENOTEMPTY`。
+获得用户单文件例外授权后，仅调整 `local-ownership.test.ts` 清理顺序，等待所有
+Connector 子进程关闭后再删除目录；原断言保持一致，完整检查重新通过。

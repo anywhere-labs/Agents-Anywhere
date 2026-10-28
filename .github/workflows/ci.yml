@@ -275,6 +275,30 @@ jobs:
         run: >-
           timeout --kill-after=30s 60 uv run --no-sync python -m tools.probe_connector_request_limits
           --output "$RUNNER_TEMP/mesh-request-limits"
+      - name: Check large Redis envelopes and subscription recovery
+        shell: bash
+        run: |
+          timeout --kill-after=30s 120 uv run --no-sync python -m tools.probe_connector_rpc_frames \
+            --redis-url redis://127.0.0.1:6379/15 --output "$RUNNER_TEMP/mesh-frames" \
+            2>&1 | tee "$RUNNER_TEMP/mesh-frames.log"
+      - name: Check expiry fallback while bootstrap remains unavailable
+        shell: bash
+        run: |
+          timeout --kill-after=30s 90 uv run --no-sync python -m tools.probe_connector_mesh_expiry \
+            --output "$RUNNER_TEMP/mesh-expiry" \
+            2>&1 | tee "$RUNNER_TEMP/mesh-expiry.log"
+      - name: Check control admission and SDK shutdown
+        shell: bash
+        run: |
+          timeout --kill-after=30s 60 uv run --no-sync python -m tools.probe_connector_control_shutdown \
+            --output "$RUNNER_TEMP/mesh-shutdown" \
+            2>&1 | tee "$RUNNER_TEMP/mesh-shutdown.log"
+      - name: Check startup authorization and shutdown fault matrix
+        shell: bash
+        run: |
+          timeout --kill-after=30s 90 uv run --no-sync python -m tools.probe_connector_control_edges \
+            --output "$RUNNER_TEMP/mesh-edges" \
+            2>&1 | tee "$RUNNER_TEMP/mesh-edges.log"
       - name: Check separated entrypoints and cross-Router recovery
         shell: bash
         run: |
@@ -291,6 +315,36 @@ jobs:
         run: >-
           timeout --kill-after=30s 300 uv run --no-sync python tools/probe_connector_mesh.py
           --single-process --output "$RUNNER_TEMP/mesh-local"
+      - name: Check overlapping authorization rotation across workers
+        shell: bash
+        run: |
+          timeout --kill-after=30s 180 uv run --no-sync python -m tools.probe_connector_mesh_renewal \
+            --redis-url redis://127.0.0.1:6379/15 --output "$RUNNER_TEMP/mesh-renewal" \
+            2>&1 | tee "$RUNNER_TEMP/mesh-renewal-connector.log"
+      - name: Check overlapping authorization rotation without Redis
+        shell: bash
+        run: |
+          timeout --kill-after=30s 180 uv run --no-sync python -m tools.probe_connector_mesh_renewal \
+            --output "$RUNNER_TEMP/mesh-renewal-local" \
+            2>&1 | tee "$RUNNER_TEMP/mesh-renewal-local-connector.log"
+      - name: Check cached authorization and cross-worker invalidation
+        shell: bash
+        run: |
+          timeout --kill-after=30s 180 uv run --no-sync python -m tools.probe_connector_mesh_auth \
+            --redis-url redis://127.0.0.1:6379/15 --output "$RUNNER_TEMP/mesh-auth" \
+            2>&1 | tee "$RUNNER_TEMP/mesh-auth-connector.log"
+      - name: Check safe fallback across workers and real local handlers
+        shell: bash
+        run: |
+          timeout --kill-after=30s 180 uv run --no-sync python -m tools.probe_connector_fallback \
+            --redis-url redis://127.0.0.1:6379/15 --output "$RUNNER_TEMP/mesh-fallback" \
+            2>&1 | tee "$RUNNER_TEMP/mesh-fallback-connector.log"
+      - name: Check safe fallback without Redis
+        shell: bash
+        run: |
+          timeout --kill-after=30s 180 uv run --no-sync python -m tools.probe_connector_fallback \
+            --output "$RUNNER_TEMP/mesh-fallback-local" \
+            2>&1 | tee "$RUNNER_TEMP/mesh-fallback-local-connector.log"
       - name: Save transport results
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
@@ -301,8 +355,17 @@ jobs:
             ${{ runner.temp }}/mesh-log-chain/results.json
             ${{ runner.temp }}/mesh-state/results.json
             ${{ runner.temp }}/mesh-request-limits/results.json
+            ${{ runner.temp }}/mesh-frames/results.json
+            ${{ runner.temp }}/mesh-expiry/results.json
+            ${{ runner.temp }}/mesh-shutdown/results.json
+            ${{ runner.temp }}/mesh-edges/results.json
             ${{ runner.temp }}/mesh-distributed/results.json
             ${{ runner.temp }}/mesh-local/results.json
+            ${{ runner.temp }}/mesh-renewal/results.json
+            ${{ runner.temp }}/mesh-renewal-local/results.json
+            ${{ runner.temp }}/mesh-auth/results.json
+            ${{ runner.temp }}/mesh-fallback/results.json
+            ${{ runner.temp }}/mesh-fallback-local/results.json
           if-no-files-found: ignore
           retention-days: 7
 
@@ -315,6 +378,21 @@ jobs:
             ${{ runner.temp }}/mesh-distributed/process-*.log
             ${{ runner.temp }}/mesh-distributed-connector.log
             ${{ runner.temp }}/mesh-local/process-*.log
+            ${{ runner.temp }}/mesh-renewal/process-*.log
+            ${{ runner.temp }}/mesh-renewal-local/process-*.log
+            ${{ runner.temp }}/mesh-renewal-connector.log
+            ${{ runner.temp }}/mesh-renewal-local-connector.log
+            ${{ runner.temp }}/mesh-auth/process-*.log
+            ${{ runner.temp }}/mesh-auth-connector.log
+            ${{ runner.temp }}/mesh-frames.log
+            ${{ runner.temp }}/mesh-expiry.log
+            ${{ runner.temp }}/mesh-expiry/process.log
+            ${{ runner.temp }}/mesh-shutdown.log
+            ${{ runner.temp }}/mesh-edges.log
+            ${{ runner.temp }}/mesh-fallback/process-*.log
+            ${{ runner.temp }}/mesh-fallback-local/process-*.log
+            ${{ runner.temp }}/mesh-fallback-connector.log
+            ${{ runner.temp }}/mesh-fallback-local-connector.log
           if-no-files-found: ignore
           retention-days: 3
 

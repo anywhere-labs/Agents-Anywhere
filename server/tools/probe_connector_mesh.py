@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import contextlib
+import copy
 import hashlib
 import json
 import os
@@ -27,21 +29,10 @@ import httpx
 import psutil
 import uvicorn
 import websockets
-from agent_server.api.connector_mesh import router as mesh_api
-from agent_server.infra.connector_mesh import ConnectorMesh
-from agent_server.infra.connector_mesh_contract import CONTROL_METHODS
-from agent_server.infra.connector_mesh_control import MeshConnectorControlTransport
-from agent_server.infra.connector_rpc import (
-    ConnectorOfflineError,
-    ConnectorRpcError,
-    ConnectorRpcManager,
-)
-from agent_server.infra.mesh_router import ManagedRouter
-from agent_server.infra.redis_coordinator import RedisCoordinator
 from connector.runtime_protocol import RuntimeInvalidRequestError
 from connector.server.mesh_transport import RemoteConnectorControl
 from connector.server.rpc import ConnectorRpcChannel
-from fastapi import FastAPI, HTTPException, Request, WebSocket
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response
 from meshcall import MeshCallError
 from meshcall.transport import DEFAULT_MAX_FRAME_SIZE
@@ -49,31 +40,67 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 from websockets.exceptions import WebSocketException
 
+from agent_server.api.connector_mesh import router as mesh_api
+from agent_server.infra.connector_mesh import ConnectorMesh
+from agent_server.infra.connector_mesh_contract import CONTROL_METHODS
+from agent_server.infra.connector_mesh_control import MeshConnectorControlTransport
+from agent_server.infra.connector_rpc import (
+    ConnectorNotDispatchedError,
+    ConnectorOfflineError,
+    ConnectorRpcError,
+    ConnectorRpcManager,
+)
+from agent_server.infra.connector_session_auth import ConnectorSessionAuthorization
+from agent_server.infra.mesh_router import ManagedRouter
+from agent_server.infra.redis_coordinator import RedisCoordinator
+
 
 def create_probe_app() -> FastAPI:
     """Real transport composition; auth and business implementations are fixtures."""
+    if os.environ.get("PROBE_GRANT_TTL"):
+        from agent_server.api import connector_mesh as proxy_module
+        from agent_server.infra import connector_mesh as mesh_module
+        from agent_server.infra import connector_mesh_routes as routes_module
+
+        # Short lifetimes are injected only into isolated probe processes.
+        mesh_module.GRANT_TTL_SECONDS = int(os.environ["PROBE_GRANT_TTL"])
+        routes_module.GRANT_TTL_SECONDS = int(os.environ["PROBE_GRANT_TTL"])
+        proxy_module.ROUTE_RENEW_SECONDS = 1
     redis = RedisCoordinator(os.environ["PROBE_REDIS"] or None, prefix=os.environ["PROBE_PREFIX"])
     rpc = ConnectorRpcManager(redis)
-    mesh = ConnectorMesh(rpc, redis)
+    mesh = ConnectorMesh(rpc, redis, credential_loader=lambda identity: store.connector_credential_fingerprint(identity))
     rpc.bind_request_transport(MeshConnectorControlTransport(mesh, rpc))
     connector_id, token = os.environ["PROBE_CONNECTOR"], os.environ["PROBE_TOKEN"]
 
     class Store:
+        def __init__(self):
+            self.fingerprint_reads = 0
+            self.fingerprint = hashlib.sha256(token.encode()).hexdigest()
+
         async def authenticate_connector_access(self, candidate):
-            return connector_id if candidate == token else None
+            fingerprint = await self.connector_credential_fingerprint(connector_id)
+            return connector_id if candidate == token and fingerprint == hashlib.sha256(token.encode()).hexdigest() else None
 
         def connector_lifecycle(self, identity):
             return rpc.lifecycle_guard(identity)
 
         async def connector_credential_fingerprint(self, identity):
+            self.fingerprint_reads += 1
             if redis.distributed and await redis.client.get(redis.key("probe-revoked")):
                 return ""
-            return hashlib.sha256(token.encode()).hexdigest() if identity == connector_id else ""
+            if redis.distributed:
+                replacement = await redis.client.get(redis.key("probe-fingerprint"))
+                if replacement:
+                    return replacement
+            return self.fingerprint if identity == connector_id else ""
+
+    store = Store()
 
     @asynccontextmanager
     async def lifespan(app):
         await redis.start()
         await rpc.start()
+        await mesh.credentials.start()
         try:
             yield
         finally:
@@ -82,15 +109,34 @@ def create_probe_app() -> FastAPI:
             await redis.close()
 
     app = FastAPI(lifespan=lifespan)
-    app.state.store, app.state.rpc, app.state.connector_mesh = Store(), rpc, mesh
+    app.state.store, app.state.rpc, app.state.connector_mesh = store, rpc, mesh
     app.include_router(mesh_api, prefix="/api/v2")
+
+    @app.middleware("http")
+    async def bootstrap_failure(request: Request, call_next):
+        gate_path = os.environ.get("PROBE_MESH_GATE_FILE")
+        gate = Path(gate_path).read_text() if gate_path and Path(gate_path).exists() else ""
+        if request.url.path.endswith("/connector/mesh/bootstrap") and gate in {"bootstrap404", "bootstrap503"}:
+            return JSONResponse({"detail": "injected bootstrap failure"}, status_code=int(gate[-3:]))
+        if (request.url.path.endswith("/connector/mesh/bootstrap") and redis.distributed
+                and await redis.client.get(redis.key("probe-bootstrap-fail"))):
+            return JSONResponse({"detail": "injected admission failure"}, status_code=503)
+        if request.url.path.endswith("/connector/mesh/status") and redis.distributed:
+            keep_link = await redis.client.get(redis.key("probe-status-fail-except"))
+            if keep_link:
+                candidate = await mesh.grant(request.headers.get("authorization", "").removeprefix("Bearer "))
+                if candidate and candidate["linkId"] != keep_link:
+                    await redis.client.incr(redis.key("probe-status-fail-count"))
+                    return JSONResponse({"detail": "injected publication confirmation failure"}, status_code=503)
+        return await call_next(request)
 
     @app.get("/probe/info")
     async def info():
         route = await mesh.routes.get(connector_id)
         return {"worker": rpc.instance_id, "pid": os.getpid(), "router": mesh.router_id,
                 "route": json.loads(route.encoded()) if route else None,
-                "connection": await rpc.current_connection_id(connector_id)}
+                "connection": await rpc.current_connection_id(connector_id),
+                "credentialQueries": store.fingerprint_reads}
 
     @app.get("/probe/redis-health")
     async def redis_health():
@@ -120,11 +166,43 @@ def create_probe_app() -> FastAPI:
 
     @app.post("/probe/credential/{action}")
     async def credential(action: str):
-        if action == "revoke":
-            await redis.client.set(redis.key("probe-revoked"), "1", ex=60)
+        if redis.distributed:
+            if action == "revoke":
+                await redis.client.set(redis.key("probe-revoked"), "1", ex=60)
+            elif action == "rotate":
+                await redis.client.set(redis.key("probe-fingerprint"), secrets.token_hex(32), ex=60)
+            else:
+                await redis.client.delete(redis.key("probe-revoked"), redis.key("probe-fingerprint"))
         else:
-            await redis.client.delete(redis.key("probe-revoked"))
+            store.fingerprint = ("" if action == "revoke" else secrets.token_hex(32) if action == "rotate"
+                                 else hashlib.sha256(token.encode()).hexdigest())
+        await mesh.credentials.invalidate(connector_id)
         return {"revoked": action == "revoke"}
+
+    relay_result = {"ready": False, "output": ""}
+
+    @app.get("/probe/relay-result")
+    async def relay_status():
+        return relay_result
+
+    @app.websocket("/api/v2/connector/terminals/{terminal_id}/relay")
+    async def terminal_relay(ws: WebSocket, terminal_id: str):
+        if ws.query_params.get("token") != token:
+            await ws.close(code=1008)
+            return
+        await ws.accept()
+        await ws.send_json({"type": "start", "mode": "attach", "terminalId": terminal_id, "sessionId": "probe-session"})
+        try:
+            while True:
+                frame = await ws.receive_json()
+                if frame.get("type") == "ready":
+                    relay_result["ready"] = True
+                    await ws.send_json({"type": "input", "requestId": "relay-input", "data": base64.b64encode(
+                        b"printf '%s%s\\n' 'FALLBACK_' 'RELAY_OK'\n").decode()})
+                if frame.get("type") in {"replay", "output"}:
+                    relay_result["output"] += base64.b64decode(frame.get("data") or "").decode(errors="replace")
+        except (WebSocketDisconnect, RuntimeError):
+            pass
 
     @app.post("/probe/stale-route")
     async def stale_route(request: Request):
@@ -136,20 +214,31 @@ def create_probe_app() -> FastAPI:
 
     @app.websocket("/api/v2/connector/ws")
     async def base_socket(ws: WebSocket):
-        if ws.headers.get("authorization") != f"Bearer {token}":
+        fingerprint = await store.connector_credential_fingerprint(connector_id)
+        if (ws.headers.get("authorization") != f"Bearer {token}"
+                or fingerprint != hashlib.sha256(token.encode()).hexdigest()):
             await ws.close(code=1008)
             return
         await ws.accept()
         connection = await rpc.register(connector_id, ws,
-                                        mesh_capable=ws.headers.get("x-aa-control-transport") == "meshcall/1.0")
+                                        mesh_capable=ws.headers.get("x-aa-control-transport") == "meshcall/1.0",
+                                        control_fallback_capable=ws.headers.get("x-aa-control-fallback") == "websocket/1.0")
+        authorization = ConnectorSessionAuthorization(
+            connector_id, connection.connection_id, hashlib.sha256(fingerprint.encode()).hexdigest(), mesh.credentials,
+            lambda: rpc.is_connection_id_current(connector_id, connection.connection_id),
+            lambda: rpc._disconnect_local(connector_id, expected_connection_id=connection.connection_id,
+                                          reason="probe authorization changed"))
+        connection.authorize_control = authorization.valid
+        authorization.start()
         try:
             while True:
                 message = await ws.receive_json()
                 if not await rpc.touch(connector_id, connection):
                     return
                 if message.get("type") == "response":
-                    rpc.resolve_response(connector_id, message)
+                    rpc.resolve_response(connector_id, message, connection=connection)
         finally:
+            await authorization.close()
             await rpc.unregister(connector_id, connection)
 
     @app.post("/probe/{transport}/{method}")
@@ -159,6 +248,31 @@ def create_probe_app() -> FastAPI:
         try:
             if transport == "mesh":
                 result = await rpc.request(connector_id, method, params, timeout=timeout)
+            elif transport == "mesh-stale":
+                from agent_server.infra.connector_mesh_routes import MeshRoute
+
+                stale = MeshRoute.decode(json.dumps(body["staleRoute"]))
+                assert stale is not None and stale.router_id == mesh.router_id
+                forwarding = MeshConnectorControlTransport(mesh, rpc)
+                local_call = forwarding._call_local
+                first, rejections = True, []
+
+                async def raced_call(route, *args):
+                    nonlocal first
+                    selected, first = (stale if first else route), False
+                    try:
+                        return await local_call(selected, *args)
+                    except ConnectorNotDispatchedError as error:
+                        rejections.append((error.__cause__.details or {}).get("reason"))
+                        raise
+
+                # Inject a route-read/dispatch race on this request only. The
+                # production selector must reject the stale link and fall back once.
+                forwarding._call_local = raced_call
+                selector = copy.copy(rpc)  # Per-request transport, shared owner/relay state.
+                selector.bind_request_transport(forwarding)
+                result, _ = await selector.request_bound(connector_id, method, params, timeout=timeout)
+                return {"result": result, "staleRejections": rejections}
             elif transport == "legacy":
                 # The unmodified legacy last hop and cross-worker owner route.
                 connection = rpc._connections.get(connector_id)
@@ -209,12 +323,21 @@ def create_front_app() -> FastAPI:
 
     @app.websocket("/{path:path}")
     async def ws_proxy(path: str, ws: WebSocket):
+        gate_path = os.environ.get("PROBE_MESH_GATE_FILE")
+        if (path.endswith("/connector/mesh") and gate_path and Path(gate_path).exists()
+                and Path(gate_path).read_text() == "deny_mesh"):
+            await ws.close(code=1008)
+            return
         headers = {"Authorization": ws.headers.get("authorization", "")}
+        fallback = ws.headers.get("x-aa-control-fallback")
+        if fallback:
+            headers["X-AA-Control-Fallback"] = fallback
         capability = ws.headers.get("x-aa-control-transport")
         if capability:
             headers["X-AA-Control-Transport"] = capability
         try:
-            async with websockets.connect(target(path).replace("http:", "ws:") + "/" + path,
+            query = "?" + ws.url.query if ws.url.query else ""
+            async with websockets.connect(target(path).replace("http:", "ws:") + "/" + path + query,
                                           additional_headers=headers, proxy=None,
                                           max_size=DEFAULT_MAX_FRAME_SIZE) as remote:
                 await ws.accept()
@@ -248,9 +371,9 @@ def create_front_app() -> FastAPI:
 
 
 class ProbeConnector:
-    def __init__(self, url: str, token: str, http: httpx.AsyncClient, *, mesh_enabled=True):
+    def __init__(self, url: str, token: str, http: httpx.AsyncClient, *, mesh_enabled=True, fallback_enabled=True):
         self.url, self.token, self.http = url, token, http
-        self.mesh_enabled = mesh_enabled
+        self.mesh_enabled, self.fallback_enabled = mesh_enabled, fallback_enabled
         self.counts: Counter = Counter()
         self.started: Counter = Counter()
         self.finished: Counter = Counter()
@@ -304,24 +427,31 @@ class ProbeConnector:
         while True:
             tasks = []
             channel = ConnectorRpcChannel()
+            self.backend._mesh_connection_token = secrets.token_urlsafe(24)
+            self.control.executor.open_session(self.dispatch, self.backend._mesh_connection_token)
             try:
                 async with websockets.connect(self.url.replace("http:", "ws:") + "/api/v2/connector/ws",
                                               additional_headers={"Authorization": f"Bearer {self.token}",
                                                                   **({"X-AA-Control-Transport": "meshcall/1.0"}
-                                                                     if self.mesh_enabled else {})},
+                                                                     if self.mesh_enabled else {}),
+                                                                  **({"X-AA-Control-Fallback": "websocket/1.0"}
+                                                                     if self.mesh_enabled and self.fallback_enabled else {})},
                                               proxy=None, max_size=DEFAULT_MAX_FRAME_SIZE) as ws:
-                    self.backend._mesh_connection_token = secrets.token_urlsafe(24)
-                    channel.set_connection(ws)
+                    channel.set_connection(ws, executor=self.control.executor,
+                                           generation=self.backend._mesh_connection_token,
+                                           business_methods=frozenset(CONTROL_METHODS) - {"workspace.refresh"})
 
                     async def dispatch(method, params):
                         if method == "connector.mesh.connection":
                             return {"connectionToken": self.backend._mesh_connection_token}
-                        self.legacy_calls[params.get("marker", "")] += 1
                         return await self.dispatch(method, params)
 
                     async def reader(channel=channel, ws=ws, dispatch=dispatch):
                         async for frame in ws:
-                            channel.start_request(json.loads(frame), dispatch)
+                            message = json.loads(frame)
+                            if message.get("method") != "connector.mesh.connection":
+                                self.legacy_calls[message.get("params", {}).get("marker", "")] += 1
+                            channel.start_request(message, dispatch)
 
                     async def heartbeat(channel=channel):
                         while True:
@@ -337,6 +467,7 @@ class ProbeConnector:
             except (OSError, ConnectionError, WebSocketException):
                 await asyncio.sleep(0.3)
             finally:
+                await self.control.executor.close_session()
                 for task in tasks:
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)

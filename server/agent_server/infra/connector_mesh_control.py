@@ -12,6 +12,7 @@ from meshcall import DeadlineExceededError, MeshCallError, UnavailableError
 from meshcall.protocol import CallOpenFrame, encode_frame
 from meshcall.transport import DEFAULT_MAX_FRAME_SIZE
 from pydantic import BaseModel, ConfigDict
+from websockets.exceptions import WebSocketException
 
 from agent_server.infra.connector_control_log import (
     business_fields,
@@ -100,73 +101,44 @@ class MeshConnectorControlTransport:
         )
 
     @bounded_connector_request
+    async def request_on_identity(self, connector_id: str, connection_id: str, method: str,
+                                  params: dict[str, Any], *, timeout: float) -> Any:
+        return await self._request_on_connection(connector_id, connection_id, method, params, timeout=timeout)
+
+    @bounded_connector_request
     async def _request_on_connection(
-        self,
-        connector_id: str,
-        connection_id: str,
-        method: str,
-        params: dict[str, Any],
-        *,
-        timeout: float,
+        self, connector_id: str, connection_id: str, method: str, params: dict[str, Any], *, timeout: float,
     ) -> Any:
-        loop = asyncio.get_running_loop()
         budget = current_request_deadline()
         assert budget is not None
-        deadline = budget.when
-        call_id = budget.call_id
-        started_at = time.monotonic()
-        context = {**business_fields(params), "callId": call_id, "method": method,
+        context = {**business_fields(params), "callId": budget.call_id, "method": method,
                    "connectorId": connector_id, "connectionId": connection_id,
                    "sourceWorkerId": self.rpc.instance_id, "routerId": self.mesh.router_id}
+        started_at = time.monotonic()
         outcome, delivery, phase = "cancelled", "not_dispatched", "route_lookup"
-        lookups, retries = 0, 0
         details = {}
-        route = None
         control_log("request.started", **context)
         try:
-            while True:
-                remaining = deadline - loop.time()
-                if remaining <= 0:
-                    raise ConnectorTransportTimeout(
-                        f"{method} timed out waiting for Connector MeshCall",
-                        details={"deliveryState": "not_dispatched", "controlCallId": call_id},
-                    )
-                if not await self.rpc.is_connection_id_current(connector_id, connection_id):
-                    raise ConnectorNotDispatchedError("connector connection changed")
-                route = await self.mesh.routes.get(connector_id)
-                lookups += 1
-                if route is None or route.connection_id != connection_id:
-                    await asyncio.sleep(min(0.1, remaining))
-                    continue
-                self._check_frame_budget(route, method, params, remaining, call_id)
-                context.update(linkId=route.link_id, routerId=route.router_id,
-                               targetWorkerId=route.worker_id, generation=route.generation)
-                remaining = deadline - loop.time()
-                if remaining <= 0:
-                    continue
-                try:
-                    phase = "local_mesh" if route.router_id == self.mesh.router_id else "redis_mesh"
-                    delivery = "outcome_unknown"
-                    control_log("request.dispatch", level="DEBUG", phase=phase, **context)
-                    if phase == "local_mesh":
-                        response = await self._call_local(route, method, params, remaining, call_id)
-                    else:
-                        response = await self.rpc.route_mesh_request(
-                            route.worker_id, connection_id,
-                            {"connectorId": connector_id, "meshRoute": asdict(route),
-                             "method": method, "params": params, "timeout": remaining,
-                             "controlCallId": call_id}, timeout=remaining,
-                        )
-                    break
-                except ConnectorNotDispatchedError:
-                    delivery, phase = "not_dispatched", "route_lookup"
-                    budget.delivery_state = delivery
-                    retries += 1
-                    await asyncio.sleep(min(0.1, max(0, deadline - loop.time())))
             if not await self.rpc.is_connection_id_current(connector_id, connection_id):
-                raise ConnectorOfflineError(
-                    "connector connection changed", details={"deliveryState": "outcome_unknown"},
-                )
+                raise ConnectorOfflineError("connector connection changed", details={"deliveryState": "not_dispatched"})
+            route = await self.mesh.routes.get(connector_id)
+            if route is None or route.connection_id != connection_id:
+                raise ConnectorNotDispatchedError("connector mesh route unavailable", details={
+                    "source": "connector_transport", "reason": "route_missing", "deliveryState": "not_dispatched"})
+            self._check_frame_budget(route, method, params, budget.remaining(), budget.call_id)
+            context.update(linkId=route.link_id, routerId=route.router_id,
+                           targetWorkerId=route.worker_id, generation=route.generation)
+            phase = "local_mesh" if route.router_id == self.mesh.router_id else "redis_mesh"
+            control_log("request.dispatch", level="DEBUG", phase=phase, **context)
+            if phase == "local_mesh":
+                response = await self._call_local(route, method, params, budget.remaining(), budget.call_id)
+            else:
+                response = await self.rpc.route_mesh_request(route.worker_id, connection_id, {
+                    "connectorId": connector_id, "meshRoute": asdict(route), "method": method,
+                    "params": params, "timeout": budget.remaining(), "controlCallId": budget.call_id,
+                }, timeout=budget.remaining())
+            if not await self.rpc.is_connection_id_current(connector_id, connection_id):
+                raise ConnectorOfflineError("connector connection changed", details={"deliveryState": "outcome_unknown"})
             outcome, delivery = "returned", "response_received"
             details = result_fields(response)
             return response
@@ -179,13 +151,12 @@ class MeshConnectorControlTransport:
             raise
         except Exception as exc:
             outcome = "timeout" if isinstance(exc, TimeoutError) else "failed"
-            delivery = (getattr(exc, "details", None) or {}).get("deliveryState", delivery)
+            delivery = (getattr(exc, "details", None) or {}).get("deliveryState", budget.delivery_state)
             details = error_fields(exc, stack=not isinstance(exc, (ConnectorRpcError, ConnectorOfflineError, TimeoutError)))
             raise
         finally:
             control_log("request.finished", level="INFO" if outcome == "returned" else "WARNING",
                         **{**context, **details}, outcome=outcome, deliveryState=delivery, phase=phase,
-                        lookupCount=lookups, routeRetries=retries,
                         elapsedMs=(time.monotonic() - started_at) * 1000)
 
     async def request_routed(self, payload: dict[str, Any]) -> Any:
@@ -201,9 +172,11 @@ class MeshConnectorControlTransport:
                 or payload.get("connectionId") != route.connection_id
                 or method not in CONTROL_METHODS or not isinstance(params, dict)):
             raise ConnectorNotDispatchedError("invalid connector mesh route")
-        if (await self.mesh.routes.get(route.connector_id) != route
-                or not await self.rpc.is_connection_id_current(route.connector_id, route.connection_id)):
-            raise ConnectorNotDispatchedError("connector mesh route was replaced")
+        if not await self.rpc.is_connection_id_current(route.connector_id, route.connection_id):
+            raise ConnectorOfflineError("connector connection changed", details={"deliveryState": "not_dispatched"})
+        if await self.mesh.routes.get(route.connector_id) != route:
+            raise ConnectorNotDispatchedError("connector mesh route was replaced", details={
+                "source": "connector_transport", "reason": "route_replaced", "deliveryState": "not_dispatched"})
         return await self._call_local(
             route, method, params, current_request_deadline().remaining(),
             str(payload.get("controlCallId") or ""),
@@ -233,58 +206,44 @@ class MeshConnectorControlTransport:
         domain, mesh_method = CONTROL_METHODS[method]
         names = service_names(route.connector_id, route.connection_id, route.link_id)
         budget = current_request_deadline()
-        deadline = min(asyncio.get_running_loop().time() + timeout, budget.when) if budget else asyncio.get_running_loop().time() + timeout
-        registration_waits = 0
-        while True:
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                raise ConnectorTransportTimeout(
-                    f"{method} timed out waiting for Connector MeshCall",
-                    details={"deliveryState": "not_dispatched", "controlCallId": call_id},
-                )
-            try:
-                if budget is not None:
-                    budget.delivery_state = "outcome_unknown"
-                response = await self.mesh.connection().call_unary(
-                    names[domain], mesh_method, ControlRequest(request=Payload(**params)), Payload,
-                    timeout=remaining, instance=route.link_id,
-                    metadata={"aa-control-call-id": call_id, "aa-connection-id": route.connection_id},
-                )
-                return response.model_dump()
-            except DeadlineExceededError as exc:
-                if (exc.details or {}).get("source") == "connector_domain":
-                    raise ConnectorRpcError(exc.code, exc.message, details=exc.details) from exc
-                raise ConnectorTransportTimeout(
-                    f"{method} timed out",
-                    details={"deliveryState": "outcome_unknown", "controlCallId": call_id},
-                ) from exc
-            except UnavailableError as exc:
-                # no_instances is emitted before dispatch. It is safe to wait
-                # for a just-connected device without replaying a mutation.
-                details = exc.details or {}
-                if details.get("source") == "connector_domain":
-                    raise ConnectorRpcError(exc.code, exc.message, details=details) from exc
-                if (details.get("source") == "connector_executor"
-                        and details.get("deliveryState") == "not_dispatched"):
-                    raise ConnectorNotDispatchedError(exc.message, details=details) from exc
-                if (
-                    details.get("source") == "router"
-                    and details.get("reason") == "no_instances"
-                ):
-                    if budget is not None:
-                        budget.delivery_state = "not_dispatched"
-                    registration_waits += 1
-                    if registration_waits == 1:
-                        control_log("registration.wait", level="DEBUG", callId=call_id, method=method,
-                                    connectorId=route.connector_id, connectionId=route.connection_id,
-                                    routerId=route.router_id, targetWorkerId=route.worker_id, linkId=route.link_id)
-                    if await self.mesh.routes.get(route.connector_id) != route:
-                        raise ConnectorNotDispatchedError("connector mesh registration changed") from exc
-                    await asyncio.sleep(min(0.1, remaining))
-                    continue
-                raise ConnectorOfflineError(
-                    exc.message or "connector is offline",
-                    details={**details, "deliveryState": "outcome_unknown", "controlCallId": call_id},
-                ) from exc
-            except MeshCallError as exc:
+        remaining = min(timeout, budget.remaining()) if budget is not None else timeout
+        client = self.mesh.connection()
+        # This phase only opens the Router connection; no business call exists.
+        try:
+            async with asyncio.timeout(min(1.0, max(0.0, remaining) / 2)):
+                await client.connect()
+        except (OSError, ConnectionError, TimeoutError, MeshCallError, WebSocketException) as exc:
+            raise ConnectorNotDispatchedError("connector mesh connection unavailable", details={
+                "source": "connector_transport", "reason": "mesh_connect_failed", "deliveryState": "not_dispatched",
+                "controlCallId": call_id}) from exc
+        remaining = min(timeout, budget.remaining()) if budget is not None else timeout
+        if remaining <= 0:
+            raise ConnectorTransportTimeout("connector RPC timed out", details={"deliveryState": "not_dispatched"})
+        try:
+            if budget is not None:
+                budget.delivery_state = "outcome_unknown"
+            response = await client.call_unary(
+                names[domain], mesh_method, ControlRequest(request=Payload(**params)), Payload,
+                timeout=remaining, instance=route.link_id,
+                metadata={"aa-control-call-id": call_id, "aa-connection-id": route.connection_id},
+            )
+            return response.model_dump()
+        except DeadlineExceededError as exc:
+            if (exc.details or {}).get("source") == "connector_domain":
                 raise ConnectorRpcError(exc.code, exc.message, details=exc.details) from exc
+            raise ConnectorTransportTimeout(f"{method} timed out", details={
+                "deliveryState": "outcome_unknown", "controlCallId": call_id}) from exc
+        except UnavailableError as exc:
+            details = exc.details or {}
+            if details.get("source") == "connector_domain":
+                raise ConnectorRpcError(exc.code, exc.message, details=details) from exc
+            if details.get("source") == "router" and details.get("reason") in {
+                "no_instances", "instance_unknown", "instance_draining",
+            }:
+                if budget is not None:
+                    budget.delivery_state = "not_dispatched"
+                raise ConnectorNotDispatchedError(exc.message, details={**details, "deliveryState": "not_dispatched"}) from exc
+            raise ConnectorOfflineError(exc.message or "connector is offline", details={
+                **details, "deliveryState": "outcome_unknown", "controlCallId": call_id}) from exc
+        except MeshCallError as exc:
+            raise ConnectorRpcError(exc.code, exc.message, details=exc.details) from exc

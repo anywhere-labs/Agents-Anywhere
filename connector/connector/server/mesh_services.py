@@ -50,16 +50,35 @@ class ConnectorControlExecutor:
         self._critical = asyncio.Semaphore(2)
         self.generation = ""
         self._tasks: set[asyncio.Task] = set()
+        self._accepting = True
+        self._closing: asyncio.Task | None = None
+
+    @property
+    def accepting(self) -> bool:
+        return self._accepting
+
+    def require_session(self, generation: str) -> None:
+        if not self._accepting or generation != self.generation:
+            raise MeshCallError("unavailable", "Connector control session is closed or replaced",
+                                details={"source": "connector_executor", "deliveryState": "not_dispatched"})
 
     def open_session(self, dispatch: Dispatch, generation: str) -> None:
-        if self._tasks:
+        if self._tasks or self._closing is not None and not self._closing.done():
             raise RuntimeError("previous Connector control session is still active")
         self._dispatch = dispatch
         self.generation = generation
+        self._accepting = True
+        self._closing = None
 
     async def close_session(self) -> None:
+        self._accepting = False
         self.generation = "closed"
-        tasks = tuple(self._tasks)
+        if self._closing is None:
+            self._closing = asyncio.create_task(self._cancel_tasks(tuple(self._tasks)), name="connector-control-close")
+        await asyncio.shield(self._closing)
+
+    @staticmethod
+    async def _cancel_tasks(tasks: tuple[asyncio.Task, ...]) -> None:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -84,12 +103,11 @@ class ConnectorControlExecutor:
         control_log("execution.queued", level="INFO" if semaphore.locked() else "DEBUG", **fields,
                     queueDepth=self._queued[lane], activeCount=self._active[lane])
         try:
+            self.require_session(generation)
             async with semaphore:
                 self._queued[lane] -= 1
                 waiting = False
-                if generation != self.generation:
-                    raise MeshCallError("unavailable", "Connector connection was replaced",
-                                        details={"source": "connector_executor", "deliveryState": "not_dispatched"})
+                self.require_session(generation)
                 self._active[lane] += 1
                 active = True
                 started_at = time.monotonic()
@@ -407,6 +425,7 @@ def bind_control_services(
     loop: asyncio.AbstractEventLoop,
     *,
     executor: ConnectorControlExecutor | None = None,
+    generation: str | None = None,
 ) -> tuple[_DomainService, ...]:
     """Bind connection-scoped service names without mutating shared contracts."""
 
@@ -422,5 +441,5 @@ def bind_control_services(
         service_type = service(names[domain], targeted=True)(
             type(f"Bound{domain}Service", (base,), methods)
         )
-        bound.append(service_type(executor, loop, executor.generation))
+        bound.append(service_type(executor, loop, executor.generation if generation is None else generation))
     return tuple(bound)

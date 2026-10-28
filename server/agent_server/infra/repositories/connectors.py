@@ -259,6 +259,7 @@ class ConnectorRepositoryMixin:
             # Credentials are deliberately reissued only on an explicit
             # registration retry. Normal starts reuse the locally saved token.
             return await self.rotate_connector_token(connector_id, user_id=user_id)
+        await self.connector_credentials_changed(connector_id)
         return await self.get_connector(connector_id), token, prefix
 
 
@@ -407,6 +408,11 @@ class ConnectorRepositoryMixin:
         return str(value or "")
 
     async def authenticate_connector_access(self, token: str) -> str | None:
+        identity = await self.authenticate_connector_access_context(token)
+        return identity[0] if identity is not None else None
+
+    async def authenticate_connector_access_context(self, token: str) -> tuple[str, str] | None:
+        """Return identity and a digest of the credential used by this exact check."""
         from agent_server.core.auth import (
             connector_access_token_id,
             verify_connector_access_token,
@@ -426,7 +432,10 @@ class ConnectorRepositoryMixin:
             ).scalar_one_or_none()
         if credential_hash is None:
             return None
-        return verify_connector_access_token(token, credential_hash=credential_hash)
+        authenticated = verify_connector_access_token(token, credential_hash=credential_hash)
+        if authenticated is None:
+            return None
+        return authenticated, hashlib.sha256(str(credential_hash).encode()).hexdigest()
 
     async def get_connector(self, connector_id: str) -> ConnectorView:
         async with self._engine.connect() as conn:
@@ -503,9 +512,11 @@ class ConnectorRepositoryMixin:
             )
             if result.rowcount == 0:
                 raise KeyError(connector_id)
-            return list((await conn.execute(
+            session_ids = list((await conn.execute(
                 select(sessions_t.c.id).where(sessions_t.c.connector_id == connector_id)
             )).scalars())
+        await self.connector_credentials_changed(connector_id)
+        return session_ids
 
     async def delete_connector(
         self, connector_id: str, *, user_id: str | None = None
@@ -542,6 +553,7 @@ class ConnectorRepositoryMixin:
             # Files cannot be rolled back, so run this after all SQL deletions.
             for session_id in session_ids:
                 await self.files.delete_session(session_id)
+        await self.connector_credentials_changed(connector_id)
         return session_ids
 
 
@@ -573,6 +585,7 @@ class ConnectorRepositoryMixin:
             )
             if result.rowcount == 0:
                 raise KeyError(connector_id)
+        await self.connector_credentials_changed(connector_id)
         return await self.get_connector(connector_id), token, prefix
 
 

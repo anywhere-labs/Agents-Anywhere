@@ -173,8 +173,10 @@ def create_app(
             except Exception:  # noqa: BLE001 - shutdown must continue
                 logger.exception("failed to flush usage events on shutdown")
             try:
-                await app.state.connector_mesh.close()
-                await app.state.rpc.close()
+                try:
+                    await app.state.connector_mesh.close()
+                finally:
+                    await app.state.rpc.close()
             finally:
                 try:
                     await app.state.timeline_write_buffer.close()
@@ -233,7 +235,10 @@ def create_app(
         instance_id=process_settings.instance_id(),
     )
     app.state.store.bind_connector_lifecycle(app.state.rpc.lifecycle_guard)
-    app.state.connector_mesh = ConnectorMesh(app.state.rpc, app.state.redis)
+    app.state.connector_mesh = ConnectorMesh(
+        app.state.rpc, app.state.redis, credential_loader=app.state.store.connector_credential_fingerprint,
+    )
+    app.state.store.bind_connector_credentials_changed(app.state.connector_mesh.credentials.invalidate)
     app.state.rpc.bind_request_transport(
         MeshConnectorControlTransport(app.state.connector_mesh, app.state.rpc)
     )
@@ -352,20 +357,22 @@ def create_app(
                 checks["redis"] = {"status": "error", "message": str(exc)}
         else:
             checks["redis"] = {"status": "not_configured"}
-        if app.state.timeline_broker.healthy:
+        authorization_healthy = (app.state.connector_mesh.credentials is not None
+                                 and app.state.connector_mesh.credentials.healthy)
+        if app.state.timeline_broker.healthy and app.state.rpc.healthy and authorization_healthy:
             checks["realtime"] = {"status": "ok"}
         else:
             ready = False
             checks["realtime"] = {"status": "error", "message": "subscription unavailable"}
-        # Preserve the public health response shape. Realtime readiness now
-        # includes the control Router started by the application lifecycle.
+        # Router availability is diagnostic while both control transports share
+        # the critical base-session authorization and routing dependencies above.
         if app.state.connector_mesh.router_url:
             try:
                 async with asyncio.timeout(2):
                     await app.state.connector_mesh.health()
+                checks["mesh"] = {"status": "ok"}
             except Exception:  # noqa: BLE001 - readiness reports Router dependency failures
-                ready = False
-                checks["realtime"] = {"status": "error", "message": "MeshCall Router unavailable"}
+                checks["mesh"] = {"status": "error", "message": "MeshCall Router unavailable"}
         return JSONResponse(
             status_code=200 if ready else 503,
             content={

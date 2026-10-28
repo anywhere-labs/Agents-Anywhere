@@ -1,5 +1,19 @@
 # Connector Control 1.0
 
+## 通道选择与安全回退
+
+基础连接同时声明 `X-AA-Control-Transport: meshcall/1.0` 和
+`X-AA-Control-Fallback: websocket/1.0` 时，支持 Mesh 优先及一次 WebSocket 回退。
+新标记表示两条入口共享普通8/关键2执行器、基础连接生命周期及64 MiB控制帧预算。
+未声明新标记的连接固定使用原 WebSocket 业务入口，即使已经发布 Mesh route。
+presence 新增可选 `controlFallbackCapable: true`，缺省为 false，不新增 Redis key。
+
+每次请求固定 connectionId、controlCallId 和绝对 deadline。没有匹配 route 时不等待
+注册；仅在 Mesh 明确未分发时允许回退一次，提交后的超时或结果未知均不重放。
+两条通道仍校验基础连接身份及认证时的凭据版本。WS 请求新增可选 metadata，使用
+`aa-control-call-id`、`aa-connection-id` 关联日志；错误增加可选 details，不改变领域参数。
+`workspace.refresh` 仍为预留方法，不提供 WS 回退。
+
 Server 到 Connector 的请求/响应控制面使用六个领域 MeshCall 服务：
 RuntimeControl、Sessions、Workspaces、Files、Shell 和 Terminals。
 服务定义以同目录 `service.json` 为准，固定前缀为 `aa.remote.v1`。
@@ -15,6 +29,10 @@ Redis presence 租约继续表示基础连接的 owner。另一个 60 秒租约�
 Router 与 worker，每 20 秒续期；只有预期服务全部注册后才能发布。发布时原子校验
 基础连接与 bootstrap 代次，清理和续期比较完整 link 身份。Router 相同时直接调用；
 跨 Router 复用原 Redis 请求/响应中转到目标 worker，再调用 MeshCall，不再递归路由。
+超过256 KiB的内部请求和响应在原 worker 频道上分片；接收端每次只拉取一片，
+原业务信封完整重组后才提交。小消息经过原通道，不排在大帧后等待。
+分片不使用 Redis 存储 key，不自动重传业务。订阅断线时丢弃部分帧并重新订阅，
+已提交调用的结果保持未知，不重放变更。
 无 Redis 的单进程模式使用同语义的本地记录。新增记录均为可重建的临时协调信息，
 不保存业务操作结果，也不改变现有 Timeline、锁、终端或通知的 Redis 职责。
 
@@ -38,14 +56,30 @@ Runtime 10、Sessions 13、Workspaces 1、Files 5、Shell 3、Terminals 10。
 保持原有排队策略，不通过 SDK 的额外 inflight 上限提前拒绝请求。执行器和任务由
 基础连接生命周期持有，Router 重连或授权更新不会重置额度。
 
-基础连接通过 `X-AA-Control-Transport: meshcall/1.0` 声明控制能力，该标记随原 Redis
-presence 租约共享。未声明能力的旧 Connector 继续使用原 WebSocket RPC，保留升级
-期间的调用能力；已声明的连接对映射内的方法不回退到旧 WebSocket RPC。Router 返回尚未分发的
-`no_instances` 或明确未分发的旧路由时，在原期限内等待注册；结果不明的变更调用
-不会自动重放。调用方超时不取消已接纳工作；基础 Connector 连接结束时取消该代次
+能力标记按基础连接固定，Server 先升级、Connector 后升级。缺少或未知回退标记的
+旧 Connector 固定使用原 WebSocket RPC。新 Connector 无 route 时立即使用 WS；
+提交 Mesh 业务前显式连接 Router，连接预算为剩余期限的一半且最多1秒。
+只有确定未分发的白名单原因允许一次 WS 回退；Redis 查询异常、参数/帧错误、
+凭据失效、连接替换、业务拒绝及提交后的超时/响应丢失均不能触发回退。
+两路使用同一个请求期限与关联 ID。调用方超时不取消已接纳工作；基础连接结束时取消该代次
 排队与执行中的控制任务，保持旧 WebSocket 的取消边界。
 
-启用远程 MeshCall 控制时请先更新 Server；旧 Connector 未声明 Mesh 能力时继续走原 RPC。
+新回退连接两种封装均按编码后64 MiB控制帧预算检查；旧连接下行预算为1 MiB，
+超限在提交前返回资源限制错误。通知大小和附件、PTY 数据面不变。
+owner 将同一次设备认证所用凭据的摘要仅保存在内存；后台缓存检查约每秒更新授权
+快照，单次最多5秒。业务提交前与响应后都校验原连接，凭据撤销同时关闭基础连接。
+发送锁内重新核对有效授权，等待锁不能继续沿用过期快照。ready 发布前即绑定授权
+入口，首次快照未完成时等待检查。基础会话清理持有独立任务，停止/取消不跳过传输收尾。
+执行器关闭后拒绝所有新任务，停止接纳状态独立于连接代次；候选链路固定签发前的
+基础会话身份，Bootstrap 或服务启动完成时再次校验。停止基础连接会结束旧链路的
+排空等待，但不会取消 SDK 的底层 stop；连接和 worker 释放后才记录链路关闭完成。
+启动中的 SDK 任务同样由链路持有；注册失败或取消时，在释放 binding 前清理部分注册，
+重复取消不能留下 Router 实例。授权缓存的容量淘汰独立于凭据失效，在途结果直到最后
+一个等待方取走前仍受撤销检查保护。代理握手总预算10秒，收尾中的 Redis 路由删除、
+Router 连接和客户端 socket 关闭各最多等待5秒，失败不会跳过其余资源清理。
+Router 运行期故障时 `/health/ready` 保持 ready 并报告 `checks.mesh=error`，
+`/api/v2/health/mesh` 仍返回503；Redis、路由订阅、Timeline 或授权订阅故障仍阻断就绪。
+
 Server 通过 `python -m agent_server.main`
 启动，由父进程维护共享 Router；直接使用 ASGI/uvicorn 时由应用生命周期维护每个
 worker 的 Router，跨 Router 仍通过 Redis 协调。反向代理需支持

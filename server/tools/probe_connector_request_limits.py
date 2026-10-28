@@ -16,13 +16,6 @@ from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
 
-from agent_server.infra.connector_mesh_control import MeshConnectorControlTransport
-from agent_server.infra.connector_mesh_routes import MeshRoute
-from agent_server.infra.connector_rpc import (
-    ConnectorRpcManager,
-    ConnectorTransportTimeout,
-)
-from agent_server.infra.redis_coordinator import RedisCoordinator
 from connector.logging import install_rpc_log_sink
 from connector.mesh.logs import LogHub
 from connector.server.mesh_services import (
@@ -32,6 +25,15 @@ from connector.server.mesh_services import (
 )
 from loguru import logger
 from meshcall import UnavailableError
+
+from agent_server.infra.connector_mesh_control import MeshConnectorControlTransport
+from agent_server.infra.connector_mesh_routes import MeshRoute
+from agent_server.infra.connector_rpc import (
+    ConnectorNotDispatchedError,
+    ConnectorRpcManager,
+    ConnectorTransportTimeout,
+)
+from agent_server.infra.redis_coordinator import RedisCoordinator
 
 ROUTE = MeshRoute("probe", "connection", "link", "router", "worker", 1, "owner")
 
@@ -101,23 +103,22 @@ async def run_probe() -> list[dict]:
         return Payload(ok=True)
 
     transport.rpc.is_connection_id_current = postcheck
-    transport.mesh.connection = lambda: SimpleNamespace(call_unary=lambda *_a, **_k: returned())
+    transport.mesh.connection = lambda: SimpleNamespace(connect=yes, call_unary=lambda *_a, **_k: returned())
     await expires("identity validation after a response stays within budget", lambda t: transport._request_on_connection("probe", "connection", "shell.exec", {}, timeout=t), "outcome_unknown")
 
     transport = adapter()
-    lookups = 0
-
-    async def registration_lookup(*_args):
-        nonlocal lookups
-        lookups += 1
-        return ROUTE if lookups == 1 else await blocked()
 
     async def no_instance(*_args, **_kwargs):
         raise UnavailableError("not registered", details={"source": "router", "reason": "no_instances"})
 
-    transport.mesh.routes.get = registration_lookup
-    transport.mesh.connection = lambda: SimpleNamespace(call_unary=no_instance)
-    await expires("registration recheck remains bounded and not dispatched", lambda t: transport._request_on_connection("probe", "connection", "shell.exec", {}, timeout=t))
+    transport.mesh.connection = lambda: SimpleNamespace(connect=yes, call_unary=no_instance)
+    try:
+        await transport._request_on_connection("probe", "connection", "shell.exec", {}, timeout=1)
+    except ConnectorNotDispatchedError as error:
+        assert error.details["reason"] == "no_instances"
+    else:
+        raise AssertionError("Router rejection was not preserved")
+    results.append({"scenario": "Router rejection returns immediately without polling or retrying Mesh", "passed": True})
 
     transport = adapter()
     transport.mesh.routes.get = blocked
@@ -148,13 +149,14 @@ async def run_probe() -> list[dict]:
     manager.bind_request_transport(transport)
     budgets = []
 
-    async def capability(*_args):
-        await asyncio.sleep(0.025)
-        return True
+    connection = await manager.register("probe", SimpleNamespace(), mesh_capable=True, control_fallback_capable=True)
+    connection.connection_id = ROUTE.connection_id
+    await manager.mark_ready(connection)
+    original_bound = manager._bound_lease
 
-    async def connection_lookup(*_args):
-        await asyncio.sleep(0.025)
-        return "connection"
+    async def delayed_lease(*args, **kwargs):
+        await asyncio.sleep(0.05)
+        return await original_bound(*args, **kwargs)
 
     async def delayed_route(*_args):
         await asyncio.sleep(0.025)
@@ -164,10 +166,9 @@ async def run_probe() -> list[dict]:
         budgets.append(kwargs["timeout"])
         await blocked()
 
-    manager._uses_mesh = capability
-    transport.rpc.current_connection_id = connection_lookup
+    manager._bound_lease = delayed_lease
     transport.mesh.routes.get = delayed_route
-    transport.mesh.connection = lambda: SimpleNamespace(call_unary=budget_unary)
+    transport.mesh.connection = lambda: SimpleNamespace(connect=yes, call_unary=budget_unary)
     await expires("lookup phases consume one budget without restarting it", lambda t: manager.request("probe", "shell.exec", {}, timeout=t), "outcome_unknown", timeout=0.15)
     assert len(budgets) == 1 and 0 < budgets[0] < 0.09, budgets
 
@@ -189,7 +190,7 @@ async def run_probe() -> list[dict]:
         ctx = SimpleNamespace(call_id="mesh-call", metadata=kwargs["metadata"])
         return await service._call("shell.exec", Payload(), ctx)
 
-    transport.mesh.connection = lambda: SimpleNamespace(call_unary=unary)
+    transport.mesh.connection = lambda: SimpleNamespace(connect=yes, call_unary=unary)
     try:
         await expires("caller deadline leaves admitted Connector execution alive", lambda t: transport._request_on_connection("probe", "connection", "shell.exec", {}, timeout=t), "outcome_unknown")
         assert calls == ["started"] and executor._tasks

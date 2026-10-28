@@ -18,7 +18,7 @@ CONTROL_LOG_FIELDS = frozenset({
     'runMs', 'queueDepth', 'activeCount', 'lane', 'callerDetached', 'lookupCount',
     'routeRetries', 'registrationWaits', 'subscriberCount', 'sessionId', 'messageId', 'runtimeId',
     'terminalId', 'taskId', 'itemId', 'revision', 'updatedSeq', 'processId',
-    'leaseSeconds', 'itemCount',
+    'leaseSeconds', 'itemCount', 'transport', 'mode', 'remainingMs', 'rpcRequestId',
 })
 
 # Producers only enqueue. The writer calls synchronous notifiers off-loop and

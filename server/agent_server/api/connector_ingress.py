@@ -21,6 +21,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from loguru import logger
+from redis.exceptions import RedisError
 from starlette.requests import HTTPConnection
 
 from agent_server.core.auth import (
@@ -53,6 +54,7 @@ from agent_server.infra.connector_rpc import (
     ConnectorRpcManager,
     DuplicateConnectorConnectionError,
 )
+from agent_server.infra.connector_session_auth import ConnectorSessionAuthorization
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
@@ -523,11 +525,23 @@ async def connector_ws(
     try:
         connector_id = _access_token_connector_id(auth_header)
         async with db.connector_lifecycle(connector_id):
-            await _require_active_connector(auth_header, db)
+            _, credential_digest = await _require_connector_context(auth_header, db)
             if websocket.headers.get("x-aa-control-transport") == "meshcall/1.0":
-                connection = await manager.register(connector_id, websocket, ready=False, mesh_capable=True)
+                connection = await manager.register(
+                    connector_id, websocket, ready=False, mesh_capable=True,
+                    control_fallback_capable=websocket.headers.get("x-aa-control-fallback") == "websocket/1.0",
+                )
             else:
                 connection = await manager.register(connector_id, websocket, ready=False)
+            # Bind before publishing ready; admission waits for the first
+            # authorized snapshot rather than treating a missing callback as valid.
+            authorization = ConnectorSessionAuthorization(
+                connector_id, connection.connection_id, credential_digest, websocket.app.state.connector_mesh.credentials,
+                lambda: manager.is_connection_id_current(connector_id, connection.connection_id),
+                lambda: manager._disconnect_local(connector_id, expected_connection_id=connection.connection_id,
+                                                  reason="connector authorization changed"),
+            )
+            connection.authorize_control = authorization.valid
             ingest_service = ConnectorIngestService(
                 db, ConnectorNotificationService(
                     db, realtime, timeline_write_buffer,
@@ -571,6 +585,7 @@ async def connector_ws(
         logger.warning("rejected duplicate connector websocket: {}", connector_id)
         return
 
+    authorization.start()
     discovery_task: asyncio.Task[str | None] | None = None
     flush_task: asyncio.Task[None] | None = None
     completion_task: asyncio.Task[None] | None = None
@@ -667,6 +682,7 @@ async def connector_ws(
         logger.info("connector disconnected: {}", connector_id)
     finally:
         with CancelScope(shield=True):
+            await authorization.close()
             if reader_task is not None and not reader_task.done():
                 reader_task.cancel()
                 await asyncio.gather(reader_task, return_exceptions=True)
@@ -683,13 +699,14 @@ async def connector_ws(
                 capabilities_task.cancel()
                 await asyncio.gather(capabilities_task, return_exceptions=True)
             try:
-                if await manager.begin_drain(connection):
-                    # The lease remains reserved until accepted work has settled.
-                    # Explicit invalidation can interrupt this drain at any time.
-                    async with asyncio.timeout(10):
+                async with asyncio.timeout(10):
+                    if await manager.begin_drain(connection):
+                        # The lease remains reserved until accepted work has settled.
+                        # Explicit invalidation can interrupt this drain at any time.
                         await notification_pump.close()
-            except TimeoutError:
-                logger.warning("connector notification drain timed out connector_id={}", connector_id)
+            except (RedisError, OSError, TimeoutError) as error:
+                control_log("connection.drain_failed", level="WARNING", connectorId=connector_id,
+                            connectionId=connection.connection_id, **error_fields(error))
             finally:
                 await manager.unregister(connector_id, connection)
             removed_terminals = await broker.remove_ephemeral_for_connector(
@@ -928,7 +945,7 @@ async def _read_connector_messages(
             return
         message_type = message.get("type")
         if message_type == "response":
-            manager.resolve_response(connector_id, message)
+            manager.resolve_response(connector_id, message, connection=connection)
         elif message_type == "notification":
             notification_pump.enqueue_message(message)
 
@@ -954,6 +971,15 @@ async def _require_active_connector(authorization: str | None, db: Store) -> str
     if connector_id is None:
         raise HTTPException(status_code=401, detail="invalid connector access token")
     return connector_id
+
+
+async def _require_connector_context(authorization: str | None, db: Store) -> tuple[str, str]:
+    if authorization is None or not authorization.startswith("Bearer "):
+        raise HTTPException(401, detail="invalid connector access token")
+    identity = await db.authenticate_connector_access_context(authorization[len("Bearer "):])
+    if identity is None:
+        raise HTTPException(401, detail="invalid connector access token")
+    return identity
 
 
 def _access_token_connector_id(authorization: str | None) -> str:

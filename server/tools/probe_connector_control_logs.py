@@ -17,12 +17,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from agent_server.api import connector_mesh as proxy_api
-from agent_server.infra.connector_control_log import _FIELDS, control_log
-from agent_server.infra.connector_mesh_contract import CONTROL_METHODS
-from agent_server.infra.connector_mesh_control import MeshConnectorControlTransport
-from agent_server.infra.connector_mesh_routes import MeshRoute
-from agent_server.infra.connector_rpc import ConnectorTransportTimeout
 from connector.logging import CONTROL_LOG_FIELDS, install_rpc_log_sink
 from connector.mesh.logs import LogHub
 from connector.runtime_protocol import RuntimeInvalidRequestError
@@ -32,6 +26,13 @@ from connector.server.mesh_services import (
     _DomainService,
 )
 from loguru import logger
+
+from agent_server.api import connector_mesh as proxy_api
+from agent_server.infra.connector_control_log import _FIELDS, control_log
+from agent_server.infra.connector_mesh_contract import CONTROL_METHODS
+from agent_server.infra.connector_mesh_control import MeshConnectorControlTransport
+from agent_server.infra.connector_mesh_routes import MeshRoute
+from agent_server.infra.connector_rpc import ConnectorTransportTimeout
 
 CANARY = "private-payload-must-not-appear"
 ROUTE = MeshRoute(
@@ -118,16 +119,19 @@ async def run_probe() -> tuple[list[dict], list[dict]]:
         assert events("request.finished")[-1]["businessOutcome"] == "rejected"
         passed("Business refusal is classified without changing the returned result")
 
-        async def no_route(*_args):
-            return None
+        lookup_started = asyncio.Event()
 
-        mesh.routes.get = no_route
+        async def blocked_lookup(*_args):
+            lookup_started.set()
+            await asyncio.Event().wait()
+
+        mesh.routes.get = blocked_lookup
         task = asyncio.create_task(
             adapter._request_on_connection(
                 ROUTE.connector_id, ROUTE.connection_id, "shell.exec", {}, timeout=10
             )
         )
-        await asyncio.sleep(0)
+        await lookup_started.wait()
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         row = events("request.finished")[-1]
@@ -293,12 +297,9 @@ async def run_probe() -> tuple[list[dict], list[dict]]:
 
         state = SimpleNamespace(
             rpc=rpc,
-            store=SimpleNamespace(
-                connector_credential_fingerprint=lambda _identity: asyncio.sleep(
-                    0, result="probe-fingerprint"
-                )
-            ),
+            store=SimpleNamespace(),
             connector_mesh=SimpleNamespace(
+                credentials=SimpleNamespace(healthy=True, get=lambda _identity: asyncio.sleep(0, result="probe-fingerprint")),
                 grant=grant,
                 route_for=lambda _grant: ROUTE,
                 authorize_router=authorize,

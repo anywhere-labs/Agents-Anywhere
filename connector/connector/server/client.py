@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 import websockets
+from meshcall.transport import DEFAULT_MAX_FRAME_SIZE
 from websockets.exceptions import ConnectionClosed
 
 from connector.core.config import ConnectorConfig
@@ -34,6 +35,8 @@ from connector.server.dispatch import (
 )
 from connector.server.errors import ConnectorNetworkError
 from connector.server.ingest import ConnectorIngestClient
+from connector.server.local_rpc import LocalRpcHandler
+from connector.server.mesh_lifecycle import complete_cleanup as _complete_cleanup
 from connector.server.mesh_transport import RemoteConnectorControl
 from connector.server.notification_coalescer import (
     TimelineItemNotificationCoalescer,
@@ -41,6 +44,7 @@ from connector.server.notification_coalescer import (
 from connector.server.protocol_revision import ProtocolRevisionClock
 from connector.server.rpc import ConnectorRpcChannel, ConnectorWebSocketFrameTooLarge
 from connector.server.runtime_host import ConnectorRuntimeHost
+from connector.server.runtime_rpc import RuntimeRpcHandler
 from connector.server.runtime_rpc_payloads import (
     DeferredServerPayload,
     server_payload_without_turn_data,
@@ -250,53 +254,62 @@ class BackendRpcClient:
 
     async def run_once(self) -> None:
         access_token = await self.ensure_access_token(force=True)
-        websocket_url = build_ws_url(
-            self.config.server_url, api_v2_path("/connector/ws")
-        )
+        websocket_url = build_ws_url(self.config.server_url, api_v2_path("/connector/ws"))
         logger.info("connecting backend websocket {}", websocket_url)
         request_session = self._dispatcher.new_session()
-        async with websockets.connect(
-            websocket_url,
-            additional_headers={
-                "Authorization": f"Bearer {access_token}",
-                "X-Device-OS": device_os(),
-                "X-AA-Control-Transport": "meshcall/1.0",
-            },
-            proxy=None if is_loopback_url(self.config.server_url) else True,
-        ) as ws:
-            self._mesh_connection_token = secrets.token_urlsafe(24)
-            self._rpc.set_connection(ws)
-            capabilities_task = asyncio.create_task(
-                self._publish_runtime_capabilities(request_session)
-            )
-            heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-            mesh_task = asyncio.create_task(self._remote_control.run(request_session))
-            recovery_task = asyncio.create_task(self._runtime_sync.reconnect_event_runtimes())
-            reader_task = asyncio.create_task(self._read_backend_messages(ws, request_session))
+        self._mesh_connection_token = secrets.token_urlsafe(24)
+        self._remote_control.executor.open_session(request_session.dispatch, self._mesh_connection_token)
+        cleanup_started = False
+        tasks: list[asyncio.Task] = []
+
+        async def cleanup() -> None:
             try:
-                if self._runtime_sync_task is None or self._runtime_sync_task.done():
-                    self._runtime_sync_task = asyncio.create_task(
-                        self._runtime_sync.sync_existing_loop()
-                    )
-                logger.info(
-                    "connector startup complete; runtime sync started in background"
-                )
-                done, _ = await asyncio.wait({reader_task, heartbeat_task}, return_when=asyncio.FIRST_COMPLETED)
-                if reader_task in done:
-                    await reader_task
-                else:
-                    await heartbeat_task
-                    raise ConnectorNetworkError("backend heartbeat stopped")
+                await self._remote_control.executor.close_session()
             finally:
-                mesh_task.cancel()
-                capabilities_task.cancel()
-                heartbeat_task.cancel()
-                recovery_task.cancel()
-                reader_task.cancel()
-                await asyncio.gather(
-                    capabilities_task, heartbeat_task, recovery_task, reader_task, mesh_task, return_exceptions=True
-                )
-                await self._rpc.close_connection()
+                for task in tasks:
+                    task.cancel()
+                try:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                finally:
+                    await self._rpc.close_connection()
+
+        try:
+            async with websockets.connect(
+                websocket_url,
+                additional_headers={
+                    "Authorization": f"Bearer {access_token}", "X-Device-OS": device_os(),
+                    "X-AA-Control-Transport": "meshcall/1.0", "X-AA-Control-Fallback": "websocket/1.0",
+                },
+                proxy=None if is_loopback_url(self.config.server_url) else True,
+                max_size=DEFAULT_MAX_FRAME_SIZE,
+            ) as ws:
+                try:
+                    self._rpc.set_connection(ws, executor=self._remote_control.executor, generation=self._mesh_connection_token,
+                                             business_methods=frozenset(RuntimeRpcHandler.METHODS | LocalRpcHandler.METHODS))
+                    tasks.append(asyncio.create_task(self._publish_runtime_capabilities(request_session)))
+                    heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+                    tasks.append(heartbeat_task)
+                    tasks.append(asyncio.create_task(self._remote_control.run(request_session)))
+                    tasks.append(asyncio.create_task(self._runtime_sync.reconnect_event_runtimes()))
+                    reader_task = asyncio.create_task(self._read_backend_messages(ws, request_session))
+                    tasks.append(reader_task)
+                    if self._runtime_sync_task is None or self._runtime_sync_task.done():
+                        self._runtime_sync_task = asyncio.create_task(self._runtime_sync.sync_existing_loop())
+                    logger.info("connector startup complete; runtime sync started in background")
+                    done, _ = await asyncio.wait({reader_task, heartbeat_task}, return_when=asyncio.FIRST_COMPLETED)
+                    if reader_task in done:
+                        await reader_task
+                    else:
+                        await heartbeat_task
+                        raise ConnectorNetworkError("backend heartbeat stopped")
+                finally:
+                    cleanup_started = True
+                    await _complete_cleanup(cleanup())
+        finally:
+            # A closed generation stops admission; it is not proof that task
+            # cleanup completed. Await its actual completion under cancellation.
+            if not cleanup_started:
+                await _complete_cleanup(self._remote_control.executor.close_session())
 
     async def _read_backend_messages(self, ws, request_session) -> None:
         async for raw_message in ws:

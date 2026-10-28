@@ -4,7 +4,17 @@
 
 ## 未发布
 
-暂无。
+### 升级须知
+
+- 新 Connector 的远程控制优先使用 MeshCall；链路未建立或请求确定未分发时安全回退 WebSocket，授权续期失败时保留在途调用并让后续操作使用备用通道；旧 Connector 固定使用原通道。请先更新 Server；反向代理需允许设备控制连接的 WebSocket 升级以启用 Mesh。原有多进程和跨 Server 实例调用继续可用，大文件控制请求不再中断后续操作，无需开启粘性会话。（[#441](https://github.com/anywhere-labs/Agents-Anywhere/pull/441)）
+
+### 会话创建与消息交付
+
+- 设备控制授权自动更新时，先接通新链路并保留旧链路中的请求，避免长命令因正常轮换误报连接失败。（[#441](https://github.com/anywhere-labs/Agents-Anywhere/pull/441)）
+
+### 本机连接、所有权与日志
+
+- 优化在线设备的授权校验，减少空闲设备以及文件、终端操作造成的数据库请求，修复大量设备同时校验时反复查库的问题；修复启动、停止与链路轮换重叠时仍执行新操作、残留连接或后台线程，以及协调服务异常时退出卡住的问题。（[#441](https://github.com/anywhere-labs/Agents-Anywhere/pull/441)）
 
 ## 2.1.0（2026-10-27）
 
@@ -12,7 +22,6 @@
 
 ### 升级须知
 
-- 新 Connector 的远程控制使用 MeshCall，请先更新 Server；旧 Connector 仍可连接新 Server。反向代理需允许设备控制连接的 WebSocket 升级；原有多进程和跨 Server 实例调用继续可用，无需开启粘性会话。（[#441](https://github.com/anywhere-labs/Agents-Anywhere/pull/441)）
 - **本机三端一起升级**：Desktop、Connector 和 DSH 插件之间的本机通道改用 MeshCall，2.0.x 与 2.1.0 互不兼容。只升级一端时，2.0.x Connector 会一直停在「等待 DSH」。（[#353](https://github.com/anywhere-labs/Agents-Anywhere/pull/353)）
 - **数据库迁移**：Server 需要执行迁移 `v2_42`–`v2_44`。`/api/v2/admin/dashboard/*` 已删除，2.0.x 的 Web / Desktop 打开看板会得到 404。（[#296](https://github.com/anywhere-labs/Agents-Anywhere/pull/296)、[#299](https://github.com/anywhere-labs/Agents-Anywhere/pull/299)、[#290](https://github.com/anywhere-labs/Agents-Anywhere/pull/290)）
 - **移除 SQLite 和 v1 导入工具**：Server 不再支持 SQLite 后端，也去掉了 v1 导入工具。仍在 v1 的部署要先用 2.0.x 完成导入；部署配置里的 `AGENT_SERVER_DB_BACKEND` 可以删除。（[#299](https://github.com/anywhere-labs/Agents-Anywhere/pull/299)）
