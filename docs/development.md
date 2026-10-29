@@ -115,21 +115,14 @@ Server 测试应使用隔离测试环境，不要把生产数据库 URL 带入�
 
 `.github/workflows/ci.yml` 按路径选择 Connector、Server、DSH 插件、Web 和 Desktop
 检查。Connector 改动同时触发 Server、插件及 Mesh 探针；Server 改动触发 Server、
-插件及 Mesh 探针；契约、工作流和公共 action 的改动触发全部检查。Mesh 作业使用
+插件及 Mesh 探针；契约和工作流的改动触发全部检查。Mesh 作业使用
 专用 Redis 7.4，依次核对只读控制契约、连接代次、跨实例/Router 故障恢复和无 Redis 单进程模式，
 结果 JSON 作为短期 artifact 保存，不依赖业务数据库。
 
-公共 `setup-yarn` action 仅缓存下载归档，按项目、Node、平台及依赖声明区分，
-不缓存 `node_modules` 或 lockfile；缓存命中后仍执行安装，从当前清单解析依赖。
 Python 环境在检查前准备一次，Server 中预装当前 Connector，之后以 `--no-sync`
 运行检查；DSH 集成探针通过 `UV_NO_SYNC=true` 复用已准备的两个环境。
 CI 的一次性 PostgreSQL 使用 tmpfs，减少每个用例清表的磁盘开销；不修改生产数据库
 配置。pytest 保留外层硬超时，并输出慢项，Server 另外打印用例名用于定位等待。
-
-DSH 的 PR/push 检查统一在 CI 中执行。独立 `dsh-bridge.yml` 使用当前
-`dsh-bridge-next/`，仅负责手动验包和既有 `dsh-bridge-v<包版本>` release 发布：
-先完成类型、构建和测试，再用 `npm pack --ignore-scripts` 打包已验证的产物，
-发布作业下载同一份归档，不重复安装、构建或触发 `prepack`。手动运行不会发布。
 
 ## 构建安装包
 

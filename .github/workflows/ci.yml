@@ -76,7 +76,7 @@ jobs:
             git diff --name-only --no-renames "$BASE_SHA" "$GITHUB_SHA" > "$RUNNER_TEMP/changed-paths"
             while IFS= read -r path; do
               case "$path" in
-                .github/workflows/*|.github/actions/*|contracts/*)
+                .github/workflows/*|contracts/*)
                   run_everything "shared file changed: $path"
                   ;;
                 dsh-bridge-next/*) plugin=true ;;
@@ -123,14 +123,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-      - name: Install plugin dependencies
-        uses: ./.github/actions/setup-yarn
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
         with:
-          project: dsh-bridge-next
           node-version: ${{ env.NODE_VERSION }}
-        env:
-          # Validate explicitly pinned DSH release candidates immediately after publication.
-          YARN_NPM_MINIMAL_AGE_GATE: "0"
       - name: Set up uv and Python
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
@@ -140,15 +136,23 @@ jobs:
           cache-dependency-glob: |
             connector/pyproject.toml
             server/pyproject.toml
+      - name: Enable Corepack
+        run: corepack enable
       - name: Prepare Python integration fixtures
         run: |
           uv sync --project connector
           uv sync --project server
           uv pip install --python server/.venv/bin/python --editable ./connector
+      - name: Install plugin dependencies
+        working-directory: dsh-bridge-next
+        env:
+          # Validate explicitly pinned DSH release candidates immediately after publication.
+          YARN_NPM_MINIMAL_AGE_GATE: "0"
+        run: corepack yarn install
       - name: Typecheck, build and test plugin
         working-directory: dsh-bridge-next
         env:
-          # Nested Python probes reuse the prepared environments, without repeated resolution.
+          # Reuse the prepared Server environment, including its Connector dependency.
           UV_NO_SYNC: "true"
         run: corepack yarn check
 
@@ -220,7 +224,6 @@ jobs:
           uv pip install --python server/.venv/bin/python --editable ./connector
       - name: Test Server
         working-directory: server
-        # Verbose names identify a stalled WebSocket test before the outer timeout.
         run: timeout --kill-after=30s 1200 uv run --no-sync pytest -v --durations=20 -o faulthandler_timeout=120
 
   mesh:
@@ -432,11 +435,14 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-      - name: Install client dependencies
-        uses: ./.github/actions/setup-yarn
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
         with:
-          project: web-next
           node-version: ${{ env.NODE_VERSION }}
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install client dependencies
+        run: corepack yarn install
       - name: Verify Web
         run: |
           corepack yarn test
@@ -455,11 +461,14 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-      - name: Install client dependencies
-        uses: ./.github/actions/setup-yarn
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
         with:
-          project: desktop-workbench
           node-version: ${{ env.NODE_VERSION }}
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install client dependencies
+        run: corepack yarn install
       - name: Verify Desktop renderer and main process
         run: |
           corepack yarn workspace agents-anywhere-desktop-renderer test

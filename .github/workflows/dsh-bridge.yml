@@ -1,8 +1,19 @@
 name: DSH Bridge
 
-# PR/push verification lives in CI's DSH plugin job. This workflow prepares a
-# package on demand and publishes only for the existing dsh-bridge-v* release tags.
 on:
+  pull_request:
+    paths:
+      - dsh-bridge/**
+      - contracts/dsh-bridge/1.0/**
+      - .github/workflows/dsh-bridge.yml
+  push:
+    branches:
+      - main
+      - v2
+    paths:
+      - dsh-bridge/**
+      - contracts/dsh-bridge/1.0/**
+      - .github/workflows/dsh-bridge.yml
   release:
     types:
       - published
@@ -17,105 +28,78 @@ concurrency:
 
 env:
   UV_DEFAULT_INDEX: https://pypi.org/simple
-  UV_VERSION: 0.12.3
-  PYTHON_VERSION: "3.12"
-  NODE_VERSION: 22.23.2
 
 jobs:
   verify:
-    name: Verify and pack current plugin
-    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'dsh-bridge-v')
+    name: Verify package
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: agents_anywhere_test
-        ports:
-          - 5432:5432
-        options: >-
-          --tmpfs /var/lib/postgresql/data:rw
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      AGENT_SERVER_TEST_DB_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/agents_anywhere_test
     defaults:
       run:
-        working-directory: dsh-bridge-next
+        working-directory: dsh-bridge
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
-      - name: Install current plugin dependencies
-        uses: ./.github/actions/setup-yarn
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          project: dsh-bridge-next
-          node-version: ${{ env.NODE_VERSION }}
-        env:
-          YARN_NPM_MINIMAL_AGE_GATE: "0"
+          node-version: 22.23.2
       - name: Set up uv and Python
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
-          version: ${{ env.UV_VERSION }}
-          python-version: ${{ env.PYTHON_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: |
-            connector/pyproject.toml
-            server/pyproject.toml
-      - name: Prepare Python integration fixtures
-        working-directory: .
-        run: |
-          uv sync --project connector
-          uv sync --project server
-          uv pip install --python server/.venv/bin/python --editable ./connector
-      - name: Typecheck, build and test plugin
-        env:
-          UV_NO_SYNC: "true"
-        run: corepack yarn check
-      - name: Match release tag to package version
-        if: github.event_name == 'release'
-        run: |
-          package_version="$(node -p 'require("./package.json").version')"
-          test "$GITHUB_REF_NAME" = "dsh-bridge-v${package_version}"
-      - name: Pack verified build without rerunning prepack
-        run: |
-          mkdir -p "$RUNNER_TEMP/dsh-bridge-package"
-          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/dsh-bridge-package"
-      - name: Save verified package
-        uses: actions/upload-artifact@v4
-        with:
-          name: dsh-bridge-package
-          path: ${{ runner.temp }}/dsh-bridge-package/*.tgz
-          if-no-files-found: error
-          retention-days: 7
+          version: 0.12.3
+          python-version: "3.12"
+      - name: Resolve bundled Connector dependencies
+        run: uv lock --project ../connector
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install dependencies
+        # Dependency lockfiles are intentionally not committed in this repository.
+        run: corepack pnpm install --no-frozen-lockfile
+      - name: Typecheck
+        run: corepack pnpm typecheck
+      - name: Test
+        run: corepack pnpm test
+      - name: Build and pack tarball
+        run: corepack pnpm pack --pack-destination "${RUNNER_TEMP}/dsh-bridge-package"
 
   publish:
-    name: Publish verified package
+    name: Publish package
     if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'dsh-bridge-v')
     needs: verify
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     environment: npm
     permissions:
       contents: read
       id-token: write
+    defaults:
+      run:
+        working-directory: dsh-bridge
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: 22.23.2
           registry-url: https://registry.npmjs.org
-          package-manager-cache: false
-      - name: Download verified package
-        uses: actions/download-artifact@v4
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
-          name: dsh-bridge-package
-          path: ${{ runner.temp }}/dsh-bridge-package
+          version: 0.12.3
+          python-version: "3.12"
+      - name: Resolve bundled Connector dependencies
+        run: uv lock --project ../connector
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install dependencies
+        run: corepack pnpm install --no-frozen-lockfile
+      - name: Match release tag to package version
+        run: |
+          package_version="$(node -p 'require("./package.json").version')"
+          test "${GITHUB_REF_NAME}" = "dsh-bridge-v${package_version}"
       - name: Publish with provenance
-        run: npm publish "$RUNNER_TEMP/dsh-bridge-package/"*.tgz --ignore-scripts --access public --provenance
+        run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
