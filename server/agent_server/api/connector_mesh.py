@@ -23,6 +23,7 @@ from agent_server.infra.connector_mesh_routes import (
     MeshRoutes,
 )
 from agent_server.infra.connector_rpc import ConnectorOfflineError
+from agent_server.infra.websocket_limits import allow_large_control_messages
 
 router = APIRouter()
 AUTHORIZATION_CHECK_SECONDS = 5.0
@@ -311,6 +312,7 @@ async def mesh_proxy(websocket: WebSocket) -> None:
                 max_size=DEFAULT_MAX_FRAME_SIZE,
                 max_queue=16,
             ))
+            allow_large_control_messages(getattr(websocket, "scope", {}))
             await websocket.accept()
         control_log("proxy.opened", **fields)
 

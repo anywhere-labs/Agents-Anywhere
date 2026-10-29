@@ -53,6 +53,11 @@ from agent_server.infra.connector_rpc import (
 from agent_server.infra.connector_session_auth import ConnectorSessionAuthorization
 from agent_server.infra.mesh_router import ManagedRouter
 from agent_server.infra.redis_coordinator import RedisCoordinator
+from agent_server.infra.websocket_limits import (
+    CLIENT_WS_MAX_MESSAGE_BYTES,
+    ControlWebSocketProtocol,
+    allow_large_control_messages,
+)
 
 
 def create_probe_app() -> FastAPI:
@@ -229,6 +234,9 @@ def create_probe_app() -> FastAPI:
                 or fingerprint != hashlib.sha256(token.encode()).hexdigest()):
             await ws.close(code=1008)
             return
+        if (ws.headers.get("x-aa-control-transport") == "meshcall/1.0"
+                and ws.headers.get("x-aa-control-fallback") == "websocket/1.0"):
+            allow_large_control_messages(ws.scope)
         await ws.accept()
         connection = await rpc.register(connector_id, ws,
                                         mesh_capable=ws.headers.get("x-aa-control-transport") == "meshcall/1.0",
@@ -801,7 +809,7 @@ def main():
         else:
             with ManagedRouter():
                 uvicorn.run(factory, factory=True, host="127.0.0.1", port=args.port, workers=args.workers,
-                            access_log=False, ws_max_size=DEFAULT_MAX_FRAME_SIZE)
+                            access_log=False, ws=ControlWebSocketProtocol, ws_max_size=CLIENT_WS_MAX_MESSAGE_BYTES)
     elif args.redis_url or args.single_process:
         args.redis_url = args.redis_url or ""
         asyncio.run(probe(args))

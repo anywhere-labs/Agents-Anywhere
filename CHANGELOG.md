@@ -6,7 +6,7 @@
 
 ### 升级须知
 
-- 新 Connector 的远程控制优先使用 MeshCall；链路未建立或请求确定未分发时安全回退 WebSocket，授权续期失败时保留在途调用并让后续操作使用备用通道；旧 Connector 固定使用原通道。请先更新 Server；反向代理需允许设备控制连接的 WebSocket 升级以启用 Mesh。原有多进程和跨 Server 实例调用继续可用，大文件控制请求不再中断后续操作，无需开启粘性会话。（[#441](https://github.com/anywhere-labs/Agents-Anywhere/pull/441)）
+- 新 Connector 的远程控制优先使用 MeshCall；链路未建立或请求确定未分发时安全回退 WebSocket，授权续期失败时保留在途调用并让后续操作使用备用通道；旧 Connector 固定使用原通道。请先更新 Server，并使用 `python -m agent_server.main` 或开发指南中的配套配置启动；反向代理需允许设备控制连接的 WebSocket 升级以启用 Mesh。原有多进程和跨 Server 实例调用继续可用，大文件控制请求不再中断后续操作，普通客户端连接保留原消息接收上限，无需开启粘性会话。（[#441](https://github.com/anywhere-labs/Agents-Anywhere/pull/441)）
 
 ### 会话创建与消息交付
 

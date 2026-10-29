@@ -266,6 +266,10 @@ jobs:
           uv pip install --python server/.venv/bin/python --editable ./connector
       - name: Check remote control contract
         run: uv run --no-sync python ../connector/tools/generate_remote_control.py --check
+      - name: Check authenticated connection message budgets
+        run: >-
+          timeout --kill-after=30s 120 uv run --no-sync python -m tools.probe_connector_websocket_limits
+          --output "$RUNNER_TEMP/mesh-websocket-limits"
       - name: Check control diagnostics and private-data boundaries
         run: >-
           timeout --kill-after=30s 60 uv run --no-sync python -m tools.probe_connector_control_logs
@@ -373,6 +377,7 @@ jobs:
           name: mesh-transport-results
           path: |
             ${{ runner.temp }}/mesh-logs/results.json
+            ${{ runner.temp }}/mesh-websocket-limits/results.json
             ${{ runner.temp }}/mesh-log-chain/results.json
             ${{ runner.temp }}/mesh-state/results.json
             ${{ runner.temp }}/mesh-request-limits/results.json

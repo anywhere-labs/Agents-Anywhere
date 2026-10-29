@@ -59,6 +59,7 @@ from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.timeline_broker import TimelineBroker
+from agent_server.infra.websocket_limits import allow_large_control_messages
 from agent_server.services.attachments import AttachmentService
 from agent_server.services.connector_ingest import ConnectorIngestService
 from agent_server.services.connector_notifications import (
@@ -570,6 +571,8 @@ async def connector_ws(
                     await websocket.close(code=1008, reason="connector was revoked")
                     return
                 await db.record_connector_activity(connector_id)
+                if connection.control_fallback_capable:
+                    allow_large_control_messages(getattr(websocket, "scope", {}))
                 await websocket.accept()
                 if not await manager.mark_ready(connection):
                     await websocket.close(code=4409, reason="connector ownership was lost")

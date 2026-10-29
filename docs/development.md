@@ -11,8 +11,26 @@ Server 的控制面通过 MeshCall 调用 Connector，契约见
 数据库、Redis、路由订阅、Timeline 和授权订阅故障仍使整体就绪检查返回503。
 先升级 Server，再升级 Connector：未声明回退能力的连接固定使用原 WS；
 新 Connector 优先 Mesh，仅在确定未分发时回退一次，不等待 Mesh 注册。
-直接调用 uvicorn 时配置 `--ws-max-size 67108864`，与 Router、SDK、代理的编码后帧
-预算对齐。控制请求在 Redis 中转前检查同一帧预算，超限不分发。旧新传输对照步骤见
+标准入口为每条 WebSocket 独立设置完整消息预算：普通客户端、旧 Connector 和终端
+relay 保持16 MiB；认证通过的 Mesh proxy，以及已协商回退能力的基础连接可接收64 MiB。
+限制在解析阶段按解压后的字节数累计分片，普通客户端不能用能力请求头放大预算。
+自定义 ASGI 启动应通过 Python 配置传入同一后端，不能仅使用全局
+`--ws-max-size 67108864`：
+
+```python
+import uvicorn
+from agent_server.infra.websocket_limits import ControlWebSocketProtocol
+
+uvicorn.run(
+    "agent_server.app:create_app", factory=True,
+    host="127.0.0.1", port=8000,
+    ws=ControlWebSocketProtocol, ws_max_size=16 * 1024 * 1024,
+)
+```
+
+后端适配的 Uvicorn/WebSocket 依赖兼容范围由 Server 清单约束，升级范围时需运行
+`cd server && uv run python -m tools.probe_connector_websocket_limits`。
+控制请求在 Redis 中转前检查实际控制帧预算，超限不分发。旧新传输对照步骤见
 [控制传输迁移说明](connector-control-transport.md)。
 
 ## 分支与环境

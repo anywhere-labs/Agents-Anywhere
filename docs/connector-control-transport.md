@@ -381,6 +381,14 @@ Server 的等待：尚未分发时标记 `not_dispatched`，开始向传输提�
 
 帧预算沿用 MeshCall SDK 默认的 64 MiB，Router、SDK、WebSocket 代理保持一致。
 新回退基础 WS 接收预算也为64 MiB，Server 按各自封装的实际编码后字节数检查。
+Server 启动入口使用独立的连接预算后端，默认入站完整消息仍为16 MiB。设备认证完成后，
+Mesh proxy 与已协商回退能力的基础连接在接受前通过私有连接状态启用64 MiB；旧连接、
+普通客户端和终端 relay 不扩大预算。后端只修改当前解析器，不修改 worker 共享配置；
+客户端伪造控制能力请求头也不能改变普通端点的预算。限制累计分片并覆盖解压后的字节数，
+在消息交给应用前拒绝超限连接。自定义启动配置参照[开发指南](development.md)，
+不能仅提高 Uvicorn 全局上限。工具目录的 `probe_connector_websocket_limits` 使用真实
+WebSocket 和受控认证覆盖首条大消息、精确边界、分片、Unicode、压缩及连接间隔离；
+跨实例 Mesh 探针的 Server workers 同样使用该后端。
 旧版下行控制帧预算保留1 MiB，超限在发送前返回资源限制错误，大请求需升级 Connector。
 通知限制不扩大。Server 在 Redis 中转前按实际 Mesh 编码检查预算，防止一个必定被 SDK 拒绝的请求先
 挤断 Redis 订阅通道。该预算不改变领域原有的文件读取、Shell 截断或 PTY scrollback
