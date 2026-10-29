@@ -17,7 +17,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.Lifecycle
@@ -182,8 +181,7 @@ fun AgentsAnywhereApp(
         SessionRealtimeController(realtimeApi, sessionStore, realtimeClientId)
     }
     val currentDestination = AppDestination.valueOf(destinationName)
-    val wideLayout = LocalConfiguration.current.screenWidthDp >=
-        com.agentsanywhere.app.ui.screens.workspace.WIDE_LAYOUT_MIN_WIDTH_DP
+    val wideLayout = com.agentsanywhere.app.ui.screens.workspace.rememberWideLayout()
     val hasAuthSession = sessionStore.hasAuthSession()
     LaunchedEffect(hasAuthSession, sessionStore.readServerUrl(), sessionStore.readUserId()) { if (hasAuthSession) sessionsController.workflows.restore() else sessionsController.workflows.clear() }
     val updateServerUrl = sessionStore.readServerUrl()

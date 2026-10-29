@@ -1375,6 +1375,10 @@ fun SessionDetailScreen(
         if (isPreparedSession) preparedSelections.model
         else optimisticSelections["model"] ?: state.runtime.selections["model"],
     )
+    val selectedModelOption = modelOptions.firstOrNull { it.selectionId == modelSelection }
+    val selectedModelLabel = selectedModelOption?.let { option ->
+        option.modelLabel?.takeIf { it.isNotBlank() } ?: option.label.substringBefore(" · ")
+    }
     val permissionSelection = permissionOptions.validatedSelection(
         if (isPreparedSession) preparedSelections.permission
         else optimisticSelections["permission"] ?: state.runtime.selections["permission"],
@@ -1792,6 +1796,9 @@ fun SessionDetailScreen(
                                     showInterrupt = showInterrupt,
                                     interrupting = state.interrupting,
                                     placeholder = placeholder,
+                                    modelLabel = selectedModelLabel,
+                                    modelLoading = state.catalogs.modelLoading,
+                                    onModelClick = ::openRuntimeSettings,
                                     attachments = if (takeoverEnabled) attachments else emptyList(),
                                     onToggleTakeover = {
                                         if (!isPreparedSession) takeoverConfirm = !takeoverEnabled
@@ -1816,9 +1823,11 @@ fun SessionDetailScreen(
                         )
                         SessionDetailHeader(
                             title = state.session?.title ?: stringResource(R.string.session_title_fallback),
+                            modelLabel = selectedModelLabel,
                             darkMode = darkMode,
                             onLeftClick = ::openRuntimeSettings,
                             onRightClick = { scope.launch { pagerState.animateScrollToPage(1) } },
+                            onModelClick = ::openRuntimeSettings,
                             modifier = Modifier.align(Alignment.TopCenter),
                         )
                         if (previewImage == null) {

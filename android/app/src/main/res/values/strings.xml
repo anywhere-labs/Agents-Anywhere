@@ -535,6 +535,7 @@
     <string name="session_attachment_file">File</string>
     <string name="session_attachment_name_fallback">attachment</string>
     <string name="session_runtime_select_model">Select model</string>
+    <string name="session_switch_model">Switch model</string>
     <string name="session_runtime_settings_title">Model settings</string>
     <string name="session_runtime_mode_effort">Mode &amp; effort</string>
     <string name="session_runtime_effort_default">Default</string>

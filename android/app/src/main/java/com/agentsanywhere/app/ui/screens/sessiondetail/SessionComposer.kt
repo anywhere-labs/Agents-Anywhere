@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,6 +30,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -60,6 +62,8 @@ import androidx.compose.ui.window.Popup
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.composables.icons.lucide.ChevronDown
+import com.composables.icons.lucide.Lucide
 import kotlinx.coroutines.delay
 
 @Composable
@@ -96,6 +100,9 @@ internal fun MessageComposer(
     showInterrupt: Boolean,
     interrupting: Boolean,
     placeholder: String,
+    modelLabel: String?,
+    modelLoading: Boolean,
+    onModelClick: () -> Unit,
     attachments: List<PendingAttachment>,
     onToggleTakeover: () -> Unit,
     onPickPhoto: () -> Unit,
@@ -200,6 +207,9 @@ internal fun MessageComposer(
                 sending = sending,
                 showInterrupt = showInterrupt,
                 interrupting = interrupting,
+                modelLabel = modelLabel,
+                modelLoading = modelLoading,
+                onModelClick = onModelClick,
                 onToggleTakeover = onToggleTakeover,
                 onOpenAttachMenu = { if (attachmentsEnabled) showAttachMenu = true },
                 onSend = onSend,
@@ -478,6 +488,9 @@ private fun ComposerActions(
     sending: Boolean,
     showInterrupt: Boolean,
     interrupting: Boolean,
+    modelLabel: String?,
+    modelLoading: Boolean,
+    onModelClick: () -> Unit,
     onToggleTakeover: () -> Unit,
     onOpenAttachMenu: () -> Unit,
     onSend: () -> Unit,
@@ -565,6 +578,15 @@ private fun ComposerActions(
                 )
             }
         }
+        ModelChip(
+            darkMode = darkMode,
+            label = modelLabel,
+            loading = modelLoading,
+            onClick = onModelClick,
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 10.dp),
+        )
         Box(
             modifier = Modifier
                 .size(34.dp)
@@ -595,6 +617,61 @@ private fun ComposerActions(
                 )
                 else -> ArrowUpGlyph(primaryActionIcon)
             }
+        }
+    }
+}
+
+@Composable
+private fun ModelChip(
+    darkMode: Boolean,
+    label: String?,
+    loading: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val surface = if (darkMode) LocalAAColors.current.raisedSurface else Color.White
+    val border = if (darkMode) Color(0xFF2E2E33) else Color(0xFFEFEDE9)
+    val text = if (darkMode) Color(0xFFD4D4D8) else Color(0xFF3A3935)
+    val accent = if (darkMode) Color(0xFF8A8A93) else Color(0xFF8A8984)
+    val resolved = label?.takeIf { it.isNotBlank() }
+        ?: stringResource(R.string.session_runtime_select_model)
+    Box(
+        modifier = modifier.fillMaxHeight(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            modifier = Modifier
+                .height(26.dp)
+                .clip(CircleShape)
+                .background(surface)
+                .border(1.dp, border, CircleShape)
+                .noRippleClickable(onClick = onClick)
+                .padding(start = 10.dp, end = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (loading) {
+                CircularProgressIndicator(
+                    color = accent,
+                    strokeWidth = 1.5.dp,
+                    modifier = Modifier.size(11.dp),
+                )
+            }
+            Text(
+                text = resolved,
+                color = text,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            Icon(
+                imageVector = Lucide.ChevronDown,
+                contentDescription = stringResource(R.string.session_switch_model),
+                tint = accent,
+                modifier = Modifier.size(12.dp),
+            )
         }
     }
 }

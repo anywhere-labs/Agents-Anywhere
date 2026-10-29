@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -29,19 +31,24 @@ import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.composables.icons.lucide.ChevronDown
+import com.composables.icons.lucide.Lucide
 
 @Composable
 internal fun SessionDetailHeader(
     title: String,
+    modelLabel: String?,
     darkMode: Boolean,
     onLeftClick: () -> Unit,
     onRightClick: () -> Unit,
+    onModelClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalAAColors.current
     val surface = if (darkMode) colors.raisedSurface else Color(0xF2FFFFFF)
     val border = if (darkMode) colors.border else Color(0xFFE8E5DE)
     val text = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF2F302D)
+    val muted = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF8A8984)
 
     Row(
         modifier = modifier
@@ -60,26 +67,49 @@ internal fun SessionDetailHeader(
             darkMode = darkMode,
             onClick = onLeftClick,
         )
-        Row(
+        Column(
             modifier = Modifier
                 .width(224.dp)
-                .height(42.dp)
+                .height(46.dp)
                 .shadow(18.dp, CircleShape, ambientColor = Color(0x0A000000), spotColor = Color(0x0A000000))
                 .clip(CircleShape)
                 .background(surface)
                 .border(1.dp, border, CircleShape)
-                .padding(horizontal = 18.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
+                .noRippleClickable(onClick = onModelClick)
+                .padding(horizontal = 14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
         ) {
             Text(
                 text = title,
                 color = text,
-                fontSize = 15.5.sp,
+                fontSize = 14.5.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (!modelLabel.isNullOrBlank()) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = modelLabel,
+                        color = muted,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Icon(
+                        imageVector = Lucide.ChevronDown,
+                        contentDescription = null,
+                        tint = muted,
+                        modifier = Modifier.size(10.dp),
+                    )
+                }
+            }
         }
         HeaderImageButton(
             resId = if (darkMode) {

@@ -533,6 +533,7 @@
     <string name="session_attachment_file">文件</string>
     <string name="session_attachment_name_fallback">附件</string>
     <string name="session_runtime_select_model">选择模型</string>
+    <string name="session_switch_model">切换模型</string>
     <string name="session_runtime_settings_title">模型配置</string>
     <string name="session_runtime_mode_effort">模式与推理强度</string>
     <string name="session_runtime_effort_default">默认</string>

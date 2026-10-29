@@ -18,7 +18,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import com.agentsanywhere.app.feature.auth.WebLoginViewModel
 import com.agentsanywhere.app.feature.devices.DeviceRuntime
@@ -63,7 +62,7 @@ import com.agentsanywhere.app.ui.screens.home.NewSessionScreen
 import com.agentsanywhere.app.ui.screens.sessiondetail.SessionComposerDraftStore
 import com.agentsanywhere.app.ui.screens.sessiondetail.SessionDetailScreen
 import com.agentsanywhere.app.ui.screens.terminal.TerminalScreen
-import com.agentsanywhere.app.ui.screens.workspace.WIDE_LAYOUT_MIN_WIDTH_DP
+import com.agentsanywhere.app.ui.screens.workspace.rememberWideLayout
 import com.agentsanywhere.app.ui.screens.workspace.SessionWorkspace
 import com.agentsanywhere.app.ui.screens.workspace.WorkspaceEmptyState
 
@@ -153,7 +152,7 @@ internal fun AgentsAnywhereNavHost(
 ) {
     val context = LocalContext.current
     val colors = LocalAAColors.current
-    val wideLayout = LocalConfiguration.current.screenWidthDp >= WIDE_LAYOUT_MIN_WIDTH_DP
+    val wideLayout = rememberWideLayout()
     var profileOpen by rememberSaveable(serverUrl, userId) { mutableStateOf(false) }
     var deviceAgentPreviewRefreshKey by remember { mutableLongStateOf(0L) }
     val deviceAgentPreviews = rememberDeviceAgentPreviews(

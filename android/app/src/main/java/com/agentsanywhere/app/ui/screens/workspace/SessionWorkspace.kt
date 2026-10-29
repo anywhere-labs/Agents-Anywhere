@@ -33,6 +33,24 @@ import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 const val WIDE_LAYOUT_MIN_WIDTH_DP = 720
 
 /**
+ * Smallest screen width (dp) that identifies a tablet, regardless of orientation.
+ * Phones stay below this even in landscape, so they keep the single-pane UI.
+ */
+const val TABLET_MIN_SMALLEST_WIDTH_DP = 600
+
+/**
+ * True only on tablets with room for the sidebar + conversation split.
+ * A large `screenWidthDp` alone also matches landscape phones (and free-form
+ * windows), which must keep the normal phone layout.
+ */
+@Composable
+fun rememberWideLayout(): Boolean {
+    val configuration = LocalConfiguration.current
+    return configuration.smallestScreenWidthDp >= TABLET_MIN_SMALLEST_WIDTH_DP &&
+        configuration.screenWidthDp >= WIDE_LAYOUT_MIN_WIDTH_DP
+}
+
+/**
  * Tablet workspace: the session list becomes a permanent sidebar next to the open
  * conversation instead of a full-screen screen you have to navigate away from.
  */
