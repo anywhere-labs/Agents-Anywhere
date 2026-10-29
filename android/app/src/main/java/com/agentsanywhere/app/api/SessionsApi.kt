@@ -496,14 +496,31 @@ class SessionsApi(
         authorizationToken: String,
         sessionId: String,
         files: List<UploadFilePart>,
+        onProgress: ((sent: Long, total: Long) -> Unit)? = null,
     ): List<RemoteUploadedAttachment> {
         return client.postMultipart(
             serverUrl = serverUrl,
             path = "/sessions/${sessionId.urlEncode()}/attachments",
             files = files,
             authorizationToken = authorizationToken,
+            onProgress = onProgress,
         ).optJSONArray("attachments").toObjectList { toRemoteUploadedAttachment() }
     }
+
+    /**
+     * Opens the raw attachment stream, or returns null when the server only offers
+     * the legacy base64 JSON endpoint.
+     */
+    fun openSessionAttachmentStream(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+        fileId: String,
+    ): okhttp3.Response? = client.openAttachmentStream(
+        serverUrl = serverUrl,
+        path = "/sessions/${sessionId.urlEncode()}/attachments/${fileId.urlEncode()}/open",
+        authorizationToken = authorizationToken,
+    )
 
     fun attachmentOpenUrl(
         serverUrl: String,
@@ -521,6 +538,7 @@ class SessionsApi(
         authorizationToken: String,
         sessionId: String,
         fileId: String,
+        destination: java.io.File,
     ): RemoteDownloadedAttachment {
         val response = client.getJson(
             serverUrl = serverUrl,
@@ -556,7 +574,7 @@ class SessionsApi(
             name = response.optString("name", fileId).ifBlank { fileId },
             size = expectedSize,
             sha256 = expectedSha256,
-            bytes = bytes,
+            file = destination.also { it.writeBytes(bytes) },
             createdAt = response.optNullableString("createdAt"),
             serverTime = response.optNullableString("serverTime"),
         )

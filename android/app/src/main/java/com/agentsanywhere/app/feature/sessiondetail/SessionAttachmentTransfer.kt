@@ -17,8 +17,15 @@ internal class SessionAttachmentTransfer(
         accessToken: String,
         sessionId: String,
         attachments: List<UploadFilePart>,
+        onProgress: ((sent: Long, total: Long) -> Unit)? = null,
     ): List<TimelineAttachment> {
-        val uploaded = sessionsApi.uploadSessionAttachments(serverUrl, accessToken, sessionId, attachments)
+        val uploaded = sessionsApi.uploadSessionAttachments(
+            serverUrl = serverUrl,
+            authorizationToken = accessToken,
+            sessionId = sessionId,
+            files = attachments,
+            onProgress = onProgress,
+        )
         return verifyUploadedAttachments(uploaded, attachments)
     }
 
@@ -33,21 +40,101 @@ internal class SessionAttachmentTransfer(
         cacheKey = "attachment:$sessionId:${attachment.fileId}",
     )
 
+    /**
+     * Downloads straight to disk. The streaming endpoint is preferred because the
+     * legacy JSON endpoint wraps the file in base64 and holds the whole payload in
+     * memory twice; servers that predate the endpoint return 404/405 and we fall
+     * back to the old path.
+     */
     fun download(
         serverUrl: String,
         accessToken: String,
         sessionId: String,
         attachment: TimelineAttachment,
+        cacheDir: File,
     ): DownloadedAttachment {
-        val downloaded = sessionsApi.downloadSessionAttachment(serverUrl, accessToken, sessionId, attachment.fileId)
+        val destination = downloadDestination(cacheDir, attachment)
+        val response = sessionsApi.openSessionAttachmentStream(
+            serverUrl = serverUrl,
+            authorizationToken = accessToken,
+            sessionId = sessionId,
+            fileId = attachment.fileId,
+        )
+        if (response != null) {
+            try {
+                response.use { streaming ->
+                    val body = streaming.body
+                        ?: throw AttachmentTransferException(AttachmentTransferFailure.SizeMismatch, attachment.name)
+                    val digest = MessageDigest.getInstance("SHA-256")
+                    var total = 0L
+                    destination.outputStream().use { output ->
+                        body.byteStream().use { input ->
+                            val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
+                            while (true) {
+                                val read = input.read(buffer)
+                                if (read == -1) break
+                                total += read
+                                if (total > MAX_DOWNLOAD_BYTES) {
+                                    throw AttachmentTransferException(
+                                        AttachmentTransferFailure.SizeMismatch,
+                                        attachment.name,
+                                    )
+                                }
+                                output.write(buffer, 0, read)
+                                digest.update(buffer, 0, read)
+                            }
+                        }
+                    }
+                    val actualSha256 = digest.digest().toHex()
+                    val expectedSize = streaming.header("Content-Length")?.toLongOrNull()
+                    if (expectedSize != null && expectedSize >= 0 && expectedSize != total) {
+                        throw AttachmentTransferException(AttachmentTransferFailure.SizeMismatch, attachment.name)
+                    }
+                    val expectedSha256 = streaming.header("X-File-Sha256")?.lowercase()?.takeIf { it.length == 64 }
+                    if (expectedSha256 != null && expectedSha256 != actualSha256) {
+                        throw AttachmentTransferException(AttachmentTransferFailure.Sha256Mismatch, attachment.name)
+                    }
+                    return DownloadedAttachment(
+                        fileId = attachment.fileId,
+                        name = attachment.name,
+                        mediaType = attachment.mediaType,
+                        size = total,
+                        sha256 = actualSha256,
+                        file = destination,
+                    )
+                }
+            } catch (error: Throwable) {
+                destination.delete()
+                throw error
+            }
+        }
+
+        val downloaded = try {
+            sessionsApi.downloadSessionAttachment(
+                serverUrl = serverUrl,
+                authorizationToken = accessToken,
+                sessionId = sessionId,
+                fileId = attachment.fileId,
+                destination = destination,
+            )
+        } catch (error: Throwable) {
+            destination.delete()
+            throw error
+        }
         return DownloadedAttachment(
             fileId = downloaded.fileId,
             name = downloaded.name,
             mediaType = attachment.mediaType,
             size = downloaded.size,
             sha256 = downloaded.sha256,
-            bytes = downloaded.bytes,
+            file = downloaded.file,
         )
+    }
+
+    private fun downloadDestination(cacheDir: File, attachment: TimelineAttachment): File {
+        val directory = File(cacheDir, "downloads").apply { mkdirs() }
+        val safeId = attachment.fileId.replace(Regex("[^A-Za-z0-9._-]"), "_").take(64)
+        return File(directory, safeId.ifBlank { "attachment" }).canonicalFile
     }
 }
 
@@ -59,11 +146,11 @@ internal fun verifyUploadedAttachments(
         throw AttachmentTransferException(AttachmentTransferFailure.IncompleteUpload)
     }
     return uploaded.zip(localAttachments).map { (remote, local) ->
-        val localSha256 = sha256(local.bytes)
-        if (remote.size != local.bytes.size.toLong()) {
+        val localSize = local.file.length()
+        if (remote.size != localSize) {
             throw AttachmentTransferException(AttachmentTransferFailure.SizeMismatch, local.name)
         }
-        if (remote.sha256?.lowercase() != localSha256) {
+        if (remote.sha256?.lowercase() != sha256(local.file)) {
             throw AttachmentTransferException(AttachmentTransferFailure.Sha256Mismatch, local.name)
         }
         remote.toTimelineAttachment()
@@ -80,9 +167,20 @@ private fun RemoteUploadedAttachment.toTimelineAttachment(): TimelineAttachment 
     sha256 = sha256,
 )
 
-private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
-    .digest(bytes)
-    .joinToString("") { byte -> "%02x".format(byte) }
+private fun sha256(file: File): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    file.inputStream().use { input ->
+        val buffer = ByteArray(64 * 1024)
+        while (true) {
+            val read = input.read(buffer)
+            if (read == -1) break
+            digest.update(buffer, 0, read)
+        }
+    }
+    return digest.digest().toHex()
+}
+
+private fun ByteArray.toHex(): String = joinToString("") { byte -> "%02x".format(byte) }
 
 private val ATTACHMENT_MEDIA_TYPE_PATTERN = Regex("^[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+$")
 
@@ -103,6 +201,11 @@ internal fun cacheDownloadedAttachment(
     check(directory.isDirectory) { "Could not create the attachment cache directory." }
     val target = File(directory, attachmentCacheFileName(attachment.fileId, attachment.name)).canonicalFile
     check(target.parentFile == directory.canonicalFile) { "Attachment cache path escaped its directory." }
-    target.writeBytes(attachment.bytes)
+    if (target != attachment.file) {
+        attachment.file.copyTo(target, overwrite = true)
+    }
     return target
 }
+
+private const val DOWNLOAD_BUFFER_BYTES = 64 * 1024
+private const val MAX_DOWNLOAD_BYTES = 200L * 1024L * 1024L

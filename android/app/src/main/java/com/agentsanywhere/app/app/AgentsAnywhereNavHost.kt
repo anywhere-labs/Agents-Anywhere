@@ -154,6 +154,7 @@ internal fun AgentsAnywhereNavHost(
     val colors = LocalAAColors.current
     val wideLayout = rememberWideLayout()
     var profileOpen by rememberSaveable(serverUrl, userId) { mutableStateOf(false) }
+    var sidebarCollapsed by rememberSaveable(serverUrl, userId) { mutableStateOf(false) }
     var deviceAgentPreviewRefreshKey by remember { mutableLongStateOf(0L) }
     val deviceAgentPreviews = rememberDeviceAgentPreviews(
         devices = sessionsState.devices,
@@ -293,6 +294,8 @@ internal fun AgentsAnywhereNavHost(
                     SessionWorkspace(
                         sidebar = { homeContent(true) },
                         detail = sessionDetailPane,
+                        sidebarCollapsed = sidebarCollapsed,
+                        onToggleSidebar = { sidebarCollapsed = !sidebarCollapsed },
                     )
                 } else {
                     homeContent(false)

@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,6 +22,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
@@ -101,6 +101,7 @@ internal fun MessageComposer(
     interrupting: Boolean,
     placeholder: String,
     modelLabel: String?,
+    modelEffortLabel: String?,
     modelLoading: Boolean,
     onModelClick: () -> Unit,
     attachments: List<PendingAttachment>,
@@ -208,6 +209,7 @@ internal fun MessageComposer(
                 showInterrupt = showInterrupt,
                 interrupting = interrupting,
                 modelLabel = modelLabel,
+                modelEffortLabel = modelEffortLabel,
                 modelLoading = modelLoading,
                 onModelClick = onModelClick,
                 onToggleTakeover = onToggleTakeover,
@@ -332,6 +334,7 @@ private fun PendingImageAttachmentCard(
         )
         AttachmentUploadOverlay(
             state = attachment.uploadState,
+            progress = attachment.uploadProgress,
             onRemove = onRemove,
             onRetry = onRetry,
             modifier = Modifier.fillMaxSize(),
@@ -397,6 +400,7 @@ private fun PendingFileAttachmentCard(
         }
         AttachmentUploadOverlay(
             state = attachment.uploadState,
+            progress = attachment.uploadProgress,
             onRemove = onRemove,
             onRetry = onRetry,
             modifier = Modifier.fillMaxSize(),
@@ -407,6 +411,7 @@ private fun PendingFileAttachmentCard(
 @Composable
 private fun AttachmentUploadOverlay(
     state: AttachmentUploadState,
+    progress: Float,
     onRemove: () -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier,
@@ -416,11 +421,20 @@ private fun AttachmentUploadOverlay(
             modifier = modifier.background(Color.Black.copy(alpha = 0.28f)),
             contentAlignment = Alignment.Center,
         ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(38.dp),
-                color = Color.White,
-                strokeWidth = 5.dp,
-            )
+            if (progress > 0f) {
+                CircularProgressIndicator(
+                    progress = { progress.coerceIn(0f, 1f) },
+                    modifier = Modifier.size(38.dp),
+                    color = Color.White,
+                    strokeWidth = 5.dp,
+                )
+            } else {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(38.dp),
+                    color = Color.White,
+                    strokeWidth = 5.dp,
+                )
+            }
         }
         AttachmentUploadState.Uploaded -> Box(modifier = modifier) {
             AttachmentRemoveButton(
@@ -489,6 +503,7 @@ private fun ComposerActions(
     showInterrupt: Boolean,
     interrupting: Boolean,
     modelLabel: String?,
+    modelEffortLabel: String?,
     modelLoading: Boolean,
     onModelClick: () -> Unit,
     onToggleTakeover: () -> Unit,
@@ -578,44 +593,48 @@ private fun ComposerActions(
                 )
             }
         }
-        ModelChip(
-            darkMode = darkMode,
-            label = modelLabel,
-            loading = modelLoading,
-            onClick = onModelClick,
-            modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 10.dp),
-        )
-        Box(
-            modifier = Modifier
-                .size(34.dp)
-                .clip(CircleShape)
-                .background(primaryActionSurface)
-                .then(
-                    if (primaryActionEnabled) {
-                        Modifier.noRippleClickable(
-                            onClick = if (showInterrupt) onInterrupt else onSend,
-                        )
-                    } else {
-                        Modifier
-                    },
-                ),
-            contentAlignment = Alignment.Center,
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            when {
-                primaryActionBusy -> CircularProgressIndicator(
-                    color = primaryActionIcon,
-                    strokeWidth = 2.dp,
-                    modifier = Modifier.size(17.dp),
-                )
-                showInterrupt -> Box(
-                    modifier = Modifier
-                        .size(10.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(primaryActionIcon),
-                )
-                else -> ArrowUpGlyph(primaryActionIcon)
+            ModelChip(
+                darkMode = darkMode,
+                label = modelLabel,
+                effortLabel = modelEffortLabel,
+                loading = modelLoading,
+                onClick = onModelClick,
+                modifier = Modifier.widthIn(max = 200.dp),
+            )
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(primaryActionSurface)
+                    .then(
+                        if (primaryActionEnabled) {
+                            Modifier.noRippleClickable(
+                                onClick = if (showInterrupt) onInterrupt else onSend,
+                            )
+                        } else {
+                            Modifier
+                        },
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                when {
+                    primaryActionBusy -> CircularProgressIndicator(
+                        color = primaryActionIcon,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(17.dp),
+                    )
+                    showInterrupt -> Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(primaryActionIcon),
+                    )
+                    else -> ArrowUpGlyph(primaryActionIcon)
+                }
             }
         }
     }
@@ -625,6 +644,7 @@ private fun ComposerActions(
 private fun ModelChip(
     darkMode: Boolean,
     label: String?,
+    effortLabel: String?,
     loading: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -635,44 +655,49 @@ private fun ModelChip(
     val accent = if (darkMode) Color(0xFF8A8A93) else Color(0xFF8A8984)
     val resolved = label?.takeIf { it.isNotBlank() }
         ?: stringResource(R.string.session_runtime_select_model)
-    Box(
-        modifier = modifier.fillMaxHeight(),
-        contentAlignment = Alignment.Center,
+    val effort = effortLabel?.takeIf { it.isNotBlank() }
+    Row(
+        modifier = modifier
+            .height(28.dp)
+            .clip(CircleShape)
+            .background(surface)
+            .border(1.dp, border, CircleShape)
+            .noRippleClickable(onClick = onClick)
+            .padding(start = 10.dp, end = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier
-                .height(26.dp)
-                .clip(CircleShape)
-                .background(surface)
-                .border(1.dp, border, CircleShape)
-                .noRippleClickable(onClick = onClick)
-                .padding(start = 10.dp, end = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(3.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (loading) {
-                CircularProgressIndicator(
-                    color = accent,
-                    strokeWidth = 1.5.dp,
-                    modifier = Modifier.size(11.dp),
-                )
-            }
-            Text(
-                text = resolved,
-                color = text,
-                fontSize = 11.5.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
-            )
-            Icon(
-                imageVector = Lucide.ChevronDown,
-                contentDescription = stringResource(R.string.session_switch_model),
-                tint = accent,
-                modifier = Modifier.size(12.dp),
+        if (loading) {
+            CircularProgressIndicator(
+                color = accent,
+                strokeWidth = 1.5.dp,
+                modifier = Modifier.size(11.dp),
             )
         }
+        Text(
+            text = resolved,
+            color = text,
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        if (effort != null) {
+            Text(
+                text = "· $effort",
+                color = accent,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+            )
+        }
+        Icon(
+            imageVector = Lucide.ChevronDown,
+            contentDescription = stringResource(R.string.session_switch_model),
+            tint = accent,
+            modifier = Modifier.size(12.dp),
+        )
     }
 }
 

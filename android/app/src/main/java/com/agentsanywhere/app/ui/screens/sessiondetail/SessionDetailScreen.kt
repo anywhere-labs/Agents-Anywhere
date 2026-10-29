@@ -95,6 +95,7 @@ import com.agentsanywhere.app.feature.sessiondetail.SessionTimelineState
 import com.agentsanywhere.app.feature.sessiondetail.TimelineAttachment
 import com.agentsanywhere.app.feature.sessiondetail.TimelineMessage
 import com.agentsanywhere.app.feature.sessiondetail.beginSnapshotLoad
+import com.agentsanywhere.app.feature.attachment.ImageCompressor
 import com.agentsanywhere.app.feature.sessiondetail.cacheDownloadedAttachment
 import com.agentsanywhere.app.feature.sessiondetail.completeSnapshotLoad
 import com.agentsanywhere.app.feature.sessiondetail.failSnapshotLoad
@@ -379,7 +380,7 @@ fun SessionDetailScreen(
         if (attachmentSaveInFlight) return
         attachmentSaveInFlight = true
         scope.launch {
-            controller.downloadAttachment(id, attachment)
+            controller.downloadAttachment(id, attachment, context.cacheDir)
                 .onSuccess { downloaded ->
                     val needsLegacyPermission = Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
                         ContextCompat.checkSelfPermission(
@@ -410,7 +411,7 @@ fun SessionDetailScreen(
     fun openAttachment(attachment: com.agentsanywhere.app.feature.sessiondetail.TimelineAttachment) {
         val id = sessionId ?: return
         scope.launch {
-            controller.downloadAttachment(id, attachment)
+            controller.downloadAttachment(id, attachment, context.cacheDir)
                 .onSuccess { downloaded ->
                     val target = withContext(Dispatchers.IO) {
                         cacheDownloadedAttachment(context.cacheDir, downloaded)
@@ -503,7 +504,18 @@ fun SessionDetailScreen(
                 }
                 return@launch
             }
-            controller.uploadAttachments(id, listOf(uploadPart))
+            var reportedProgress = 0
+            controller.uploadAttachments(id, listOf(uploadPart)) { sent, total ->
+                val percent = if (total > 0L) ((sent * 100L) / total).toInt().coerceIn(0, 100) else 0
+                if (percent >= reportedProgress + 5 || percent == 100) {
+                    reportedProgress = percent
+                    scope.launch {
+                        updateAttachment(attachment.id) {
+                            it.copy(uploadProgress = percent / 100f)
+                        }
+                    }
+                }
+            }
                 .onSuccess { uploaded ->
                     val remote = uploaded.firstOrNull()
                     updateAttachment(attachment.id) {
@@ -534,7 +546,12 @@ fun SessionDetailScreen(
 
     fun retryPendingAttachment(attachment: PendingAttachment) {
         updateAttachment(attachment.id) {
-            it.copy(uploadState = AttachmentUploadState.Uploading, remote = null, errorMessage = null)
+            it.copy(
+                uploadState = AttachmentUploadState.Uploading,
+                uploadProgress = 0f,
+                remote = null,
+                errorMessage = null,
+            )
         }
         uploadPendingAttachment(attachment)
     }
@@ -579,6 +596,7 @@ fun SessionDetailScreen(
             .map {
                 it.copy(
                     uploadState = AttachmentUploadState.Uploading,
+                    uploadProgress = 0f,
                     remote = null,
                     errorMessage = null,
                 )
@@ -1379,6 +1397,10 @@ fun SessionDetailScreen(
     val selectedModelLabel = selectedModelOption?.let { option ->
         option.modelLabel?.takeIf { it.isNotBlank() } ?: option.label.substringBefore(" · ")
     }
+    val defaultEffortLabel = stringResource(R.string.session_runtime_effort_default)
+    val selectedModelEffortLabel = selectedModelOption
+        ?.effortDisplayLabel(defaultEffortLabel)
+        ?.takeIf { it.isNotBlank() && it != defaultEffortLabel }
     val permissionSelection = permissionOptions.validatedSelection(
         if (isPreparedSession) preparedSelections.permission
         else optimisticSelections["permission"] ?: state.runtime.selections["permission"],
@@ -1797,6 +1819,7 @@ fun SessionDetailScreen(
                                     interrupting = state.interrupting,
                                     placeholder = placeholder,
                                     modelLabel = selectedModelLabel,
+                                    modelEffortLabel = selectedModelEffortLabel,
                                     modelLoading = state.catalogs.modelLoading,
                                     onModelClick = ::openRuntimeSettings,
                                     attachments = if (takeoverEnabled) attachments else emptyList(),
@@ -1823,11 +1846,8 @@ fun SessionDetailScreen(
                         )
                         SessionDetailHeader(
                             title = state.session?.title ?: stringResource(R.string.session_title_fallback),
-                            modelLabel = selectedModelLabel,
                             darkMode = darkMode,
-                            onLeftClick = ::openRuntimeSettings,
                             onRightClick = { scope.launch { pagerState.animateScrollToPage(1) } },
-                            onModelClick = ::openRuntimeSettings,
                             modifier = Modifier.align(Alignment.TopCenter),
                         )
                         if (previewImage == null) {
@@ -2329,41 +2349,84 @@ private fun Context.pendingAttachment(uri: Uri): PendingAttachment? {
     )
 }
 
-private fun Context.uploadPart(attachment: PendingAttachment): UploadFilePart {
-    val bytes = contentResolver.openInputStream(attachment.uri)?.use { input ->
-        input.readBytes()
-    } ?: throw IllegalStateException(getString(R.string.session_upload_file_read_failed, attachment.name))
-    if (bytes.isEmpty()) throw IllegalStateException(getString(R.string.session_upload_file_empty, attachment.name))
-    if (bytes.size > MAX_ATTACHMENT_BYTES) {
-        throw IllegalStateException(getString(R.string.session_attachment_file_too_large, attachment.name))
-    }
+private suspend fun Context.uploadPart(attachment: PendingAttachment): UploadFilePart {
     val mediaType = attachment.mediaType.trim().lowercase()
     if (!isValidAttachmentMediaType(mediaType)) {
         throw IllegalStateException(getString(R.string.session_attachment_media_type_invalid, attachment.name))
     }
+    if (attachment.size > MAX_ATTACHMENT_BYTES) {
+        throw IllegalStateException(getString(R.string.session_attachment_file_too_large, attachment.name))
+    }
+    val compressed = ImageCompressor.compress(this, attachment.uri, attachment.name, mediaType)
+    val file = compressed.file ?: copyAttachmentToCache(attachment)
+    if (file.length() <= 0L) {
+        file.delete()
+        throw IllegalStateException(getString(R.string.session_upload_file_empty, attachment.name))
+    }
+    if (file.length() > MAX_ATTACHMENT_BYTES) {
+        file.delete()
+        throw IllegalStateException(getString(R.string.session_attachment_file_too_large, attachment.name))
+    }
     return UploadFilePart(
-        name = attachment.name,
-        mediaType = mediaType,
-        bytes = bytes,
+        name = compressed.name,
+        mediaType = compressed.mediaType.ifBlank { mediaType },
+        file = file,
+        size = file.length(),
     )
+}
+
+/** Streams the original to the cache for uploads that must not be re-encoded (GIF, SVG, small files). */
+private fun Context.copyAttachmentToCache(attachment: PendingAttachment): File {
+    val directory = File(cacheDir, "upload_tmp").apply { mkdirs() }
+    val target = File(directory, "src_${UUID.randomUUID()}")
+    val input = contentResolver.openInputStream(attachment.uri)
+        ?: throw IllegalStateException(getString(R.string.session_upload_file_read_failed, attachment.name))
+    try {
+        input.use { source ->
+            target.outputStream().use { output ->
+                val buffer = ByteArray(64 * 1024)
+                var total = 0L
+                while (true) {
+                    val read = source.read(buffer)
+                    if (read == -1) break
+                    total += read
+                    if (total > MAX_ATTACHMENT_BYTES) {
+                        throw IllegalStateException(getString(R.string.session_attachment_file_too_large, attachment.name))
+                    }
+                    output.write(buffer, 0, read)
+                }
+            }
+        }
+    } catch (error: Throwable) {
+        target.delete()
+        throw error
+    }
+    return target
 }
 
 private fun UploadFilePart.toNewSessionAttachmentPart(): NewSessionAttachmentPart =
     NewSessionAttachmentPart(
         name = name,
         mediaType = mediaType,
-        bytes = bytes,
+        file = file,
     )
 
 private fun UploadFilePart.toLocalTimelineAttachment(uri: Uri): TimelineAttachment {
-    val sha256 = MessageDigest.getInstance("SHA-256")
-        .digest(bytes)
-        .joinToString(separator = "") { byte -> "%02x".format(byte) }
+    val sha256 = file.inputStream().use { input ->
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(64 * 1024)
+        while (true) {
+            val read = input.read(buffer)
+            if (read == -1) break
+            digest.update(buffer, 0, read)
+        }
+        digest.digest().joinToString(separator = "") { byte -> "%02x".format(byte) }
+    }
     return TimelineAttachment(
         fileId = sha256,
         name = name,
         mediaType = mediaType,
-        size = bytes.size.toLong(),
+        size = file.length(),
         sha256 = sha256,
         localPreviewUri = uri.toString().takeIf { mediaType.startsWith("image/") },
     )
@@ -2394,7 +2457,7 @@ private suspend fun saveImageToGallery(
                 ?: error("Unable to create gallery image")
             try {
                 resolver.openOutputStream(imageUri, "w")?.use { output ->
-                    output.write(downloaded.bytes)
+                    downloaded.file.inputStream().use { input -> input.copyTo(output) }
                 } ?: error("Unable to open gallery image")
                 resolver.update(
                     imageUri,
@@ -2412,7 +2475,9 @@ private suspend fun saveImageToGallery(
             val directory = File(pictures, "Agents Anywhere")
             check(directory.exists() || directory.mkdirs()) { "Unable to create gallery directory" }
             val imageFile = uniqueGalleryFile(directory, displayName)
-            imageFile.outputStream().use { output -> output.write(downloaded.bytes) }
+            imageFile.outputStream().use { output ->
+                downloaded.file.inputStream().use { input -> input.copyTo(output) }
+            }
             MediaScannerConnection.scanFile(
                 context,
                 arrayOf(imageFile.absolutePath),

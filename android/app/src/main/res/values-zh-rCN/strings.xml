@@ -721,4 +721,6 @@
     <string name="session_image_input_unsupported">当前模型声明不支持图片输入，请移除图片或切换模型。</string>
     <string name="workspace_empty_title">选择一个会话</string>
     <string name="workspace_empty_message">从左侧列表中选择一个会话，或者新建一个。</string>
+    <string name="workspace_sidebar_collapse">收起侧栏</string>
+    <string name="workspace_sidebar_expand">展开侧栏</string>
 </resources>

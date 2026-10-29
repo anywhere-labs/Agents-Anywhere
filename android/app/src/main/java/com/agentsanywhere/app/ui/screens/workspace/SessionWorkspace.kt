@@ -1,6 +1,12 @@
 package com.agentsanywhere.app.ui.screens.workspace
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,14 +16,19 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -28,6 +39,9 @@ import com.agentsanywhere.app.R
 import com.agentsanywhere.app.ui.designsystem.AAWordmark
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.composables.icons.lucide.ChevronLeft
+import com.composables.icons.lucide.ChevronRight
+import com.composables.icons.lucide.Lucide
 
 /** Screen width (dp) from which the persistent sidebar + detail layout is used. */
 const val WIDE_LAYOUT_MIN_WIDTH_DP = 720
@@ -59,6 +73,8 @@ fun SessionWorkspace(
     sidebar: @Composable () -> Unit,
     detail: @Composable () -> Unit,
     modifier: Modifier = Modifier,
+    sidebarCollapsed: Boolean = false,
+    onToggleSidebar: () -> Unit = {},
 ) {
     val colors = LocalAAColors.current
     val configuration = LocalConfiguration.current
@@ -69,26 +85,69 @@ fun SessionWorkspace(
             .fillMaxSize()
             .background(colors.canvas),
     ) {
-        Box(
-            modifier = Modifier
-                .width(sidebarWidth)
-                .fillMaxHeight(),
+        AnimatedVisibility(
+            visible = !sidebarCollapsed,
+            enter = expandHorizontally() + fadeIn(),
+            exit = shrinkHorizontally() + fadeOut(),
         ) {
-            sidebar()
+            Row {
+                Box(
+                    modifier = Modifier
+                        .width(sidebarWidth)
+                        .fillMaxHeight(),
+                ) {
+                    sidebar()
+                }
+                Box(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .fillMaxHeight()
+                        .background(colors.border),
+                )
+            }
         }
-        Box(
-            modifier = Modifier
-                .width(1.dp)
-                .fillMaxHeight()
-                .background(colors.border),
-        )
         Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight(),
         ) {
             detail()
+            SidebarToggleButton(
+                collapsed = sidebarCollapsed,
+                onClick = onToggleSidebar,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 12.dp, top = 11.dp),
+            )
         }
+    }
+}
+
+@Composable
+private fun SidebarToggleButton(
+    collapsed: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = LocalAAColors.current
+    Box(
+        modifier = modifier
+            .size(36.dp)
+            .shadow(10.dp, CircleShape, ambientColor = Color(0x0A000000), spotColor = Color(0x0A000000))
+            .clip(CircleShape)
+            .background(colors.raisedSurface)
+            .border(1.dp, colors.border, CircleShape)
+            .noRippleClickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = if (collapsed) Lucide.ChevronRight else Lucide.ChevronLeft,
+            contentDescription = stringResource(
+                if (collapsed) R.string.workspace_sidebar_expand else R.string.workspace_sidebar_collapse,
+            ),
+            tint = colors.muted,
+            modifier = Modifier.size(16.dp),
+        )
     }
 }
 

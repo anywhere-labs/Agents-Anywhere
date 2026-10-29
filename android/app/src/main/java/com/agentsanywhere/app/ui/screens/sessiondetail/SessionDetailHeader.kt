@@ -37,48 +37,33 @@ import com.composables.icons.lucide.Lucide
 @Composable
 internal fun SessionDetailHeader(
     title: String,
-    modelLabel: String?,
     darkMode: Boolean,
-    onLeftClick: () -> Unit,
     onRightClick: () -> Unit,
-    onModelClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalAAColors.current
     val surface = if (darkMode) colors.raisedSurface else Color(0xF2FFFFFF)
     val border = if (darkMode) colors.border else Color(0xFFE8E5DE)
     val text = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF2F302D)
-    val muted = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF8A8984)
 
-    Row(
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .height(58.dp)
             .padding(horizontal = 18.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
+        contentAlignment = Alignment.Center,
     ) {
-        HeaderImageButton(
-            resId = if (darkMode) {
-                R.drawable.ic_session_runtime_settings_dark
-            } else {
-                R.drawable.ic_session_runtime_settings_light
-            },
-            darkMode = darkMode,
-            onClick = onLeftClick,
-        )
-        Column(
+        Row(
             modifier = Modifier
                 .width(224.dp)
-                .height(46.dp)
+                .height(42.dp)
                 .shadow(18.dp, CircleShape, ambientColor = Color(0x0A000000), spotColor = Color(0x0A000000))
                 .clip(CircleShape)
                 .background(surface)
                 .border(1.dp, border, CircleShape)
-                .noRippleClickable(onClick = onModelClick)
-                .padding(horizontal = 14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = title,
@@ -88,28 +73,6 @@ internal fun SessionDetailHeader(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (!modelLabel.isNullOrBlank()) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = modelLabel,
-                        color = muted,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    Icon(
-                        imageVector = Lucide.ChevronDown,
-                        contentDescription = null,
-                        tint = muted,
-                        modifier = Modifier.size(10.dp),
-                    )
-                }
-            }
         }
         HeaderImageButton(
             resId = if (darkMode) {
@@ -119,6 +82,7 @@ internal fun SessionDetailHeader(
             },
             darkMode = darkMode,
             onClick = onRightClick,
+            modifier = Modifier.align(Alignment.CenterEnd),
         )
     }
 }
@@ -148,12 +112,13 @@ private fun HeaderImageButton(
     resId: Int,
     darkMode: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val colors = LocalAAColors.current
     val surface = if (darkMode) colors.raisedSurface else Color(0xF2FFFFFF)
     val border = if (darkMode) colors.border else Color(0xFFE8E5DE)
     Box(
-        modifier = Modifier
+        modifier = modifier
             .size(44.dp)
             .shadow(14.dp, CircleShape, ambientColor = Color(0x0A000000), spotColor = Color(0x0A000000))
             .clip(CircleShape)
