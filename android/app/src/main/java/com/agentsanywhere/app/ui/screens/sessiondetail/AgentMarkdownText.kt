@@ -167,8 +167,7 @@ private fun parseMarkdown(text: String): ParsedMarkdown {
         ParsedMarkdown(extracted, parsed)
     }.getOrElse {
         // One malformed message must not take down the whole session timeline.
-        val plain = MarkdownMathSource(raw, emptyMap(), null)
-        ParsedMarkdown(plain, Document())
+        ParsedMarkdown(MarkdownMathSource.plain(raw), Document())
     }
 }
 
@@ -1625,6 +1624,8 @@ private class MarkdownMathSource private constructor(
     }
 
     companion object {
+        fun plain(markdown: String): MarkdownMathSource = MarkdownMathSource(markdown, emptyMap(), null)
+
         fun parse(markdown: String): MarkdownMathSource {
             if (!mayContainMath(markdown)) {
                 return MarkdownMathSource(markdown, emptyMap(), null)

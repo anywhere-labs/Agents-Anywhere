@@ -83,14 +83,17 @@ internal class TimelineReadingState {
 
     fun observe(key: String, row: String, coordinates: LayoutCoordinates, layout: TextLayoutResult? = null, text: String = "") {
         if (!coordinates.isAttached) return
-        val next = Region(Rect(coordinates.positionInWindow(), coordinates.size.toSize()), layout, text, row)
+        val consistentLayout = layout?.takeIf { it.layoutInput.text.text == text }
+        val next = Region(Rect(coordinates.positionInWindow(), coordinates.size.toSize()), consistentLayout, text, row)
         if (regions[key] != next) {
             regions[key] = next
             invalidate()
         }
     }
 
-    fun remove(key: String) { regions.remove(key); invalidate() }
+    fun remove(key: String) {
+        if (regions.remove(key) != null) invalidate()
+    }
 
     fun groupExpanded(kind: String, members: List<String>): Boolean {
         val explicit = members.mapNotNull { groupMembers["$kind:$it"] }
@@ -171,18 +174,13 @@ internal class TimelineReadingState {
         val region = regions[held.key]
         if (region == null) {
             val owner = owners[held.row]
-            if (owner != null && list.layoutInfo.visibleItemsInfo.none { it.index == owner.first }) {
-                // Regrouping changes the outer lazy key. Materialize the same logical
-                // message before restoring its descendant coordinate, instead of
-                // adopting whichever neighbouring row LazyColumn chose as fallback.
-                correcting = true
-                try { list.scrollToItem(owner.first) } finally { correcting = false }
-                invalidate()
-                return
-            }
             val fallbackKey = listOf("header:${held.row}", "message:${held.row}", owner?.second)
                 .filterNotNull().firstOrNull { it != held.key && regions.containsKey(it) }
             val fallback = fallbackKey?.let(regions::get)
+            // A row is briefly unregistered while LazyColumn replaces a regrouped item.
+            // Never jump to its index just to make it visible again: that produces the
+            // visible flash when a running tool/reasoning item changes. Rebase on a
+            // surviving logical row (or the currently visible content) instead.
             anchor = if (fallback != null) Anchor(fallbackKey, held.row, -1, "", held.y) else capture()
             invalidate()
             return
