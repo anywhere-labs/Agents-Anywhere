@@ -216,6 +216,7 @@ fun AgentsAnywhereTheme(
 
     SideEffect {
         val window = (view.context as? android.app.Activity)?.window ?: return@SideEffect
+        window.decorView.setBackgroundColor(colors.canvas.toArgb())
         window.statusBarColor = colors.canvas.toArgb()
         window.navigationBarColor = colors.canvas.toArgb()
         WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme

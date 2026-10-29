@@ -23,6 +23,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -160,6 +163,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 @Composable
 fun SessionDetailScreen(
     navigate: (AppDestination) -> Unit,
+    onBack: () -> Unit = { navigate(AppDestination.Sessions) },
     sessionId: String?,
     initialSession: AgentSession?,
     preparedSession: NewSessionDraft? = null,
@@ -1136,7 +1140,7 @@ fun SessionDetailScreen(
         if (pagerState.currentPage == 1) {
             scope.launch { pagerState.animateScrollToPage(0) }
         } else {
-            navigate(AppDestination.Sessions)
+            onBack()
         }
     }
 
@@ -1640,13 +1644,21 @@ fun SessionDetailScreen(
         else -> stringResource(R.string.session_send_unavailable)
     }
     val density = LocalDensity.current
-    val imeBottomPx = WindowInsets.ime.getBottom(density)
     val timelineBottomPadding = if (composerHeightPx > 0) {
         with(density) { composerHeightPx.toDp() } + 16.dp
     } else {
         168.dp
     }
     val hasOpenNotifications = state.notices.notices.any(RuntimeNotice::openNotification)
+    val imeBottomPx = WindowInsets.ime.getBottom(density)
+    // Android 15+ lays the window out behind the keyboard, so the IME inset plus the gesture
+    // bar has to be applied by the composer itself. Older releases shrink the window for us
+    // and the inset was applied a second time, which pushed the composer off the keyboard.
+    val composerInsets = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+        Modifier.windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
+    } else {
+        Modifier.imePadding()
+    }
 
     ScreenScaffold {
         HorizontalPager(
@@ -1724,12 +1736,14 @@ fun SessionDetailScreen(
                         }
                         ComposerVeil(
                             height = timelineBottomPadding + 16.dp,
-                            modifier = Modifier.align(Alignment.BottomCenter),
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .then(composerInsets),
                         )
                         Column(
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
-                                .imePadding(),
+                                .then(composerInsets),
                         ) {
                             Column(
                                 modifier = Modifier.onSizeChanged { composerHeightPx = it.height },

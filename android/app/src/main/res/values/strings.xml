@@ -720,4 +720,6 @@
     <string name="native_history_check">Check recovery status</string>
     <string name="native_history_releasing">Ending execution…</string>
     <string name="session_image_input_unsupported">The selected model does not declare image input support. Remove the image or choose another model.</string>
+    <string name="workspace_empty_title">Pick a conversation</string>
+    <string name="workspace_empty_message">Choose a session from the sidebar, or start a new one.</string>
 </resources>

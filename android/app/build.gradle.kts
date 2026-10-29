@@ -14,6 +14,14 @@ val debugServerUrl = providers.gradleProperty("agentsAnywhere.serverUrl")
     .orElse(localSettings.getProperty("agentsAnywhere.serverUrl", officialServerUrl))
     .get()
 
+// Personal signing key (CI supplies it through env vars; local builds stay unsigned
+// release builds unless AA_KEYSTORE_PATH is set).
+val releaseKeystoreFile = System.getenv("AA_KEYSTORE_PATH")
+    ?.takeIf { it.isNotBlank() }
+    ?.let { file(it) }
+    ?.takeIf { it.isFile }
+var personalSigningConfig: com.android.build.api.dsl.SigningConfig? = null
+
 fun String.asBuildConfigString(): String = "\"" + replace("\\", "\\\\")
     .replace("\"", "\\\"")
     .replace("\n", "\\n")
@@ -27,8 +35,8 @@ android {
         applicationId = "com.agentsanywhere.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10
-        versionName = "2.1.0"
+        versionCode = 11
+        versionName = "2.1.1"
         buildConfigField("String", "OFFICIAL_SERVER_URL", officialServerUrl.asBuildConfigString())
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -37,12 +45,28 @@ android {
         }
     }
 
+    signingConfigs {
+        if (releaseKeystoreFile != null) {
+            personalSigningConfig = create("release") {
+                storeFile = releaseKeystoreFile
+                storePassword = System.getenv("AA_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("AA_KEY_ALIAS")
+                keyPassword = System.getenv("AA_KEY_PASSWORD")
+                enableV1Signing = true
+                enableV2Signing = true
+            }
+        }
+    }
+
     buildTypes {
         debug {
             buildConfigField("String", "OFFICIAL_SERVER_URL", debugServerUrl.asBuildConfigString())
+            signingConfig = personalSigningConfig
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = personalSigningConfig
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

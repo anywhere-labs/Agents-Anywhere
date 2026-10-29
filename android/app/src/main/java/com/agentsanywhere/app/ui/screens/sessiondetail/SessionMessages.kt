@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -382,7 +384,14 @@ internal fun MessageList(
 
     CompositionLocalProvider(LocalTimelineReading provides reading) {
         Box(Modifier.fillMaxSize()) {
-            SessionSelectionContainer(modifier = Modifier.fillMaxSize()) {
+            SessionSelectionContainer(
+                // Keep lines readable on tablets; on phones the max width never kicks in.
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .widthIn(max = 820.dp)
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter),
+            ) {
                 LazyColumn(
                     state = listState,
                     reverseLayout = true,
@@ -437,7 +446,11 @@ internal fun MessageList(
                             }
                         }
                     }
-                    items(detachedNotices.asReversed(), key = { "notice:${it.noticeId}" }) { notice ->
+                    items(
+                        items = detachedNotices.asReversed(),
+                        key = { "notice:${it.noticeId}" },
+                        contentType = { "notice" },
+                    ) { notice ->
                         RuntimeNoticeCard(
                             notice = notice,
                             busy = notice.noticeId in respondingNoticeIds,
@@ -447,7 +460,11 @@ internal fun MessageList(
                             notificationOnly = notice.type == "notification",
                         )
                     }
-                    items(timelineItems.asReversed(), key = { it.key }) { item ->
+                    items(
+                        items = timelineItems.asReversed(),
+                        key = { it.key },
+                        contentType = { "timeline" },
+                    ) { item ->
                         CompositionLocalProvider(LocalReadingMessage provides item.messages.first().id) {
                             Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
                                 when (item) {

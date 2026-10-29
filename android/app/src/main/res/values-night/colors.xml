@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="aa_canvas">#09090B</color>
+    <color name="aa_ink">#FAFAFA</color>
+    <color name="aa_window_background">#09090B</color>
+</resources>

@@ -2,4 +2,5 @@
 <resources>
     <color name="aa_canvas">#FDFCFB</color>
     <color name="aa_ink">#0A0A0B</color>
+    <color name="aa_window_background">#FDFCFB</color>
 </resources>

@@ -718,4 +718,6 @@
     <string name="native_history_check">查询恢复状态</string>
     <string name="native_history_releasing">正在结束执行…</string>
     <string name="session_image_input_unsupported">当前模型声明不支持图片输入，请移除图片或切换模型。</string>
+    <string name="workspace_empty_title">选择一个会话</string>
+    <string name="workspace_empty_message">从左侧列表中选择一个会话，或者新建一个。</string>
 </resources>

@@ -9,6 +9,13 @@
 - Pi 优先复用本机兼容安装的模型、认证和配置；已有受管模型网关配置保持隔离，用户也可明确选择受管环境。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 - Pi 接入需要 Server 执行 `v2_45` 数据库迁移，并配套更新 Connector 和使用此功能的客户端。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 
+### 手机端
+
+- Android 平板和宽度 720dp 以上的设备改用侧边栏加对话分栏：会话列表固定在左侧，打开会话不再整屏跳转，消息正文限制最大宽度，长行不再横跨整块屏幕。
+- 修复深色模式下弹出键盘时键盘周围露出白色窗口背景的问题：窗口底色跟随主题，深色界面不再闪白。
+- 修复 Android 15 上输入框被顶起两次、和键盘之间留出空档的问题，旧版本保持原有行为。
+- Release 包开启 R8 代码压缩和资源压缩，安装包更小、启动更快。
+
 ### 会话创建与消息交付
 
 - 修复 Codex 查看图片的记录显示为 `unknown` 的问题，现可点击图片路径打开预览。（[#491](https://github.com/anywhere-labs/Agents-Anywhere/pull/491)）
