@@ -67,11 +67,13 @@ jobs:
         if: env.AA_KEYSTORE_BASE64 != ''
         working-directory: android
         run: |
-          set -euo pipefail
+          set -uo pipefail
           APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          echo "apksigner: $APKSIGNER"
           for apk in app/build/outputs/apk/debug/*.apk app/build/outputs/apk/release/*.apk; do
             echo "== $apk"
-            "$APKSIGNER" verify --print-certs "$apk" | grep -E "Signer #1 certificate (DN|SHA-256)"
+            "$APKSIGNER" verify --verbose --print-certs "$apk" 2>&1 | head -20
+            echo "exit=$?"
           done
 
       - name: Collect APKs
