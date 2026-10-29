@@ -119,7 +119,7 @@ fun WorkspaceEmptyState(
                 modifier = Modifier
                     .clip(RoundedCornerShape(12.dp))
                     .background(colors.primaryAction)
-                    .noRippleClickable(onNewSession)
+                    .noRippleClickable(onClick = onNewSession)
                     .padding(horizontal = 18.dp, vertical = 11.dp),
             ) {
                 Text(
