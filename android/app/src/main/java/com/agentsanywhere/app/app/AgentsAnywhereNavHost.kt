@@ -274,17 +274,22 @@ internal fun AgentsAnywhereNavHost(
                 val enterOffset: (Int) -> Int = { width -> if (forward) width / 5 else -width / 5 }
                 val exitOffset: (Int) -> Int = { width -> if (forward) -width / 5 else width / 5 }
 
-                slideInHorizontally(
+                val slideIn = slideInHorizontally(
                     animationSpec = tween(durationMillis = 260),
                     initialOffsetX = enterOffset,
-                ) + fadeIn(
-                    animationSpec = tween(durationMillis = 180),
-                ) togetherWith slideOutHorizontally(
+                )
+                val slideOut = slideOutHorizontally(
                     animationSpec = tween(durationMillis = 260),
                     targetOffsetX = exitOffset,
-                ) + fadeOut(
-                    animationSpec = tween(durationMillis = 160),
                 )
+                if (forward) {
+                    (slideIn + fadeIn(animationSpec = tween(durationMillis = 180))) togetherWith
+                        (slideOut + fadeOut(animationSpec = tween(durationMillis = 160)))
+                } else {
+                    // Going back must not cross-fade: the two full-screen pages briefly turn
+                    // translucent over each other and read as a flash. A plain slide is clean.
+                    slideIn togetherWith slideOut
+                }
             },
             label = "App destination transition",
         ) { destination ->
