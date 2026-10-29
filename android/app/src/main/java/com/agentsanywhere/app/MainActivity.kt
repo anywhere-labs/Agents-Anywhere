@@ -52,7 +52,7 @@ class MainActivity : ComponentActivity() {
             ImageLoader.Builder(context)
                 .memoryCache {
                     MemoryCache.Builder()
-                        .maxSizePercent(context, 0.25)
+                        .maxSizePercent(context, 0.12)
                         .build()
                 }
                 .diskCache {

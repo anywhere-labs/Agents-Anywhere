@@ -9,6 +9,11 @@
 - Pi 优先复用本机兼容安装的模型、认证和配置；已有受管模型网关配置保持隔离，用户也可明确选择受管环境。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 - Pi 接入需要 Server 执行 `v2_45` 数据库迁移，并配套更新 Connector 和使用此功能的客户端。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 
+### 手机端
+
+- 修复进入正在同步的会话、展开思考链时偶发闪退：流式文本更新期间不再把新文本与旧排版混用，所有阅读位置都按对应排版边界校验。
+- Markdown 和公式提取改到后台解析，流式消息与长思考链不再反复阻塞主线程；异常公式回退为原文，减少卡顿和内存压力。
+
 ### 会话创建与消息交付
 
 - 修复 Codex 查看图片的记录显示为 `unknown` 的问题，现可点击图片路径打开预览。（[#491](https://github.com/anywhere-labs/Agents-Anywhere/pull/491)）

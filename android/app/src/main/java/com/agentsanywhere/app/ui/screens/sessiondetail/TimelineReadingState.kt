@@ -143,9 +143,12 @@ internal class TimelineReadingState {
         val (key, region) = candidate
         val layout = region.layout
         val offset = if (layout != null && layout.lineCount > 0) {
-            layout.getLineStart(layout.getLineForVerticalPosition((viewport.top - region.bounds.top).coerceAtLeast(0f)))
+            val localY = (viewport.top - region.bounds.top).coerceIn(0f, layout.size.height.toFloat())
+            layout.getLineStart(layout.getLineForVerticalPosition(localY))
         } else -1
-        val localY = if (layout != null && offset >= 0) layout.getLineTop(layout.getLineForOffset(offset.coerceAtMost(region.text.length))) else 0f
+        val localY = if (layout != null && offset >= 0) {
+            layout.getLineTop(layout.getLineForOffset(offset.coerceIn(0, layout.layoutInput.text.length)))
+        } else 0f
         return Anchor(key, region.row, offset, if (offset >= 0) region.text.drop(offset).take(40) else "", region.bounds.top + localY)
     }
 
@@ -191,7 +194,7 @@ internal class TimelineReadingState {
         }
         val layout = region.layout
         val localY = if (offset >= 0 && layout != null && layout.lineCount > 0) {
-            layout.getLineTop(layout.getLineForOffset(offset.coerceIn(0, region.text.length)))
+            layout.getLineTop(layout.getLineForOffset(offset.coerceIn(0, layout.layoutInput.text.length)))
         } else 0f
         val delta = held.y - (region.bounds.top + localY)
         if (abs(delta) <= 1f) return
@@ -254,9 +257,28 @@ internal fun ReadingTextAnchor(text: String): ReadingTextRegistration {
 
 internal class ReadingTextRegistration(private val state: TimelineReadingState?, private val key: String, private val row: String) {
     var text: String = ""
+        set(value) {
+            if (field == value) return
+            field = value
+            // Composition publishes new text before BasicText has produced its new layout.
+            // Never expose that new length together with the previous text's line offsets.
+            layout = null
+            publish()
+        }
     private var coordinates: LayoutCoordinates? = null
     private var layout: TextLayoutResult? = null
+
     fun positioned(value: LayoutCoordinates) { coordinates = value; publish() }
-    fun laidOut(value: TextLayoutResult) { layout = value; publish() }
-    private fun publish() { coordinates?.let { state?.observe(key, row, it, layout, text) } }
+
+    fun laidOut(value: TextLayoutResult) {
+        // A late callback from a replaced text/layout pass must not republish stale offsets.
+        if (value.layoutInput.text.text != text) return
+        layout = value
+        publish()
+    }
+
+    private fun publish() {
+        val currentLayout = layout?.takeIf { it.layoutInput.text.text == text }
+        coordinates?.let { state?.observe(key, row, it, currentLayout, text) }
+    }
 }
