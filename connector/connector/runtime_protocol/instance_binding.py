@@ -32,6 +32,10 @@ from connector.runtime_protocol.models import (
     SessionState,
 )
 from connector.runtime_protocol.protocol import AgentRuntime
+from connector.runtime_protocol.workflows import (
+    RuntimeWorkflowRequest,
+    RuntimeWorkflowResult,
+)
 
 
 def _instance_metadata(
@@ -187,6 +191,10 @@ class RuntimeInstanceHost(RuntimeHostClient):
     @property
     def connector_id(self) -> str:
         return self.base.connector_id
+
+    @property
+    def runtime_id(self) -> str:
+        return self.instance.runtime_id
 
     @property
     def session_namespace(self) -> str:
@@ -448,6 +456,19 @@ class RuntimeInstance(AgentRuntime):
 
     instance: RuntimeInstanceSpec
     native_runtime: AgentRuntime
+
+    async def list_scoped_model_catalog(self, session_id: str, query: str | None = None, limit: int = 100) -> RuntimeModelCatalog:
+        catalog = await self.native_runtime.list_scoped_model_catalog(session_id, query=query, limit=limit)
+        return replace(catalog, runtime=self.instance.runtime_type, runtime_id=self.instance.runtime_id)
+
+    async def execute_workflow(self, request: RuntimeWorkflowRequest) -> RuntimeWorkflowResult:
+        return await self.native_runtime.execute_workflow(request)
+
+    async def get_session_configuration(self, session_id: str) -> dict[str, Any]:
+        return await self.native_runtime.get_session_configuration(session_id)
+
+    async def update_session_configuration(self, session_id: str, values: Mapping[str, Any]) -> dict[str, Any]:
+        return await self.native_runtime.update_session_configuration(session_id, values)
 
     @property
     def sync_mode(self) -> str:

@@ -1,0 +1,184 @@
+{
+  "$defs": {
+    "componentOperation": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "not": {
+                  "const": "list"
+                }
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "operationId"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "install",
+                  "activate",
+                  "remove"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "releaseId"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "operation": {
+          "enum": [
+            "list",
+            "get_operation",
+            "install",
+            "activate",
+            "rollback",
+            "remove"
+          ]
+        },
+        "operationId": {
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        },
+        "profileId": {
+          "default": "pi",
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+          "type": "string"
+        },
+        "releaseId": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "type": "object"
+    },
+    "configuration": {
+      "properties": {
+        "options": {
+          "items": {
+            "anyOf": [
+              {
+                "required": [
+                  "configId"
+                ]
+              },
+              {
+                "required": [
+                  "id"
+                ]
+              }
+            ],
+            "properties": {
+              "configId": {
+                "type": "string"
+              },
+              "currentValue": {
+                "type": [
+                  "string",
+                  "boolean"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "options": {
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "select",
+                  "boolean"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "name",
+              "currentValue"
+            ],
+            "type": "object"
+          },
+          "maxItems": 128,
+          "type": "array"
+        },
+        "revision": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "revision",
+        "options"
+      ],
+      "type": "object"
+    },
+    "formResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "form"
+        },
+        "values": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "kind",
+        "values"
+      ],
+      "type": "object"
+    },
+    "sourceReplacement": {
+      "additionalProperties": false,
+      "properties": {
+        "complete": {
+          "const": true
+        },
+        "epoch": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "sourceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "sourceId",
+        "epoch",
+        "complete",
+        "items"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:acp-runtime:1.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

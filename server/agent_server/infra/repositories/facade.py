@@ -28,7 +28,11 @@ _MAX_TRACKED_LOCKS = 4096
 _TRACKED_LOCK_IDLE_SECONDS = 900.0
 
 
+from agent_server.infra.repositories.runtime_workflows import RuntimeWorkflowRepositoryMixin
+
+
 class Store(
+    RuntimeWorkflowRepositoryMixin,
     DeviceRuntimeRepositoryMixin,
     ProtocolCatalogRepositoryMixin,
     UserRepositoryMixin,

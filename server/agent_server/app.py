@@ -25,6 +25,7 @@ from agent_server.api import (
     connector_files,
     connector_ingress,
     connector_runtimes,
+    runtime_workflows,
     connector_shell,
     connector_terminal,
     connectors,
@@ -370,6 +371,7 @@ def create_app(
     app.include_router(connectors.router, prefix=API_V2_PREFIX)
     app.include_router(connector_files.router, prefix=API_V2_PREFIX)
     app.include_router(connector_runtimes.router, prefix=API_V2_PREFIX)
+    app.include_router(runtime_workflows.router, prefix=API_V2_PREFIX)
     app.include_router(connector_shell.router, prefix=API_V2_PREFIX)
     app.include_router(connector_terminal.router, prefix=API_V2_PREFIX)
     app.include_router(client_ws.router, prefix=API_V2_PREFIX)

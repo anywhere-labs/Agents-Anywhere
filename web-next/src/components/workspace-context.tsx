@@ -1298,6 +1298,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     replaceRoute({ page: "home", projectId })
   }, [replaceRoute])
   const sessionCreation = useSessionCreation({
+    storageScope: `${typeof window === "undefined" ? "" : window.location.origin}:${authSession?.userId ?? ""}`,
     userId: authSession?.userId ?? null,
     token: authSession?.accessToken ?? null,
     addMessage: addOptimisticMessage,

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ValidationError
 
+from agent_server.core.agent_components import AgentComponentRequest
 from agent_server.core.device_runtime import (
     DeviceRuntimeListResponse,
     DeviceRuntimeView,
@@ -39,6 +40,70 @@ from agent_server.services.device_runtimes import (
 )
 
 router = APIRouter(prefix="/connectors", tags=["connector-runtimes"])
+
+
+@router.get("/{connector_id}/runtimes/{runtime_id}/components")
+async def list_agent_components(
+    connector_id: str,
+    runtime_id: str,
+    service: Annotated[DeviceRuntimeService, Depends(get_device_runtime_service)],
+    manager: Annotated[ConnectorRpcManager, Depends(get_rpc)],
+    user_id: Annotated[str, Depends(current_user_id)],
+):
+    return await agent_component_operation(
+        connector_id,
+        runtime_id,
+        AgentComponentRequest(operation="list"),
+        service,
+        manager,
+        user_id,
+    )
+
+
+@router.post("/{connector_id}/runtimes/{runtime_id}/components", status_code=202)
+async def agent_component_operation(
+    connector_id: str,
+    runtime_id: str,
+    payload: AgentComponentRequest,
+    service: Annotated[DeviceRuntimeService, Depends(get_device_runtime_service)],
+    manager: Annotated[ConnectorRpcManager, Depends(get_rpc)],
+    user_id: Annotated[str, Depends(current_user_id)],
+):
+    try:
+        runtime = await service.get_runtime(connector_id, runtime_id, user_id=user_id)
+    except DeviceRuntimeError as error:
+        _raise_device_runtime_error(error)
+    if runtime.runtimeType != "acp":
+        raise HTTPException(
+            409,
+            {
+                "code": "component_management_unsupported",
+                "message": "该 Runtime 不支持 Agent 组件管理。",
+            },
+        )
+    try:
+        result = await manager.request(
+            connector_id,
+            "runtime.components",
+            {
+                "runtime": runtime.runtimeType,
+                "runtimeId": runtime_id,
+                **payload.model_dump(exclude_none=True),
+            },
+            timeout=20,
+        )
+    except (ConnectorOfflineError, ConnectorRpcError, TimeoutError) as error:
+        raise HTTPException(
+            503,
+            {
+                "code": "component_operation_outcome_unknown",
+                "message": "操作结果需要查询，请保留原操作身份。",
+                "queryBeforeRetry": True,
+            },
+        ) from error
+    if not isinstance(result, dict):
+        raise_invalid_runtime_response("invalid_component_operation")
+    return result
 
 
 @router.get(
@@ -410,7 +475,9 @@ async def request_runtime_rpc(
 
 
 def parse_runtime_capability_response(result: Any) -> ProtocolCapabilitySet:
-    raw_capability_set = result.get("capabilitySet") if isinstance(result, dict) else None
+    raw_capability_set = (
+        result.get("capabilitySet") if isinstance(result, dict) else None
+    )
     if not isinstance(raw_capability_set, dict):
         raise_invalid_runtime_response("invalid_runtime_capabilities")
     try:

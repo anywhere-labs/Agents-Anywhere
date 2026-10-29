@@ -13,6 +13,7 @@ export type SessionCreationDraft = {
   modelId: string
   reasoningId: string
   permissionMode: string
+  preparedWorkspace?: import("@/features/dashboard/runtime-workflows").PreparedWorkspace
   configurationRequired?: boolean
   request: Omit<SessionCreateAndStartRequest, "attachments">
 }

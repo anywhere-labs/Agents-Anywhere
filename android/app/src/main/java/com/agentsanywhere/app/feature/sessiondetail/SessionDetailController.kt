@@ -27,6 +27,8 @@ class SessionDetailController(
     private val sessionsApi: SessionsApi,
     private val sessionStore: AuthSessionReader,
 ) {
+
+
     private val optimisticStore = SessionOptimisticMessageStore()
     private val attachmentTransfer = SessionAttachmentTransfer(sessionsApi)
 

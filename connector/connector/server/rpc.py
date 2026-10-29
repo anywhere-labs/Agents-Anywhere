@@ -39,7 +39,9 @@ RPC_LOG_PARTIAL_SECRET_KEYS = frozenset(
     key for key in RPC_LOG_EXACT_SECRET_KEYS if key != "auth"
 )
 CONNECTOR_WS_MAX_NOTIFICATION_BYTES = 900 * 1024
-CRITICAL_RPC_METHODS = frozenset({"interaction.respond", "session.notices"})
+CRITICAL_RPC_METHODS = frozenset({"interaction.respond",
+    "workspace.preparation.get", "workspace.preparation.respond", "workspace.preparation.cancel",
+    "session.creation.get", "session.creation.respond", "session.creation.cancel", "session.notices"})
 
 
 class WebSocketSender(Protocol):

@@ -2,6 +2,7 @@ import Foundation
 import Observation
 
 struct NewSessionPreference: Codable {
+    var pendingWorkflowIDs: [String]? = nil
     var draftText: String? = nil
     var connectorID = ""
     var runtimeID = ""
@@ -30,9 +31,16 @@ final class NewSessionModel {
     private(set) var loadingDevices: Set<String> = []
     private(set) var connectorID: String
     private(set) var runtimeID: String
+    private(set) var runtimeWorkflow: V2RuntimeWorkflow?
+    private(set) var workflowResponding = false
+    @ObservationIgnored private let workflowAPI: V2RuntimeWorkflowAPI?
+    @ObservationIgnored private var preparedWorkflow: V2RuntimeWorkflow?
+    var agentConfigurationValues: [String: JSONValue] = [:]
     private(set) var prepared: V2PreparedSession?
     private(set) var isPreparing = false
     private(set) var isCreating = false
+    private(set) var isResumingWorkflow = false
+    var hasPendingWorkflow: Bool { !(preference.pendingWorkflowIDs ?? []).isEmpty }
     private(set) var isValid = true
     private(set) var creationUncertain = false
     private(set) var network = V2NetworkStatus()
@@ -56,7 +64,8 @@ final class NewSessionModel {
 
     init(scope: V2ClientScope, devices: V2DeviceManagementService,
          preparation: V2SessionPreparationService, creation: V2SessionCreationService, projectAPI: V2ProjectAPI,
-         defaults: UserDefaults = .standard) {
+         defaults: UserDefaults = .standard, workflowAPI: V2RuntimeWorkflowAPI? = nil) {
+        self.workflowAPI = workflowAPI
         self.projectAPI = projectAPI
         files = V2WorkspaceFilesService(connectorAPI: devices.connectorAPI, serverURL: scope.serverURL)
         self.devices = devices; self.preparation = preparation; self.creation = creation; self.defaults = defaults
@@ -109,6 +118,7 @@ final class NewSessionModel {
         guard !isCreating, isValid, let value = projects.first(where: { $0.id == id }) else { return false }
         if connectorID != value.connectorId { focusDevice(value.connectorId, workspace: nil) }
         workspace = value.workspacePath
+        preparedWorkflow = nil; runtimeWorkflow = nil; prepared = nil; preparationVersion += 1
         identifyProject()
         return true
     }
@@ -124,6 +134,7 @@ final class NewSessionModel {
         guard isValid, !isCreating, !connectorID.isEmpty,
               ProjectWorkspacePath.key(path, deviceOS: connector?.deviceOs) != nil else { return false }
         workspace = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        preparedWorkflow = nil; runtimeWorkflow = nil; prepared = nil; preparationVersion += 1
         identifyProject()
         return true
     }
@@ -213,7 +224,7 @@ final class NewSessionModel {
             runtimeID = available.first { $0.id == saved && $0.isReadyForSession }?.id
                 ?? available.first { $0.isReadyForSession }?.id ?? ""
         }
-        await prepareTarget()
+        if preparedWorkflow == nil { await prepareTarget() }
         await home
     }
 
@@ -252,6 +263,7 @@ final class NewSessionModel {
     }
 
     func prepareTarget() async {
+        if hasPendingWorkflow && !isCreating { return }
         preparationVersion += 1
         let version = preparationVersion
         prepared = nil
@@ -261,15 +273,83 @@ final class NewSessionModel {
         isPreparing = true
         defer { if version == preparationVersion { isPreparing = false } }
         do {
-            let value = try await preparation.prepare(connectorId: connectorID, runtimeId: runtimeID)
+            var value = try await preparation.prepare(connectorId: connectorID, runtimeId: runtimeID)
             guard isValid, version == preparationVersion, !Task.isCancelled else { return }
             guard value.runtime.isReadyForSession else {
                 error = value.runtime.sessionUnavailableReason ?? String(localized: "Agent 尚未就绪")
                 return
             }
+            if value.capabilities.allows("runtime.workspace.prepare") {
+                guard let workflowAPI else { throw HTTPError.invalidResponse }
+                let project = try await V2WorkspaceProjectResolver(api: projectAPI).resolve(projects: projects, connectorID: connectorID, path: workspace, deviceOS: connector?.deviceOs, validate: { [self] in guard isValid, version == preparationVersion, !Task.isCancelled else { throw CancellationError() } })
+                projects.removeAll { $0.id == project.id }; projects.append(project); projectID = project.id
+                let operation = try await workflowAPI.post("preparations", ["connectorId": .string(connectorID), "runtimeId": .string(runtimeID), "projectId": .string(project.id), "clientPreparationId": .string(UUID().uuidString)])
+                let ready = try await awaitWorkflow(operation, until: { $0.state.phase == "ready" }, version: version)
+                guard let catalog = ready.state.catalog else { throw HTTPError.invalidResponse }
+                if preparedWorkflow?.state.configuration != ready.state.configuration {
+                    agentConfigurationValues = ready.state.configuration.map { AgentForm.defaults(AgentForm.configurationSchema($0)) } ?? [:]
+                }
+                preparedWorkflow = ready
+                value = V2PreparedSession(runtime: value.runtime, capabilities: value.capabilities, catalogs: V2SessionCatalogs(model: catalog, permission: value.catalogs.permission))
+            } else { preparedWorkflow = nil }
             prepared = value
             settings.replace(ChatSettingsCatalog(value.catalogs), selections: savedSelections)
         } catch { if isValid, version == preparationVersion { self.error = error.localizedDescription } }
+    }
+
+    private func awaitWorkflow(_ initial: V2RuntimeWorkflow, until done: (V2RuntimeWorkflow) -> Bool, version: Int) async throws -> V2RuntimeWorkflow {
+        guard let workflowAPI else { throw HTTPError.invalidResponse }
+        var value = initial
+        while true {
+            guard isValid, version == preparationVersion, !Task.isCancelled else { throw CancellationError() }
+            runtimeWorkflow = value
+            if done(value) { return value }
+            if ["failed", "rejected", "cancelled", "expired", "outcome_unknown"].contains(value.state.phase) { throw V2RuntimeWorkflowFailure(workflow: value) }
+            try await Task.sleep(for: .seconds(1))
+            value = try await workflowAPI.get(value)
+        }
+    }
+
+    func resumeWorkflow() async -> V2SessionMeta? {
+        guard let workflowAPI, let id = preference.pendingWorkflowIDs?.first, !isResumingWorkflow else { return nil }
+        isResumingWorkflow = true
+        defer { isResumingWorkflow = false }
+        do {
+            let value = try await workflowAPI.get(kind: "creation", id: id)
+            guard isValid, !Task.isCancelled else { return nil }
+            runtimeWorkflow = value
+            let result = try await awaitWorkflow(value, until: { $0.state.messageAccepted == true }, version: preparationVersion)
+            guard let sessionID = result.sessionId else { throw HTTPError.invalidResponse }
+            let session = try await creation.sessionAPI.sessionMeta(sessionId: sessionID).session
+            guard isValid, !Task.isCancelled else { return nil }
+            preference.pendingWorkflowIDs?.removeAll { $0 == id }; persist()
+            creationUncertain = false
+            return session
+        } catch {
+            guard isValid else { return nil }
+            // A failed status query alone says nothing about whether creation ran.
+            let rejected = (error as? V2RuntimeWorkflowFailure)?.definitelyNotAccepted == true
+            creationUncertain = !rejected
+            if rejected { preference.pendingWorkflowIDs?.removeAll { $0 == id }; persist() }
+            self.error = error.localizedDescription
+            return nil
+        }
+    }
+
+    func respondWorkflow(_ request: V2WorkflowInteraction, action: String, input: JSONValue?) async {
+        guard let workflowAPI, let runtimeWorkflow, !workflowResponding else { return }
+        workflowResponding = true
+        defer { workflowResponding = false }
+        do { try await workflowAPI.respond(runtimeWorkflow, request: request, action: action, input: input) }
+        catch { self.error = error.localizedDescription }
+    }
+
+    func cancelWorkflow() async {
+        guard let workflowAPI, let runtimeWorkflow, !workflowResponding else { return }
+        workflowResponding = true
+        defer { workflowResponding = false }
+        do { self.runtimeWorkflow = try await workflowAPI.post("\(runtimeWorkflow.kind)/\(runtimeWorkflow.id.v2URLPathComponentEncoded)/cancel", ["operationId": .string(UUID().uuidString)]) }
+        catch { self.error = error.localizedDescription }
     }
 
     func saveSelections() {
@@ -319,15 +399,21 @@ final class NewSessionModel {
                 if draft.text.isEmpty, draft.attachments.isEmpty { draft.text = text; draft.attachments = files }
             }
         }
-        await onStaged?(submission)
+        if preparedWorkflow == nil { await onStaged?(submission) }
         guard isValid, !Task.isCancelled else { return nil }
         let target = (project.connectorId, runtime.id, project.id)
         let chosenSelections = settings.selections
+        let chosenConfiguration = agentConfigurationValues
+        let chosenConfigurationSnapshot = preparedWorkflow?.state.configuration
         await prepareTarget()
         guard isValid, !Task.isCancelled, prepared != nil, connectorID == target.0, runtimeID == target.1,
               connector?.status == .online, network.availability != .offline else { return nil }
         guard settings.hasValidSelections, chosenSelections == settings.selections else {
             error = String(localized: "可用选项已变化，请检查模型和权限后再次发送。")
+            return nil
+        }
+        guard chosenConfigurationSnapshot == preparedWorkflow?.state.configuration, chosenConfiguration == agentConfigurationValues else {
+            error = "Agent 配置已变化，请重新确认后发送。"
             return nil
         }
         var didSubmit = false
@@ -340,10 +426,39 @@ final class NewSessionModel {
                 return nil
             }
             didSubmit = true
-            let response = try await creation.createAndStart(connectorId: connectorID, projectId: project.id, runtime: runtime.runtimeType,
+            let response: V2SessionCreateResponse
+            if let preparedWorkflow, let workflowAPI {
+                guard let catalogRevision = preparedWorkflow.state.catalogRevision else { throw HTTPError.invalidResponse }
+                var body: [String: JSONValue] = ["preparationId": .string(preparedWorkflow.id), "createOperationId": .string(submission.pending.id),
+                    "expectedRevision": .number(Double(preparedWorkflow.state.revision)), "catalogRevision": .number(Double(catalogRevision)),
+                    "clientMessageId": .string(submission.pending.id), "content": .string(text),
+                    "selections": .object(Dictionary(uniqueKeysWithValues: settings.selections.map { ($0.key.rawValue, .string($0.value)) }))]
+                if !files.isEmpty {
+                    body["attachments"] = .array(files.map { file in
+                        let item = file.local
+                        var fields: [String: JSONValue] = ["fileId": .string(item.fileId), "name": .string(item.name),
+                            "mediaType": .string(item.mediaType), "size": .number(Double(item.data.count)),
+                            "contentBase64": .string(item.data.base64EncodedString())]
+                        if let checksum = item.sha256 { fields["sha256"] = .string(checksum) }
+                        return .object(fields)
+                    })
+                }
+                body["title"] = .string(String(text.prefix(80)))
+                if preparedWorkflow.state.configuration != nil { body["configuration"] = .object(chosenConfiguration) }
+                preference.pendingWorkflowIDs = Array(Set((preference.pendingWorkflowIDs ?? []) + [submission.pending.id])); persist()
+                let started = try await workflowAPI.post("creations", body)
+                let admitted = try await awaitWorkflow(started, until: { $0.state.messageAccepted == true }, version: preparationVersion)
+                guard let id = admitted.sessionId else { throw HTTPError.invalidResponse }
+                let meta = try await creation.sessionAPI.sessionMeta(sessionId: id)
+                response = V2SessionCreateResponse(session: meta.session, connectorResult: nil, serverTime: nil)
+                preference.pendingWorkflowIDs?.removeAll { $0 == submission.pending.id }; persist()
+                await onStaged?(submission)
+            } else {
+            response = try await creation.createAndStart(connectorId: connectorID, projectId: project.id, runtime: runtime.runtimeType,
                 runtimeId: runtime.id, title: nil, cwd: project.workspacePath,
                 content: text, selections: settings.selections, attachments: files.map(\.local),
                 clientMessageId: submission.pending.id)
+            }
             guard isValid else { return nil }
             completed = true
             onBound?(submission, response)
@@ -351,6 +466,7 @@ final class NewSessionModel {
         } catch {
             guard isValid else { return nil }
             creationUncertain = didSubmit && !V2ClientFailure.isDefiniteWriteRejection(error)
+            if !creationUncertain { preference.pendingWorkflowIDs?.removeAll { $0 == submission.pending.id }; persist() }
             self.error = creationUncertain
                 ? String(localized: "创建结果尚未确认。请先检查会话列表，避免重复创建。草稿已保留。\n\(error.localizedDescription)")
                 : error.localizedDescription
@@ -375,7 +491,7 @@ final class NewSessionModel {
     }
 
     /// Explicitly reviewed by the user. Network recovery alone never retries creation.
-    func acknowledgeUncertainCreation() { creationUncertain = false; error = nil }
+    func acknowledgeUncertainCreation() { creationUncertain = false; error = nil; preference.pendingWorkflowIDs = []; preparedWorkflow = nil; prepared = nil; persist(); Task { await prepareTarget() } }
 
     func invalidate() {
         isValid = false; preparationVersion += 1; prepared = nil

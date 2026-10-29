@@ -13,7 +13,7 @@ back to the backend.
 ```text
 connector/
   runtime_protocol/  AgentRuntime, RuntimeProvider, RuntimeHostClient contracts
-  runtimes/          Codex, Claude and DSH RuntimeProvider/AgentRuntime packages
+  runtimes/          Codex, Claude, DSH and ACP RuntimeProvider/AgentRuntime packages
   server/            Backend auth, ingest, RPC channel, request dispatch, host mapping
   core/              Connector config, runtime owner, runtime config storage
   local/             Local filesystem, shell, and terminal backends
@@ -211,3 +211,11 @@ uv run pytest -q
 ```
 
 DSH 插件默认将私有数据存放在 `~/.agents-anywhere/dsh-bridge-next/`，其托管 Connector 通过 `AGENT_CONNECTOR_DATA_DIR` 使用其中的 `connector/` 子目录。插件首次启动负责迁移旧 `.agentsanywhere/dsh-bridge-next/` 数据；通用 Connector 的默认路径和自定义环境变量行为不变。
+
+## Pi Runtime
+
+Pi 通过通用 ACP 适配启动托管安装的 `@openma/pi-acp` 发布包，不依赖 DSH。默认 Provider 为 Codex、Claude、DSH、Pi；Pi 的实例、会话和事件保持 `runtimeType=pi`，ACP 是内部对接协议。
+
+创建 Pi 实例时填写模型网关，可选填自定义模型；启动时自动准备兼容的 Node 和固定版本 npm 依赖。配置与原生会话数据按实例隔离，工具权限复用现有权限选择与审批入口。默认 Pi 路径直接运行上游发布包，不要求选择 AA 签名组件。
+
+旧独立 Pi 引擎与内置产物已移除。配置、消息接纳、附件、恢复和其他 ACP 代码的边界见 [ACP Runtime 与 Pi 当前实现](../docs/runtime-protocol/acp-runtime-implementation.md)。

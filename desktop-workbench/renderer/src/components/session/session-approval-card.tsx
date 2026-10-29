@@ -1,5 +1,7 @@
 "use client"
 
+import { RuntimeInteractionForm } from "./runtime-workflow-panel"
+import type { WorkflowInteraction } from "@/features/dashboard/runtime-workflows"
 import * as React from "react"
 import { Check, CircleAlert, CircleCheck, Info, Loader2, ShieldCheck, TriangleAlert, X } from "lucide-react"
 
@@ -50,11 +52,25 @@ export function InteractionCard({
     setInputDrafts(inputRequest ? createInputRequestDrafts(inputRequest) : {})
   }, [inputRequest])
 
+  const owner = notice.metadata?.ownerGeneration
+  const revision = notice.metadata?.requestRevision
+  const runtimeDialog = notice.actions.find(action => (action.input?.uiSchema as Record<string, unknown> | undefined)?.component === "runtimeDialog")
+  if ((runtimeDialog || notice.metadata?.kind === "form") && typeof owner === "string" && typeof revision === "number") {
+    const ui = (runtimeDialog?.input?.uiSchema ?? { kind: "form" }) as Record<string, unknown>
+    const request = { interactionId: notice.noticeId, ownerGeneration: owner, requestRevision: revision,
+      revision, kind: ui.kind, title: notice.title, message: notice.message ?? undefined, status: "open",
+      metadata: { ...notice.metadata, initialValue: ui.initialValue, options: ui.options }, actions: notice.actions } as WorkflowInteraction
+    return <RuntimeInteractionForm key={notice.noticeId + owner} request={request} pending={disabled}
+      onRespond={(actionId, response) => onRespondInteraction(notice.noticeId, actionId, {
+        ownerGeneration: owner, requestRevision: revision, responseOperationId: crypto.randomUUID(), ...(response === undefined ? {} : { response }),
+      })} />
+  }
   const respond = (action: NoticeAction) => {
     const input = inputRequest?.action.actionId === action.actionId
       ? buildInputRequestPayload(inputRequest, inputDrafts)
       : undefined
-    onRespondInteraction(notice.noticeId, action.actionId, input)
+    onRespondInteraction(notice.noticeId, action.actionId, typeof owner === "string" && typeof revision === "number"
+      ? { ownerGeneration: owner, requestRevision: revision, responseOperationId: crypto.randomUUID(), ...(input === undefined ? {} : { response: input }) } : input)
   }
 
   const actionLabel = (action: NoticeAction) => {

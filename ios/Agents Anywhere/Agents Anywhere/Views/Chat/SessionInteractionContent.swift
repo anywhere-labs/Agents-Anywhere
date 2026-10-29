@@ -23,6 +23,16 @@ struct SessionInteractionContent: View {
                     Button(String(localized: "操作详情"), appSymbol: "arrow.up.right.square") { showsDetails = true }
                         .font(.footnote).frame(minHeight: 44)
                 }
+                if let owner = item.notice.metadata["ownerGeneration"]?.stringValue,
+                   let revision = item.notice.metadata["requestRevision"]?.intValue,
+                   item.notice.metadata["kind"] == .string("form") || item.notice.actions.contains(where: { $0.input.uiSchema?["component"] == .string("runtimeDialog") }) {
+                    let dialog = item.notice.actions.first(where: { $0.input.uiSchema?["component"] == .string("runtimeDialog") })
+                    RuntimeWorkflowInput(request: V2WorkflowInteraction(interactionId: item.id, ownerGeneration: owner, requestRevision: revision,
+                        kind: item.notice.metadata["kind"] == .string("form") ? "form" : dialog?.input.uiSchema?["kind"]?.stringValue ?? "", title: item.notice.title, message: nil, status: "open",
+                        metadata: item.notice.metadata["kind"] == .string("form") ? item.notice.metadata : dialog?.input.uiSchema ?? .object([:]), actions: item.notice.actions), pending: chat.isWorking) { action, value in
+                            Task { await chat.respondRuntimeDialog(notice: item, actionID: action, value: value) }
+                        }
+                } else {
                 if let form = item.form {
                     ForEach(form.questions) { question in
                         questionFields(question)
@@ -46,6 +56,7 @@ struct SessionInteractionContent: View {
                 }
                 if item.notice.type == "interaction" {
                     SessionInteractionActions(item: item, chat: chat, now: timeline.date)
+                }
                 }
                 submissionStatus(at: timeline.date)
                 if let error = item.responseError { Text(error).font(.footnote).foregroundStyle(.secondary) }

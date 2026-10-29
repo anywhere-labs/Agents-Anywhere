@@ -7,6 +7,7 @@ from typing import Any
 
 from loguru import logger
 from sqlalchemy import case, func, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from agent_server.core.models import SessionView, TimelineItem, TimelineItemIn
@@ -26,6 +27,7 @@ from agent_server.core.timeline import (
 from agent_server.core.utc import utc_now
 from agent_server.infra.db import sessions as sessions_t
 from agent_server.infra.db import timeline_items as timeline_items_t
+from agent_server.infra.db.schema import session_runtime_event_receipts
 from agent_server.infra.repositories.store_support import session_revision_fenced
 
 
@@ -522,8 +524,37 @@ class TimelineRepositoryMixin:
         session_id: str,
         source_observed_at: str | None = None,
         mark_read_on_change: bool = False,
+        source_event_id: str | None = None,
+        source_event_digest: str | None = None,
     ) -> SessionView:
         async with self._timeline_lock(session_id), self._engine.begin() as conn:
+            if source_event_id is not None:
+                row = (
+                    await conn.execute(
+                        pg_insert(session_runtime_event_receipts)
+                        .values(
+                            session_id=session_id,
+                            source_event_id=source_event_id,
+                            event_digest=source_event_digest or "",
+                        )
+                        .on_conflict_do_nothing()
+                        .returning(session_runtime_event_receipts.c.source_event_id)
+                    )
+                ).first()
+                if row is None:
+                    existing = (
+                        await conn.execute(
+                            select(session_runtime_event_receipts.c.event_digest).where(
+                                session_runtime_event_receipts.c.session_id
+                                == session_id,
+                                session_runtime_event_receipts.c.source_event_id
+                                == source_event_id,
+                            )
+                        )
+                    ).scalar_one()
+                    if existing != (source_event_digest or ""):
+                        raise ValueError("source event identity conflict")
+                    return await self.get_session(session_id)
             await update_source_observed_at(
                 conn,
                 session_id=session_id,

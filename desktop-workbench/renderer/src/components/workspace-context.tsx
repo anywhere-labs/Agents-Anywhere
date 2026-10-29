@@ -1449,6 +1449,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     replaceRoute({ page: "home", projectId })
   }, [replaceRoute])
   const sessionCreation = useSessionCreation({
+    storageScope: `${authSession?.serverUrl ?? ""}:${authSession?.userId ?? ""}`,
     userId: authSession?.userId ?? null,
     token: authSession?.accessToken ?? null,
     addMessage: addOptimisticMessage,
@@ -1629,7 +1630,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     refreshData: fetchData,
   }
 
-  return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>
+  return <WorkspaceContext.Provider value={value}>{children}
+  </WorkspaceContext.Provider>
 }
 
 function sameStableValue(left: unknown, right: unknown): boolean {

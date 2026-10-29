@@ -588,3 +588,22 @@ pairing_codes = Table(
     Column("claimed_at", Text),
     Column("consumed_at", Text),
 )
+
+
+runtime_workflows = Table(
+    "runtime_workflows", metadata,
+    Column("user_id", Text, primary_key=True), Column("kind", Text, primary_key=True), Column("id", Text, primary_key=True),
+    Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
+    Column("runtime_id", Text, nullable=False), Column("runtime_type", Text, nullable=False),
+    Column("project_id", Text, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False), Column("session_id", Text),
+    Column("input_digest", Text, nullable=False), Column("request_json", Text, nullable=False),
+    Column("result_json", Text, nullable=False), Column("consumed_by", Text),
+)
+
+
+session_runtime_event_receipts = Table(
+    "session_runtime_event_receipts", metadata,
+    Column("session_id", Text, ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True),
+    Column("source_event_id", Text, primary_key=True),
+    Column("event_digest", Text, nullable=False),
+)

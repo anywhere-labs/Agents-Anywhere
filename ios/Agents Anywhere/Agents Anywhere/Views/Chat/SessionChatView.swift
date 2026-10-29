@@ -29,7 +29,7 @@ struct SessionChatView: View, Equatable {
          onMenu: @escaping () -> Void) {
         _storage = StateObject(wrappedValue: StableViewModel {
             let chat = SessionChatModel(session: session, repository: services.sessionRepository, attachments: services.attachments,
-                files: services.workspaceFiles)
+                files: services.workspaceFiles, workflowAPI: services.runtimeWorkflows)
             chat.onEditCreation = { [weak services, weak session] pending in
                 if let session { services?.editCreation(session, pending: pending) }
             }

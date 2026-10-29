@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from sqlalchemy import func
+
 from sqlalchemy import case, literal_column
 from pydantic import BaseModel
 
@@ -272,11 +274,15 @@ class SessionRepositoryMixin:
         permission_selection_id: str | None = None,
         selections: dict[str, str | None] | None = None,
         takeover: bool = False,
+        session_id: str | None = None,
     ) -> SessionView:
         identity = _runtime_identity(runtime, runtime_id)
-        session_id = f"sess_{secrets.token_urlsafe(10)}"
+        has_reserved_id = session_id is not None
+        session_id = session_id or f"sess_{secrets.token_urlsafe(10)}"
         now = utc_now()
         async with self._engine.begin() as conn:
+            if has_reserved_id:
+                await conn.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(session_id, 0))))
             connector_q = select(
                 connectors_t.c.status,
                 connectors_t.c.user_id,
@@ -316,8 +322,13 @@ class SessionRepositoryMixin:
                         "project connector and workspace must match the session"
                     )
                 cwd = project.workspace_path or cleaned_cwd
-            await conn.execute(
-                insert(sessions_t).values(
+            existing = (await conn.execute(select(sessions_t).where(sessions_t.c.id == session_id))).mappings().first()
+            if existing:
+                if existing["connector_id"] != connector_id or existing["project_id"] != project_id or existing["runtime_id"] != str(identity.runtime_id):
+                    raise ValueError("session identity conflict")
+            else:
+                await conn.execute(
+                    insert(sessions_t).values(
                     id=session_id,
                     connector_id=connector_id,
                     project_id=project_id,

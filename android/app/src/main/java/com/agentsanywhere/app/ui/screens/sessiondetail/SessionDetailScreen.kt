@@ -210,7 +210,10 @@ fun SessionDetailScreen(
     var retryClientMessageId by remember(composerDraftSessionId) { mutableStateOf(restoredComposerDraft.clientMessageId) }
     var preparedSessionCreating by remember(preparedSession) { mutableStateOf(false) }
     var preparedSelections by remember(preparedSession) { mutableStateOf(preparedSession?.selections ?: NewSessionSelections()) }
-    var preparedModelOptions by remember(preparedSession) { mutableStateOf(emptyList<com.agentsanywhere.app.feature.sessiondetail.RuntimeSelectionOption>()) }
+    var preparedModelOptions by remember(preparedSession) {
+        mutableStateOf(preparedSession?.preparedWorkspace?.catalog?.models
+            ?.map { it.toRemoteRuntimeModel() }?.modelSelectionOptions().orEmpty())
+    }
     var preparedPermissionCatalog by remember(preparedSession) { mutableStateOf<NewSessionPermissionCatalog?>(null) }
     var preparedModelLoading by remember(preparedSession) { mutableStateOf(false) }
     var preparedPermissionLoading by remember(preparedSession) { mutableStateOf(false) }
@@ -908,7 +911,9 @@ fun SessionDetailScreen(
             preparedModelLoading = true
             preparedModelError = null
             scope.launch {
-                onLoadPreparedModelCatalog(pending.connectorId, pending.runtimeId)
+                val catalogResult = pending.preparedWorkspace?.catalog?.let { Result.success(it) }
+                    ?: onLoadPreparedModelCatalog(pending.connectorId, pending.runtimeId)
+                catalogResult
                     .onSuccess { catalog ->
                         preparedModelOptions = catalog.models
                             .map { it.toRemoteRuntimeModel() }
@@ -1079,7 +1084,11 @@ fun SessionDetailScreen(
         )
         noticeResponseErrors = noticeResponseErrors - notice.noticeId
         scope.launch {
-            controller.respondNotice(id, notice.noticeId, action.actionId, input)
+            controller.respondNotice(id, notice.noticeId, action.actionId,
+                if (notice.metadata["ownerGeneration"] is String && notice.metadata["requestRevision"] is Number)
+                    mapOf("ownerGeneration" to notice.metadata["ownerGeneration"], "requestRevision" to notice.metadata["requestRevision"],
+                        "responseOperationId" to UUID.randomUUID().toString()) + (if (input != null) mapOf("response" to input) else emptyMap())
+                else input)
                 .onSuccess {
                     runtimeNoticeDraftStore.clear(notice.sessionId, notice.noticeId)
                     state = state.copy(

@@ -8,6 +8,8 @@ export const CAPABILITY = {
   approveInteraction: "session.interaction.approval",
   attachment: "runtime.attachment",
   runtimeConfig: "runtime.config",
+  configurationRead: "session.configuration.read",
+  configurationUpdate: "session.configuration.update",
   modelCatalog: "catalog.model",
   permissionCatalog: "catalog.permission",
   effortCatalog: "catalog.effort",

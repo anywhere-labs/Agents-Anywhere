@@ -33,7 +33,17 @@ class SessionsController(
     private val devicesApi: DevicesApi,
     private val filesApi: FilesApi,
     private val sessionStore: AuthSessionReader,
+    workflowApi: com.agentsanywhere.app.api.RuntimeWorkflowApi = com.agentsanywhere.app.api.RuntimeWorkflowApi(),
+    workflowReferences: RuntimeWorkflowReferenceStore? = null,
 ) {
+    val workflows = RuntimeWorkflowCoordinator(workflowApi, sessionStore, workflowReferences)
+    suspend fun prepareRuntimeWorkspace(connector: String, runtime: String, project: String): Result<PreparedRuntimeWorkspace> = runCatching {
+        val value = workflows.run("preparations", org.json.JSONObject().put("connectorId", connector).put("runtimeId", runtime).put("projectId", project).put("clientPreparationId", java.util.UUID.randomUUID().toString())) { it.optString("phase") == "ready" }
+        val state = value.getJSONObject("state")
+        val schema = state.optJSONObject("configuration")?.let { AgentForm.configurationSchema(it) }
+        PreparedRuntimeWorkspace(value.getString("id"), state.getLong("revision"), state.getLong("catalogRevision"), sessionsApi.parseScopedModelCatalog(state.getJSONObject("catalog")).toNewSessionModelCatalog(), schema?.toString(), schema?.let { AgentForm.defaults(it) }.orEmpty())
+    }.onFailure { if (it is CancellationException) throw it }
+
     fun dashboardSnapshotState(snapshot: RemoteDashboardSnapshot): SessionsState {
         return toState(
             remoteSessions = snapshot.sessions,
@@ -163,6 +173,22 @@ class SessionsController(
                 return@withContext NewSessionCreateOutcome.Failed(error)
             }
             try {
+                val prepared = draft.preparedWorkspace
+                if (prepared != null) {
+                    val value = workflows.run("creations", org.json.JSONObject().put("preparationId", prepared.preparationId)
+                        .put("createOperationId", draft.clientMessageId).put("clientMessageId", draft.clientMessageId)
+                        .put("expectedRevision", prepared.expectedRevision).put("catalogRevision", prepared.catalogRevision)
+                        .put("selections", org.json.JSONObject(draft.selections.toMap())).put("content", draft.content).apply {
+                            if (draft.attachments.isNotEmpty()) put("attachments", org.json.JSONArray(draft.attachments.map { part ->
+                                val item = part.toInlineAttachmentRef()
+                                org.json.JSONObject().put("fileId", item.fileId).put("name", item.name).put("mediaType", item.mediaType)
+                                    .put("size", item.size).put("sha256", item.sha256).put("contentBase64", item.contentBase64)
+                            }))
+                            if (prepared.configurationSchema != null) put("configuration", org.json.JSONObject(prepared.configurationValues))
+                        }) { it.optBoolean("messageAccepted") }
+                    val session = bindAcceptedWorkflowSession(devices)
+                    return@withContext NewSessionCreateOutcome.Created(session)
+                }
                 val response = sessionsApi.createAndStartSession(
                     serverUrl = serverUrl,
                     authorizationToken = accessToken,
@@ -186,6 +212,12 @@ class SessionsController(
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
+                if (draft.preparedWorkspace != null) {
+                    val state = workflows.operation.value?.optJSONObject("state")
+                    val rejected = state?.has("messageAccepted") == true && !state.isNull("messageAccepted") &&
+                        !state.optBoolean("messageAccepted") && state.optString("phase") in setOf("failed", "rejected", "cancelled", "expired")
+                    return@withContext NewSessionCreateOutcome.Failed(error.asCreateFailure(), outcomeUnknown = !rejected)
+                }
                 if (error.mayHaveUnknownCreateOutcome()) {
                     reconcileCreateAfterNetworkFailure(
                         draft = resolved,
@@ -199,6 +231,16 @@ class SessionsController(
             }
         }
     }
+
+    private suspend fun bindAcceptedWorkflowSession(devices: List<AgentDevice>): AgentSession =
+        workflows.bindAcceptedCreation { server, token, id ->
+            sessionsApi.getWorkflowSession(server, token, id).toAgentSession(devices.associateBy { it.id })
+        }
+
+    suspend fun openAcceptedWorkflow(devices: List<AgentDevice>): Result<AgentSession> = try {
+        Result.success(bindAcceptedWorkflowSession(devices))
+    } catch (error: CancellationException) { throw error }
+    catch (error: Exception) { Result.failure(error) }
 
     private fun reconcileCreateAfterNetworkFailure(
         draft: NewSessionCreateDraft,

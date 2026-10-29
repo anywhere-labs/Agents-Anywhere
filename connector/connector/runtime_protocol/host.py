@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Any
 
 from connector.core.json_kv import JsonKeyValueStore
@@ -48,6 +48,11 @@ class RuntimeHostClient(ABC):
     @abstractmethod
     def connector_id(self) -> str:
         raise NotImplementedError
+
+    @property
+    def runtime_id(self) -> str | None:
+        """Immutable instance identity when this Host is instance-bound."""
+        return None
 
     @property
     def session_namespace(self) -> str:
@@ -170,7 +175,7 @@ class RuntimeHostClient(ABC):
         machine. Hosts that are not bound to an instance ignore it.
         """
 
-        return None
+        return
 
     async def attachment_download(
         self,

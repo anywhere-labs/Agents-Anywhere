@@ -49,6 +49,7 @@ import { timelineRunCounts } from "@/components/session/timeline-summary"
 import { needsOlderTimelinePage } from "@/components/session/timeline-autofill"
 import { createTimelineScrollFollow } from "@/components/session/timeline-scroll-follow"
 import { createSessionEventBuffer } from "@/components/session/session-event-buffer"
+import { RuntimeCreationStatus } from "@/components/session/runtime-creation-status"
 import { CAPABILITY, capabilityIsUsable, findCapability } from "@/components/session/capabilities"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
 import { commandResult, commandTransportFailure, type CommandOutcome } from "@/components/session/runtime-command-model"
@@ -1770,6 +1771,7 @@ export function SessionDetail({
           {onOpenReview && turnReviewDisplay.activeReview ? (
             <SessionReviewTag files={turnReviewDisplay.activeReview.files} onReview={() => onOpenReview()} />
           ) : null}
+          <RuntimeCreationStatus sessionId={sessionId} />
           {creationFailed ? (
             <div className="mx-auto w-full max-w-3xl p-4">
               <Alert>

@@ -5,6 +5,7 @@ import json
 import shutil
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from agent_server.infra.files.base import FileStorage
 
@@ -55,11 +56,18 @@ class LocalFileStorage(FileStorage):
     ) -> None:
         session_dir = self._root / session_id
         session_dir.mkdir(parents=True, exist_ok=True)
-        (session_dir / f"{file_id}.bin").write_bytes(data)
-        (session_dir / f"{file_id}.json").write_text(
-            json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        # Workflow retries may write the same content-addressed ID concurrently.
+        # Publish complete files so a Connector never reads a partially rewritten blob.
+        temporary_blob = session_dir / f".{file_id}.{uuid4().hex}.bin"
+        temporary_meta = session_dir / f".{file_id}.{uuid4().hex}.json"
+        try:
+            temporary_blob.write_bytes(data)
+            temporary_meta.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            temporary_blob.replace(session_dir / f"{file_id}.bin")
+            temporary_meta.replace(session_dir / f"{file_id}.json")
+        finally:
+            temporary_blob.unlink(missing_ok=True)
+            temporary_meta.unlink(missing_ok=True)
 
     def _read(self, session_id: str, file_id: str) -> tuple[bytes, dict[str, Any]]:
         metadata = self._metadata(session_id, file_id)
