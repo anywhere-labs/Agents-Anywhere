@@ -50,6 +50,7 @@ from connector.runtimes.codex.ipc.timeline import (
 )
 from connector.runtimes.codex.notifications.notices import CodexNoticeHandler
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
+from connector.runtimes.codex.timeline.order import is_append_only, timeline_order
 
 IPC_SOURCE = "codex.ipc"
 STATE_SOURCE_KEYS = (
@@ -261,7 +262,11 @@ class CodexIpcSessionProjector:
             transport="ipc",
         )
         known = self._timeline_items.get(session_id)
-        if full or known is None:
+        if (
+            full
+            or known is None
+            or not is_append_only(timeline_order(known.values()), timeline_order(items))
+        ):
             await self.host.timeline_sync(
                 session_id=session_id,
                 runtime="codex",
@@ -280,8 +285,8 @@ class CodexIpcSessionProjector:
                 and previous.status == item.status
             ):
                 continue
-            known[item.id] = item
             await self.host.timeline_item_upsert(item)
+            known[item.id] = item
 
     async def _project_detached(self, thread: FollowedThread) -> None:
         session_id = self.session_id_for(thread.thread_id)
