@@ -57,6 +57,7 @@ class _ControlLink:
     running: ControlMeshServer | None = field(default=None, repr=False)
     retire_requested: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
     retirement: asyncio.Task | None = field(default=None, repr=False)
+    retire_reason: str = 'route_replaced'
     retiring: bool = False
     cleanup: asyncio.Task | None = field(default=None, repr=False)
 
@@ -198,12 +199,13 @@ class RemoteConnectorControl:
         return True
 
     async def _retire_when_needed(self, link: _ControlLink) -> None:
-        reason = "route_replaced"
+        reason = "grant_expiring"
         try:
             async with asyncio.timeout(max(0, link.expires_at - asyncio.get_running_loop().time() - self._drain_reserve_seconds)):
                 await link.retire_requested.wait()
+            reason = link.retire_reason
         except TimeoutError:
-            reason = "grant_expiring"
+            pass
         link.retiring = True
         await self._retire(link, reason=reason)
 
@@ -245,7 +247,10 @@ class RemoteConnectorControl:
                 await asyncio.sleep(min(5, max(0, current.refresh_at - asyncio.get_running_loop().time())))
                 if not await self._status(current):
                     control_log("link.reconnecting", level="WARNING", **self._fields(current), reason="registration_lost")
-                    await self._close_link(current)
+                    # A route is only an address for new work. Losing it does
+                    # not revoke the authorization of admitted requests.
+                    current.retire_reason = 'registration_lost'
+                    current.retire_requested.set()
                     current = None
             except asyncio.CancelledError:
                 raise
@@ -255,9 +260,10 @@ class RemoteConnectorControl:
                 if self._authorization_rejected(error):
                     await self._close_link(current)
                     current = None
-            except Exception as error:  # noqa: BLE001 - failed authorization or registration requires a new link
+            except Exception as error:  # noqa: BLE001 - replace an unconfirmed registration without cutting admitted work
                 control_log("link.retry", level="WARNING", **self._fields(current),
                             phase="monitor_registration", **error_fields(error))
-                await self._close_link(current)
+                current.retire_reason = 'registration_unconfirmed'
+                current.retire_requested.set()
                 current = None
                 await asyncio.sleep(3)

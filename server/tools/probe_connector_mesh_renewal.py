@@ -32,6 +32,7 @@ class RenewalConnector(ProbeConnector):
     def __init__(self, *args, grant_ttl_seconds=900.0, **kwargs):
         self.lanes, self.peaks = Counter(), Counter()
         self.admission_failures = 0
+        self.confirmed_links: set[str] = set()
         super().__init__(*args, **kwargs)
         # Scale only this probe's retirement window alongside its short grant.
         self.control._drain_reserve_seconds = mesh_transport.CONTROL_DRAIN_RESERVE_SECONDS * min(1, grant_ttl_seconds / 900)
@@ -39,7 +40,9 @@ class RenewalConnector(ProbeConnector):
 
         async def observed_open():
             try:
-                return await original_open()
+                link = await original_open()
+                self.confirmed_links.add(link.info['instanceId'])
+                return link
             except httpx.HTTPStatusError:
                 self.admission_failures += 1
                 raise
@@ -223,6 +226,41 @@ async def probe(args):
                 return await http.post(urls[4] + f"/probe/mesh/{method}",
                                        json={"params": {"marker": marker, "block": block,
                                                         "real_process": real_process}, "timeout": 35})
+
+            # Lose routing state while the actual SDK link, authorization and
+            # subprocess remain live. New work falls back; old work drains.
+            lost = await until(ready)
+            lost_link = next(link for link in connector.control._links if link.info['instanceId'] == lost['link_id'])
+            async def publication_confirmed():
+                return lost['link_id'] in connector.confirmed_links
+            await until(publication_confirmed)
+            held_reply = pending(call('shell.exec', 'route-lost', block=True, real_process=True))
+            async def lost_running():
+                return connector.started['route-lost'] == 1
+            await until(lost_running)
+            removed = await http.post(urls[0] + '/probe/remove-route', json=lost)
+            assert removed.status_code == 200 and removed.json()['connection'] == lost['connection_id']
+            fallback = await call('interaction.respond', 'route-lost-fallback')
+            assert fallback.status_code == 200 and connector.counts['route-lost-fallback'] == 1
+            async def lost_draining():
+                return lost_link.retiring
+            await until(lost_draining)
+            assert lost_link in connector.control._links and lost_link.running.server.driver.connected
+            assert not held_reply.done() and connector.finished['route-lost'] == 0
+            async def recovered():
+                latest = await ready()
+                return latest if latest and latest['link_id'] != lost['link_id'] else None
+            replacement = await until(recovered)
+            assert replacement['connection_id'] == lost['connection_id']
+            connector.release.set()
+            completed = await held_reply
+            assert completed.status_code == 200 and completed.json()['result']['stdout'] == 'ROTATION_CHILD_OK\n'
+            async def lost_retired():
+                return lost_link not in connector.control._links
+            await until(lost_retired)
+            assert connector.counts['route-lost'] == connector.finished['route-lost'] == 1
+            passed('lost route preserves an admitted subprocess reply, WS fallback and replacement without duplicate execution')
+            connector.release.clear()
 
             route = await until(ready)
             old = next(link for link in connector.control._links if link.info["instanceId"] == route["link_id"])

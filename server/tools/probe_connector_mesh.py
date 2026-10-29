@@ -212,6 +212,14 @@ def create_probe_app() -> FastAPI:
         await mesh.routes.remove(stale)
         return {"published": await mesh.routes.publish(stale)}
 
+    @app.post("/probe/remove-route")
+    async def remove_route(request: Request):
+        from agent_server.infra.connector_mesh_routes import MeshRoute
+        route = MeshRoute.decode(json.dumps(await request.json()))
+        assert route is not None and route.connector_id == connector_id
+        await mesh.routes.remove(route)
+        return {"connection": await rpc.current_connection_id(connector_id)}
+
     @app.websocket("/api/v2/connector/ws")
     async def base_socket(ws: WebSocket):
         fingerprint = await store.connector_credential_fingerprint(connector_id)

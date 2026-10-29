@@ -4,24 +4,69 @@ import asyncio
 import contextlib
 import secrets
 import time
-from contextlib import AsyncExitStack
-from typing import Annotated
+from collections.abc import Awaitable, Callable
+from contextlib import AsyncExitStack, asynccontextmanager
+from typing import Annotated, Literal
 
 import websockets
 from fastapi import APIRouter, Header, HTTPException, Request, WebSocket
 from meshcall.transport import DEFAULT_MAX_FRAME_SIZE
 from pydantic import BaseModel, Field
+from redis.exceptions import RedisError
 
 from agent_server.api.connector_ingress import _require_active_connector
 from agent_server.infra.connector_cleanup import complete_cleanup
 from agent_server.infra.connector_control_log import control_log, error_fields
-from agent_server.infra.connector_mesh_routes import ROUTE_RENEW_SECONDS, MeshRoutes
+from agent_server.infra.connector_mesh_routes import (
+    ROUTE_RENEW_SECONDS,
+    MeshRoute,
+    MeshRoutes,
+)
 from agent_server.infra.connector_rpc import ConnectorOfflineError
 
 router = APIRouter()
 AUTHORIZATION_CHECK_SECONDS = 5.0
 PROXY_CLEANUP_SECONDS = 5.0
 PROXY_HANDSHAKE_SECONDS = 10.0
+STATUS_REQUEST_SECONDS = 3.0
+BOOTSTRAP_REQUEST_SECONDS = 10.0
+LIFECYCLE_RELEASE_SECONDS = 2.0
+PROXY_PUBLICATION_SECONDS = 5.0
+PROXY_ROUTE_CHECK_SECONDS = 3.0
+PROXY_PUBLICATION_RETRY_SECONDS = 1.0
+
+
+class _BoundedLifecycle:
+    """Exit in the entering task, preserving the lock's ContextVar ownership."""
+
+    def __init__(self, guard, diagnostics: dict | None = None) -> None:
+        self.guard = guard
+        self.diagnostics = diagnostics
+
+    async def __aenter__(self):
+        return await self.guard.__aenter__()
+
+    async def __aexit__(self, *exc):
+        try:
+            async with asyncio.timeout(LIFECYCLE_RELEASE_SECONDS):
+                return await self.guard.__aexit__(*exc)
+        except TimeoutError:
+            if self.diagnostics is not None:
+                self.diagnostics['phase'] = 'lifecycle_release'
+            raise
+
+
+@asynccontextmanager
+async def _http_budget(state, phase: str, seconds: float):
+    started = time.monotonic()
+    diagnostics = {"workerId": state.rpc.instance_id, "phase": phase}
+    try:
+        async with asyncio.timeout(seconds):
+            yield diagnostics
+    except TimeoutError as error:
+        control_log("http.request_timed_out", level="WARNING", **diagnostics,
+                    elapsedMs=(time.monotonic() - started) * 1000, **error_fields(error, stack=False))
+        raise HTTPException(503, detail="MeshCall control request timed out") from error
 
 
 class BootstrapRequest(BaseModel):
@@ -50,12 +95,17 @@ async def _valid_grant(state, grant: dict) -> bool:
 @router.get("/connector/mesh/status")
 async def mesh_status(request: Request, authorization: Annotated[str, Header()]) -> dict:
     state = request.app.state
-    grant = await state.connector_mesh.grant(authorization.removeprefix("Bearer "))
-    if grant is None or not await _valid_grant(state, grant):
-        raise HTTPException(401, detail="invalid MeshCall credential")
-    route = await state.connector_mesh.routes.get(grant["connectorId"])
-    return {"ready": bool(route and route.connection_id == grant["connectionId"]
-                          and route.link_id == grant["linkId"])}
+    async with _http_budget(state, "status_grant_lookup", STATUS_REQUEST_SECONDS) as diagnostics:
+        grant = await state.connector_mesh.grant(authorization.removeprefix("Bearer "))
+        if grant is not None:
+            diagnostics.update(connectorId=grant["connectorId"], connectionId=grant["connectionId"],
+                               linkId=grant["linkId"], phase="status_authorization")
+        if grant is None or not await _valid_grant(state, grant):
+            raise HTTPException(401, detail="invalid MeshCall credential")
+        diagnostics['phase'] = 'status_route_lookup'
+        route = await state.connector_mesh.routes.get(grant["connectorId"])
+        return {"ready": bool(route and route.connection_id == grant["connectionId"]
+                              and route.link_id == grant["linkId"])}
 
 
 @router.get("/health/mesh")
@@ -74,18 +124,27 @@ async def bootstrap(
 ) -> dict:
     if payload.protocolVersion != "1.0":
         raise HTTPException(426, detail="MeshCall control protocol 1.0 required")
+    async with _http_budget(request.app.state, "bootstrap_authentication", BOOTSTRAP_REQUEST_SECONDS) as diagnostics:
+        return await _bootstrap(payload, request, authorization, diagnostics)
+
+
+async def _bootstrap(payload: BootstrapRequest, request: Request, authorization: str, diagnostics: dict) -> dict:
     store, rpc, transport = (
         request.app.state.store,
         request.app.state.rpc,
         request.app.state.connector_mesh,
     )
     connector_id = await _require_active_connector(authorization, store)
-    async with store.connector_lifecycle(connector_id):
+    diagnostics.update(connectorId=connector_id, phase="lifecycle_acquire")
+    async with _BoundedLifecycle(store.connector_lifecycle(connector_id), diagnostics):
+        diagnostics['phase'] = 'bootstrap_locked_authentication'
         await _require_active_connector(authorization, store)
         try:
+            diagnostics['phase'] = 'bootstrap_connection_handshake'
             result, connection_id = await rpc.request_bound(
                 connector_id, "connector.mesh.connection", {}, timeout=5
             )
+            diagnostics.update(connectionId=connection_id, phase="bootstrap_connection_verify")
             if not secrets.compare_digest(
                 result.get("connectionToken", ""), payload.connectionToken
             ):
@@ -98,7 +157,9 @@ async def bootstrap(
                 control_log("bootstrap.rejected", level="WARNING", connectorId=connector_id,
                             connectionId=connection_id, workerId=rpc.instance_id, reason="connection_replaced")
                 raise HTTPException(409, detail="Connector connection changed")
+            diagnostics['phase'] = 'bootstrap_fingerprint_lookup'
             fingerprint = await store.connector_credential_fingerprint(connector_id)
+            diagnostics['phase'] = 'bootstrap_grant_issue'
             response = await transport.issue(connector_id, connection_id, fingerprint)
             return {
                 **response,
@@ -108,6 +169,56 @@ async def bootstrap(
             control_log("bootstrap.failed", level="WARNING", connectorId=connector_id,
                         workerId=rpc.instance_id, **error_fields(error, stack=False))
             raise HTTPException(503, detail=str(error)) from error
+
+
+async def _publish_proxy_route(
+    state, route: MeshRoute, validate: Callable[[], Awaitable[bool]],
+) -> Literal['published', 'draining', 'pending', 'rejected', 'unauthorized']:
+    """Bound admission and reconcile an uncertain coordination write outside its lock."""
+    mesh = state.connector_mesh
+    fields = {**MeshRoutes.log_fields(route), 'phase': 'lifecycle_acquire'}
+    published: bool | None = None
+    authorized = True
+    task = asyncio.current_task()
+    cancellations = task.cancelling()
+    try:
+        async with asyncio.timeout(PROXY_PUBLICATION_SECONDS):
+            async with _BoundedLifecycle(state.store.connector_lifecycle(route.connector_id), fields):
+                fields['phase'] = 'publication_authorization'
+                authorized = await validate()
+                if not authorized:
+                    return 'unauthorized'
+                fields['phase'] = 'route_publish'
+                published = await mesh.routes.publish(route)
+        if published:
+            return 'published'
+    except (RedisError, OSError, TimeoutError) as error:
+        control_log('route.publication_unconfirmed', level='WARNING', **fields,
+                    outcome='unauthorized' if not authorized else 'published' if published
+                    else 'rejected' if published is False else 'unknown', **error_fields(error, stack=False))
+        # A release timeout may replace the body's CancelledError. Preserve an
+        # external cancellation instead of resuming the publication watchdog.
+        if task.cancelling() > cancellations:
+            raise asyncio.CancelledError from error
+        if not authorized:
+            return 'unauthorized'
+        # A failed release cannot erase the successful publication we observed.
+        if published:
+            return 'published'
+    try:
+        async with asyncio.timeout(PROXY_ROUTE_CHECK_SECONDS):
+            current = await mesh.routes.get(route.connector_id)
+    except (RedisError, OSError, TimeoutError) as error:
+        control_log('route.confirmation_failed', level='WARNING', **MeshRoutes.log_fields(route),
+                    phase='publication_route_check', **error_fields(error, stack=False))
+        return 'pending'
+    if current == route:
+        control_log('route.publication_confirmed', **MeshRoutes.log_fields(route), phase='publication_route_check')
+        return 'published'
+    if (isinstance(current, MeshRoute) and current.connection_id == route.connection_id
+            and current.generation > route.generation):
+        return 'draining'
+    return 'rejected' if published is False else 'pending'
 
 
 @router.websocket("/connector/mesh")
@@ -232,34 +343,61 @@ async def mesh_proxy(websocket: WebSocket) -> None:
         async def watchdog() -> None:
             nonlocal close_reason
             registered = False
+            services_ready = False
+            publication_uncertain = False
             draining = False
             renew_at = 0.0
             loop = asyncio.get_running_loop()
             while await valid():
                 if not registered:
-                    async with asyncio.timeout(5):
-                        ready = await mesh.registered(route)
-                    if ready:
-                        async with state.store.connector_lifecycle(route.connector_id):
-                            if not await refresh_authorization():
-                                return
-                            if not await mesh.routes.publish(route):
-                                close_reason = "route_publish_rejected"
-                                return
+                    if not services_ready:
+                        async with asyncio.timeout(5):
+                            services_ready = await mesh.registered(route)
+                    if services_ready:
+                        outcome = await _publish_proxy_route(state, route, refresh_authorization)
+                        if outcome == 'unauthorized':
+                            return
+                        if outcome == 'pending':
+                            publication_uncertain = True
+                            # Retry only the same idempotent route, never a
+                            # business call or a new connection identity.
+                            await asyncio.sleep(PROXY_PUBLICATION_RETRY_SECONDS)
+                            continue
+                        if outcome == 'rejected' and not publication_uncertain:
+                            close_reason = 'route_publish_rejected'
+                            return
+                        if outcome in {'draining', 'rejected'}:
+                            # An earlier attempt may have admitted work before
+                            # losing its reply. Preserve that socket even if a
+                            # newer route has already disappeared again.
+                            draining = True
+                            control_log('proxy.draining', **fields,
+                                        reason='publication_rejected_after_unknown' if outcome == 'rejected'
+                                        else 'newer_link_published')
                         registered = True
                         renew_at = loop.time() + ROUTE_RENEW_SECONDS
                 elif not draining and loop.time() >= renew_at:
-                    if not await mesh.routes.renew(route):
-                        replacement = await mesh.routes.get(route.connector_id)
-                        if (replacement is None or replacement.connection_id != route.connection_id
-                                or replacement.generation <= route.generation):
-                            close_reason = "route_lease_lost"
-                            return
-                        # A newer link owns new requests. Preserve this
-                        # authenticated socket for already-routed replies;
-                        # the Connector drains it, or its grant expires.
+                    renewed, replacement = False, None
+                    phase = 'route_renew'
+                    try:
+                        async with asyncio.timeout(PROXY_ROUTE_CHECK_SECONDS):
+                            renewed = await mesh.routes.renew(route)
+                            if not renewed:
+                                phase = 'route_renewal_check'
+                                replacement = await mesh.routes.get(route.connector_id)
+                    except (RedisError, OSError, TimeoutError) as error:
+                        control_log('route.renewal_unconfirmed', level='WARNING', **fields,
+                                    phase=phase, **error_fields(error, stack=False))
+                    if not renewed:
+                        # Routing state can disappear after admitting work,
+                        # including after a replacement has already closed.
+                        # Only the independent authorization/physical link
+                        # checks may invalidate this reply path.
                         draining = True
-                        control_log("proxy.draining", **fields, reason="newer_link_published")
+                        newer = (replacement is not None and replacement.connection_id == route.connection_id
+                                 and replacement.generation > route.generation)
+                        control_log("proxy.draining", **fields,
+                                    reason="newer_link_published" if newer else "route_lease_lost")
                     renew_at = loop.time() + ROUTE_RENEW_SECONDS
                 await asyncio.sleep(1 if registered else 0.1)
 

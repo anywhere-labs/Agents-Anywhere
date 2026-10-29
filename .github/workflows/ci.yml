@@ -275,6 +275,24 @@ jobs:
         run: >-
           timeout --kill-after=30s 60 uv run --no-sync python -m tools.probe_connector_request_limits
           --output "$RUNNER_TEMP/mesh-request-limits"
+      - name: Check HTTP control budgets and WS timeout isolation
+        shell: bash
+        run: |
+          timeout --kill-after=30s 60 uv run --no-sync python -m tools.probe_connector_control_http \
+            --redis-url redis://127.0.0.1:6379/15 --output "$RUNNER_TEMP/mesh-http" \
+            2>&1 | tee "$RUNNER_TEMP/mesh-http.log"
+      - name: Check proxy publication budgets and uncertain admission
+        shell: bash
+        run: |
+          timeout --kill-after=30s 60 uv run --no-sync python -m tools.probe_connector_proxy_publication \
+            --redis-url redis://127.0.0.1:6379/15 --output "$RUNNER_TEMP/mesh-publication" \
+            2>&1 | tee "$RUNNER_TEMP/mesh-publication.log"
+      - name: Check lost-route draining and scoped registration queries
+        shell: bash
+        run: |
+          timeout --kill-after=30s 120 uv run --no-sync python -m tools.probe_connector_mesh_recovery \
+            --redis-url redis://127.0.0.1:6379/15 --output "$RUNNER_TEMP/mesh-recovery" \
+            2>&1 | tee "$RUNNER_TEMP/mesh-recovery.log"
       - name: Check large Redis envelopes and subscription recovery
         shell: bash
         run: |
@@ -355,6 +373,9 @@ jobs:
             ${{ runner.temp }}/mesh-log-chain/results.json
             ${{ runner.temp }}/mesh-state/results.json
             ${{ runner.temp }}/mesh-request-limits/results.json
+            ${{ runner.temp }}/mesh-http/results.json
+            ${{ runner.temp }}/mesh-publication/results.json
+            ${{ runner.temp }}/mesh-recovery/results.json
             ${{ runner.temp }}/mesh-frames/results.json
             ${{ runner.temp }}/mesh-expiry/results.json
             ${{ runner.temp }}/mesh-shutdown/results.json
@@ -385,6 +406,9 @@ jobs:
             ${{ runner.temp }}/mesh-auth/process-*.log
             ${{ runner.temp }}/mesh-auth-connector.log
             ${{ runner.temp }}/mesh-frames.log
+            ${{ runner.temp }}/mesh-http.log
+            ${{ runner.temp }}/mesh-publication.log
+            ${{ runner.temp }}/mesh-recovery.log
             ${{ runner.temp }}/mesh-expiry.log
             ${{ runner.temp }}/mesh-expiry/process.log
             ${{ runner.temp }}/mesh-shutdown.log

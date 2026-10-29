@@ -178,6 +178,17 @@ Mesh 链路在同一 worker 上共享指纹缓存。incoming/outgoing 转发帧�
 完成再放行，避免慢检查期间继续使用过期快照。`/connector/mesh/status` 同样复用
 指纹缓存，仍读取原有 grant、route 和基础连接租约。
 
+状态 HTTP 入口为这些查询共用3秒服务端预算。Bootstrap 从认证开始共用10秒预算，
+覆盖生命周期锁等待、锁内二次认证、连接握手与复核、凭据读取和 grant 签发；
+不能仅依靠 Connector 的 HTTP timeout 结束 Server 中的等待。期限耗尽返回503，
+保留原有401、409、426拒绝，不重放业务操作。
+
+生命周期锁退出在进入锁的同一任务中执行，另有最多2秒预算，避免锁的 ContextVar
+跨任务重置，以及释放停滞使请求永久不结束。正常协调服务下，入口到期会释放锁，
+让后续凭据操作继续；条件释放失败则停止续租，保留原租约到期语义。代理发布路由
+时使用相同的有界锁退出。超时日志记录具体阶段及已经确认的 connector/connection
+身份，不打印凭据。
+
 基础 WS 的 owner 从同一次 token 认证读取的凭据值生成摘要，仅保存于该连接内存，
 不写入 Redis、日志和元数据。后台约每秒检查缓存指纹及原连接归属，单次最多5秒；
 业务提交前使用有效快照，快照过期时等待检查，并在收到响应后再次复核。凭据变化、
@@ -413,6 +424,32 @@ SDK 启动也由链路持有独立任务，外部重复取消只向 SDK 传递�
 Server 关闭 Mesh 后不能重新创建控制客户端；凭据清理失败仍会关闭 Mesh 和 RPC
 资源。授权订阅关闭失败不会阻止重新订阅，恢复前拒绝使用缓存授权。
 
+代理首次发布 route 的锁等待、锁内授权复核和发布共用5秒预算，锁退出另有最多2秒。
+超时或协调服务异常后，先离开生命周期锁，再在3秒预算内读取实际 route。完整身份
+相同表示发布已生效，继续续租；更新代次已接管时保留旧 socket 传回在途结果。
+尚未确认时每秒重试同一个幂等协调发布，不重新签发身份或重放业务。每条 socket
+只确认一次服务注册，重试不会反复拉取全局 Registry。
+
+一旦出现过不确定发布，后续拒绝且 route 已消失也不能证明没有业务曾被接纳；该
+socket 保留至 Connector 现有排空或授权结束。明确的首次拒绝仍立即关闭，程序错误
+仍传播，凭据/基础连接失效仍阻断。发布已经返回成功但锁释放响应丢失时，保留已知
+成功结果，不因辅助清理失败中断已经接通的链路。
+外部取消与锁释放超时同时发生时保留取消语义，停止发布重试并回收两个 socket；
+不能因清理超时替换原始取消而让 watchdog 留在后台。
+
+已发布链路的续租与路由核对共用3秒预算。路由消失、被替换或协调读写无法确认时，
+代理停止续租，保留仍通过独立授权校验的socket供在途回复收尾；较新路由随后消失
+也不能触发旧socket提前关闭。Connector收到`ready=false`或无法解析状态时，启动
+原有独立排空任务并继续建立替代链路，不等待旧任务完成才重连；短暂HTTP失败仍
+保留当前链路。明确授权拒绝、基础连接变化及物理断线仍关闭相应连接，不重放业务。
+
+注册确认逐项调用公开`Registry.describe`，最多查询当前链路的7个服务，核对实例
+身份及非排空状态。服务尚未注册时返回未就绪，权限、程序错误和外部取消原样传播；
+不再读取整个Router目录。每条socket确认成功后继续复用该结果。
+
+WS 派发前的期限检查独立于 socket 异常处理。编码或等待锁后预算已耗尽时，只结束
+当前未发送的请求；不注销设备、不清除其他 pending，也不取消已接纳的业务。
+
 ## 健康检查与上线
 
 初次启动仍要求 Router 程序存在且成功启动。运行期 Router 故障由
@@ -499,6 +536,12 @@ PYTHONPATH=.:../connector uv run --no-sync python -m tools.probe_connector_contr
   --output ../.local-dev/mesh-shutdown
 PYTHONPATH=.:../connector uv run --no-sync python -m tools.probe_connector_control_edges \
   --output ../.local-dev/mesh-edges
+PYTHONPATH=.:../connector uv run --no-sync python -m tools.probe_connector_control_http \
+  --redis-url redis://127.0.0.1:6379/15 --output ../.local-dev/mesh-http
+PYTHONPATH=.:../connector uv run --no-sync python -m tools.probe_connector_proxy_publication \
+  --redis-url redis://127.0.0.1:6379/15 --output ../.local-dev/mesh-publication
+PYTHONPATH=.:../connector uv run --no-sync python -m tools.probe_connector_mesh_recovery \
+  --redis-url redis://127.0.0.1:6379/15 --output ../.local-dev/mesh-recovery
 ```
 
 关闭探针核对关闭后的新任务拒绝、迟到 Bootstrap、取消关闭等待和真实 SDK drain

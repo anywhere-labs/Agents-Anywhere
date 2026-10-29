@@ -740,11 +740,13 @@ class ConnectorRpcManager:
                     connector_id
                 ) is not connection or not self._is_local_online(connection):
                     raise ConnectorOfflineError("connector is offline")
+                deadline = current_request_deadline()
+                if deadline is not None and deadline.remaining() <= 0:
+                    # TimeoutError is also an OSError. A local deadline before
+                    # sending must not enter the socket-failure cleanup below.
+                    raise deadline.timeout_error()
                 try:
-                    deadline = current_request_deadline()
                     if deadline is not None:
-                        if deadline.remaining() <= 0:
-                            raise deadline.timeout_error()
                         deadline.delivery_state = "outcome_unknown"
                     await connection.websocket.send_json(payload)
                     logger.info(

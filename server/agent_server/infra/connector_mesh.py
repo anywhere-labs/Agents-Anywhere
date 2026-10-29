@@ -9,7 +9,14 @@ import secrets
 import time
 from collections.abc import Awaitable, Callable
 
-from meshcall import Mesh, ReconnectPolicy, RetryPolicy, Router, RouterCredentials
+from meshcall import (
+    Mesh,
+    MethodNotFoundError,
+    ReconnectPolicy,
+    RetryPolicy,
+    Router,
+    RouterCredentials,
+)
 from meshcall.router_auth import RouterScope
 
 from agent_server.infra.connector_cleanup import complete_cleanup
@@ -179,10 +186,14 @@ class ConnectorMesh:
         )
 
     async def registered(self, route: MeshRoute) -> bool:
-        names = set(service_names(route.connector_id, route.connection_id, route.link_id).values())
-        services = await self.connection().registry.list()
-        ready = {
-            entry.name for entry in services
-            if any(instance.id == route.link_id for instance in entry.instances)
-        }
-        return names <= ready
+        registry = self.connection().registry
+        for name in service_names(route.connector_id, route.connection_id, route.link_id).values():
+            try:
+                entry = await registry.describe(name)
+            except MethodNotFoundError:
+                return False
+            if entry.name != name or not any(
+                instance.id == route.link_id and not instance.draining for instance in entry.instances
+            ):
+                return False
+        return True
