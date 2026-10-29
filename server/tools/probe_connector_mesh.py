@@ -118,6 +118,8 @@ def create_probe_app() -> FastAPI:
         gate = Path(gate_path).read_text() if gate_path and Path(gate_path).exists() else ""
         if request.url.path.endswith("/connector/mesh/bootstrap") and gate in {"bootstrap404", "bootstrap503"}:
             return JSONResponse({"detail": "injected bootstrap failure"}, status_code=int(gate[-3:]))
+        if request.url.path.endswith("/connector/mesh/status") and gate == 'status_html':
+            return Response('<html>injected status response</html>', status_code=200, media_type='text/html')
         if (request.url.path.endswith("/connector/mesh/bootstrap") and redis.distributed
                 and await redis.client.get(redis.key("probe-bootstrap-fail"))):
             return JSONResponse({"detail": "injected admission failure"}, status_code=503)

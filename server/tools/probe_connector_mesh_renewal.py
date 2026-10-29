@@ -32,6 +32,7 @@ class RenewalConnector(ProbeConnector):
     def __init__(self, *args, grant_ttl_seconds=900.0, **kwargs):
         self.lanes, self.peaks = Counter(), Counter()
         self.admission_failures = 0
+        self.status_decoding_failures = 0
         self.confirmed_links: set[str] = set()
         super().__init__(*args, **kwargs)
         # Scale only this probe's retirement window alongside its short grant.
@@ -48,6 +49,14 @@ class RenewalConnector(ProbeConnector):
                 raise
 
         self.control._open_link = observed_open
+        original_status = self.control._status
+        async def observed_status(link):
+            try:
+                return await original_status(link)
+            except httpx.DecodingError:
+                self.status_decoding_failures += 1
+                raise
+        self.control._status = observed_status
 
     async def dispatch(self, method, params):
         lane = "critical" if method in self.control.executor.CRITICAL_METHODS else "regular"
@@ -178,6 +187,9 @@ async def probe(args):
     os.environ["PROBE_CONNECTOR"] = "probe-" + secrets.token_hex(8)
     env = dict(os.environ, PROBE_PREFIX=prefix, PROBE_REDIS=args.redis_url,
                PROBE_TOKEN=secrets.token_urlsafe(24), PROBE_GRANT_TTL="40")
+    status_gate = output / 'status-gate'
+    status_gate.write_text('status_html')
+    env['PROBE_MESH_GATE_FILE'] = str(status_gate)
     redis = Redis.from_url(args.redis_url, decode_responses=True) if args.redis_url else None
     processes, logs, requests, results = [], [], [], []
     connector_task = None
@@ -226,6 +238,29 @@ async def probe(args):
                 return await http.post(urls[4] + f"/probe/mesh/{method}",
                                        json={"params": {"marker": marker, "block": block,
                                                         "real_process": real_process}, "timeout": 35})
+
+            initial = await until(ready)
+            initial_link = next(link for link in connector.control._links if link.info['instanceId'] == initial['link_id'])
+            initial_reply = pending(call('shell.exec', 'initial-status', block=True, real_process=True))
+            async def unconfirmed_running():
+                return connector.started['initial-status'] == 1 and connector.status_decoding_failures >= 2
+            await until(unconfirmed_running)
+            assert initial['link_id'] not in connector.confirmed_links
+            assert initial_link.running.server.driver.connected and len(connector.control._links) == 1
+            assert not initial_reply.done()
+            assert (await call('interaction.respond', 'initial-status-live')).status_code == 200
+            connector.release.set()
+            completed = await initial_reply
+            assert completed.status_code == 200 and completed.json()['result']['stdout'] == 'ROTATION_CHILD_OK\n'
+            assert connector.counts['initial-status'] == connector.finished['initial-status'] == 1
+            assert initial_link.running.server.driver.connected and initial['link_id'] not in connector.confirmed_links
+            status_gate.write_text('')
+            async def initial_confirmed():
+                return initial['link_id'] in connector.confirmed_links
+            await until(initial_confirmed)
+            assert (await ready())['link_id'] == initial['link_id'] and len(connector.control._links) == 1
+            passed('malformed initial HTTP status preserves one live link and subprocess reply; confirmation recovers without replay')
+            connector.release.clear()
 
             # Lose routing state while the actual SDK link, authorization and
             # subprocess remain live. New work falls back; old work drains.
@@ -392,6 +427,7 @@ async def probe(args):
             assert connector.started["disconnect-new"] == connector.finished["disconnect-old"] == 0
             passed("base connection loss cancels both overlapping links and queued work without replay")
     finally:
+        status_gate.unlink(missing_ok=True)
         for task in requests:
             if not task.done():
                 task.cancel()

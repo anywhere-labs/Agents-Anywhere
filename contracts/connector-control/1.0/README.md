@@ -93,6 +93,8 @@ HTTP 状态查询共用3秒服务端预算，覆盖 grant、授权与 route；Bo
 核对共用3秒预算。Connector收到`ready=false`时排空原链路并并行建立替代链路，
 不能将路由缺失当成授权失效。凭据、基础连接及物理连接的失效仍沿原边界关闭。
 注册确认仅通过公开Registry describe核对本链路7个服务及非排空实例，不读取全目录。
+首次确认和稳态监控都要求状态正文为包含布尔`ready`的JSON对象；正文无法解码或
+格式不符时视为暂时不可用，保留有效链路并重查，不重建已接纳任务。401/403仍关闭。
 Router 运行期故障时 `/health/ready` 保持 ready 并报告 `checks.mesh=error`，
 `/api/v2/health/mesh` 仍返回503；Redis、路由订阅、Timeline 或授权订阅故障仍阻断就绪。
 

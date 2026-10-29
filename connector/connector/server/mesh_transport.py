@@ -103,7 +103,15 @@ class RemoteConnectorControl:
             headers={"Authorization": f"Bearer {link.info['token']}"}, timeout=5,
         )
         response.raise_for_status()
-        return response.json().get("ready") is True
+        try:
+            status = response.json()
+        except ValueError as error:
+            # A response decoding failure says nothing about the live SDK
+            # link, which may already be serving business calls.
+            raise httpx.DecodingError("Invalid MeshCall status response", request=response.request) from error
+        if not isinstance(status, dict) or type(status.get('ready')) is not bool:
+            raise httpx.DecodingError("Invalid MeshCall status response", request=response.request)
+        return status['ready']
 
     async def _open_link(self) -> _ControlLink:
         async with asyncio.timeout(30):

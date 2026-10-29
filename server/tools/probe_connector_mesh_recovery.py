@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
+from connector.server import mesh_transport
 from connector.server.mesh_lifecycle import ControlMeshServer
 from connector.server.mesh_services import bind_control_services
 from connector.server.mesh_transport import (
@@ -252,19 +253,141 @@ async def registry_cases(passed):
         await router.stop()
 
 
-async def probe(output, redis_url):
+async def initial_status_case(fault, body, passed):
+    started, finish, closed, allow_status, draining = (asyncio.Event() for _ in range(5))
+    executions = queries = admissions = 0
+    records = []
+    async def dispatch(_method, _params):
+        nonlocal executions
+        executions += 1
+        started.set()
+        await finish.wait()
+        return {'ok': True}
+    async def status_response(request):
+        nonlocal queries
+        queries += 1
+        if queries == 1:
+            code = 401 if fault == 'unauthorized' else 403 if fault == 'forbidden' else 200
+            return httpx.Response(code, request=request, content=body)
+        await allow_status.wait()
+        return httpx.Response(200, request=request, json={'ready': True})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(status_response)) as http:
+        control = RemoteConnectorControl(SimpleNamespace(config=SimpleNamespace(
+            connector_id='fixture', server_url='http://fixture'), _dispatcher=SimpleNamespace(dispatch=dispatch),
+            _get_http_client=lambda: http))
+        control.executor.open_session(dispatch, 'base')
+        async def close():
+            closed.set()
+        work = asyncio.create_task(control.executor.execute('shell.exec', {}, 'base', 'call', 'base'))
+        async def drain(*, timeout):
+            draining.set()
+            await asyncio.shield(work)
+        driver = SimpleNamespace(connected=True)
+        now = asyncio.get_running_loop().time()
+        link = _ControlLink(SimpleNamespace(drain=drain), AsyncExitStack(),
+            {'connectionId': 'base', 'instanceId': 'candidate', 'token': 'fixture'}, now + 900, now + 450,
+            running=SimpleNamespace(server=SimpleNamespace(driver=driver)))
+        link.stack.push_async_callback(close)
+        control._links.add(link)
+        link.retirement = asyncio.create_task(control._retire_when_needed(link))
+        control._draining.add(link.retirement)
+        link.retirement.add_done_callback(control._draining.discard)
+        async def admit():
+            nonlocal admissions
+            admissions += 1
+            return link
+        control._admit_link = admit
+        if fault == 'programming':
+            async def broken(_link):
+                raise TypeError('controlled programming error')
+            control._status = broken
+        opening = None
+        try:
+            with patch.object(mesh_transport, 'control_log', lambda event, **fields: records.append({'event': event, **fields})):
+                await started.wait()
+                opening = asyncio.create_task(control._open_link())
+                if fault in {'unauthorized', 'forbidden', 'programming'}:
+                    result = (await asyncio.wait_for(asyncio.gather(opening, return_exceptions=True), 2))[0]
+                    assert isinstance(result, TypeError if fault == 'programming' else httpx.HTTPStatusError)
+                    if fault != 'programming':
+                        assert result.response.status_code == (401 if fault == 'unauthorized' else 403)
+                    assert closed.is_set() and not work.done()
+                else:
+                    await until(lambda: bool(records) or closed.is_set())
+                    assert not closed.is_set() and not opening.done() and not work.done()
+                    assert records[0]['event'] == 'link.status_unavailable'
+                    assert records[0]['phase'] == 'confirm_publication' and records[0]['errorType'] == 'DecodingError'
+                    assert 'MESH_STATUS_PRIVATE_MARKER' not in json.dumps(records)
+                    if fault == 'cancel':
+                        await control.executor.close_session()
+                        opening.cancel()
+                        await asyncio.wait_for(asyncio.gather(opening, return_exceptions=True), 2)
+                        assert opening.cancelled() and work.cancelled() and closed.is_set()
+                    elif fault == 'disconnected':
+                        driver.connected = False
+                        result = (await asyncio.wait_for(asyncio.gather(opening, return_exceptions=True), 3))[0]
+                        assert isinstance(result, ConnectionError) and closed.is_set()
+                    elif fault == 'retiring':
+                        link.retire_requested.set()
+                        await asyncio.wait_for(draining.wait(), 1)
+                        assert not closed.is_set() and not work.done()
+                        finish.set()
+                        assert await work == {'ok': True}
+                        result = (await asyncio.wait_for(asyncio.gather(opening, return_exceptions=True), 3))[0]
+                        assert isinstance(result, ConnectionError) and closed.is_set()
+                    else:
+                        finish.set()
+                        assert await work == {'ok': True} and not closed.is_set()
+                        allow_status.set()
+                        assert await asyncio.wait_for(opening, 3) is link
+                        assert queries == 2 and not closed.is_set()
+                assert admissions == executions == 1
+                passed('initial status ' + fault + ': one admission/execution; replies and shutdown preserved')
+        finally:
+            finish.set()
+            allow_status.set()
+            if opening is not None:
+                opening.cancel()
+                await asyncio.gather(opening, return_exceptions=True)
+            await control.executor.close_session()
+            await control._close_link(link)
+            await asyncio.gather(work, return_exceptions=True)
+            assert not control._links and not control._draining
+
+
+async def initial_status_cases(passed):
+    bodies = {
+        'html': b'<html>MESH_STATUS_PRIVATE_MARKER</html>', 'empty': b'',
+        'invalid_encoding': b'\xff', 'truncated_json': b'{"ready":', 'null': b'null',
+        'array': b'[]', 'missing_ready': b'{}', 'string_ready': b'{"ready":"true"}',
+        'integer_ready': b'{"ready":1}',
+    }
+    for fault in (*bodies, 'unauthorized', 'forbidden', 'cancel', 'disconnected', 'retiring', 'programming'):
+        await initial_status_case(fault, bodies.get(fault, bodies['html']), passed)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, request=request, json={'ready': False}))) as http:
+        control = RemoteConnectorControl(SimpleNamespace(config=SimpleNamespace(
+            connector_id='fixture', server_url='http://fixture'), _dispatcher=SimpleNamespace(dispatch=None),
+            _get_http_client=lambda: http))
+        assert await control._status(SimpleNamespace(info={'token': 'fixture'})) is False
+        passed('valid ready=false remains an explicit not-ready response')
+
+
+async def probe(output, redis_url, status_only=False):
     results = []
     def passed(scenario, **fields):
         results.append({'scenario': scenario, 'passed': True, **fields})
     try:
-        for mode, url in [('memory', None), ('controlled', None), *([('redis', redis_url)] if redis_url else [])]:
+        for mode, url in ([] if status_only else [('memory', None), ('controlled', None), *([('redis', redis_url)] if redis_url else [])]):
             for fault in ('newer_present', 'newer_gone', 'route_removed', 'renew_error', 'renew_stall',
                           'lookup_error', 'lookup_stall', 'cancel_renew', 'renew_programming',
                           'authorization_after_drain', 'base_after_drain'):
                 await proxy_case(fault, mode, url, passed)
-        for fault in ('route_missing', 'malformed_status', 'authorization', 'status_unavailable'):
-            await connector_case(fault, passed)
-        await registry_cases(passed)
+        if not status_only:
+            for fault in ('route_missing', 'malformed_status', 'authorization', 'status_unavailable'):
+                await connector_case(fault, passed)
+            await registry_cases(passed)
+        await initial_status_cases(passed)
         assert not (asyncio.all_tasks() - {asyncio.current_task()}), 'recovery task leaked'
     finally:
         output.mkdir(parents=True, exist_ok=True)
@@ -276,7 +399,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--redis-url', help='Dedicated disposable Redis only')
+    parser.add_argument('--status-only', action='store_true', help='Run initial status response checks only')
     args = parser.parse_args()
     logger.remove()
     logger.add(sys.stderr, level='WARNING')
-    asyncio.run(probe(args.output, args.redis_url))
+    asyncio.run(probe(args.output, args.redis_url, args.status_only))
