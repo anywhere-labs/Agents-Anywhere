@@ -74,7 +74,6 @@ fun SessionWorkspace(
     detail: @Composable () -> Unit,
     modifier: Modifier = Modifier,
     sidebarCollapsed: Boolean = false,
-    onToggleSidebar: () -> Unit = {},
 ) {
     val colors = LocalAAColors.current
     val configuration = LocalConfiguration.current
@@ -112,42 +111,7 @@ fun SessionWorkspace(
                 .fillMaxHeight(),
         ) {
             detail()
-            SidebarToggleButton(
-                collapsed = sidebarCollapsed,
-                onClick = onToggleSidebar,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(start = 12.dp, top = 11.dp),
-            )
         }
-    }
-}
-
-@Composable
-private fun SidebarToggleButton(
-    collapsed: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val colors = LocalAAColors.current
-    Box(
-        modifier = modifier
-            .size(36.dp)
-            .shadow(10.dp, CircleShape, ambientColor = Color(0x0A000000), spotColor = Color(0x0A000000))
-            .clip(CircleShape)
-            .background(colors.raisedSurface)
-            .border(1.dp, colors.border, CircleShape)
-            .noRippleClickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = if (collapsed) Lucide.ChevronRight else Lucide.ChevronLeft,
-            contentDescription = stringResource(
-                if (collapsed) R.string.workspace_sidebar_expand else R.string.workspace_sidebar_collapse,
-            ),
-            tint = colors.muted,
-            modifier = Modifier.size(16.dp),
-        )
     }
 }
 

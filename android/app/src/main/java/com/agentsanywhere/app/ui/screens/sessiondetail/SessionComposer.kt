@@ -594,7 +594,8 @@ private fun ComposerActions(
             }
         }
         Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.weight(1f, fill = false),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             ModelChip(
@@ -603,7 +604,9 @@ private fun ComposerActions(
                 effortLabel = modelEffortLabel,
                 loading = modelLoading,
                 onClick = onModelClick,
-                modifier = Modifier.widthIn(max = 200.dp),
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .widthIn(max = 200.dp),
             )
             Box(
                 modifier = Modifier

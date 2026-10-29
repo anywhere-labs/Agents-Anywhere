@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -32,6 +33,8 @@ import com.agentsanywhere.app.R
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.composables.icons.lucide.ChevronDown
+import com.composables.icons.lucide.ChevronLeft
+import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.Lucide
 
 @Composable
@@ -40,6 +43,8 @@ internal fun SessionDetailHeader(
     darkMode: Boolean,
     onRightClick: () -> Unit,
     modifier: Modifier = Modifier,
+    sidebarCollapsed: Boolean = false,
+    onToggleSidebar: (() -> Unit)? = null,
 ) {
     val colors = LocalAAColors.current
     val surface = if (darkMode) colors.raisedSurface else Color(0xF2FFFFFF)
@@ -74,6 +79,17 @@ internal fun SessionDetailHeader(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        if (onToggleSidebar != null) {
+            HeaderIconButton(
+                imageVector = if (sidebarCollapsed) Lucide.ChevronRight else Lucide.ChevronLeft,
+                contentDescription = stringResource(
+                    if (sidebarCollapsed) R.string.workspace_sidebar_expand else R.string.workspace_sidebar_collapse,
+                ),
+                darkMode = darkMode,
+                onClick = onToggleSidebar,
+                modifier = Modifier.align(Alignment.CenterStart),
+            )
+        }
         HeaderImageButton(
             resId = if (darkMode) {
                 R.drawable.ic_session_agent_button_dark
@@ -105,6 +121,37 @@ internal fun HeaderVeil(
                 ),
             ),
     )
+}
+
+@Composable
+private fun HeaderIconButton(
+    imageVector: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    darkMode: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = LocalAAColors.current
+    val surface = if (darkMode) colors.raisedSurface else Color(0xF2FFFFFF)
+    val border = if (darkMode) colors.border else Color(0xFFE8E5DE)
+    val tint = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF2D2E2B)
+    Box(
+        modifier = modifier
+            .size(44.dp)
+            .shadow(14.dp, CircleShape, ambientColor = Color(0x0A000000), spotColor = Color(0x0A000000))
+            .clip(CircleShape)
+            .background(surface)
+            .border(1.dp, border, CircleShape)
+            .noRippleClickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = imageVector,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(18.dp),
+        )
+    }
 }
 
 @Composable

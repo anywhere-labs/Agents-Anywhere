@@ -185,6 +185,8 @@ fun SessionDetailScreen(
     terminalPool: RemoteTerminalPool,
     composerDraftStore: SessionComposerDraftStore,
     onSessionChanged: (AgentSession) -> Unit = {},
+    sidebarCollapsed: Boolean = false,
+    onToggleSidebar: (() -> Unit)? = null,
 ) {
     val colors = LocalAAColors.current
     val darkMode = colors.isDark
@@ -1849,6 +1851,8 @@ fun SessionDetailScreen(
                             darkMode = darkMode,
                             onRightClick = { scope.launch { pagerState.animateScrollToPage(1) } },
                             modifier = Modifier.align(Alignment.TopCenter),
+                            sidebarCollapsed = sidebarCollapsed,
+                            onToggleSidebar = onToggleSidebar,
                         )
                         if (previewImage == null) {
                             AAToastHost(
