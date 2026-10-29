@@ -124,7 +124,7 @@ internal fun HeaderVeil(
 }
 
 @Composable
-private fun HeaderIconButton(
+internal fun HeaderIconButton(
     imageVector: androidx.compose.ui.graphics.vector.ImageVector,
     contentDescription: String,
     darkMode: Boolean,

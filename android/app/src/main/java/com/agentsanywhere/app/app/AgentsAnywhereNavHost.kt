@@ -220,7 +220,11 @@ internal fun AgentsAnywhereNavHost(
     val sessionDetailPane: @Composable () -> Unit = {
         val paneSessionId = selectedSessionId ?: preparedSessionDraft?.localSessionId
         if (paneSessionId == null) {
-            WorkspaceEmptyState(onNewSession = { navigate(AppDestination.NewSession) })
+            WorkspaceEmptyState(
+                onNewSession = { navigate(AppDestination.NewSession) },
+                sidebarCollapsed = sidebarCollapsed,
+                onToggleSidebar = if (wideLayout) ({ sidebarCollapsed = !sidebarCollapsed }) else null,
+            )
         } else {
             key(paneSessionId) {
                 SessionDetailScreen(

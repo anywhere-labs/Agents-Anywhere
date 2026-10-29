@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.ui.designsystem.AAWordmark
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
+import com.agentsanywhere.app.ui.screens.sessiondetail.HeaderIconButton
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.ChevronRight
@@ -120,6 +121,8 @@ fun SessionWorkspace(
 fun WorkspaceEmptyState(
     onNewSession: () -> Unit,
     modifier: Modifier = Modifier,
+    sidebarCollapsed: Boolean = false,
+    onToggleSidebar: (() -> Unit)? = null,
 ) {
     val colors = LocalAAColors.current
 
@@ -127,6 +130,19 @@ fun WorkspaceEmptyState(
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.Center,
     ) {
+        if (onToggleSidebar != null) {
+            HeaderIconButton(
+                imageVector = if (sidebarCollapsed) Lucide.ChevronRight else Lucide.ChevronLeft,
+                contentDescription = stringResource(
+                    if (sidebarCollapsed) R.string.workspace_sidebar_expand else R.string.workspace_sidebar_collapse,
+                ),
+                darkMode = LocalAAColors.current.isDark,
+                onClick = onToggleSidebar,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 18.dp, top = 7.dp),
+            )
+        }
         Column(
             modifier = Modifier
                 .widthIn(max = 360.dp)
