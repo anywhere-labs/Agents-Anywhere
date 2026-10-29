@@ -280,6 +280,7 @@ test("a backend that stops after ready opens the gate, and its recheck starts a 
     errorMessage: (error: unknown) => error instanceof Error ? error.message : String(error),
     sendToRenderer: (_channel: string, state: { status: string; recovery?: { kind: string } }) => published.push(state),
     drainDesktopOAuthCallbacks: async () => {},
+    applyOwnershipToSilentLaunch: () => {},
   };
   const { startDesktopBackend, restartDesktopBackend } = loadFunctions(
     ["startDesktopBackend", "restartDesktopBackend", "publishOwnership"],
