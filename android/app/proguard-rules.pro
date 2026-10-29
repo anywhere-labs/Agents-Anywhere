@@ -9,3 +9,7 @@
 
 # Keep annotations used by kotlinx/okhttp consumer rules.
 -keepattributes *Annotation*, Signature, InnerClasses, EnclosingMethod
+
+# Sora was compiled against Kotlin 1.x, whose interface DefaultImpls bridge class
+# is no longer shipped by the Kotlin 2 stdlib. Only referenced from its bytecode.
+-dontwarn kotlin.Cloneable$DefaultImpls
