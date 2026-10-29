@@ -20,7 +20,7 @@ val releaseKeystoreFile = System.getenv("AA_KEYSTORE_PATH")
     ?.takeIf { it.isNotBlank() }
     ?.let { file(it) }
     ?.takeIf { it.isFile }
-var personalSigningConfig: com.android.build.api.dsl.SigningConfig? = null
+var personalSigningConfig: com.android.build.api.dsl.ApkSigningConfig? = null
 
 fun String.asBuildConfigString(): String = "\"" + replace("\\", "\\\\")
     .replace("\"", "\\\"")
