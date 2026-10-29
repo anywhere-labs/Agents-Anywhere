@@ -285,6 +285,12 @@ internal fun AgentsAnywhereNavHost(
                     mobileLoginQr = pendingMobileLoginQr,
                 )
                 AppDestination.Sessions -> if (wideLayout) {
+                    // Back should close the open conversation, not the whole app.
+                    androidx.activity.compose.BackHandler(
+                        enabled = selectedSessionId != null || preparedSessionDraft != null,
+                    ) {
+                        onClearSelectedSession()
+                    }
                     SessionWorkspace(
                         sidebar = { homeContent(true) },
                         detail = sessionDetailPane,
