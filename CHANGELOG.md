@@ -10,7 +10,7 @@
 
 ### Android
 
-- 折叠屏展开或使用宽窗口时，可以在左侧切换项目和会话、在右侧查看消息，并按需收起侧栏；窄窗口保留手机单栏导航，切换会话或窗口宽度时保留各会话草稿和阅读位置。（[499dcd84](https://github.com/anywhere-labs/Agents-Anywhere/commit/499dcd844aea90783ff121add3abbd945b26d744)）
+- 折叠屏展开或使用宽窗口时，可以在左侧切换项目和会话、在右侧查看消息，并按需收起侧栏；窄窗口保留手机单栏导航，切换会话或窗口宽度时保留各会话草稿和阅读位置。（[#478](https://github.com/anywhere-labs/Agents-Anywhere/pull/478)）
 
 ## 2.1.0（2026-10-27）
 
