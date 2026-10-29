@@ -20,6 +20,7 @@ from agent_server.core.connector_presence import ConnectorLease
 from agent_server.infra.connector_cleanup import complete_cleanup
 from agent_server.infra.connector_control_log import (
     business_fields,
+    completion_log_level,
     control_log,
     error_fields,
     result_fields,
@@ -600,6 +601,16 @@ class ConnectorRpcManager:
             or details.get("source") == "router" and details.get("reason") in {
                 "no_instances", "instance_unknown", "instance_draining"}))
 
+    @classmethod
+    def _route_log_outcome(cls, response: dict[str, Any], *, mesh_request: bool) -> str:
+        if response.get("ok") is True:
+            return "returned"
+        error = response.get("error") or {}
+        if (mesh_request and error.get("type") == "not_dispatched"
+                and cls._safe_mesh_rejection(ConnectorNotDispatchedError("", details=error.get("details")))):
+            return "not_dispatched"
+        return "failed"
+
     async def _request_selected(self, connector_id: str, lease: ConnectorLease, method: str, params: dict[str, Any]) -> Any:
         deadline = current_request_deadline()
         assert deadline is not None
@@ -610,7 +621,7 @@ class ConnectorRpcManager:
         use_mesh = (transport is not None and transport.supports(method) and lease.mesh_capable
                     and (lease.control_fallback_capable or method == "workspace.refresh"))
         if use_mesh:
-            control_log("transport.selected", **fields, transport="mesh", mode="mesh_preferred", remainingMs=deadline.remaining() * 1000)
+            control_log("transport.selected", level="DEBUG", **fields, transport="mesh", mode="mesh_preferred", remainingMs=deadline.remaining() * 1000)
             try:
                 return await transport.request_on_identity(connector_id, lease.connection_id, method, params,
                                                            timeout=deadline.remaining())
@@ -621,7 +632,7 @@ class ConnectorRpcManager:
                 deadline.delivery_state = "not_dispatched"
                 # Never bind this logical request to a replacement base socket.
                 await self._bound_lease(connector_id, lease.connection_id)
-        control_log("transport.selected", **fields, transport="websocket", mode="fallback" if use_mesh else "legacy_primary",
+        control_log("transport.selected", level="DEBUG", **fields, transport="websocket", mode="fallback" if use_mesh else "legacy_primary",
                     reason=reason, remainingMs=deadline.remaining() * 1000)
         if deadline.remaining() <= 0:
             raise deadline.timeout_error()
@@ -726,6 +737,7 @@ class ConnectorRpcManager:
         deadline = current_request_deadline()
         fields = {"connectorId": connector_id, "connectionId": connection.connection_id,
                   "callId": deadline.call_id if deadline else None, "rpcRequestId": request_id, "method": method}
+        outcome, details = "cancelled", {}
         control_log("websocket.request.started", level="DEBUG", **fields)
         try:
             payload = {"id": request_id, "type": "request", "method": method, "params": params,
@@ -749,7 +761,7 @@ class ConnectorRpcManager:
                     if deadline is not None:
                         deadline.delivery_state = "outcome_unknown"
                     await connection.websocket.send_json(payload)
-                    logger.info(
+                    logger.debug(
                         "connector rpc request sent connector_id={} method={} request_id={}",
                         connector_id,
                         method,
@@ -761,7 +773,7 @@ class ConnectorRpcManager:
                         future.exception()
                     raise ConnectorOfflineError("connector disconnected") from exc
             response = await asyncio.wait_for(future, timeout=timeout)
-            logger.info(
+            logger.debug(
                 "connector rpc response received connector_id={} method={} request_id={} elapsed_ms={:.1f}",
                 connector_id,
                 method,
@@ -771,11 +783,28 @@ class ConnectorRpcManager:
             await self._authorize_local(connection)
             if deadline is not None:
                 deadline.delivery_state = "response_received"
+            outcome = "returned" if response.get("ok") is True else "failed"
+            if outcome == "returned":
+                details = result_fields(response.get("result"))
+            else:
+                details = {"errorCode": (response.get("error") or {}).get("code")}
+        except asyncio.CancelledError:
+            if deadline is not None and deadline.remaining() <= 0:
+                outcome, details = "timeout", {"reason": "deadline_expired"}
+            else:
+                details = {"reason": "caller_cancelled"}
+            raise
+        except Exception as exc:
+            outcome = "timeout" if isinstance(exc, TimeoutError) else "failed"
+            details = error_fields(exc, stack=not isinstance(exc, (ConnectorRpcError, ConnectorOfflineError, TimeoutError)))
+            raise
         finally:
             connection.pending.pop(request_id, None)
-            control_log("websocket.request.finished", level="DEBUG", **fields,
+            elapsed_ms = (time.monotonic() - request_started_at) * 1000
+            control_log("websocket.request.finished", level=completion_log_level(outcome, elapsed_ms, details),
+                        **{**fields, **details}, outcome=outcome,
                         deliveryState=deadline.delivery_state if deadline else "outcome_unknown",
-                        elapsedMs=(time.monotonic() - request_started_at) * 1000)
+                        elapsedMs=elapsed_ms)
 
         if response.get("ok") is True:
             return response.get("result")
@@ -835,7 +864,7 @@ class ConnectorRpcManager:
             details["phase"] = "wait_response"
             response = await asyncio.wait_for(future, timeout=timeout)
             details["phase"] = "response_received"
-            outcome = "returned" if response.get("ok") is True else "failed"
+            outcome = self._route_log_outcome(response, mesh_request=mesh_request)
             delivery = "response_received"
             if outcome == "returned":
                 details.update(result_fields(response.get("result")))
@@ -851,14 +880,18 @@ class ConnectorRpcManager:
         except Exception as exc:
             outcome = "timeout" if isinstance(exc, TimeoutError) else "failed"
             details.update(error_fields(exc, stack=not isinstance(exc, (ConnectorOfflineError, TimeoutError))))
+            if mesh_request and isinstance(exc, ConnectorNotDispatchedError) and self._safe_mesh_rejection(exc):
+                outcome = "not_dispatched"
+                details["reason"] = exc.details["reason"]
             raise
         finally:
             self._routed_pending.pop(request_id, None)
             if diagnostic_request:
-                control_log("redis.request.finished", level="INFO" if outcome == "returned" else "WARNING",
+                elapsed_ms = (time.monotonic() - started_at) * 1000
+                control_log("redis.request.finished", level=completion_log_level(outcome, elapsed_ms, details),
                             **{**diagnostics, **details}, sourceWorkerId=self.instance_id,
                             targetWorkerId=lease.instance_id, outcome=outcome, deliveryState=delivery,
-                            elapsedMs=(time.monotonic() - started_at) * 1000)
+                            elapsedMs=elapsed_ms)
         if response.get("ok") is True:
             return response.get("result")
         error = response.get("error") or {}
@@ -978,16 +1011,17 @@ class ConnectorRpcManager:
         control_log("redis.target.received", level="DEBUG", **fields)
         try:
             response = await self._handle_routed_impl(payload, diagnostics=details)
-            outcome = "returned" if response and response.get("ok") is True else "failed"
+            outcome = self._route_log_outcome(response or {}, mesh_request=payload.get("type") == "meshRequest")
             delivery = "response_published" if response else "not_dispatched"
         except Exception as exc:
             outcome = "failed"
             details.update(error_fields(exc))
             raise
         finally:
-            control_log("redis.target.finished", level="INFO" if outcome == "returned" else "WARNING",
+            elapsed_ms = (time.monotonic() - started_at) * 1000
+            control_log("redis.target.finished", level=completion_log_level(outcome, elapsed_ms, details),
                         **{**fields, **details}, outcome=outcome, deliveryState=delivery,
-                        elapsedMs=(time.monotonic() - started_at) * 1000)
+                        elapsedMs=elapsed_ms)
 
     async def _handle_routed_impl(self, payload: dict[str, Any], *, diagnostics: dict | None = None) -> dict | None:
         request_id = payload.get("requestId")

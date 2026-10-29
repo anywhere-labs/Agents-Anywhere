@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict
 from connector.runtime_protocol import RuntimeProtocolError
 from connector.server.control_log import (
     business_fields,
+    completion_log_level,
     control_log,
     error_fields,
     result_fields,
@@ -100,7 +101,7 @@ class ConnectorControlExecutor:
         waiting, active = True, False
         phase, outcome = "queued", "cancelled"
         details = {}
-        control_log("execution.queued", level="INFO" if semaphore.locked() else "DEBUG", **fields,
+        control_log("execution.queued", level="DEBUG", **fields,
                     queueDepth=self._queued[lane], activeCount=self._active[lane])
         try:
             self.require_session(generation)
@@ -112,7 +113,7 @@ class ConnectorControlExecutor:
                 active = True
                 started_at = time.monotonic()
                 phase = "started"
-                control_log("execution.started", **fields, queueWaitMs=(started_at - queued_at) * 1000,
+                control_log("execution.started", level="DEBUG", **fields, queueWaitMs=(started_at - queued_at) * 1000,
                             queueDepth=self._queued[lane], activeCount=self._active[lane])
                 result = await self._dispatch(method, params)
             if not isinstance(result, dict):
@@ -136,14 +137,17 @@ class ConnectorControlExecutor:
                 self._active[lane] -= 1
             self._tasks.discard(task)
             ended_at = time.monotonic()
-            level = "INFO" if outcome == "returned" else ("WARNING" if not details.get("errorStack") else "ERROR")
+            elapsed_ms = (ended_at - queued_at) * 1000
+            details["callerDetached"] = bool(detached and detached.is_set())
+            # Executor rejections remain failures; only the Server's proven
+            # transport rejection whitelist is expected to fall back safely.
+            level = completion_log_level("failed" if outcome == "not_dispatched" else outcome, elapsed_ms, details)
             control_log("execution.finished", level=level, **{**fields, **details}, phase=phase, outcome=outcome,
-                        callerDetached=bool(detached and detached.is_set()),
                         deliveryState="not_dispatched" if started_at is None else (
                             "handler_returned" if outcome == "returned" else "execution_started"),
                         queueWaitMs=((started_at or ended_at) - queued_at) * 1000,
                         runMs=(ended_at - started_at) * 1000 if started_at is not None else 0,
-                        elapsedMs=(ended_at - queued_at) * 1000,
+                        elapsedMs=elapsed_ms,
                         queueDepth=self._queued[lane], activeCount=self._active[lane])
 
 

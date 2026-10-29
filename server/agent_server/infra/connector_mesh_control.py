@@ -16,6 +16,7 @@ from websockets.exceptions import WebSocketException
 
 from agent_server.infra.connector_control_log import (
     business_fields,
+    completion_log_level,
     control_log,
     error_fields,
     result_fields,
@@ -117,7 +118,7 @@ class MeshConnectorControlTransport:
         started_at = time.monotonic()
         outcome, delivery, phase = "cancelled", "not_dispatched", "route_lookup"
         details = {}
-        control_log("request.started", **context)
+        control_log("request.started", level="DEBUG", **context)
         try:
             if not await self.rpc.is_connection_id_current(connector_id, connection_id):
                 raise ConnectorOfflineError("connector connection changed", details={"deliveryState": "not_dispatched"})
@@ -153,11 +154,15 @@ class MeshConnectorControlTransport:
             outcome = "timeout" if isinstance(exc, TimeoutError) else "failed"
             delivery = (getattr(exc, "details", None) or {}).get("deliveryState", budget.delivery_state)
             details = error_fields(exc, stack=not isinstance(exc, (ConnectorRpcError, ConnectorOfflineError, TimeoutError)))
+            if isinstance(exc, ConnectorNotDispatchedError) and ConnectorRpcManager._safe_mesh_rejection(exc):
+                outcome = "not_dispatched"
+                details["reason"] = exc.details["reason"]
             raise
         finally:
-            control_log("request.finished", level="INFO" if outcome == "returned" else "WARNING",
+            elapsed_ms = (time.monotonic() - started_at) * 1000
+            control_log("request.finished", level=completion_log_level(outcome, elapsed_ms, details),
                         **{**context, **details}, outcome=outcome, deliveryState=delivery, phase=phase,
-                        elapsedMs=(time.monotonic() - started_at) * 1000)
+                        elapsedMs=elapsed_ms)
 
     async def request_routed(self, payload: dict[str, Any]) -> Any:
         async with connector_request_timeout(routed_request_timeout(payload), call_id=payload.get("controlCallId")):

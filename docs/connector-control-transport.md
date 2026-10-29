@@ -321,9 +321,19 @@ PYTHONPATH=.:../connector uv run --no-sync python -m tools.probe_connector_mesh_
 响应、响应发布和 Connector 已开始执行。`callerDetached=true` 不代表领域任务已取消。
 通知可能早于或晚于 RPC 返回；后台通知保持独立来源，不强行归属于某次 RPC。
 
-正常调用的 Server 开始/结束、Connector 开始/结束保留 INFO；即时入队和中转细节为
-DEBUG，实际发生排队时入队提升为 INFO。通知/落库仅慢项使用 INFO，正常高频事件
-使用 DEBUG。正常续租、授权逐帧校验和轮询等待不逐条输出 INFO。
+控制调用的开始、选路、入队、执行开始和中转细节统一使用 DEBUG；成功且总耗时不足
+100 ms 的完成记录也使用 DEBUG。总耗时达到100 ms（含排队）的完成摘要提升为 INFO，
+保留排队/执行耗时、业务结果分类及关联 ID。`ok:false`、`accepted:false` 的业务拒绝，
+以及调用方已停止等待后才完成的 Connector 结果，即使很快也保留 INFO。
+仅白名单内、确定未分发且允许安全回退的 Mesh 拒绝按同样的耗时规则记录，避免
+备用通道正常工作时每次尝试仍输出告警；`not_dispatched` 在这里是诊断分类，不改变
+实际回退决策。结果未知、授权失败、执行器拒绝、超时和取消保留 WARNING；含安全
+栈位置的程序异常使用 ERROR。旧 WebSocket 主通道和新版备用通道沿用同一分级。
+正常快速调用没有逐次 INFO，排查完整调用阶段时需开启 DEBUG；日志级别不代表投递状态。
+Server 默认控制台级别为 INFO，设置 `LOGURU_LEVEL=DEBUG` 后重新启动可查看所有阶段；
+应用自行安装的日志 sink 保持其原配置。Connector 可使用现有的 `--debug` 查看控制台阶段日志。
+授权、路由、链路的建立/替换/关闭仍记录原生命周期事件。通知/落库仍仅慢项使用 INFO，
+正常续租、授权逐帧校验和轮询等待不逐条输出 INFO。
 
 Connector 诊断记录先进入最多 1024 条、4 MiB 的线程安全队列，由独立 daemon
 线程按最多 64 条批量写入原日志存储；业务事件循环不等待文件锁或写盘。队列满时

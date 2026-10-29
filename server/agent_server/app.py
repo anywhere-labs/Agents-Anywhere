@@ -53,6 +53,7 @@ from agent_server.infra.db.migrations import (
     upgrade_database,
 )
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
+from agent_server.infra.logging import configure_server_logging
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
@@ -119,6 +120,7 @@ def create_app(
     (see the Compose ``migrate-next`` step), so ``migrate_database`` is off by
     default; the test suite migrates its own database once per session.
     """
+    configure_server_logging()
     process_settings = ProcessSettings.from_environment()
     resolved_redis_url = redis_url
     if resolved_redis_url is None:

@@ -9,30 +9,44 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import re
+import subprocess
+import sys
 import tempfile
 import time
 from collections import defaultdict
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from agent_server.api import connector_mesh as proxy_api
+from agent_server.infra.connector_control_log import (
+    _FIELDS,
+    completion_log_level,
+    control_log,
+)
+from agent_server.infra.connector_mesh_contract import CONTROL_METHODS
+from agent_server.infra.connector_mesh_control import MeshConnectorControlTransport
+from agent_server.infra.connector_mesh_routes import MeshRoute
+from agent_server.infra.connector_rpc import (
+    ConnectorRpcManager,
+    ConnectorTransportTimeout,
+    connector_request_timeout,
+)
 from connector.logging import CONTROL_LOG_FIELDS, install_rpc_log_sink
 from connector.mesh.logs import LogHub
 from connector.runtime_protocol import RuntimeInvalidRequestError
+from connector.server.control_log import (
+    completion_log_level as connector_completion_log_level,
+)
 from connector.server.mesh_services import (
     ConnectorControlExecutor,
     Payload,
     _DomainService,
 )
 from loguru import logger
-
-from agent_server.api import connector_mesh as proxy_api
-from agent_server.infra.connector_control_log import _FIELDS, control_log
-from agent_server.infra.connector_mesh_contract import CONTROL_METHODS
-from agent_server.infra.connector_mesh_control import MeshConnectorControlTransport
-from agent_server.infra.connector_mesh_routes import MeshRoute
-from agent_server.infra.connector_rpc import ConnectorTransportTimeout
 
 CANARY = "private-payload-must-not-appear"
 ROUTE = MeshRoute(
@@ -50,6 +64,166 @@ async def wait_for(predicate):
     async with asyncio.timeout(3):
         while not predicate():
             await asyncio.sleep(0)
+
+
+def verify_server_log_defaults(passed):
+    code = """
+import contextlib
+import io
+import json
+import sys
+from loguru import logger
+from agent_server.infra.logging import configure_server_logging
+if sys.argv[1] == "custom":
+    logger.add(sys.stderr, level="DEBUG")
+records = []
+logger.add(lambda message: records.append(message.record["level"].name), level="DEBUG")
+with io.StringIO() as temporary, contextlib.redirect_stderr(temporary):
+    configure_server_logging()
+configure_server_logging()
+logger.debug("server-debug-marker")
+logger.info("server-info-marker")
+print(json.dumps(records))
+"""
+    for mode in ("default", "debug", "custom"):
+        env = dict(os.environ)
+        env.pop("LOGURU_LEVEL", None)
+        env.pop("LOGURU_AUTOINIT", None)
+        if mode == "debug":
+            env["LOGURU_LEVEL"] = "DEBUG"
+        elif mode == "custom":
+            env["LOGURU_AUTOINIT"] = "false"
+        child = subprocess.run(
+            [sys.executable, "-c", code, mode],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        assert json.loads(child.stdout) == ["DEBUG", "INFO"]
+        assert child.stderr.count("server-info-marker") == 1
+        assert child.stderr.count("server-debug-marker") == (
+            0 if mode == "default" else 1
+        )
+    passed(
+        "Fresh Server processes default to INFO; DEBUG opt-in, explicit sinks and repeated configuration remain intact"
+    )
+
+
+async def verify_call_log_levels(records, passed):
+    for policy in (completion_log_level, connector_completion_log_level):
+        assert policy("returned", 99.999, {}) == "DEBUG"
+        assert policy("returned", 100, {}) == "INFO"
+        assert policy("returned", 0, {"businessOutcome": "rejected"}) == "INFO"
+        assert policy("returned", 0, {"callerDetached": True}) == "INFO"
+        assert policy("timeout", 0, {}) == "WARNING"
+        assert policy("failed", 0, {"errorStack": "safe location"}) == "ERROR"
+    passed(
+        "Both completion policies preserve the exact 100ms boundary, refusal, detachment and failure visibility"
+    )
+
+    for mode in ("mesh", "fallback", "legacy"):
+        for behavior in ("fast", "slow", "refused"):
+            await verify_call_log_case(mode, behavior, records)
+            passed(
+                f"{mode} {behavior} calls keep one execution, correlation and the intended default log volume"
+            )
+
+
+async def verify_call_log_case(mode, behavior, records):
+    manager = ConnectorRpcManager()
+    count = 0
+
+    async def dispatch(_method, _params):
+        nonlocal count
+        count += 1
+        if behavior == "slow":
+            await asyncio.sleep(0.12)
+        return {
+            "ok": behavior != "refused",
+            "accepted": behavior != "refused",
+            "body": CANARY,
+        }
+
+    executor = ConnectorControlExecutor(dispatch, connector_id=ROUTE.connector_id)
+
+    class ReplySocket:
+        async def send_json(self, message):
+            result = await executor.execute(
+                message["method"],
+                message["params"],
+                connection.connection_id,
+                message["metadata"]["aa-control-call-id"],
+                connection.connection_id,
+            )
+            manager.resolve_response(
+                ROUTE.connector_id,
+                {"id": message["id"], "ok": True, "result": result},
+                connection=connection,
+            )
+
+        async def close(self, **_kwargs):
+            pass
+
+    connection = await manager.register(
+        ROUTE.connector_id,
+        ReplySocket(),
+        mesh_capable=mode != "legacy",
+        control_fallback_capable=mode != "legacy",
+    )
+
+    async def authorized():
+        return True
+
+    connection.authorize_control = authorized
+    executor.open_session(dispatch, connection.connection_id)
+    route = replace(
+        ROUTE, connection_id=connection.connection_id, worker_id=manager.instance_id
+    )
+
+    async def get_route(_connector_id):
+        return None if mode == "fallback" else route
+
+    mesh = SimpleNamespace(
+        router_id=route.router_id, routes=SimpleNamespace(get=get_route)
+    )
+    adapter = MeshConnectorControlTransport(mesh, manager)
+
+    async def call(_route, method, params, _timeout, call_id):
+        return await executor.execute(
+            method, params, connection.connection_id, call_id, connection.connection_id
+        )
+
+    adapter._call_local = call
+    manager.bind_request_transport(adapter)
+    prefix = f"volume-{mode}-{behavior}-"
+    requests = 10 if behavior == "fast" else 1
+    try:
+        for index in range(requests):
+            async with connector_request_timeout(2, call_id=f"{prefix}{index}"):
+                result = await manager.request(
+                    ROUTE.connector_id, "terminal.write", {"data": CANARY}
+                )
+                assert result["ok"] is (behavior != "refused")
+        rows = [row for row in records if str(row.get("callId", "")).startswith(prefix)]
+        assert count == requests
+        if behavior == "fast":
+            assert rows and all(row["level"] == "DEBUG" for row in rows), rows
+        else:
+            terminal = [
+                row
+                for row in rows
+                if row["event"].endswith(".finished") and row["outcome"] == "returned"
+            ]
+            assert len(terminal) >= 2 and all(
+                row["level"] == "INFO" for row in terminal
+            ), terminal
+            if behavior == "refused":
+                assert all(row["businessOutcome"] == "rejected" for row in terminal)
+    finally:
+        await executor.close_session()
+        await manager.close()
 
 
 async def run_probe() -> tuple[list[dict], list[dict]]:
@@ -74,6 +248,8 @@ async def run_probe() -> tuple[list[dict], list[dict]]:
     logger.remove()
     sink = logger.add(capture, level="DEBUG")
     try:
+        verify_server_log_defaults(passed)
+        await verify_call_log_levels(records, passed)
 
         async def current(*_args):
             return True
@@ -299,7 +475,10 @@ async def run_probe() -> tuple[list[dict], list[dict]]:
             rpc=rpc,
             store=SimpleNamespace(),
             connector_mesh=SimpleNamespace(
-                credentials=SimpleNamespace(healthy=True, get=lambda _identity: asyncio.sleep(0, result="probe-fingerprint")),
+                credentials=SimpleNamespace(
+                    healthy=True,
+                    get=lambda _identity: asyncio.sleep(0, result="probe-fingerprint"),
+                ),
                 grant=grant,
                 route_for=lambda _grant: ROUTE,
                 authorize_router=authorize,
@@ -361,14 +540,21 @@ async def run_probe() -> tuple[list[dict], list[dict]]:
             for colored in (False, True):
                 path = Path(directory) / f"colored-{colored}.log"
                 paths.append(path)
-                file_sink = logger.add(path, format="probe - <level>{message}</level>", colorize=colored)
+                file_sink = logger.add(
+                    path, format="probe - <level>{message}</level>", colorize=colored
+                )
                 try:
                     control_log("parser.probe", callId=f"parser-{colored}")
                 finally:
                     logger.remove(file_sink)
             assert "\x1b[" in paths[1].read_text()
-            assert {row["callId"] for row in read_control_records(paths)} == {"parser-False", "parser-True"}
-        passed("Real Loguru file records parse identically with and without forced ANSI colors")
+            assert {row["callId"] for row in read_control_records(paths)} == {
+                "parser-False",
+                "parser-True",
+            }
+        passed(
+            "Real Loguru file records parse identically with and without forced ANSI colors"
+        )
 
         def broken_sink(_message):
             raise OSError(CANARY)

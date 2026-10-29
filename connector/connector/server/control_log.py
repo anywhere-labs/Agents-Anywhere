@@ -13,6 +13,17 @@ from connector.logging import CONTROL_LOG_FIELDS as _FIELDS
 from connector.logging import logger
 
 _IDS = ("sessionId", "messageId", "runtimeId", "terminalId", "taskId")
+SLOW_CONTROL_LOG_MS = 100.0
+
+
+def completion_log_level(outcome: str, elapsed_ms: float, fields: dict[str, Any]) -> str:
+    """Keep fast calls quiet while preserving slow work and business refusals."""
+    if outcome not in {"returned", "not_dispatched"}:
+        return "ERROR" if fields.get("errorStack") else "WARNING"
+    if (elapsed_ms >= SLOW_CONTROL_LOG_MS or fields.get("businessOutcome") == "rejected"
+            or fields.get("callerDetached")):
+        return "INFO"
+    return "DEBUG"
 
 
 def business_fields(value: object) -> dict[str, Any]:

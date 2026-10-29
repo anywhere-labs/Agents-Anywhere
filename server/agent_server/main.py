@@ -7,10 +7,12 @@ import uvicorn
 from meshcall.transport import DEFAULT_MAX_FRAME_SIZE
 
 from agent_server.core.process_settings import ProcessSettings
+from agent_server.infra.logging import configure_server_logging
 from agent_server.infra.mesh_router import ManagedRouter
 
 
 def main(argv: list[str] | None = None) -> None:
+    configure_server_logging()
     settings = ProcessSettings.from_environment()
     settings.validate_shared_state(
         redis_configured=bool(os.environ.get("AGENT_SERVER_REDIS_URL"))
