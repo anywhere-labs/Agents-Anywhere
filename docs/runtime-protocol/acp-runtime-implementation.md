@@ -15,7 +15,7 @@ Web / Desktop / Android / iOS
 
 默认 Provider 为 Codex、Claude、DSH、Pi。Pi 使用 `runtimeType=pi`、`implementationType=acp-stdio`，ACP 是内部对接协议。通用 `AcpRuntime` 通过注入 `AgentProfile`、启动配置、准备策略复用协调逻辑，其他 Agent 可以有自己的 Provider 身份；默认列表没有单独名为 ACP 的入口。
 
-Pi 的 `PiProvider` 直接实现 `RuntimeProvider` 的配置、发现和启动流程，托管安装并运行上游 npm 发布包。旧 `pi-runtime/`、`connector/connector/runtimes/pi/`、`contracts/pi-bridge/` 已移除。
+Pi 的 `PiProvider` 直接实现 `RuntimeProvider` 的配置、发现和启动流程，托管安装并运行上游 npm 发布包。
 
 ## Pi 实例配置与安装
 
@@ -81,7 +81,7 @@ Connector 显式加载 `permissions.mjs`，打开和恢复会话时核验 Agent 
 
 ## 通用 ACP 与运行环境管理
 
-通用 ACP 适配、协调和同步服务由各 Agent Profile 复用。Pi 直接使用 npm 发布包，不再提供独立的签名组件发布、安装、激活或回退 API。
+通用 ACP 适配、协调和同步服务由各 Agent Profile 复用。Pi 直接使用 npm 发布包。
 
 TUI 协作、最终模型请求守卫、持久接纳回执和原生位置选择未在默认路径开放。通用原生历史快照按来源完整性处理，不能用部分结果删除其他历史；默认 Pi 没有独立的原生位置选择界面。
 
@@ -102,6 +102,6 @@ uv run python scripts/verify-acp-generic-boundary.py
 uv run python scripts/verify-acp-processes.py
 ```
 
-实现变更时同步更新本页，不再追加按轮次记录的完成声明、旧引擎验证结果或已失效的实施顺序。
+实现变更时同步更新本页。
 
 默认 Pi 的直接功能检查为 `PYTHONPATH=connector connector/.venv/bin/python connector/scripts/verify-pi-managed.py --scenario allow`；另有 `deny`、`readonly`、`attachment`、`steer`、`slow`、`reasoning` 和 `interrupt` 场景，使用真实 OpenMA/Pi 包与本地 SSE 模型，不调用付费供应商。

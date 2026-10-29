@@ -15,7 +15,7 @@
 | API、有效能力与实时同步 | [API 索引](../api/README.md)、[能力](../api/capabilities.md)、[实时 API](../api/realtime.md) |
 | Timeline 工具身份与多来源同步 | [身份说明](timeline-identity.md) |
 
-默认 Runtime 为 Codex、Claude、DSH、Pi。Pi 的 Provider 身份为 `pi`，通过通用 ACP 适配启动托管安装的 `@openma/pi-acp`。运行环境使用 npm 安装器管理，不提供独立的签名组件管理接口。
+默认 Runtime 为 Codex、Claude、DSH、Pi。Pi 的 Provider 身份为 `pi`，通过通用 ACP 适配启动托管安装的 `@openma/pi-acp`。运行环境使用 npm 安装器管理。
 
 ## 早期重构参考
 
@@ -25,5 +25,3 @@
 - 结构与行为设计：[Connector 结构](connector-structure.md)、[Server API / 数据库](server-api-db.md)、[Web 行为](web-behavior.md)、[行为迁移](behavior-migration-targets.md)。
 - 重构记录：[Runtime 实例](runtime-instances-v2-rewrite.md)、[Codex 重构目标](codex-runtime-refactor-target.md)。
 - 执行计划：[迁移顺序](migration-sequence.md)、[实施顺序](implementation-order.md)、[执行依赖](execution-dependencies.md)。
-
-旧独立 Pi Runtime 的接入计划、客户端计划和阶段实现记录，以及 ACP 的重复实施约定、组合记录和上游钩子调查已删除；有效内容合并到当前 ACP/Pi 说明。
