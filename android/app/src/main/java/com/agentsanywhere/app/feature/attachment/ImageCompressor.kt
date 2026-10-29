@@ -5,7 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.media.ExifInterface
-import android.media.ImageDecoder
+import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
 import kotlinx.coroutines.Dispatchers
@@ -71,8 +71,9 @@ object ImageCompressor {
             bitmap.recycle()
         }
         if (encoded == null) return@withContext original
-        if (original.sourceSize > 0 && encoded.file.length() >= original.sourceSize) {
-            encoded.file.delete()
+        val encodedFile = encoded.file ?: return@withContext original
+        if (original.sourceSize > 0 && encodedFile.length() >= original.sourceSize) {
+            encodedFile.delete()
             return@withContext original
         }
         encoded

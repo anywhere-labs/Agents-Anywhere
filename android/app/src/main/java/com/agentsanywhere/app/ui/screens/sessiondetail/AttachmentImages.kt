@@ -47,7 +47,6 @@ import coil3.network.NetworkHeaders
 import coil3.network.httpHeaders
 import coil3.request.ImageRequest
 import coil3.request.crossfade
-import coil3.request.respectCacheHeaders
 import coil3.size.Size
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.sessiondetail.AttachmentImageRequest
@@ -523,7 +522,6 @@ private fun AttachmentImageRequest.toCoilRequest(context: Context): ImageRequest
         // Timeline thumbnails never need more than a couple of hundred dp; decoding the
         // full-size photo for a 96dp tile wasted both memory and bandwidth.
         .size(Size(588, 426))
-        .respectCacheHeaders(true)
         .crossfade(true)
         .build()
 }
