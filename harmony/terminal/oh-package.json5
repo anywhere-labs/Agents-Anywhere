@@ -1,0 +1,13 @@
+{
+  "name": "terminal",
+  "version": "1.0.0",
+  "description": "终端域：终端模拟与终端页",
+  "main": "Index.ets",
+  "author": "",
+  "license": "",
+  "dependencies": {
+    "common": "file:../common",
+    "network": "file:../network",
+    "session": "file:../session"
+  }
+}

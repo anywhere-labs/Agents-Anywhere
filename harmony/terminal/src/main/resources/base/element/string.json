@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "files_device",
+      "value": "Device"
+    },
+    {
+      "name": "terminal_reconnecting",
+      "value": "%s input(s) queued — reconnecting…"
+    },
+    {
+      "name": "terminal_reopen",
+      "value": "Reopen terminal"
+    },
+    {
+      "name": "terminal_back_to_bottom",
+      "value": "Back to bottom"
+    },
+    {
+      "name": "terminal_title",
+      "value": "Terminal"
+    }
+  ]
+}

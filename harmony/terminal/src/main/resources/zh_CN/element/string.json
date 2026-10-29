@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "files_device",
+      "value": "设备"
+    },
+    {
+      "name": "terminal_reconnecting",
+      "value": "已排队 %s 条输入 — 正在重连…"
+    },
+    {
+      "name": "terminal_reopen",
+      "value": "重新打开终端"
+    },
+    {
+      "name": "terminal_back_to_bottom",
+      "value": "回到底部"
+    },
+    {
+      "name": "terminal_title",
+      "value": "终端"
+    }
+  ]
+}

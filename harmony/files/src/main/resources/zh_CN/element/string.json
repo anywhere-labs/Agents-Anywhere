@@ -1,0 +1,108 @@
+{
+  "string": [
+    {
+      "name": "profile_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "files_back",
+      "value": "返回"
+    },
+    {
+      "name": "files_up",
+      "value": "向上"
+    },
+    {
+      "name": "files_truncated",
+      "value": "目录列表已截断。"
+    },
+    {
+      "name": "devices_no_online",
+      "value": "暂无在线设备"
+    },
+    {
+      "name": "session_agent_files",
+      "value": "Agent 文件"
+    },
+    {
+      "name": "session_agent_files_loading",
+      "value": "正在加载文件…"
+    },
+    {
+      "name": "session_agent_files_empty",
+      "value": "这个目录是空的。"
+    },
+    {
+      "name": "session_agent_files_binary",
+      "value": "这个文件无法预览。"
+    },
+    {
+      "name": "session_agent_files_truncated_notice",
+      "value": "文件过大——仅显示开头部分。"
+    },
+    {
+      "name": "session_agent_files_save",
+      "value": "保存"
+    },
+    {
+      "name": "session_agent_files_saved",
+      "value": "文件已保存。"
+    },
+    {
+      "name": "session_agent_files_save_failed",
+      "value": "无法保存文件。"
+    },
+    {
+      "name": "session_agent_files_no_workspace",
+      "value": "这个会话没有工作区。"
+    },
+    {
+      "name": "session_agent_files_missing_session",
+      "value": "缺少会话。"
+    },
+    {
+      "name": "files_copy_path",
+      "value": "复制路径"
+    },
+    {
+      "name": "files_copied_path",
+      "value": "已复制路径"
+    },
+    {
+      "name": "files_copy_content",
+      "value": "复制内容"
+    },
+    {
+      "name": "files_copied_content",
+      "value": "已复制内容"
+    },
+    {
+      "name": "files_search",
+      "value": "搜索"
+    },
+    {
+      "name": "files_pair_first",
+      "value": "先配对一台设备，再浏览文件。"
+    },
+    {
+      "name": "files_all_devices_offline",
+      "value": "先让一台设备上线，再浏览文件。"
+    },
+    {
+      "name": "files_windows_drives",
+      "value": "这台电脑"
+    },
+    {
+      "name": "files_empty_directory",
+      "value": "这个目录是空的。"
+    },
+    {
+      "name": "files_loading",
+      "value": "正在加载文件…"
+    },
+    {
+      "name": "home_pair_new_device",
+      "value": "配对新设备"
+    }
+  ]
+}

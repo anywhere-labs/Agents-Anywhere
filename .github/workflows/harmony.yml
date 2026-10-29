@@ -1,0 +1,90 @@
+name: HarmonyOS
+
+# Build check for the HarmonyOS client. Produces an unsigned debug HAP; it
+# verifies that harmony/ compiles but is not a distributable artifact.
+
+on:
+  push:
+    branches:
+      - main
+      - v2
+    paths:
+      - harmony/**
+      - .github/workflows/harmony.yml
+  pull_request:
+    paths:
+      - harmony/**
+      - .github/workflows/harmony.yml
+  workflow_dispatch:
+
+concurrency:
+  group: harmony-hap-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+    working-directory: harmony
+
+jobs:
+  build:
+    name: HarmonyOS headless build
+    runs-on: ubuntu-latest
+    # Third-party image with the HarmonyOS SDK / ohpm / hvigorw. workflow_dispatch
+    # ignores `paths`, so it can be used to validate the image; pin it to a digest
+    # after the first successful run.
+    container: ghcr.io/dalongzhuazi/harmonyos-ci:api26r
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Cache hvigor distribution
+        uses: actions/cache@v4
+        with:
+          path: /root/.hvigor
+          key: hvigor-${{ runner.os }}-${{ hashFiles('harmony/hvigor/hvigor-config.json5') }}
+          restore-keys: |
+            hvigor-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: ohpm install --all
+
+      - name: Build HAP
+        run: |
+          hvigorw clean --no-daemon
+          hvigorw assembleHap --mode module -p product=default -p buildMode=debug --no-daemon --stacktrace
+
+      - name: Collect and verify artifacts
+        run: |
+          set -eu
+          mkdir -p dist
+          find . -type f -name '*.hap' -path '*/outputs/*' \
+            -not -path './oh_modules/*' -not -path './node_modules/*' \
+            -exec cp -v {} dist/ \;
+          shopt -s nullglob
+          haps=(dist/*.hap)
+          if [ ${#haps[@]} -eq 0 ]; then
+            echo "::error::No .hap produced, check the build log above"
+            exit 1
+          fi
+          for h in "${haps[@]}"; do
+            size=$(stat -c%s "$h")
+            if [ "$size" -le 0 ]; then
+              echo "::error::$h is empty"
+              exit 1
+            fi
+            echo "$h: $size bytes"
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hap-unsigned
+          # `working-directory` does not apply to `uses:` steps; resolve from
+          # the repository root.
+          path: harmony/dist/
+          if-no-files-found: error
+          retention-days: 14

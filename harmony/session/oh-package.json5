@@ -1,0 +1,12 @@
+{
+  "name": "session",
+  "version": "1.0.0",
+  "description": "会话域：登录/会话态、会话列表与时间线",
+  "main": "Index.ets",
+  "author": "",
+  "license": "",
+  "dependencies": {
+    "common": "file:../common",
+    "network": "file:../network"
+  }
+}

@@ -1,0 +1,1196 @@
+{
+  "string": [
+    {
+      "name": "EntryAbility_label",
+      "value": "Agents Anywhere"
+    },
+    {
+      "name": "login_server_placeholder",
+      "value": "https://your-server.example.com"
+    },
+    {
+      "name": "login_back",
+      "value": "Back"
+    },
+    {
+      "name": "login_retry",
+      "value": "Retry"
+    },
+    {
+      "name": "login_signing_in",
+      "value": "Signing in…"
+    },
+    {
+      "name": "login_continue_to",
+      "value": "Continue to"
+    },
+    {
+      "name": "login_choose_method",
+      "value": "Choose how you want to login."
+    },
+    {
+      "name": "login_qr_login",
+      "value": "Scan to Login"
+    },
+    {
+      "name": "login_password_login",
+      "value": "Account Password Login"
+    },
+    {
+      "name": "login_qr_help",
+      "value": "To scan: open Agents Anywhere on desktop or the web, go to Settings - Phone Connection - Start Connecting, then scan the QR code shown."
+    },
+    {
+      "name": "login_qr_invalid",
+      "value": "Scan a valid Agents Anywhere QR code."
+    },
+    {
+      "name": "login_qr_rescan",
+      "value": "Scan Again"
+    },
+    {
+      "name": "login_qr_waiting",
+      "value": "Waiting for web confirmation..."
+    },
+    {
+      "name": "login_qr_completing",
+      "value": "Completing sign-in..."
+    },
+    {
+      "name": "login_qr_rejected",
+      "value": "Sign-in rejected."
+    },
+    {
+      "name": "login_qr_expired",
+      "value": "QR code expired."
+    },
+    {
+      "name": "login_qr_consumed",
+      "value": "QR code already used."
+    },
+    {
+      "name": "login_host_choice_title",
+      "value": "Choose a login service"
+    },
+    {
+      "name": "login_host_choice_hint",
+      "value": "If you do not have a privately deployed backend, sign in to Cloud."
+    },
+    {
+      "name": "login_official_service",
+      "value": "Sign in to Agents Anywhere Cloud"
+    },
+    {
+      "name": "login_self_host_service",
+      "value": "Connect to your own server instance"
+    },
+    {
+      "name": "login_or",
+      "value": "OR"
+    },
+    {
+      "name": "login_connect_server",
+      "value": "Connect to server"
+    },
+    {
+      "name": "login_checking",
+      "value": "Checking..."
+    },
+    {
+      "name": "login_invalid_server",
+      "value": "Enter a valid backend address."
+    },
+    {
+      "name": "home_no_sessions",
+      "value": "No sessions yet. Start one from a connected device."
+    },
+    {
+      "name": "home_archive_failed",
+      "value": "Could not archive sessions"
+    },
+    {
+      "name": "home_project_archive",
+      "value": "Archive project"
+    },
+    {
+      "name": "home_project_archive_title",
+      "value": "Archive project sessions?"
+    },
+    {
+      "name": "home_project_archive_description",
+      "value": "All active sessions in “%s” will be archived. The project itself will remain."
+    },
+    {
+      "name": "home_project_archived",
+      "value": "Project sessions archived."
+    },
+    {
+      "name": "home_project_archive_failed",
+      "value": "Could not archive project sessions."
+    },
+    {
+      "name": "home_pinned",
+      "value": "Pinned"
+    },
+    {
+      "name": "home_recents",
+      "value": "Recents"
+    },
+    {
+      "name": "home_no_pinned_sessions",
+      "value": "No pinned sessions."
+    },
+    {
+      "name": "home_no_recent_sessions",
+      "value": "No recent sessions."
+    },
+    {
+      "name": "home_rename_session",
+      "value": "Rename session"
+    },
+    {
+      "name": "home_session_title_placeholder",
+      "value": "Session title"
+    },
+    {
+      "name": "home_session_renamed",
+      "value": "Session renamed."
+    },
+    {
+      "name": "home_rename_failed",
+      "value": "Could not rename session."
+    },
+    {
+      "name": "home_session_pinned",
+      "value": "Session pinned."
+    },
+    {
+      "name": "home_session_unpinned",
+      "value": "Session unpinned."
+    },
+    {
+      "name": "home_pin_update_failed",
+      "value": "Could not update pin state."
+    },
+    {
+      "name": "home_session_archived",
+      "value": "Session archived."
+    },
+    {
+      "name": "home_session_restored",
+      "value": "Session restored."
+    },
+    {
+      "name": "home_restore_failed",
+      "value": "Could not restore session."
+    },
+    {
+      "name": "profile_password_updated_title",
+      "value": "Password updated"
+    },
+    {
+      "name": "profile_sign_out_title",
+      "value": "Sign out"
+    },
+    {
+      "name": "profile_sign_out_msg",
+      "value": "Sign out of this account on this device?"
+    },
+    {
+      "name": "profile_cancel",
+      "value": "Cancel"
+    },
+    {
+      "name": "profile_sign_out",
+      "value": "Sign out"
+    },
+    {
+      "name": "profile_save",
+      "value": "Save"
+    },
+    {
+      "name": "profile_new_password_placeholder",
+      "value": "New password"
+    },
+    {
+      "name": "profile_language",
+      "value": "Language"
+    },
+    {
+      "name": "profile_language_system",
+      "value": "Follow system"
+    },
+    {
+      "name": "profile_language_chinese",
+      "value": "中文"
+    },
+    {
+      "name": "profile_language_english",
+      "value": "English"
+    },
+    {
+      "name": "profile_appearance",
+      "value": "Appearance"
+    },
+    {
+      "name": "profile_follow_system",
+      "value": "Follow system"
+    },
+    {
+      "name": "profile_light",
+      "value": "Light"
+    },
+    {
+      "name": "profile_dark",
+      "value": "Dark"
+    },
+    {
+      "name": "profile_sidebar_display",
+      "value": "Sidebar display"
+    },
+    {
+      "name": "profile_project_view",
+      "value": "Project view"
+    },
+    {
+      "name": "profile_session_view",
+      "value": "Session view"
+    },
+    {
+      "name": "profile_version",
+      "value": "Version"
+    },
+    {
+      "name": "profile_check_updates",
+      "value": "Check for updates"
+    },
+    {
+      "name": "session_file",
+      "value": "FILE"
+    },
+    {
+      "name": "session_own_answer_placeholder",
+      "value": "Or enter your own answer…"
+    },
+    {
+      "name": "session_no_messages",
+      "value": "No messages yet. Say hello to start."
+    },
+    {
+      "name": "session_attachment_url_placeholder",
+      "value": "https://example.com/image.png"
+    },
+    {
+      "name": "session_attachment_camera",
+      "value": "Camera"
+    },
+    {
+      "name": "session_attachment_photos",
+      "value": "Photos"
+    },
+    {
+      "name": "session_attachment_file",
+      "value": "File"
+    },
+    {
+      "name": "session_attachment_url",
+      "value": "From URL"
+    },
+    {
+      "name": "session_attachment_saved",
+      "value": "Attachment saved."
+    },
+    {
+      "name": "session_message_placeholder",
+      "value": "Message the agent…"
+    },
+    {
+      "name": "session_takeover_label",
+      "value": "接管"
+    },
+    {
+      "name": "session_takeover_on_toast",
+      "value": "已接管该会话"
+    },
+    {
+      "name": "session_takeover_off_toast",
+      "value": "已退出接管"
+    },
+    {
+      "name": "session_enable_takeover_title",
+      "value": "Turn on takeover?"
+    },
+    {
+      "name": "session_disable_takeover_title",
+      "value": "Turn off takeover?"
+    },
+    {
+      "name": "session_enable_takeover_body",
+      "value": "• Once enabled, you can take over this session from Agents Anywhere on the web.\n• Messages may not show up in the %s client right away; restarting it usually refreshes the sync.\n• Working on this session in both Agents Anywhere and that client at the same time may cause unexpected behavior."
+    },
+    {
+      "name": "session_disable_takeover_body",
+      "value": "• After takeover is turned off, this session goes back to read-only mode and you can no longer send messages.\n• The history created here may not show up in the %s client right away; restarting it usually refreshes the sync."
+    },
+    {
+      "name": "session_enable_takeover_dsh_body",
+      "value": "DSH now syncs with Agents Anywhere in real time. Turn on takeover to send messages."
+    },
+    {
+      "name": "session_disable_takeover_dsh_body",
+      "value": "After takeover is turned off, this session goes back to read-only mode and you can no longer send messages."
+    },
+    {
+      "name": "common_enable",
+      "value": "Enable"
+    },
+    {
+      "name": "common_ok",
+      "value": "OK"
+    },
+    {
+      "name": "session_device_offline_title",
+      "value": "Device is offline"
+    },
+    {
+      "name": "session_device_offline_body",
+      "value": "This session can't receive messages until its device reconnects."
+    },
+    {
+      "name": "common_disable",
+      "value": "Disable"
+    },
+    {
+      "name": "session_attachment_loading",
+      "value": "Loading image…"
+    },
+    {
+      "name": "session_attachment_load_failed",
+      "value": "Could not load the attachment."
+    },
+    {
+      "name": "session_tool_ran",
+      "value": "Ran %1$s"
+    },
+    {
+      "name": "session_tool_command_fallback",
+      "value": "command"
+    },
+    {
+      "name": "session_tool_created_file",
+      "value": "Created %1$s"
+    },
+    {
+      "name": "session_tool_changed_file",
+      "value": "Changed %1$s"
+    },
+    {
+      "name": "session_tool_created_files",
+      "value": "Created files"
+    },
+    {
+      "name": "session_tool_changed_files",
+      "value": "Changed files"
+    },
+    {
+      "name": "session_tool_searched",
+      "value": "Searched %1$s"
+    },
+    {
+      "name": "session_tool_web_fallback",
+      "value": "web"
+    },
+    {
+      "name": "session_tool_reasoning",
+      "value": "Reasoning"
+    },
+    {
+      "name": "session_tool_action_created",
+      "value": "Created"
+    },
+    {
+      "name": "session_tool_action_deleted",
+      "value": "Deleted"
+    },
+    {
+      "name": "session_tool_action_modified",
+      "value": "Modified"
+    },
+    {
+      "name": "session_tool_action_renamed",
+      "value": "Renamed"
+    },
+    {
+      "name": "session_tool_action_changed",
+      "value": "Changed"
+    },
+    {
+      "name": "session_tool_group_reasoning",
+      "value": "Reasoned %1$d times"
+    },
+    {
+      "name": "session_tool_group_tools",
+      "value": "Used tools %1$d times"
+    },
+    {
+      "name": "session_tool_group_items",
+      "value": "%1$d activities"
+    },
+    {
+      "name": "session_tool_running",
+      "value": "Working…"
+    },
+    {
+      "name": "session_tool_more_notices",
+      "value": "%1$d more notices pending"
+    },
+    {
+      "name": "session_tool_label_command",
+      "value": "command"
+    },
+    {
+      "name": "session_tool_label_output",
+      "value": "output"
+    },
+    {
+      "name": "session_tool_copy",
+      "value": "Copy"
+    },
+    {
+      "name": "session_tool_copied",
+      "value": "Copied"
+    },
+    {
+      "name": "files_up",
+      "value": "Up"
+    },
+    {
+      "name": "login_web_link_error",
+      "value": "This link cannot be opened inside the sign-in page."
+    },
+    {
+      "name": "login_web_load_error",
+      "value": "Could not load the web sign-in page."
+    },
+    {
+      "name": "home_new_session",
+      "value": "New session"
+    },
+    {
+      "name": "home_devices",
+      "value": "Devices"
+    },
+    {
+      "name": "home_terminal",
+      "value": "Terminal"
+    },
+    {
+      "name": "home_files",
+      "value": "Files"
+    },
+    {
+      "name": "profile_email",
+      "value": "Email"
+    },
+    {
+      "name": "profile_role",
+      "value": "Role"
+    },
+    {
+      "name": "profile_change_password",
+      "value": "Change password"
+    },
+    {
+      "name": "profile_account",
+      "value": "Account"
+    },
+    {
+      "name": "profile_not_bound",
+      "value": "Not bound"
+    },
+    {
+      "name": "profile_bind_email",
+      "value": "Bind email"
+    },
+    {
+      "name": "profile_email_placeholder",
+      "value": "Email address"
+    },
+    {
+      "name": "profile_email_code_placeholder",
+      "value": "Verification code"
+    },
+    {
+      "name": "profile_email_code_sent",
+      "value": "Verification code sent"
+    },
+    {
+      "name": "profile_email_bound_msg",
+      "value": "Email bound"
+    },
+    {
+      "name": "profile_send",
+      "value": "Send code"
+    },
+    {
+      "name": "profile_email_invalid",
+      "value": "Enter a valid email address"
+    },
+    {
+      "name": "profile_avatar_updated",
+      "value": "Avatar updated."
+    },
+    {
+      "name": "profile_avatar_read_failed",
+      "value": "Could not read that image."
+    },
+    {
+      "name": "new_session_attach_files",
+      "value": "Attach files"
+    },
+    {
+      "name": "new_session_pick_photos",
+      "value": "Photos"
+    },
+    {
+      "name": "new_session_pick_files",
+      "value": "Files"
+    },
+    {
+      "name": "new_session_attachment_limit",
+      "value": "You can attach up to %d files."
+    },
+    {
+      "name": "new_session_attachment_too_large",
+      "value": "%s is too large."
+    },
+    {
+      "name": "new_session_attachment_empty",
+      "value": "%s is empty."
+    },
+    {
+      "name": "new_session_attachment_read_failed",
+      "value": "Could not read an attachment."
+    },
+    {
+      "name": "new_session_message_or_attachment_required",
+      "value": "Enter a message or attach a file before starting."
+    },
+    {
+      "name": "files_windows_drives",
+      "value": "This PC"
+    },
+    {
+      "name": "common_rename",
+      "value": "Rename"
+    },
+    {
+      "name": "common_archive",
+      "value": "Archive"
+    },
+    {
+      "name": "common_unarchive",
+      "value": "Unarchive"
+    },
+    {
+      "name": "common_pin",
+      "value": "Pin"
+    },
+    {
+      "name": "common_unpin",
+      "value": "Unpin"
+    },
+    {
+      "name": "common_cancel",
+      "value": "Cancel"
+    },
+    {
+      "name": "common_retry",
+      "value": "Retry"
+    },
+    {
+      "name": "new_session_title",
+      "value": "New Session"
+    },
+    {
+      "name": "new_session_checking_devices",
+      "value": "Checking devices"
+    },
+    {
+      "name": "new_session_devices_unavailable",
+      "value": "Unable to load devices"
+    },
+    {
+      "name": "new_session_devices_unavailable_description",
+      "value": "Unable to check device status. Please try again."
+    },
+    {
+      "name": "new_session_connect_device_title",
+      "value": "Connect a device first"
+    },
+    {
+      "name": "new_session_connect_device_description",
+      "value": "Sessions run on your computer. Connect a device, then choose an Agent to start chatting."
+    },
+    {
+      "name": "new_session_devices_offline_title",
+      "value": "Your device is offline"
+    },
+    {
+      "name": "new_session_devices_offline_description",
+      "value": "Make sure Agents Anywhere on your computer is connected and has network access, then check again."
+    },
+    {
+      "name": "new_session_agents_unavailable",
+      "value": "Unable to load Agents"
+    },
+    {
+      "name": "new_session_agents_unavailable_description",
+      "value": "Unable to check Agent status. Please try again."
+    },
+    {
+      "name": "new_session_setup_agent_title",
+      "value": "Set up an Agent first"
+    },
+    {
+      "name": "new_session_setup_agent_description",
+      "value": "No Agent is available yet. Set one up in the desktop app to get started."
+    },
+    {
+      "name": "new_session_check_again",
+      "value": "Check again"
+    },
+    {
+      "name": "new_session_view_devices",
+      "value": "View devices"
+    },
+    {
+      "name": "new_session_no_attached_agents",
+      "value": "No configured and running agent on this device."
+    },
+    {
+      "name": "new_session_device",
+      "value": "Device"
+    },
+    {
+      "name": "new_session_agent",
+      "value": "Agent"
+    },
+    {
+      "name": "new_session_no_device",
+      "value": "No device"
+    },
+    {
+      "name": "new_session_workspace",
+      "value": "Working directory"
+    },
+    {
+      "name": "new_session_choose_directory",
+      "value": "Choose a directory"
+    },
+    {
+      "name": "new_session_loading_directory",
+      "value": "Loading directory..."
+    },
+    {
+      "name": "new_session_empty_directory",
+      "value": "This directory is empty."
+    },
+    {
+      "name": "new_session_load_directory_failed",
+      "value": "Could not load this directory."
+    },
+    {
+      "name": "new_session_use_directory",
+      "value": "Use this directory"
+    },
+    {
+      "name": "new_session_first_message",
+      "value": "First message"
+    },
+    {
+      "name": "new_session_message_placeholder",
+      "value": "Describe the first task…"
+    },
+    {
+      "name": "new_session_start_chat",
+      "value": "Start chat"
+    },
+    {
+      "name": "new_session_starting",
+      "value": "Starting..."
+    },
+    {
+      "name": "new_session_select_device_first",
+      "value": "Select a device first."
+    },
+    {
+      "name": "new_session_select_runtime_first",
+      "value": "Select a runtime first."
+    },
+    {
+      "name": "new_session_model",
+      "value": "Model"
+    },
+    {
+      "name": "new_session_reasoning",
+      "value": "Reasoning"
+    },
+    {
+      "name": "new_session_permission",
+      "value": "Permission"
+    },
+    {
+      "name": "new_session_catalog_loading",
+      "value": "Loading live options..."
+    },
+    {
+      "name": "new_session_catalog_unavailable",
+      "value": "Not available"
+    },
+    {
+      "name": "new_session_capabilities_failed",
+      "value": "Could not load runtime capabilities."
+    },
+    {
+      "name": "new_session_model_catalog_failed",
+      "value": "Could not load the model catalog."
+    },
+    {
+      "name": "new_session_permission_catalog_failed",
+      "value": "Could not load the permission catalog."
+    },
+    {
+      "name": "session_runtime_effort_default",
+      "value": "Default"
+    },
+    {
+      "name": "runtime_permission_dsh_read_only",
+      "value": "read-only"
+    },
+    {
+      "name": "runtime_permission_dsh_workspace_write",
+      "value": "workspace-write"
+    },
+    {
+      "name": "runtime_permission_dsh_full_access",
+      "value": "danger-full-access"
+    },
+    {
+      "name": "runtime_permission_request_approval",
+      "value": "Request approval"
+    },
+    {
+      "name": "runtime_permission_auto_review",
+      "value": "Auto review"
+    },
+    {
+      "name": "runtime_permission_full_access",
+      "value": "Full access"
+    },
+    {
+      "name": "runtime_permission_desc_request_approval",
+      "value": "Always ask before editing files outside the workspace or using the internet."
+    },
+    {
+      "name": "runtime_permission_desc_auto_review",
+      "value": "Only ask for approval when Codex detects a risky operation."
+    },
+    {
+      "name": "runtime_permission_desc_full_access",
+      "value": "Allow unrestricted internet access and access to any file on this computer."
+    },
+    {
+      "name": "runtime_permission_claude_default",
+      "value": "Ask permissions"
+    },
+    {
+      "name": "runtime_permission_desc_claude_default",
+      "value": "Use Claude Code's default prompts for risky tools."
+    },
+    {
+      "name": "runtime_permission_claude_accept_edits",
+      "value": "Accept edits"
+    },
+    {
+      "name": "runtime_permission_desc_claude_accept_edits",
+      "value": "Automatically accept file edits; still ask for other risky tools."
+    },
+    {
+      "name": "runtime_permission_claude_plan",
+      "value": "Plan mode"
+    },
+    {
+      "name": "runtime_permission_desc_claude_plan",
+      "value": "Allow planning without executing writes or commands."
+    },
+    {
+      "name": "runtime_permission_claude_auto",
+      "value": "Auto mode"
+    },
+    {
+      "name": "runtime_permission_desc_claude_auto",
+      "value": "Use Claude Code's automatic classifier for risky actions."
+    },
+    {
+      "name": "runtime_permission_claude_dont_ask",
+      "value": "Don't ask"
+    },
+    {
+      "name": "runtime_permission_desc_claude_dont_ask",
+      "value": "Deny unapproved tools instead of asking for permission."
+    },
+    {
+      "name": "runtime_permission_claude_bypass_permissions",
+      "value": "Bypass permissions"
+    },
+    {
+      "name": "runtime_permission_desc_claude_bypass_permissions",
+      "value": "Skip permission prompts and allow unrestricted tool use."
+    },
+    {
+      "name": "home_search_coming_soon",
+      "value": "Search is coming soon."
+    },
+    {
+      "name": "home_project_filter_sessions",
+      "value": "Filter project sessions"
+    },
+    {
+      "name": "home_project_session_status",
+      "value": "Session status"
+    },
+    {
+      "name": "home_project_filter_active",
+      "value": "Active sessions"
+    },
+    {
+      "name": "home_project_filter_archived",
+      "value": "Archived"
+    },
+    {
+      "name": "home_project_filter_all",
+      "value": "All"
+    },
+    {
+      "name": "home_project_filter_devices",
+      "value": "Devices"
+    },
+    {
+      "name": "home_project_filter_all_devices",
+      "value": "All devices"
+    },
+    {
+      "name": "home_project_filter_agents",
+      "value": "Agents"
+    },
+    {
+      "name": "home_project_filter_all_agents",
+      "value": "All Agents"
+    },
+    {
+      "name": "home_project_filter_clear",
+      "value": "Clear filters"
+    },
+    {
+      "name": "home_project_filter_empty",
+      "value": "No projects match the selected device or Agent."
+    },
+    {
+      "name": "home_project_filter_loading",
+      "value": "Checking projects for this device or Agent..."
+    },
+    {
+      "name": "home_session_status_waiting_approval",
+      "value": "Waiting approval"
+    },
+    {
+      "name": "update_available_title",
+      "value": "New version available"
+    },
+    {
+      "name": "update_available_message",
+      "value": "Version v%s is available. Update to stay compatible with the service. Some features may stop working on older versions."
+    },
+    {
+      "name": "update_ignore_version",
+      "value": "Ignore this version"
+    },
+    {
+      "name": "update_now",
+      "value": "Update now"
+    },
+    {
+      "name": "update_open_link_fallback",
+      "value": "Open this address in your browser: %s"
+    },
+    {
+      "name": "update_up_to_date",
+      "value": "You are using the latest version."
+    },
+    {
+      "name": "update_check_failed",
+      "value": "Could not check for updates."
+    },
+    {
+      "name": "update_new_version_badge",
+      "value": "New version"
+    },
+    {
+      "name": "home_projects",
+      "value": "Projects"
+    },
+    {
+      "name": "home_no_projects",
+      "value": "No projects yet."
+    },
+    {
+      "name": "home_project_no_sessions",
+      "value": "No sessions yet."
+    },
+    {
+      "name": "home_project_load_retry",
+      "value": "Could not load sessions. Tap to retry."
+    },
+    {
+      "name": "home_project_edit",
+      "value": "Edit"
+    },
+    {
+      "name": "home_project_pin",
+      "value": "Pin project"
+    },
+    {
+      "name": "home_project_unpin",
+      "value": "Unpin project"
+    },
+    {
+      "name": "home_project_edit_title",
+      "value": "Edit project"
+    },
+    {
+      "name": "home_project_name",
+      "value": "Project name"
+    },
+    {
+      "name": "home_project_device",
+      "value": "Device"
+    },
+    {
+      "name": "home_project_path",
+      "value": "Path"
+    },
+    {
+      "name": "home_project_path_immutable",
+      "value": "The device and path cannot be changed after the project is created."
+    },
+    {
+      "name": "home_project_pinned",
+      "value": "Project pinned."
+    },
+    {
+      "name": "home_project_unpinned",
+      "value": "Project unpinned."
+    },
+    {
+      "name": "home_project_updated",
+      "value": "Project updated."
+    },
+    {
+      "name": "home_project_update_failed",
+      "value": "Could not update project."
+    },
+    {
+      "name": "home_no_active_projects_create",
+      "value": "No active projects yet. Create one when you're ready."
+    },
+    {
+      "name": "home_no_archived_projects_yet",
+      "value": "No projects with archived sessions yet."
+    },
+    {
+      "name": "home_no_projects_create",
+      "value": "No projects yet. Create one when you're ready."
+    },
+    {
+      "name": "home_pair_device_first",
+      "value": "Pair a device first, then you can start sessions there."
+    },
+    {
+      "name": "home_pair_new_device",
+      "value": "Pair a new device"
+    },
+    {
+      "name": "project_name_adjusted",
+      "value": "This name was just taken. An available name is ready; confirm it and submit again."
+    },
+    {
+      "name": "project_workspace_conflict_title",
+      "value": "This directory already belongs to a project"
+    },
+    {
+      "name": "project_workspace_conflict_message",
+      "value": "This directory belongs to “%s”. Continuing will rename it to “%s” and preserve its sessions and settings."
+    },
+    {
+      "name": "project_rename_existing",
+      "value": "Continue and rename"
+    },
+    {
+      "name": "workspace_resolve_failed",
+      "value": "Could not resolve this directory. Try again."
+    },
+    {
+      "name": "common_save",
+      "value": "Save"
+    },
+    {
+      "name": "common_saving",
+      "value": "Saving..."
+    },
+    {
+      "name": "new_session_create_project",
+      "value": "New project"
+    },
+    {
+      "name": "new_session_project_directory",
+      "value": "Project directory"
+    },
+    {
+      "name": "profile_settings",
+      "value": "Settings"
+    },
+    {
+      "name": "profile_updates",
+      "value": "Updates"
+    },
+    {
+      "name": "profile_archived_sessions",
+      "value": "Archived sessions"
+    },
+    {
+      "name": "profile_official_service",
+      "value": "Official Service"
+    },
+    {
+      "name": "profile_self_hosted",
+      "value": "Self-host Service"
+    },
+    {
+      "name": "profile_account_fallback",
+      "value": "Account"
+    },
+    {
+      "name": "profile_nickname",
+      "value": "Nickname"
+    },
+    {
+      "name": "profile_edit_nickname",
+      "value": "Edit nickname"
+    },
+    {
+      "name": "profile_avatar_change",
+      "value": "Tap to change avatar"
+    },
+    {
+      "name": "profile_avatar_updating",
+      "value": "Updating avatar"
+    },
+    {
+      "name": "profile_confirm_password",
+      "value": "Confirm password"
+    },
+    {
+      "name": "profile_password_min_length",
+      "value": "Use at least 8 characters."
+    },
+    {
+      "name": "auth_passwords_do_not_match",
+      "value": "Passwords do not match."
+    },
+    {
+      "name": "profile_updated",
+      "value": "Account updated."
+    },
+    {
+      "name": "archived_all_projects",
+      "value": "All projects"
+    },
+    {
+      "name": "archived_unknown_project",
+      "value": "Unknown project"
+    },
+    {
+      "name": "archived_empty",
+      "value": "No archived sessions"
+    },
+    {
+      "name": "archived_retry",
+      "value": "Retry"
+    },
+    {
+      "name": "archived_restore",
+      "value": "Restore"
+    },
+    {
+      "name": "archived_restore_project",
+      "value": "Restore all"
+    },
+    {
+      "name": "archived_restoring",
+      "value": "Restoring…"
+    },
+    {
+      "name": "archived_restored",
+      "value": "Sessions restored"
+    },
+    {
+      "name": "archived_restore_failed",
+      "value": "Could not restore sessions. Try again."
+    },
+    {
+      "name": "archived_load_more",
+      "value": "Load more"
+    },
+    {
+      "name": "archived_loading_more",
+      "value": "Loading…"
+    },
+    {
+      "name": "archived_time_unavailable",
+      "value": "Time unavailable"
+    },
+    {
+      "name": "archive_loading",
+      "value": "Loading archived sessions…"
+    },
+    {
+      "name": "archive_load_failed",
+      "value": "Could not load archived sessions"
+    },
+    {
+      "name": "archive_retry_hint",
+      "value": "Check your connection and try again."
+    },
+    {
+      "name": "archive_page_empty",
+      "value": "No sessions to display on this page"
+    },
+    {
+      "name": "archive_more_hint",
+      "value": "Load more to see earlier archived sessions."
+    },
+    {
+      "name": "archive_more_failed",
+      "value": "Could not load more sessions"
+    },
+    {
+      "name": "archive_project_empty",
+      "value": "No archived sessions in this project"
+    },
+    {
+      "name": "archive_archived_at",
+      "value": "Archived %s"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "app": {
+    "bundleName": "com.agentsanywhere.app",
+    "vendor": "example",
+    "versionCode": 2010000,
+    "versionName": "2.1.0",
+    "icon": "$media:layered_image",
+    "label": "$string:app_name"
+  }
+}

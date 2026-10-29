@@ -1,0 +1,19 @@
+{
+  "routerMap": [
+    {
+      "name": "session_detail",
+      "pageSourceFile": "src/main/ets/pages/SessionDetailPage.ets",
+      "buildFunction": "SessionDetailPageBuilder"
+    },
+    {
+      "name": "archived_sessions",
+      "pageSourceFile": "src/main/ets/pages/ArchivedSessionsPage.ets",
+      "buildFunction": "ArchivedSessionsPageBuilder"
+    },
+    {
+      "name": "new_project",
+      "pageSourceFile": "src/main/ets/pages/NewProjectPage.ets",
+      "buildFunction": "NewProjectPageBuilder"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "routerMap": [
+    {
+      "name": "files",
+      "pageSourceFile": "src/main/ets/pages/FilesPage.ets",
+      "buildFunction": "FilesPageBuilder"
+    },
+    {
+      "name": "session_agent_files",
+      "pageSourceFile": "src/main/ets/pages/SessionAgentFilesPage.ets",
+      "buildFunction": "SessionAgentFilesPageBuilder"
+    }
+  ]
+}
