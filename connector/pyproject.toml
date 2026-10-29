@@ -6,7 +6,6 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "agent-client-protocol==0.12.1",
-    "cryptography>=44",
     "asyncer>=0.0.18",
     "claude-agent-sdk",
     "httpx[socks]>=0.28.1",

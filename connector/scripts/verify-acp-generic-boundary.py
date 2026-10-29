@@ -1,18 +1,16 @@
-"""Non-Pi ACP integration scenario; authored but not executed in this task."""
+"""Exercise shared ACP sessions with a controlled non-Pi Agent."""
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 import sys
 import tempfile
+from pathlib import Path
 
 from connector.runtimes.acp.application.sessions import SessionService
 from connector.runtimes.acp.domain.definitions import AgentProfile, LaunchDefinition
-from connector.runtimes.acp.domain.capabilities import verified_release
 from connector.runtimes.acp.infrastructure.acp.client import AgentClient
 from connector.runtimes.acp.infrastructure.persistence import Store
 from connector.runtimes.acp.infrastructure.projection import Projection
-from connector.runtimes.acp.provider import AcpProvider
 
 
 async def wait_for(predicate):
@@ -34,12 +32,6 @@ def answer_pending(app, scope):
 
 async def main():
     profile = AgentProfile("controlled-other-agent", "Controlled Agent")
-    provider = AcpProvider(profile)
-    schema = await provider.get_config_schema()
-    assert "agentDir" not in schema.schema["properties"]
-    assert "agentProfileId" not in schema.schema["properties"]
-    assert verified_release(profile, {"profileId": profile.id, "guarantees": [], "acceptance": {}})
-    assert (await provider.discover()).display_name == profile.title
     with tempfile.TemporaryDirectory(prefix="aa-nonpi-acp-") as directory:
         root = Path(directory)
         marker = root / "received.txt"

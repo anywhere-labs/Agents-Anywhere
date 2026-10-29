@@ -13,9 +13,9 @@ Web / Desktop / Android / iOS
   → Pi SDK
 ```
 
-默认 Provider 为 Codex、Claude、DSH、Pi。Pi 使用 `runtimeType=pi`、`implementationType=acp-stdio`，ACP 是内部对接协议。通用 `AcpProvider` 通过注入 `AgentProfile`、启动配置、准备策略复用协调逻辑，其他 Agent 可以有自己的 Provider 身份；默认列表没有单独名为 ACP 的入口。
+默认 Provider 为 Codex、Claude、DSH、Pi。Pi 使用 `runtimeType=pi`、`implementationType=acp-stdio`，ACP 是内部对接协议。通用 `AcpRuntime` 通过注入 `AgentProfile`、启动配置、准备策略复用协调逻辑，其他 Agent 可以有自己的 Provider 身份；默认列表没有单独名为 ACP 的入口。
 
-Pi 的 `PiProvider` 覆盖了通用 Provider 的配置、发现和启动流程：直接托管安装并运行上游 npm 发布包，不经过 AA 签名组件选择。旧 `pi-runtime/`、`connector/connector/runtimes/pi/`、`contracts/pi-bridge/` 已移除。
+Pi 的 `PiProvider` 直接实现 `RuntimeProvider` 的配置、发现和启动流程，托管安装并运行上游 npm 发布包。旧 `pi-runtime/`、`connector/connector/runtimes/pi/`、`contracts/pi-bridge/` 已移除。
 
 ## Pi 实例配置与安装
 
@@ -79,14 +79,11 @@ Connector 显式加载 `permissions.mjs`，打开和恢复会话时核验 Agent 
 
 会话使用独立进程，执行配额和超时由协调层管理。关闭先阻止新请求并失效交互，实际释放进程后收敛状态；异常退出进入恢复状态。进程监督实现包括 POSIX 进程组和 Windows Job，相关受控检查入口见下文。
 
-## 通用 ACP 与组件管理的定位
+## 通用 ACP 与运行环境管理
 
-| 代码 | 当前用途 |
-| --- | --- |
-| `connector/connector/runtimes/acp/` | 默认 Pi 与其他 Profile 共用的 ACP 适配、协调和同步 |
-| 通用 `AcpProvider` 组件服务 | 签名清单、安装、激活、回退和引用保护；与 PiProvider 的 npm 安装路径不同 |
+通用 ACP 适配、协调和同步服务由各 Agent Profile 复用。Pi 直接使用 npm 发布包，不再提供独立的签名组件发布、安装、激活或回退 API。
 
-通用组件服务的正式发布索引和受信公钥当前为空。默认 Pi 直接使用 npm 发布包，无需等待签名组件；TUI 协作、最终模型请求守卫、持久接纳回执和原生位置选择未在默认路径开放。通用原生历史快照按来源完整性处理，不能用部分结果删除其他历史；默认 Pi 没有独立的原生位置选择界面。
+TUI 协作、最终模型请求守卫、持久接纳回执和原生位置选择未在默认路径开放。通用原生历史快照按来源完整性处理，不能用部分结果删除其他历史；默认 Pi 没有独立的原生位置选择界面。
 
 ## 源码与维护入口
 
@@ -103,8 +100,6 @@ Connector 显式加载 `permissions.mjs`，打开和恢复会话时核验 Agent 
 uv run python scripts/verify-acp-runtime.py
 uv run python scripts/verify-acp-generic-boundary.py
 uv run python scripts/verify-acp-processes.py
-uv run python scripts/verify-acp-components.py
-uv run python scripts/verify-acp-packaging.py
 ```
 
 实现变更时同步更新本页，不再追加按轮次记录的完成声明、旧引擎验证结果或已失效的实施顺序。

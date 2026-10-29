@@ -18,11 +18,3 @@ def wire(value: Any) -> Any:
 def require_version(response: dict) -> None:
     if response.get("protocolVersion") != 1:
         raise AcpError("unsupported_acp_version", "该入口只启用了 ACP v1。")
-
-
-def completed_prompt(response: dict) -> dict:
-    return {
-        "accepted": True,
-        "evidence": "v1_prompt_completed",
-        "stopReason": response["stopReason"],
-    }

@@ -199,13 +199,11 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install Connector dependencies
         run: uv sync --project connector
-      - name: Verify actual ACP transport, ownership and components
+      - name: Verify actual ACP transport and ownership
         working-directory: connector
         run: |
           uv run python scripts/verify-acp-runtime.py
           uv run python scripts/verify-acp-processes.py
-          uv run python scripts/verify-acp-components.py
-          uv run python scripts/verify-acp-packaging.py
           uv run python scripts/verify-acp-generic-boundary.py
       - name: Verify published Pi runtime with a local model
         working-directory: connector

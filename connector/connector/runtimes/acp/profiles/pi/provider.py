@@ -12,6 +12,7 @@ from jsonschema import Draft202012Validator
 from connector.runtime_protocol import (
     RuntimeConfig,
     RuntimeConfigSchema,
+    RuntimeProvider,
     RuntimeTypeDescriptor,
 )
 from connector.runtime_protocol.errors import RuntimeInvalidRequestError
@@ -26,7 +27,6 @@ from connector.runtimes.model_gateway import (
 
 from ...domain.definitions import LaunchDefinition
 from ...infrastructure.npm import install_npm_runtime
-from ...provider import AcpProvider
 from .client import PiClient
 from .profile import PI_PROFILE
 from .runtime import ManagedPiRuntime
@@ -41,9 +41,14 @@ DEPENDENCIES = {
 }
 
 
-class PiProvider(AcpProvider):
+class PiProvider(RuntimeProvider):
+    runtime_type = "pi"
+    display_name = "Pi"
+    implementation_type = "acp-stdio"
+    instance_policy = "multiple"
+
     def __init__(self):
-        super().__init__(PI_PROFILE, runtime_type="pi")
+        self.profile = PI_PROFILE
 
     async def get_config_schema(self):
         return RuntimeConfigSchema(

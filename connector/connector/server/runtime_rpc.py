@@ -65,7 +65,6 @@ class RuntimeRpcHandler:
 
     METHODS: ClassVar[set[str]] = {
         "runtime.discover",
-        "runtime.components",
         "session.configuration.get",
         "session.configuration.update",
         "runtime.configSchema",
@@ -106,12 +105,6 @@ class RuntimeRpcHandler:
         return method in self.METHODS or method in WORKFLOW_RPC
 
     async def dispatch(self, method: str, params: dict[str, Any]) -> Any:
-        if method == "runtime.components":
-            parsed = RuntimeIdParams.parse({key: params[key] for key in ("runtime", "runtimeId") if key in params})
-            self._validate_known_scope(parsed.scope, require_entry=True)
-            host = await self.agent_runtime_host.prepare_runtime_host(parsed.runtime_id)
-            result = await self.agent_runtime_supervisor.provider(parsed.runtime_type).manage_components(host, {key: value for key, value in params.items() if key not in {"runtime", "runtimeId", "runtimeType"}})
-            return self._scoped_result(parsed.scope, result)
         if method in {"session.configuration.get", "session.configuration.update"}:
             runtime = self._resolve_agent_runtime(params)
             session_id = params.get("sessionId")

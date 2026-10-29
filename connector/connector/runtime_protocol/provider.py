@@ -90,8 +90,6 @@ class RuntimeProvider(ABC):
     async def stop_runtime(self, runtime: AgentRuntime) -> None:
         await runtime.stop()
 
-    async def manage_components(self, host: RuntimeHostClient, values: Mapping[str, Any]) -> dict[str, Any]:
-        raise RuntimeUnsupportedError("manage_components")
 
     def resource_claims(
         self,

@@ -51,46 +51,6 @@ def main():
                 "required": ["kind", "values"],
                 "properties": {"kind": {"const": "form"}, "values": {"type": "object"}},
             },
-            "componentOperation": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["operation"],
-                "properties": {
-                    "operation": {
-                        "enum": [
-                            "list",
-                            "get_operation",
-                            "install",
-                            "activate",
-                            "rollback",
-                            "remove",
-                        ]
-                    },
-                    "operationId": {"type": "string", "minLength": 1, "maxLength": 160},
-                    "profileId": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 160,
-                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
-                        "default": "pi",
-                    },
-                    "releaseId": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-                },
-                "allOf": [
-                    {
-                        "if": {"properties": {"operation": {"not": {"const": "list"}}}},
-                        "then": {"required": ["operationId"]},
-                    },
-                    {
-                        "if": {
-                            "properties": {
-                                "operation": {"enum": ["install", "activate", "remove"]}
-                            }
-                        },
-                        "then": {"required": ["releaseId"]},
-                    },
-                ],
-            },
             "sourceReplacement": {
                 "type": "object",
                 "additionalProperties": False,

@@ -12,6 +12,4 @@ PI_PROFILE = AgentProfile(
     # Managed npm installation uses the published ACP executable. The client
     # verifies AA's permission extension before exposing a writable session.
     required_guarantees=frozenset({"managed_tool_permissions"}),
-    release_ready=True,
-    unavailable_reason="pi_environment_not_ready",
 )

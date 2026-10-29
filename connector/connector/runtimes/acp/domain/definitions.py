@@ -33,13 +33,8 @@ class AgentProfile:
     id: str
     title: str
     required_guarantees: frozenset[str] = frozenset()
-    release_ready: bool = False
-    unavailable_reason: str = "acp_release_acceptance_pending"
     permission_options: tuple[tuple[str, str], ...] = ()
     runtime_capabilities: tuple[str, ...] = ()
-    # Release acceptance belongs to the profile, never to the ACP transport.
-    required_work_devices: frozenset[str] = frozenset()
-    required_clients: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -54,11 +49,3 @@ class LaunchDefinition:
 class Workspace:
     registered_path: str
     canonical_path: str
-
-
-@dataclass(frozen=True)
-class ComponentReference:
-    release_id: str
-    profile_id: str
-    platform: str
-    architecture: str
