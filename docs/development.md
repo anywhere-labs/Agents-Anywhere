@@ -1,5 +1,38 @@
 # v2 开发指南
 
+Server 的控制面通过 MeshCall 调用 Connector，契约见
+[connector-control/1.0](../contracts/connector-control/1.0/README.md)。请使用
+`cd server && uv run python -m agent_server.main` 或仓库启动脚本，由父进程维护
+共享 Router。直接以 ASGI/uvicorn 启动时，应用生命周期为当前 worker 管理 Router；
+多 worker/多实例继续使用 Redis 路由，不要求粘性会话。
+反向代理需允许 `/api/v2/connector/mesh` WebSocket 升级。使用
+`GET /api/v2/health/mesh` 严格检查 Router 健康；运行期 Router 故障时返回503，
+`/health/ready` 仍可返回200并以 `checks.mesh=error` 单独报告，以便继续提供 WS 控制。
+数据库、Redis、路由订阅、Timeline 和授权订阅故障仍使整体就绪检查返回503。
+先升级 Server，再升级 Connector：未声明回退能力的连接固定使用原 WS；
+新 Connector 优先 Mesh，仅在确定未分发时回退一次，不等待 Mesh 注册。
+标准入口为每条 WebSocket 独立设置完整消息预算：普通客户端、旧 Connector 和终端
+relay 保持16 MiB；认证通过的 Mesh proxy，以及已协商回退能力的基础连接可接收64 MiB。
+限制在解析阶段按解压后的字节数累计分片，普通客户端不能用能力请求头放大预算。
+自定义 ASGI 启动应通过 Python 配置传入同一后端，不能仅使用全局
+`--ws-max-size 67108864`：
+
+```python
+import uvicorn
+from agent_server.infra.websocket_limits import ControlWebSocketProtocol
+
+uvicorn.run(
+    "agent_server.app:create_app", factory=True,
+    host="127.0.0.1", port=8000,
+    ws=ControlWebSocketProtocol, ws_max_size=16 * 1024 * 1024,
+)
+```
+
+后端适配的 Uvicorn/WebSocket 依赖兼容范围由 Server 清单约束，升级范围时需运行
+`cd server && uv run python -m tools.probe_connector_websocket_limits`。
+控制请求在 Redis 中转前检查实际控制帧预算，超限不分发。旧新传输对照步骤见
+[控制传输迁移说明](connector-control-transport.md)。
+
 ## 分支与环境
 
 `main` 是 v2 主线，新功能从最新 `main` 创建分支，分支名为 `<type>/<domain>/<topic>`（type 如 `feat`、`fix`、`docs`；domain 缩写为 `fe`、`be`、`con`、`dsk`、`apk`、`ios`、`dsh`、`docs`，多个 domain 用 `+` 连接），如 `feat/con+be/<topic>`。`v2` 保留用于发布过渡，不再把旧 `main` 的 API 和数据库假定套用到当前主线。历史资料见[升级指南](upgrading.md)。
@@ -95,6 +128,19 @@ yarn workspace agents-anywhere-desktop-renderer protocol:check
 ```
 
 Server 测试应使用隔离测试环境，不要把生产数据库 URL 带入测试进程。Headless 检查通过不代表真实安装、OAuth 回调或远程 Runtime 会话已验证；这些按变更影响单独记录。
+
+### CI 入口与缓存
+
+`.github/workflows/ci.yml` 按路径选择 Connector、Server、DSH 插件、Web 和 Desktop
+检查。Connector 改动同时触发 Server、插件及 Mesh 探针；Server 改动触发 Server、
+插件及 Mesh 探针；契约和工作流的改动触发全部检查。Mesh 作业使用
+专用 Redis 7.4，依次核对只读控制契约、连接代次、跨实例/Router 故障恢复和无 Redis 单进程模式，
+结果 JSON 作为短期 artifact 保存，不依赖业务数据库。
+
+Python 环境在检查前准备一次，Server 中预装当前 Connector，之后以 `--no-sync`
+运行检查；DSH 集成探针通过 `UV_NO_SYNC=true` 复用已准备的两个环境。
+CI 的一次性 PostgreSQL 使用 tmpfs，减少每个用例清表的磁盘开销；不修改生产数据库
+配置。pytest 保留外层硬超时，并输出慢项，Server 另外打印用例名用于定位等待。
 
 ## 构建安装包
 

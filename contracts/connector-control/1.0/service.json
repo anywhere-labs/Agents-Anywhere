@@ -1,0 +1,2525 @@
+{
+  "protocol": "meshcall/1",
+  "services": [
+    {
+      "name": "aa.remote.v1.RuntimeControl",
+      "version": "1",
+      "source_module": "connector.server.mesh_services",
+      "source_qualname": "RuntimeControlService",
+      "balance": {
+        "kind": "round_robin",
+        "key": null
+      },
+      "description": "Discover, inspect and manage configured Runtime instances.",
+      "targeted": true,
+      "methods": [
+        {
+          "name": "discover",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "RuntimeControlServiceDiscoverRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "RuntimeControlServiceDiscoverRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Discover Runtime providers and active instances.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": true,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "configSchema",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "RuntimeControlServiceConfigSchemaRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "RuntimeControlServiceConfigSchemaRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Read the configuration schema for a Runtime provider.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": true,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "config",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "RuntimeControlServiceConfigRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "RuntimeControlServiceConfigRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Read one Runtime instance configuration and status.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": true,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "validateConfig",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "RuntimeControlServiceValidateConfigRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "RuntimeControlServiceValidateConfigRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Validate a Runtime configuration without starting it.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": true,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "start",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "RuntimeControlServiceStartRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "RuntimeControlServiceStartRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Start or reconcile a configured Runtime instance.",
+          "annotations": {
+            "idempotent": false,
+            "read_only": false,
+            "destructive": true
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "stop",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "RuntimeControlServiceStopRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "RuntimeControlServiceStopRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Stop a configured Runtime instance.",
+          "annotations": {
+            "idempotent": false,
+            "read_only": false,
+            "destructive": true
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "capabilities",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "RuntimeControlServiceCapabilitiesRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "RuntimeControlServiceCapabilitiesRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Read Runtime-wide capabilities.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": true,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "commands",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "RuntimeControlServiceCommandsRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "RuntimeControlServiceCommandsRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "List Runtime-wide commands.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": true,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "modelCatalog",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "RuntimeControlServiceModelCatalogRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "RuntimeControlServiceModelCatalogRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Read the Runtime model catalog.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": true,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "permissionCatalog",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "RuntimeControlServicePermissionCatalogRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "RuntimeControlServicePermissionCatalogRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Read the Runtime permission catalog.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": true,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        }
+      ]
+    },
+    {
+      "name": "aa.remote.v1.Sessions",
+      "version": "1",
+      "source_module": "connector.server.mesh_services",
+      "source_qualname": "SessionService",
+      "balance": {
+        "kind": "round_robin",
+        "key": null
+      },
+      "description": "Read and operate Agent sessions owned by a Runtime instance.",
+      "targeted": true,
+      "methods": [
+        {
+          "name": "discover",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "SessionServiceDiscoverRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "SessionServiceDiscoverRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Discover native sessions for a Runtime instance.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": true,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "create",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "SessionServiceCreateRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "SessionServiceCreateRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Create a session and start its first turn.",
+          "annotations": {
+            "idempotent": false,
+            "read_only": false,
+            "destructive": true
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "sync",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "SessionServiceSyncRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "SessionServiceSyncRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Apply a Server session snapshot to the Runtime adapter.",
+          "annotations": {
+            "idempotent": false,
+            "read_only": false,
+            "destructive": true
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "state",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "SessionServiceStateRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "SessionServiceStateRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Read the current live state of a session.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": true,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "capabilities",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "SessionServiceCapabilitiesRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "SessionServiceCapabilitiesRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Read effective capabilities for a session.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": true,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "notices",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "SessionServiceNoticesRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "SessionServiceNoticesRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Read current Runtime-owned notices for a session.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": true,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "updateSelections",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "SessionServiceUpdateSelectionsRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "SessionServiceUpdateSelectionsRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Update model, permission or other session selections.",
+          "annotations": {
+            "idempotent": false,
+            "read_only": false,
+            "destructive": true
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "commands",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "SessionServiceCommandsRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "SessionServiceCommandsRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "List commands available in a session.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": true,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "executeCommand",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "SessionServiceExecuteCommandRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "SessionServiceExecuteCommandRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Execute a Runtime command in a session.",
+          "annotations": {
+            "idempotent": false,
+            "read_only": false,
+            "destructive": true
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "sendMessage",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "SessionServiceSendMessageRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "SessionServiceSendMessageRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Send a user message to an existing session.",
+          "annotations": {
+            "idempotent": false,
+            "read_only": false,
+            "destructive": true
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "steer",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "SessionServiceSteerRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "SessionServiceSteerRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Append guidance to a running session turn.",
+          "annotations": {
+            "idempotent": false,
+            "read_only": false,
+            "destructive": true
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "interrupt",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "SessionServiceInterruptRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "SessionServiceInterruptRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Interrupt the active turn of a session.",
+          "annotations": {
+            "idempotent": false,
+            "read_only": false,
+            "destructive": true
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "respondInteraction",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "SessionServiceRespondInteractionRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "SessionServiceRespondInteractionRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Respond to a Runtime interaction or approval.",
+          "annotations": {
+            "idempotent": false,
+            "read_only": false,
+            "destructive": true
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        }
+      ]
+    },
+    {
+      "name": "aa.remote.v1.Workspaces",
+      "version": "1",
+      "source_module": "connector.server.mesh_services",
+      "source_qualname": "WorkspaceService",
+      "balance": {
+        "kind": "round_robin",
+        "key": null
+      },
+      "description": "Reconcile Runtime-owned workspace inventory.",
+      "targeted": true,
+      "methods": [
+        {
+          "name": "refresh",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "WorkspaceServiceRefreshRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "WorkspaceServiceRefreshRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Request a fresh Runtime-owned workspace inventory.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": false,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        }
+      ]
+    },
+    {
+      "name": "aa.remote.v1.Files",
+      "version": "1",
+      "source_module": "connector.server.mesh_services",
+      "source_qualname": "FileService",
+      "balance": {
+        "kind": "round_robin",
+        "key": null
+      },
+      "description": "Control Connector-local file access; file bytes retain their data plane.",
+      "targeted": true,
+      "methods": [
+        {
+          "name": "prepareDownload",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "FileServicePrepareDownloadRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "FileServicePrepareDownloadRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Prepare a Connector file for download through the data plane.",
+          "annotations": {
+            "idempotent": false,
+            "read_only": false,
+            "destructive": true
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "uploadPreparedDownload",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "FileServiceUploadPreparedDownloadRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "FileServiceUploadPreparedDownloadRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Start upload of a previously prepared download.",
+          "annotations": {
+            "idempotent": false,
+            "read_only": false,
+            "destructive": true
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "writeFile",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "FileServiceWriteFileRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "FileServiceWriteFileRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Write a local workspace file.",
+          "annotations": {
+            "idempotent": false,
+            "read_only": false,
+            "destructive": true
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "readDir",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "FileServiceReadDirRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "FileServiceReadDirRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "List a local workspace directory.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": true,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "readText",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "FileServiceReadTextRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "FileServiceReadTextRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Read a local workspace text file.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": true,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        }
+      ]
+    },
+    {
+      "name": "aa.remote.v1.Shell",
+      "version": "1",
+      "source_module": "connector.server.mesh_services",
+      "source_qualname": "ShellService",
+      "balance": {
+        "kind": "round_robin",
+        "key": null
+      },
+      "description": "Execute and supervise bounded Connector-local shell tasks.",
+      "targeted": true,
+      "methods": [
+        {
+          "name": "execute",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "ShellServiceExecuteRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "ShellServiceExecuteRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Execute a bounded local shell command.",
+          "annotations": {
+            "idempotent": false,
+            "read_only": false,
+            "destructive": true
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "startTask",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "ShellServiceStartTaskRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "ShellServiceStartTaskRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Start a tracked local shell task.",
+          "annotations": {
+            "idempotent": false,
+            "read_only": false,
+            "destructive": true
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "cancelTask",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "ShellServiceCancelTaskRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "ShellServiceCancelTaskRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Cancel a tracked local shell task.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": false,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        }
+      ]
+    },
+    {
+      "name": "aa.remote.v1.Terminals",
+      "version": "1",
+      "source_module": "connector.server.mesh_services",
+      "source_qualname": "TerminalService",
+      "balance": {
+        "kind": "round_robin",
+        "key": null
+      },
+      "description": "Manage PTYs; the continuous byte stream remains on the relay data plane.",
+      "targeted": true,
+      "methods": [
+        {
+          "name": "create",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "TerminalServiceCreateRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "TerminalServiceCreateRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Create a local terminal.",
+          "annotations": {
+            "idempotent": false,
+            "read_only": false,
+            "destructive": true
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "write",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "TerminalServiceWriteRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "TerminalServiceWriteRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Write input to a local terminal.",
+          "annotations": {
+            "idempotent": false,
+            "read_only": false,
+            "destructive": true
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "resize",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "TerminalServiceResizeRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "TerminalServiceResizeRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Resize a local terminal.",
+          "annotations": {
+            "idempotent": false,
+            "read_only": false,
+            "destructive": true
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "close",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "TerminalServiceCloseRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "TerminalServiceCloseRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Close a local terminal.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": false,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "rename",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "TerminalServiceRenameRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "TerminalServiceRenameRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Rename a local terminal.",
+          "annotations": {
+            "idempotent": false,
+            "read_only": false,
+            "destructive": true
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "setPersistent",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "TerminalServiceSetPersistentRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "TerminalServiceSetPersistentRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Change terminal persistence across client disconnects.",
+          "annotations": {
+            "idempotent": false,
+            "read_only": false,
+            "destructive": true
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "list",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "TerminalServiceListRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "TerminalServiceListRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "List local terminals.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": true,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "release",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "TerminalServiceReleaseRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "TerminalServiceReleaseRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Release a terminal client lease.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": false,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "snapshot",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "TerminalServiceSnapshotRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "TerminalServiceSnapshotRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Read a terminal scrollback snapshot.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": true,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
+          "name": "connectRelay",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "TerminalServiceConnectRelayRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "TerminalServiceConnectRelayRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Connect the terminal relay data plane.",
+          "annotations": {
+            "idempotent": false,
+            "read_only": false,
+            "destructive": true
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        }
+      ]
+    }
+  ]
+}

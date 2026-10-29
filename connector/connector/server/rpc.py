@@ -7,8 +7,13 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from meshcall import MeshCallError
+from meshcall.transport import DEFAULT_MAX_FRAME_SIZE
+
 from connector.logging import logger
 from connector.runtime_protocol import RuntimeProtocolError
+from connector.server.control_log import control_log, error_fields
+from connector.server.mesh_services import ConnectorControlExecutor
 
 ConnectorDispatcher = Callable[[str, dict[str, Any]], Awaitable[Any]]
 
@@ -84,6 +89,9 @@ class ConnectorRpcChannel:
 
     def __init__(self) -> None:
         self._generation = 0
+        self._executor: ConnectorControlExecutor | None = None
+        self._executor_generation = ""
+        self._business_methods: frozenset[str] = frozenset()
         self._ws: WebSocketSender | None = None
         self._send_queue: asyncio.Queue[_QueuedSend] | None = None
         self._send_worker_task: asyncio.Task[None] | None = None
@@ -91,8 +99,10 @@ class ConnectorRpcChannel:
         self._request_semaphore = asyncio.Semaphore(8)
         self._critical_request_semaphore = asyncio.Semaphore(2)
 
-    def set_connection(self, ws: WebSocketSender) -> None:
+    def set_connection(self, ws: WebSocketSender, *, executor: ConnectorControlExecutor | None = None,
+                       generation: str = "", business_methods: frozenset[str] = frozenset()) -> None:
         self.clear_connection()
+        self._executor, self._executor_generation, self._business_methods = executor, generation, business_methods
         if self._send_worker_task is not None:
             self._send_worker_task.cancel()
         self._ws = ws
@@ -105,6 +115,8 @@ class ConnectorRpcChannel:
     def clear_connection(self) -> None:
         self._generation += 1
         self._ws = None
+        self._executor = None
+        self._business_methods = frozenset()
         if self._send_worker_task is not None:
             self._send_worker_task.cancel()
             self._send_worker_task = None
@@ -146,55 +158,38 @@ class ConnectorRpcChannel:
         params = message.get("params") if isinstance(message.get("params"), dict) else {}
         if not isinstance(request_id, str) or not isinstance(method, str):
             return
-        logger.opt(lazy=True).debug(
-            "connector rpc request received method={} id={} payload={}",
-            lambda: method,
-            lambda: request_id,
-            lambda: sanitize_rpc_log_value(params),
-        )
+        managed = self._executor is not None
+        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+        call_id = metadata.get("aa-control-call-id", request_id)
+        connection_id = metadata.get("aa-connection-id", "")
+        if not managed:
+            logger.opt(lazy=True).debug("connector rpc request received method={} id={} payload={}",
+                                       lambda: method, lambda: request_id, lambda: sanitize_rpc_log_value(params))
         try:
-            result = await dispatch(method, params)
-            logger.opt(lazy=True).debug(
-                "connector rpc request completed method={} id={} result={}",
-                lambda: method,
-                lambda: request_id,
-                lambda: sanitize_rpc_log_value(result),
-            )
+            if managed and method in self._business_methods:
+                result = await self._executor.execute(method, params, self._executor_generation,
+                    call_id, connection_id, context={"transport": "websocket", "rpcRequestId": request_id})
+            else:
+                result = await dispatch(method, params)
+            if not managed:
+                logger.opt(lazy=True).debug("connector rpc request completed method={} id={} result={}",
+                                           lambda: method, lambda: request_id, lambda: sanitize_rpc_log_value(result))
             if generation == self._generation:
-                await self.send_response(request_id, ok=True, result=result)
-        except RuntimeProtocolError as exc:
-            logger.warning(
-                "connector runtime request failed method={} id={} code={} message={}",
-                method,
-                request_id,
-                exc.code,
-                str(exc),
-            )
-            logger.opt(lazy=True).debug(
-                "connector rpc request failed method={} id={} error={}",
-                lambda: method,
-                lambda: request_id,
-                lambda exc=exc: sanitize_rpc_log_value({"code": exc.code, "message": str(exc)}),
-            )
-            if generation == self._generation:
-                await self.send_response(
-                    request_id, ok=False,
-                    error={"code": exc.code, "message": str(exc)},
-                )
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("connector request failed method={} id={}", method, request_id)
+                await self.send_response(request_id, ok=True, result=result, metadata=metadata if managed else None)
+        except Exception as exc:  # noqa: BLE001 - send domain failures through the original RPC envelope
             code = getattr(exc, "code", None) or exc.__class__.__name__
-            logger.opt(lazy=True).debug(
-                "connector rpc request failed method={} id={} error={}",
-                lambda: method,
-                lambda: request_id,
-                lambda exc=exc: sanitize_rpc_log_value({"code": code, "message": str(exc)}),
-            )
+            details = dict(getattr(exc, "details", None) or {})
+            if managed:
+                if details.get("source") != "connector_executor":
+                    details["source"] = "connector_domain"
+                control_log("websocket.adapter_failed", level="WARNING", callId=call_id,
+                            connectionId=connection_id, rpcRequestId=request_id, method=method,
+                            **error_fields(exc, stack=not isinstance(exc, (RuntimeProtocolError, MeshCallError))))
+            else:
+                logger.warning("connector runtime request failed method={} id={} code={}", method, request_id, code)
             if generation == self._generation:
-                await self.send_response(
-                    request_id, ok=False,
-                    error={"code": code, "message": str(exc)},
-                )
+                await self.send_response(request_id, ok=False, error={"code": code, "message": str(exc),
+                    **({"details": details} if managed else {})}, metadata=metadata if managed else None)
 
     def start_request(
         self,
@@ -228,6 +223,9 @@ class ConnectorRpcChannel:
         generation: int | None = None,
     ) -> None:
         method = message.get("method")
+        if self._executor is not None and (method in self._business_methods or method == "connector.mesh.connection"):
+            await self.handle_message(message, dispatch, generation=generation)
+            return
         semaphore = (
             self._critical_request_semaphore
             if method in CRITICAL_RPC_METHODS
@@ -262,21 +260,32 @@ class ConnectorRpcChannel:
         *,
         ok: bool,
         result: Any = None,
-        error: dict[str, str] | None = None,
+        error: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         payload: dict[str, Any] = {"id": request_id, "type": "response", "ok": ok}
         if ok:
             payload["result"] = result
         else:
             payload["error"] = error or {"code": "error", "message": "connector request failed"}
+        if metadata:
+            payload["metadata"] = {key: metadata[key] for key in ("aa-control-call-id", "aa-connection-id") if key in metadata}
         response_body = payload.get("result") if ok else payload.get("error")
-        logger.opt(lazy=True).debug(
-            "connector rpc response sending id={} ok={} payload={}",
-            lambda: request_id,
-            lambda: ok,
-            lambda: sanitize_rpc_log_value(response_body),
-        )
-        await self.send_json(payload)
+        if self._executor is None:
+            logger.opt(lazy=True).debug("connector rpc response sending id={} ok={} payload={}",
+                                       lambda: request_id, lambda: ok, lambda: sanitize_rpc_log_value(response_body))
+        try:
+            await self.send_json(payload, max_frame_bytes=DEFAULT_MAX_FRAME_SIZE if self._executor is not None else None)
+        except ConnectorWebSocketFrameTooLarge:
+            control_log("websocket.response_rejected", level="WARNING", rpcRequestId=request_id,
+                        callId=(metadata or {}).get("aa-control-call-id"), reason="frame_too_large",
+                        deliveryState="outcome_unknown")
+            # The handler may have completed. Return a small error without
+            # sending an oversized frame that would destroy the base session.
+            payload.pop("result", None)
+            payload.update(ok=False, error={"code": "resource_exhausted", "message": "WebSocket control response exceeds frame budget",
+                "details": {"source": "connector_transport", "reason": "frame_too_large", "deliveryState": "outcome_unknown"}})
+            await self.send_json(payload, max_frame_bytes=DEFAULT_MAX_FRAME_SIZE)
 
     async def send_json(
         self,

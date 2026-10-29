@@ -66,6 +66,14 @@ class Store(
         self._session_revision_publisher: Any | None = None
         self._session_revision_range_sealer: Any | None = None
         self._connector_lifecycle_factory: Any | None = None
+        self._connector_credentials_changed: Any | None = None
+
+    def bind_connector_credentials_changed(self, callback: Any) -> None:
+        self._connector_credentials_changed = callback
+
+    async def connector_credentials_changed(self, connector_id: str) -> None:
+        if self._connector_credentials_changed is not None:
+            await self._connector_credentials_changed(connector_id)
 
     def bind_connector_lifecycle(self, factory: Any) -> None:
         self._connector_lifecycle_factory = factory

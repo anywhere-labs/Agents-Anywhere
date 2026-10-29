@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import uvicorn
+import uvicorn  # noqa: F401 - preserve the public launcher module alias
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -24,6 +24,7 @@ from agent_server.api import (
     client_ws,
     connector_files,
     connector_ingress,
+    connector_mesh,
     connector_runtimes,
     connector_shell,
     connector_terminal,
@@ -43,6 +44,8 @@ from agent_server.core.api_namespace import API_V2_PREFIX
 from agent_server.core.process_settings import ProcessSettings
 from agent_server.core.setup_token import SetupToken
 from agent_server.core.utc import utc_now
+from agent_server.infra.connector_mesh import ConnectorMesh
+from agent_server.infra.connector_mesh_control import MeshConnectorControlTransport
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.db.migrations import (
     database_schema_version,
@@ -50,6 +53,7 @@ from agent_server.infra.db.migrations import (
     upgrade_database,
 )
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
+from agent_server.infra.logging import configure_server_logging
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
@@ -116,6 +120,7 @@ def create_app(
     (see the Compose ``migrate-next`` step), so ``migrate_database`` is off by
     default; the test suite migrates its own database once per session.
     """
+    configure_server_logging()
     process_settings = ProcessSettings.from_environment()
     resolved_redis_url = redis_url
     if resolved_redis_url is None:
@@ -137,6 +142,7 @@ def create_app(
                 app.state.store.engine
             )
             await app.state.redis.start()
+            await app.state.connector_mesh.ensure_router()
             await app.state.timeline_broker.start()
             await app.state.timeline_write_buffer.start()
             await app.state.terminal_stream_hub.start()
@@ -169,7 +175,10 @@ def create_app(
             except Exception:  # noqa: BLE001 - shutdown must continue
                 logger.exception("failed to flush usage events on shutdown")
             try:
-                await app.state.rpc.close()
+                try:
+                    await app.state.connector_mesh.close()
+                finally:
+                    await app.state.rpc.close()
             finally:
                 try:
                     await app.state.timeline_write_buffer.close()
@@ -228,6 +237,13 @@ def create_app(
         instance_id=process_settings.instance_id(),
     )
     app.state.store.bind_connector_lifecycle(app.state.rpc.lifecycle_guard)
+    app.state.connector_mesh = ConnectorMesh(
+        app.state.rpc, app.state.redis, credential_loader=app.state.store.connector_credential_fingerprint,
+    )
+    app.state.store.bind_connector_credentials_changed(app.state.connector_mesh.credentials.invalidate)
+    app.state.rpc.bind_request_transport(
+        MeshConnectorControlTransport(app.state.connector_mesh, app.state.rpc)
+    )
     app.state.fs_downloads = FsDownloadRelayManager(app.state.redis)
     app.state.shell_tasks = ShellTaskManager(app.state.redis)
     app.state.terminal_broker = TerminalBroker(
@@ -343,11 +359,22 @@ def create_app(
                 checks["redis"] = {"status": "error", "message": str(exc)}
         else:
             checks["redis"] = {"status": "not_configured"}
-        if app.state.timeline_broker.healthy:
+        authorization_healthy = (app.state.connector_mesh.credentials is not None
+                                 and app.state.connector_mesh.credentials.healthy)
+        if app.state.timeline_broker.healthy and app.state.rpc.healthy and authorization_healthy:
             checks["realtime"] = {"status": "ok"}
         else:
             ready = False
             checks["realtime"] = {"status": "error", "message": "subscription unavailable"}
+        # Router availability is diagnostic while both control transports share
+        # the critical base-session authorization and routing dependencies above.
+        if app.state.connector_mesh.router_url:
+            try:
+                async with asyncio.timeout(2):
+                    await app.state.connector_mesh.health()
+                checks["mesh"] = {"status": "ok"}
+            except Exception:  # noqa: BLE001 - readiness reports Router dependency failures
+                checks["mesh"] = {"status": "error", "message": "MeshCall Router unavailable"}
         return JSONResponse(
             status_code=200 if ready else 503,
             content={
@@ -374,6 +401,7 @@ def create_app(
     app.include_router(connector_terminal.router, prefix=API_V2_PREFIX)
     app.include_router(client_ws.router, prefix=API_V2_PREFIX)
     app.include_router(connector_ingress.router, prefix=API_V2_PREFIX)
+    app.include_router(connector_mesh.router, prefix=API_V2_PREFIX)
     app.include_router(agents.router, prefix=API_V2_PREFIX)
     app.include_router(pairing.router, prefix=API_V2_PREFIX)
     app.include_router(projects.router, prefix=API_V2_PREFIX)
@@ -449,15 +477,5 @@ def create_app(
 
 
 def main() -> None:
-    settings = ProcessSettings.from_environment()
-    settings.validate_shared_state(
-        redis_configured=bool(os.environ.get("AGENT_SERVER_REDIS_URL"))
-    )
-    uvicorn.run(
-        "agent_server.app:create_app",
-        factory=True,
-        host=settings.host,
-        port=settings.port,
-        workers=settings.workers,
-        reload=False,
-    )
+    from agent_server.main import main as run
+    run([])

@@ -35,8 +35,13 @@ AGENT_SERVER_DB_URL=postgresql+asyncpg://agents:password@127.0.0.1:5432/agents_a
 
 AGENT_SERVER_DB_URL=postgresql+asyncpg://agents:password@127.0.0.1:5432/agents_anywhere \
 AGENT_SERVER_REDIS_URL=redis://127.0.0.1:6379/0 \
-  uv run uvicorn agent_server.app:create_app --factory --host 127.0.0.1 --port 8000
+  uv run python -m agent_server.main --host 127.0.0.1 --port 8000
 ```
+
+标准启动入口将普通 WebSocket 的完整消息接收预算保持为16 MiB；仅认证通过的
+Mesh proxy 和已协商回退能力的 Connector 基础连接使用64 MiB。自定义 ASGI 启动
+需通过 Python 配置传入 `ControlWebSocketProtocol`，具体示例见
+[开发指南](../docs/development.md)，不能仅提高全局 WebSocket 上限。
 
 The Server requires the database to be at its exact Alembic schema revision and
 does not mutate a production database during startup. `upgrade` stamps an
@@ -198,7 +203,7 @@ A manually prepared static export can be served with:
 
 ```bash
 AGENT_SERVER_STATIC_DIR=/path/to/web-next/out \
-  uv run uvicorn agent_server.app:create_app --factory --host 127.0.0.1 --port 8000
+  uv run python -m agent_server.main --host 127.0.0.1 --port 8000
 ```
 
 ## Verify

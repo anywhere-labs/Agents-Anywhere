@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import test, { type TestContext } from 'node:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { once } from 'node:events'
 import { tmpdir } from 'node:os'
@@ -10,11 +10,24 @@ import { launchConnector } from '../helpers/python-connector.js'
 
 const config = (id: string) => ({ serverUrl: 'https://example.test', connectorId: id, connectorToken: 'fixture' })
 
+function trackedConnectors(t: TestContext, home: string) {
+  const children: ReturnType<typeof launchConnector>[] = []
+  t.after(async () => {
+    const results = await Promise.allSettled(children.map(child => child.close()))
+    await rm(home, { recursive: true, force: true })
+    for (const result of results) if (result.status === 'rejected') throw result.reason
+  })
+  return (...args: Parameters<typeof launchConnector>) => {
+    const child = launchConnector(...args)
+    children.push(child)
+    return child
+  }
+}
+
 test('Python Desktop and plugin race, CLI is excluded, and the same RPC channel retries after exit', { timeout: 20000 }, async t => {
   const home = await mkdtemp(join(tmpdir(), 'aa-python-owners-'))
-  t.after(() => rm(home, { recursive: true, force: true }))
-  const desktop = launchConnector(home, 'desktop-workbench'), plugin = launchConnector(home, 'dsh-plugin')
-  t.after(async () => { await desktop.close(); await plugin.close() })
+  const launch = trackedConnectors(t, home)
+  const desktop = launch(home, 'desktop-workbench'), plugin = launch(home, 'dsh-plugin')
   assert.equal((await desktop.request('connector.getState')).running, false)
   assert.equal(readLocalState(localRuntimePath(home)).runtime, undefined, 'Opening RPC does not claim ownership')
   const results = await Promise.allSettled([desktop.request('connector.start', config('desktop-id')), plugin.request('connector.start', config('plugin-id'))])
@@ -31,8 +44,7 @@ test('Python Desktop and plugin race, CLI is excluded, and the same RPC channel 
   assert.equal(readLocalState(file).runtime?.pid, winner.child.pid)
   assert.equal(readLocalState(file).runtime?.childPid, undefined)
   assert.deepEqual(readLocalState(file).connectorIds, [winnerId])
-  const cli = launchConnector(home, 'cli', 'start')
-  t.after(() => cli.close())
+  const cli = launch(home, 'cli', 'start')
   assert.equal((await once(cli.child, 'exit'))[0], 2)
   assert.match(cli.stderr, /Another Connector is running/)
   assert.deepEqual(readLocalState(file).connectorIds, [winnerId])
@@ -40,8 +52,7 @@ test('Python Desktop and plugin race, CLI is excluded, and the same RPC channel 
   assert.equal((await loser.request('connector.start', config(loserId))).running, true)
   assert.deepEqual(readLocalState(file).connectorIds, [winnerId, loserId])
   await loser.close(true)
-  const next = launchConnector(home, 'cli', 'start')
-  t.after(() => next.close())
+  const next = launch(home, 'cli', 'start')
   for (let i = 0; !next.stderr.includes('backend-ready'); i++) {
     assert.ok(i < 300, next.stderr)
     assert.equal(next.child.exitCode, null)
@@ -55,10 +66,9 @@ test('Python Desktop and plugin race, CLI is excluded, and the same RPC channel 
 
 test('CLI ownership blocks both RPC launchers without killing their control channels', { timeout: 15000 }, async t => {
   const home = await mkdtemp(join(tmpdir(), 'aa-cli-owner-'))
-  t.after(() => rm(home, { recursive: true, force: true }))
-  const cli = launchConnector(home, 'cli', 'start')
-  const clients = [launchConnector(home, 'desktop-workbench'), launchConnector(home, 'dsh-plugin')]
-  t.after(async () => { await cli.close(); for (const client of clients) await client.close() })
+  const launch = trackedConnectors(t, home)
+  const cli = launch(home, 'cli', 'start')
+  const clients = [launch(home, 'desktop-workbench'), launch(home, 'dsh-plugin')]
   for (let i = 0; !cli.stderr.includes('backend-ready'); i++) { assert.ok(i < 300, cli.stderr); await delay(20) }
   for (const client of clients) {
     await assert.rejects(client.request('connector.acquireOwnership'), { code: 'connector_already_running' })
