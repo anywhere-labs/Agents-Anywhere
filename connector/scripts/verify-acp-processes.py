@@ -16,13 +16,17 @@ from connector.runtimes.acp.domain.definitions import LaunchDefinition
 from connector.runtimes.acp.infrastructure.processes import AgentProcess
 
 
+def process_alive(pid):
+    try:
+        return psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        # A child can disappear between opening the PID and reading its status.
+        return False
+
+
 async def gone(pids):
     async with asyncio.timeout(8):
-        while any(
-            psutil.pid_exists(pid)
-            and psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
-            for pid in pids
-        ):
+        while any(process_alive(pid) for pid in pids):
             await asyncio.sleep(0.05)
 
 

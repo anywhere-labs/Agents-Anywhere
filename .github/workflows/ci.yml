@@ -201,6 +201,7 @@ jobs:
         run: uv sync --project connector
       - name: Verify actual ACP transport and ownership
         working-directory: connector
+        shell: bash
         run: |
           uv run python scripts/verify-acp-runtime.py
           uv run python scripts/verify-acp-processes.py

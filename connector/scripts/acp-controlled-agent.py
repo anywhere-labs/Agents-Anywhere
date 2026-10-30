@@ -17,8 +17,10 @@ def write_marker(text):
 
 
 def send(value):
-    sys.stdout.write(json.dumps({"jsonrpc": "2.0", **value}, ensure_ascii=False) + "\n")
-    sys.stdout.flush()
+    # ACP stdio is UTF-8, regardless of the Windows pipe's locale encoding.
+    payload = json.dumps({"jsonrpc": "2.0", **value}, ensure_ascii=False) + "\n"
+    sys.stdout.buffer.write(payload.encode("utf-8"))
+    sys.stdout.buffer.flush()
 
 
 async def permission(title):
