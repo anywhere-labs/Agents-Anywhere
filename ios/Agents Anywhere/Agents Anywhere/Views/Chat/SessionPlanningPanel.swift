@@ -38,6 +38,7 @@ struct SessionPlanningPanel: View {
                         if let plan = entry.plan {
                             Label(plan.title, systemImage: "doc.text").font(.headline)
                             Text("计划 · 版本 \(plan.revision)").font(.caption).foregroundStyle(.secondary)
+                            ChatMarkdownView(text: plan.markdown).frame(maxHeight: 240, alignment: .top).clipped()
                             HStack {
                                 Button("打开计划") { reader = plan }.frame(minHeight: 44)
                                 if state.review?.planId == plan.planId, state.review?.planRevision == plan.revision,
@@ -94,36 +95,38 @@ private struct SessionPlanReader: View {
     }
 }
 
-struct SessionPlanReviewSheet: View {
+struct SessionPlanReviewPanel: View {
     let chat: SessionChatModel
     let target: V2PlanningState
     @State private var feedback = ""
-    private var valid: Bool {
-        guard let current = chat.session.planning else { return false }
-        return chat.session.runtime.allows("session.plan_review") && current.freshness == "fresh" && current.epoch == target.epoch && current.review?.reviewId == target.review?.reviewId
-            && (current.review?.status == "open" || (current.review?.status == "approved" && current.execution?.status == "rejected" && current.execution?.retryable == true)) && current.capabilities?.actions.isEmpty == false
+    @AccessibilityFocusState private var titleFocused: Bool
+    private func allowed(_ action: String) -> Bool {
+        target.freshness == "fresh" && !target.epoch.isEmpty && target.capabilities?.actions.contains(action) == true && !chat.isWorking
     }
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("\(target.proposal?.title ?? "计划") · 版本 \(target.proposal?.revision ?? 1)").font(.headline)
-                    ChatMarkdownView(text: target.proposal?.markdown ?? "")
-                    if !valid { Text("审阅状态已变化，请刷新后重新打开当前计划。").foregroundStyle(.secondary) }
-                    TextField("修改意见", text: $feedback, axis: .vertical).lineLimit(3...6).textFieldStyle(.roundedBorder).disabled(target.review?.status != "open" || chat.isWorking)
-                    if let error = chat.error { Text(error).foregroundStyle(.red) }
-                }.padding(20)
-            }
-            .navigationTitle("是否执行这个计划？").navigationBarTitleDisplayMode(.inline)
-            .safeAreaInset(edge: .bottom) {
-                VStack(spacing: 8) {
-                    Button(target.review?.status == "approved" ? "重试启动" : "同意并执行") { respond("approve_and_execute") }.frame(minHeight: 44).buttonStyle(.borderedProminent).disabled(!valid || chat.isWorking)
-                    Button("提交修改意见") { respond("request_revision") }.frame(minHeight: 44).disabled(!valid || chat.isWorking || target.review?.status != "open" || feedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    Button("暂不执行") { respond("dismiss_review") }.frame(minHeight: 44).disabled(!valid || chat.isWorking || target.review?.status != "open")
-                }.frame(maxWidth: .infinity).padding().background(.regularMaterial)
-            }
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("稍后查看") { chat.planReviewTarget = nil }.disabled(chat.isWorking) } }
-        }.interactiveDismissDisabled(chat.isWorking)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("是否执行这个计划？").font(.headline).accessibilityAddTraits(.isHeader).accessibilityFocused($titleFocused)
+                Text("\(target.proposal?.title ?? "计划") · 版本 \(target.proposal?.revision ?? 1)").font(.caption).foregroundStyle(.secondary)
+                if target.freshness != "fresh" { Text("原生状态待核对，请刷新后再确认。").font(.caption) }
+                if target.review?.status == "open" {
+                    TextField("修改意见：不，说明需要如何调整计划", text: $feedback, axis: .vertical).lineLimit(2...3).textFieldStyle(.roundedBorder).disabled(!allowed("request_revision"))
+                }
+                if let error = chat.error { Text(error).foregroundStyle(.red) }
+                HStack {
+                    Button(chat.isWorking ? "正在确认…" : target.review?.status == "approved" ? "重试启动" : "同意并执行") { respond("approve_and_execute") }
+                        .frame(minHeight: 44).buttonStyle(.borderedProminent).disabled(!allowed("approve_and_execute"))
+                    if target.review?.status == "open" {
+                        Button("暂不执行") { respond("dismiss_review") }.frame(minHeight: 44).disabled(!allowed("dismiss_review"))
+                    }
+                }
+                if target.review?.status == "open" {
+                    Button("提交修改意见") { respond("request_revision") }.frame(minHeight: 44)
+                        .disabled(!allowed("request_revision") || feedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }.padding(16)
+        }.frame(maxHeight: 300).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20)).padding(.horizontal, 12).padding(.vertical, 8)
+            .onChange(of: chat.planReviewFocusRequest) { titleFocused = true }
     }
-    private func respond(_ action: String) { Task { await chat.respondPlan(target, action: action, feedback: feedback) } }
+    private func respond(_ action: String) { Task { await chat.respondPlan(target, action: action, feedback: action == "request_revision" ? feedback.trimmingCharacters(in: .whitespacesAndNewlines) : "") } }
 }

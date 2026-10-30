@@ -2,7 +2,7 @@
 
 import { useSessionPlanning } from "@/features/planning/use-session-planning"
 import { parsePlanningCommand } from "@/features/planning/commands"
-import { PlanningPanel } from "@/components/session/planning-panel"
+import { PlanningPanel, PlanningReviewPanel, PlanningReader, usePlanReader, getPlanReviewTarget } from "@/components/session/planning-panel"
 
 import * as React from "react"
 import { ArrowDown, ChevronDown, CircleAlert, Loader2, WifiOff } from "lucide-react"
@@ -350,6 +350,8 @@ export function SessionDetail({
   const [loading, setLoading] = React.useState(() => !initialOptimisticState)
   const [error, setError] = React.useState<string | null>(null)
   const planning = useSessionPlanning(token, sessionId)
+  const planReader = usePlanReader(sessionId)
+  const planReviewHeading = React.useRef<HTMLHeadingElement>(null)
   const [sending, setSending] = React.useState(false)
   const [interrupting, setInterrupting] = React.useState(false)
   const [takeoverBusy, setTakeoverBusy] = React.useState(false)
@@ -1663,8 +1665,10 @@ export function SessionDetail({
   // DSH syncs with Agents Anywhere in real time, so the restart-to-sync caveats do not apply.
   const takeoverIsDsh = sessionRuntimeType(session) === "dsh"
 
+  const planReview = getPlanReviewTarget(planning.state, capabilityIsUsable(effectiveCapabilities, CAPABILITY.planReview, sessionRuntimeScope))
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden overscroll-none">
+    <div className="@container/plan-layout flex h-full min-h-0 min-w-0 overflow-hidden">
+    <div className={cn("relative h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden overscroll-none", planReader.document ? "hidden @min-[48rem]/plan-layout:flex" : "flex")}>
       {error ? (
         <Alert variant="destructive" className="mx-auto mt-4 w-[calc(100%-2rem)] max-w-3xl">
           <CircleAlert />
@@ -1744,7 +1748,7 @@ export function SessionDetail({
                 </React.Fragment>
               )
             })}
-            <PlanningPanel key={session.id} planning={planning} canReview={capabilityIsUsable(effectiveCapabilities, CAPABILITY.planReview, sessionRuntimeScope)} />
+            <PlanningPanel key={session.id} planning={planning} canReview={capabilityIsUsable(effectiveCapabilities, CAPABILITY.planReview, sessionRuntimeScope)} onRead={planReader.open} onReview={() => { planReviewHeading.current?.focus({ preventScroll: true }); planReviewHeading.current?.scrollIntoView({ block: "nearest" }) }} />
             {detachedInteractions.map((notice) => (
               <InteractionCard
                 key={notice.noticeId}
@@ -1796,6 +1800,8 @@ export function SessionDetail({
           {onOpenReview && turnReviewDisplay.activeReview ? (
             <SessionReviewTag files={turnReviewDisplay.activeReview.files} onReview={() => onOpenReview()} />
           ) : null}
+          {planReview && <PlanningReviewPanel planning={planning} target={planReview} headingRef={planReviewHeading} onRead={planReader.open} />}
+          <div hidden={planReview !== null}>
           <SessionComposer
             token={token}
             session={session}
@@ -1820,6 +1826,7 @@ export function SessionDetail({
             onCommand={handleSessionCommand}
             onToggleTakeover={() => setPendingTakeover(!session.takeover)}
           />
+          </div>
         </div>
       </div>
       <Dialog
@@ -1880,6 +1887,8 @@ export function SessionDetail({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+    <PlanningReader reader={planReader} className="pt-14" />
     </div>
   )
 }

@@ -7,6 +7,9 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -44,6 +47,7 @@ internal fun SessionPlanningPanel(state: RemotePlanningState?, darkMode: Boolean
                     entry.document?.let { document ->
                         Text(document.title, style = MaterialTheme.typography.titleMedium)
                         Text("计划 · 版本 ${document.revision}", style = MaterialTheme.typography.labelMedium)
+                        Box(Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState())) { AgentMarkdownText(document.markdown, darkMode, onOpenFile = {}) }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(onClick = { reader = document }) { Text("打开计划") }
                             val retry = state.review?.status == "approved" && state.executionStatus == "rejected" && state.executionRetryable
@@ -97,23 +101,25 @@ private fun PlanningWritingTitle(writing: Boolean) {
 }
 
 @Composable
-internal fun PlanningReviewDialog(target: RemotePlanningState, current: RemotePlanningState?, darkMode: Boolean, busy: Boolean, canReview: Boolean = true,
-    onDismiss: () -> Unit, onRespond: (String, String) -> Unit) {
+internal fun PlanningReviewPanel(target: RemotePlanningState, busy: Boolean, focusRequester: FocusRequester, onRespond: (String, String) -> Unit) {
     val document = target.proposal ?: return
-    var feedback by remember(target.review?.reviewId) { mutableStateOf("") }
-    val valid = canReview && current?.freshness == "fresh" && current.epoch == target.epoch && current.review?.reviewId == target.review?.reviewId && (current.review?.status == "open" || (current.review?.status == "approved" && current.executionStatus == "rejected" && current.executionRetryable)) && !current.actions.isNullOrEmpty()
-    Dialog(onDismissRequest = { if (!busy) onDismiss() }) {
-        Surface(shape = MaterialTheme.shapes.large) {
-            Column(Modifier.imePadding().padding(20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("是否执行这个计划？", style = MaterialTheme.typography.titleLarge)
-                Text("${document.title} · 版本 ${document.revision}")
-                Box(Modifier.weight(1f, fill = false).heightIn(max = 320.dp).verticalScroll(rememberScrollState())) { AgentMarkdownText(document.markdown, darkMode, onOpenFile = {}) }
-                if (!valid) Text("审阅状态已变化，请刷新后重新打开当前计划。")
-                OutlinedTextField(value = feedback, onValueChange = { feedback = it }, label = { Text("修改意见") }, enabled = !busy && target.review?.status == "open", modifier = Modifier.fillMaxWidth())
-                Button(onClick = { onRespond("approve_and_execute", "") }, enabled = valid && !busy, modifier = Modifier.fillMaxWidth()) { Text(if (busy) "正在确认…" else if (target.review?.status == "approved") "重试启动" else "同意并执行") }
-                TextButton(onClick = { onRespond("request_revision", feedback) }, enabled = valid && !busy && target.review?.status == "open" && feedback.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("提交修改意见") }
-                TextButton(onClick = { onRespond("dismiss_review", "") }, enabled = valid && !busy && target.review?.status == "open", modifier = Modifier.fillMaxWidth()) { Text("暂不执行") }
+    val review = target.review ?: return
+    var feedback by remember(target.sessionId, target.epoch, review.reviewId, document.planId, document.revision, document.contentHash) { mutableStateOf("") }
+    fun allowed(action: String) = target.freshness == "fresh" && target.epoch.isNotEmpty() && target.actions?.contains(action) == true
+    Surface(shape = MaterialTheme.shapes.large, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), tonalElevation = 2.dp) {
+        Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()).padding(16.dp).focusRequester(focusRequester).focusable(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("是否执行这个计划？", style = MaterialTheme.typography.titleMedium)
+            Text("${document.title} · 版本 ${document.revision}", style = MaterialTheme.typography.labelMedium)
+            if (target.freshness != "fresh") Text("原生状态待核对，请刷新后再确认。")
+            if (review.status == "open") {
+                OutlinedTextField(value = feedback, onValueChange = { feedback = it }, label = { Text("修改意见") }, placeholder = { Text("不，说明需要如何调整计划") }, maxLines = 3,
+                    enabled = !busy && allowed("request_revision"), modifier = Modifier.fillMaxWidth())
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { onRespond("approve_and_execute", "") }, enabled = !busy && allowed("approve_and_execute")) { Text(if (busy) "正在确认…" else if (review.status == "approved") "重试启动" else "同意并执行") }
+                if (review.status == "open") TextButton(onClick = { onRespond("dismiss_review", "") }, enabled = !busy && allowed("dismiss_review")) { Text("暂不执行") }
+            }
+            if (review.status == "open") TextButton(onClick = { onRespond("request_revision", feedback.trim()) }, enabled = !busy && allowed("request_revision") && feedback.isNotBlank()) { Text("提交修改意见") }
         }
     }
 }

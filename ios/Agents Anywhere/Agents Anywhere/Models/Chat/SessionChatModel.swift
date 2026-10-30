@@ -14,15 +14,17 @@ final class SessionChatModel {
         set { session.isPerformingAction = newValue }
     }
     private(set) var isLoadingSettings = false
-    var planReviewTarget: V2PlanningReviewTarget?
-    @ObservationIgnored private var shownPlanReviews = Set<String>()
-    func presentPlanReviewIfNeeded() {
-        guard session.runtime.allows("session.plan_review"), let state = session.planning, state.freshness == "fresh", let review = state.review,
-              review.status == "open", state.capabilities?.actions.isEmpty == false,
-              shownPlanReviews.insert(review.reviewId).inserted else { return }
-        planReviewTarget = V2PlanningReviewTarget(state: state)
+    // The composer derives its pending confirmation from current Runtime state.
+    var planReviewTarget: V2PlanningReviewTarget? {
+        guard session.runtime.allows("session.plan_review"), let state = session.planning,
+              let review = state.review, let plan = state.proposal,
+              state.capabilities?.actions.contains(where: { ["approve_and_execute", "request_revision", "dismiss_review"].contains($0) }) == true,
+              review.status == "open" || (review.status == "approved" && state.execution?.status == "rejected" && state.execution?.retryable == true),
+              review.planId == plan.planId, review.planRevision == plan.revision, review.contentHash == plan.contentHash else { return nil }
+        return .init(state: state)
     }
-    func openPlanReview() { guard session.runtime.allows("session.plan_review") else { return }; if let state = session.planning { planReviewTarget = .init(state: state) } }
+    var planReviewFocusRequest = 0
+    func openPlanReview() { if planReviewTarget != nil { planReviewFocusRequest += 1 } }
     func respondPlan(_ target: V2PlanningState, action: String, feedback: String) async {
         guard !isWorking, let review = target.review else { return }
         isWorking = true; error = nil
@@ -31,7 +33,7 @@ final class SessionChatModel {
             let request = V2PlanningRequest(command: action, feedback: feedback, reviewId: review.reviewId,
                 planId: review.planId, planRevision: review.planRevision, contentHash: review.contentHash,
                 epoch: target.epoch)
-            if try await repository.executePlanning(sessionId: session.id, request: request) { planReviewTarget = nil }
+            _ = try await repository.executePlanning(sessionId: session.id, request: request)
         } catch { self.error = error.localizedDescription }
     }
     var error: String?

@@ -178,11 +178,10 @@ fun SessionDetailScreen(
     composerDraftStore: SessionComposerDraftStore,
     onSessionChanged: (AgentSession) -> Unit = {},
 ) {
-    var planTarget by remember(sessionId) { mutableStateOf<com.agentsanywhere.app.api.RemotePlanningState?>(null) }
+    val planReviewFocus = remember(sessionId) { androidx.compose.ui.focus.FocusRequester() }
     var planningCreation by remember(sessionId, preparedSession?.localSessionId) { mutableStateOf(false) }
     var planningBusy by remember(sessionId) { mutableStateOf(false) }
     val planningSession by rememberUpdatedState(sessionId)
-    val shownPlanReviews = remember(sessionId) { mutableSetOf<String>() }
     val colors = LocalAAColors.current
     val darkMode = colors.isDark
     val context = LocalContext.current
@@ -1498,20 +1497,22 @@ fun SessionDetailScreen(
     }
 
     val canReviewPlanning = state.capabilities.isUsable("session.plan_review", runtimeId, runtimeType)
-    LaunchedEffect(state.planning?.review?.reviewId, state.planning?.freshness, state.planning?.actions, canReviewPlanning) {
-        val current = state.planning
-        val review = current?.review
-        if (canReviewPlanning && current?.freshness == "fresh" && !current.actions.isNullOrEmpty() && review?.status == "open" && shownPlanReviews.add(review.reviewId)) planTarget = current
+    val planTarget = state.planning?.takeIf { current ->
+        val review = current.review
+        val document = current.proposal
+        canReviewPlanning && review != null && document != null &&
+            current.actions?.any { it in setOf("approve_and_execute", "request_revision", "dismiss_review") } == true &&
+            (review.status == "open" || (review.status == "approved" && current.executionStatus == "rejected" && current.executionRetryable)) &&
+            review.planId == document.planId && review.planRevision == document.revision && review.contentHash == document.contentHash
     }
-    planTarget?.let { target ->
-        PlanningReviewDialog(target, state.planning, darkMode, planningBusy, canReview = canReviewPlanning, onDismiss = { planTarget = null }, onRespond = { action, feedback ->
-            val id = sessionId
-            if (id != null && !planningBusy) scope.launch {
-                planningBusy = true
-                controller.respondPlanning(id, target, action, feedback).onSuccess { if (planningSession == id) { state = state.copy(planning = it); planTarget = null } }.onFailure { showError(it.message.orEmpty()) }
-                planningBusy = false
-            }
-        })
+    LaunchedEffect(planTarget?.review?.reviewId) { if (planTarget != null) unfocusComposer() }
+    fun respondPlan(target: com.agentsanywhere.app.api.RemotePlanningState, action: String, feedback: String) {
+        val id = sessionId
+        if (id != null && !planningBusy) scope.launch {
+            planningBusy = true
+            controller.respondPlanning(id, target, action, feedback).onSuccess { if (planningSession == id) state = state.copy(planning = it) }.onFailure { showError(it.message.orEmpty()) }
+            planningBusy = false
+        }
     }
 
     fun sendDraft() {
@@ -1738,7 +1739,7 @@ fun SessionDetailScreen(
                             state.messages.isEmpty() && (state.planning == null || (state.planning?.effectiveMode != "plan" && state.planning?.draft == null && state.planning?.proposal == null && state.planning?.documents.isNullOrEmpty())) && openInteractions.isEmpty() && !hasOpenNotifications ->
                                 SessionWelcomeMessage()
                             else -> MessageList(
-                                planningContent = { SessionPlanningPanel(state.planning, darkMode, canReview = canReviewPlanning) { planTarget = state.planning } },
+                                planningContent = { SessionPlanningPanel(state.planning, darkMode, canReview = canReviewPlanning) { if (planTarget != null) planReviewFocus.requestFocus() } },
                                 messages = state.messages,
                                 darkMode = darkMode,
                                 sessionId = sessionId.orEmpty(),
@@ -1794,7 +1795,10 @@ fun SessionDetailScreen(
                                         onSelect = ::chooseCommand,
                                     )
                                 }
-                                MessageComposer(
+                                planTarget?.let { target ->
+                                    PlanningReviewPanel(target, planningBusy, planReviewFocus, onRespond = { action, feedback -> respondPlan(target, action, feedback) })
+                                }
+                                if (planTarget == null) MessageComposer(
                                     darkMode = darkMode,
                                     draft = if (takeoverEnabled) draft else "",
                                     onDraftChange = ::setComposerDraft,
