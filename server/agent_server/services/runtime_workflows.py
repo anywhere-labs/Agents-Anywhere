@@ -5,10 +5,13 @@ import json
 import secrets
 from typing import Any, Protocol
 
+from pydantic import ValidationError
+
 from agent_server.core.runtime_workflows import (
     BeginCreationRequest,
     PrepareWorkspaceRequest,
     WorkflowInteractionResponse,
+    WorkflowState,
     WorkflowView,
     is_reservation_rejection,
     reservation_rejection,
@@ -258,6 +261,13 @@ class RuntimeWorkflowService:
             raise WorkflowError(
                 "invalid_runtime_response", "Runtime 返回的操作结果无效。", 502
             )
+        if "catalog" in result:
+            try:
+                WorkflowState.model_validate(result)
+            except ValidationError as error:
+                raise WorkflowError(
+                    "invalid_runtime_response", "Runtime 返回的模型目录不符合协议，请更新 Connector。", 502
+                ) from error
         return result
 
     async def _refresh(

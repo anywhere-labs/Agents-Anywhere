@@ -14,6 +14,7 @@ from pydantic import (
 )
 
 from .models import InlineAttachmentRef
+from .protocol import ProtocolModelCatalog
 
 Identity = str
 
@@ -82,6 +83,13 @@ class WorkflowInteractionResponse(BaseModel):
     input: Any = None
 
 
+class WorkflowState(BaseModel):
+    """Keep runtime extensions while validating the shared model catalog."""
+
+    model_config = ConfigDict(extra="allow")
+    catalog: ProtocolModelCatalog | None = None
+
+
 class WorkflowView(BaseModel):
     model_config = ConfigDict(extra="forbid")
     protocolVersion: Literal["1.1", "1.2"] = "1.1"
@@ -91,7 +99,7 @@ class WorkflowView(BaseModel):
     runtimeId: str
     projectId: str
     sessionId: str | None = None
-    state: dict[str, Any]
+    state: WorkflowState
 
 
 class PositionSelectionRequest(BaseModel):

@@ -8,6 +8,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from jsonschema import Draft202012Validator
+
 from connector.runtimes.acp.application.sessions import SessionService
 from connector.runtimes.acp.application.synchronization import SynchronizationService
 from connector.runtimes.acp.domain.definitions import (
@@ -87,6 +89,9 @@ async def main():
                 "ready preparation",
             )
             view = app.preparation_view("prep")
+            catalog_schema = Path(__file__).resolve().parents[2] / "contracts/protocol/1.1/schemas/model-catalog.schema.json"
+            Draft202012Validator(json.loads(catalog_schema.read_text(encoding="utf-8"))).validate(view["catalog"])
+            assert view["catalog"]["models"][0]["displayName"] == "Controlled model"
             reserve = {
                 "preparationId": "prep",
                 "createOperationId": "create",

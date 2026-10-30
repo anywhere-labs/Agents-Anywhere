@@ -1,5 +1,6 @@
 import { apiClient } from "@/lib/api"
-import type { InlineAttachmentRef, ProtocolModelCatalog } from "./types"
+import type { InlineAttachmentRef } from "./types"
+import type { WorkflowView as ProtocolWorkflowView } from "@/generated/runtime-workflows/v1_2/workflow-view"
 
 export type RuntimeDialogValue = { kind: "confirm"; status: "submitted"; value: boolean }
   | { kind: "form"; values: Record<string, unknown> }
@@ -10,9 +11,8 @@ export type WorkflowInteraction = {
   kind: string; title: string; message?: string; status: string; metadata: Record<string, unknown>;
   actions: { actionId: string; label: string; style: string; input: Record<string, unknown> }[]
 }
-export type WorkflowView = { protocolVersion: "1.1" | "1.2"; id: string; kind: "preparation" | "creation";
-  connectorId: string; runtimeId: string; projectId: string; sessionId?: string | null;
-  state: { phase: string; revision: number; catalogRevision?: number; catalog?: ProtocolModelCatalog;
+export type WorkflowView = Omit<ProtocolWorkflowView, "state"> & {
+  state: ProtocolWorkflowView["state"] & { phase: string; revision: number; catalogRevision?: number;
     messageAccepted?: boolean | null; created?: boolean | null; initializationId?: string; workerGeneration?: string;
     configuration?: import("./runtime-forms").AgentConfiguration;
     interactions: WorkflowInteraction[]; canCancel?: boolean; canCancelInitialization?: boolean;

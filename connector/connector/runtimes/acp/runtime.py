@@ -13,7 +13,6 @@ from connector.runtime_protocol.models import (
     RuntimeCommandResult,
     RuntimeIdentity,
     RuntimeModelCatalog,
-    RuntimeModelItem,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
     RuntimePermissionItem,
@@ -425,22 +424,12 @@ class AcpRuntime(AgentRuntime):
         )
 
     async def list_scoped_model_catalog(self, session_id, query=None, limit=100):
-        snapshot = self.app.configurations.snapshot(session_id)
-        models = []
-        for option in snapshot.options:
-            if option.get("category") == "model":
-                for group in option.get("options", []):
-                    models.extend(
-                        RuntimeModelItem(
-                            id=value["value"],
-                            title=value["name"],
-                            selection_id=value["value"],
-                        )
-                        for value in group.get("options", [group])
-                    )
-        return RuntimeModelCatalog(
-            runtime=self.config.runtime, revision=snapshot.revision, models=tuple(models[:limit])
-        )
+        from dataclasses import replace
+
+        from .domain.catalogs import model_catalog
+
+        catalog = model_catalog(self.app.configurations.snapshot(session_id), self.config.runtime)
+        return replace(catalog, models=catalog.models[:limit])
 
     async def list_sessions(self, limit=100, cursor=None, force=False):
         from .domain.definitions import fingerprint

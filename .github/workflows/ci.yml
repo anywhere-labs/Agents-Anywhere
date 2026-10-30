@@ -256,6 +256,9 @@ jobs:
         run: |
           uv sync --project server
           uv pip install --python server/.venv/bin/python --editable ./connector
+      - name: Check runtime workflow contracts
+        working-directory: server
+        run: uv run --no-sync python -m scripts.export_workflow_schemas --check
       - name: Test Server
         working-directory: server
         # Verbose names identify a stalled WebSocket test before the outer timeout.

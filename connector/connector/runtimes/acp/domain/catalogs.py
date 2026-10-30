@@ -2,6 +2,12 @@
 import base64
 import json
 
+from connector.runtime_protocol.models import (
+    RuntimeModelCatalog,
+    RuntimeModelItem,
+    RuntimeReasoningItem,
+)
+
 from .definitions import AcpError
 
 PREFIX = "acp-selection:"
@@ -23,11 +29,32 @@ def decode_selection(value):
         raise AcpError("invalid_selection", "模型与推理强度选择无效。") from error
 
 
-def model_items(snapshot):
-    efforts = [value for option in snapshot.options if option.get("category") == "effort"
-               for group in option.get("options", []) for value in group.get("options", [group])]
-    return [{"id": value["value"], "title": value["name"], "selectionId": value["value"], "enabled": True,
-             "reasoningItems": [{"id": effort["value"], "title": effort["name"], "enabled": True,
-                                  "selectionId": selection_id(value["value"], effort["value"])} for effort in efforts]}
-            for option in snapshot.options if option.get("category") == "model" and option.get("type") == "select"
-            for group in option.get("options", []) for value in group.get("options", [group])]
+def model_catalog(snapshot, runtime: str) -> RuntimeModelCatalog:
+    """Keep ACP selections typed until the shared wire projection."""
+    efforts = [
+        value
+        for option in snapshot.options
+        if option.get("category") == "effort" and option.get("type") == "select"
+        for group in option.get("options", [])
+        for value in group.get("options", [group])
+    ]
+    models = tuple(
+        RuntimeModelItem(
+            id=value["value"],
+            title=value["name"],
+            selection_id=value["value"],
+            reasoning_items=tuple(
+                RuntimeReasoningItem(
+                    id=effort["value"],
+                    title=effort["name"],
+                    selection_id=selection_id(value["value"], effort["value"]),
+                )
+                for effort in efforts
+            ),
+        )
+        for option in snapshot.options
+        if option.get("category") == "model" and option.get("type") == "select"
+        for group in option.get("options", [])
+        for value in group.get("options", [group])
+    )
+    return RuntimeModelCatalog(runtime=runtime, revision=snapshot.revision, models=models)

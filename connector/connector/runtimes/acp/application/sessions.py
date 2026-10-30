@@ -393,18 +393,15 @@ class SessionService:
     def preparation_view(self, key: str) -> dict:
         row = self.store.require("preparation", key)
         options = self.configurations.snapshot(key)
-        from ..domain.catalogs import model_items
-        models = model_items(options)
+        from connector.runtime_protocol.catalogs import model_catalog_payload
+
+        from ..domain.catalogs import model_catalog
         return {
             "preparationId": key,
             "phase": row["phase"],
             "revision": row["revision"],
             "catalogRevision": options.revision,
-            "catalog": {
-                "runtime": self.runtime_type,
-                "revision": options.revision,
-                "models": models,
-            },
+            "catalog": model_catalog_payload(model_catalog(options, self.runtime_type)),
             "configuration": {
                 "revision": options.revision,
                 "options": list(options.options),
