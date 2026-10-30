@@ -82,6 +82,7 @@ import com.agentsanywhere.app.feature.files.displayRemotePath
 import com.agentsanywhere.app.feature.files.FileEntry
 import com.agentsanywhere.app.feature.files.fileNameFromRemotePath
 import com.agentsanywhere.app.feature.files.FilesController
+import com.agentsanywhere.app.feature.files.isImageFileName
 import com.agentsanywhere.app.feature.files.FilesDirectory
 import com.agentsanywhere.app.feature.files.initialRemoteFilePath
 import com.agentsanywhere.app.feature.files.isWindowsDeviceOs
@@ -242,21 +243,21 @@ internal fun SessionAgentFilesScreen(
         searchQuery = ""
         searchResult = SoraFileSearchResult()
         val filePath = normalizeRemotePath(file.path)
-        val requestRoot = remoteRootForPath(
-            targetPath = filePath,
-            deviceOs = deviceOs,
-            fallbackRoot = root,
-        )
-        if (isImageFile(file.name)) {
-            filesController.downloadFile(
+        if (isImageFileName(file.name)) {
+            filesController.downloadWorkspaceFile(
                 connectorId = current.connectorId,
-                root = requestRoot,
+                workspaceRoot = root,
                 path = filePath,
-                destination = File(context.cacheDir, "session-files/${imageCacheName(filePath, file.name)}"),
+                cacheDir = context.cacheDir,
             )
                 .onSuccess { imageFile = it.file }
                 .onFailure { failure -> previewError = failure.message ?: openFileFailedMessage }
         } else {
+            val requestRoot = remoteRootForPath(
+                targetPath = filePath,
+                deviceOs = deviceOs,
+                fallbackRoot = root,
+            )
             filesController.readTextFile(
                 connectorId = current.connectorId,
                 root = requestRoot,
@@ -452,21 +453,21 @@ internal fun DeviceFilesContent(
         searchQuery = ""
         searchResult = SoraFileSearchResult()
         val filePath = normalizeRemotePath(file.path)
-        val requestRoot = remoteRootForPath(
-            targetPath = filePath,
-            deviceOs = deviceOs,
-            fallbackRoot = resolvedRoot?.takeIf { it.isNotBlank() } ?: "~",
-        )
-        if (isImageFile(file.name)) {
-            controller.downloadFile(
+        if (isImageFileName(file.name)) {
+            controller.downloadWorkspaceFile(
                 connectorId = current.id,
-                root = requestRoot,
+                workspaceRoot = resolvedRoot?.takeIf { it.isNotBlank() } ?: "~",
                 path = filePath,
-                destination = File(context.cacheDir, "session-files/${imageCacheName(filePath, file.name)}"),
+                cacheDir = context.cacheDir,
             )
                 .onSuccess { imageFile = it.file }
                 .onFailure { failure -> previewError = failure.message ?: openFileFailedMessage }
         } else {
+            val requestRoot = remoteRootForPath(
+                targetPath = filePath,
+                deviceOs = deviceOs,
+                fallbackRoot = resolvedRoot?.takeIf { it.isNotBlank() } ?: "~",
+            )
             controller.readTextFile(
                 connectorId = current.id,
                 root = requestRoot,
@@ -535,16 +536,6 @@ private enum class PushView {
     Terminal,
 }
 
-private val imageFileExtensions = setOf("png", "jpg", "jpeg", "webp", "gif", "bmp", "heic", "heif")
-
-private fun isImageFile(name: String): Boolean {
-    return name.substringAfterLast('.', "").lowercase() in imageFileExtensions
-}
-
-private fun imageCacheName(path: String, name: String): String {
-    val safeName = name.replace(Regex("[^A-Za-z0-9._-]"), "_").take(96).ifBlank { "image" }
-    return "${path.hashCode().toString(16)}-$safeName"
-}
 
 @Composable
 internal fun TerminalContent(

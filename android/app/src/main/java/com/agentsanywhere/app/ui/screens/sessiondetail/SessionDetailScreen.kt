@@ -1704,12 +1704,13 @@ fun SessionDetailScreen(
                                 controller = controller,
                                 loadWorkspaceImage = { path ->
                                     val session = state.session
-                                    if (session == null) {
-                                        Result.failure(IllegalStateException("No active session."))
+                                    val root = session?.cwd.orEmpty()
+                                    if (session == null || root.isBlank() || !filesController.isWithinWorkspace(root, path)) {
+                                        Result.failure(IllegalStateException("Image path is outside the workspace."))
                                     } else {
                                         filesController.downloadWorkspaceFile(
                                             connectorId = session.connectorId,
-                                            workspaceRoot = session.cwd.orEmpty(),
+                                            workspaceRoot = root,
                                             path = path,
                                             cacheDir = context.cacheDir,
                                         ).map { it.file }

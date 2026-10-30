@@ -1,5 +1,8 @@
 package com.agentsanywhere.app.feature.sessiondetail
 
+import com.agentsanywhere.app.feature.files.MAX_WORKSPACE_IMAGES_PER_MESSAGE
+import com.agentsanywhere.app.feature.files.isImageFilePath
+
 import com.agentsanywhere.app.api.RemoteTimelineItem
 import org.json.JSONArray
 import org.json.JSONObject
@@ -261,7 +264,7 @@ private fun RemoteTimelineItem.toArtifactMessages(): List<TimelineMessage> {
             badge = status.statusLabel(),
             detail = path.orEmpty(),
             body = content.text("description") ?: content.text("text").orEmpty(),
-            workspaceImages = listOfNotNull(path).filter(::isWorkspaceImagePath),
+            workspaceImages = listOfNotNull(path).filter(::isImageFilePath),
             rawContent = content.toString(2),
             orderSeq = orderSeq,
             revision = revision,
@@ -474,18 +477,13 @@ private fun RemoteTimelineItem.workspaceImagePaths(): List<String> {
     content.optJSONObject("dshResultMeta")
         ?.optString("path")
         ?.trim()
-        ?.takeIf(::isWorkspaceImagePath)
+        ?.takeIf(::isImageFilePath)
         ?.let(result::add)
     val output = content.opt("output")?.toString().orEmpty()
     WorkspaceImageFileRegex.findAll(output).forEach { match ->
-        match.groupValues.getOrNull(1)?.trim()?.takeIf(::isWorkspaceImagePath)?.let(result::add)
+        match.groupValues.getOrNull(1)?.trim()?.takeIf(::isImageFilePath)?.let(result::add)
     }
-    return result.toList()
-}
-
-private fun isWorkspaceImagePath(path: String): Boolean {
-    val extension = path.substringAfterLast('.', "").lowercase()
-    return extension in setOf("png", "jpg", "jpeg", "webp", "gif", "bmp", "heic", "heif")
+    return result.take(MAX_WORKSPACE_IMAGES_PER_MESSAGE).toList()
 }
 
 private fun RemoteTimelineItem.shortToolTitle(): String {

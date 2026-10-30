@@ -89,6 +89,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.feature.files.MAX_WORKSPACE_IMAGES_PER_MESSAGE
 import com.agentsanywhere.app.feature.sessiondetail.MessageAuthor
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNotice
@@ -1699,7 +1700,7 @@ private fun ToolActivityCard(
         // Screenshots and workspace images are message content, not a debugging
         // detail: show them inline as soon as the row is composed, like a chat
         // picture bubble. Keep the expanded card for the surrounding tool output.
-        message.workspaceImages.forEach { path ->
+        message.workspaceImages.take(MAX_WORKSPACE_IMAGES_PER_MESSAGE).forEach { path ->
             WorkspaceImagePreview(
                 path = path,
                 darkMode = darkMode,
@@ -1921,9 +1922,11 @@ private fun WorkspaceImagePreview(
 ) {
     val colors = LocalAAColors.current
     var image by remember(path) { mutableStateOf<File?>(null) }
-    var loading by remember(path) { mutableStateOf(true) }
+    var requested by remember(path) { mutableStateOf(false) }
+    var loading by remember(path) { mutableStateOf(false) }
     var error by remember(path) { mutableStateOf<String?>(null) }
-    LaunchedEffect(path) {
+    LaunchedEffect(path, requested) {
+        if (!requested) return@LaunchedEffect
         loading = true
         error = null
         loadWorkspaceImage(path)
@@ -1940,7 +1943,9 @@ private fun WorkspaceImagePreview(
             .clip(shape)
             .background(if (darkMode) Color(0xFF18181B) else Color(0xFFF5F4F0))
             .border(1.dp, colors.border, shape)
-            .noRippleClickable { onOpenFile(path) },
+            .noRippleClickable {
+                if (requested && image != null) onOpenFile(path) else requested = true
+            },
         contentAlignment = Alignment.Center,
     ) {
         when {
@@ -1958,7 +1963,11 @@ private fun WorkspaceImagePreview(
                 contentScale = ContentScale.Fit,
             )
             else -> Text(
-                text = error ?: stringResource(R.string.files_open_file_to_preview),
+                text = error ?: if (requested) {
+                    stringResource(R.string.files_open_file_to_preview)
+                } else {
+                    stringResource(R.string.session_workspace_image_tap_to_load)
+                },
                 color = colors.muted,
                 fontSize = 12.sp,
                 modifier = Modifier.padding(12.dp),
