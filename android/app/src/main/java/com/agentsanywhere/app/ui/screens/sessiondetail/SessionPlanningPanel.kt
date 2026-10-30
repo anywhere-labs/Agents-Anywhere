@@ -39,6 +39,7 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.window.Dialog
 import com.agentsanywhere.app.api.PlanDocument
 import com.agentsanywhere.app.api.RemotePlanningState
+import com.agentsanywhere.app.feature.sessiondetail.planReviewStatus
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.composables.icons.lucide.Check
@@ -53,15 +54,10 @@ import com.composables.icons.lucide.Send
 
 private data class PlanningCard(val id: String, val document: PlanDocument? = null, val draft: com.agentsanywhere.app.api.PlanDraft? = null)
 
+/** Planning status and the live draft; finished plan versions are placed in the timeline. */
 @Composable
 internal fun SessionPlanningPanel(state: RemotePlanningState?, darkMode: Boolean) {
     if (state == null || (state.effectiveMode != "plan" && state.draft == null && state.proposal == null && state.documents.isEmpty())) return
-    var reader by remember(state.sessionId) { mutableStateOf<PlanDocument?>(null) }
-    val positions = remember(state.sessionId) { mutableMapOf<String, androidx.compose.foundation.ScrollState>() }
-    val context = LocalContext.current
-    val exportTitle = stringResource(R.string.planning_export_title)
-    val cards = (state.documents + listOfNotNull(state.proposal)).distinctBy { it.planId to it.revision }.map { PlanningCard("${it.planId}:${it.revision}", document = it) } +
-        listOfNotNull(state.draft?.let { PlanningCard("${it.planId}:${it.revision}", draft = it) })
     val colors = LocalAAColors.current
     val mode = if (state.effectiveMode == "plan") stringResource(R.string.planning_mode) else null
     val execution = state.executionStatus?.let { when (it) { "started" -> stringResource(R.string.planning_execution_started); "accepted" -> stringResource(R.string.planning_execution_accepted); "rejected" -> stringResource(R.string.planning_execution_rejected); else -> stringResource(R.string.planning_execution_uncertain) } }
@@ -70,13 +66,21 @@ internal fun SessionPlanningPanel(state: RemotePlanningState?, darkMode: Boolean
             Icon(Lucide.ListChecks, contentDescription = null, tint = colors.muted, modifier = Modifier.size(14.dp))
             Text(listOfNotNull(mode, execution).joinToString(" · "), color = colors.muted, fontSize = 12.sp)
         }
-        cards.forEach { entry -> key(entry.id) {
-            PlanCard(entry, darkMode, onRead = { reader = it })
+        state.draft?.let { draft -> key("${draft.planId}:${draft.revision}") {
+            PlanCard(PlanningCard("${draft.planId}:${draft.revision}", draft = draft), darkMode, status = null, onRead = {})
         } }
     }
-    reader?.let { document ->
+}
+
+/** Full-text reader, kept outside the lazy timeline so any plan entry can open it. */
+@Composable
+internal fun PlanReaderDialog(reader: MutableState<PlanDocument?>, darkMode: Boolean) {
+    val positions = remember { mutableMapOf<String, androidx.compose.foundation.ScrollState>() }
+    val context = LocalContext.current
+    val exportTitle = stringResource(R.string.planning_export_title)
+    reader.value?.let { document ->
         val position = positions.getOrPut("${document.planId}:${document.revision}") { androidx.compose.foundation.ScrollState(0) }
-        Dialog(onDismissRequest = { reader = null }, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+        Dialog(onDismissRequest = { reader.value = null }, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
             Surface(Modifier.fillMaxSize()) {
                 Column(Modifier.systemBarsPadding().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(document.title, style = MaterialTheme.typography.titleLarge)
@@ -84,7 +88,7 @@ internal fun SessionPlanningPanel(state: RemotePlanningState?, darkMode: Boolean
                     Row {
                         TextButton(onClick = { (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText(document.title, document.markdown)) }) { Text(stringResource(R.string.planning_copy)) }
                         TextButton(onClick = { context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/markdown").putExtra(Intent.EXTRA_TEXT, document.markdown).putExtra(Intent.EXTRA_TITLE, "PLAN.md"), exportTitle)) }) { Text(stringResource(R.string.planning_export)) }
-                        TextButton(onClick = { reader = null }) { Text(stringResource(R.string.planning_close)) }
+                        TextButton(onClick = { reader.value = null }) { Text(stringResource(R.string.planning_close)) }
                     }
                 }
             }
@@ -114,17 +118,46 @@ private fun PlanningWritingTitle(writing: Boolean) {
     })
 }
 
+/** Every plan version this session has, newest proposal included. */
+internal fun RemotePlanningState.planDocuments(): List<PlanDocument> =
+    (documents + listOfNotNull(proposal)).distinctBy { it.planId to it.revision }
+
+/** One plan version at its place in the timeline: the newest as a card, earlier ones as a single row. */
+@Composable
+internal fun PlanTimelineEntry(state: RemotePlanningState?, document: PlanDocument, latestRevision: Int, darkMode: Boolean, onRead: (PlanDocument) -> Unit) {
+    val colors = LocalAAColors.current
+    if (document.revision < latestRevision) {
+        val shape = RoundedCornerShape(12.dp)
+        Row(
+            Modifier.fillMaxWidth().clip(shape).border(1.dp, colors.border, shape).noRippleClickable { onRead(document) }.padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Lucide.FileText, contentDescription = null, tint = colors.muted, modifier = Modifier.size(14.dp))
+            Text(
+                listOf(document.title, stringResource(R.string.planning_version, document.revision), stringResource(R.string.planning_superseded, latestRevision)).joinToString(" · "),
+                Modifier.weight(1f), color = colors.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            Text(stringResource(R.string.planning_open), color = colors.inkSoft, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        }
+        return
+    }
+    val status = planReviewStatus(state, document)?.let { stringResource(it) }
+    PlanCard(PlanningCard("${document.planId}:${document.revision}", document = document), darkMode, status = status, onRead = onRead)
+}
+
 private val PlanPreviewHeight = 240.dp
 
 // The card header already shows the title; drop a leading Markdown line that repeats it.
 private fun planBody(document: PlanDocument): String {
     val markdown = document.markdown.replace(Regex("^\\s*\\n"), "")
-    val heading = markdown.substringBefore('\n').replace(Regex("^#{1,6}\\s+"), "").removeSurrounding("**").trim()
+    // Same cleanup the Connector applies when it derives the title.
+    val heading = markdown.substringBefore('\n').replace(Regex("^\\s*(?:#{1,6}\\s+|[-*+]\\s+|\\d+[.)]\\s+|>\\s*)"), "").replace(Regex("`+|\\*+|(?<!\\w)_+|_+(?!\\w)"), "").trim()
     return if (heading.isNotEmpty() && heading == document.title.trim()) markdown.substringAfter('\n', "").replace(Regex("^\\s*\\n"), "") else markdown
 }
 
 @Composable
-private fun PlanCard(entry: PlanningCard, darkMode: Boolean, onRead: (PlanDocument) -> Unit) {
+private fun PlanCard(entry: PlanningCard, darkMode: Boolean, status: String?, onRead: (PlanDocument) -> Unit) {
     val colors = LocalAAColors.current
     val shape = RoundedCornerShape(16.dp)
     val document = entry.document
@@ -142,7 +175,7 @@ private fun PlanCard(entry: PlanningCard, darkMode: Boolean, onRead: (PlanDocume
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 entry.draft?.let { PlanningWritingTitle(it.contentState == "drafting") }
                     ?: Text(document!!.title, color = colors.ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                Text(if (entry.draft != null) stringResource(R.string.planning_streaming) else stringResource(R.string.planning_document_version, document!!.revision), color = colors.muted, fontSize = 12.sp)
+                Text(if (entry.draft != null) stringResource(R.string.planning_streaming) else listOfNotNull(stringResource(R.string.planning_version, document!!.revision), status).joinToString(" · "), color = colors.muted, fontSize = 12.sp)
             }
             document?.let { PlanActionButton(stringResource(R.string.planning_open), onClick = { onRead(it) }) }
         }

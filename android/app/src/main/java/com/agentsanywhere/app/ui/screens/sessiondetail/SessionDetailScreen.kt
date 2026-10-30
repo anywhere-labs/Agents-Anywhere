@@ -184,6 +184,7 @@ fun SessionDetailScreen(
 ) {
     var planningCreation by remember(sessionId, preparedSession?.localSessionId) { mutableStateOf(false) }
     var planningBusy by remember(sessionId) { mutableStateOf(false) }
+    val planReader = remember(sessionId) { mutableStateOf<com.agentsanywhere.app.api.PlanDocument?>(null) }
     val planningSession by rememberUpdatedState(sessionId)
     val colors = LocalAAColors.current
     val darkMode = colors.isDark
@@ -1406,7 +1407,9 @@ fun SessionDetailScreen(
     )
 
     fun commandBlockMessage(command: RuntimeCommand): String? =
-        when (command.block(runtimeStatus, canUseCommands, takeoverEnabled, connectorOnline)) {
+        // AA's own /plan is not a runtime command; the planning capability already gated it.
+        if (command.id == "plan" && state.commands.commands.none { it.id == "plan" }) null
+        else when (command.block(runtimeStatus, canUseCommands, takeoverEnabled, connectorOnline)) {
             null -> null
             RuntimeCommandBlock.Busy -> context.getString(R.string.session_command_busy)
             RuntimeCommandBlock.ReadOnly -> context.getString(R.string.session_command_read_only)
@@ -1610,8 +1613,23 @@ fun SessionDetailScreen(
         }
     }
 
-    val commandSuggestions = remember(state.commands.commands, slashIntent?.command) {
-        slashIntent?.let { intent -> state.commands.commands.filter { it.matchesPrefix(intent.command) }.take(6) }
+    // `/plan` is parsed by AA, not run by the runtime; offer it wherever planning is usable.
+    val planningUsable = connectorOnline && state.capabilities.isUsable("session.planning", runtimeId, runtimeType)
+    val planCommandTitle = stringResource(R.string.planning_command_title)
+    val planCommandDescription = stringResource(R.string.planning_command_description)
+    val planCommandHint = stringResource(R.string.planning_command_hint)
+    val planCommand = remember(planCommandTitle, planCommandDescription, planCommandHint) {
+        RuntimeCommand(
+            id = "plan", title = planCommandTitle, description = planCommandDescription, aliases = emptyList(), category = null,
+            scope = "session", enabled = true, disabledReason = null, acceptsArgs = true, argsSchema = null,
+            metadata = mapOf("ui" to mapOf("kind" to "execute", "argumentHint" to planCommandHint)),
+        )
+    }
+    val offeredCommands = remember(state.commands.commands, planningUsable, planCommand) {
+        if (planningUsable && state.commands.commands.none { it.id == "plan" }) listOf(planCommand) + state.commands.commands else state.commands.commands
+    }
+    val commandSuggestions = remember(offeredCommands, slashIntent?.command) {
+        slashIntent?.let { intent -> offeredCommands.filter { it.matchesPrefix(intent.command) }.take(6) }
             .orEmpty()
     }
     // The unavailable reason only answers a bare "/"; other slash text may just be prose.
@@ -1729,6 +1747,11 @@ fun SessionDetailScreen(
                             .fillMaxWidth()
                             .background(colors.canvas),
                     ) {
+                        val planning = state.planning
+                        val planDocs = remember(planning) { planning?.planDocuments().orEmpty() }
+                        val latestPlanRevisions = remember(planDocs) { com.agentsanywhere.app.feature.sessiondetail.latestPlanRevisions(planDocs) }
+                        val hidePlanEcho = remember(planning, planDocs) { { message: TimelineMessage -> com.agentsanywhere.app.feature.sessiondetail.isPlanEcho(planning, planDocs, message) } }
+                        PlanReaderDialog(planReader, darkMode)
                         when {
                             sessionId == null && !isPreparedSession -> EmptyDetailMessage(stringResource(R.string.session_open_from_list))
                             state.timeline.isLoading && state.messages.isEmpty() -> {
@@ -1741,6 +1764,11 @@ fun SessionDetailScreen(
                                 SessionWelcomeMessage()
                             else -> MessageList(
                                 planningContent = { SessionPlanningPanel(state.planning, darkMode) },
+                                planDocuments = planDocs,
+                                planEntry = { document ->
+                                    PlanTimelineEntry(planning, document, latestPlanRevisions[document.planId] ?: document.revision, darkMode, onRead = { planReader.value = it })
+                                },
+                                hideMessage = hidePlanEcho,
                                 messages = state.messages,
                                 darkMode = darkMode,
                                 sessionId = sessionId.orEmpty(),

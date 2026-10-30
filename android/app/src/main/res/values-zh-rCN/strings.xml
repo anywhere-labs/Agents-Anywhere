@@ -718,4 +718,10 @@
     <string name="native_history_check">查询恢复状态</string>
     <string name="native_history_releasing">正在结束执行…</string>
     <string name="session_image_input_unsupported">当前模型声明不支持图片输入，请移除图片或切换模型。</string>
+    <string name="session_command_title_compact">压缩上下文</string>
+    <string name="session_command_description_compact">压缩会话上下文。</string>
+    <string name="session_command_title_kill_chatgpt">退出 ChatGPT</string>
+    <string name="session_command_description_kill_chatgpt">退出 ChatGPT / Codex 桌面应用，让它的会话改由 Connector 自己的 app-server 运行。</string>
+    <string name="session_command_title_open_in_codex_app">在 Codex 应用中打开</string>
+    <string name="session_command_description_open_in_codex_app">在正在运行的 Codex 桌面应用中打开此会话，并从那里继续跟随。</string>
 </resources>

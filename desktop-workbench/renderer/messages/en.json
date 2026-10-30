@@ -1197,7 +1197,10 @@
         "check": "Check recovery status",
         "releaseFailed": "Execution release is unconfirmed. Refresh the session state.",
         "releasing": "Ending execution…"
-      }
+      },
+      "commandDescription_compact": "Compact the session context.",
+      "commandDescription_kill-chatgpt": "Stop the ChatGPT / Codex desktop app so its threads can run in the connector's own app-server.",
+      "commandDescription_open-in-codex-app": "Open this thread in the running Codex desktop app and follow it from there."
     },
     "sessionStatus": {
       "idle": "Idle",
@@ -2235,6 +2238,18 @@
     "creationIntent": "The new session will use plan mode",
     "stepPending": "Pending",
     "stepInProgress": "In progress",
-    "stepCompleted": "Completed"
+    "stepCompleted": "Completed",
+    "statusOpen": "Awaiting confirmation",
+    "statusResponding": "Confirming",
+    "statusApproved": "Approved",
+    "statusExecuted": "Executed",
+    "statusExecutionPending": "Approved; execution not started",
+    "statusRevisionRequested": "Revision requested",
+    "statusDismissed": "Not executed",
+    "statusWithdrawn": "Withdrawn",
+    "statusUnknown": "Needs verification",
+    "superseded": "Revised as version {revision}",
+    "commandDescription": "Enter native planning: /plan <task> drafts a plan to confirm before executing; /plan off exits",
+    "commandHint": "[task | off]"
   }
 }

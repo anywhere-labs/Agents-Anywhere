@@ -127,6 +127,7 @@ export function SessionComposer({
 }) {
   const tSession = useTranslations("dashboard.session")
   const tNew = useTranslations("dashboard.new")
+  const tPlanning = useTranslations("planning")
   const composerRef = React.useRef<HTMLDivElement | null>(null)
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null)
   const valueRef = React.useRef(value)
@@ -393,15 +394,26 @@ export function SessionComposer({
   const commandQuery = slashCandidate?.command ?? null
   const catalogUsable = canUseCommands && connectorOnline
   const mode = slashMode(slashIntent, runtimeCommands, { usable: catalogUsable, loading: commandsLoading, error: commandsError })
+  // `/plan` is parsed by AA, not run by the runtime; offer it wherever planning is usable.
+  const planningUsable = capabilityIsUsable(effectiveCapabilities, CAPABILITY.planning, runtimeScope) && connectorOnline
+  const planCommand = React.useMemo<RuntimeCommand>(() => ({
+    id: "plan", title: "/plan", description: tPlanning("commandDescription"), aliases: [], category: null, scope: "session",
+    enabled: true, disabledReason: null, acceptsArgs: true, argsSchema: null,
+    metadata: { ui: { kind: "execute", argumentHint: tPlanning("commandHint") } },
+  }), [tPlanning])
+  const offeredCommands = React.useMemo(
+    () => planningUsable && !runtimeCommands.some((command) => command.id === "plan") ? [planCommand, ...runtimeCommands] : runtimeCommands,
+    [planCommand, planningUsable, runtimeCommands],
+  )
   const commandSuggestions = React.useMemo(
-    () => (commandQuery === null ? [] : runtimeCommands.filter((command) => commandMatchesQuery(command, commandQuery))),
-    [commandQuery, runtimeCommands],
+    () => (commandQuery === null ? [] : offeredCommands.filter((command) => commandMatchesQuery(command, commandQuery))),
+    [commandQuery, offeredCommands],
   )
   // A bare "/" in a session that cannot run commands explains why instead of
   // doing nothing, e.g. a runtime or bridge that predates native commands.
   const commandsCapability = findCapability(effectiveCapabilities, CAPABILITY.commands, runtimeScope)
   const commandsUnavailable =
-    commandsCapability !== null && !catalogUsable && slashCandidate?.command === "" && slashCandidate.suffix === ""
+    commandsCapability !== null && !catalogUsable && !planningUsable && slashCandidate?.command === "" && slashCandidate.suffix === ""
       ? !connectorOnline
         ? tSession("commandBlocked_offline")
         : !commandsCapability.supported
@@ -411,7 +423,7 @@ export function SessionComposer({
   const showUnavailableMenu = commandsUnavailable !== null && attachments.length === 0 && menuDismissedFor !== value
   const showCommandMenu =
     slashCandidate !== null &&
-    catalogUsable &&
+    (catalogUsable || planningUsable) &&
     slashCandidate.suffix === "" &&
     attachments.length === 0 &&
     menuDismissedFor !== value &&
@@ -425,7 +437,7 @@ export function SessionComposer({
     onCommandQueryChange(commandQuery)
   }, [commandQuery, onCommandQueryChange])
   const commandBusy = sending || interrupting || commandPending
-  const blockOf = (command: RuntimeCommand): CommandBlock | null => commandBusy ? "busy" : commandBlock(command, runtimeStatus, {
+  const blockOf = (command: RuntimeCommand): CommandBlock | null => command === planCommand ? null : commandBusy ? "busy" : commandBlock(command, runtimeStatus, {
     capability: canUseCommands,
     writable: session.takeover && !sourceUnavailable && !creatingSession,
     online: connectorOnline,
@@ -436,6 +448,9 @@ export function SessionComposer({
       ? tSession(`commandReason_${command.disabledReason}`)
       : command.disabledReason || tSession("commandUnavailable")
   }
+  // AA's own commands carry translated descriptions; native commands keep the runtime's text.
+  const commandDescription = (command: RuntimeCommand): string =>
+    tSession.has(`commandDescription_${command.id}`) ? tSession(`commandDescription_${command.id}`) : command.description || command.title
   const canSubmitCommand = mode.kind === "command" && !commandPending && connectorOnline
   const canSubmitMessage =
     (canSend || Boolean(planningIntent && capabilityIsUsable(effectiveCapabilities, CAPABILITY.planning, runtimeScope) && !sending && !interrupting && !commandPending)) &&
@@ -702,7 +717,7 @@ export function SessionComposer({
                         /{command.id}{hint ? <span className="text-muted-foreground"> {hint}</span> : null}
                       </span>
                       <span className={cn("min-w-0 flex-1 truncate text-xs", block ? "text-muted-foreground/80" : "text-muted-foreground")}>
-                        {block ? blockMessage(command, block) : command.description || command.title}
+                        {block ? blockMessage(command, block) : commandDescription(command)}
                       </span>
                     </button>
                   )

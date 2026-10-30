@@ -2,7 +2,7 @@ package com.agentsanywhere.app.api
 
 import org.json.JSONObject
 
-data class PlanDocument(val planId: String, val revision: Int, val contentHash: String, val title: String, val markdown: String)
+data class PlanDocument(val planId: String, val revision: Int, val contentHash: String, val title: String, val markdown: String, val createdAt: String? = null)
 data class PlanReview(val reviewId: String, val planId: String, val planRevision: Int, val contentHash: String, val status: String)
 data class PlanDraft(val draftId: String, val content: String, val contentState: String, val planId: String = draftId, val revision: Int = 1)
 data class RemotePlanningState(
@@ -11,7 +11,7 @@ data class RemotePlanningState(
     val actions: List<String>?,
     val executionStatus: String? = null, val executionRetryable: Boolean = false,
 )
-internal fun JSONObject.toPlanDocument() = PlanDocument(getString("planId"), getInt("revision"), getString("contentHash"), getString("title"), getString("markdown"))
+internal fun JSONObject.toPlanDocument() = PlanDocument(getString("planId"), getInt("revision"), getString("contentHash"), getString("title"), optString("markdown"), optString("createdAt").takeIf(String::isNotBlank))
 internal fun JSONObject.toRemotePlanningState(): RemotePlanningState {
     val docs = optJSONArray("proposals")
     return RemotePlanningState(getString("sessionId"), optString("effectiveMode", "unknown"), optString("freshness", "unknown"), optString("epoch", ""), optInt("revision"),

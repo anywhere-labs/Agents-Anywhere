@@ -6,7 +6,20 @@ nonisolated struct V2PlanDocument: Codable, Hashable, Identifiable {
     let contentHash: String
     let title: String
     let markdown: String
+    let createdAt: String?
     var id: String { "\(planId):\(revision)" }
+
+    private enum CodingKeys: String, CodingKey { case planId, revision, contentHash, title, markdown, createdAt }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        planId = try values.decode(String.self, forKey: .planId)
+        revision = try values.decode(Int.self, forKey: .revision)
+        contentHash = try values.decode(String.self, forKey: .contentHash)
+        title = try values.decode(String.self, forKey: .title)
+        // Earlier versions in the live state carry no body; the archive keeps it.
+        markdown = try values.decodeIfPresent(String.self, forKey: .markdown) ?? ""
+        createdAt = try values.decodeIfPresent(String.self, forKey: .createdAt)
+    }
 }
 nonisolated struct V2PlanDraft: Codable, Hashable { let draftId: String; let content: String; let contentState: String; let planId: String; let revision: Int }
 nonisolated struct V2PlanExecution: Codable, Hashable { let status: String; let retryable: Bool? }

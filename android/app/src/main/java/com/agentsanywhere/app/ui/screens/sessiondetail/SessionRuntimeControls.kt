@@ -116,6 +116,7 @@ internal fun RuntimeCommandSuggestions(
             commands.isEmpty() -> Text(stringResource(R.string.session_commands_empty), color = colors.muted)
             else -> commands.forEach { command ->
                 val reason = blockReason(command)
+                val (title, description) = localizedCommandText(command)
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -140,14 +141,14 @@ internal fun RuntimeCommandSuggestions(
                         }
                         Spacer(Modifier.size(width = 10.dp, height = 1.dp))
                         Text(
-                            text = command.title,
+                            text = title,
                             color = colors.muted.copy(alpha = if (reason == null) 1f else 0.6f),
                             fontSize = 13.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    (reason ?: command.description)?.takeIf(String::isNotBlank)?.let {
+                    (reason ?: description)?.takeIf(String::isNotBlank)?.let {
                         Text(
                             it,
                             color = if (reason != null) colors.errorText else colors.muted,
@@ -664,6 +665,15 @@ private fun RuntimeNoticeActionButton(
             overflow = TextOverflow.Ellipsis,
         )
     }
+}
+
+/** AA's own commands carry translated text; native commands keep the runtime's text. */
+@Composable
+private fun localizedCommandText(command: RuntimeCommand): Pair<String, String?> = when (command.id) {
+    "compact" -> stringResource(R.string.session_command_title_compact) to stringResource(R.string.session_command_description_compact)
+    "kill-chatgpt" -> stringResource(R.string.session_command_title_kill_chatgpt) to stringResource(R.string.session_command_description_kill_chatgpt)
+    "open-in-codex-app" -> stringResource(R.string.session_command_title_open_in_codex_app) to stringResource(R.string.session_command_description_open_in_codex_app)
+    else -> command.title to command.description
 }
 
 @Composable

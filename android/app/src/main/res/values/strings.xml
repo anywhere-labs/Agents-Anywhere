@@ -720,4 +720,10 @@
     <string name="native_history_check">Check recovery status</string>
     <string name="native_history_releasing">Ending execution…</string>
     <string name="session_image_input_unsupported">The selected model does not declare image input support. Remove the image or choose another model.</string>
+    <string name="session_command_title_compact">Compact</string>
+    <string name="session_command_description_compact">Compact the session context.</string>
+    <string name="session_command_title_kill_chatgpt">Kill ChatGPT</string>
+    <string name="session_command_description_kill_chatgpt">Stop the ChatGPT / Codex desktop app so its threads can run in the connector\'s own app-server.</string>
+    <string name="session_command_title_open_in_codex_app">Open in Codex App</string>
+    <string name="session_command_description_open_in_codex_app">Open this thread in the running Codex desktop app and follow it from there.</string>
 </resources>

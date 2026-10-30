@@ -53,4 +53,17 @@
     <string name="planning_workflow_binding">The created session is being opened.</string>
     <string name="planning_workflow_creation_missing">There is no created session to open.</string>
     <string name="planning_workflow_session_mismatch">The returned session does not match the creation operation.</string>
+    <string name="planning_status_open">Awaiting confirmation</string>
+    <string name="planning_status_responding">Confirming</string>
+    <string name="planning_status_approved">Approved</string>
+    <string name="planning_status_executed">Executed</string>
+    <string name="planning_status_execution_pending">Approved; execution not started</string>
+    <string name="planning_status_revision_requested">Revision requested</string>
+    <string name="planning_status_dismissed">Not executed</string>
+    <string name="planning_status_withdrawn">Withdrawn</string>
+    <string name="planning_status_unknown">Needs verification</string>
+    <string name="planning_superseded">Revised as version %1$d</string>
+    <string name="planning_command_title">Plan</string>
+    <string name="planning_command_description">Enter native planning: /plan &lt;task&gt; drafts a plan to confirm before executing; /plan off exits</string>
+    <string name="planning_command_hint">[task | off]</string>
 </resources>

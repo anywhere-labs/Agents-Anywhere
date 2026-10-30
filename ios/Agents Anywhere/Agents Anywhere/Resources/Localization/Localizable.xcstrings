@@ -16752,6 +16752,261 @@
           }
         }
       }
+    },
+    "待确认": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Awaiting confirmation"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "待确认"
+          }
+        }
+      }
+    },
+    "正在确认": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Confirming"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在确认"
+          }
+        }
+      }
+    },
+    "已同意": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Approved"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已同意"
+          }
+        }
+      }
+    },
+    "已执行": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Executed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已执行"
+          }
+        }
+      }
+    },
+    "已同意，执行未启动": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Approved; execution not started"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已同意，执行未启动"
+          }
+        }
+      }
+    },
+    "已请求修改": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Revision requested"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已请求修改"
+          }
+        }
+      }
+    },
+    "未执行": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not executed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未执行"
+          }
+        }
+      }
+    },
+    "已撤回": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Withdrawn"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已撤回"
+          }
+        }
+      }
+    },
+    "结果待核对": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Needs verification"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "结果待核对"
+          }
+        }
+      }
+    },
+    "已修改为版本 %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Revised as version %lld"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已修改为版本 %lld"
+          }
+        }
+      }
+    },
+    "进入原生规划：/plan <任务> 先出计划、确认后执行；/plan off 退出": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter native planning: /plan <task> drafts a plan to confirm before executing; /plan off exits"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "进入原生规划：/plan <任务> 先出计划、确认后执行；/plan off 退出"
+          }
+        }
+      }
+    },
+    "[任务 | off]": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "[task | off]"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "[任务 | off]"
+          }
+        }
+      }
+    },
+    "压缩会话上下文。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compact the session context."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "压缩会话上下文。"
+          }
+        }
+      }
+    },
+    "退出 ChatGPT / Codex 桌面应用，让它的会话改由 Connector 自己的 app-server 运行。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stop the ChatGPT / Codex desktop app so its threads can run in the connector's own app-server."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "退出 ChatGPT / Codex 桌面应用，让它的会话改由 Connector 自己的 app-server 运行。"
+          }
+        }
+      }
+    },
+    "在正在运行的 Codex 桌面应用中打开此会话，并从那里继续跟随。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open this thread in the running Codex desktop app and follow it from there."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在正在运行的 Codex 桌面应用中打开此会话，并从那里继续跟随。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

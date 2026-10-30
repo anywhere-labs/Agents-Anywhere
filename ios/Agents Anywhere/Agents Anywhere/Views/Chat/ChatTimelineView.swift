@@ -334,6 +334,7 @@ private struct ChatTimelineContent: View, Equatable {
     let onPromptVisibility: (Bool) -> Void
     let onOlderPromptVisibility: (Bool) -> Void
     let onTailVisibility: (TimelineTailVisibility.Region, Bool) -> Void
+    @State private var planReader: V2PlanDocument?
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.model === rhs.model && lhs.latestPullReady == rhs.latestPullReady && lhs.isLoadingLatest == rhs.isLoadingLatest
@@ -342,8 +343,15 @@ private struct ChatTimelineContent: View, Equatable {
     }
     var body: some View {
         let visibleNotices = model.session.notices.notices.filter { $0.isVisible && !$0.blocks(model.session.id) }
-        let groups = TimelineGrouping.groups(model.timeline.rows, interactionTargets: Set(model.session.notices.notices
+        let planning = model.session.planning
+        let plans = planning?.proposals ?? [planning?.proposal].compactMap { $0 }
+        // A system row that only repeats a plan is shown by the plan card instead.
+        let rows = plans.isEmpty && planning?.draft == nil ? model.timeline.rows
+            : model.timeline.rows.filter { !PlanTimeline.isEcho($0, state: planning, documents: plans) }
+        let groups = TimelineGrouping.groups(rows, interactionTargets: Set(model.session.notices.notices
             .filter(\.isVisible).compactMap(\.timelineTargetID)))
+        let planPlacement = PlanTimeline.placement(plans, groups: groups)
+        let latestPlans = PlanTimeline.latestRevisions(plans)
         // Resolve notice targets once per body instead of once per row.
         let rowIDs = Set(model.timeline.rows.map(\.id))
         let noticesByTarget = Dictionary(grouping: visibleNotices.filter { $0.timelineTargetID != nil }) { $0.timelineTargetID! }
@@ -380,6 +388,8 @@ private struct ChatTimelineContent: View, Equatable {
                 .onScrollVisibilityChange(threshold: 0.9) { onOlderPromptVisibility($0) }
             }
             ForEach(groups) { group in
+                // Plans that preceded this group, e.g. the plan an implementation started from.
+                ForEach(planPlacement.before[group.id] ?? []) { plan in planEntry(plan, latest: latestPlans) }
                 SessionTimelineGroupView(group: group, chat: model, onAttachment: onAttachment, onFile: onFile,
                     turnAction: actions[group.id],
                     inlineNotices: group.rows.flatMap { noticesByTarget[$0.id] ?? [] })
@@ -396,6 +406,7 @@ private struct ChatTimelineContent: View, Equatable {
                         }
                     }
             }
+            ForEach(planPlacement.end) { plan in planEntry(plan, latest: latestPlans) }
             SessionPlanningPanel(chat: model)
             ForEach(visibleNotices.filter { notice in
                 notice.timelineTargetID.map { !rowIDs.contains($0) } ?? true
@@ -441,7 +452,13 @@ private struct ChatTimelineContent: View, Equatable {
         }
         .modifier(ChatPageContentColumn(horizontalInset: nil))
         .coordinateSpace(name: "chat.timeline.content")
+        .modifier(PlanReaderPresentation(reader: $planReader))
         .traceChatLayout("timeline-content", state: "groups=\(groups.count), footers=\(actions.count), running=\(model.isRunning)")
+    }
+
+    private func planEntry(_ plan: V2PlanDocument, latest: [String: Int]) -> some View {
+        SessionPlanTimelineEntry(plan: plan, latestRevision: latest[plan.planId] ?? plan.revision,
+            status: PlanTimeline.status(model.session.planning, plan), onRead: { planReader = $0 })
     }
 
 }

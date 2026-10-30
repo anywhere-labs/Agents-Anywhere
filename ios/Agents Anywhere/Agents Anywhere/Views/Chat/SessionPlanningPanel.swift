@@ -16,27 +16,61 @@ private struct PlanCardEntry: Identifiable {
     var draft: V2PlanDraft? = nil
 }
 
+/// Planning status and the live draft; finished plan versions are placed in the timeline.
 struct SessionPlanningPanel: View {
     let chat: SessionChatModel
-    @State private var reader: V2PlanDocument?
-    @State private var positions: [String: CGFloat] = [:]
     var body: some View {
-        if let state = chat.session.planning, state.effectiveMode == "plan" || state.draft != nil || state.proposal != nil || state.proposals?.isEmpty == false {
-            let entries = (state.proposals ?? [state.proposal].compactMap { $0 }).map { PlanCardEntry(id: $0.id, plan: $0) }
-                + [state.draft].compactMap { $0 }.map { PlanCardEntry(id: "\($0.planId):\($0.revision)", draft: $0) }
+        if let state = chat.session.planning {
             let status = [state.effectiveMode == "plan" ? String(localized: "规划模式") : nil, state.execution.map { execution in
                 execution.status == "started" ? String(localized: "计划执行已开始") : execution.status == "accepted" ? String(localized: "执行请求已接受，等待原生开始") : execution.status == "rejected" ? String(localized: "计划已同意，执行尚未启动") : String(localized: "执行结果待核对")
             }].compactMap { $0 }
-            VStack(alignment: .leading, spacing: 12) {
-                if !status.isEmpty {
-                    Text(status.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+            if !status.isEmpty || state.draft != nil {
+                VStack(alignment: .leading, spacing: 12) {
+                    if !status.isEmpty {
+                        Text(status.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let draft = state.draft {
+                        SessionPlanCard(entry: PlanCardEntry(id: "\(draft.planId):\(draft.revision)", draft: draft), onRead: { _ in })
+                    }
                 }
-                ForEach(entries) { entry in
-                    SessionPlanCard(entry: entry, onRead: { reader = $0 })
-                }
-            }.sheet(item: $reader) { plan in
-                SessionPlanReader(plan: plan, offset: Binding(get: { positions[plan.id] ?? 0 }, set: { positions[plan.id] = $0 }))
             }
+        }
+    }
+}
+
+/// One plan version at its place in the timeline: the newest as a card, earlier ones as a single row.
+struct SessionPlanTimelineEntry: View {
+    let plan: V2PlanDocument
+    let latestRevision: Int
+    let status: String?
+    let onRead: (V2PlanDocument) -> Void
+    var body: some View {
+        if plan.revision < latestRevision {
+            Button { onRead(plan) } label: {
+                HStack(spacing: 8) {
+                    AppSymbol("doc.text", size: 14)
+                    Text([plan.title, String(localized: "版本 \(plan.revision)"), String(localized: "已修改为版本 \(latestRevision)")].joined(separator: " · "))
+                        .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                    Text(String(localized: "打开计划"))
+                }
+                .font(.caption).foregroundStyle(.secondary)
+                .padding(.horizontal, 12).frame(minHeight: 44)
+                .overlay { RoundedRectangle(cornerRadius: 16).strokeBorder(.separator, style: StrokeStyle(lineWidth: 1, dash: [4, 3])) }
+                .contentShape(Rectangle())
+            }.buttonStyle(.plain)
+        } else {
+            SessionPlanCard(entry: PlanCardEntry(id: plan.id, plan: plan), status: status, onRead: onRead)
+        }
+    }
+}
+
+/// Full-text reader shared by every plan entry in the chat.
+struct PlanReaderPresentation: ViewModifier {
+    @Binding var reader: V2PlanDocument?
+    @State private var positions: [String: CGFloat] = [:]
+    func body(content: Content) -> some View {
+        content.sheet(item: $reader) { plan in
+            SessionPlanReader(plan: plan, offset: Binding(get: { positions[plan.id] ?? 0 }, set: { positions[plan.id] = $0 }))
         }
     }
 }
@@ -45,15 +79,18 @@ struct SessionPlanningPanel: View {
 private func planPreviewBody(markdown: String, title: String) -> String {
     let text = markdown.replacingOccurrences(of: #"^\s*\n"#, with: "", options: .regularExpression)
     let lines = text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
-    var heading = String(lines.first ?? "").replacingOccurrences(of: #"^#{1,6}\s+"#, with: "", options: .regularExpression)
-    if heading.hasPrefix("**"), heading.hasSuffix("**"), heading.count >= 4 { heading = String(heading.dropFirst(2).dropLast(2)) }
-    heading = heading.trimmingCharacters(in: .whitespaces)
+    // Same cleanup the Connector applies when it derives the title.
+    let heading = String(lines.first ?? "")
+        .replacingOccurrences(of: #"^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)"#, with: "", options: .regularExpression)
+        .replacingOccurrences(of: #"`+|\*+|(?<!\w)_+|_+(?!\w)"#, with: "", options: .regularExpression)
+        .trimmingCharacters(in: .whitespaces)
     guard !heading.isEmpty, heading == title.trimmingCharacters(in: .whitespaces) else { return text }
     return (lines.count > 1 ? String(lines[1]) : "").replacingOccurrences(of: #"^\s*\n"#, with: "", options: .regularExpression)
 }
 
 private struct SessionPlanCard: View {
     let entry: PlanCardEntry
+    var status: String? = nil
     let onRead: (V2PlanDocument) -> Void
     @State private var expanded = false
     @State private var contentHeight: CGFloat = 0
@@ -71,7 +108,7 @@ private struct SessionPlanCard: View {
                     } else if let plan = entry.plan {
                         Text(plan.title).font(.subheadline.weight(.semibold)).accessibilityAddTraits(.isHeader)
                     }
-                    Text(entry.plan.map { String(localized: "计划 · 版本 \($0.revision)") } ?? String(localized: "正文随原生计划输出更新")).font(.caption).foregroundStyle(.secondary)
+                    Text(entry.plan.map { plan in [String(localized: "版本 \(plan.revision)"), status].compactMap { $0 }.joined(separator: " · ") } ?? String(localized: "正文随原生计划输出更新")).font(.caption).foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, alignment: .leading)
                 if let plan = entry.plan {
                     Button(String(localized: "打开计划")) { onRead(plan) }

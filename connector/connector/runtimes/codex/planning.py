@@ -190,7 +190,7 @@ class CodexPlanningPort:
     async def latest_proposal(self, session_id, external_id, current):
         if await self.read_mode(session_id, external_id) != "plan":
             return None
-        from connector.planning.domain.session import content_hash, stable_id
+        from connector.planning.domain.session import content_hash
         from connector.runtimes.codex.ipc.timeline import (
             thread_snapshot_from_conversation_state,
         )
@@ -214,11 +214,8 @@ class CodexPlanningPort:
             return None
         for item in reversed(turns[-1].get("items", [])):
             if item.get("type") == "plan" and item.get("text", "").strip():
-                if (
-                    current
-                    and current["planId"] == stable_id("plan_", session_id, item["id"])
-                    and current["contentHash"] == content_hash(item["text"])
-                ):
+                # A revised plan keeps the reviewed planId, so match the frozen text.
+                if current and current["contentHash"] == content_hash(item["text"]):
                     return None
                 return PlanningObservation(
                     session_id=session_id,

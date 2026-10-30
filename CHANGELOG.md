@@ -18,6 +18,8 @@
 - 在 Codex、Claude Code 和 DSH 会话中可统一使用 `/plan`、`/plan <任务>` 与 `/plan off`；新会话首条任务即可进入原生规划，裸 `/plan` 只设置创建意图，不消耗空模型回合。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
 - Web、Desktop、Android 和 iOS 新增流式计划卡片，在输入区直接「同意并执行／修改计划／暂不执行」，不再弹出审批窗口；计划卡片与确认面板沿用审批卡样式，长计划可展开全文，「打开计划」后可复制和导出完整计划，Web 和 Desktop 支持与聊天并排阅读。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
 - 计划按不可变版本保存，设备离线仍可查阅；旧版本批准、重复执行和结果未知后的自动重发会被阻止，批准计划继续使用用户当前权限设置。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- 提交修改意见后的新计划作为同一份计划的下一版本（版本 2、3…），旧版本在时间线中收为一行，可随时打开；计划卡片按产生时间排在时间线中，批准后紧贴在实施内容上方，Codex 不再额外显示一条重复的计划系统消息。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- 斜杠菜单在支持规划的会话中提供 `/plan`，并显示中英文说明；Codex 内置指令的说明随客户端语言显示。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
 
 ### 会话创建与消息交付
 

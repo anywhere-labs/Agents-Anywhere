@@ -56,6 +56,8 @@ data class TimelineMessage(
     val sourceReplacedBy: String? = null,
     val optimistic: Boolean = false,
     val errorMessage: String? = null,
+    val createdAt: String = "",
+    val sourceRole: String? = null,
 )
 
 data class TimelineFileChange(

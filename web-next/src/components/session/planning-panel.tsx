@@ -9,6 +9,7 @@ import { MarkdownText } from '@/components/markdown-text'
 import { copyText } from '@/lib/clipboard'
 import type { useSessionPlanning, PlanDocument, PlanningState } from '@/features/planning/use-session-planning'
 import { cn } from '@/lib/utils'
+import { planReviewStatus } from '@/features/planning/timeline'
 
 type Planning = ReturnType<typeof useSessionPlanning>
 type ReviewTarget = { document: PlanDocument; review: NonNullable<PlanningState['review']>; epoch: string }
@@ -44,16 +45,11 @@ function download(document: PlanDocument) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-export function PlanningPanel({ planning, canReview = true, onRead }: {
-  planning: Planning; canReview?: boolean; onRead: (document: PlanDocument) => void
-}) {
+/** Planning status and the live draft; finished plan versions are placed in the timeline. */
+export function PlanningPanel({ planning, canReview = true }: { planning: Planning; canReview?: boolean }) {
   const t = useTranslations('planning')
   const { state, documents, error } = planning
   const target = getPlanReviewTarget(state, canReview)
-  const cards = [
-    ...documents.map(document => ({ key: `${document.planId}:${document.revision}`, document, draft: null })),
-    ...(state?.draft ? [{ key: `${state.draft.planId}:${state.draft.revision}`, document: null, draft: state.draft }] : []),
-  ]
   if (!documents.length && !state?.draft && state?.effectiveMode !== "plan" && !state?.requestedMode && !error) return null
   const uncertain = !!state && (state.effectiveMode === 'unknown' || state.freshness !== 'fresh')
   const mode = state?.requestedMode ? t('modePending') : state?.effectiveMode === 'plan' ? t('mode') : uncertain ? t('stateUncertain') : null
@@ -65,9 +61,25 @@ export function PlanningPanel({ planning, canReview = true, onRead }: {
       {(uncertain || error) && !target && <RefreshButton planning={planning} />}
     </div>}
     {state?.executionProgress && <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">{t('progress')}</summary><ul className="mt-1 list-inside list-disc">{((state.executionProgress.steps ?? []) as { step: string; status: string }[]).map((step, index) => <li key={index}>{step.step} · {step.status === 'pending' ? t('stepPending') : step.status === 'in_progress' ? t('stepInProgress') : step.status === 'completed' ? t('stepCompleted') : step.status}</li>)}</ul></details>}
-    {cards.map(({ key, document, draft }) => <PlanCard key={key} document={document} draft={draft} onRead={onRead} />)}
+    {state?.draft && <PlanCard key={`${state.draft.planId}:${state.draft.revision}`} document={null} draft={state.draft} onRead={() => undefined} />}
     {error && !target && <p className="text-xs text-destructive" role="alert">{error}</p>}
   </section>
+}
+
+/** One plan version at its place in the timeline: the newest as a card, earlier ones as a single row. */
+export function PlanTimelineEntry({ planning, document, latestRevision, onRead }: {
+  planning: Planning; document: PlanDocument; latestRevision: number; onRead: (document: PlanDocument) => void
+}) {
+  const t = useTranslations('planning')
+  if (document.revision < latestRevision) {
+    return <div className="flex min-w-0 items-center gap-2 rounded-xl border border-dashed px-3 py-1.5 text-xs text-muted-foreground">
+      <FileText className="size-3.5 shrink-0" aria-hidden="true" />
+      <span className="min-w-0 flex-1 truncate">{[document.title, t('version', { revision: document.revision }), t('superseded', { revision: latestRevision })].join(' · ')}</span>
+      <Button variant="ghost" size="xs" onClick={() => onRead(document)}>{t('open')}</Button>
+    </div>
+  }
+  const status = planReviewStatus(planning.state, document)
+  return <PlanCard document={document} draft={null} status={status ? t(status) : null} onRead={onRead} />
 }
 
 export function PlanningReviewPanel({ planning, target }: { planning: Planning; target: ReviewTarget }) {
@@ -169,14 +181,15 @@ const PLAN_PREVIEW_HEIGHT = 288
 
 // The card header already shows the title; drop a leading Markdown line that repeats it.
 function planBody(document: PlanDocument) {
-  const markdown = document.markdown.replace(/^\s*\n/, '')
+  const markdown = (document.markdown ?? '').replace(/^\s*\n/, '')
   const [first = '', ...rest] = markdown.split('\n')
-  const heading = first.replace(/^#{1,6}\s+/, '').replace(/^\*\*(.*)\*\*$/, '$1').trim()
+  // Same cleanup the Connector applies when it derives the title.
+  const heading = first.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)/, '').replace(/`+|\*+|(?<!\w)_+|_+(?!\w)/g, '').trim()
   return heading && heading === document.title.trim() ? rest.join('\n').replace(/^\s*\n/, '') : markdown
 }
 
-function PlanCard({ document, draft, onRead }: {
-  document: PlanDocument | null; draft: PlanningState['draft'] | null; onRead: (document: PlanDocument) => void
+function PlanCard({ document, draft, status = null, onRead }: {
+  document: PlanDocument | null; draft: PlanningState['draft'] | null; status?: string | null; onRead: (document: PlanDocument) => void
 }) {
   const t = useTranslations('planning')
   const ref = React.useRef<HTMLDivElement>(null)
@@ -211,7 +224,7 @@ function PlanCard({ document, draft, onRead }: {
         <FileText className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
         <div className="min-w-0">
           <div className="wrap-break-word text-sm font-medium"><span className={cn(writing && 'plan-writing-title')}>{draft ? writing ? t('writing') : t('interrupted') : document!.title}</span></div>
-          <div className="text-xs text-muted-foreground">{draft ? t('streaming') : t('documentVersion', { revision: document!.revision })}</div>
+          <div className="text-xs text-muted-foreground">{draft ? t('streaming') : [t('version', { revision: document!.revision }), status].filter(Boolean).join(' · ')}</div>
         </div>
       </div>
       {document && <Button variant="outline" size="sm" onClick={() => onRead(document)}>{t('open')}</Button>}

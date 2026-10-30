@@ -232,12 +232,9 @@ class PlanningService:
                     state.review.update(status="withdrawn", actions=[])
                     state.native_review = None
             elif event.kind == "draft":
-                from connector.planning.domain.session import stable_id
-
                 if (
                     state.proposal
-                    and state.proposal["planId"]
-                    == stable_id("plan_", event.session_id, event.native_id)
+                    and state.proposal["planId"] == state.plan_ids.get(event.native_id)
                     and state.review
                     and state.review["status"] in {"open", "responding", "approved"}
                 ):

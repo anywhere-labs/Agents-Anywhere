@@ -123,6 +123,16 @@ final class SessionChatModel {
     /// The runtime advertises commands at all, even when they cannot run now.
     var offersCommands: Bool { session.isValid && session.runtime.capabilities?.capability(id: "session.commands") != nil }
     var canUseCommands: Bool { session.runtime.allows("session.commands") && connectorOnline }
+    /// `/plan` is parsed by AA, not run by the runtime; offer it wherever planning is usable.
+    var planningUsable: Bool { session.runtime.allows("session.planning") && connectorOnline }
+    var offeredCommands: [V2RuntimeCommand] {
+        planningUsable && !commands.contains(where: { $0.id == "plan" }) ? [Self.planCommand] + commands : commands
+    }
+    static var planCommand: V2RuntimeCommand {
+        V2RuntimeCommand(id: "plan", title: "plan", description: String(localized: "进入原生规划：/plan <任务> 先出计划、确认后执行；/plan off 退出"),
+            aliases: [], category: nil, scope: "session", enabled: true, disabledReason: nil, acceptsArgs: true, argsSchema: nil,
+            metadata: .object(["ui": .object(["kind": .string("execute"), "argumentHint": .string(String(localized: "[任务 | off]"))])]))
+    }
     var commandsUnavailableReason: String? {
         guard let capability = session.runtime.capabilities?.capability(id: "session.commands"), !canUseCommands else { return nil }
         if !connectorOnline { return String(localized: "设备离线") }
@@ -146,6 +156,8 @@ final class SessionChatModel {
     }
 
     func commandBlock(_ command: V2RuntimeCommand) -> RuntimeCommandBlock? {
+        // AA's own /plan is not a runtime command; the planning capability already gated it.
+        if command.id == "plan", !commands.contains(where: { $0.id == "plan" }) { return nil }
         if isRunningCommand || isWorking { return .busy }
         return command.block(status: session.runtime.state?.status, capability: canUseCommands,
             writable: session.metadata?.takeover == true, online: connectorOnline)
@@ -172,7 +184,7 @@ final class SessionChatModel {
     /// is not a command-like slash (e.g. a path or prose).
     func commandSuggestions(for text: String) -> [V2RuntimeCommand]? {
         guard let intent = SlashIntent(text), intent.isCommandLike, intent.suffix.isEmpty, !intent.multiline else { return nil }
-        return commands.filter { $0.matches(intent.command) }
+        return offeredCommands.filter { $0.matches(intent.command) }
     }
 
     /// Only drafts naming a catalog command run as commands; the catalog is read

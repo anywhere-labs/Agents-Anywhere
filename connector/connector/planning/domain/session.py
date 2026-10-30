@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -26,6 +27,22 @@ def stable_id(prefix: str, *parts: str) -> str:
     return prefix + hashlib.sha256("\0".join(parts).encode()).hexdigest()[:32]
 
 
+_MARKDOWN_PREFIX = re.compile(r"^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)")
+_MARKDOWN_INLINE = re.compile(r"`+|\*+|(?<!\w)_+|_+(?!\w)")
+
+
+def plan_title(text: str) -> str:
+    """First heading of any level, else the first line of prose, without Markdown."""
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    heading = next((line for line in lines if re.match(r"^#{1,6}\s+", line)), None)
+    source = heading or (lines[0] if lines else "")
+    title = _MARKDOWN_INLINE.sub("", _MARKDOWN_PREFIX.sub("", source)).strip()
+    if not title:
+        return "计划"
+    return title if len(title) <= 60 else title[:59] + "…"
+
+
 @dataclass(slots=True)
 class SessionPlanning:
     session_id: str
@@ -43,6 +60,9 @@ class SessionPlanning:
     operation: dict[str, Any] | None = None
     execution: dict[str, Any] | None = None
     execution_progress: dict[str, Any] | None = None
+    # Native plan item id -> AA planId. A revision requested in review keeps the
+    # reviewed planId, so the next native item becomes that plan's next version.
+    plan_ids: dict[str, str] = field(default_factory=dict)
 
     @property
     def proposal(self) -> dict[str, Any] | None:
@@ -63,21 +83,32 @@ class SessionPlanning:
         self.freshness = "fresh" if mode != "unknown" else "unknown"
         self.revision += 1
 
+    def plan_id_for(self, native_id: str) -> str:
+        """The AA plan a native plan item belongs to, fixed on first sight."""
+
+        known = self.plan_ids.get(native_id)
+        if known is not None:
+            return known
+        if self.review and self.review["status"] == "revision_requested":
+            plan_id = self.review["planId"]
+        else:
+            plan_id = stable_id("plan_", self.session_id, native_id)
+        self.plan_ids[native_id] = plan_id
+        return plan_id
+
+    def next_version(self, plan_id: str) -> int:
+        return 1 + max(
+            (p["revision"] for p in self.proposals if p["planId"] == plan_id), default=0
+        )
+
     def update_draft(self, native_id: str, text: str, *, append: bool) -> None:
         draft_id = stable_id("draft_", self.session_id, native_id)
         if not self.draft or self.draft["draftId"] != draft_id:
+            plan_id = self.plan_id_for(native_id)
             self.draft = {
                 "draftId": draft_id,
-                "planId": stable_id("plan_", self.session_id, native_id),
-                "revision": 1
-                + max(
-                    (
-                        p["revision"]
-                        for p in self.proposals
-                        if p["planId"] == stable_id("plan_", self.session_id, native_id)
-                    ),
-                    default=0,
-                ),
+                "planId": plan_id,
+                "revision": self.next_version(plan_id),
                 "seq": 0,
                 "content": "",
                 "contentState": "drafting",
@@ -100,7 +131,7 @@ class SessionPlanning:
         native_review: dict | None,
     ) -> bool:
         digest = content_hash(text)
-        plan_id = stable_id("plan_", self.session_id, native_id)
+        plan_id = self.plan_id_for(native_id)
         current = self.proposal
         if (
             current
@@ -108,22 +139,13 @@ class SessionPlanning:
             and current["contentHash"] == digest
         ):
             return False
-        version = 1 + max(
-            (p["revision"] for p in self.proposals if p["planId"] == plan_id), default=0
-        )
-        title = next(
-            (
-                line.lstrip("#").strip()
-                for line in text.splitlines()
-                if line.startswith("# ")
-            ),
-            "计划",
-        )
+        version = self.next_version(plan_id)
+        title = plan_title(text)
         proposal = {
             "planId": plan_id,
             "revision": version,
             "contentHash": digest,
-            "title": title[:200],
+            "title": title,
             "markdown": text,
             "sourceTurnId": turn_id,
             "contentState": "ready",

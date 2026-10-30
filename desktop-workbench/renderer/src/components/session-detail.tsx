@@ -2,7 +2,8 @@
 
 import { useSessionPlanning } from "@/features/planning/use-session-planning"
 import { parsePlanningCommand } from "@/features/planning/commands"
-import { PlanningPanel, PlanningReviewPanel, PlanningReader, usePlanReader, getPlanReviewTarget } from "@/components/session/planning-panel"
+import { PlanningPanel, PlanningReviewPanel, PlanningReader, PlanTimelineEntry, usePlanReader, getPlanReviewTarget } from "@/components/session/planning-panel"
+import { latestPlanRevisions, placePlanDocuments, planEchoFilter } from "@/features/planning/timeline"
 
 import * as React from "react"
 import { ArrowDown, ChevronDown, CircleAlert, Loader2, WifiOff } from "lucide-react"
@@ -1609,10 +1610,23 @@ export function SessionDetail({
     resizeObserver.observe(node)
     return () => resizeObserver.disconnect()
   }, [session?.id])
+  const planEcho = React.useMemo(() => planEchoFilter(planning.state, planning.documents), [planning.state, planning.documents])
   const timelineGroups = React.useMemo(
-    () => groupTimelineItems((state?.items ?? []).filter(isVisibleTimelineItem), interactionTargetIds),
-    [interactionTargetIds, state?.items],
+    () => groupTimelineItems(
+      (state?.items ?? []).filter(item => isVisibleTimelineItem(item) && planEcho(item, messageText(item))),
+      interactionTargetIds,
+    ),
+    [interactionTargetIds, planEcho, state?.items],
   )
+  const planPlacement = React.useMemo(
+    () => placePlanDocuments(planning.documents, timelineGroups.map(group => ({ key: timelineGroupKey(group), items: timelineGroupItems(group) }))),
+    [planning.documents, timelineGroups],
+  )
+  const latestPlanRevision = React.useMemo(() => latestPlanRevisions(planning.documents), [planning.documents])
+  const renderPlanEntries = (documents: typeof planning.documents) => documents.map(document => (
+    <PlanTimelineEntry key={`plan:${document.planId}:${document.revision}`} planning={planning} document={document}
+      latestRevision={latestPlanRevision.get(document.planId) ?? document.revision} onRead={planReader.open} />
+  ))
   const selectTurnReviewDisplay = React.useMemo(() => createTurnReviewDisplaySelector(), [sessionId])
   const turnReviewDisplay = React.useMemo(() => {
     return selectTurnReviewDisplay(state?.session.id === sessionId ? state.items.filter(isVisibleTimelineItem) : [], {
@@ -1713,6 +1727,7 @@ export function SessionDetail({
                 .find((turn) => turn !== undefined)
               return (
                 <React.Fragment key={groupKey}>
+                  {renderPlanEntries(planPlacement.before.get(groupKey) ?? [])}
                   <LiveTimelineGroupEntry
                     group={group}
                     token={token}
@@ -1746,7 +1761,8 @@ export function SessionDetail({
                 </React.Fragment>
               )
             })}
-            <PlanningPanel key={session.id} planning={planning} canReview={capabilityIsUsable(effectiveCapabilities, CAPABILITY.planReview, sessionRuntimeScope)} onRead={planReader.open} />
+            {renderPlanEntries(planPlacement.end)}
+            <PlanningPanel key={session.id} planning={planning} canReview={capabilityIsUsable(effectiveCapabilities, CAPABILITY.planReview, sessionRuntimeScope)} />
             {detachedInteractions.map((notice) => (
               <InteractionCard
                 key={notice.noticeId}

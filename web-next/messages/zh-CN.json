@@ -1127,7 +1127,10 @@
         "check": "查询恢复状态",
         "releaseFailed": "尚未确认执行实例已释放，请刷新状态。",
         "releasing": "正在结束执行…"
-      }
+      },
+      "commandDescription_compact": "压缩会话上下文。",
+      "commandDescription_kill-chatgpt": "退出 ChatGPT / Codex 桌面应用，让它的会话改由 Connector 自己的 app-server 运行。",
+      "commandDescription_open-in-codex-app": "在正在运行的 Codex 桌面应用中打开此会话，并从那里继续跟随。"
     },
     "sessionStatus": {
       "idle": "空闲",
@@ -2031,6 +2034,18 @@
     "creationIntent": "新会话将使用计划模式",
     "stepPending": "待执行",
     "stepInProgress": "进行中",
-    "stepCompleted": "已完成"
+    "stepCompleted": "已完成",
+    "statusOpen": "待确认",
+    "statusResponding": "正在确认",
+    "statusApproved": "已同意",
+    "statusExecuted": "已执行",
+    "statusExecutionPending": "已同意，执行未启动",
+    "statusRevisionRequested": "已请求修改",
+    "statusDismissed": "未执行",
+    "statusWithdrawn": "已撤回",
+    "statusUnknown": "结果待核对",
+    "superseded": "已修改为版本 {revision}",
+    "commandDescription": "进入原生规划：/plan <任务> 先出计划、确认后执行；/plan off 退出",
+    "commandHint": "[任务 | off]"
   }
 }

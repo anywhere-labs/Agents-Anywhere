@@ -53,4 +53,17 @@
     <string name="planning_workflow_binding">正在读取已创建的会话。</string>
     <string name="planning_workflow_creation_missing">没有待绑定的创建操作。</string>
     <string name="planning_workflow_session_mismatch">返回的会话身份与创建操作不一致。</string>
+    <string name="planning_status_open">待确认</string>
+    <string name="planning_status_responding">正在确认</string>
+    <string name="planning_status_approved">已同意</string>
+    <string name="planning_status_executed">已执行</string>
+    <string name="planning_status_execution_pending">已同意，执行未启动</string>
+    <string name="planning_status_revision_requested">已请求修改</string>
+    <string name="planning_status_dismissed">未执行</string>
+    <string name="planning_status_withdrawn">已撤回</string>
+    <string name="planning_status_unknown">结果待核对</string>
+    <string name="planning_superseded">已修改为版本 %1$d</string>
+    <string name="planning_command_title">计划</string>
+    <string name="planning_command_description">进入原生规划：/plan &lt;任务&gt; 先出计划、确认后执行；/plan off 退出</string>
+    <string name="planning_command_hint">[任务 | off]</string>
 </resources>
