@@ -24,31 +24,86 @@ struct SessionPlanningPanel: View {
         if let state = chat.session.planning, state.effectiveMode == "plan" || state.draft != nil || state.proposal != nil || state.proposals?.isEmpty == false {
             let entries = (state.proposals ?? [state.proposal].compactMap { $0 }).map { PlanCardEntry(id: $0.id, plan: $0) }
                 + [state.draft].compactMap { $0 }.map { PlanCardEntry(id: "\($0.planId):\($0.revision)", draft: $0) }
+            let status = [state.effectiveMode == "plan" ? "规划模式" : nil, state.execution.map { execution in
+                execution.status == "started" ? "计划执行已开始" : execution.status == "accepted" ? "执行请求已接受，等待原生开始" : execution.status == "rejected" ? "计划已同意，执行尚未启动" : "执行结果待核对"
+            }].compactMap { $0 }
             VStack(alignment: .leading, spacing: 12) {
-                Text(state.effectiveMode == "plan" ? "规划模式" : "计划").font(.caption).foregroundStyle(.secondary)
-                if let execution = state.execution {
-                    Text(execution.status == "started" ? "计划执行已开始" : execution.status == "accepted" ? "执行请求已接受，等待原生开始" : execution.status == "rejected" ? "计划已同意，执行尚未启动" : "执行结果待核对").font(.caption)
+                if !status.isEmpty {
+                    Text(status.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
                 }
                 ForEach(entries) { entry in
-                    VStack(alignment: .leading, spacing: 12) {
-                        if let draft = entry.draft {
-                            PlanWritingTitle(writing: draft.contentState == "drafting")
-                            ChatMarkdownView(text: draft.content, isStreaming: draft.contentState == "drafting")
-                        }
-                        if let plan = entry.plan {
-                            Label(plan.title, systemImage: "doc.text").font(.headline)
-                            Text("计划 · 版本 \(plan.revision)").font(.caption).foregroundStyle(.secondary)
-                            ChatMarkdownView(text: plan.markdown).frame(maxHeight: 240, alignment: .top).clipped()
-                            HStack {
-                                Button("打开计划") { reader = plan }.frame(minHeight: 44)
-                            }
-                        }
-                    }.padding(16).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                    SessionPlanCard(entry: entry, onRead: { reader = $0 })
                 }
             }.sheet(item: $reader) { plan in
                 SessionPlanReader(plan: plan, offset: Binding(get: { positions[plan.id] ?? 0 }, set: { positions[plan.id] = $0 }))
             }
         }
+    }
+}
+
+/// The card header already shows the title; drop a leading Markdown line that repeats it.
+private func planPreviewBody(markdown: String, title: String) -> String {
+    let text = markdown.replacingOccurrences(of: #"^\s*\n"#, with: "", options: .regularExpression)
+    let lines = text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+    var heading = String(lines.first ?? "").replacingOccurrences(of: #"^#{1,6}\s+"#, with: "", options: .regularExpression)
+    if heading.hasPrefix("**"), heading.hasSuffix("**"), heading.count >= 4 { heading = String(heading.dropFirst(2).dropLast(2)) }
+    heading = heading.trimmingCharacters(in: .whitespaces)
+    guard !heading.isEmpty, heading == title.trimmingCharacters(in: .whitespaces) else { return text }
+    return (lines.count > 1 ? String(lines[1]) : "").replacingOccurrences(of: #"^\s*\n"#, with: "", options: .regularExpression)
+}
+
+private struct SessionPlanCard: View {
+    let entry: PlanCardEntry
+    let onRead: (V2PlanDocument) -> Void
+    @State private var expanded = false
+    @State private var contentHeight: CGFloat = 0
+    @ScaledMetric(relativeTo: .body) private var previewHeight: CGFloat = 240
+    private var collapsible: Bool { entry.plan != nil && contentHeight > previewHeight + 1 }
+    private var clamped: Bool { collapsible && !expanded }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                AppSymbol("doc.text", size: 17).foregroundStyle(.secondary).padding(.top, 1)
+                VStack(alignment: .leading, spacing: 2) {
+                    if let draft = entry.draft {
+                        PlanWritingTitle(writing: draft.contentState == "drafting")
+                    } else if let plan = entry.plan {
+                        Text(plan.title).font(.subheadline.weight(.semibold)).accessibilityAddTraits(.isHeader)
+                    }
+                    Text(entry.plan.map { "计划 · 版本 \($0.revision)" } ?? "正文随原生计划输出更新").font(.caption).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                if let plan = entry.plan {
+                    Button("打开计划") { onRead(plan) }
+                        .font(.subheadline).buttonStyle(.glass).buttonBorderShape(.capsule).controlSize(.small)
+                        .frame(minHeight: 44)
+                }
+            }
+            if let draft = entry.draft {
+                ChatMarkdownView(text: draft.content, isStreaming: draft.contentState == "drafting")
+            } else if let plan = entry.plan {
+                ChatMarkdownView(text: planPreviewBody(markdown: plan.markdown, title: plan.title))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+                    .frame(maxHeight: clamped ? previewHeight : nil, alignment: .top)
+                    .clipped()
+                    .mask {
+                        LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: clamped ? 0.8 : 1), .init(color: clamped ? .clear : .black, location: 1)],
+                            startPoint: .top, endPoint: .bottom)
+                    }
+                if collapsible {
+                    Button {
+                        withAnimation(.smooth(duration: 0.2)) { expanded.toggle() }
+                    } label: {
+                        Label(expanded ? "收起" : "展开全文", appSymbol: "chevron.down")
+                    }
+                    .font(.caption).foregroundStyle(.secondary).buttonStyle(.plain).frame(minHeight: 44)
+                }
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassEffect(.regular, in: .rect(cornerRadius: 24))
     }
 }
 
@@ -59,7 +114,7 @@ private struct PlanWritingTitle: View {
     @State private var visible = false
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 15, paused: !writing || !visible || reduceMotion || scenePhase != .active)) { context in
-            Text(writing ? "正在撰写计划" : "计划草稿已中断").font(.headline)
+            Text(writing ? "正在撰写计划" : "计划草稿已中断").font(.subheadline.weight(.semibold))
                 .opacity(!writing || reduceMotion || !visible || scenePhase != .active ? 1 : 0.78 + 0.22 * sin(context.date.timeIntervalSinceReferenceDate * .pi / 1.2))
         }.onScrollVisibilityChange { visible = $0 }
     }
@@ -94,32 +149,64 @@ struct SessionPlanReviewPanel: View {
     let chat: SessionChatModel
     let target: V2PlanningState
     @State private var feedback = ""
+    @State private var editing = false
+    @State private var pending: String?
+    @FocusState private var feedbackFocused: Bool
+    private var open: Bool { target.review?.status == "open" }
+    private var trimmedFeedback: String { feedback.trimmingCharacters(in: .whitespacesAndNewlines) }
     private func allowed(_ action: String) -> Bool {
         target.freshness == "fresh" && !target.epoch.isEmpty && target.capabilities?.actions.contains(action) == true && !chat.isWorking
     }
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("是否执行这个计划？").font(.headline).accessibilityAddTraits(.isHeader)
-                Text("\(target.proposal?.title ?? "计划") · 版本 \(target.proposal?.revision ?? 1)").font(.caption).foregroundStyle(.secondary)
-                if target.freshness != "fresh" { Text("原生状态待核对，请刷新后再确认。").font(.caption) }
-                if target.review?.status == "open" {
-                    TextField("修改意见：不，说明需要如何调整计划", text: $feedback, axis: .vertical).lineLimit(2...3).textFieldStyle(.roundedBorder).disabled(!allowed("request_revision"))
-                }
-                if let error = chat.error { Text(error).foregroundStyle(.red) }
-                HStack {
-                    Button(chat.isWorking ? "正在确认…" : target.review?.status == "approved" ? "重试启动" : "同意并执行") { respond("approve_and_execute") }
-                        .frame(minHeight: 44).buttonStyle(.borderedProminent).disabled(!allowed("approve_and_execute"))
-                    if target.review?.status == "open" {
-                        Button("暂不执行") { respond("dismiss_review") }.frame(minHeight: 44).disabled(!allowed("dismiss_review"))
-                    }
-                }
-                if target.review?.status == "open" {
-                    Button("提交修改意见") { respond("request_revision") }.frame(minHeight: 44)
-                        .disabled(!allowed("request_revision") || feedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }.padding(16)
-        }.frame(maxHeight: 300).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20)).padding(.horizontal, 12).padding(.vertical, 8)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 8) {
+                AppSymbol("checkmark.shield", size: 17).foregroundStyle(.secondary).padding(.top, 1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(open ? "是否执行这个计划？" : "计划已同意，执行尚未启动").font(.subheadline.weight(.semibold)).accessibilityAddTraits(.isHeader)
+                    Text("版本 \(target.proposal?.revision ?? 1)").font(.caption).foregroundStyle(.secondary)
+                    if target.freshness != "fresh" { Text("原生状态待核对，请刷新后再确认。").font(.caption).foregroundStyle(.secondary) }
+                    if let error = chat.error { Text(error).font(.caption).foregroundStyle(.red) }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if editing {
+                TextField("说明需要如何调整计划", text: $feedback, axis: .vertical)
+                    .lineLimit(2...4).textFieldStyle(.roundedBorder).focused($feedbackFocused)
+                    .disabled(chat.isWorking)
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { actions }
+                VStack(spacing: 8) { actions }
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassEffect(.regular, in: .rect(cornerRadius: 24))
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .onChange(of: editing) { _, value in feedbackFocused = value }
     }
-    private func respond(_ action: String) { Task { await chat.respondPlan(target, action: action, feedback: action == "request_revision" ? feedback.trimmingCharacters(in: .whitespacesAndNewlines) : "") } }
+    @ViewBuilder private var actions: some View {
+        if !open {
+            button("重试启动", "approve_and_execute", prominent: true)
+        } else if editing {
+            AppGlassButton("取消", disabled: chat.isWorking) { editing = false }.font(.subheadline)
+            button("提交修改意见", "request_revision", prominent: true, extraDisabled: trimmedFeedback.isEmpty)
+        } else {
+            button("暂不执行", "dismiss_review")
+            AppGlassButton("修改计划", disabled: !allowed("request_revision")) { editing = true }.font(.subheadline)
+            button("同意并执行", "approve_and_execute", prominent: true)
+        }
+    }
+    private func button(_ title: String, _ action: String, prominent: Bool = false, extraDisabled: Bool = false) -> some View {
+        AppGlassButton(title, style: prominent ? .prominent : .regular, isLoading: chat.isWorking && pending == action,
+            disabled: !allowed(action) || extraDisabled, maxWidth: .infinity) { respond(action) }
+            .font(.subheadline)
+    }
+    private func respond(_ action: String) {
+        pending = action
+        Task {
+            await chat.respondPlan(target, action: action, feedback: action == "request_revision" ? trimmedFeedback : "")
+            pending = nil
+            if action == "request_revision", chat.error == nil { editing = false; feedback = "" }
+        }
+    }
 }

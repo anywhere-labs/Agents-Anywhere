@@ -1799,7 +1799,7 @@ export function SessionDetail({
           {onOpenReview && turnReviewDisplay.activeReview ? (
             <SessionReviewTag files={turnReviewDisplay.activeReview.files} onReview={() => onOpenReview()} />
           ) : null}
-          {planReview && <PlanningReviewPanel planning={planning} target={planReview} onRead={planReader.open} />}
+          {planReview && <PlanningReviewPanel planning={planning} target={planReview} />}
           <div hidden={planReview !== null}>
           <SessionComposer
             token={token}
