@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -52,6 +53,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.IntOffset
@@ -109,6 +111,12 @@ internal fun MessageComposer(
     onPickPhoto: () -> Unit,
     onPickFile: () -> Unit,
     onOpenCamera: () -> Unit,
+    onPickVideo: () -> Unit = {},
+    onPickAudio: () -> Unit = {},
+    onPasteClipboard: () -> Unit = {},
+    onPickCompressedPhoto: () -> Unit = {},
+    onCompactContext: (() -> Unit)? = null,
+    onAttachMenuOpen: () -> Unit = {},
     onRemoveAttachment: (PendingAttachment) -> Unit,
     onRetryAttachment: (PendingAttachment) -> Unit,
     onPreviewAttachment: (PendingAttachment) -> Unit,
@@ -213,7 +221,12 @@ internal fun MessageComposer(
                 modelLoading = modelLoading,
                 onModelClick = onModelClick,
                 onToggleTakeover = onToggleTakeover,
-                onOpenAttachMenu = { if (attachmentsEnabled) showAttachMenu = true },
+                onOpenAttachMenu = {
+                    if (attachmentsEnabled) {
+                        showAttachMenu = true
+                        onAttachMenuOpen()
+                    }
+                },
                 onSend = onSend,
                 onInterrupt = onInterrupt,
             )
@@ -248,9 +261,31 @@ internal fun MessageComposer(
                         showAttachMenu = false
                         onPickPhoto()
                     },
+                    onVideo = {
+                        showAttachMenu = false
+                        onPickVideo()
+                    },
+                    onAudio = {
+                        showAttachMenu = false
+                        onPickAudio()
+                    },
                     onFile = {
                         showAttachMenu = false
                         onPickFile()
+                    },
+                    onClipboard = {
+                        showAttachMenu = false
+                        onPasteClipboard()
+                    },
+                    onCompressPhoto = {
+                        showAttachMenu = false
+                        onPickCompressedPhoto()
+                    },
+                    onCompactContext = onCompactContext?.let { compact ->
+                        {
+                            showAttachMenu = false
+                            compact()
+                        }
                     },
                 )
             }
@@ -704,91 +739,115 @@ private fun ModelChip(
     }
 }
 
+private data class AttachmentMenuAction(
+    val labelRes: Int,
+    val iconRes: Int,
+    val onClick: () -> Unit,
+)
+
 @Composable
 private fun AttachmentSourceMenu(
     darkMode: Boolean,
     onCamera: () -> Unit,
     onPhoto: () -> Unit,
+    onVideo: () -> Unit,
+    onAudio: () -> Unit,
     onFile: () -> Unit,
+    onClipboard: () -> Unit,
+    onCompressPhoto: () -> Unit,
+    onCompactContext: (() -> Unit)?,
 ) {
     val surface = if (darkMode) Color(0xFF202023) else Color.White
     val border = if (darkMode) Color(0xFF38383C) else Color(0xFFEFEDE9)
     val shadow = if (darkMode) Color(0x80000000) else Color(0x1A000000)
     val text = if (darkMode) Color(0xFFF4F4F5) else Color(0xFF2F302D)
     val iconSurface = if (darkMode) Color(0xFF3A3A3D) else Color(0xFFF1F1EF)
-    val cameraIcon = if (darkMode) R.drawable.ic_attachment_camera_white else R.drawable.ic_attachment_camera_black
-    val photoIcon = if (darkMode) R.drawable.ic_attachment_photo_white else R.drawable.ic_attachment_photo_black
-    val fileIcon = if (darkMode) R.drawable.ic_attachment_file_white else R.drawable.ic_attachment_file_black
+    val iconTint = if (darkMode) Color(0xFFE4E4E7) else Color(0xFF3F3F46)
+    val actions = listOfNotNull(
+        AttachmentMenuAction(R.string.session_attachment_photos, R.drawable.ic_attachment_photo_black, onPhoto),
+        AttachmentMenuAction(R.string.session_attachment_camera, R.drawable.ic_attachment_camera_black, onCamera),
+        AttachmentMenuAction(R.string.session_attachment_video, R.drawable.ic_attachment_video, onVideo),
+        AttachmentMenuAction(R.string.session_attachment_audio, R.drawable.ic_attachment_audio, onAudio),
+        AttachmentMenuAction(R.string.session_attachment_file, R.drawable.ic_attachment_file_black, onFile),
+        AttachmentMenuAction(R.string.session_attachment_clipboard, R.drawable.ic_attachment_clipboard, onClipboard),
+        AttachmentMenuAction(R.string.session_attachment_compress_image, R.drawable.ic_attachment_compress, onCompressPhoto),
+        onCompactContext?.let {
+            AttachmentMenuAction(R.string.session_attachment_compact_context, R.drawable.ic_attachment_compact, it)
+        },
+    )
     Column(
         modifier = Modifier
-            .width(270.dp)
-            .height(190.dp)
-            .shadow(34.dp, RoundedCornerShape(24.dp), ambientColor = shadow, spotColor = shadow)
-            .clip(RoundedCornerShape(24.dp))
+            .width(300.dp)
+            .shadow(30.dp, RoundedCornerShape(22.dp), ambientColor = shadow, spotColor = shadow)
+            .clip(RoundedCornerShape(22.dp))
             .background(surface)
-            .border(1.dp, border, RoundedCornerShape(24.dp))
-            .padding(horizontal = 18.dp, vertical = 10.dp),
+            .border(1.dp, border, RoundedCornerShape(22.dp))
+            .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        AttachmentSourceRow(
-            label = stringResource(R.string.session_attachment_camera),
-            iconRes = cameraIcon,
-            iconSurface = iconSurface,
-            text = text,
-            onClick = onCamera,
-        )
-        AttachmentSourceRow(
-            label = stringResource(R.string.session_attachment_photos),
-            iconRes = photoIcon,
-            iconSurface = iconSurface,
-            text = text,
-            onClick = onPhoto,
-        )
-        AttachmentSourceRow(
-            label = stringResource(R.string.session_attachment_file),
-            iconRes = fileIcon,
-            iconSurface = iconSurface,
-            text = text,
-            onClick = onFile,
-        )
+        actions.chunked(4).forEach { rowActions ->
+            Row(
+                modifier = Modifier.fillMaxWidth().height(72.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                rowActions.forEach { action ->
+                    AttachmentActionTile(
+                        action = action,
+                        iconSurface = iconSurface,
+                        iconTint = iconTint,
+                        text = text,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                repeat(4 - rowActions.size) {
+                    Spacer(Modifier.weight(1f))
+                }
+            }
+        }
     }
 }
 
 @Composable
-private fun AttachmentSourceRow(
-    label: String,
-    iconRes: Int,
+private fun AttachmentActionTile(
+    action: AttachmentMenuAction,
     iconSurface: Color,
+    iconTint: Color,
     text: Color,
-    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(50.dp)
-            .noRippleClickable(onClick = onClick),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    val label = stringResource(action.labelRes)
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .clip(RoundedCornerShape(14.dp))
+            .noRippleClickable(onClick = action.onClick)
+            .padding(vertical = 7.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Box(
             modifier = Modifier
-                .size(42.dp)
+                .size(36.dp)
                 .clip(CircleShape)
                 .background(iconSurface),
             contentAlignment = Alignment.Center,
         ) {
-            Image(
-                painter = painterResource(iconRes),
-                contentDescription = label,
-                modifier = Modifier.size(22.dp),
+            Icon(
+                painter = painterResource(action.iconRes),
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(19.dp),
             )
         }
         Text(
             text = label,
             color = text,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.SemiBold,
+            fontSize = 11.sp,
+            lineHeight = 13.sp,
+            fontWeight = FontWeight.Medium,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
         )
     }
 }

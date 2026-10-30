@@ -32,6 +32,19 @@ data class CompressedImage(
  * turn. Downscaling to [MAX_EDGE] and re-encoding at [QUALITY] cuts the payload by
  * 80-95% with no visible difference on a phone or tablet screen.
  */
+enum class ImageCompressionProfile(
+    val maxEdge: Int,
+    val quality: Int,
+    /** Re-encode even when the source already fits the edge limit and the skip threshold. */
+    val force: Boolean,
+) {
+    /** Automatic compression applied to every upload. */
+    Standard(ImageCompressor.MAX_EDGE, ImageCompressor.QUALITY, false),
+
+    /** User-selected "compress image" action, optimised for sending over mobile data. */
+    Strong(1280, 70, true),
+}
+
 object ImageCompressor {
     const val MAX_EDGE = 2048
     const val QUALITY = 85
@@ -46,6 +59,7 @@ object ImageCompressor {
         uri: Uri,
         name: String,
         mediaType: String,
+        profile: ImageCompressionProfile = ImageCompressionProfile.Standard,
     ): CompressedImage = withContext(Dispatchers.IO) {
         val normalizedType = mediaType.trim().lowercase()
         val original = CompressedImage(
@@ -60,13 +74,13 @@ object ImageCompressor {
         val bounds = readBounds(context, uri) ?: return@withContext original
         val longestEdge = max(bounds.first, bounds.second)
         if (longestEdge <= 0) return@withContext original
-        if (longestEdge <= MAX_EDGE && original.sourceSize in 1..SKIP_BELOW_BYTES) {
+        if (!profile.force && longestEdge <= profile.maxEdge && original.sourceSize in 1..SKIP_BELOW_BYTES) {
             return@withContext original
         }
-        val bitmap = runCatching { decode(context, uri, bounds) }.getOrNull()
+        val bitmap = runCatching { decode(context, uri, bounds, profile.maxEdge) }.getOrNull()
             ?: return@withContext original
         val encoded = try {
-            encode(context, bitmap, name, normalizedType)
+            encode(context, bitmap, name, normalizedType, profile.quality)
         } finally {
             bitmap.recycle()
         }
@@ -93,9 +107,9 @@ object ImageCompressor {
         return if (width > 0 && height > 0) width to height else null
     }
 
-    private fun decode(context: Context, uri: Uri, bounds: Pair<Int, Int>): Bitmap? {
+    private fun decode(context: Context, uri: Uri, bounds: Pair<Int, Int>, maxEdge: Int): Bitmap? {
         val (width, height) = bounds
-        val scale = (MAX_EDGE.toFloat() / max(width, height).toFloat()).coerceAtMost(1f)
+        val scale = (maxEdge.toFloat() / max(width, height).toFloat()).coerceAtMost(1f)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val source = ImageDecoder.createSource(context.contentResolver, uri)
             return ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
@@ -111,7 +125,7 @@ object ImageCompressor {
         }
         @Suppress("DEPRECATION")
         val options = BitmapFactory.Options().apply {
-            inSampleSize = sampleSize(width, height)
+            inSampleSize = sampleSize(width, height, maxEdge)
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
         val decoded = context.contentResolver.openInputStream(uri)?.use {
@@ -127,9 +141,9 @@ object ImageCompressor {
         return scaled
     }
 
-    private fun sampleSize(width: Int, height: Int): Int {
+    private fun sampleSize(width: Int, height: Int, maxEdge: Int): Int {
         var sample = 1
-        while (max(width / sample, height / sample) > MAX_EDGE * 2) sample *= 2
+        while (max(width / sample, height / sample) > maxEdge * 2) sample *= 2
         return sample
     }
 
@@ -156,7 +170,13 @@ object ImageCompressor {
         }.getOrDefault(bitmap)
     }
 
-    private fun encode(context: Context, bitmap: Bitmap, name: String, mediaType: String): CompressedImage? {
+    private fun encode(
+        context: Context,
+        bitmap: Bitmap,
+        name: String,
+        mediaType: String,
+        quality: Int,
+    ): CompressedImage? {
         val hasAlpha = bitmap.hasAlpha()
         val format = if (hasAlpha) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Bitmap.CompressFormat.WEBP_LOSSY else @Suppress("DEPRECATION") Bitmap.CompressFormat.WEBP
@@ -168,7 +188,7 @@ object ImageCompressor {
         val directory = File(context.cacheDir, "upload_tmp").apply { mkdirs() }
         val file = File(directory, "${UUID.randomUUID()}.$extension")
         val written = runCatching {
-            file.outputStream().use { stream -> bitmap.compress(format, QUALITY, stream) }
+            file.outputStream().use { stream -> bitmap.compress(format, quality, stream) }
         }.getOrDefault(false)
         if (!written) {
             file.delete()

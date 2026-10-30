@@ -1,6 +1,7 @@
 package com.agentsanywhere.app.ui.screens.sessiondetail
 
 import android.Manifest
+import android.content.ClipboardManager as AndroidClipboardManager
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -95,6 +96,7 @@ import com.agentsanywhere.app.feature.sessiondetail.SessionTimelineState
 import com.agentsanywhere.app.feature.sessiondetail.TimelineAttachment
 import com.agentsanywhere.app.feature.sessiondetail.TimelineMessage
 import com.agentsanywhere.app.feature.sessiondetail.beginSnapshotLoad
+import com.agentsanywhere.app.feature.attachment.ImageCompressionProfile
 import com.agentsanywhere.app.feature.attachment.ImageCompressor
 import com.agentsanywhere.app.feature.sessiondetail.cacheDownloadedAttachment
 import com.agentsanywhere.app.feature.sessiondetail.completeSnapshotLoad
@@ -622,15 +624,37 @@ fun SessionDetailScreen(
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
         attachPending(uris.mapNotNull { context.pendingAttachment(it) })
     }
+    val compressedPhotoPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(MAX_ATTACHMENT_FILES),
+    ) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        attachPending(
+            uris.mapNotNull { uri ->
+                context.pendingAttachment(uri)?.copy(
+                    compressionProfile = ImageCompressionProfile.Strong,
+                )
+            },
+        )
+    }
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments(),
     ) { uris ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
-        uris.forEach { uri ->
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-        }
+        context.persistReadPermissions(uris)
+        attachPending(uris.mapNotNull { context.pendingAttachment(it) })
+    }
+    val videoPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        context.persistReadPermissions(uris)
+        attachPending(uris.mapNotNull { context.pendingAttachment(it) })
+    }
+    val audioPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        context.persistReadPermissions(uris)
         attachPending(uris.mapNotNull { context.pendingAttachment(it) })
     }
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
@@ -651,12 +675,66 @@ fun SessionDetailScreen(
         }
     }
 
+    fun openCompressedPhotoPicker() {
+        try {
+            compressedPhotoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        } catch (_: Exception) {
+            showError(context.getString(R.string.session_photo_access_required))
+        }
+    }
+
     fun openFilePicker() {
         try {
             filePicker.launch(arrayOf("*/*"))
         } catch (_: Exception) {
             showError(context.getString(R.string.session_file_picker_failed))
         }
+    }
+
+    fun openVideoPicker() {
+        try {
+            videoPicker.launch(arrayOf("video/*"))
+        } catch (_: Exception) {
+            showError(context.getString(R.string.session_video_picker_failed))
+        }
+    }
+
+    fun openAudioPicker() {
+        try {
+            audioPicker.launch(arrayOf("audio/*"))
+        } catch (_: Exception) {
+            showError(context.getString(R.string.session_audio_picker_failed))
+        }
+    }
+
+    fun pasteFromClipboard() {
+        val item = context.getSystemService(AndroidClipboardManager::class.java)
+            ?.primaryClip
+            ?.takeIf { it.itemCount > 0 }
+            ?.getItemAt(0)
+        if (item == null) {
+            showError(context.getString(R.string.session_clipboard_empty))
+            return
+        }
+        val uri = item.uri
+        if (uri != null) {
+            val mediaType = item.intent?.type ?: context.contentResolver.getType(uri)
+            if (mediaType?.startsWith("image/") == true) {
+                attachPending(context.pendingAttachment(uri))
+            } else {
+                showError(context.getString(R.string.session_clipboard_unsupported))
+            }
+            return
+        }
+        val pasted = item.coerceToText(context)?.toString()?.trim().orEmpty()
+        if (pasted.isEmpty()) {
+            showError(context.getString(R.string.session_clipboard_empty))
+            return
+        }
+        setComposerDraft(
+            if (draft.isBlank()) pasted else draft.trimEnd() + "\n" + pasted,
+        )
+        showToast(context.getString(R.string.session_clipboard_text_pasted))
     }
 
     fun openCamera() {
@@ -1296,6 +1374,9 @@ fun SessionDetailScreen(
     }
     val canUseCommands = state.capabilities.isUsable(SESSION_COMMANDS_CAPABILITY, runtimeId, runtimeType) ||
         state.capabilities.isUsable(SESSION_COMMAND_EXECUTE_CAPABILITY, runtimeId, runtimeType)
+    // Only expose compaction when the remote runtime actually advertises it. Sending
+    // plain "/compact" text would reach the model as chat input, not as a command.
+    val compactCommand = state.commands.commands.firstOrNull(RuntimeCommand::isCompactCommand)
     val capabilityFactsFresh = state.capabilities.isLoaded && state.capabilities.errorMessage == null
     val runtimeStatus = state.effectiveRuntimeStatus()
     val openInteractions = remember(state.notices.notices) {
@@ -1494,6 +1575,33 @@ fun SessionDetailScreen(
                         .joinToString("\n"),
                 )
                 else -> showError(detail ?: context.getString(R.string.session_command_failed))
+            }
+        }
+    }
+
+    fun compactContext() {
+        val id = sessionId ?: return
+        val loaded = state.commands.commands.firstOrNull(RuntimeCommand::isCompactCommand)
+        if (loaded != null) {
+            runCommand(loaded, "/${loaded.id}")
+            return
+        }
+        if (!canUseCommands) {
+            showError(commandUnavailableMessage())
+            return
+        }
+        if (state.commands.isLoaded) {
+            showError(context.getString(R.string.session_compact_unavailable))
+            return
+        }
+        scope.launch {
+            val command = controller.loadCommands(id).getOrNull()
+                .orEmpty()
+                .firstOrNull(RuntimeCommand::isCompactCommand)
+            if (command != null) {
+                runCommand(command, "/${command.id}")
+            } else {
+                showError(context.getString(R.string.session_compact_unavailable))
             }
         }
     }
@@ -1831,6 +1939,12 @@ fun SessionDetailScreen(
                                     onPickPhoto = ::openPhotoPicker,
                                     onPickFile = ::openFilePicker,
                                     onOpenCamera = ::openCamera,
+                                    onPickVideo = ::openVideoPicker,
+                                    onPickAudio = ::openAudioPicker,
+                                    onPasteClipboard = ::pasteFromClipboard,
+                                    onPickCompressedPhoto = ::openCompressedPhotoPicker,
+                                    onCompactContext = if (canUseCommands && compactCommand != null) ::compactContext else null,
+                                    onAttachMenuOpen = { if (canUseCommands) loadCommands() },
                                     onRemoveAttachment = { remove ->
                                         setComposerAttachments(attachments.filterNot { it.id == remove.id })
                                     },
@@ -2332,6 +2446,18 @@ private fun latestTimelineItemChanged(
         previous?.updatedSeq != current?.updatedSeq
 }
 
+private fun RuntimeCommand.isCompactCommand(): Boolean =
+    id.equals("compact", ignoreCase = true) ||
+        aliases.any { it.equals("compact", ignoreCase = true) }
+
+private fun Context.persistReadPermissions(uris: List<Uri>) {
+    uris.forEach { uri ->
+        runCatching {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+    }
+}
+
 private fun Context.pendingAttachment(uri: Uri): PendingAttachment? {
     val resolver = contentResolver
     var name = getString(R.string.session_attachment_name_fallback)
@@ -2361,7 +2487,13 @@ private suspend fun Context.uploadPart(attachment: PendingAttachment): UploadFil
     if (attachment.size > MAX_ATTACHMENT_BYTES) {
         throw IllegalStateException(getString(R.string.session_attachment_file_too_large, attachment.name))
     }
-    val compressed = ImageCompressor.compress(this, attachment.uri, attachment.name, mediaType)
+    val compressed = ImageCompressor.compress(
+        this,
+        attachment.uri,
+        attachment.name,
+        mediaType,
+        attachment.compressionProfile,
+    )
     val file = compressed.file ?: copyAttachmentToCache(attachment)
     if (file.length() <= 0L) {
         file.delete()

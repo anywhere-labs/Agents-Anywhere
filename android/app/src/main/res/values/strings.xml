@@ -533,6 +533,17 @@
     <string name="session_attachment_camera">Camera</string>
     <string name="session_attachment_photos">Photos</string>
     <string name="session_attachment_file">File</string>
+    <string name="session_attachment_video">Video</string>
+    <string name="session_attachment_audio">Audio</string>
+    <string name="session_attachment_clipboard">Paste</string>
+    <string name="session_attachment_compress_image">Compress</string>
+    <string name="session_attachment_compact_context">Compact</string>
+    <string name="session_clipboard_empty">Clipboard is empty.</string>
+    <string name="session_clipboard_unsupported">This clipboard item cannot be attached.</string>
+    <string name="session_clipboard_text_pasted">Pasted text into the message.</string>
+    <string name="session_video_picker_failed">Could not open the video picker.</string>
+    <string name="session_audio_picker_failed">Could not open the audio picker.</string>
+    <string name="session_compact_unavailable">This runtime does not expose a context compaction command.</string>
     <string name="session_attachment_name_fallback">attachment</string>
     <string name="session_runtime_select_model">Select model</string>
     <string name="session_switch_model">Switch model</string>

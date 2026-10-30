@@ -49,6 +49,7 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import coil3.size.Size
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.feature.attachment.ImageCompressionProfile
 import com.agentsanywhere.app.feature.sessiondetail.AttachmentImageRequest
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessiondetail.TimelineAttachment
@@ -72,6 +73,7 @@ internal data class PendingAttachment(
     val uploadProgress: Float = 0f,
     val remote: TimelineAttachment? = null,
     val errorMessage: String? = null,
+    val compressionProfile: ImageCompressionProfile = ImageCompressionProfile.Standard,
 ) {
     val isImage: Boolean
         get() = mediaType.startsWith("image/")
