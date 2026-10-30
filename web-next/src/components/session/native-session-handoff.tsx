@@ -73,6 +73,9 @@ export function NativeSessionHandoff({ token, session, state, capabilities, onSe
     finally { if (mounted.current) { setBusy(false); setReleasing(false) } }
   }
 
+  // 暂不展示 AA 持有会话时的状态卡片，保留判断及恢复、释放逻辑供后续使用。
+  if (canClose) return null
+
   return <div className="mx-auto w-full max-w-3xl px-4 pt-2">
     <Alert>
       <AlertTitle>{busy ? t(releasing ? "releasing" : "preparing") : canClose ? t("active") : t("title")}</AlertTitle>

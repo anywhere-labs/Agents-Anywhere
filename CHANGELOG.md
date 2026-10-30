@@ -13,7 +13,7 @@
 
 - 修复接入 Codex 已有会话后，补入的旧消息出现在最新消息下方、历史消息交错或重排后顺序没有更新的问题；升级后同步会自动校准已有记录。（[#480](https://github.com/anywhere-labs/Agents-Anywhere/pull/480)）
 
-- Pi 接入沿用 Codex 的 Agent、模型、权限和发送入口，各端自动加载工作区模型，支持首条及后续附件、工具审批、运行中追加指示和会话恢复，并可浏览本机原生历史，退出对应 CLI 会话后使用「继续任务」恢复原会话，结束 AA 执行后可切回 `pi`；检测到外部历史变化时停止继续写入，Windows 下准备执行环境不再因文本编码报错。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
+- Pi 接入沿用 Codex 的 Agent、模型、权限和发送入口，各端自动加载工作区模型，支持首条及后续附件、工具审批、运行中追加指示和会话恢复，并可浏览本机原生历史，退出对应 CLI 会话后使用「继续任务」恢复原会话，AA 接手后不再显示「AA 正在使用此会话」提示卡片；检测到外部历史变化时停止继续写入，Windows 下准备执行环境不再因文本编码报错。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 
 - Desktop 刷新本机设备列表时不再反复返回 Connector 启动页，Web 和 Desktop 显示 Pi 模型目录时不再因缺少可选信息而报错。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 

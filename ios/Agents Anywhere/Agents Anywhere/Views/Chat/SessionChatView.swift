@@ -73,7 +73,9 @@ struct SessionChatView: View, Equatable {
                         SessionInteractionDock(chat: model,
                             onShowAll: { expandedNoticeID = $0; sheet = .notices })
                             .traceChatLayout("interaction-dock")
-                        if session.runtime.state?.metadata["nativeHistory"] == .bool(true) {
+                        // 暂不展示 AA 持有会话时的状态卡片，保留状态和操作逻辑。
+                        if session.runtime.state?.metadata["nativeHistory"] == .bool(true)
+                            && !session.runtime.allows("session.close") {
                             nativeHistoryControls
                         }
                         ChatComposerDock(draft: session.composer, settings: model.settings,

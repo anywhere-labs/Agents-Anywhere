@@ -66,6 +66,9 @@ internal fun NativeHistoryControls(
             } finally { busy = false }
         }
     }
+    // 暂不展示 AA 持有会话时的状态卡片，保留判断及恢复、释放逻辑供后续使用。
+    if (canRelease) return
+
     Surface(tonalElevation = 2.dp) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(stringResource(if (busy && releasing) R.string.native_history_releasing else if (busy) R.string.native_history_preparing else R.string.native_history_title))

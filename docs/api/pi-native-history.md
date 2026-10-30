@@ -6,7 +6,7 @@ Pi 的历史浏览由 Connector 直接读取 JSONL，不启动 Node、Pi SDK 或
 
 ## 继续与释放
 
-会话通过有效能力 `session.recover` 提供「继续任务」，通过 `session.close` 提供「结束 AA 执行」。Pi 的原生来源能力附带 `metadata.nativeHistory=true`、`sourceRevision` 和 `requiresCliExitConfirmation=true`。会话状态含 `metadata.nativeHistory`、`sourceRevision`、`ownerGeneration`，错误包含 `code` 和可展示的 `message`。
+会话通过有效能力 `session.recover` 提供「继续任务」，通过 `session.close` 保留结束 AA 执行的能力。四端暂不展示 AA 已接手时的状态卡片及其中的「结束 AA 执行」按钮；浏览状态的「继续任务」入口和退出 CLI 确认仍保留，状态判断、恢复与释放逻辑不变。Pi 的原生来源能力附带 `metadata.nativeHistory=true`、`sourceRevision` 和 `requiresCliExitConfirmation=true`。会话状态含 `metadata.nativeHistory`、`sourceRevision`、`ownerGeneration`，错误包含 `code` 和可展示的 `message`。
 
 `POST /api/v2/runtime-workflows/sessions/{sessionId}/recover` 在现有字段 `operationId`、`expectedGeneration` 外增加可选字段：
 
