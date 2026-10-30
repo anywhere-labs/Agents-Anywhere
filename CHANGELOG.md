@@ -11,7 +11,7 @@
 
 ### 会话创建与消息交付
 
-- Android 终端文件页可以预览工作区图片；对话中工具和命令输出产生的截图也会直接显示缩略图并可点击查看。（[#0](https://github.com/anywhere-labs/Agents-Anywhere/pull/0)）
+- Android 终端文件页可以预览工作区图片；对话中工具和命令输出产生的截图也会直接显示缩略图并可点击查看。（[#493](https://github.com/anywhere-labs/Agents-Anywhere/pull/493)）
 
 - 修复 Codex 查看图片的记录显示为 `unknown` 的问题，现可点击图片路径打开预览。（[#491](https://github.com/anywhere-labs/Agents-Anywhere/pull/491)）
 
