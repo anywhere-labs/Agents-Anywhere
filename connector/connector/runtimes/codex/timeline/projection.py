@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import mimetypes
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -237,7 +238,7 @@ class CodexTimelineProjection:
             }
         if self.raw_type == "contextCompaction":
             return self.context_compaction_content()
-        if self.raw_type == "ImageViewThreadItem":
+        if self.raw_type == "imageView":
             return self.image_view_content()
         if self.text or (
             self.attachments and self.raw_type in {"userMessage", "steeringUserMessage"}
@@ -379,10 +380,11 @@ class CodexTimelineProjection:
         }
 
     def image_view_content(self) -> Mapping[str, Any]:
+        media_type = mimetypes.guess_type(self.path)[0] if self.path else None
         return {
-            "kind": "system",
-            "label": "查看图片",
-            "state": compact_state_from_status(self.status),
+            "kind": "image",
+            "path": self.path or "",
+            **({"mediaType": media_type} if media_type else {}),
         }
 
     def custom_tool_call_content(self) -> Mapping[str, Any]:

@@ -175,11 +175,6 @@ class CodexContextCompactionItem(CodexMarkerTimelineItem):
 
 
 @dataclass(frozen=True, slots=True)
-class CodexImageViewItem(CodexMarkerTimelineItem):
-    expected_native_item_types: ClassVar[tuple[str, ...]] = ("ImageViewThreadItem",)
-
-
-@dataclass(frozen=True, slots=True)
 class CodexCommandExecutionItem(CodexToolTimelineItem):
     expected_native_item_types: ClassVar[tuple[str, ...]] = ("commandExecution",)
 
@@ -254,6 +249,11 @@ class CodexFileChangeItem(CodexArtifactTimelineItem):
 
 
 @dataclass(frozen=True, slots=True)
+class CodexImageViewItem(CodexArtifactTimelineItem):
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ("imageView",)
+
+
+@dataclass(frozen=True, slots=True)
 class CodexUnknownItem(CodexSystemTimelineItem):
     pass
 
@@ -270,7 +270,6 @@ CODEX_TIMELINE_ITEM_CLASS_BY_NATIVE_TYPE: Mapping[str, type[CodexTimelineItem]] 
     "turnEnd": CodexTurnEndItem,
     "error": CodexErrorItem,
     "contextCompaction": CodexContextCompactionItem,
-    "ImageViewThreadItem": CodexImageViewItem,
     "commandExecution": CodexCommandExecutionItem,
     "mcpToolCall": CodexMcpToolCallItem,
     "dynamicToolCall": CodexDynamicToolCallItem,
@@ -287,6 +286,7 @@ CODEX_TIMELINE_ITEM_CLASS_BY_NATIVE_TYPE: Mapping[str, type[CodexTimelineItem]] 
     "toolResult": CodexToolResultItem,
     "fileChange": CodexFileChangeItem,
     "file_change": CodexFileChangeItem,
+    "imageView": CodexImageViewItem,
 }
 
 
