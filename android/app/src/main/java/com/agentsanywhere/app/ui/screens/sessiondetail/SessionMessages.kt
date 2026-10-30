@@ -268,6 +268,7 @@ internal fun MessageList(
     bottomContentPadding: Dp = 168.dp,
     hasMore: Boolean,
     loadingOlder: Boolean,
+    historyError: Boolean = false,
     onLoadOlder: () -> Unit,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
     onOpenAttachment: (TimelineAttachment) -> Unit,
@@ -304,7 +305,7 @@ internal fun MessageList(
     val topReadingInset = with(density) { 74.dp.toPx() }
     val bottomReadingInset = with(density) { bottomContentPadding.toPx() }
 
-    SideEffect { reading.items(timelineItems, 1 + (if (displayWorkingLabel != null) 1 else 0) + detachedNotices.size) }
+    SideEffect { reading.items(timelineItems, 1 + (if (displayWorkingLabel != null) 1 else 0) + detachedNotices.size, hasMore) }
 
     DisposableEffect(sessionId) {
         onDispose { returnToLatestJob?.cancel() }
@@ -365,12 +366,12 @@ internal fun MessageList(
     }
     LaunchedEffect(streamLatestRequest, sessionId) { reading.invalidate() }
 
-    LaunchedEffect(listState, hasMore, loadingOlder, displayMessages.size) {
+    LaunchedEffect(listState, hasMore, loadingOlder, historyError, displayMessages.size) {
         snapshotFlow {
             val layout = listState.layoutInfo
             val total = layout.totalItemsCount
             val lastVisible = layout.visibleItemsInfo.maxOfOrNull { it.index } ?: -1
-            total > 0 && lastVisible >= total - LOAD_OLDER_VISIBLE_THRESHOLD
+            (!historyError && reading.needsOlder) || (total > 0 && lastVisible >= total - LOAD_OLDER_VISIBLE_THRESHOLD)
         }
             .distinctUntilChanged()
             .collectLatest { nearOldest ->

@@ -76,6 +76,14 @@ reopens the dialog even for an ignored version. Outside taps and Back do not
 close the prompt. Downloads show progress and continue through the existing APK
 installer flow.
 
+## 折叠屏与宽窗口工作台
+
+- 以应用当前实际可用宽度为准：小于 600dp 沿用手机单页导航，达到 600dp 时在左侧显示项目/会话，右侧显示当前会话。
+- 左侧宽度为窗口的 36%，限制在 240–320dp；可手动收起和展开，收起偏好不会让窄屏的会话列表消失。
+- 切换会话、收放侧栏和调整窗口时保留各会话草稿与阅读状态；返回列表后右侧显示选择会话的提示。账号设置、新建会话和全局设备/文件/终端仍使用完整页面。
+- 首版不针对遮挡内容的实体铰链、上下半折姿态、拖动分隔线或多标签页做专门适配；应在目标折叠屏上验证键盘、旋转和厂商多窗口行为。
+- 本地 `assembleDebug` 产物使用开发签名，不能保证覆盖安装不同签名的官方版本；不要为安装测试包卸载或清除原应用数据。
+
 ## 会话流式生成期间的阅读位置
 
 Android 会话列表在最新位置自动跟随生成；上翻或展开思维链、工具详情后，切换为阅读状态。

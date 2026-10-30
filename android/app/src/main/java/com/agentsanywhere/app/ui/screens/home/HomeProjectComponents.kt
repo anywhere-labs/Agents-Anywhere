@@ -26,6 +26,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -67,6 +71,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.sessions.ProjectSessionStatusFilter
 import com.agentsanywhere.app.feature.sessions.ProjectDeviceAgentFilter
@@ -120,8 +126,10 @@ internal fun HomeProjectList(
     onNewSession: (AgentProject) -> Unit,
     onSessionLongPress: (AgentSession, Rect) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
+    selectedSessionId: String? = null,
 ) {
-    var pinnedExpanded by remember { mutableStateOf(true) }
+    var pinnedExpanded by rememberSaveable { mutableStateOf(true) }
+    val listState = rememberLazyListState()
     var filterAnchor by remember { mutableStateOf<Rect?>(null) }
     val projectsExpanded = projectPreferences.projectsExpanded
     val ordered = remember(projects, allSessions) {
@@ -157,6 +165,7 @@ internal fun HomeProjectList(
             }
         }
     } else LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 96.dp),
     ) {
@@ -183,11 +192,13 @@ internal fun HomeProjectList(
                         onNewSession = { onNewSession(project) },
                         onSessionLongPress = onSessionLongPress,
                         onOpenSession = onOpenSession,
+                        selectedSessionId = selectedSessionId,
                     )
                 }
                 items(pinnedSessions, key = { "pinned-session-${it.id}" }) { session ->
                     HomeProjectSessionRow(
                         session = session,
+                        selected = session.id == selectedSessionId,
                         inset = false,
                         onClick = { onOpenSession(session) },
                         onLongPress = { onSessionLongPress(session, it) },
@@ -231,6 +242,7 @@ internal fun HomeProjectList(
                         onNewSession = { onNewSession(project) },
                         onSessionLongPress = onSessionLongPress,
                         onOpenSession = onOpenSession,
+                        selectedSessionId = selectedSessionId,
                     )
                 }
             }
@@ -266,6 +278,7 @@ private fun HomeProjectTreeItem(
     onNewSession: () -> Unit,
     onSessionLongPress: (AgentSession, Rect) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
+    selectedSessionId: String? = null,
 ) {
     HomeProjectRow(
         project = project,
@@ -317,6 +330,7 @@ private fun HomeProjectTreeItem(
             else -> sessions.forEach { session ->
                 HomeProjectSessionRow(
                     session = session,
+                    selected = session.id == selectedSessionId,
                     onClick = { onOpenSession(session) },
                     onLongPress = { onSessionLongPress(session, it) },
                 )
@@ -531,56 +545,70 @@ internal fun HomeProjectActionOverlay(
     onTogglePinned: () -> Unit,
     onArchive: () -> Unit,
 ) {
-    menu.anchorBounds?.let { anchor ->
-        HomeProjectAnchoredPopup(anchor, onDismiss) {
-            HomeProjectActionCard(menu.project, Modifier, onEdit, onTogglePinned, onArchive)
-        }
-        return
-    }
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
     val density = LocalDensity.current
-    val row = menu.rowBounds
-    val menuWidth = 252.dp
+    var overlayOrigin by remember { mutableStateOf(Offset.Zero) }
     val menuHeight = 168.dp
-    val gap = 10.dp
-    val margin = 18.dp
-    val menuWidthPx = with(density) { menuWidth.toPx() }
+    val gapPx = with(density) { 10.dp.toPx() }
+    val marginPx = with(density) { 18.dp.toPx() }
     val menuHeightPx = with(density) { menuHeight.toPx() }
-    val gapPx = with(density) { gap.toPx() }
-    val marginPx = with(density) { margin.toPx() }
     val highlightShape = RoundedCornerShape(15.dp)
 
     BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(if (darkMode) Color(0x99000000) else Color(0x66000000))
-            .pointerInput(Unit) { detectTapGestures(onTap = { onDismiss() }) },
+        modifier = Modifier.fillMaxSize()
+            .onGloballyPositioned { overlayOrigin = it.boundsInRoot().topLeft },
     ) {
+        val menuWidth = minOf(252.dp, (maxWidth - 36.dp).coerceAtLeast(0.dp))
+        menu.anchorBounds?.let { anchor ->
+            HomeProjectAnchoredPopup(anchor, onDismiss) {
+                HomeProjectActionCard(menu.project, Modifier.width(menuWidth), onEdit, onTogglePinned, onArchive)
+            }
+            return@BoxWithConstraints
+        }
+        val row = menu.rowBounds.translate(-overlayOrigin.x, -overlayOrigin.y)
+        val menuWidthPx = with(density) { menuWidth.toPx() }
         val screenWidthPx = with(density) { maxWidth.toPx() }
         val screenHeightPx = with(density) { maxHeight.toPx() }
-        val menuX = (row.left + 120f).coerceIn(marginPx, screenWidthPx - menuWidthPx - marginPx)
+        val minX = minOf(marginPx, (screenWidthPx - menuWidthPx).coerceAtLeast(0f))
+        val maxX = (screenWidthPx - menuWidthPx - marginPx).coerceAtLeast(minX)
+        val menuX = (row.left + 120f).coerceIn(minX, maxX)
         val belowY = row.bottom + gapPx
         val aboveY = row.top - menuHeightPx - gapPx
-        val menuY = if (belowY + menuHeightPx + marginPx <= screenHeightPx) belowY else aboveY.coerceAtLeast(marginPx)
+        val minY = minOf(marginPx, (screenHeightPx - menuHeightPx).coerceAtLeast(0f))
+        val maxY = (screenHeightPx - menuHeightPx - marginPx).coerceAtLeast(minY)
+        val menuY = (if (belowY + menuHeightPx + marginPx <= screenHeightPx) belowY else aboveY)
+            .coerceIn(minY, maxY)
 
-        Box(
-            modifier = Modifier
-                .offset { IntOffset(row.left.roundToInt(), row.top.roundToInt()) }
-                .width(with(density) { row.width.toDp() })
-                .height(with(density) { row.height.toDp() })
-                .clip(highlightShape)
-                .background(if (darkMode) Color(0xFF202020) else Color.White),
+        Popup(
+            alignment = Alignment.TopStart,
+            onDismissRequest = onDismiss,
+            properties = PopupProperties(focusable = true),
         ) {
-            HomeProjectHighlightRow(menu.project, menu.expanded)
+            Box(Modifier.width(maxWidth).height(maxHeight)) {
+                Box(Modifier.fillMaxSize()
+                    .background(if (darkMode) Color(0x99000000) else Color(0x66000000))
+                    .pointerInput(Unit) { detectTapGestures(onTap = { onDismiss() }) })
+                Box(
+                    modifier = Modifier
+                        .offset { IntOffset(row.left.roundToInt(), row.top.roundToInt()) }
+                        .width(with(density) { row.width.toDp() })
+                        .height(with(density) { row.height.toDp() })
+                        .clip(highlightShape)
+                        .background(if (darkMode) Color(0xFF202020) else Color.White)
+                        .clearAndSetSemantics { },
+                ) {
+                    HomeProjectHighlightRow(menu.project, menu.expanded)
+                }
+                HomeProjectActionCard(
+                    project = menu.project,
+                    modifier = Modifier.width(menuWidth).offset { IntOffset(menuX.roundToInt(), menuY.roundToInt()) },
+                    onEdit = onEdit,
+                    onTogglePinned = onTogglePinned,
+                    onArchive = onArchive,
+                )
+            }
         }
-        HomeProjectActionCard(
-            project = menu.project,
-            modifier = Modifier.offset { IntOffset(menuX.roundToInt(), menuY.roundToInt()) },
-            onEdit = onEdit,
-            onTogglePinned = onTogglePinned,
-            onArchive = onArchive,
-        )
     }
 }
 
@@ -623,7 +651,6 @@ private fun HomeProjectActionCard(
     val border = if (darkMode) Color(0xFF2D2D2F) else Color(0xFFEFEDE9)
     Column(
         modifier = modifier
-            .width(252.dp)
             .height(168.dp)
             .clip(RoundedCornerShape(22.dp))
             .background(surface)
@@ -668,7 +695,8 @@ private fun HomeProjectActionRow(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, color = tint, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text(label, modifier = Modifier.weight(1f).padding(end = 8.dp), color = tint, fontSize = 16.sp,
+            fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(21.dp))
     }
 }

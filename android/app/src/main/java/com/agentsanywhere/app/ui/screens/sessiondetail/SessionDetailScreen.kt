@@ -178,6 +178,7 @@ fun SessionDetailScreen(
     filesController: FilesController,
     terminalPool: RemoteTerminalPool,
     composerDraftStore: SessionComposerDraftStore,
+    backHandlingEnabled: Boolean = true,
     onSessionChanged: (AgentSession) -> Unit = {},
 ) {
     val colors = LocalAAColors.current
@@ -1122,7 +1123,7 @@ fun SessionDetailScreen(
         }
     }
 
-    BackHandler {
+    BackHandler(enabled = backHandlingEnabled) {
         if (pagerState.currentPage == 1) {
             scope.launch { pagerState.animateScrollToPage(0) }
         } else {
@@ -1694,6 +1695,7 @@ fun SessionDetailScreen(
                                 bottomContentPadding = timelineBottomPadding,
                                 hasMore = state.hasMore,
                                 loadingOlder = state.timeline.loadingOlder,
+                                historyError = state.timeline.historyErrorMessage != null,
                                 onLoadOlder = { loadOlderMessages() },
                                 onPreviewAttachment = { previewImage = AttachmentPreview.Remote(it) },
                                 onOpenAttachment = ::openAttachment,
