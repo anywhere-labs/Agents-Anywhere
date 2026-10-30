@@ -1696,6 +1696,17 @@ private fun ToolActivityCard(
                 CompactStatusPill(label = message.status)
             }
         }
+        // Screenshots and workspace images are message content, not a debugging
+        // detail: show them inline as soon as the row is composed, like a chat
+        // picture bubble. Keep the expanded card for the surrounding tool output.
+        message.workspaceImages.forEach { path ->
+            WorkspaceImagePreview(
+                path = path,
+                darkMode = darkMode,
+                onOpenFile = onOpenFile,
+                loadWorkspaceImage = loadWorkspaceImage,
+            )
+        }
         if (expanded && expandable) {
             if (hasDetail) {
                 DisableSelection {
@@ -1967,14 +1978,6 @@ private fun ToolCallPreview(
     val output = message.output
     val error = message.toolError
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        message.workspaceImages.forEach { path ->
-            WorkspaceImagePreview(
-                path = path,
-                darkMode = darkMode,
-                onOpenFile = onOpenFile,
-                loadWorkspaceImage = loadWorkspaceImage,
-            )
-        }
         if (input.isNotBlank()) {
             CommandPreviewSection(
                 label = stringResource(R.string.session_input),

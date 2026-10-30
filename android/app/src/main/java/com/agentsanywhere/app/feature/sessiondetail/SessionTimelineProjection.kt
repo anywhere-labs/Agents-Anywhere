@@ -261,6 +261,7 @@ private fun RemoteTimelineItem.toArtifactMessages(): List<TimelineMessage> {
             badge = status.statusLabel(),
             detail = path.orEmpty(),
             body = content.text("description") ?: content.text("text").orEmpty(),
+            workspaceImages = listOfNotNull(path).filter(::isWorkspaceImagePath),
             rawContent = content.toString(2),
             orderSeq = orderSeq,
             revision = revision,
