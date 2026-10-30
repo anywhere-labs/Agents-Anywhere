@@ -23,6 +23,22 @@ UploadProgress = Callable[[int], Awaitable[None]]
 class RuntimeHostClient(ABC):
     """Runtime -> Connector."""
 
+    async def observe_planning(self, observation) -> None:
+        handler = getattr(self, "_planning_observer", None)
+        if handler is not None:
+            await handler(observation)
+
+    async def validate_planning_document(self, session_id: str, text: str) -> bool:
+        callback = getattr(self, "_planning_validate", None)
+        return callback(session_id, text) if callback else True
+
+    async def prepare_planning_turn(self, session_id: str, external_id: str | None) -> bool:
+        callback = getattr(self, "_planning_prepare", None)
+        return await callback(session_id, external_id) if callback else False
+
+    async def publish_planning(self, snapshot: dict, durable: bool = False) -> None:
+        raise NotImplementedError("Planning publication is unavailable")
+
     async def prepare_runtime_host(self, runtime_id: str) -> RuntimeHostClient:
         """Bind storage before a provider constructs its runtime; legacy hosts are unchanged."""
         return self

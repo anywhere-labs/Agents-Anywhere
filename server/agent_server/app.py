@@ -36,6 +36,7 @@ from agent_server.api import (
     service,
     sessions,
     sessions_fs,
+    session_planning,
     sessions_terminal,
     shares,
 )
@@ -378,6 +379,7 @@ def create_app(
     app.include_router(pairing.router, prefix=API_V2_PREFIX)
     app.include_router(projects.router, prefix=API_V2_PREFIX)
     app.include_router(sessions.router, prefix=API_V2_PREFIX)
+    app.include_router(session_planning.router, prefix=API_V2_PREFIX)
     app.include_router(sessions_fs.router, prefix=API_V2_PREFIX)
     app.include_router(sessions_terminal.router, prefix=API_V2_PREFIX)
 

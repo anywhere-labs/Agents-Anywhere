@@ -16,12 +16,12 @@ from connector.runtimes.claude.domain.approvals import (
     notice_transition,
     permission_result_from_decision,
 )
-from connector.runtimes.claude.domain.session import ClaudeSession
 from connector.runtimes.claude.domain.input_requests import (
     ClaudeInputRequest,
     claude_input_request,
     input_request_notice,
 )
+from connector.runtimes.claude.domain.session import ClaudeSession
 from connector.runtimes.claude.notifications.notices import ClaudeNoticeRegistry
 from connector.runtimes.claude.notifications.projector import (
     ClaudeNotificationProjector,
@@ -191,6 +191,30 @@ class ClaudeInteractionController:
             asyncio.get_running_loop().create_future()
         )
         self._interaction_futures[notice.notice_id] = future
+        if tool_name == "ExitPlanMode":
+            from connector.runtime_protocol.planning import PlanningObservation
+            from connector.runtimes.claude.planning import remember_native_plan_path
+            remember_native_plan_path(self.notifications.host, session.session_id, tool_input.get("planFilePath"))
+            native_id = str(getattr(self.notifications.host, "_claude_plan_paths", {}).get(session.session_id) or _tool_use_id(context) or notice.notice_id)
+            plan = tool_input.get("plan")
+            if not isinstance(plan, str) or not plan.strip():
+                from connector.runtimes.claude.planning import native_plan_document
+                plan = await native_plan_document(self.notifications.host, session.session_id)
+            if not isinstance(plan, str) or not plan.strip():
+                self._interaction_futures.pop(notice.notice_id, None)
+                return ClaudeApprovalDecision(allowed=False, action_id="plan_document_required",
+                    message="AA 未能读取完整原生计划正文，请先将计划保存到当前原生计划文件，再调用 ExitPlanMode。")
+            try:
+                await self.notifications.session_state.session_state_update(session, "waiting_approval", metadata={"source": "claude.plan_review"})
+                await self.notifications.host.observe_planning(PlanningObservation(
+                    session_id=session.session_id, external_session_id=session.external_session_id,
+                    kind="proposal", native_id=native_id, text=plan,
+                    source_turn_id=turn_id, native_review={"noticeId": notice.notice_id, "toolInput": {key: value for key, value in tool_input.items() if key != "plan"}}))
+                return await future
+            finally:
+                self._interaction_futures.pop(notice.notice_id, None)
+                if not future.done():
+                    future.cancel()
         await self.notifications.notice_handler.notice_upsert(notice)
         await self.notifications.session_state.session_state_update(
             session,

@@ -26,6 +26,10 @@ async def dispatch_session_create(
     params: dict[str, Any],
 ) -> dict[str, Any]:
     parsed = SessionCreateParams.parse(params)
+    if params.get("planningIntent") is not None:
+        if runtime.planning is None:
+            raise ValueError("Native planning is unavailable")
+        runtime.planning.state(parsed.session_id).requested_mode = "plan"
     result = await runtime.create_and_start_session(
         parsed.session_id,
         parsed.content,
@@ -124,6 +128,18 @@ async def dispatch_session_command_execute(
     params: dict[str, Any],
 ) -> dict[str, Any]:
     parsed = CommandExecuteParams.parse(params)
+    if parsed.command == "plan":
+        from uuid import uuid4
+
+        from connector.planning.application.commands import parse_plan_command
+        if runtime.planning is None:
+            return {"command": "plan", "ok": False, "code": "planning_unavailable", "message": "原生 Plan 控制当前不可用。", "result": {}}
+        intent = parse_plan_command(parsed.raw if parsed.raw is not None else "/plan" + (" " + " ".join(parsed.args) if parsed.args else ""))
+        if intent is None:
+            return {"command": "plan", "ok": False, "code": "invalid_command", "message": "请输入完整 /plan 命令。", "result": {}}
+        result = await runtime.planning.execute(parsed.session_id, parsed.external_session_id,
+            {**intent, "operationId": params.get("operationId") or uuid4().hex})
+        return {"command": "plan", "ok": result["ok"], "code": result.get("code"), "message": result.get("message"), "result": result}
     result = await runtime.execute_command(
         session_id=parsed.session_id,
         command=parsed.command,

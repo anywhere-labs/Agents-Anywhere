@@ -104,6 +104,8 @@ class CodexIpcSessionProjector:
         if not touches_state and not touches_history:
             return
         if thread.state is not None and thread.status == "following":
+            from connector.runtimes.codex.planning import observe_ipc_plan
+            await observe_ipc_plan(self.host, self.session_id_for(thread.thread_id), thread)
             if touches_state:
                 await self._project_state(thread)
             if touches_history and self.timeline is not None:

@@ -16,6 +16,13 @@ internal fun reduceRealtimeEvent(
 
     var next = current.copy(realtime = current.realtime.rememberEvent(event.eventId, event.cursor))
     when (event.type) {
+        "planning.state.updated" -> event.payload.planning?.let { observed ->
+            val previous = next.planning
+            if (previous == null || previous.epoch != observed.epoch || observed.revision >= previous.revision) {
+                val docs = (previous?.documents.orEmpty() + listOfNotNull(observed.proposal)).distinctBy { it.planId to it.revision }
+                next = next.copy(planning = observed.copy(documents = docs, actions = observed.actions ?: previous?.actions))
+            }
+        }
         "session.subscribed" -> Unit
         "session.meta.updated" -> event.payload.session?.let { session ->
             val observed = session.toAgentSession(devices.associateBy { it.id })

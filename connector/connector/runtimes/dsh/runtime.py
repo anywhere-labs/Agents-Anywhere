@@ -159,14 +159,24 @@ class DshRuntime(AgentRuntime):
         commands = models.commands(await self._request("listCommands", {
             **_session_params(session_id, external_session_id), "query": query, "limit": limit,
         }))
-        return tuple(command for command in commands if command.id == "compact")
+        planning = self.planning is not None and await self.planning.port.available(session_id, external_session_id)
+        return tuple(command for command in commands if command.id == "compact" or (command.id == "plan" and planning))
 
     async def execute_command(
         self, session_id: str, command: str, external_session_id: str | None = None,
         raw: str | None = None, args: tuple[str, ...] = (),
     ) -> RuntimeCommandResult:
+        if command == "plan" and self.planning is not None:
+            from uuid import uuid4
+
+            from connector.planning.application.commands import parse_plan_command
+            intent = parse_plan_command(raw if raw is not None else "/plan" + (" " + " ".join(args) if args else ""))
+            if intent is None:
+                return RuntimeCommandResult(command=command, ok=False, code="invalid_command", message="请输入完整 /plan 命令。")
+            result = await self.planning.execute(session_id, external_session_id, {**intent, "operationId": uuid4().hex})
+            return RuntimeCommandResult(command=command, ok=result["ok"], code=result.get("code"), message=result.get("message"), result=result)
         if command != "compact":
-            return RuntimeCommandResult(command=command, ok=False, code="unknown_command", message="AA supports only /compact for DSH.")
+            return RuntimeCommandResult(command=command, ok=False, code="unknown_command", message="This DSH command is not available in AA.")
         unavailable = await self._commands_unavailable(session_id, external_session_id)
         if unavailable:
             return RuntimeCommandResult(command=command, ok=False, code=unavailable[0], message=unavailable[1])
@@ -345,7 +355,12 @@ class DshRuntime(AgentRuntime):
         result = await self._request(
             "getSessionNotices", _session_params(session_id, external_session_id)
         )
-        return tuple(models.notice(item) for item in _array(result, "notices"))
+        from connector.runtimes.dsh.planning import observe_dsh_notice
+        notices = []
+        for item in _array(result, "notices"):
+            if not await observe_dsh_notice(self.host, {**item, "sessionId": session_id}):
+                notices.append(models.notice(item))
+        return tuple(notices)
 
     async def respond_interaction(
         self, session_id: str, notice_id: str, action_id: str,
@@ -388,12 +403,13 @@ class DshRuntime(AgentRuntime):
         cwd: str | None, attachments: tuple[RuntimeAttachment, ...], client_message_id: str | None,
         *, selections: Mapping[str, str | None] | None = None, agent_preset: str | None = None,
     ) -> RuntimeOperationResult:
-        if (not content.strip() and not attachments) or not client_message_id:
+        if (not content.strip() and not attachments and not (method == "createAndStartSession" and self.planning and self.planning.state(session_id).requested_mode == "plan")) or not client_message_id:
             raise RuntimeInvalidRequestError("A message and a stable clientMessageId are required")
         params = {**_session_params(session_id, external_id), "content": content,
                   "clientMessageId": client_message_id, "cwd": cwd,
                   "selections": dict(selections or {})}
         if method == "createAndStartSession":
+            params["planningIntent"] = self.planning is not None and self.planning.state(session_id).requested_mode == "plan"
             params["agentPreset"] = agent_preset
         if attachments:
             capability_set = _object(await self._request("getRuntimeCapabilities"))
@@ -440,6 +456,17 @@ class DshRuntime(AgentRuntime):
                 await client.request("getRuntimeCapabilities"),
                 connector_id=self.host.connector_id,
             )
+            if self.planning is not None:
+                # Bootstrap through this already connected client. Re-entering
+                # _ensure_client from a Host capability callback would deadlock.
+                try:
+                    native_planning = (await client.request("getPlanning", {})).get("available") is True
+                except (BridgeRpcError, RuntimeError, OSError, ValueError, TimeoutError):
+                    native_planning = False
+                from dataclasses import replace
+                from connector.runtime_protocol.models import RuntimeCapability
+                items = tuple(item for item in capabilities.capabilities if item.capability_id != "session.planning")
+                capabilities = replace(capabilities, capabilities=(*items, RuntimeCapability(capability_id="session.planning", runtime="dsh", scope="runtime", supported=False, available=False, metadata={"nativePlanningAvailable": native_planning})))
             await self.host.runtime_capabilities_update(capabilities)
             supported = {item.capability_id for item in capabilities.capabilities if item.available and item.supported}
             for capability, method, decode, publish in (

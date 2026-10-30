@@ -1,5 +1,9 @@
 "use client"
 
+import { useSessionPlanning } from "@/features/planning/use-session-planning"
+import { parsePlanningCommand } from "@/features/planning/commands"
+import { PlanningPanel } from "@/components/session/planning-panel"
+
 import * as React from "react"
 import { ArrowDown, ChevronDown, CircleAlert, Loader2, WifiOff } from "lucide-react"
 import { toast } from "sonner"
@@ -345,6 +349,7 @@ export function SessionDetail({
   )
   const [loading, setLoading] = React.useState(() => !initialOptimisticState)
   const [error, setError] = React.useState<string | null>(null)
+  const planning = useSessionPlanning(token, sessionId)
   const [sending, setSending] = React.useState(false)
   const [interrupting, setInterrupting] = React.useState(false)
   const [takeoverBusy, setTakeoverBusy] = React.useState(false)
@@ -911,6 +916,7 @@ export function SessionDetail({
 
     const applyEvent = (event: ProtocolEventEnvelope) => {
       if (cancelled || event.sessionId !== sessionId) return
+      if (event.type === "planning.state.updated") { planning.ingest(event.payload.state as import("@/generated/protocol/v1/planning-state").PlanningState); return }
       if (event.type === "keepalive") return
       const usesDurableEventIdDedup = sessionEventUsesDurableEventIdDedup(event)
       if (!eventSequenceCursor.accepts(sessionId, event.sequence)) return
@@ -1177,6 +1183,20 @@ export function SessionDetail({
     selections: { model?: string; permission?: string },
   ): Promise<boolean> => {
     if (!session || (!content.trim() && attachments.length === 0)) return false
+    const planIntent = parsePlanningCommand(content)
+    if (planIntent) {
+      const uploaded = attachments.flatMap(file => file.uploaded ? [file.uploaded] : [])
+      if (uploaded.length !== attachments.length) return false
+      if (planIntent.command !== "submit_task" && attachments.length) { toast.error("此规划命令不接受附件，请填写规划任务。"); return false }
+      try {
+        await selectionWritesRef.current.get(session.id)
+        if (!await handleSelectionChange(selections)) return false
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : tSession("updateSelectionsFailed")); return false
+      }
+      if (planIntent.command === "submit_task") timelineFollowRef.current?.resume()
+      return planning.execute({ ...planIntent, attachments: uploaded })
+    }
     const uploadedAttachments = attachments.flatMap((attachment) =>
       attachment.uploaded ? [attachment.uploaded] : [],
     )
@@ -1675,6 +1695,7 @@ export function SessionDetail({
             {loading && !state ? <SessionSkeletonInline /> : null}
             {state &&
             timelineGroups.length === 0 &&
+            !planning.state?.draft && planning.documents.length === 0 && planning.state?.effectiveMode !== "plan" &&
             detachedInteractions.length === 0 &&
             detachedNotifications.length === 0 &&
             blockingInteractionList.length === 0 ? (
@@ -1723,6 +1744,7 @@ export function SessionDetail({
                 </React.Fragment>
               )
             })}
+            <PlanningPanel key={session.id} planning={planning} canReview={capabilityIsUsable(effectiveCapabilities, CAPABILITY.planReview, sessionRuntimeScope)} />
             {detachedInteractions.map((notice) => (
               <InteractionCard
                 key={notice.noticeId}
@@ -1780,7 +1802,7 @@ export function SessionDetail({
             runtimeState={runtimeState}
             pendingInteractionCount={blockingInteractionCount}
             creatingSession={isLocalOptimisticSession}
-            sending={sending}
+            sending={sending || planning.busy}
             interrupting={interrupting}
             takeoverBusy={takeoverBusy}
             value={composerDraft}

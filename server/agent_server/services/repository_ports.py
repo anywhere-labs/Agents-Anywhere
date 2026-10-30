@@ -249,7 +249,11 @@ class ConnectorIngestRepository(DashboardEventRepository, Protocol):
         connector_id: str,
     ) -> list[SessionView]: ...
 
+from agent_server.services.planning.ports import PlanningRepository
+
+
 class ConnectorNotificationRepository(
+    PlanningRepository,
     CatalogRepository,
     SessionStateRepository,
     TimelineEffectRepository,
@@ -506,6 +510,9 @@ class SessionRunRepository(
     ProjectLookupRepository,
     Protocol,
 ):
+    async def reserve_planning_creation(self, connector_id: str, runtime_id: str, operation_id: str, fingerprint: str) -> dict | None: ...
+    async def save_planning_creation(self, connector_id: str, runtime_id: str, operation_id: str, payload: dict) -> None: ...
+
     async def get_protocol_capabilities(
         self,
         connector_id: str,

@@ -21,8 +21,8 @@ from sqlalchemy.pool import NullPool
 from agent_server.infra.db.engine import resolve_db_url
 
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_44"
-CURRENT_SCHEMA_VERSION = "2.44"
+CURRENT_SCHEMA_REVISION = "v2_45"
+CURRENT_SCHEMA_VERSION = "2.45"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -270,6 +270,17 @@ def _classify_sync(connection) -> UnversionedDatabase:
                 and "name_key" in runtime_columns
             )
             if runtime_instance_layout:
+                planning_tables = {"session_planning", "plan_documents", "planning_operations", "planning_creations"}
+                if planning_tables & tables:
+                    columns = {
+                        "session_planning": {"session_id", "payload"},
+                        "plan_documents": {"session_id", "plan_id", "revision", "content_hash", "payload", "created_at"},
+                        "planning_operations": {"session_id", "operation_id", "fingerprint", "payload"},
+                        "planning_creations": {"connector_id", "runtime_id", "operation_id", "fingerprint", "payload"},
+                    }
+                    if planning_tables.issubset(tables) and all(required.issubset(_column_names(inspector, table)) for table, required in columns.items()):
+                        return UnversionedDatabase("v2", "v2_45")
+                    return UnversionedDatabase("unknown")
                 if (
                     "app_releases" in tables
                     or "_deprecated_app_releases" in tables

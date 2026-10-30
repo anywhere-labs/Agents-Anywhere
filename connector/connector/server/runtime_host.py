@@ -114,6 +114,15 @@ class ConnectorRuntimeHost(RuntimeHostClient):
     def connector_id(self) -> str:
         return self._connector_id
 
+    async def publish_planning(self, snapshot: dict, durable: bool = False) -> None:
+        notification = {"method": "session.planning.updated", "params": snapshot}
+        if durable:
+            if self._ingest_notifications is None:
+                raise RuntimeError("Durable plan ingestion is unavailable")
+            await self._ingest_notifications([notification])
+        else:
+            await self._notify_server(notification["method"], snapshot)
+
     async def session_meta_upsert(
         self,
         session_id: str,

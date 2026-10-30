@@ -11,6 +11,10 @@ from pydantic import BaseModel
 
 from agent_server.core.protocol import (
     PROTOCOL_VERSION_1,
+    PlanningRequest,
+    PlanningState,
+    PlanningResponse,
+    PlanDocument,
     ProtocolCapabilitiesResponse,
     ProtocolCapabilitySet,
     ProtocolEventEnvelope,
@@ -25,6 +29,7 @@ from agent_server.core.protocol import (
     ProtocolWsTicketRequest,
     ProtocolWsTicketResponse,
 )
+
 
 JSON_SCHEMA_DRAFT = "https://json-schema.org/draft/2020-12/schema"
 SCHEMA_ID_PREFIX = "urn:agents-anywhere:protocol"
@@ -42,6 +47,10 @@ class ProtocolSchema:
 
 
 SCHEMAS = (
+    ProtocolSchema("planning-request", PlanningRequest, "bidirectional", "validation"),
+    ProtocolSchema("planning-state", PlanningState, "egress", "serialization"),
+    ProtocolSchema("planning-response", PlanningResponse, "egress", "serialization"),
+    ProtocolSchema("plan-document", PlanDocument, "egress", "serialization"),
     ProtocolSchema("handshake-request", ProtocolHandshakeRequest, "ingress", "validation"),
     ProtocolSchema("handshake-response", ProtocolHandshakeResponse, "egress", "serialization"),
     ProtocolSchema("capability-set", ProtocolCapabilitySet, "bidirectional", "validation"),

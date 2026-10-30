@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { parsePlanningCommand } from "@/features/planning/commands"
 import { Monitor, ChevronDown, ArrowUp, Loader2, Check } from "lucide-react"
 import { toast } from "sonner"
 
@@ -284,6 +285,7 @@ export function TaskComposer() {
   const [catalogsLoading, setCatalogsLoading] = React.useState(false)
   const [creating, setCreating] = React.useState(false)
   const creatingRef = React.useRef(false)
+  const [planningCreation, setPlanningCreation] = React.useState(false)
   const [createTick, setCreateTick] = React.useState(0)
   const [preferenceLoaded, setPreferenceLoaded] = React.useState(false)
   const [preference, setPreference] = React.useState<NewSessionPreference | null>(null)
@@ -716,6 +718,13 @@ export function TaskComposer() {
   const compactSelectors = composerWidth > 0 && composerWidth < 640
 
   const handleCreate = async () => {
+    const planIntent = parsePlanningCommand(prompt)
+    if (planIntent && planIntent.command !== "submit_task") {
+      if (attachments.length) { toast.error("请填写附件对应的规划任务。"); return }
+      setPlanningCreation(planIntent.command === "enter_plan"); setPrompt(""); return
+    }
+    const usePlanning = planningCreation || planIntent?.command === "submit_task"
+
     if (!authSession?.accessToken || !selectedConnector || !selectedRuntime || !workspace?.path || creatingRef.current) return
     if (workspace.connectorId !== selectedConnector.id) return
     if (!prompt.trim() && attachments.length === 0) return
@@ -838,15 +847,17 @@ export function TaskComposer() {
       persistPreference(nextPreference)
       const created = await dashboardApi.createAndStartSession(authSession.accessToken, {
         ...createBody,
-        content: messageText,
+        content: planIntent ? planIntent.content ?? "" : usePlanning ? prompt : messageText,
+        ...(usePlanning ? { planningIntent: { mode: "plan" as const, operationId: clientMessageId } } : {}),
         selections,
         attachments: selectedAttachments.length > 0
           ? await inlineAttachmentsFromFiles(selectedAttachments)
           : undefined,
         clientMessageId,
       })
+      setPlanningCreation(false)
       toolSidebarStore.migrateSession(localSessionId, created.session.id)
-      bindOptimisticSession(localSessionId, created.session, created.attachments)
+      bindOptimisticSession(localSessionId, created.session, created.attachments, planIntent?.command === "enter_plan")
     } catch (err) {
       const message = err instanceof Error ? err.message : t("createFailed")
       markOptimisticMessageFailed(clientMessageId, message)
@@ -881,6 +892,7 @@ export function TaskComposer() {
           className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20"
         >
           <div className="flex flex-col gap-3 px-5 pt-4">
+            {planningCreation && <Badge variant="outline">新会话将使用计划模式</Badge>}
             <AttachmentPreviewList attachments={attachments} onRemove={remove} />
             {attachmentError ? <p role="alert" className="text-xs text-destructive">{attachmentError}</p> : null}
             <Textarea

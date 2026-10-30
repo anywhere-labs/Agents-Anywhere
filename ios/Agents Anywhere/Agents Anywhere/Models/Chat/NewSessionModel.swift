@@ -36,6 +36,7 @@ final class NewSessionModel {
     private(set) var isValid = true
     private(set) var creationUncertain = false
     private(set) var network = V2NetworkStatus()
+    var planningCreation = false
     var error: String?
     @ObservationIgnored var onStaged: ((NewSessionSubmission) async -> Void)?
     @ObservationIgnored var onFailed: ((NewSessionSubmission) -> Void)?
@@ -279,6 +280,12 @@ final class NewSessionModel {
     }
 
     func create(text: String) async -> V2SessionMeta? {
+        let intent = V2PlanningCommand.parse(text)
+        if let intent, intent.command != "submit_task" {
+            guard draft.attachments.isEmpty else { error = "请填写附件对应的规划任务。"; return nil }
+            planningCreation = intent.command == "enter_plan"; draft.text = ""; saveDraft(); return nil
+        }
+        let usePlanning = planningCreation || intent?.command == "submit_task"
         guard canCreate, let runtime else { return nil }
         draft.text = text
         guard draft.canAttemptSend else { return nil }
@@ -342,10 +349,11 @@ final class NewSessionModel {
             didSubmit = true
             let response = try await creation.createAndStart(connectorId: connectorID, projectId: project.id, runtime: runtime.runtimeType,
                 runtimeId: runtime.id, title: nil, cwd: project.workspacePath,
-                content: text, selections: settings.selections, attachments: files.map(\.local),
+                content: usePlanning && intent == nil ? "/plan " + text : text, selections: settings.selections, attachments: files.map(\.local),
                 clientMessageId: submission.pending.id)
             guard isValid else { return nil }
             completed = true
+            planningCreation = false
             onBound?(submission, response)
             return response.session
         } catch {

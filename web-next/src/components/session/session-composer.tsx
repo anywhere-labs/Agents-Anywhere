@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { parsePlanningCommand } from "@/features/planning/commands"
 import { ArrowUp, Check, ChevronDown, Loader2, Square, X } from "lucide-react"
 import { toast } from "sonner"
 
@@ -365,7 +366,8 @@ export function SessionComposer({
               : isError
                 ? tSession("errorPlaceholder")
                 : tSession("replyPlaceholder")
-  const slashIntent = parseSlashIntent(value)
+  const planningIntent = parsePlanningCommand(value)
+  const slashIntent = planningIntent ? null : parseSlashIntent(value)
   // "/Users/me/file.ts" and other non-command slash text never opens the menu.
   const slashCandidate = slashIntent && commandLikeToken(slashIntent) ? slashIntent : null
   const commandQuery = slashCandidate?.command ?? null
@@ -416,7 +418,7 @@ export function SessionComposer({
   }
   const canSubmitCommand = mode.kind === "command" && !commandPending && connectorOnline
   const canSubmitMessage =
-    canSend &&
+    (canSend || Boolean(planningIntent && capabilityIsUsable(effectiveCapabilities, CAPABILITY.planning, runtimeScope) && !sending && !interrupting && !commandPending)) &&
     session.takeover &&
     hasInput &&
     attachmentsReady &&
@@ -514,6 +516,18 @@ export function SessionComposer({
     if (!canSubmitMessage) return
     const text = value
     const files = attachments
+    if (planningIntent) {
+      const currentVisit = sessionVisitRef.current
+      const sent = await onSend(text, files, {
+        ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
+        ...(selectedPermissionSelection ? { permission: selectedPermissionSelection } : {}),
+      })
+      if (sent && sessionVisitRef.current === currentVisit) {
+        if (valueRef.current === text) updateValue("")
+        files.forEach(file => remove(file.id))
+      }
+      return
+    }
     updateValue("")
     clear({ revokePreviews: false })
     const sent = await onSend(text, files, {

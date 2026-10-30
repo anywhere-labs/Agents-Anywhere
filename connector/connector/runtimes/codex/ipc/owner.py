@@ -245,6 +245,7 @@ class CodexIpcOwnerService:
             active_turn_id=self.active_turn_ids.get(session_id),
             model_settings=model,
             permission_settings=permission,
+            collaboration_mode=getattr(self.sdk, "_planning_modes", {}).get(thread_id),
         )
 
     async def _settings_from_selections(
@@ -490,8 +491,16 @@ class CodexIpcOwnerService:
         selections = await selections_from_thread_state(
             flat, self.read_model_catalog, self.read_permission_catalog
         )
+        collaboration = settings.get("collaborationMode")
+        applied_mode = False
+        if isinstance(collaboration, Mapping) and collaboration.get("mode") in {"plan", "default"}:
+            setter = getattr(self.sdk, "set_collaboration_mode", None)
+            if not callable(setter):
+                return False
+            await setter(thread_id, dict(collaboration))
+            applied_mode = True
         if not selections:
-            return False
+            return applied_mode
         result = await self.apply_selections(session_id, thread_id, selections)
         return bool(getattr(result, "ok", True))
 
@@ -523,6 +532,7 @@ def conversation_state_from_thread(
     now: Clock = time.time,
     model_settings: CodexModelSettings | None = None,
     permission_settings: CodexPermissionSettings | None = None,
+    collaboration_mode: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a v11-shaped ``conversationState`` from app-server thread data.
 
@@ -591,11 +601,11 @@ def conversation_state_from_thread(
         "paginatedHistory": {"itemsBackwardsCursor": None},
         "latestModel": model,
         "latestReasoningEffort": effort,
-        "latestCollaborationMode": {
+        "latestCollaborationMode": dict(collaboration_mode) if collaboration_mode is not None else {
             "mode": "default",
             "settings": {"model": model, "reasoning_effort": effort, "developer_instructions": None},
         },
-        "latestThreadSettings": _latest_thread_settings(permissions, cwd, model, effort),
+        "latestThreadSettings": {**_latest_thread_settings(permissions, cwd, model, effort), **({"collaborationMode": dict(collaboration_mode)} if collaboration_mode is not None else {})},
         "latestTokenUsageInfo": None,
         "latestTurnStartMessageId": None,
         "previousTurnModel": None,

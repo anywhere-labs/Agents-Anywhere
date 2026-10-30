@@ -1,6 +1,38 @@
 {
   "artifacts": [
     {
+      "direction": "bidirectional",
+      "model": "PlanningRequest",
+      "path": "schemas/planning-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "60595eaa9f35dbd14485f121a6af71021e47c8df434e0945f47e12f63997e07b",
+      "slug": "planning-request"
+    },
+    {
+      "direction": "egress",
+      "model": "PlanningState",
+      "path": "schemas/planning-state.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "0f85afc76f828ef636646c03d972ae39ba67df34d42e949027334f8e47c74922",
+      "slug": "planning-state"
+    },
+    {
+      "direction": "egress",
+      "model": "PlanningResponse",
+      "path": "schemas/planning-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "433ee4403274a5890fd307fc179089880b7d3d6af78bb877b13ed62b44f4a992",
+      "slug": "planning-response"
+    },
+    {
+      "direction": "egress",
+      "model": "PlanDocument",
+      "path": "schemas/plan-document.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "1e56effe2263c791597626d293d7da66e91325c21844888bd8bafacbb6f7dc43",
+      "slug": "plan-document"
+    },
+    {
       "direction": "ingress",
       "model": "ProtocolHandshakeRequest",
       "path": "schemas/handshake-request.schema.json",

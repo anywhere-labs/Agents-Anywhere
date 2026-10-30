@@ -151,6 +151,7 @@ support per-turn SDK options can apply current state at dispatch time.
 
 ## Documents
 
+- [AA 统一原生 Plan 设计与实施计划](./unified-plan-implementation-plan.md)：待实施的统一领域规则、Codex / Claude Code / DSH 适配、四端流式卡片、计划阅读与执行确认。
 - [Runtime instances v2 rewrite](./runtime-instances-v2-rewrite.md)
 - [Connector -> Runtime ABC](./connector-to-runtime.md)
 - [Runtime -> Connector host client](./runtime-host-client.md)
@@ -161,3 +162,5 @@ support per-turn SDK options can apply current state at dispatch time.
 - [Implementation order](./implementation-order.md)
 - [Behavior migration targets](./behavior-migration-targets.md)
 - [API documentation](../api/README.md)
+
+统一 Plan 已有独立的 [使用、分层与 API 文档](../api/planning.md)，其中列出三种原生适配、四端交互、能力与数据库迁移。

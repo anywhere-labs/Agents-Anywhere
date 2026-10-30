@@ -16,8 +16,10 @@ struct V2SessionCreationService {
         attachments: [V2LocalAttachment],
         clientMessageId: String
     ) async throws -> V2SessionCreateResponse {
-        let normalizedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        if normalizedContent.isEmpty, attachments.isEmpty {
+        let intent = V2PlanningCommand.parse(content)
+        if intent?.command == "exit_plan" || intent?.command == "enter_plan" { throw V2BusinessError.emptyMessage }
+        let normalizedContent = intent == nil ? content.trimmingCharacters(in: .whitespacesAndNewlines) : intent?.content ?? ""
+        if normalizedContent.isEmpty, attachments.isEmpty, intent == nil {
             throw V2BusinessError.emptyMessage
         }
         if attachments.count > 10 {
@@ -44,6 +46,7 @@ struct V2SessionCreationService {
                 runtimeId: runtimeId,
                 title: title,
                 cwd: cwd,
+                planningIntent: intent == nil ? nil : V2PlanningIntent(operationId: clientMessageId),
                 content: normalizedContent,
                 selections: selections,
                 attachments: inlineAttachments,

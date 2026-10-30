@@ -135,6 +135,8 @@ class SessionsController(
         devices: List<AgentDevice>,
         projects: List<AgentProject> = emptyList(),
     ): NewSessionCreateOutcome {
+        val planning = com.agentsanywhere.app.feature.sessiondetail.PlanningCommand.parse(draft.content)
+        if (planning?.command == "exit_plan" || planning?.command == "enter_plan") return NewSessionCreateOutcome.Failed(IllegalArgumentException("请使用 /plan <任务> 创建规划会话。"))
         validateNewSessionDraft(draft)?.let { error ->
             return NewSessionCreateOutcome.Failed(IllegalArgumentException(error))
         }
@@ -172,7 +174,8 @@ class SessionsController(
                         runtime = draft.runtimeType,
                         title = draft.title?.trim()?.takeIf(String::isNotBlank),
                         cwd = resolved.cwd,
-                        content = draft.content.trim(),
+                        content = planning?.content ?: if (planning != null) "" else draft.content.trim(),
+                        planningIntent = planning != null,
                         selections = draft.selections.toMap(),
                         attachments = draft.attachments.map(NewSessionAttachmentPart::toInlineAttachmentRef),
                         clientMessageId = draft.clientMessageId,

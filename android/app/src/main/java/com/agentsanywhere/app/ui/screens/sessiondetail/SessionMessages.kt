@@ -247,6 +247,7 @@ private fun SkeletonBlock(
 
 @Composable
 internal fun MessageList(
+    planningContent: (@Composable () -> Unit)? = null,
     messages: List<TimelineMessage>,
     darkMode: Boolean,
     sessionId: String,
@@ -438,6 +439,7 @@ internal fun MessageList(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 item(key = "bottom-space") { Spacer(Modifier.height(bottomContentPadding)) }
+                if (planningContent != null) item(key = "planning") { planningContent() }
                 if (displayWorkingLabel != null) {
                     item(key = "working-indicator") {
                         DisableSelection {

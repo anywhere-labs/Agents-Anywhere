@@ -116,6 +116,12 @@ export class BridgeService {
   @query({ description: 'One page of a session timeline snapshot.', request: payload, response: payload, inject: [callScope] })
   async getSessionSnapshot(request: Payload, call: CallScope, context: RpcContext): Promise<Payload> { return this.forward('getSessionSnapshot', request, call, context) }
 
+  @query({ description: 'Native planning state.', request: payload, response: payload, inject: [callScope] })
+  async getPlanning(request: Payload, call: CallScope, context: RpcContext): Promise<Payload> { return this.forward('getPlanning', request, call, context) }
+
+  @mutates({ description: 'Select native planning mode.', request: payload, response: payload, inject: [callScope] })
+  async setPlanning(request: Payload, call: CallScope, context: RpcContext): Promise<Payload> { return this.forward('setPlanning', request, call, context) }
+
   @query({ description: 'Status, selections and source state of a session.', request: payload, response: payload, inject: [callScope] })
   async getSessionState(request: Payload, call: CallScope, context: RpcContext): Promise<Payload> { return this.forward('getSessionState', request, call, context) }
 

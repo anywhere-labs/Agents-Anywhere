@@ -8,6 +8,7 @@ from agent_server.core.models import NoticeIn
 
 @dataclass
 class IngestEffect:
+    planning_state: dict[str, Any] | None = None
     session_id: str | None = None
     session_ids: list[str] | None = None
     item: dict[str, Any] | None = None

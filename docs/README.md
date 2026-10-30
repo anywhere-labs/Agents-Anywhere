@@ -14,6 +14,7 @@
 | 接入无图形界面的机器 | [Connector](../connector/README.md) |
 | Android 构建 | [Android](../android/README.md) |
 | 架构和 API | [Server 架构](server-architecture.md)、[API](api/README.md) |
+| 使用统一原生 Plan、流式卡片和执行确认 | [Plan 使用与 API](api/planning.md)；[设计与实施计划](runtime-protocol/unified-plan-implementation-plan.md) |
 | DSH 大历史内存 | [实现与验证](dsh-snapshot-uploads.md) |
 | DSH 慢速历史上传 | [实现与验证](dsh-slow-upload.md)、[2.1.0 配套说明（未发布）](releases/2.1.0.md) |
 | Runtime 和本机协议 | [Runtime protocol](runtime-protocol/README.md)、[本机协议](../contracts/local-machine/2.0/README.md)、[Codex IPC 接管](codex-ipc-takeover.md) |

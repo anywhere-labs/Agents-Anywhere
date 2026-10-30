@@ -8,6 +8,7 @@ All Server HTTP, SSE, and WebSocket API documentation should live under this dir
 
 ## Documents
 
+- [统一原生 Plan](planning.md)：规划命令、流式卡片、不可变版本、审阅和回执 API；[完整设计](../runtime-protocol/unified-plan-implementation-plan.md)保留原生研究与分层依据。
 - [Upgrading to v2](../upgrading.md): current deployment and client upgrade
   guidance, including legacy v1 migrations.
 - [API v2 namespace](./namespace.md): `/api/v2` namespace and client/connector URL rules.

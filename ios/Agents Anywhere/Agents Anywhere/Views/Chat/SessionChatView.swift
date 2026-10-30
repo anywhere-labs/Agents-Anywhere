@@ -41,6 +41,9 @@ struct SessionChatView: View, Equatable {
         fileService = services.workspaceFiles; detailService = services.sessionDetail
         self.onMenu = onMenu
     }
+    private var planningTarget: Binding<V2PlanningReviewTarget?> {
+        Binding(get: { model.planReviewTarget }, set: { if !model.isWorking { model.planReviewTarget = $0 } })
+    }
     private var controls: ChatControlMetrics { .init(bodyLineHeight: bodyLineHeight) }
     private var session: V2SessionModel { model.session }
     private var requiresTakeover: Bool { session.metadata?.takeover == false }
@@ -55,12 +58,16 @@ struct SessionChatView: View, Equatable {
                 if hasStartedLoading {
                     ChatTimelineView(model: model,
                         onAttachment: openAttachment, onFile: openFile)
+                        .onChange(of: session.planning?.review?.reviewId) { model.presentPlanReviewIfNeeded() }
+                        .onChange(of: session.planning?.capabilities?.actions) { model.presentPlanReviewIfNeeded() }
+                        .onChange(of: session.runtime.allows("session.plan_review")) { model.presentPlanReviewIfNeeded() }
+                        .sheet(item: planningTarget) { target in SessionPlanReviewSheet(chat: model, target: target.state) }
                 } else {
                     Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
                 .overlay {
-                    if model.isOpeningReady && model.timeline.rows.isEmpty && model.timeline.pendingMessages.isEmpty {
+                    if model.isOpeningReady && model.timeline.rows.isEmpty && model.timeline.pendingMessages.isEmpty && session.planning?.draft == nil && session.planning?.proposal == nil {
                         VStack(spacing: 12) {
                             Text(String(localized: "在这里继续你的任务")).foregroundStyle(.secondary)
                         }.allowsHitTesting(false)
@@ -74,7 +81,7 @@ struct SessionChatView: View, Equatable {
                             .traceChatLayout("interaction-dock")
                         ChatComposerDock(draft: session.composer, settings: model.settings,
                             maximumEditorHeight: min(160, max(72, geometry.size.height * 0.30)), controls: controls,
-                            canSend: session.canSend, canAttach: model.canAttach,
+                            canSend: session.canSend || (V2PlanningCommand.parse(session.composer.text) != nil && session.runtime.allows("session.planning")), canAttach: model.canAttach,
                             canSelectModel: session.runtime.allows("catalog.model"),
                             canSelectPermission: session.runtime.allows("catalog.permission"),
                             isStreaming: model.isRunning, canStop: session.runtime.allows("session.interrupt"),

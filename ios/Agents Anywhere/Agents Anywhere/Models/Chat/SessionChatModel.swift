@@ -14,6 +14,26 @@ final class SessionChatModel {
         set { session.isPerformingAction = newValue }
     }
     private(set) var isLoadingSettings = false
+    var planReviewTarget: V2PlanningReviewTarget?
+    @ObservationIgnored private var shownPlanReviews = Set<String>()
+    func presentPlanReviewIfNeeded() {
+        guard session.runtime.allows("session.plan_review"), let state = session.planning, state.freshness == "fresh", let review = state.review,
+              review.status == "open", state.capabilities?.actions.isEmpty == false,
+              shownPlanReviews.insert(review.reviewId).inserted else { return }
+        planReviewTarget = V2PlanningReviewTarget(state: state)
+    }
+    func openPlanReview() { guard session.runtime.allows("session.plan_review") else { return }; if let state = session.planning { planReviewTarget = .init(state: state) } }
+    func respondPlan(_ target: V2PlanningState, action: String, feedback: String) async {
+        guard !isWorking, let review = target.review else { return }
+        isWorking = true; error = nil
+        defer { isWorking = false }
+        do {
+            let request = V2PlanningRequest(command: action, feedback: feedback, reviewId: review.reviewId,
+                planId: review.planId, planRevision: review.planRevision, contentHash: review.contentHash,
+                epoch: target.epoch)
+            if try await repository.executePlanning(sessionId: session.id, request: request) { planReviewTarget = nil }
+        } catch { self.error = error.localizedDescription }
+    }
     var error: String?
     var settingsError: String?
     private(set) var isOpeningPrepared = false
@@ -220,6 +240,7 @@ final class SessionChatModel {
         if let data = repository.cached(sessionId: session.id) {
             timeline.presentOpening(data.items, pendingMessages: session.pendingMessages)
         }
+        await repository.refreshPlanning(sessionId: session.id)
         isOpeningPrepared = true
     }
 
@@ -278,6 +299,22 @@ final class SessionChatModel {
     }
 
     func send(_ text: String) async {
+        if let intent = V2PlanningCommand.parse(text) {
+            guard !isWorking else { return }
+            let selected = session.composer.attachments
+            guard intent.command == "submit_task" || selected.isEmpty else { error = "请填写附件对应的规划任务。"; return }
+            isWorking = true; error = nil
+            defer { isWorking = false }
+            do {
+                var request = V2PlanningRequest(command: intent.command, content: intent.content)
+                if !selected.isEmpty {
+                    let files = try await attachments.upload(sessionId: session.id, attachments: selected.map(\.local))
+                    request.attachments = files.map { V2AttachmentSendReference(fileId: $0.fileId) }
+                }
+                if try await repository.executePlanning(sessionId: session.id, request: request), session.composer.text == text, session.composer.attachments.map(\.id) == selected.map(\.id) { session.composer.clear() }
+            } catch { self.error = error.localizedDescription }
+            return
+        }
         if let command = await catalogCommand(for: text) {
             session.composer.text = text
             await runCommand(command, raw: text)
