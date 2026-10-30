@@ -40,8 +40,10 @@ class SessionsController(
     suspend fun prepareRuntimeWorkspace(connector: String, runtime: String, project: String): Result<PreparedRuntimeWorkspace> = runCatching {
         val value = workflows.run("preparations", org.json.JSONObject().put("connectorId", connector).put("runtimeId", runtime).put("projectId", project).put("clientPreparationId", java.util.UUID.randomUUID().toString())) { it.optString("phase") == "ready" }
         val state = value.getJSONObject("state")
-        val schema = state.optJSONObject("configuration")?.let { AgentForm.configurationSchema(it) }
-        PreparedRuntimeWorkspace(value.getString("id"), state.getLong("revision"), state.getLong("catalogRevision"), sessionsApi.parseScopedModelCatalog(state.getJSONObject("catalog")).toNewSessionModelCatalog(), schema?.toString(), schema?.let { AgentForm.defaults(it) }.orEmpty())
+        val snapshot = state.optJSONObject("configuration")
+        val schema = snapshot?.let { AgentForm.configurationSchema(it) }
+        val (defaultModel, inputModalities) = AgentForm.modelInputModalities(snapshot)
+        PreparedRuntimeWorkspace(value.getString("id"), state.getLong("revision"), state.getLong("catalogRevision"), sessionsApi.parseScopedModelCatalog(state.getJSONObject("catalog")).toNewSessionModelCatalog(), schema?.toString(), schema?.let { AgentForm.defaults(it) }.orEmpty(), inputModalities, defaultModel)
     }.onFailure { if (it is CancellationException) throw it }
 
     fun dashboardSnapshotState(snapshot: RemoteDashboardSnapshot): SessionsState {
@@ -798,6 +800,10 @@ internal fun validateNewSessionDraft(draft: NewSessionCreateDraft): String? {
     }
     if (draft.content.isBlank() && draft.attachments.isEmpty()) return "Enter a message or attach a file before starting."
     if (draft.clientMessageId.isBlank()) return "The client message ID is missing."
+    val inputs = draft.preparedWorkspace?.inputModalities(draft.selections.model)
+    if (inputs != null && "image" !in inputs && draft.attachments.any { it.mediaType.startsWith("image/", ignoreCase = true) }) {
+        return "The selected model does not declare image input support. Remove the image or choose another model."
+    }
     if (draft.attachments.size > MAX_CREATE_ATTACHMENTS) return "You can attach up to $MAX_CREATE_ATTACHMENTS files."
     draft.attachments.firstOrNull { it.name.isBlank() }?.let { return "An attachment name is missing." }
     draft.attachments.firstOrNull { it.bytes.isEmpty() }?.let { return "Attachments cannot be empty." }

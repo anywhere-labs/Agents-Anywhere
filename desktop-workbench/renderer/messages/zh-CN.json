@@ -388,6 +388,7 @@
       "attach": "添加附件",
       "attachmentLimit": "最多 {count} 个文件",
       "attachmentsUnsupported": "当前 Runtime 不支持附件。请移除附件或切换其他 Runtime。",
+      "imageInputUnsupported": "当前模型声明不支持图片输入，请移除图片或切换模型。",
       "attachmentTypesUnsupported": "仅支持以下附件类型：{types}。",
       "createSession": "创建会话",
       "creating": "正在创建会话...",

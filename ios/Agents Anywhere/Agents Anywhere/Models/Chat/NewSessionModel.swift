@@ -363,6 +363,11 @@ final class NewSessionModel {
         draft.text = text
         guard draft.canAttemptSend else { return nil }
         let files = draft.attachments
+        if let inputs = AgentForm.inputModalities(preparedWorkflow?.state.configuration, modelID: settings.modelID),
+           !inputs.contains("image"), files.contains(where: { $0.local.mediaType.lowercased().hasPrefix("image/") }) {
+            error = String(localized: "当前模型声明不支持图片输入，请移除图片或切换模型。")
+            return nil
+        }
         isCreating = true; error = nil
         saveSelections()
         defer { isCreating = false; saveDraft() }

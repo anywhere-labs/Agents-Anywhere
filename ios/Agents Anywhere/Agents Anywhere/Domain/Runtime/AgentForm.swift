@@ -1,6 +1,14 @@
 import Foundation
 
 nonisolated enum AgentForm {
+    static func inputModalities(_ snapshot: JSONValue?, modelID: String) -> [String]? {
+        guard case let .array(options) = snapshot?["options"],
+              let model = options.first(where: { $0["category"] == .string("model") }) else { return nil }
+        let id = modelID.isEmpty ? model["currentValue"]?.stringValue ?? "" : modelID
+        guard case let .array(inputs) = model["_meta"]?["aa"]?["modelInputModalities"]?[id] else { return nil }
+        return inputs.compactMap(\.stringValue)
+    }
+
     static func defaults(_ schema: JSONValue) -> [String: JSONValue] {
         guard case let .object(fields) = schema["properties"] else { return [:] }
         let required: [JSONValue] = if case let .array(items) = schema["required"] { items } else { [] }
@@ -39,10 +47,11 @@ nonisolated enum AgentForm {
         }
     }
 
-    static func configurationSchema(_ snapshot: JSONValue, includeModel: Bool = false) -> JSONValue {
+    /// Model, effort and permission belong to the selection controls unless explicitly included.
+    static func configurationSchema(_ snapshot: JSONValue, includeSelectionOptions: Bool = false) -> JSONValue {
         guard case let .array(options) = snapshot["options"] else { return .object(["type": .string("object"), "properties": .object([:])]) }
         var fields: [String: JSONValue] = [:]
-        for option in options where includeModel || option["category"] != .string("model") {
+        for option in options where includeSelectionOptions || !["model", "effort", "permission"].contains(option["category"]?.stringValue ?? "") {
             guard let id = option["configId"]?.stringValue ?? option["id"]?.stringValue else { continue }
             var field: [String: JSONValue] = ["type": .string(option["type"] == .string("boolean") ? "boolean" : "string"), "title": option["name"] ?? .string(id)]
             field["default"] = option["currentValue"]

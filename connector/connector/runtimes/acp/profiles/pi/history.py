@@ -40,7 +40,7 @@ class NativeHistory:
             if (
                 isinstance(message, dict)
                 and message.get("role") == "user"
-                and (text := text_content(message.get("content")))
+                and (text := text_content(message.get("aaDisplayText", message.get("content"))))
             ):
                 return text[:160]
         return "Pi 历史会话"
@@ -272,6 +272,10 @@ def timeline(
             role = message.get("role")
             blocks = message.get("content", [])
             if role in {"user", "assistant", "custom"}:
+                if role == "user" and isinstance(message.get("aaDisplayText"), str):
+                    # The SDK text contains execution resource paths. AA-origin
+                    # messages retain their original presentation independently.
+                    blocks = [{"type": "text", "text": message["aaDisplayText"]}]
                 blocks = (
                     [{"type": "text", "text": blocks}]
                     if isinstance(blocks, str)
@@ -295,6 +299,8 @@ def timeline(
                         }
                         if message.get("aaClientMessageId"):
                             content["clientMessageId"] = message["aaClientMessageId"]
+                        if role == "user" and index == 0 and message.get("aaAttachments"):
+                            content["attachments"] = message["aaAttachments"]
                         add(
                             entry,
                             index,

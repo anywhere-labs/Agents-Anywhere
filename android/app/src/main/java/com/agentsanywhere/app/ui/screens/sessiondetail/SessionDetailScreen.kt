@@ -1481,6 +1481,15 @@ fun SessionDetailScreen(
     }
 
     fun sendDraft() {
+        val inputs = if (preparedSession != null) {
+            preparedSession.preparedWorkspace?.inputModalities(preparedSelections.model)
+        } else {
+            state.capabilities.find(SESSION_ATTACHMENT_CAPABILITY, runtimeId, runtimeType)?.metadata?.get("inputModalities") as? List<*>
+        }
+        if (inputs != null && "image" !in inputs && attachments.any { it.mediaType.startsWith("image/", ignoreCase = true) }) {
+            showError(context.getString(R.string.session_image_input_unsupported))
+            return
+        }
         val raw = draft
         val text = raw.trim()
         if (text.isEmpty() && attachments.isEmpty()) return

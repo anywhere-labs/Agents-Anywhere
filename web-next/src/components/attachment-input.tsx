@@ -16,7 +16,7 @@ import {
 import { dashboardApi } from "@/features/dashboard/api"
 import type { UploadedAttachment } from "@/features/dashboard/types"
 import { cn } from "@/lib/utils"
-import { attachmentMimeAllowed } from "@/components/session/capabilities"
+import { attachmentMimeAllowed, isImageMediaType } from "@/components/session/capabilities"
 import { useTranslations } from "next-intl"
 
 const MAX_ATTACHMENT_FILES = 5
@@ -58,6 +58,7 @@ type AttachmentPreviewListProps = {
 }
 
 type UseAttachmentsOptions = {
+  imagesAllowed?: boolean
   initialAttachments?: AttachedFile[]
   enabled?: boolean
   allowedMimeTypes?: readonly string[]
@@ -131,9 +132,18 @@ function formatBytes(size: number): string {
   return `${size} B`
 }
 
+function imageBlocked(file: AttachedFile, imagesAllowed: boolean): boolean {
+  return !imagesAllowed && isImageMediaType(file.mediaType)
+}
+
+function typeBlocked(file: AttachedFile, enabled: boolean, allowedMimeTypes: readonly string[] | undefined): boolean {
+  return !enabled || !attachmentMimeAllowed(file.mediaType, allowedMimeTypes)
+}
+
 export function useAttachments(options: UseAttachmentsOptions = {}) {
-  const { sessionId, token, enabled = true, allowedMimeTypes } = options
+  const { sessionId, token, enabled = true, allowedMimeTypes, imagesAllowed = true } = options
   const t = useTranslations("dashboard.new")
+  const [rejectedImages, setRejectedImages] = useState(false)
   const [rejectedTypes, setRejectedTypes] = useState(false)
   const [attachments, setAttachments] = useState<AttachedFile[]>(() => options.initialAttachments ?? [])
   const [isDragging, setIsDragging] = useState(false)
@@ -161,6 +171,7 @@ export function useAttachments(options: UseAttachmentsOptions = {}) {
   const clear = useCallback((options: ClearAttachmentsOptions = {}) => {
     const revoke = options.revokePreviews ?? true
     setRejectedTypes(false)
+    setRejectedImages(false)
     if (!revoke) attachmentsRef.current = []
     setAttachments((prev) => {
       if (revoke) revokePreviews(prev)
@@ -206,15 +217,16 @@ export function useAttachments(options: UseAttachmentsOptions = {}) {
   }, [sessionId, token])
 
   const add = useCallback((files: AttachedFile[]) => {
-    const accepted = files.filter((file) => enabled && attachmentMimeAllowed(file.mediaType, allowedMimeTypes))
+    const accepted = files.filter((file) => !typeBlocked(file, enabled, allowedMimeTypes) && !imageBlocked(file, imagesAllowed))
     for (const file of files) if (!accepted.includes(file)) revokePreview(file)
-    setRejectedTypes(accepted.length !== files.length)
+    setRejectedImages(files.some((file) => imageBlocked(file, imagesAllowed)))
+    setRejectedTypes(files.some((file) => typeBlocked(file, enabled, allowedMimeTypes)))
     const uploadImmediately = Boolean(sessionId && token)
     const result = mergeFiles(attachmentsRef.current, accepted, uploadImmediately)
     attachmentsRef.current = result.next
     setAttachments(result.next)
     if (uploadImmediately) result.accepted.forEach(upload)
-  }, [sessionId, token, upload, enabled, allowedMimeTypes])
+  }, [sessionId, token, upload, enabled, allowedMimeTypes, imagesAllowed])
 
   const remove = useCallback((id: string) => {
     setAttachments((prev) => {
@@ -279,12 +291,18 @@ export function useAttachments(options: UseAttachmentsOptions = {}) {
     [add],
   )
 
-  const attachmentsAllowed = attachments.every((file) => enabled && attachmentMimeAllowed(file.mediaType, allowedMimeTypes))
-  const attachmentError = rejectedTypes || !attachmentsAllowed
-    ? !enabled || allowedMimeTypes?.length === 0
-      ? t("attachmentsUnsupported")
-      : t("attachmentTypesUnsupported", { types: allowedMimeTypes?.join(", ") ?? "" })
-    : undefined
+  const attachmentsAllowed = attachments.every((file) => !typeBlocked(file, enabled, allowedMimeTypes) && !imageBlocked(file, imagesAllowed))
+  // Report every rejection reason so a mixed drop does not silently lose files.
+  const imageError = !imagesAllowed && (rejectedImages || attachments.some((file) => imageBlocked(file, imagesAllowed)))
+  const typeError = rejectedTypes || attachments.some((file) => typeBlocked(file, enabled, allowedMimeTypes))
+  const attachmentError = [
+    imageError ? t("imageInputUnsupported") : undefined,
+    typeError
+      ? !enabled || allowedMimeTypes?.length === 0
+        ? t("attachmentsUnsupported")
+        : t("attachmentTypesUnsupported", { types: allowedMimeTypes?.join(", ") ?? "" })
+      : undefined,
+  ].filter(Boolean).join(" ") || undefined
   const uploadsPending = attachments.some((file) => file.uploadStatus === "uploading")
   const uploadFailed = attachments.some((file) => file.uploadStatus === "failed")
   const allUploaded = attachments.every((file) => file.uploadStatus === "uploaded")

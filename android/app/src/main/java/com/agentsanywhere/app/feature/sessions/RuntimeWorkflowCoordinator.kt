@@ -166,4 +166,22 @@ class RuntimeWorkflowCoordinator(
 }
 private fun String.urlEncoded(): String = java.net.URLEncoder.encode(this, "UTF-8").replace("+", "%20")
 
-data class PreparedRuntimeWorkspace(val preparationId: String, val expectedRevision: Long, val catalogRevision: Long, val catalog: NewSessionModelCatalog, val configurationSchema: String? = null, val configurationValues: Map<String, Any> = emptyMap())
+data class PreparedRuntimeWorkspace(
+    val preparationId: String,
+    val expectedRevision: Long,
+    val catalogRevision: Long,
+    val catalog: NewSessionModelCatalog,
+    val configurationSchema: String? = null,
+    val configurationValues: Map<String, Any> = emptyMap(),
+    val inputModalitiesByModel: Map<String, List<String>> = emptyMap(),
+    val defaultModelId: String? = null,
+) {
+    fun inputModalities(selectionId: String?): List<String>? {
+        // Only an absent selection means the Agent default; an unknown one has no declaration.
+        if (selectionId.isNullOrBlank()) return defaultModelId?.let(inputModalitiesByModel::get)
+        val model = catalog.models.firstOrNull { item ->
+            item.selectionId == selectionId || item.reasoningItems.any { it.selectionId == selectionId }
+        } ?: return null
+        return inputModalitiesByModel[model.id]
+    }
+}

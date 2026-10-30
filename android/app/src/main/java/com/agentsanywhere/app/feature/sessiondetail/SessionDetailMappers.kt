@@ -122,6 +122,7 @@ private fun RemoteRuntimeCapability.toEffectiveCapability(): EffectiveCapability
         allowed = allowed,
         unavailableReason = unavailableReason,
         parameters = parameters,
+        metadata = metadata,
         runtimeId = runtimeId,
         runtimeType = runtimeType,
     )

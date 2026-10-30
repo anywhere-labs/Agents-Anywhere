@@ -25,6 +25,8 @@ from ...domain.sessions import SessionBinding
 from ...runtime import AcpRuntime
 from .history import discover_history_files, read_history, timeline
 
+PROJECTION_REVISION = 2
+
 
 class NativePiRuntime(AcpRuntime):
     def __init__(self, *args, prepare_launch, history_roots, **kwargs):
@@ -149,6 +151,7 @@ class NativePiRuntime(AcpRuntime):
                     and previous
                     and previous.get("signature") == entry["signature"]
                     and previous.get("publishedRevision") == previous["revision"]
+                    and previous.get("projectionRevision") == PROJECTION_REVISION
                     and previous.get("ambiguous") == ambiguous
                 ):
                     continue
@@ -205,6 +208,7 @@ class NativePiRuntime(AcpRuntime):
                     force
                     or not previous
                     or previous.get("publishedRevision") != source["revision"]
+                    or previous.get("projectionRevision") != PROJECTION_REVISION
                     or previous.get("ambiguous") != source["ambiguous"]
                 ):
                     self._publish_history(
@@ -336,6 +340,7 @@ class NativePiRuntime(AcpRuntime):
                     )
             self._publish_native_state(session_id)
             source["publishedRevision"] = history.revision
+            source["projectionRevision"] = PROJECTION_REVISION
             self.app.store.put("pi_native_source", session_id, source)
 
     def _failure(self, session_id, code, message):
@@ -348,6 +353,9 @@ class NativePiRuntime(AcpRuntime):
     def _publish_native_state(self, session_id):
         source = self._source(session_id)
         if not source:
+            # Newly created AA sessions have not yet entered the native file
+            # index, but their idle/model changes still update effective input.
+            self._publish_session_capabilities(session_id)
             return
         binding = self.app.store.get("binding", session_id)
         state = (

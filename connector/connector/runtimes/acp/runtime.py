@@ -26,7 +26,7 @@ from connector.runtime_protocol.workflows import RuntimeWorkflowResult
 
 from .application.agent_capabilities import AgentCapabilities
 from .composition import build_services
-from .domain.definitions import AcpError
+from .domain.definitions import AcpError, PromptRejectedBeforeDispatch
 
 
 class AcpRuntime(AgentRuntime):
@@ -296,7 +296,9 @@ class AcpRuntime(AgentRuntime):
                     session_id=session_id,
                     supported=supported,
                     available=supported and ready and state["status"] == "idle",
-                    metadata={"maxFiles": 16, "maxBytes": 33554432}
+                    metadata={"maxFiles": 16, "maxBytes": 33554432,
+                              **(live["client"].attachment_metadata(live["agentSessionId"])
+                                 if live and hasattr(live["client"], "attachment_metadata") else {})}
                     if capability_id == "runtime.attachment"
                     else {},
                 )
@@ -594,7 +596,7 @@ class AcpRuntime(AgentRuntime):
                             result = {"ok": row["message_accepted"], "messageAccepted": row["message_accepted"],
                                       "phase": row["phase"], "clientMessageId": client_message_id}
                             if row["message_accepted"] is False:
-                                result.update(code="message_rejected", message="当前权限或用户审批未允许此消息。")
+                                result.update(row.get("failure") or {"code": "message_rejected", "message": "当前权限或用户审批未允许此消息。"})
                             break
                         if row["phase"] == "outcome_unknown":
                             break
@@ -624,7 +626,7 @@ class AcpRuntime(AgentRuntime):
         if previous:
             require_same_input(previous["inputDigest"], digest)
             result = previous["result"]
-            return RuntimeOperationResult(ok=result["messageAccepted"] is True, code=result.get("code"), result=result)
+            return RuntimeOperationResult(ok=result["messageAccepted"] is True, code=result.get("code"), message=result.get("message"), result=result)
         blocks = []
         if attachments:
             from .infrastructure.attachments import materialize
@@ -643,6 +645,12 @@ class AcpRuntime(AgentRuntime):
             response = await self.agent_capabilities.invoke(session_id, "session.steer", "aa/steer", {
                 "content": content, "blocks": blocks, "clientMessageId": client_message_id,
             }, external_session_id=external_session_id)
+        except PromptRejectedBeforeDispatch as error:
+            result = {"messageAccepted": False, "code": error.code, "message": str(error), "phase": "rejected"}
+            with self.app.store.transaction():
+                self.app.prompts.save(operation.reject("adapter_rejected_before_dispatch", failure={"code": error.code, "message": str(error)}))
+                self.app.store.put("steer_operation", key, {**row, "result": result})
+            return RuntimeOperationResult(ok=False, code=error.code, message=str(error), result=result)
         except BaseException:
             with self.app.store.transaction():
                 self.app.prompts.save(operation.lose_connection())

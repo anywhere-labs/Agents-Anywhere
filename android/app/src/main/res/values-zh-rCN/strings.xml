@@ -717,4 +717,5 @@
     <string name="native_history_cli_exited">我已退出 CLI 中对应会话</string>
     <string name="native_history_check">查询恢复状态</string>
     <string name="native_history_releasing">正在结束执行…</string>
+    <string name="session_image_input_unsupported">当前模型声明不支持图片输入，请移除图片或切换模型。</string>
 </resources>

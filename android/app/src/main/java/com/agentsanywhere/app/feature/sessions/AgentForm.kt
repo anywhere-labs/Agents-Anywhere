@@ -4,6 +4,18 @@ import org.json.JSONObject
 
 /** ACP form values stay typed; empty text, false and cancellation are distinct. */
 object AgentForm {
+    fun modelInputModalities(snapshot: JSONObject?): Pair<String?, Map<String, List<String>>> {
+        val options = snapshot?.optJSONArray("options") ?: return null to emptyMap()
+        val model = (0 until options.length()).map { options.getJSONObject(it) }
+            .firstOrNull { it.optString("category") == "model" } ?: return null to emptyMap()
+        val inputs = model.optJSONObject("_meta")?.optJSONObject("aa")?.optJSONObject("modelInputModalities")
+        val byModel = inputs?.keys()?.asSequence()?.associateWith { id ->
+            val values = inputs.optJSONArray(id)
+            (0 until (values?.length() ?: 0)).map { values!!.getString(it) }
+        }.orEmpty()
+        return model.optString("currentValue").takeIf(String::isNotBlank) to byModel
+    }
+
     fun defaults(schema: JSONObject): Map<String, Any> {
         val properties = schema.optJSONObject("properties") ?: return emptyMap()
         val required = schema.optJSONArray("required")?.let { list -> (0 until list.length()).map { list.getString(it) }.toSet() }.orEmpty()
@@ -35,12 +47,13 @@ object AgentForm {
         }
     }
 
-    fun configurationSchema(snapshot: JSONObject, includeModel: Boolean = false): JSONObject {
+    /** Model, effort and permission belong to the selection controls unless explicitly included. */
+    fun configurationSchema(snapshot: JSONObject, includeSelectionOptions: Boolean = false): JSONObject {
         val properties = JSONObject()
         val options = snapshot.optJSONArray("options")
         for (i in 0 until (options?.length() ?: 0)) {
             val option = options!!.getJSONObject(i)
-            if (!includeModel && option.optString("category") == "model") continue
+            if (!includeSelectionOptions && option.optString("category") in setOf("model", "effort", "permission")) continue
             val field = JSONObject().put("title", option.getString("name")).put("type", if (option.getString("type") == "boolean") "boolean" else "string").put("default", option.get("currentValue"))
             if (option.getString("type") == "select") {
                 val values = org.json.JSONArray()

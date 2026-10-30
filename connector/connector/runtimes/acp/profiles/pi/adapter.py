@@ -13,6 +13,8 @@ from pathlib import Path
 from ...domain.definitions import AcpError, fingerprint
 from ...infrastructure.npm import installation_lock
 
+PATCH_REVISION = 5
+
 RELEASE_FILES = {
     "bin.js": "066e83d7f9b4ccbd475691af05a5be365aec0927574769dcacd21e22abe49382",
     "index.js": "7a176beaea6265d0f72e383794cdd9def31a76fd540445b8bbf4301194e7a6b8",
@@ -41,7 +43,7 @@ def prepare_adapter(entry: Path, sdk: Path, root: Path) -> tuple[Path, dict]:
         .read_text(encoding="utf-8")
         .replace("__AA_PI_SDK_URL__", (sdk / "dist/index.js").as_uri())
     )
-    patch = fingerprint({"bridge": bridge, "source": RELEASE_FILES, "revision": 3})
+    patch = fingerprint({"bridge": bridge, "source": RELEASE_FILES, "revision": PATCH_REVISION})
     destination = root / patch
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     with installation_lock(root / ".patch.lock"):  # noqa: SIM117 -- staging is scoped inside the installation lease
@@ -61,7 +63,7 @@ def prepare_adapter(entry: Path, sdk: Path, root: Path) -> tuple[Path, dict]:
                 )
                 if name.startswith("chunk-"):
                     source = (
-                        'import {aaFindSession, aaBeforePrompt, aaLoadingReport} from "../sdk-bridge.mjs";\n'
+                        'import {aaFindSession, aaWithMessage, aaConfigOptions, aaLoadingReport} from "../sdk-bridge.mjs";\n'
                         + source
                     )
                     for old, new in (
@@ -70,8 +72,16 @@ def prepare_adapter(entry: Path, sdk: Path, root: Path) -> tuple[Path, dict]:
                             "async function findSession(sessionId, sessionDir) {\n  if(process.env.AA_PI_SESSION_FILE) return aaFindSession(sessionId);",
                         ),
                         (
-                            "  async prompt(params) {",
-                            "  async prompt(params) {\n    aaBeforePrompt(params);",
+                            "await session.prompt(converted.text, converted.images)",
+                            "await aaWithMessage(params, () => session.prompt(converted.text, converted.images))",
+                        ),
+                        (
+                            "await session.steer(converted.text, converted.images)",
+                            "await aaWithMessage(params, () => session.steer(converted.text, converted.images))",
+                        ),
+                        (
+                            "return buildConfigOptions(this.session, {\n      booleanOptions: this.features.booleanConfigOptions\n    });",
+                            "return aaConfigOptions(this.session, buildConfigOptions(this.session, {\n      booleanOptions: this.features.booleanConfigOptions\n    }));",
                         ),
                         (
                             "extensions: session.extensions(),",
@@ -141,6 +151,41 @@ def prepare_adapter(entry: Path, sdk: Path, root: Path) -> tuple[Path, dict]:
         "version": "0.1.8",
         "sourceFiles": RELEASE_FILES,
         "patchDigest": patch,
+        "compatibilityRevision": PATCH_REVISION,
         "sdkEntry": str(sdk / "dist/index.js"),
     }
     return destination / "dist/bin.js", metadata
+
+
+# These known bridge templates are data for deterministic identity verification,
+# never executed. Keep them in the wheel so upgrades do not depend on old caches.
+LEGACY_BRIDGES = {
+    3: "66d7c688ed8d8673beb35716903a84e220599ddb7684de72aeed3d1ec355eafc",
+}
+
+
+def is_known_compatibility_upgrade(previous: dict, current: dict) -> bool:
+    """Verify the exact known old artifact from bundled source, even on a cold cache."""
+    old = previous.get("adapter", {})
+    new = current.get("adapter", {})
+    revision = old.get("compatibilityRevision", 3)
+    if revision not in LEGACY_BRIDGES or new.get("compatibilityRevision") != PATCH_REVISION:
+        return False
+
+    def strip(value):
+        return {key: item for key, item in value.items()
+                if key not in {"patchDigest", "compatibilityRevision"}}
+
+    if {**previous, "adapter": strip(old)} != {**current, "adapter": strip(new)}:
+        return False
+    digest = old.get("patchDigest", "")
+    if not re.fullmatch(r"[a-f0-9]{64}", digest):
+        return False
+    try:
+        template = Path(__file__).with_name("compat").joinpath(f"bridge-v{revision}.mjs").read_text(encoding="utf-8")
+        if hashlib.sha256(template.encode()).hexdigest() != LEGACY_BRIDGES[revision]:
+            return False
+        bridge = template.replace("__AA_PI_SDK_URL__", Path(old["sdkEntry"]).as_uri())
+    except (OSError, KeyError, ValueError):
+        return False
+    return fingerprint({"bridge": bridge, "source": RELEASE_FILES, "revision": revision}) == digest

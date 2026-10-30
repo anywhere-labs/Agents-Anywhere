@@ -3,7 +3,7 @@
 import { RuntimeWorkflowPanel } from "@/components/session/runtime-workflow-panel"
 import { useWorkspacePreparation } from "@/components/session/use-workspace-preparation"
 import { RuntimeCreationStatus } from "@/components/session/runtime-creation-status"
-import { configSchema, formDefaults } from "@/features/dashboard/runtime-forms"
+import { creationConfigurationDefaults } from "@/features/dashboard/runtime-forms"
 
 import * as React from "react"
 import { Monitor, ChevronDown, ArrowUp, Loader2, Check } from "lucide-react"
@@ -271,7 +271,7 @@ export function TaskComposer() {
     needsPreparation && !catalogsLoading && workspace?.path && workspace.connectorId === selectedConnectorId ? prepareRequest : undefined,
   )
   const preparedConfiguration = preparation.operation?.state.configuration
-    ? formDefaults(configSchema(preparation.operation.state.configuration)) as Record<string, string | boolean>
+    ? creationConfigurationDefaults(preparation.operation.state.configuration) as Record<string, string | boolean>
     : {}
   React.useEffect(() => {
     if (needsPreparation) setModelCatalog(preparation.operation?.state.phase === "ready" ? preparation.operation.state.catalog ?? null : null)
@@ -527,9 +527,12 @@ export function TaskComposer() {
     selectedRuntimeScope,
   )
   const allowedMimeTypes = React.useMemo(() => attachmentMimeTypes(runtimeCapabilities, selectedRuntimeScope), [runtimeCapabilities, selectedRuntimeScope])
+  const modelInputs = preparation.operation?.state.configuration?.options.find(option => option.category === "model")?._meta?.aa?.modelInputModalities
+  const selectedInputs = modelInputs && typeof modelInputs === "object" ? (modelInputs as Record<string, unknown>)[selectedModel] : undefined
+  const imagesAllowed = !Array.isArray(selectedInputs) || selectedInputs.includes("image")
   const [restoredAttachments] = React.useState(() => (creationEditorDraft?.attachments ?? []).map(file => ({ ...file, preview: undefined })))
   const { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop,
-    attachmentsAllowed, attachmentError } = useAttachments({ enabled: canUseAttachments, allowedMimeTypes, initialAttachments: restoredAttachments })
+    attachmentsAllowed, attachmentError } = useAttachments({ enabled: canUseAttachments, allowedMimeTypes, imagesAllowed, initialAttachments: restoredAttachments })
 
   const models = React.useMemo(
     () => modelCatalog?.models.map((item) => ({

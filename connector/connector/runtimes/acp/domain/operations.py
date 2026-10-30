@@ -14,6 +14,7 @@ class PromptOperation:
     message_accepted: bool | None = None
     agent_message_id: str | None = None
     evidence: str | None = None
+    failure: dict | None = None
 
     def dispatch(self) -> PromptOperation:
         if self.phase != "not_sent":
@@ -46,9 +47,9 @@ class PromptOperation:
             evidence="locally_cancelled_before_agent_dispatch",
         )
 
-    def reject(self, evidence: str) -> PromptOperation:
+    def reject(self, evidence: str, *, failure: dict | None = None) -> PromptOperation:
         return replace(
-            self, phase="rejected", message_accepted=False, evidence=evidence
+            self, phase="rejected", message_accepted=False, evidence=evidence, failure=failure
         )
 
 

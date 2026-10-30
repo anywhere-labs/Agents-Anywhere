@@ -717,6 +717,7 @@ class SessionService:
                     "ok": previous["message_accepted"] is True,
                     "messageAccepted": previous["message_accepted"],
                     "phase": previous["phase"],
+                    **(previous.get("failure") or {}),
                 }
             binding = self._binding(self.store.require("binding", session_id))
             binding.require_writable()
@@ -762,8 +763,8 @@ class SessionService:
             failed = True
             operation = operation.lose_connection()
             raise
-        except PromptRejectedBeforeDispatch:
-            operation = operation.reject("adapter_rejected_before_dispatch")
+        except PromptRejectedBeforeDispatch as error:
+            operation = operation.reject("adapter_rejected_before_dispatch", failure={"code": error.code, "message": str(error)})
             stop_reason = "refusal"
         except Exception:  # noqa: BLE001 -- v1 errors do not establish pre-insertion rejection
             failed = True
@@ -782,6 +783,7 @@ class SessionService:
                     row.update(
                         phase=operation.phase,
                         message_accepted=operation.message_accepted,
+                        **({"failure": operation.failure} if operation.failure else {}),
                     )
                     self.store.put("creation", creation_id, row)
                 current = self._binding(self.store.require("binding", session_id))
@@ -812,10 +814,10 @@ class SessionService:
                             "sessionId": session_id,
                             "externalSessionId": context["agentSessionId"],
                             "turnId": operation.operation_id,
-                            "outcome": "failed"
-                            if failed
-                            else "cancelled"
+                            "outcome": "cancelled"
                             if stop_reason == "cancelled"
+                            else "failed"
+                            if failed or operation.message_accepted is False
                             else "completed",
                             "metadata": {
                                 "sourceEventId": fingerprint(
@@ -826,7 +828,13 @@ class SessionService:
                     )
             if failed:
                 await self._close_context(context)
-            elif creation_id and operation.message_accepted is True:
+            elif (
+                creation_id
+                and operation.message_accepted is not None
+                and not context["closing"]
+            ):
+                # A definite pre-dispatch rejection still leaves a usable session;
+                # later turns must not keep reporting into the creation operation.
                 context["scopeId"] = session_id
             self.active_runs.discard(session_id)
 

@@ -54,7 +54,7 @@ import {
   selectionIdForPermissionCatalog,
 } from "@/components/session/catalog-selection"
 import { SelectionSettingsDrawer } from "@/components/session/selection-settings-drawer"
-import { CAPABILITY, capabilityIsUsable, findCapability, attachmentMimeTypes } from "@/components/session/capabilities"
+import { CAPABILITY, capabilityIsUsable, findCapability, attachmentMimeTypes, attachmentImagesAllowed } from "@/components/session/capabilities"
 import { useElementWidth } from "@/hooks/use-element-width"
 import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
 
@@ -202,6 +202,7 @@ export function SessionComposer({
   )
   const canUseEffortCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.effortCatalog, runtimeScope)
   const canUseAttachments = capabilityIsUsable(effectiveCapabilities, CAPABILITY.attachment, runtimeScope)
+  const imagesAllowed = attachmentImagesAllowed(effectiveCapabilities, runtimeScope)
   const allowedMimeTypes = React.useMemo(() => attachmentMimeTypes(effectiveCapabilities, runtimeScope), [effectiveCapabilities, runtimeScope])
   const {
     attachments,
@@ -218,7 +219,7 @@ export function SessionComposer({
     onDragLeave,
     onDragOver,
     onDrop,
-  } = useAttachments({ sessionId: creatingSession ? undefined : session.id, token, enabled: canUseAttachments, allowedMimeTypes })
+  } = useAttachments({ sessionId: creatingSession ? undefined : session.id, token, enabled: canUseAttachments, allowedMimeTypes, imagesAllowed })
   const canSend =
     canUseSendMessage &&
     !creatingSession &&

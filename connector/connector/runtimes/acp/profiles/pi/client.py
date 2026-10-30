@@ -266,7 +266,24 @@ class PiClient(AgentClient):
         )
         return result
 
+    def attachment_metadata(self, session_id):
+        option = next((item for item in self.configuration.get(session_id, [])
+                       if item.get("category") == "model"), {})
+        inputs = option.get("_meta", {}).get("aa", {}).get("modelInputModalities", {})
+        current = inputs.get(option.get("currentValue"))
+        return {"modelInputModalities": inputs, **({"inputModalities": current} if isinstance(current, list) else {})}
+
+    def validate_input(self, session_id, blocks):
+        modalities = self.attachment_metadata(session_id).get("inputModalities")
+        if isinstance(modalities, list) and "image" not in modalities and any(
+            block.get("type") == "image" for block in blocks or []
+        ):
+            raise PromptRejectedBeforeDispatch(
+                "image_input_unsupported", "当前模型声明不支持图片输入，请移除图片或切换支持图片的模型。"
+            )
+
     async def prompt(self, session_id, text, operation_id, blocks=None):
+        self.validate_input(session_id, blocks)
         if text.lstrip().split(maxsplit=1)[0:1] == [
             "/bash"
         ] and not await self.authorize_bash(session_id, text.lstrip()[5:].strip()):
@@ -315,10 +332,12 @@ class PiClient(AgentClient):
     async def extension(self, method, values):
         session_id = values.get("sessionId")
         if method == "aa/steer":
+            self.validate_input(session_id, values.get("blocks"))
             result = await super().extension(
                 "session/steering",
                 {
                     "sessionId": session_id,
+                    "aa": {"clientMessageId": values["clientMessageId"]},
                     "prompt": [
                         {"type": "text", "text": values["content"]},
                         *values.get("blocks", []),

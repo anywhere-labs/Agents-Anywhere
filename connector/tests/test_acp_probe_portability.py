@@ -100,7 +100,13 @@ def test_adapter_cache_preserves_utf8_under_windows_locale(
     source = """import {} from "@earendil-works/pi-coding-agent";
 async function findSession(sessionId, sessionDir) { return {}; }
 class Session {
-  async prompt(params) { return {}; }
+  async prompt(params) { await session.prompt(converted.text, converted.images); }
+  async steering(params) { await session.steer(converted.text, converted.images); }
+  configOptions() {
+    return buildConfigOptions(this.session, {
+      booleanOptions: this.features.booleanConfigOptions
+    });
+  }
   loading(session) { return {extensions: session.extensions(),}; }
 """
     for method in ("load", "resume", "fork"):

@@ -333,6 +333,7 @@
       "attach": "Attach files",
       "attachmentLimit": "Up to {count} files",
       "attachmentsUnsupported": "This runtime does not support attachments. Remove them or choose another runtime.",
+      "imageInputUnsupported": "The selected model does not declare image input support. Remove the image or choose another model.",
       "attachmentTypesUnsupported": "Only these attachment types are supported: {types}.",
       "createSession": "Create session",
       "creating": "Creating session...",
