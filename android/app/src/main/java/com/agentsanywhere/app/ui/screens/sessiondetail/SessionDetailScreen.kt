@@ -819,22 +819,25 @@ fun SessionDetailScreen(
         }
     }
 
-    fun enqueueDraft(text: String, pendingAttachments: List<PendingAttachment>) {
+    fun enqueueDraft(text: String, pendingAttachments: List<PendingAttachment>): String? {
         val message = text.trim()
-        if (message.isEmpty() && pendingAttachments.isEmpty()) return
-        queuedDrafts = queuedDrafts + QueuedDraft(
+        if (message.isEmpty() && pendingAttachments.isEmpty()) return null
+        val queued = QueuedDraft(
             text = message,
             attachments = pendingAttachments,
         )
+        queuedDrafts = queuedDrafts + queued
         if (draft == text) setComposerDraft("")
         if (attachments == pendingAttachments) setComposerAttachments(emptyList())
         showToast(context.getString(R.string.session_queue_added, queuedDrafts.size))
+        return queued.id
     }
 
     fun sendText(
         text: String,
         queuedAttachments: List<PendingAttachment>? = null,
         clearInput: Boolean = true,
+        queuedDraftId: String? = null,
     ) {
         val pending = preparedSession
         if (pending != null) {
@@ -952,6 +955,9 @@ fun SessionDetailScreen(
             controller.sendMessage(id, text, clientMessageId, uploadedAttachments = uploadedAttachments)
                 .onSuccess { result ->
                     if (clearInput) clearComposerDraft()
+                    if (queuedDraftId != null) {
+                        queuedDrafts = queuedDrafts.filterNot { it.id == queuedDraftId }
+                    }
                     state = controller.markOptimisticMessage(
                         sessionId = id,
                         state = state,
@@ -1405,19 +1411,6 @@ fun SessionDetailScreen(
         val id = sessionId.orEmpty()
         openInteractions.filter { it.blocksSession(id) }
     }
-    LaunchedEffect(runtimeStatus, queuedDrafts.size, state.sending, connectorOnline) {
-        if (
-            queuedDrafts.isNotEmpty() &&
-            !state.sending &&
-            connectorOnline &&
-            runtimeStatus in setOf(SessionRuntimeStatus.Idle, SessionRuntimeStatus.Error)
-        ) {
-            val next = queuedDrafts.first()
-            queuedDrafts = queuedDrafts.drop(1)
-            delay(350)
-            sendText(next.text, next.attachments, clearInput = false)
-        }
-    }
     val canQueueWhileRunning = runtimeType == "dsh" && runtimeStatus == SessionRuntimeStatus.Running
     val runtimeBlocksSubmission = runtimeStatus in setOf(
         SessionRuntimeStatus.Waiting,
@@ -1678,7 +1671,8 @@ fun SessionDetailScreen(
                 showError(context.getString(R.string.session_wait_uploads))
                 return
             }
-            enqueueDraft(raw, attachments)
+            val queuedId = enqueueDraft(raw, attachments)
+            sendText(raw, attachments, clearInput = false, queuedDraftId = queuedId)
             return
         }
         if (id == null || intent == null || !canUseCommands) {
