@@ -720,4 +720,18 @@
     <string name="native_history_check">Check recovery status</string>
     <string name="native_history_releasing">Ending execution…</string>
     <string name="session_image_input_unsupported">The selected model does not declare image input support. Remove the image or choose another model.</string>
+    <string name="markdown_table_title">Table</string>
+    <string name="markdown_table_copy">Copy table</string>
+    <string name="markdown_table_download">Download CSV</string>
+    <string name="markdown_table_fullscreen">Full screen</string>
+    <string name="markdown_table_close">Close</string>
+    <string name="markdown_table_saved">Saved to Downloads/AgentsAnywhere</string>
+    <string name="markdown_table_save_failed">Could not save the file</string>
+    <string name="markdown_table_cell_copied">Copied</string>
+    <string name="markdown_table_phone_hint">%1$s might be a phone number</string>
+    <string name="markdown_table_call">Call</string>
+    <string name="markdown_table_copy_number">Copy number</string>
+    <string name="markdown_table_add_contact">Add to contacts</string>
+    <string name="markdown_table_cancel">Cancel</string>
+    <string name="markdown_table_open_failed">Could not open. Try again.</string>
 </resources>
