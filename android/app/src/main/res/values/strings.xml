@@ -539,6 +539,10 @@
     <string name="session_attachment_compress_image">Compress</string>
     <string name="session_attachment_compact_context">Compact</string>
     <string name="session_clipboard_empty">Clipboard is empty.</string>
+    <string name="session_queue_section">Queued messages (%1$d)</string>
+    <string name="session_queue_attachments_only">%1$d attachment(s)</string>
+    <string name="session_queue_more">+%1$d more</string>
+    <string name="session_queue_added">Added to queue. It will send after the current reply.</string>
     <string name="session_clipboard_unsupported">This clipboard item cannot be attached.</string>
     <string name="session_clipboard_text_pasted">Pasted text into the message.</string>
     <string name="session_video_picker_failed">Could not open the video picker.</string>

@@ -217,6 +217,7 @@ fun SessionDetailScreen(
     var forceLatestRequest by remember(sessionId) { mutableStateOf(0) }
     var streamLatestRequest by remember(sessionId) { mutableStateOf(0) }
     var attachments by remember(composerDraftSessionId) { mutableStateOf(restoredComposerDraft.attachments) }
+    var queuedDrafts by remember(composerDraftSessionId) { mutableStateOf(emptyList<QueuedDraft>()) }
     var retryClientMessageId by remember(composerDraftSessionId) { mutableStateOf(restoredComposerDraft.clientMessageId) }
     var preparedSessionCreating by remember(preparedSession) { mutableStateOf(false) }
     var preparedSelections by remember(preparedSession) { mutableStateOf(preparedSession?.selections ?: NewSessionSelections()) }
@@ -818,12 +819,28 @@ fun SessionDetailScreen(
         }
     }
 
-    fun sendText(text: String) {
+    fun enqueueDraft(text: String, pendingAttachments: List<PendingAttachment>) {
+        val message = text.trim()
+        if (message.isEmpty() && pendingAttachments.isEmpty()) return
+        queuedDrafts = queuedDrafts + QueuedDraft(
+            text = message,
+            attachments = pendingAttachments,
+        )
+        if (draft == text) setComposerDraft("")
+        if (attachments == pendingAttachments) setComposerAttachments(emptyList())
+        showToast(context.getString(R.string.session_queue_added, queuedDrafts.size))
+    }
+
+    fun sendText(
+        text: String,
+        queuedAttachments: List<PendingAttachment>? = null,
+        clearInput: Boolean = true,
+    ) {
         val pending = preparedSession
         if (pending != null) {
             if (preparedSessionCreating) return
             val message = text.trim()
-            val pendingAttachments = attachments
+            val pendingAttachments = queuedAttachments ?: attachments
             if (message.isBlank() && pendingAttachments.isEmpty()) return
             val clientMessageId = retryClientMessageId ?: "opt_${UUID.randomUUID()}"
             val localSessionId = pending.localSessionId
@@ -909,7 +926,7 @@ fun SessionDetailScreen(
             return
         }
         val clientMessageId = retryClientMessageId ?: "opt_${UUID.randomUUID()}"
-        val pendingAttachments = attachments
+        val pendingAttachments = queuedAttachments ?: attachments
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         scope.launch {
             if (pendingAttachments.any { it.uploadState != AttachmentUploadState.Uploaded || it.remote == null }) {
@@ -934,7 +951,7 @@ fun SessionDetailScreen(
             state.session?.let { onSessionChanged(it.copy(optimisticTopUntil = System.currentTimeMillis() + 1_000)) }
             controller.sendMessage(id, text, clientMessageId, uploadedAttachments = uploadedAttachments)
                 .onSuccess { result ->
-                    clearComposerDraft()
+                    if (clearInput) clearComposerDraft()
                     state = controller.markOptimisticMessage(
                         sessionId = id,
                         state = state,
@@ -949,7 +966,7 @@ fun SessionDetailScreen(
                         ?.takeUnless(::isInternalRuntimeError)
                         ?: context.getString(R.string.session_send_failed)
                     if (controller.hasServerEcho(state, clientMessageId)) {
-                        clearComposerDraft()
+                        if (clearInput) clearComposerDraft()
                         return@onFailure
                     }
                     retryClientMessageId = clientMessageId
@@ -1388,6 +1405,20 @@ fun SessionDetailScreen(
         val id = sessionId.orEmpty()
         openInteractions.filter { it.blocksSession(id) }
     }
+    LaunchedEffect(runtimeStatus, queuedDrafts.size, state.sending, connectorOnline) {
+        if (
+            queuedDrafts.isNotEmpty() &&
+            !state.sending &&
+            connectorOnline &&
+            runtimeStatus in setOf(SessionRuntimeStatus.Idle, SessionRuntimeStatus.Error)
+        ) {
+            val next = queuedDrafts.first()
+            queuedDrafts = queuedDrafts.drop(1)
+            delay(350)
+            sendText(next.text, next.attachments, clearInput = false)
+        }
+    }
+    val canQueueWhileRunning = runtimeType == "dsh" && runtimeStatus == SessionRuntimeStatus.Running
     val runtimeBlocksSubmission = runtimeStatus in setOf(
         SessionRuntimeStatus.Waiting,
         SessionRuntimeStatus.Pending,
@@ -1396,7 +1427,7 @@ fun SessionDetailScreen(
         SessionRuntimeStatus.WaitingApproval,
         SessionRuntimeStatus.Blocked,
         SessionRuntimeStatus.Disconnected,
-    )
+    ) && !canQueueWhileRunning
     val inputEnabled = if (isPreparedSession) {
         true
     } else {
@@ -1637,6 +1668,19 @@ fun SessionDetailScreen(
         val id = sessionId
         val intent = if (isPreparedSession) null else SlashIntent.parse(raw)
             ?.takeIf { it.isCommandLike && it.command.isNotEmpty() }
+        if (
+            runtimeStatus == SessionRuntimeStatus.Running &&
+            runtimeType == "dsh" &&
+            canUseSendMessage &&
+            intent == null
+        ) {
+            if (attachments.isNotEmpty() && !attachmentsReady) {
+                showError(context.getString(R.string.session_wait_uploads))
+                return
+            }
+            enqueueDraft(raw, attachments)
+            return
+        }
         if (id == null || intent == null || !canUseCommands) {
             sendText(text)
             return
@@ -1945,6 +1989,12 @@ fun SessionDetailScreen(
                                     onPickCompressedPhoto = ::openCompressedPhotoPicker,
                                     onCompactContext = if (canUseCommands && compactCommand != null) ::compactContext else null,
                                     onAttachMenuOpen = { if (canUseCommands) loadCommands() },
+                                    queuedMessages = queuedDrafts.map {
+                                        QueuedDraftUi(it.id, it.text, it.attachments.size)
+                                    },
+                                    onRemoveQueued = { queuedId ->
+                                        queuedDrafts = queuedDrafts.filterNot { it.id == queuedId }
+                                    },
                                     onRemoveAttachment = { remove ->
                                         setComposerAttachments(attachments.filterNot { it.id == remove.id })
                                     },
@@ -2109,6 +2159,12 @@ private fun SessionDetailState.effectiveRuntimeStatus(): SessionRuntimeStatus {
         SessionStatus.Unknown, null -> SessionRuntimeStatus.Unknown
     }
 }
+
+private data class QueuedDraft(
+    val id: String = UUID.randomUUID().toString(),
+    val text: String,
+    val attachments: List<PendingAttachment>,
+)
 
 private enum class SessionShareScope(val apiValue: String) {
     Reply("message"),

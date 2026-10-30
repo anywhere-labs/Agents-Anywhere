@@ -88,6 +88,12 @@ internal fun ComposerVeil(
     )
 }
 
+internal data class QueuedDraftUi(
+    val id: String,
+    val text: String,
+    val attachmentCount: Int,
+)
+
 @Composable
 internal fun MessageComposer(
     darkMode: Boolean,
@@ -117,6 +123,8 @@ internal fun MessageComposer(
     onPickCompressedPhoto: () -> Unit = {},
     onCompactContext: (() -> Unit)? = null,
     onAttachMenuOpen: () -> Unit = {},
+    queuedMessages: List<QueuedDraftUi> = emptyList(),
+    onRemoveQueued: (String) -> Unit = {},
     onRemoveAttachment: (PendingAttachment) -> Unit,
     onRetryAttachment: (PendingAttachment) -> Unit,
     onPreviewAttachment: (PendingAttachment) -> Unit,
@@ -154,7 +162,7 @@ internal fun MessageComposer(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 104.dp, max = 218.dp)
+                .heightIn(min = 104.dp, max = 300.dp)
                 .shadow(28.dp, RoundedCornerShape(22.dp), ambientColor = Color(0x12000000), spotColor = Color(0x12000000))
                 .clip(RoundedCornerShape(22.dp))
                 .background(surface)
@@ -163,6 +171,13 @@ internal fun MessageComposer(
                 .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            if (queuedMessages.isNotEmpty()) {
+                QueuedDraftStrip(
+                    queued = queuedMessages,
+                    darkMode = darkMode,
+                    onRemove = onRemoveQueued,
+                )
+            }
             if (attachments.isNotEmpty()) {
                 PendingAttachmentStrip(
                     attachments = attachments,
@@ -289,6 +304,66 @@ internal fun MessageComposer(
                     },
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun QueuedDraftStrip(
+    queued: List<QueuedDraftUi>,
+    darkMode: Boolean,
+    onRemove: (String) -> Unit,
+) {
+    val colors = LocalAAColors.current
+    val background = if (darkMode) colors.subtle else Color(0xFFF5F4F1)
+    val textColor = if (darkMode) Color(0xFFD4D4D8) else Color(0xFF3A3935)
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.session_queue_section, queued.size),
+            color = colors.muted,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        queued.take(2).forEach { item ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(background)
+                    .padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = item.text.ifBlank {
+                        stringResource(R.string.session_queue_attachments_only, item.attachmentCount)
+                    },
+                    color = textColor,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = "×",
+                    color = colors.muted,
+                    fontSize = 17.sp,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .noRippleClickable { onRemove(item.id) }
+                        .padding(horizontal = 6.dp),
+                )
+            }
+        }
+        if (queued.size > 2) {
+            Text(
+                text = stringResource(R.string.session_queue_more, queued.size - 2),
+                color = colors.muted,
+                fontSize = 11.sp,
+            )
         }
     }
 }
@@ -555,19 +630,23 @@ private fun ComposerActions(
         darkMode -> Color(0xFFA1A1AA)
         else -> Color(0xFF3A3935)
     }
-    val primaryActionEnabled = if (showInterrupt) !interrupting else canSend
-    val primaryActionBusy = sending || interrupting
+    val primaryActionEnabled = when {
+        canSend -> true
+        showInterrupt -> !interrupting
+        else -> false
+    }
+    val primaryActionBusy = sending || (interrupting && !canSend)
     val primaryActionSurface = when {
-        showInterrupt -> Color(0xFFEF4444)
         canSend && darkMode -> Color(0xFFFAFAFA)
         canSend -> Color(0xFF2B2B2B)
+        showInterrupt -> Color(0xFFEF4444)
         darkMode -> Color(0xFF3F3F46)
         else -> Color(0xFFE2E0DC)
     }
     val primaryActionIcon = when {
-        showInterrupt -> Color.White
         canSend && darkMode -> Color(0xFF09090B)
         canSend -> Color.White
+        showInterrupt -> Color.White
         darkMode -> Color(0xFF71717A)
         else -> Color(0xFFA7A5A0)
     }
@@ -643,6 +722,23 @@ private fun ComposerActions(
                     .weight(1f, fill = false)
                     .widthIn(max = 200.dp),
             )
+            if (showInterrupt && canSend) {
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFEF4444))
+                        .noRippleClickable(onClick = onInterrupt),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(9.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(Color.White),
+                    )
+                }
+            }
             Box(
                 modifier = Modifier
                     .size(34.dp)
@@ -651,7 +747,7 @@ private fun ComposerActions(
                     .then(
                         if (primaryActionEnabled) {
                             Modifier.noRippleClickable(
-                                onClick = if (showInterrupt) onInterrupt else onSend,
+                                onClick = if (canSend) onSend else onInterrupt,
                             )
                         } else {
                             Modifier
@@ -665,6 +761,7 @@ private fun ComposerActions(
                         strokeWidth = 2.dp,
                         modifier = Modifier.size(17.dp),
                     )
+                    canSend -> ArrowUpGlyph(primaryActionIcon)
                     showInterrupt -> Box(
                         modifier = Modifier
                             .size(10.dp)
