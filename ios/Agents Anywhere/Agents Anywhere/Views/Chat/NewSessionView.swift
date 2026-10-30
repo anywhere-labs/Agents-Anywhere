@@ -56,6 +56,7 @@ struct NewSessionView: View, Equatable {
                             ? ChatControlMetrics.expandedHorizontalInset : ChatControlMetrics.collapsedHorizontalInset)
                         .padding(.leading, 6)
                         .padding(.bottom, 6)
+                if model.planningCreation { Text(String(localized: "新会话将使用计划模式")).font(.caption).foregroundStyle(.secondary).padding(.horizontal) }
                 ChatComposerDock(draft: model.draft, settings: model.settings,
                     maximumEditorHeight: min(160, max(72, geometry.size.height * 0.30)), controls: controls,
                     canSend: model.canCreate, canAttach: model.canAttach && model.prepared != nil,

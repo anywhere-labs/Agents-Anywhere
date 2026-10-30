@@ -396,6 +396,7 @@ private struct ChatTimelineContent: View, Equatable {
                         }
                     }
             }
+            SessionPlanningPanel(chat: model)
             ForEach(visibleNotices.filter { notice in
                 notice.timelineTargetID.map { !rowIDs.contains($0) } ?? true
             }) { item in SessionInteractionCard(item: item, chat: model) }

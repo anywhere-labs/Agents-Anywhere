@@ -1,6 +1,7 @@
 package com.agentsanywhere.app.feature.sessions
 
 import com.agentsanywhere.app.api.ApiException
+import com.agentsanywhere.app.feature.sessiondetail.PlanningFailure
 import com.agentsanywhere.app.api.DevicesApi
 import com.agentsanywhere.app.api.FilesApi
 import com.agentsanywhere.app.api.RemoteInlineAttachmentRef
@@ -147,6 +148,10 @@ class SessionsController(
         devices: List<AgentDevice>,
         projects: List<AgentProject> = emptyList(),
     ): NewSessionCreateOutcome {
+        val planning = com.agentsanywhere.app.feature.sessiondetail.PlanningCommand.parse(draft.content)
+        if (planning?.command == "exit_plan" || planning?.command == "enter_plan") return NewSessionCreateOutcome.Failed(PlanningFailure(PlanningFailure.Reason.TaskRequired))
+        // Prepared-workspace creation does not carry a planning intent yet; refuse instead of silently dropping it.
+        if (planning != null && draft.preparedWorkspace != null) return NewSessionCreateOutcome.Failed(PlanningFailure(PlanningFailure.Reason.WorkspaceRequired))
         validateNewSessionDraft(draft)?.let { error ->
             return NewSessionCreateOutcome.Failed(IllegalArgumentException(error))
         }
@@ -200,7 +205,8 @@ class SessionsController(
                         runtime = draft.runtimeType,
                         title = draft.title?.trim()?.takeIf(String::isNotBlank),
                         cwd = resolved.cwd,
-                        content = draft.content.trim(),
+                        content = planning?.content ?: if (planning != null) "" else draft.content.trim(),
+                        planningIntent = planning != null,
                         selections = draft.selections.toMap(),
                         attachments = draft.attachments.map(NewSessionAttachmentPart::toInlineAttachmentRef),
                         clientMessageId = draft.clientMessageId,

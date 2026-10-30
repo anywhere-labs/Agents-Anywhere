@@ -12,6 +12,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Checkbox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import com.agentsanywhere.app.R
 import androidx.compose.ui.unit.dp
 import com.agentsanywhere.app.feature.sessions.RuntimeWorkflowCoordinator
 import kotlinx.coroutines.launch
@@ -20,7 +22,9 @@ import org.json.JSONObject
 @Composable
 fun RuntimeWorkflowDialog(coordinator: RuntimeWorkflowCoordinator, onOpenAccepted: suspend () -> Unit) {
     val operation by coordinator.operation.collectAsState()
-    val error by coordinator.error.collectAsState()
+    val failure by coordinator.error.collectAsState()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val error = failure?.let { com.agentsanywhere.app.ui.designsystem.runtimeOperationErrorMessage(context, it, R.string.new_session_create_failed) }
     val binding by coordinator.binding.collectAsState()
     val scope = rememberCoroutineScope()
     var pending by remember(operation?.optString("id")) { mutableStateOf(false) }
@@ -35,12 +39,12 @@ fun RuntimeWorkflowDialog(coordinator: RuntimeWorkflowCoordinator, onOpenAccepte
     LaunchedEffect(value.optString("id"), accepted) {
         if (accepted && !binding) onOpenAccepted()
     }
-    val failure = state.optJSONObject("failure")?.optString("message")?.takeIf { it.isNotBlank() }
+    val runtimeFailure = state.optJSONObject("failure")?.optString("message")?.takeIf { it.isNotBlank() }
     val stopped = state.optString("phase") in setOf("failed", "rejected", "cancelled", "expired", "outcome_unknown")
-    if (!hasQuestions && error == null && failure == null && !stopped) return
+    if (!hasQuestions && error == null && runtimeFailure == null && !stopped) return
     AlertDialog(onDismissRequest = {}, title = { Text(openRequests.firstOrNull()?.getString("title") ?: androidx.compose.ui.res.stringResource(com.agentsanywhere.app.R.string.new_session_create_failed)) },
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (error != null || failure != null) Text(error ?: failure.orEmpty())
+            if (error != null || runtimeFailure != null) Text(error ?: runtimeFailure.orEmpty())
             for (i in 0 until (requests?.length() ?: 0)) {
                 val request = requests!!.getJSONObject(i)
                 if (request.optString("status") == "open") key(request.getString("interactionId"), request.getString("ownerGeneration")) {
@@ -50,11 +54,11 @@ fun RuntimeWorkflowDialog(coordinator: RuntimeWorkflowCoordinator, onOpenAccepte
         } }, confirmButton = {
             if (state.optBoolean("messageAccepted")) TextButton(enabled = !pending && !binding, onClick = {
                 scope.launch { pending = true; try { onOpenAccepted() } finally { pending = false } }
-            }) { Text(if (binding) "正在读取会话…" else "打开已创建的会话") }
+            }) { Text(if (binding) stringResource(R.string.planning_binding) else stringResource(R.string.planning_open_created)) }
         }, dismissButton = {
-            if (state.optBoolean("canCancel") || state.optBoolean("canCancelInitialization")) TextButton(enabled = !pending, onClick = { scope.launch { coordinator.cancel() } }) { Text("取消") }
+            if (state.optBoolean("canCancel") || state.optBoolean("canCancelInitialization")) TextButton(enabled = !pending, onClick = { scope.launch { coordinator.cancel() } }) { Text(stringResource(R.string.planning_cancel)) }
             if (state.optString("phase") in setOf("failed", "rejected", "cancelled", "expired", "outcome_unknown")) TextButton(onClick = { coordinator.dismiss() }) { Text(androidx.compose.ui.res.stringResource(com.agentsanywhere.app.R.string.common_close)) }
-            else if (state.optBoolean("messageAccepted")) TextButton(enabled = !binding && !pending, onClick = { coordinator.dismiss() }) { Text("稍后打开") }
+            else if (state.optBoolean("messageAccepted")) TextButton(enabled = !binding && !pending, onClick = { coordinator.dismiss() }) { Text(stringResource(R.string.planning_open_later)) }
         })
 }
 

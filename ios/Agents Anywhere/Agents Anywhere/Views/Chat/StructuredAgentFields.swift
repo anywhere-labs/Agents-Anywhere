@@ -17,7 +17,7 @@ struct StructuredAgentFields: View {
                             Toggle(title, isOn: Binding(get: { values[key] == .bool(true) }, set: { values[key] = .bool($0) }))
                         } else if case let .array(options) = field["enum"] {
                             Picker(title, selection: Binding(get: { values[key]?.stringValue ?? "" }, set: { values[key] = .string($0) })) {
-                                Text("请选择").tag("")
+                                Text(String(localized: "请选择")).tag("")
                                 ForEach(options.indices, id: \.self) { index in Text(label(field, index, options[index])).tag(options[index].stringValue ?? "") }
                             }
                         } else if field["type"] == .string("array"), case let .array(options) = field["items"]?["enum"] {

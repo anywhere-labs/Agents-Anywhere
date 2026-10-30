@@ -452,3 +452,10 @@ html[data-windows-title-bar] [data-slot="session-tool-sidebar"] {
   overflow-y: hidden;
   padding-block: 0.25rem;
 }
+
+/* Only the title shimmers; the document remains readable and selectable. */
+@keyframes plan-writing { from { background-position: 180% 0; } to { background-position: -80% 0; } }
+.plan-writing-title { background: linear-gradient(100deg, var(--muted-foreground) 35%, var(--foreground) 50%, var(--muted-foreground) 65%); background-size: 200% 100%; background-clip: text; color: transparent; animation: plan-writing 2.4s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .plan-writing-title { animation: none; background: none; color: var(--foreground); } }
+
+.plan-writing-paused .plan-writing-title { animation-play-state: paused; }

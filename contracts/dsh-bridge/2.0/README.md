@@ -41,6 +41,8 @@ API key 形如 `mk_<id>_<随机 hex>`，Router 按 id 查表并比对 SHA-256。
 | `ping`、`getRuntimeConfig`、`getRuntimeCapabilities`、`listWorkspaces` | 只读 |
 | `listSessions`、`getSessionSnapshot`、`getSessionState`、`getSessionNotices`、`getSessionCapabilities` | 只读，分页游标同 1.0 |
 | `listCommands`、`listModels`、`listPermissions`、`listAgentPresets` | 只读 |
+| `getPlanning` | 原生 Plan 服务存在性与当前／待生效模式，只读 |
+| `setPlanning` | 设置原生规划选择，返回 committed／queued／cancelled／noop |
 | `createAndStartSession`、`startTurn`、`interruptSession`、`updateSelections`、`respondInteraction`、`executeCommand` | 变更 |
 | `refreshSync` | 要求重新捕获一个会话 |
 | `sync` | server stream：先发 `{kind:"subscribed", projectionVersion, checkpointVersion?}`，调用保持打开期间通过 `Sync.ingestBatch` 回传批次 |
@@ -98,3 +100,14 @@ Desktop 主进程是 CommonJS，生成文件的 `import type ... from "meshcall"
 ## 兼容
 
 硬切 2.0：旧 Connector 只读 1.0 的 `endpoint.json`，不会读取 rendezvous v2，因此会一直停在“等待 DSH”，用户需要一起升级三端；插件也不再写 1.0 的 endpoint 镜像（`<DSH_HOME>/agents-anywhere/bridge/endpoint.json`）。插件与 Connector 的接口更新按仓库版本规则升 MINOR。
+
+
+## 统一 Plan 扩展
+
+- `getPlanning({})` 返回 `{available}`，用于无会话能力探测；带既有会话绑定时返回 `{available, active, pending?}`。`pending` 是下一边界的目标布尔值，不是“是否有待生效变更”。
+- `setPlanning({sessionId, externalSessionId, active})` 返回 `{outcome, active, pending?}`，不会发送空模型任务。缺少原生 Plan 服务时拒绝操作。
+- `createAndStartSession` 可携带 `planningIntent: true`，在创建、配置与首轮任务之间原子应用原生 Plan 意图；只有实际任务才创建会话。
+- Sync 的 notifications 操作增加 `planning.observed`：`{sessionId, externalSessionId?, kind, nativeId?, text?, append?, mode?}`，kind 为 draft／mode／interrupted／execution；它是 Connector 内部原生事实，不直接转发 Server。
+- 原生 plan-review notice 的 `metadata.planningReview` 保存完整 markdown、questionId、approveOptionId、可选 callId；Connector 将其转换为统一的不可变正文和审阅，隐藏重复的通用弹窗。原生身份不传给统一客户端。
+- Bridge 的 `session.planning` 默认不宣称完整 AA 能力，只在 metadata 中报告 `nativePlanningAvailable`。具备统一 Planning 应用与持久化的 Connector 才能发布有效的 planning／plan_document／plan_review 能力。因此新 Bridge 配旧 Connector 不会把首轮任务静默降级为普通模式。
+- 兼容命令目录只增加实际已注册、且 Plan 服务存在的 plan；任意其他原生命令继续被白名单拒绝。AA 的 plan 命令统一由 Connector Planning 应用处理，不回调通用命令入口。

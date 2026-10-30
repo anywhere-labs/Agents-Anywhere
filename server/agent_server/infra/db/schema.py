@@ -607,3 +607,18 @@ session_runtime_event_receipts = Table(
     Column("source_event_id", Text, primary_key=True),
     Column("event_digest", Text, nullable=False),
 )
+session_planning = Table("session_planning", metadata,
+    Column("session_id", Text, ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True),
+    Column("payload", Text, nullable=False))
+plan_documents = Table("plan_documents", metadata,
+    Column("session_id", Text, ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True),
+    Column("plan_id", Text, primary_key=True), Column("revision", Integer, primary_key=True),
+    Column("content_hash", Text, nullable=False), Column("payload", Text, nullable=False), Column("created_at", Text, nullable=False))
+planning_operations = Table("planning_operations", metadata,
+    Column("session_id", Text, ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True),
+    Column("operation_id", Text, primary_key=True), Column("fingerprint", Text, nullable=False), Column("payload", Text, nullable=False))
+
+planning_creations = Table("planning_creations", metadata,
+    Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), primary_key=True),
+    Column("runtime_id", Text, primary_key=True), Column("operation_id", Text, primary_key=True),
+    Column("fingerprint", Text, nullable=False), Column("payload", Text, nullable=False))

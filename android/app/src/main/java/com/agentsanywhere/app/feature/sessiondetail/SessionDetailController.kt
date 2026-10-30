@@ -33,6 +33,33 @@ class SessionDetailController(
     private val optimisticStore = SessionOptimisticMessageStore()
     private val attachmentTransfer = SessionAttachmentTransfer(sessionsApi)
 
+    suspend fun submitPlanning(sessionId: String, command: PlanningCommand, attachments: List<TimelineAttachment>) =
+        executePlanning(sessionId, JSONObject().put("command", command.command).put("content", command.content)
+            .put("operationId", java.util.UUID.randomUUID().toString()).put("attachments", org.json.JSONArray(attachments.map { JSONObject().put("fileId", it.fileId) })))
+
+    suspend fun respondPlanning(sessionId: String, target: com.agentsanywhere.app.api.RemotePlanningState, action: String, feedback: String) =
+        executePlanning(sessionId, JSONObject().put("command", action).put("operationId", java.util.UUID.randomUUID().toString())
+            .put("reviewId", target.review?.reviewId).put("planId", target.review?.planId).put("planRevision", target.review?.planRevision)
+            .put("contentHash", target.review?.contentHash).put("epoch", target.epoch).put("feedback", feedback))
+
+    fun clearPlanningEntry(sessionId: String) { optimisticStore.clear(sessionId) }
+
+    suspend fun loadPlanning(sessionId: String) = withContext(Dispatchers.IO) {
+        runCatching { val auth = authSession(); sessionsApi.planning(auth.serverUrl, auth.accessToken, sessionId) }
+    }
+
+    suspend fun executePlanning(sessionId: String, request: JSONObject) = withContext(Dispatchers.IO) {
+        runCatching {
+            val auth = authSession()
+            val response = sessionsApi.executePlanning(auth.serverUrl, auth.accessToken, sessionId, request)
+            if (!response.optBoolean("ok")) {
+                val message = response.optString("message").takeIf { it.isNotBlank() }
+                if (message != null) throw IllegalStateException(message)
+                throw PlanningFailure(PlanningFailure.Reason.OutcomeUnknown)
+            }
+            sessionsApi.planning(auth.serverUrl, auth.accessToken, sessionId)
+        }
+    }
     suspend fun nativeHistoryAction(sessionId: String, body: JSONObject, close: Boolean): Result<Unit> =
         withContext(Dispatchers.IO) {
             runCatching {
@@ -93,6 +120,7 @@ class SessionDetailController(
                     orderingItems = projection.orderingItems,
                 )
                 SessionDetailState(
+                    planning = runCatching { sessionsApi.planning(auth.serverUrl, auth.accessToken, sessionId) }.getOrNull() ?: currentState?.planning,
                     meta = SessionMeta(
                         session = snapshot.session.toAgentSession(devices.associateBy { it.id }),
                         serverTime = snapshot.serverTime,

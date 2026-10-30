@@ -63,6 +63,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import com.agentsanywhere.app.ui.designsystem.runtimeOperationErrorMessage
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
@@ -181,6 +182,9 @@ fun SessionDetailScreen(
     composerDraftStore: SessionComposerDraftStore,
     onSessionChanged: (AgentSession) -> Unit = {},
 ) {
+    var planningCreation by remember(sessionId, preparedSession?.localSessionId) { mutableStateOf(false) }
+    var planningBusy by remember(sessionId) { mutableStateOf(false) }
+    val planningSession by rememberUpdatedState(sessionId)
     val colors = LocalAAColors.current
     val darkMode = colors.isDark
     val context = LocalContext.current
@@ -757,7 +761,7 @@ fun SessionDetailScreen(
                 when (
                     val outcome = onCreatePreparedSession(
                         pending.firstMessageRequest(
-                            content = message,
+                            content = if (planningCreation && com.agentsanywhere.app.feature.sessiondetail.PlanningCommand.parse(message) == null) "/plan $message" else message,
                             selections = preparedSelections,
                             attachments = inlineAttachments,
                             clientMessageId = clientMessageId,
@@ -771,6 +775,7 @@ fun SessionDetailScreen(
                             clientMessageId = clientMessageId,
                             status = "running",
                         )
+                        if (com.agentsanywhere.app.feature.sessiondetail.PlanningCommand.parse(message)?.command == "enter_plan") controller.clearPlanningEntry(localSessionId)
                         controller.bindOptimisticSession(localSessionId, outcome.session.id)
                         clearComposerDraft()
                         onPreparedSessionCreated(outcome.session)
@@ -781,9 +786,9 @@ fun SessionDetailScreen(
                         attachments = pendingAttachments
                         retryClientMessageId = clientMessageId
                         saveComposerDraft(message, pendingAttachments, clientMessageId)
-                        val rawMessage = outcome.error.message
+                        val rawMessage = runtimeOperationErrorMessage(context, outcome.error, R.string.new_session_create_failed)
                         val errorMessage = rawMessage
-                            ?.takeUnless(::isInternalRuntimeError)
+                            .takeUnless(::isInternalRuntimeError)
                             ?: context.getString(R.string.new_session_create_failed)
                         state = controller.markOptimisticMessage(
                             sessionId = localSessionId,
@@ -1316,13 +1321,15 @@ fun SessionDetailScreen(
         attachmentsReady &&
         (attachments.isEmpty() || canUseAttachments) &&
         (isPreparedSession || canUseSendMessage)
-    val canSend = inputEnabled &&
+    val planInput = com.agentsanywhere.app.feature.sessiondetail.PlanningCommand.parse(draft) != null
+    val canSend = (inputEnabled || (planInput && takeoverEnabled && !state.planning?.actions.isNullOrEmpty())) &&
         !state.sending &&
         !preparedSessionCreating &&
         !state.commandExecuting &&
         (draft.isNotBlank() || attachments.isNotEmpty()) &&
         when {
             // Blocked commands still submit so the tap explains why they cannot run.
+            planInput -> attachmentsReady && !planningBusy
             exactCommand != null -> true
             commandLookupPending -> false
             else -> messageSendable
@@ -1481,6 +1488,25 @@ fun SessionDetailScreen(
         runCommand(command, if (typedExact) current.trimEnd() else "/${command.id}", clearing = current)
     }
 
+    val canReviewPlanning = state.capabilities.isUsable("session.plan_review", runtimeId, runtimeType)
+    val planTarget = state.planning?.takeIf { current ->
+        val review = current.review
+        val document = current.proposal
+        canReviewPlanning && review != null && document != null &&
+            current.actions?.any { it in setOf("approve_and_execute", "request_revision", "dismiss_review") } == true &&
+            (review.status == "open" || (review.status == "approved" && current.executionStatus == "rejected" && current.executionRetryable)) &&
+            review.planId == document.planId && review.planRevision == document.revision && review.contentHash == document.contentHash
+    }
+    LaunchedEffect(planTarget?.review?.reviewId) { if (planTarget != null) unfocusComposer() }
+    fun respondPlan(target: com.agentsanywhere.app.api.RemotePlanningState, action: String, feedback: String) {
+        val id = sessionId
+        if (id != null && !planningBusy) scope.launch {
+            planningBusy = true
+            controller.respondPlanning(id, target, action, feedback).onSuccess { if (planningSession == id) state = state.copy(planning = it) }.onFailure { showError(runtimeOperationErrorMessage(context, it)) }
+            planningBusy = false
+        }
+    }
+
     fun sendDraft() {
         val inputs = if (preparedSession != null) {
             preparedSession.preparedWorkspace?.inputModalities(preparedSelections.model)
@@ -1495,10 +1521,27 @@ fun SessionDetailScreen(
         val text = raw.trim()
         if (text.isEmpty() && attachments.isEmpty()) return
         val id = sessionId
+        val planning = com.agentsanywhere.app.feature.sessiondetail.PlanningCommand.parse(raw)
+        if (planning != null && isPreparedSession && planning.command != "submit_task") {
+            if (attachments.isNotEmpty()) { showError(context.getString(R.string.planning_attachment_task)); return }
+            planningCreation = planning.command == "enter_plan"; clearComposerDraft(); return
+        }
+        if (planning != null && id != null && !isPreparedSession) {
+            if (planningBusy) return
+            if (planning.command != "submit_task" && attachments.isNotEmpty()) { showError(context.getString(R.string.planning_attachment_task)); return }
+            if (attachments.any { it.remote == null || it.uploadState != AttachmentUploadState.Uploaded }) { showError(context.getString(R.string.planning_upload_pending)); return }
+            val uploaded = attachments.mapNotNull { it.remote }
+            scope.launch {
+                planningBusy = true
+                controller.submitPlanning(id, planning, uploaded).onSuccess { if (planningSession == id) { state = state.copy(planning = it); if (draft == raw) clearComposerDraft() } }.onFailure { showError(runtimeOperationErrorMessage(context, it)) }
+                planningBusy = false
+            }
+            return
+        }
         val intent = if (isPreparedSession) null else SlashIntent.parse(raw)
             ?.takeIf { it.isCommandLike && it.command.isNotEmpty() }
         if (id == null || intent == null || !canUseCommands) {
-            sendText(text)
+            sendText(if (isPreparedSession && (planningCreation || planning != null)) raw else text)
             return
         }
         state.commands.commands.exact(intent)?.let { command ->
@@ -1694,9 +1737,10 @@ fun SessionDetailScreen(
                             state.timeline.errorMessage != null && state.messages.isEmpty() -> {
                                 EmptyDetailMessage(state.timeline.errorMessage.orEmpty())
                             }
-                            state.messages.isEmpty() && openInteractions.isEmpty() && !hasOpenNotifications ->
+                            state.messages.isEmpty() && (state.planning == null || (state.planning?.effectiveMode != "plan" && state.planning?.draft == null && state.planning?.proposal == null && state.planning?.documents.isNullOrEmpty())) && openInteractions.isEmpty() && !hasOpenNotifications ->
                                 SessionWelcomeMessage()
                             else -> MessageList(
+                                planningContent = { SessionPlanningPanel(state.planning, darkMode) },
                                 messages = state.messages,
                                 darkMode = darkMode,
                                 sessionId = sessionId.orEmpty(),
@@ -1734,6 +1778,7 @@ fun SessionDetailScreen(
                             Column(
                                 modifier = Modifier.onSizeChanged { composerHeightPx = it.height },
                             ) {
+                                if (planningCreation && isPreparedSession) Text(stringResource(R.string.planning_creation_intent), modifier = Modifier.padding(horizontal = 20.dp))
                                 BlockingRuntimeNoticeStack(
                                     notices = blockingNotices,
                                     respondingNoticeIds = state.respondingNoticeIds,
@@ -1765,7 +1810,10 @@ fun SessionDetailScreen(
                                         onSettled = { loadInitialSnapshot() },
                                     )
                                 }
-                                MessageComposer(
+                                planTarget?.let { target ->
+                                    PlanningReviewPanel(target, planningBusy, onRespond = { action, feedback -> respondPlan(target, action, feedback) })
+                                }
+                                if (planTarget == null) MessageComposer(
                                     darkMode = darkMode,
                                     draft = if (takeoverEnabled) draft else "",
                                     onDraftChange = ::setComposerDraft,

@@ -61,7 +61,7 @@ struct SessionChatView: View, Equatable {
                 }
             }
                 .overlay {
-                    if model.isOpeningReady && model.timeline.rows.isEmpty && model.timeline.pendingMessages.isEmpty {
+                    if model.isOpeningReady && model.timeline.rows.isEmpty && model.timeline.pendingMessages.isEmpty && session.planning?.draft == nil && session.planning?.proposal == nil {
                         VStack(spacing: 12) {
                             Text(String(localized: "在这里继续你的任务")).foregroundStyle(.secondary)
                         }.allowsHitTesting(false)
@@ -78,9 +78,13 @@ struct SessionChatView: View, Equatable {
                             && !session.runtime.allows("session.close") {
                             nativeHistoryControls
                         }
+                        if let target = model.planReviewTarget {
+                            SessionPlanReviewPanel(chat: model, target: target.state)
+                                .id("\(target.state.epoch):\(target.id):\(target.state.review?.planId ?? ""):\(target.state.review?.planRevision ?? 0):\(target.state.review?.contentHash ?? "")")
+                        }
                         ChatComposerDock(draft: session.composer, settings: model.settings,
                             maximumEditorHeight: min(160, max(72, geometry.size.height * 0.30)), controls: controls,
-                            canSend: session.canSend, canAttach: model.canAttach,
+                            canSend: session.canSend || (V2PlanningCommand.parse(session.composer.text) != nil && session.runtime.allows("session.planning")), canAttach: model.canAttach,
                             canSelectModel: session.runtime.allows("catalog.model"),
                             canSelectPermission: session.runtime.allows("catalog.permission"),
                             isStreaming: model.isRunning, canStop: session.runtime.allows("session.interrupt"),
@@ -91,6 +95,13 @@ struct SessionChatView: View, Equatable {
                             onApplySettings: model.applySettings, applyError: { model.settingsError },
                             onDraftChange: { model.repository.draftDidChange(sessionID: model.session.id) })
                             .traceChatLayout("composer-dock")
+                            .frame(height: model.planReviewTarget == nil ? nil : 0)
+                            .clipped()
+                            .allowsHitTesting(model.planReviewTarget == nil)
+                            .accessibilityHidden(model.planReviewTarget != nil)
+                            .onChange(of: model.planReviewTarget?.id, initial: true) { _, target in
+                                if target != nil { session.composer.isFocused = false }
+                            }
                     }
                     .frame(maxWidth: ChatControlMetrics.maximumContentWidth).frame(maxWidth: .infinity)
                     // Native safe-area layout owns both the visible scroll

@@ -1,5 +1,9 @@
 "use client"
 
+import { useSessionPlanning } from "@/features/planning/use-session-planning"
+import { parsePlanningCommand } from "@/features/planning/commands"
+import { PlanningPanel, PlanningReviewPanel, PlanningReader, usePlanReader, getPlanReviewTarget } from "@/components/session/planning-panel"
+
 import * as React from "react"
 import { ArrowDown, ChevronDown, CircleAlert, Loader2, WifiOff } from "lucide-react"
 import { toast } from "sonner"
@@ -328,6 +332,7 @@ export function SessionDetail({
   onStreamProgress,
 }: SessionDetailProps) {
   const tSession = useTranslations("dashboard.session")
+  const tPlanning = useTranslations("planning")
   const tNew = useTranslations("dashboard.new")
   const tCommon = useTranslations("common")
   const {
@@ -352,6 +357,8 @@ export function SessionDetail({
   )
   const [loading, setLoading] = React.useState(() => !initialOptimisticState)
   const [error, setError] = React.useState<string | null>(null)
+  const planning = useSessionPlanning(token, sessionId)
+  const planReader = usePlanReader(sessionId)
   const [sending, setSending] = React.useState(false)
   const [interrupting, setInterrupting] = React.useState(false)
   const [takeoverBusy, setTakeoverBusy] = React.useState(false)
@@ -918,6 +925,7 @@ export function SessionDetail({
 
     const applyEvent = (event: ProtocolEventEnvelope) => {
       if (cancelled || event.sessionId !== sessionId) return
+      if (event.type === "planning.state.updated") { planning.ingest(event.payload.state as import("@/generated/protocol/v1/planning-state").PlanningState); return }
       if (event.type === "keepalive") return
       const usesDurableEventIdDedup = sessionEventUsesDurableEventIdDedup(event)
       if (!eventSequenceCursor.accepts(sessionId, event.sequence)) return
@@ -1192,6 +1200,20 @@ export function SessionDetail({
     _selections: { model?: string; permission?: string },
   ): Promise<boolean> => {
     if (!session || (!content.trim() && attachments.length === 0)) return false
+    const planIntent = parsePlanningCommand(content)
+    if (planIntent) {
+      const uploaded = attachments.flatMap(file => file.uploaded ? [file.uploaded] : [])
+      if (uploaded.length !== attachments.length) return false
+      if (planIntent.command !== "submit_task" && attachments.length) { toast.error(tPlanning("commandAttachments")); return false }
+      try {
+        // Selections are written when changed; only wait for a pending write.
+        await selectionWritesRef.current.get(session.id)
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : tSession("updateSelectionsFailed")); return false
+      }
+      if (planIntent.command === "submit_task") timelineFollowRef.current?.resume()
+      return planning.execute({ ...planIntent, attachments: uploaded })
+    }
     const uploadedAttachments = attachments.flatMap((attachment) =>
       attachment.uploaded ? [attachment.uploaded] : [],
     )
@@ -1643,8 +1665,10 @@ export function SessionDetail({
   // DSH syncs with Agents Anywhere in real time, so the restart-to-sync caveats do not apply.
   const takeoverIsDsh = sessionRuntimeType(session) === "dsh"
 
+  const planReview = getPlanReviewTarget(planning.state, capabilityIsUsable(effectiveCapabilities, CAPABILITY.planReview, sessionRuntimeScope))
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden overscroll-none">
+    <div className="@container/plan-layout flex h-full min-h-0 min-w-0 overflow-hidden">
+    <div className={cn("relative h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden overscroll-none", planReader.document ? "hidden @min-[48rem]/plan-layout:flex" : "flex")}>
       {error ? (
         <Alert variant="destructive" className="mx-auto mt-4 w-[calc(100%-2rem)] max-w-3xl">
           <CircleAlert />
@@ -1675,6 +1699,7 @@ export function SessionDetail({
             {loading && !state ? <SessionSkeletonInline /> : null}
             {state &&
             timelineGroups.length === 0 &&
+            !planning.state?.draft && planning.documents.length === 0 && planning.state?.effectiveMode !== "plan" &&
             detachedInteractions.length === 0 &&
             detachedNotifications.length === 0 &&
             blockingInteractionList.length === 0 ? (
@@ -1721,6 +1746,7 @@ export function SessionDetail({
                 </React.Fragment>
               )
             })}
+            <PlanningPanel key={session.id} planning={planning} canReview={capabilityIsUsable(effectiveCapabilities, CAPABILITY.planReview, sessionRuntimeScope)} onRead={planReader.open} />
             {detachedInteractions.map((notice) => (
               <InteractionCard
                 key={notice.noticeId}
@@ -1796,13 +1822,16 @@ export function SessionDetail({
                 </AlertDescription>
               </Alert>
             </div>
-          ) : <SessionComposer
+          ) : <>
+          {planReview && <PlanningReviewPanel planning={planning} target={planReview} />}
+          <div hidden={planReview !== null}>
+          <SessionComposer
             token={token}
             session={session}
             runtimeState={runtimeState}
             pendingInteractionCount={blockingInteractionCount}
             creatingSession={isLocalOptimisticSession}
-            sending={sending}
+            sending={sending || planning.busy}
             interrupting={interrupting}
             takeoverBusy={takeoverBusy}
             value={composerDraft}
@@ -1819,7 +1848,9 @@ export function SessionDetail({
             onInterrupt={handleInterrupt}
             onCommand={handleSessionCommand}
             onToggleTakeover={() => setPendingTakeover(!session.takeover)}
-          />}
+          />
+          </div>
+          </>}
         </div>
       </div>
       <Dialog
@@ -1880,6 +1911,8 @@ export function SessionDetail({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+    <PlanningReader reader={planReader} className="pt-14" />
     </div>
   )
 }
