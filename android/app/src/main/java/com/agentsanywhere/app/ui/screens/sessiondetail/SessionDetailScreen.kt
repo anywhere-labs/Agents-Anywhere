@@ -63,6 +63,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import com.agentsanywhere.app.ui.designsystem.runtimeOperationErrorMessage
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
@@ -785,9 +786,9 @@ fun SessionDetailScreen(
                         attachments = pendingAttachments
                         retryClientMessageId = clientMessageId
                         saveComposerDraft(message, pendingAttachments, clientMessageId)
-                        val rawMessage = outcome.error.message
+                        val rawMessage = runtimeOperationErrorMessage(context, outcome.error, R.string.new_session_create_failed)
                         val errorMessage = rawMessage
-                            ?.takeUnless(::isInternalRuntimeError)
+                            .takeUnless(::isInternalRuntimeError)
                             ?: context.getString(R.string.new_session_create_failed)
                         state = controller.markOptimisticMessage(
                             sessionId = localSessionId,
@@ -1501,7 +1502,7 @@ fun SessionDetailScreen(
         val id = sessionId
         if (id != null && !planningBusy) scope.launch {
             planningBusy = true
-            controller.respondPlanning(id, target, action, feedback).onSuccess { if (planningSession == id) state = state.copy(planning = it) }.onFailure { showError(it.message.orEmpty()) }
+            controller.respondPlanning(id, target, action, feedback).onSuccess { if (planningSession == id) state = state.copy(planning = it) }.onFailure { showError(runtimeOperationErrorMessage(context, it)) }
             planningBusy = false
         }
     }
@@ -1522,17 +1523,17 @@ fun SessionDetailScreen(
         val id = sessionId
         val planning = com.agentsanywhere.app.feature.sessiondetail.PlanningCommand.parse(raw)
         if (planning != null && isPreparedSession && planning.command != "submit_task") {
-            if (attachments.isNotEmpty()) { showError("请填写附件对应的规划任务。"); return }
+            if (attachments.isNotEmpty()) { showError(context.getString(R.string.planning_attachment_task)); return }
             planningCreation = planning.command == "enter_plan"; clearComposerDraft(); return
         }
         if (planning != null && id != null && !isPreparedSession) {
             if (planningBusy) return
-            if (planning.command != "submit_task" && attachments.isNotEmpty()) { showError("请填写附件对应的规划任务。"); return }
-            if (attachments.any { it.remote == null || it.uploadState != AttachmentUploadState.Uploaded }) { showError("请等待附件上传完成。"); return }
+            if (planning.command != "submit_task" && attachments.isNotEmpty()) { showError(context.getString(R.string.planning_attachment_task)); return }
+            if (attachments.any { it.remote == null || it.uploadState != AttachmentUploadState.Uploaded }) { showError(context.getString(R.string.planning_upload_pending)); return }
             val uploaded = attachments.mapNotNull { it.remote }
             scope.launch {
                 planningBusy = true
-                controller.submitPlanning(id, planning, uploaded).onSuccess { if (planningSession == id) { state = state.copy(planning = it); if (draft == raw) clearComposerDraft() } }.onFailure { showError(it.message.orEmpty()) }
+                controller.submitPlanning(id, planning, uploaded).onSuccess { if (planningSession == id) { state = state.copy(planning = it); if (draft == raw) clearComposerDraft() } }.onFailure { showError(runtimeOperationErrorMessage(context, it)) }
                 planningBusy = false
             }
             return
@@ -1777,7 +1778,7 @@ fun SessionDetailScreen(
                             Column(
                                 modifier = Modifier.onSizeChanged { composerHeightPx = it.height },
                             ) {
-                                if (planningCreation && isPreparedSession) Text("新会话将使用计划模式", modifier = Modifier.padding(horizontal = 20.dp))
+                                if (planningCreation && isPreparedSession) Text(stringResource(R.string.planning_creation_intent), modifier = Modifier.padding(horizontal = 20.dp))
                                 BlockingRuntimeNoticeStack(
                                     notices = blockingNotices,
                                     respondingNoticeIds = state.respondingNoticeIds,

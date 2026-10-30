@@ -85,7 +85,7 @@ fun NewSessionScreen(
     onListDirectory: suspend (String, String, String) -> Result<NewSessionDirectory>,
     onListRuntimes: suspend (String) -> Result<DeviceRuntimeList>,
     onLoadRuntimeCapabilities: suspend (String, String) -> Result<NewSessionRuntimeCapabilities>,
-    onPrepareRuntimeWorkspace: suspend (String, String, String) -> Result<com.agentsanywhere.app.feature.sessions.PreparedRuntimeWorkspace> = { _, _, _ -> Result.failure(IllegalStateException("工作区准备不可用。")) },
+    onPrepareRuntimeWorkspace: suspend (String, String, String) -> Result<com.agentsanywhere.app.feature.sessions.PreparedRuntimeWorkspace> = { _, _, _ -> Result.failure(com.agentsanywhere.app.feature.sessiondetail.PlanningFailure(com.agentsanywhere.app.feature.sessiondetail.PlanningFailure.Reason.WorkspaceUnavailable)) },
     onLoadModelCatalog: suspend (String, String) -> Result<NewSessionModelCatalog>,
     onLoadPermissionCatalog: suspend (String, String) -> Result<NewSessionPermissionCatalog>,
     onPrepareSession: (NewSessionDraft) -> Unit,
@@ -516,7 +516,7 @@ fun NewSessionScreen(
                     runtimeSelection.requestKey?.let { runtimeSelection = runtimeSelection.applyModelCatalog(it, result.catalog) }
                 }
             } catch (error: CancellationException) { throw error }
-            catch (error: Exception) { preparationError = error.message ?: context.getString(R.string.new_session_model_catalog_failed) }
+            catch (error: Exception) { preparationError = com.agentsanywhere.app.ui.designsystem.runtimeOperationErrorMessage(context, error, R.string.new_session_model_catalog_failed) }
             finally { preparingRuntime = false }
         }
     }

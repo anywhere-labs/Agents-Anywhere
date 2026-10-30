@@ -24,8 +24,8 @@ struct SessionPlanningPanel: View {
         if let state = chat.session.planning, state.effectiveMode == "plan" || state.draft != nil || state.proposal != nil || state.proposals?.isEmpty == false {
             let entries = (state.proposals ?? [state.proposal].compactMap { $0 }).map { PlanCardEntry(id: $0.id, plan: $0) }
                 + [state.draft].compactMap { $0 }.map { PlanCardEntry(id: "\($0.planId):\($0.revision)", draft: $0) }
-            let status = [state.effectiveMode == "plan" ? "规划模式" : nil, state.execution.map { execution in
-                execution.status == "started" ? "计划执行已开始" : execution.status == "accepted" ? "执行请求已接受，等待原生开始" : execution.status == "rejected" ? "计划已同意，执行尚未启动" : "执行结果待核对"
+            let status = [state.effectiveMode == "plan" ? String(localized: "规划模式") : nil, state.execution.map { execution in
+                execution.status == "started" ? String(localized: "计划执行已开始") : execution.status == "accepted" ? String(localized: "执行请求已接受，等待原生开始") : execution.status == "rejected" ? String(localized: "计划已同意，执行尚未启动") : String(localized: "执行结果待核对")
             }].compactMap { $0 }
             VStack(alignment: .leading, spacing: 12) {
                 if !status.isEmpty {
@@ -71,10 +71,10 @@ private struct SessionPlanCard: View {
                     } else if let plan = entry.plan {
                         Text(plan.title).font(.subheadline.weight(.semibold)).accessibilityAddTraits(.isHeader)
                     }
-                    Text(entry.plan.map { "计划 · 版本 \($0.revision)" } ?? "正文随原生计划输出更新").font(.caption).foregroundStyle(.secondary)
+                    Text(entry.plan.map { String(localized: "计划 · 版本 \($0.revision)") } ?? String(localized: "正文随原生计划输出更新")).font(.caption).foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, alignment: .leading)
                 if let plan = entry.plan {
-                    Button("打开计划") { onRead(plan) }
+                    Button(String(localized: "打开计划")) { onRead(plan) }
                         .font(.subheadline).buttonStyle(.glass).buttonBorderShape(.capsule).controlSize(.small)
                         .frame(minHeight: 44)
                 }
@@ -95,7 +95,7 @@ private struct SessionPlanCard: View {
                     Button {
                         withAnimation(.smooth(duration: 0.2)) { expanded.toggle() }
                     } label: {
-                        Label(expanded ? "收起" : "展开全文", appSymbol: "chevron.down")
+                        Label(expanded ? String(localized: "收起") : String(localized: "展开全文"), appSymbol: "chevron.down")
                     }
                     .font(.caption).foregroundStyle(.secondary).buttonStyle(.plain).frame(minHeight: 44)
                 }
@@ -114,7 +114,7 @@ private struct PlanWritingTitle: View {
     @State private var visible = false
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 15, paused: !writing || !visible || reduceMotion || scenePhase != .active)) { context in
-            Text(writing ? "正在撰写计划" : "计划草稿已中断").font(.subheadline.weight(.semibold))
+            Text(writing ? String(localized: "正在撰写计划") : String(localized: "计划草稿已中断")).font(.subheadline.weight(.semibold))
                 .opacity(!writing || reduceMotion || !visible || scenePhase != .active ? 1 : 0.78 + 0.22 * sin(context.date.timeIntervalSinceReferenceDate * .pi / 1.2))
         }.onScrollVisibilityChange { visible = $0 }
     }
@@ -135,10 +135,10 @@ private struct SessionPlanReader: View {
                 }
                 .navigationTitle(plan.title).navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .confirmationAction) { Button("关闭") { dismiss() } }
-                    ToolbarItem(placement: .bottomBar) { Button("复制") { UIPasteboard.general.string = plan.markdown } }
-                    ToolbarItem(placement: .bottomBar) { Button("导出 Markdown") { exporting = true } }
-                    ToolbarItem(placement: .bottomBar) { ShareLink(item: plan.markdown) { Text("分享") } }
+                    ToolbarItem(placement: .confirmationAction) { Button(String(localized: "关闭")) { dismiss() } }
+                    ToolbarItem(placement: .bottomBar) { Button(String(localized: "复制")) { UIPasteboard.general.string = plan.markdown } }
+                    ToolbarItem(placement: .bottomBar) { Button(String(localized: "导出 Markdown")) { exporting = true } }
+                    ToolbarItem(placement: .bottomBar) { ShareLink(item: plan.markdown) { Text(String(localized: "分享")) } }
                 }
                 .fileExporter(isPresented: $exporting, document: PlanMarkdownFile(text: plan.markdown), contentType: UTType(filenameExtension: "md") ?? .plainText, defaultFilename: "PLAN.md") { _ in }
         }
@@ -162,14 +162,14 @@ struct SessionPlanReviewPanel: View {
             HStack(alignment: .top, spacing: 8) {
                 AppSymbol("checkmark.shield", size: 17).foregroundStyle(.secondary).padding(.top, 1)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(open ? "是否执行这个计划？" : "计划已同意，执行尚未启动").font(.subheadline.weight(.semibold)).accessibilityAddTraits(.isHeader)
-                    Text("版本 \(target.proposal?.revision ?? 1)").font(.caption).foregroundStyle(.secondary)
-                    if target.freshness != "fresh" { Text("原生状态待核对，请刷新后再确认。").font(.caption).foregroundStyle(.secondary) }
+                    Text(open ? String(localized: "是否执行这个计划？") : String(localized: "计划已同意，执行尚未启动")).font(.subheadline.weight(.semibold)).accessibilityAddTraits(.isHeader)
+                    Text(String(localized: "版本 \(target.proposal?.revision ?? 1)")).font(.caption).foregroundStyle(.secondary)
+                    if target.freshness != "fresh" { Text(String(localized: "原生状态待核对，请刷新后再确认。")).font(.caption).foregroundStyle(.secondary) }
                     if let error = chat.error { Text(error).font(.caption).foregroundStyle(.red) }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
             if editing {
-                TextField("说明需要如何调整计划", text: $feedback, axis: .vertical)
+                TextField(String(localized: "说明需要如何调整计划"), text: $feedback, axis: .vertical)
                     .lineLimit(2...4).textFieldStyle(.roundedBorder).focused($feedbackFocused)
                     .disabled(chat.isWorking)
             }
@@ -186,14 +186,14 @@ struct SessionPlanReviewPanel: View {
     }
     @ViewBuilder private var actions: some View {
         if !open {
-            button("重试启动", "approve_and_execute", prominent: true)
+            button(String(localized: "重试启动"), "approve_and_execute", prominent: true)
         } else if editing {
-            AppGlassButton("取消", disabled: chat.isWorking) { editing = false }.font(.subheadline)
-            button("提交修改意见", "request_revision", prominent: true, extraDisabled: trimmedFeedback.isEmpty)
+            AppGlassButton(String(localized: "取消"), disabled: chat.isWorking) { editing = false }.font(.subheadline)
+            button(String(localized: "提交修改意见"), "request_revision", prominent: true, extraDisabled: trimmedFeedback.isEmpty)
         } else {
-            button("暂不执行", "dismiss_review")
-            AppGlassButton("修改计划", disabled: !allowed("request_revision")) { editing = true }.font(.subheadline)
-            button("同意并执行", "approve_and_execute", prominent: true)
+            button(String(localized: "暂不执行"), "dismiss_review")
+            AppGlassButton(String(localized: "修改计划"), disabled: !allowed("request_revision")) { editing = true }.font(.subheadline)
+            button(String(localized: "同意并执行"), "approve_and_execute", prominent: true)
         }
     }
     private func button(_ title: String, _ action: String, prominent: Bool = false, extraDisabled: Bool = false) -> some View {

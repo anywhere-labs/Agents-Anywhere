@@ -332,6 +332,7 @@ export function SessionDetail({
   onStreamProgress,
 }: SessionDetailProps) {
   const tSession = useTranslations("dashboard.session")
+  const tPlanning = useTranslations("planning")
   const tNew = useTranslations("dashboard.new")
   const tCommon = useTranslations("common")
   const {
@@ -1203,7 +1204,7 @@ export function SessionDetail({
     if (planIntent) {
       const uploaded = attachments.flatMap(file => file.uploaded ? [file.uploaded] : [])
       if (uploaded.length !== attachments.length) return false
-      if (planIntent.command !== "submit_task" && attachments.length) { toast.error("此规划命令不接受附件，请填写规划任务。"); return false }
+      if (planIntent.command !== "submit_task" && attachments.length) { toast.error(tPlanning("commandAttachments")); return false }
       try {
         // Selections are written when changed; only wait for a pending write.
         await selectionWritesRef.current.get(session.id)

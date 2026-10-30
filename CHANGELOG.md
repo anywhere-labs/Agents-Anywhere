@@ -12,6 +12,9 @@
 
 ### 统一 Plan
 
+- 补齐 Web、Desktop、Android 和 iOS 计划卡片、审阅、阅读器及规划入口提示的中英文翻译，随客户端语言切换。
+
+- 修复 Codex 规划模式调用旧写入路由接口导致首轮任务创建失败的问题，并避免异常日志展开运行时对象造成 Connector 卡顿和断连。
 - 在 Codex、Claude Code 和 DSH 会话中可统一使用 `/plan`、`/plan <任务>` 与 `/plan off`；新会话首条任务即可进入原生规划，裸 `/plan` 只设置创建意图，不消耗空模型回合。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
 - Web、Desktop、Android 和 iOS 新增流式计划卡片，在输入区直接「同意并执行／修改计划／暂不执行」，不再弹出审批窗口；计划卡片与确认面板沿用审批卡样式，长计划可展开全文，「打开计划」后可复制和导出完整计划，Web 和 Desktop 支持与聊天并排阅读。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
 - 计划按不可变版本保存，设备离线仍可查阅；旧版本批准、重复执行和结果未知后的自动重发会被阻止，批准计划继续使用用户当前权限设置。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）

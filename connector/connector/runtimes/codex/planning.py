@@ -99,7 +99,14 @@ class CodexPlanningPort:
                 code="planning_turn_running",
                 message="请等待当前轮结束后切换规划模式。",
             )
-        thread = await self.runtime._ipc_attach_for_write(session_id, external_id)
+        route = await self.runtime._ipc_route_for_write(session_id, external_id)
+        if route.kind == "blocked":
+            return NativePlanningResult(
+                outcome="rejected",
+                code=route.code or "planning_owner_unreachable",
+                message=route.message or "原生会话控制连接暂不可用。",
+            )
+        thread = route.thread if route.kind == "followed" else None
         if thread is None and self.external_writer_held(external_id):
             return NativePlanningResult(
                 outcome="rejected",

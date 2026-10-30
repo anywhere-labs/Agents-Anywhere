@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from 'react'
+import { useTranslations } from 'next-intl'
 import { apiClient } from '@/lib/api'
 import type { PlanningState, PlanDocument } from '@/generated/protocol/v1/planning-state'
 import type { PlanningRequest } from '@/generated/protocol/v1/planning-request'
@@ -9,6 +10,7 @@ import type { PlanningResponse } from '@/generated/protocol/v1/planning-response
 export type { PlanningState, PlanDocument, PlanningRequest }
 type Visit = { sessionId: string; token: string }
 export function useSessionPlanning(token: string, sessionId: string) {
+  const t = useTranslations('planning')
   const visit = React.useRef<Visit>({ sessionId, token })
   const activeOperation = React.useRef<object | null>(null)
   if (visit.current.sessionId !== sessionId || visit.current.token !== token) {
@@ -57,17 +59,17 @@ export function useSessionPlanning(token: string, sessionId: string) {
       const result = await apiClient.post<PlanningResponse>(`${path}/planning`, { ...request, operationId: crypto.randomUUID() }, { token })
       if (visit.current !== current) return false
       if (result.state) ingest(result.state)
-      if (!result.ok) setFailure({ visit: current, message: result.message || '规划操作未完成，请刷新原生状态。' })
+      if (!result.ok) setFailure({ visit: current, message: result.message || t('operationFailed') })
       await refresh().catch(() => undefined)
       return result.ok
     } catch (error) {
-      if (visit.current === current) setFailure({ visit: current, message: error instanceof Error ? error.message : '规划操作结果尚不确定，请刷新状态。' })
+      if (visit.current === current) setFailure({ visit: current, message: error instanceof Error ? error.message : t('operationUnknown') })
       return false
     } finally {
       if (activeOperation.current === operation) activeOperation.current = null
       if (visit.current === current) setRunning(null)
     }
-  }, [path, token, sessionId, refresh, ingest])
+  }, [path, token, sessionId, refresh, ingest, t])
   return {
     state: projection?.visit === visit.current ? projection.state : null,
     documents: archive?.visit === visit.current ? archive.documents : [],

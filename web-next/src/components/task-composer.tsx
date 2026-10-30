@@ -147,6 +147,7 @@ export function TaskComposer() {
     updateProject,
   } = useWorkspace()
   const t = useTranslations("dashboard.new")
+  const tPlanning = useTranslations("planning")
   const tCommon = useTranslations("common")
   const tWorkspace = useTranslations("dashboard.workspacePicker")
   const typewriterTitles = React.useMemo(
@@ -775,7 +776,7 @@ export function TaskComposer() {
   const handleCreate = async () => {
     const planIntent = parsePlanningCommand(prompt)
     if (planIntent && planIntent.command !== "submit_task") {
-      if (attachments.length) { toast.error("请填写附件对应的规划任务。"); return }
+      if (attachments.length) { toast.error(tPlanning("attachmentTask")); return }
       setPlanningCreation(planIntent.command === "enter_plan"); setPrompt(""); return
     }
     const usePlanning = planningCreation || planIntent?.command === "submit_task"
@@ -785,7 +786,7 @@ export function TaskComposer() {
     if (!prompt.trim() && attachments.length === 0) return
     if (catalogsLoading || (needsPreparation && preparation.operation?.state.phase !== "ready")) return
     // Prepared-workspace creation does not carry a planning intent yet; refuse instead of silently dropping it.
-    if (usePlanning && needsPreparation) { toast.error("该运行时需要先准备工作区，新会话暂不支持计划模式；请创建后再输入 /plan。"); return }
+    if (usePlanning && needsPreparation) { toast.error(tPlanning("workspaceUnsupported")); return }
     if (requiresModelSelection && !selectedModelSelection) return
     if (requiresPermissionSelection && !selectedPermissionSelection) return
     if (attachments.length > 0 && (!canUseAttachments || !attachmentsAllowed)) return
@@ -1038,7 +1039,7 @@ export function TaskComposer() {
               </div>
             ) : null}
             {recoveryTargetUnavailable ? <p role="alert" className="text-sm text-destructive">{t("restoredTargetUnavailable")}</p> : null}
-            {planningCreation && <Badge variant="outline">新会话将使用计划模式</Badge>}
+            {planningCreation && <Badge variant="outline">{tPlanning("creationIntent")}</Badge>}
             <AttachmentPreviewList attachments={attachments} onRemove={remove} />
             {attachmentError ? <p role="alert" className="text-xs text-destructive">{attachmentError}</p> : null}
             <Textarea

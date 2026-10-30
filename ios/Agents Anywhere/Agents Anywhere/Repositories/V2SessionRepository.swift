@@ -53,7 +53,7 @@ final class V2SessionRepository {
         let result = try await planningAPI.execute(sessionId: sessionId, request: request)
         if let state = result.state { entries[sessionId]?.model.observePlanning(state) }
         await refreshPlanning(sessionId: sessionId)
-        guard result.ok else { throw NSError(domain: "Planning", code: 1, userInfo: [NSLocalizedDescriptionKey: result.message ?? "规划操作结果尚未确认，请刷新状态。"] ) }
+        guard result.ok else { throw NSError(domain: "Planning", code: 1, userInfo: [NSLocalizedDescriptionKey: result.message ?? String(localized: "规划操作结果尚未确认，请刷新状态。")] ) }
         return true
     }
 

@@ -20,7 +20,7 @@ class RuntimeWorkflowCoordinator(
 ) {
     private val mutableOperation = MutableStateFlow<JSONObject?>(null)
     val operation = mutableOperation.asStateFlow()
-    private val mutableError = MutableStateFlow<String?>(null)
+    private val mutableError = MutableStateFlow<Throwable?>(null)
     val error = mutableError.asStateFlow()
     private val mutableBinding = MutableStateFlow(false)
     val binding = mutableBinding.asStateFlow()
@@ -53,17 +53,17 @@ class RuntimeWorkflowCoordinator(
         val target = scope()
         require(target.server.isNotBlank() && target.token.isNotBlank())
         val id = body.optString("createOperationId")
-        check(publish(target) {
+        requireWorkflow(publish(target) {
             if (path == "creations" && id.isNotBlank()) references?.remember(target.server, target.user, id)
-        }) { "运行目标已变化。" }
+        }, RuntimeWorkflowFailure.Reason.TargetChanged)
         var value = withContext(Dispatchers.IO) { api.post(target.server, target.token, path, body) }
         while (true) {
-            check(publish(target) { mutableOperation.value = value }) { "运行目标已变化。" }
+            requireWorkflow(publish(target) { mutableOperation.value = value }, RuntimeWorkflowFailure.Reason.TargetChanged)
             val state = value.getJSONObject("state")
             if (done(state)) {
-                check(publish(target) {
+                requireWorkflow(publish(target) {
                     if (value.optString("kind") != "creation") mutableOperation.value = null
-                }) { "运行目标已变化。" }
+                }, RuntimeWorkflowFailure.Reason.TargetChanged)
                 return value
             }
             check(state.optString("phase") !in setOf("failed", "rejected", "expired", "cancelled", "outcome_unknown")) {
@@ -78,21 +78,21 @@ class RuntimeWorkflowCoordinator(
      * commits binding and releases the account-scoped recovery reference. */
     suspend fun bindAcceptedCreation(load: suspend (String, String, String) -> AgentSession): AgentSession {
         val target = scope()
-        val value = mutableOperation.value ?: error("没有待绑定的创建操作。")
+        val value = mutableOperation.value ?: throw RuntimeWorkflowFailure(RuntimeWorkflowFailure.Reason.CreationMissing)
         val id = value.getString("id")
         require(value.optString("kind") == "creation" && value.getJSONObject("state").optBoolean("messageAccepted"))
         val sessionId = value.getString("sessionId")
-        check(publish(target, id) { check(!mutableBinding.value) { "正在读取已创建的会话。" }; mutableBinding.value = true }) { "运行目标已变化。" }
+        requireWorkflow(publish(target, id) { requireWorkflow(!mutableBinding.value, RuntimeWorkflowFailure.Reason.BindingInProgress); mutableBinding.value = true }, RuntimeWorkflowFailure.Reason.TargetChanged)
         try {
             val session = withContext(Dispatchers.IO) { load(target.server, target.token, sessionId) }
-            check(session.id == sessionId) { "返回的会话身份与创建操作不一致。" }
-            check(publish(target, id) {
+            requireWorkflow(session.id == sessionId, RuntimeWorkflowFailure.Reason.SessionMismatch)
+            requireWorkflow(publish(target, id) {
                 references?.remember(target.server, target.user, id, remove = true)
                 mutableOperation.value = null; mutableError.value = null
-            }) { "运行目标已变化。" }
+            }, RuntimeWorkflowFailure.Reason.TargetChanged)
             return session
         } catch (error: CancellationException) { throw error }
-        catch (error: Exception) { publish(target, id) { mutableError.value = error.message }; throw error }
+        catch (error: Exception) { publish(target, id) { mutableError.value = error }; throw error }
         finally { publish(target) { mutableBinding.value = false } }
     }
 
@@ -114,7 +114,7 @@ class RuntimeWorkflowCoordinator(
             val next = withContext(Dispatchers.IO) { api.get(target.server, target.token, "creation", id) }
             publish(target) { mutableOperation.value = next }
         } catch (error: CancellationException) { throw error }
-        catch (error: Exception) { publish(target) { mutableError.value = error.message } }
+        catch (error: Exception) { publish(target) { mutableError.value = error } }
     }
 
     suspend fun refresh() {
@@ -131,7 +131,7 @@ class RuntimeWorkflowCoordinator(
                 mutableOperation.value = next
             }
         } catch (error: CancellationException) { throw error }
-        catch (error: Exception) { publish(target, id) { mutableError.value = error.message } }
+        catch (error: Exception) { publish(target, id) { mutableError.value = error } }
     }
 
     suspend fun respond(request: JSONObject, action: String, input: JSONObject?) {
@@ -148,7 +148,7 @@ class RuntimeWorkflowCoordinator(
             withContext(Dispatchers.IO) { api.post(target.server, target.token, "${value.getString("kind")}/${id.urlEncoded()}/responses", body) }
             if (publish(target, id) { mutableError.value = null }) refresh(target, value)
         } catch (error: CancellationException) { throw error }
-        catch (error: Exception) { publish(target, id) { mutableError.value = error.message } }
+        catch (error: Exception) { publish(target, id) { mutableError.value = error } }
     }
 
     suspend fun cancel() {
@@ -161,7 +161,7 @@ class RuntimeWorkflowCoordinator(
             }
             publish(target, id) { mutableOperation.value = next }
         } catch (error: CancellationException) { throw error }
-        catch (error: Exception) { publish(target, id) { mutableError.value = error.message } }
+        catch (error: Exception) { publish(target, id) { mutableError.value = error } }
     }
 }
 private fun String.urlEncoded(): String = java.net.URLEncoder.encode(this, "UTF-8").replace("+", "%20")
@@ -184,4 +184,12 @@ data class PreparedRuntimeWorkspace(
         } ?: return null
         return inputModalitiesByModel[model.id]
     }
+}
+
+internal class RuntimeWorkflowFailure(val reason: Reason) : IllegalStateException() {
+    enum class Reason { TargetChanged, BindingInProgress, CreationMissing, SessionMismatch }
+}
+
+private fun requireWorkflow(condition: Boolean, reason: RuntimeWorkflowFailure.Reason) {
+    if (!condition) throw RuntimeWorkflowFailure(reason)
 }

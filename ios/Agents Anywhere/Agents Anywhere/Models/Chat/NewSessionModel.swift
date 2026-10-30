@@ -362,7 +362,7 @@ final class NewSessionModel {
     func create(text: String) async -> V2SessionMeta? {
         let intent = V2PlanningCommand.parse(text)
         if let intent, intent.command != "submit_task" {
-            guard draft.attachments.isEmpty else { error = "请填写附件对应的规划任务。"; return nil }
+            guard draft.attachments.isEmpty else { error = String(localized: "请填写附件对应的规划任务。"); return nil }
             planningCreation = intent.command == "enter_plan"; draft.text = ""; saveDraft(); return nil
         }
         let usePlanning = planningCreation || intent?.command == "submit_task"
@@ -370,7 +370,7 @@ final class NewSessionModel {
         draft.text = text
         guard draft.canAttemptSend else { return nil }
         // Prepared-workspace creation does not carry a planning intent yet; refuse instead of silently dropping it.
-        if usePlanning, preparedWorkflow != nil { error = "该运行时需要先准备工作区，新会话暂不支持计划模式；请创建后再输入 /plan。"; return nil }
+        if usePlanning, preparedWorkflow != nil { error = String(localized: "该运行时需要先准备工作区，新会话暂不支持计划模式；请创建后再输入 /plan。"); return nil }
         let files = draft.attachments
         if let inputs = AgentForm.inputModalities(preparedWorkflow?.state.configuration, modelID: settings.modelID),
            !inputs.contains("image"), files.contains(where: { AgentForm.isModelImage($0.local.mediaType) }) {
@@ -427,10 +427,10 @@ final class NewSessionModel {
             return nil
         }
         guard chosenConfigurationSnapshot == preparedWorkflow?.state.configuration, chosenConfiguration == agentConfigurationValues else {
-            error = "Agent 配置已变化，请重新确认后发送。"
+            error = String(localized: "Agent 配置已变化，请重新确认后发送。")
             return nil
         }
-        if usePlanning, preparedWorkflow != nil { error = "该运行时需要先准备工作区，新会话暂不支持计划模式；请创建后再输入 /plan。"; return nil }
+        if usePlanning, preparedWorkflow != nil { error = String(localized: "该运行时需要先准备工作区，新会话暂不支持计划模式；请创建后再输入 /plan。"); return nil }
         var didSubmit = false
         do {
             guard isValid, !Task.isCancelled, projectID == target.2,

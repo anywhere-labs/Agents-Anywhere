@@ -52,7 +52,11 @@ class SessionDetailController(
         runCatching {
             val auth = authSession()
             val response = sessionsApi.executePlanning(auth.serverUrl, auth.accessToken, sessionId, request)
-            check(response.optBoolean("ok")) { response.optString("message", "规划操作结果尚未确认，请刷新状态。") }
+            if (!response.optBoolean("ok")) {
+                val message = response.optString("message").takeIf { it.isNotBlank() }
+                if (message != null) throw IllegalStateException(message)
+                throw PlanningFailure(PlanningFailure.Reason.OutcomeUnknown)
+            }
             sessionsApi.planning(auth.serverUrl, auth.accessToken, sessionId)
         }
     }

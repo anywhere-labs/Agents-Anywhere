@@ -366,7 +366,7 @@ final class SessionChatModel {
         if let intent = V2PlanningCommand.parse(text) {
             guard !isWorking else { return }
             let selected = session.composer.attachments
-            guard intent.command == "submit_task" || selected.isEmpty else { error = "请填写附件对应的规划任务。"; return }
+            guard intent.command == "submit_task" || selected.isEmpty else { error = String(localized: "请填写附件对应的规划任务。"); return }
             isWorking = true; error = nil
             defer { isWorking = false }
             do {

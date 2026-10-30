@@ -1,6 +1,8 @@
 package com.agentsanywhere.app.ui.screens.sessiondetail
 
 import android.content.Intent
+import androidx.compose.ui.res.stringResource
+import com.agentsanywhere.app.R
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -57,11 +59,12 @@ internal fun SessionPlanningPanel(state: RemotePlanningState?, darkMode: Boolean
     var reader by remember(state.sessionId) { mutableStateOf<PlanDocument?>(null) }
     val positions = remember(state.sessionId) { mutableMapOf<String, androidx.compose.foundation.ScrollState>() }
     val context = LocalContext.current
+    val exportTitle = stringResource(R.string.planning_export_title)
     val cards = (state.documents + listOfNotNull(state.proposal)).distinctBy { it.planId to it.revision }.map { PlanningCard("${it.planId}:${it.revision}", document = it) } +
         listOfNotNull(state.draft?.let { PlanningCard("${it.planId}:${it.revision}", draft = it) })
     val colors = LocalAAColors.current
-    val mode = if (state.effectiveMode == "plan") "规划模式" else null
-    val execution = state.executionStatus?.let { when (it) { "started" -> "计划执行已开始"; "accepted" -> "执行请求已接受，等待原生开始"; "rejected" -> "计划已同意，执行尚未启动"; else -> "执行结果待核对" } }
+    val mode = if (state.effectiveMode == "plan") stringResource(R.string.planning_mode) else null
+    val execution = state.executionStatus?.let { when (it) { "started" -> stringResource(R.string.planning_execution_started); "accepted" -> stringResource(R.string.planning_execution_accepted); "rejected" -> stringResource(R.string.planning_execution_rejected); else -> stringResource(R.string.planning_execution_uncertain) } }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (mode != null || execution != null) Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Lucide.ListChecks, contentDescription = null, tint = colors.muted, modifier = Modifier.size(14.dp))
@@ -79,9 +82,9 @@ internal fun SessionPlanningPanel(state: RemotePlanningState?, darkMode: Boolean
                     Text(document.title, style = MaterialTheme.typography.titleLarge)
                     Box(Modifier.weight(1f).verticalScroll(position)) { AgentMarkdownText(document.markdown, darkMode, onOpenFile = {}) }
                     Row {
-                        TextButton(onClick = { (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText(document.title, document.markdown)) }) { Text("复制") }
-                        TextButton(onClick = { context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/markdown").putExtra(Intent.EXTRA_TEXT, document.markdown).putExtra(Intent.EXTRA_TITLE, "PLAN.md"), "导出计划")) }) { Text("导出 Markdown") }
-                        TextButton(onClick = { reader = null }) { Text("关闭") }
+                        TextButton(onClick = { (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText(document.title, document.markdown)) }) { Text(stringResource(R.string.planning_copy)) }
+                        TextButton(onClick = { context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/markdown").putExtra(Intent.EXTRA_TEXT, document.markdown).putExtra(Intent.EXTRA_TITLE, "PLAN.md"), exportTitle)) }) { Text(stringResource(R.string.planning_export)) }
+                        TextButton(onClick = { reader = null }) { Text(stringResource(R.string.planning_close)) }
                     }
                 }
             }
@@ -104,7 +107,7 @@ private fun PlanningWritingTitle(writing: Boolean) {
     LaunchedEffect(writing, foreground, visible) {
         if (writing && foreground && visible && android.animation.ValueAnimator.areAnimatorsEnabled()) opacity.animateTo(.55f, infiniteRepeatable(tween(1200), RepeatMode.Reverse)) else opacity.snapTo(1f)
     }
-    Text(if (writing) "正在撰写计划" else "计划草稿已中断", color = LocalAAColors.current.ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.alpha(opacity.value).onGloballyPositioned { coordinates ->
+    Text(if (writing) stringResource(R.string.planning_writing) else stringResource(R.string.planning_interrupted), color = LocalAAColors.current.ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.alpha(opacity.value).onGloballyPositioned { coordinates ->
         val bounds = coordinates.boundsInWindow()
         val window = android.graphics.Rect().also(view::getWindowVisibleDisplayFrame)
         visible = bounds.bottom > window.top && bounds.top < window.bottom
@@ -139,9 +142,9 @@ private fun PlanCard(entry: PlanningCard, darkMode: Boolean, onRead: (PlanDocume
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 entry.draft?.let { PlanningWritingTitle(it.contentState == "drafting") }
                     ?: Text(document!!.title, color = colors.ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                Text(if (entry.draft != null) "正文随原生计划输出更新" else "计划 · 版本 ${document!!.revision}", color = colors.muted, fontSize = 12.sp)
+                Text(if (entry.draft != null) stringResource(R.string.planning_streaming) else stringResource(R.string.planning_document_version, document!!.revision), color = colors.muted, fontSize = 12.sp)
             }
-            document?.let { PlanActionButton("打开计划", onClick = { onRead(it) }) }
+            document?.let { PlanActionButton(stringResource(R.string.planning_open), onClick = { onRead(it) }) }
         }
         Box(Modifier.fillMaxWidth().padding(start = 26.dp).then(if (clamped) Modifier.height(PlanPreviewHeight) else Modifier).clipToBounds()) {
             Box(Modifier.fillMaxWidth().wrapContentHeight(Alignment.Top, unbounded = true).onSizeChanged { fullHeight = it.height }) {
@@ -155,7 +158,7 @@ private fun PlanCard(entry: PlanningCard, darkMode: Boolean, onRead: (PlanDocume
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(if (expanded) Lucide.ChevronUp else Lucide.ChevronDown, contentDescription = null, tint = colors.inkSoft, modifier = Modifier.size(14.dp))
-            Text(if (expanded) "收起" else "展开全文", color = colors.inkSoft, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            Text(if (expanded) stringResource(R.string.planning_collapse) else stringResource(R.string.planning_expand), color = colors.inkSoft, fontSize = 12.sp, fontWeight = FontWeight.Medium)
         }
     }
 }
@@ -188,27 +191,27 @@ internal fun PlanningReviewPanel(target: RemotePlanningState, busy: Boolean, onR
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.Top) {
                 Icon(Lucide.ListChecks, contentDescription = null, tint = colors.muted, modifier = Modifier.size(17.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(if (open) "是否执行这个计划？" else "计划已同意，执行尚未启动", color = colors.ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    Text("版本 ${document.revision}", color = colors.muted, fontSize = 12.sp)
-                    if (target.freshness != "fresh") Text("原生状态待核对，请刷新后再确认。", color = colors.muted, fontSize = 12.sp)
+                    Text(if (open) stringResource(R.string.planning_review_title) else stringResource(R.string.planning_execution_rejected), color = colors.ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(R.string.planning_version, document.revision), color = colors.muted, fontSize = 12.sp)
+                    if (target.freshness != "fresh") Text(stringResource(R.string.planning_refresh_before_review), color = colors.muted, fontSize = 12.sp)
                 }
             }
             if (editing) OutlinedTextField(
-                value = feedback, onValueChange = { feedback = it }, placeholder = { Text("说明需要如何调整计划") }, minLines = 2, maxLines = 4,
+                value = feedback, onValueChange = { feedback = it }, placeholder = { Text(stringResource(R.string.planning_feedback_placeholder)) }, minLines = 2, maxLines = 4,
                 enabled = !busy, modifier = Modifier.fillMaxWidth().focusRequester(focus),
             )
             FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 fun loading(action: String) = busy && pending == action
                 when {
-                    !open -> PlanActionButton("重试启动", Lucide.RotateCcw, primary = true, busy = loading("approve_and_execute"), enabled = !busy && allowed("approve_and_execute")) { respond("approve_and_execute") }
+                    !open -> PlanActionButton(stringResource(R.string.planning_retry_start), Lucide.RotateCcw, primary = true, busy = loading("approve_and_execute"), enabled = !busy && allowed("approve_and_execute")) { respond("approve_and_execute") }
                     editing -> {
-                        PlanActionButton("取消", enabled = !busy) { editing = false }
-                        PlanActionButton("提交修改意见", Lucide.Send, primary = true, busy = loading("request_revision"), enabled = !busy && allowed("request_revision") && feedback.isNotBlank()) { respond("request_revision") }
+                        PlanActionButton(stringResource(R.string.planning_cancel), enabled = !busy) { editing = false }
+                        PlanActionButton(stringResource(R.string.planning_submit_feedback), Lucide.Send, primary = true, busy = loading("request_revision"), enabled = !busy && allowed("request_revision") && feedback.isNotBlank()) { respond("request_revision") }
                     }
                     else -> {
-                        PlanActionButton("暂不执行", busy = loading("dismiss_review"), enabled = !busy && allowed("dismiss_review")) { respond("dismiss_review") }
-                        PlanActionButton("修改计划", Lucide.PencilLine, enabled = !busy && allowed("request_revision")) { editing = true }
-                        PlanActionButton("同意并执行", Lucide.Check, primary = true, busy = loading("approve_and_execute"), enabled = !busy && allowed("approve_and_execute")) { respond("approve_and_execute") }
+                        PlanActionButton(stringResource(R.string.planning_dismiss), busy = loading("dismiss_review"), enabled = !busy && allowed("dismiss_review")) { respond("dismiss_review") }
+                        PlanActionButton(stringResource(R.string.planning_revise), Lucide.PencilLine, enabled = !busy && allowed("request_revision")) { editing = true }
+                        PlanActionButton(stringResource(R.string.planning_approve), Lucide.Check, primary = true, busy = loading("approve_and_execute"), enabled = !busy && allowed("approve_and_execute")) { respond("approve_and_execute") }
                     }
                 }
             }

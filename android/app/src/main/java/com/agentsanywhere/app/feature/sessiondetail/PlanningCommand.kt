@@ -11,3 +11,7 @@ data class PlanningCommand(val command: String, val content: String? = null) {
         }
     }
 }
+
+internal class PlanningFailure(val reason: Reason) : IllegalStateException() {
+    enum class Reason { TaskRequired, WorkspaceRequired, WorkspaceUnavailable, OutcomeUnknown }
+}
