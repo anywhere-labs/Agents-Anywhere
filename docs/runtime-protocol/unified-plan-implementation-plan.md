@@ -557,6 +557,8 @@ Server 测试前按开发指南把 Connector 包安装到 Server 测试环境，
 
 ### 15.2 真实 Web → Server → Connector → Codex 运行
 
+首轮准入修复提交：`7c5c63ff`。
+
 以独立本地 Server/Web、独立 PostgreSQL/Redis 和本机构建的 Linux arm64 Connector 容器，使用实际页面输入 `/plan <任务>`。原生 Codex CLI/SDK 0.163.0、GPT-6.1-Sol 真实读取演示 README 并生成计划；未使用受控模型或模拟计划输出。终稿保存至 Server，Markdown 的 SHA-256 与所审版本相符，审阅保持 open，原 README 未改动。真实页面同时显示聊天流计划卡片、输入区确认面板及非模态全文侧栏。
 
 此次演练发现首轮规划的准入误读旧 Connector 级能力缓存，导致当前实例已支持 Plan 时仍返回 409。首轮 Plan 改为读取绑定实例的实时 `runtime.capabilities` 并保持失败／超时的业务错误，不放宽原生能力与身份校验。
