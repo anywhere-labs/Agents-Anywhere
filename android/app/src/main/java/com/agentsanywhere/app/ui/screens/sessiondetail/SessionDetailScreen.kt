@@ -88,6 +88,7 @@ import com.agentsanywhere.app.api.UploadFilePart
 import com.agentsanywhere.app.feature.files.FilesController
 import com.agentsanywhere.app.feature.realtime.SessionRealtimeController
 import com.agentsanywhere.app.feature.sessiondetail.DownloadedAttachment
+import com.agentsanywhere.app.feature.sessiondetail.PendingMessageQueue
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessiondetail.SessionMeta
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailState
