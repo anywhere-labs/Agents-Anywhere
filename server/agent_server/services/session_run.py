@@ -5,9 +5,9 @@ import binascii
 import hashlib
 import json
 import re
-from uuid import uuid4
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 from agent_server.core.api_namespace import api_v2_path
 from agent_server.core.capabilities import (
@@ -49,6 +49,7 @@ from agent_server.services.device_runtimes import (
 )
 from agent_server.services.effective_capabilities import (
     derive_session_effective_capabilities,
+    read_runtime_capability_facts,
     read_session_capability_facts,
 )
 from agent_server.services.repository_ports import SessionRunRepository
@@ -214,7 +215,7 @@ class SessionRunService:
             )
 
         if payload.planningIntent is not None:
-            await self._require_runtime_capability(payload.connectorId, payload.runtime, runtime_id, SESSION_PLANNING, user_id=user_id)
+            await self._require_runtime_capability(payload.connectorId, payload.runtime, runtime_id, SESSION_PLANNING, user_id=user_id, live=True)
             payload.clientMessageId = payload.clientMessageId or payload.planningIntent.operationId
             fingerprint = hashlib.sha256(json.dumps(payload.model_dump(mode="json"), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
             try:
@@ -766,13 +767,30 @@ class SessionRunService:
         *,
         user_id: str,
         attachment_media_types: list[str] | None = None,
+        live: bool = False,
     ) -> None:
-        capability_set = ProtocolCapabilitySet.model_validate(
-            await self._store.get_protocol_capabilities(
-                connector_id,
-                user_id=user_id,
-            )
-        )
+        try:
+            if live:
+                capability_set = await read_runtime_capability_facts(
+                    self._manager, connector_id, runtime=runtime, runtime_id=runtime_id,
+                )
+            else:
+                capability_set = ProtocolCapabilitySet.model_validate(
+                    await self._store.get_protocol_capabilities(
+                        connector_id, user_id=user_id,
+                    )
+                )
+        except ConnectorOfflineError as exc:
+            raise SessionRunConflictError(str(exc)) from exc
+        except TimeoutError as exc:
+            raise SessionRunTimeoutError({
+                "code": "runtime_capabilities_timeout",
+                "message": "connector runtime capabilities request timed out",
+            }) from exc
+        except ConnectorRpcError as exc:
+            raise SessionRunUpstreamError(exc.message or exc.code) from exc
+        except (TypeError, ValueError) as exc:
+            raise SessionRunUpstreamError(str(exc)) from exc
         capability = next(
             (
                 item

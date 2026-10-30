@@ -59,6 +59,8 @@ DSH 必须组合原生 Plan 插件；缺少服务的旧 composition 返回明确
 
 命令为 `enter_plan`、`exit_plan`、`submit_task`、`approve_and_execute`、`request_revision`、`dismiss_review`。新建任务在既有 create-and-start 请求中携带 `planningIntent: {mode: "plan", operationId}`，不能先普通发送再切换。Server 保存创建身份，重复请求不会创建第二个会话。
 
+首轮规划的创建准入向所选 Runtime 实例读取当前能力，并校验实例身份；不依赖旧 Connector 级能力缓存。原生不可达、超时或返回无效能力时明确拒绝，不创建第二条任务。
+
 每个写操作有稳定 `operationId`。同身份同请求读取原回执，异内容冲突。审阅必须携带 `reviewId`、`planId`、`planRevision`、`contentHash`、`epoch`；可选 `expectedRevision`。正文版本变化、控制实例变化或原生交互过期时拒绝批准。两个设备同时回应时只派发一个有效决定。
 
 `outcome` 是 `applied | pending | rejected | unknown`。响应另记录 `execution`，区分任务接受、实施开始和已拒绝；HTTP 200 不能代替业务 `ok`。模式成功但任务失败会保留模式事实；批准成功但实施明确未派发时可以只重试启动阶段。结果未知时禁用自动重发，使用回执查询和原生校准。

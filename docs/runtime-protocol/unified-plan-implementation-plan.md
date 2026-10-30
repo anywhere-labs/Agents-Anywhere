@@ -553,3 +553,12 @@ Server 测试前按开发指南把 Connector 包安装到 Server 测试环境，
 实际检查：Web 现有检查 401 项通过；Web/Desktop 类型与协议一致性检查通过；Android `:app:compileDebugKotlin` 通过；本次修改的 3 个 Swift 文件语法解析通过。
 
 浏览器使用真实生产组件和本地模拟状态入口检查了 1200px、390px 两档布局、明暗主题、无模态容器和无焦点抢占、状态过期禁用、反馈提交、批准、暂不执行、失败保留、执行重试、新版本清空旧反馈、其他端回应状态撤下确认、能力失效及切换会话隔离。非模态阅读器的键盘滚动和关闭再打开恢复 637px 阅读位置通过，390px 时页面宽度与视口同为 390px，无横向溢出。该浏览器记录属于组件呈现检查，模拟状态入口不作为原生 Runtime 或完整应用链路证据。
+
+
+### 15.2 真实 Web → Server → Connector → Codex 运行
+
+以独立本地 Server/Web、独立 PostgreSQL/Redis 和本机构建的 Linux arm64 Connector 容器，使用实际页面输入 `/plan <任务>`。原生 Codex CLI/SDK 0.163.0、GPT-6.1-Sol 真实读取演示 README 并生成计划；未使用受控模型或模拟计划输出。终稿保存至 Server，Markdown 的 SHA-256 与所审版本相符，审阅保持 open，原 README 未改动。真实页面同时显示聊天流计划卡片、输入区确认面板及非模态全文侧栏。
+
+此次演练发现首轮规划的准入误读旧 Connector 级能力缓存，导致当前实例已支持 Plan 时仍返回 409。首轮 Plan 改为读取绑定实例的实时 `runtime.capabilities` 并保持失败／超时的业务错误，不放宽原生能力与身份校验。
+
+相关现有检查 `test_backend_mvp.py`、`test_architecture_boundaries.py`、`test_protocol_contracts.py` 合计 245 通过、14 跳过。修改文件的 Ruff 检查仍报告原有 `read_session_capability_facts` 的 TRY004，已用修改前源码复核；新增读取函数未引入该问题。没有修改测试文件或产品版本。
