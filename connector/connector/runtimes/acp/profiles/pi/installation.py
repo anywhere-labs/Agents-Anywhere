@@ -31,9 +31,9 @@ def agent_directory(values: dict) -> Path:
 def history_directories(values: dict, agent_dir: Path) -> tuple[Path, ...]:
     paths = [agent_dir / "sessions"]
     try:
-        setting = json.loads((agent_dir / "settings.json").read_text()).get(
-            "sessionDir"
-        )
+        setting = json.loads(
+            (agent_dir / "settings.json").read_text(encoding="utf-8")
+        ).get("sessionDir")
         if isinstance(setting, str) and setting:
             paths.append(Path(setting).expanduser())
     except (OSError, ValueError, AttributeError):
@@ -54,7 +54,7 @@ def _package_for(entry: Path) -> Path | None:
     for root in entry.resolve().parents:
         manifest = root / "package.json"
         try:
-            if json.loads(manifest.read_text()).get("name") == PACKAGE:
+            if json.loads(manifest.read_text(encoding="utf-8")).get("name") == PACKAGE:
                 return root
         except (OSError, ValueError, AttributeError):
             continue
@@ -121,6 +121,7 @@ def resolve_local(values: dict) -> PiInstallation:
                         "JSON.stringify({path:process.execPath,version:process.versions.node})",
                     ],
                     text=True,
+                    encoding="utf-8",
                     timeout=10,
                     stderr=subprocess.DEVNULL,
                 )
@@ -158,7 +159,7 @@ def resolve_local(values: dict) -> PiInstallation:
             "pi_installation_unsupported",
             "无法将此 pi 入口绑定到兼容 SDK；请指定 npm 安装的真实 pi 入口。",
         )
-    manifest = json.loads((root / "package.json").read_text())
+    manifest = json.loads((root / "package.json").read_text(encoding="utf-8"))
     if (
         manifest.get("version") != SUPPORTED_SDK
         or not (root / "dist/index.js").is_file()
@@ -217,6 +218,7 @@ console.log(JSON.stringify([...seen.values()]));
                     str(installation.sdk / "package.json"),
                 ],
                 text=True,
+                encoding="utf-8",
                 timeout=30,
                 stderr=subprocess.DEVNULL,
             )

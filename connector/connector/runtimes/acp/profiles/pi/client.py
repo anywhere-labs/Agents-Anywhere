@@ -185,7 +185,7 @@ class PiClient(AgentClient):
             )
         path = self.permission_file
         if path.exists():
-            self.permissions.update(json.loads(path.read_text()))
+            self.permissions.update(json.loads(path.read_text(encoding="utf-8")))
 
     async def start(self, launch, cwd):
         result = await super().start(launch, cwd)
@@ -243,7 +243,7 @@ class PiClient(AgentClient):
 
     def save_permission(self, session_id, value):
         path = self.permission_file
-        current = json.loads(path.read_text()) if path.exists() else {}
+        current = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         current[session_id] = value
         private_json(path, current)
         self.permissions[session_id] = value

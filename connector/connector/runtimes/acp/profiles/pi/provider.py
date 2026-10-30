@@ -234,7 +234,7 @@ class PiProvider(RuntimeProvider):
             }
             previous = root / "execution-source.json"
             old_identity = (
-                json.loads(previous.read_text()) if previous.exists() else None
+                json.loads(previous.read_text(encoding="utf-8")) if previous.exists() else None
             )
             expected_identity = identity
             if managed and old_identity and old_identity.get("mode") == "managed":

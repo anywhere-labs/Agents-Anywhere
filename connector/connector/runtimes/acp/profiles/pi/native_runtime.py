@@ -746,7 +746,7 @@ class NativePiRuntime(AcpRuntime):
         source = self._source(session_id)
         state_file = self.app.root / ("pi-writes-" + fingerprint(session_id) + ".json")
         try:
-            state = json.loads(state_file.read_text())
+            state = json.loads(state_file.read_text(encoding="utf-8"))
         except (OSError, ValueError) as error:
             raise AcpError(
                 "pi_writer_unavailable", "原生历史写入校验尚未就绪。"
@@ -761,7 +761,7 @@ class NativePiRuntime(AcpRuntime):
         ):
             # Own write and atomic sidecar replacement may straddle this read.
             await asyncio.sleep(0.05)
-            state = json.loads(state_file.read_text())
+            state = json.loads(state_file.read_text(encoding="utf-8"))
             history = await asyncio.to_thread(
                 read_history, Path(source["path"]), self.history_roots
             )

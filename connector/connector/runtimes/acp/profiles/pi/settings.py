@@ -16,7 +16,7 @@ def private_json(path: Path, value: dict) -> None:
     temporary = path.with_name("." + path.name + "." + uuid4().hex)
     try:
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "w") as output:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as output:
             json.dump(value, output)
             output.flush()
             os.fsync(output.fileno())

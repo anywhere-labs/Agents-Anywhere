@@ -22,7 +22,12 @@ RELEASE_FILES = {
 
 def prepare_adapter(entry: Path, sdk: Path, root: Path) -> tuple[Path, dict]:
     package = entry.parent.parent
-    if json.loads((package / "package.json").read_text()).get("version") != "0.1.8":
+    if (
+        json.loads((package / "package.json").read_text(encoding="utf-8")).get(
+            "version"
+        )
+        != "0.1.8"
+    ):
         raise AcpError("pi_adapter_incompatible", "Pi ACP 适配器版本不匹配。")
     for name, expected in RELEASE_FILES.items():
         if hashlib.sha256((entry.parent / name).read_bytes()).hexdigest() != expected:
@@ -33,7 +38,7 @@ def prepare_adapter(entry: Path, sdk: Path, root: Path) -> tuple[Path, dict]:
     bridge = (
         Path(__file__)
         .with_name("sdk-bridge.mjs")
-        .read_text()
+        .read_text(encoding="utf-8")
         .replace("__AA_PI_SDK_URL__", (sdk / "dist/index.js").as_uri())
     )
     patch = fingerprint({"bridge": bridge, "source": RELEASE_FILES, "revision": 3})
@@ -46,10 +51,12 @@ def prepare_adapter(entry: Path, sdk: Path, root: Path) -> tuple[Path, dict]:
             shutil.copytree(
                 package, staging, ignore=shutil.ignore_patterns("node_modules")
             )
-            (staging / "sdk-bridge.mjs").write_text(bridge)
+            (staging / "sdk-bridge.mjs").write_text(
+                bridge, encoding="utf-8", newline="\n"
+            )
             for name in RELEASE_FILES:
                 path = staging / "dist" / name
-                source = path.read_text().replace(
+                source = path.read_text(encoding="utf-8").replace(
                     '"@earendil-works/pi-coding-agent"', '"../sdk-bridge.mjs"'
                 )
                 if name.startswith("chunk-"):
@@ -90,7 +97,7 @@ def prepare_adapter(entry: Path, sdk: Path, root: Path) -> tuple[Path, dict]:
                         "if (pi.model === void 0 && available.length > 0) {",
                         "if (pi.model === void 0 && available.length > 0 && !process.env.AA_PI_SESSION_FILE) {",
                     )
-                path.write_text(source)
+                path.write_text(source, encoding="utf-8", newline="\n")
             # Keep third-party dependency resolution attached to its original install.
             modules = next(
                 (

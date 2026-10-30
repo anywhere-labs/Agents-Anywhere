@@ -49,7 +49,7 @@ def _node_pair(executable: Path) -> tuple[Path, Path] | None:
         return None
     try:
         # Preserve argv[0] until a version-manager shim resolves its active Node.
-        resolved = subprocess.check_output([str(executable), "--print", "process.execPath"], timeout=10, text=True, stderr=subprocess.DEVNULL).strip()
+        resolved = subprocess.check_output([str(executable), "--print", "process.execPath"], timeout=10, text=True, encoding="utf-8", stderr=subprocess.DEVNULL).strip()
         if not Path(resolved).is_absolute():
             return None
         executable = Path(resolved)
@@ -63,7 +63,7 @@ def _node_pair(executable: Path) -> tuple[Path, Path] | None:
     if not npm or not executable.is_file():
         return None
     try:
-        version = subprocess.check_output([str(executable), "--version"], timeout=10, text=True)
+        version = subprocess.check_output([str(executable), "--version"], timeout=10, text=True, encoding="utf-8")
         parts = tuple(int(value) for value in version.strip().lstrip("v").split("."))
         if (22, 19, 0) <= parts < (23, 0, 0):
             return executable.resolve(), npm.resolve()
