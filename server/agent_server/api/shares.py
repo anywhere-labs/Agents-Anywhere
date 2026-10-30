@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import os
 import urllib.parse
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import FileResponse
 
 from agent_server.core.models import (
     PublicSessionShareResponse,
@@ -131,6 +133,7 @@ async def public_session_share(
 async def public_share_attachment(
     share_id: str,
     file_id: str,
+    request: Request,
     db: Store = Depends(get_store),
     attachments: AttachmentService = Depends(get_attachment_service),
 ) -> Response:
@@ -138,6 +141,12 @@ async def public_share_attachment(
     if file_id not in set(share["allowedFileIds"]):
         raise HTTPException(status_code=404, detail="file not found")
     try:
+        path, metadata = await attachments.local_signed_file(
+            session_id=share["sessionId"],
+            file_id=file_id,
+        )
+        if path is not None:
+            return _shared_file_response(request, path, metadata)
         data, metadata = await attachments.read_shared_file(
             session_id=share["sessionId"],
             file_id=file_id,
@@ -154,6 +163,39 @@ async def public_share_attachment(
             "Content-Disposition": _content_disposition(name),
             "Cache-Control": "private, max-age=300",
         },
+    )
+
+
+CACHE_CONTROL_SHARED = "private, max-age=3600"
+
+
+def _shared_file_response(
+    request: Request, path: Path, metadata: dict[str, Any]
+) -> Response:
+    """Stream a shared attachment from disk with range support."""
+    name = str(metadata.get("name") or path.name)
+    sha256 = str(metadata.get("sha256") or "")
+    if sha256:
+        etag = f'"{sha256}"'
+        if_none_match = request.headers.get("if-none-match")
+        if if_none_match and (
+            "*" in {tag.strip() for tag in if_none_match.split(",")}
+            or etag in {tag.strip() for tag in if_none_match.split(",")}
+        ):
+            return Response(
+                status_code=304,
+                headers={"ETag": etag, "Cache-Control": CACHE_CONTROL_SHARED},
+            )
+    headers = {
+        "Content-Disposition": _content_disposition(name),
+        "Cache-Control": CACHE_CONTROL_SHARED,
+    }
+    if sha256:
+        headers["ETag"] = f'"{sha256}"'
+    return FileResponse(
+        path,
+        media_type=str(metadata.get("mediaType") or "application/octet-stream"),
+        headers=headers,
     )
 
 

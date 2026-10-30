@@ -3,13 +3,15 @@ from __future__ import annotations
 import base64
 import hashlib
 import secrets
-from typing import Any
+from pathlib import Path
+from typing import Any, BinaryIO
 
 from agent_server.core.api_namespace import api_v2_path
 from agent_server.core.auth import create_signed_token
 from agent_server.core.models import UploadedAttachment
 from agent_server.core.utc import utc_now
 from agent_server.infra.files import FileStorage
+from agent_server.services.thumbnails import is_supported_media_type
 
 LOCAL_FILE_TOKEN_KIND = "local_file"
 LOCAL_FILE_TOKEN_EXPIRES_IN = 300
@@ -41,6 +43,39 @@ class AttachmentService:
                 file_id=file_id,
             )
 
+    async def save_user_upload_stream(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        name: str,
+        source: BinaryIO,
+        media_type: str | None = None,
+        max_bytes: int | None = None,
+    ) -> dict[str, Any]:
+        """Stage an upload straight from the request stream onto disk.
+
+        Same contract as :meth:`save_user_upload`, but the bytes are copied in
+        chunks: a batch of 25 MB photos no longer turns into the same number of
+        bytes objects inside the worker process.
+        """
+        async with self._store.attachment_write_fence(session_id, user_id=user_id):
+            file_id = f"file_{secrets.token_urlsafe(12)}"
+            metadata = self._file_metadata(
+                file_id=file_id,
+                session_id=session_id,
+                name=name,
+                media_type=media_type,
+                origin="user",
+            )
+            return await self._files.write_stream(
+                session_id,
+                file_id,
+                source,
+                metadata,
+                max_bytes=max_bytes,
+            )
+
     async def read_user_file(
         self,
         *,
@@ -67,6 +102,42 @@ class AttachmentService:
         data, metadata = await self._files.read(session_id, file_id)
         self._validate_blob_integrity(data, metadata)
         return data, metadata
+
+    async def local_signed_file(
+        self,
+        *,
+        session_id: str,
+        file_id: str,
+    ) -> tuple[Path | None, dict[str, Any]]:
+        """Return (blob path, metadata); path is None for remote backends."""
+        self._validate_file_id(file_id)
+        metadata = await self._files.metadata(session_id, file_id)
+        return await self._files.local_path(session_id, file_id), metadata
+
+    async def local_user_file(
+        self,
+        *,
+        session_id: str,
+        file_id: str,
+        user_id: str,
+    ) -> tuple[Path | None, dict[str, Any]]:
+        """Authorize a user download and return (blob path, metadata)."""
+        await self._store.get_session(session_id, user_id=user_id)
+        return await self.local_signed_file(session_id=session_id, file_id=file_id)
+
+    async def local_connector_file(
+        self,
+        *,
+        session_id: str,
+        file_id: str,
+        connector_id: str,
+    ) -> tuple[Path | None, dict[str, Any]]:
+        """Authorize a connector download and return (blob path, metadata)."""
+        self._validate_file_id(file_id)
+        if not await self._store.session_owned_by_connector(session_id, connector_id):
+            raise KeyError(session_id)
+        metadata = await self._files.metadata(session_id, file_id)
+        return await self._files.local_path(session_id, file_id), metadata
 
     async def read_shared_file(
         self,
@@ -160,6 +231,13 @@ class AttachmentService:
             createdAt=saved["createdAt"],
             downloadUrl=api_v2_path(f"/sessions/{session_id}/attachments/{saved['fileId']}"),
             openUrl=api_v2_path(f"/sessions/{session_id}/attachments/{saved['fileId']}/open"),
+            thumbnailUrl=(
+                api_v2_path(
+                    f"/sessions/{session_id}/attachments/{saved['fileId']}/thumb?w=512"
+                )
+                if is_supported_media_type(saved.get("mediaType"))
+                else ""
+            ),
         )
 
     async def _persist_file_blob(
@@ -175,20 +253,42 @@ class AttachmentService:
     ) -> dict[str, Any]:
         file_id = file_id or f"file_{secrets.token_urlsafe(12)}"
         self._validate_file_id(file_id)
-        created_at = utc_now()
-        metadata: dict[str, Any] = {
+        metadata = self._file_metadata(
+            file_id=file_id,
+            session_id=session_id,
+            name=name,
+            source_path=source_path,
+            media_type=media_type,
+            origin=origin,
+            size=len(data),
+            sha256=hashlib.sha256(data).hexdigest(),
+        )
+        await self._files.write(session_id, file_id, data, metadata)
+        return metadata
+
+    @staticmethod
+    def _file_metadata(
+        *,
+        file_id: str,
+        session_id: str,
+        name: str | None,
+        media_type: str | None,
+        origin: str,
+        source_path: str | None = None,
+        size: int = 0,
+        sha256: str = "",
+    ) -> dict[str, Any]:
+        return {
             "fileId": file_id,
             "sessionId": session_id,
             "path": source_path or "",
             "name": name or file_id,
-            "size": len(data),
-            "sha256": hashlib.sha256(data).hexdigest(),
+            "size": size,
+            "sha256": sha256,
             "mediaType": media_type or "",
             "origin": origin,
-            "createdAt": created_at,
+            "createdAt": utc_now(),
         }
-        await self._files.write(session_id, file_id, data, metadata)
-        return metadata
 
     @staticmethod
     def _validate_file_id(file_id: str) -> None:

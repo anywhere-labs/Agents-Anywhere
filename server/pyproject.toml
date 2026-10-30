@@ -13,6 +13,7 @@ dependencies = [
     "httpx-s3-client",
     "jsonschema>=4.26.0",
     "loguru>=0.7.3",
+    "pillow>=11.0.0",
     "python-multipart>=0.0.20",
     "redis>=6.0.0",
     "sqlalchemy[asyncio]>=2.0.36",
