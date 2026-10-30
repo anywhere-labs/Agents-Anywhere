@@ -14,6 +14,16 @@ data class RemoteDirectoryEntry(
     val size: Long?,
 )
 
+data class RemoteFileTransfer(
+    val path: String,
+    val name: String,
+    val size: Long,
+    val sha256: String,
+    val mediaType: String,
+    val transferId: String,
+    val downloadUrl: String,
+)
+
 data class RemoteTextFile(
     val path: String,
     val name: String,

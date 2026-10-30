@@ -1702,6 +1702,20 @@ fun SessionDetailScreen(
                                 sessionId = sessionId.orEmpty(),
                                 workspaceRoot = state.session?.cwd,
                                 controller = controller,
+                                loadWorkspaceImage = { path ->
+                                    val session = state.session
+                                    val root = session?.cwd.orEmpty()
+                                    if (session == null || root.isBlank() || !filesController.isWithinWorkspace(root, path)) {
+                                        Result.failure(IllegalStateException("Image path is outside the workspace."))
+                                    } else {
+                                        filesController.downloadWorkspaceFile(
+                                            connectorId = session.connectorId,
+                                            workspaceRoot = root,
+                                            path = path,
+                                            cacheDir = context.cacheDir,
+                                        ).map { it.file }
+                                    }
+                                },
                                 forceLatestRequest = forceLatestRequest,
                                 streamLatestRequest = streamLatestRequest,
                                 workingLabel = workingLabel,
