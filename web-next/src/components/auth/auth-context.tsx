@@ -59,6 +59,13 @@ type AuthState = {
   signOut: () => void
 }
 
+const AUTO_SSO_SUPPRESSION_KEY = "aa.auth.auto-sso-suppressed.v1"
+
+function autoSSOSuppressed(): boolean {
+  if (typeof window === "undefined") return false
+  return window.localStorage.getItem(AUTO_SSO_SUPPRESSION_KEY) === "1"
+}
+
 const AuthContext = React.createContext<AuthState | null>(null)
 
 export function useAuth() {
@@ -193,11 +200,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     clearOAuthQueryParams()
 
     async function boot() {
+      let serverConfig: Awaited<ReturnType<typeof authApi.config>> | null = null
       if (initialOAuthError && !cancelled) {
         setError(initialOAuthError)
       }
       try {
         const config = await authApi.config()
+        serverConfig = config
         if (!cancelled) {
           setOauthEnabled(config.oauthEnabled)
           setOauthProviderLabel(config.oauthProviderLabel)
@@ -212,6 +221,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } catch {
         // Server unreachable — fall through to normal auth flow.
+      }
+      if (
+        !stored &&
+        serverConfig?.oauthEnabled &&
+        !initialOAuthPending &&
+        !initialOAuthError &&
+        !autoSSOSuppressed() &&
+        nextScreen !== "signed-out"
+      ) {
+        try {
+          const result = await authApi.startOAuth(window.location.href)
+          if (!cancelled) {
+            window.location.assign(result.authorizeUrl)
+          }
+          return
+        } catch (err) {
+          if (!cancelled) setError(err instanceof Error ? err.message : t("errors.oauth"))
+        }
       }
       if (initialOAuthPending) {
         setOauthPending(initialOAuthPending)
@@ -343,6 +370,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setLoading(true)
     setError(null)
     try {
+      window.localStorage.removeItem(AUTO_SSO_SUPPRESSION_KEY)
       const result = await authApi.startOAuth(window.location.href)
       window.location.assign(result.authorizeUrl)
     } catch (err) {
@@ -397,6 +425,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [session?.accessToken])
 
   const signOut = React.useCallback(() => {
+    window.localStorage.setItem(AUTO_SSO_SUPPRESSION_KEY, "1")
     clearAuthFlow(window.sessionStorage)
     clearStoredSession()
     setSession(null)
