@@ -7,6 +7,7 @@ import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from anyio import CancelScope
@@ -20,6 +21,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from fastapi.responses import FileResponse
 from loguru import logger
 from starlette.requests import HTTPConnection
 
@@ -467,6 +469,14 @@ async def connector_attachment_content(
     connector_id = await _require_active_connector(authorization, db)
     await db.record_connector_activity(connector_id)
     try:
+        path, metadata = await attachments.local_connector_file(
+            session_id=session_id,
+            file_id=file_id,
+            connector_id=connector_id,
+        )
+        if path is not None:
+            await attachments.verify_local_file(path, metadata)
+            return _connector_file_response(path, metadata)
         data, metadata = await attachments.read_connector_attachment(
             session_id=session_id,
             file_id=file_id,
@@ -483,6 +493,23 @@ async def connector_attachment_content(
             "X-File-Name": _safe_header_value(metadata.get("name") or file_id),
             "X-File-Sha256": str(metadata.get("sha256") or ""),
         },
+    )
+
+
+def _connector_file_response(path: Path, metadata: dict[str, Any]) -> FileResponse:
+    """Stream a stored blob to the connector without buffering it in memory."""
+    sha256 = str(metadata.get("sha256") or "")
+    headers = {
+        "X-File-Name": _safe_header_value(metadata.get("name") or path.name),
+        "X-File-Sha256": sha256,
+        "Cache-Control": "private, max-age=3600",
+    }
+    if sha256:
+        headers["ETag"] = f'"{sha256}"'
+    return FileResponse(
+        path,
+        media_type=metadata.get("mediaType") or "application/octet-stream",
+        headers=headers,
     )
 
 
