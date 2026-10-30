@@ -29,6 +29,7 @@ import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -82,8 +83,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.regex.Matcher
 import java.util.regex.Pattern
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.commonmark.Extension
 import org.commonmark.ext.autolink.AutolinkExtension
 import org.commonmark.ext.gfm.strikethrough.Strikethrough
@@ -151,6 +154,23 @@ private val markdownParser = Parser.builder()
     )
     .build()
 
+private data class ParsedMarkdown(
+    val mathSource: MarkdownMathSource,
+    val document: Document,
+)
+
+private fun parseMarkdown(text: String): ParsedMarkdown {
+    val raw = text.ifBlank { "_(no content)_" }
+    return runCatching {
+        val extracted = MarkdownMathSource.parse(raw)
+        val parsed = markdownParser.parse(normalizeMarkdownTables(extracted.markdown)) as Document
+        ParsedMarkdown(extracted, parsed)
+    }.getOrElse {
+        // One malformed message must not take down the whole session timeline.
+        ParsedMarkdown(MarkdownMathSource.plain(raw), Document())
+    }
+}
+
 @Composable
 internal fun AgentMarkdownText(
     text: String,
@@ -163,12 +183,16 @@ internal fun AgentMarkdownText(
         ensureLatexExtensionsRegistered(context)
     }
     val uriHandler = LocalUriHandler.current
-    val (mathSource, document) = remember(text) {
-        val raw = text.ifBlank { "_(no content)_" }
-        val extracted = MarkdownMathSource.parse(raw)
-        val parsed = markdownParser.parse(normalizeMarkdownTables(extracted.markdown)) as Document
-        extracted to parsed
+    var parsedMarkdown by remember { mutableStateOf<ParsedMarkdown?>(null) }
+    LaunchedEffect(text) {
+        // Streaming deltas and expanded reasoning can contain large Markdown documents.
+        // Keep regex extraction and CommonMark parsing off the UI thread.
+        val next = withContext(Dispatchers.Default) { parseMarkdown(text) }
+        parsedMarkdown = next
     }
+    // Keep the last rendered document while the next delta is parsed; this avoids
+    // alternating between raw text and Markdown on every streaming update.
+    val parsed = parsedMarkdown
     val styles = markdownStyles(darkMode, compact)
     val openUrl: (String) -> Unit = { url ->
         runCatching { uriHandler.openUri(url) }
@@ -180,14 +204,22 @@ internal fun AgentMarkdownText(
             .padding(horizontal = 4.dp),
         verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp),
     ) {
-        MarkdownBlocks(
-            nodes = document.children(),
-            mathSource = mathSource,
-            darkMode = darkMode,
-            styles = styles,
-            onOpenFile = onOpenFile,
-            onOpenUrl = openUrl,
-        )
+        if (parsed == null) {
+            Text(
+                text = text,
+                color = styles.bodyColor,
+                style = styles.body,
+            )
+        } else {
+            MarkdownBlocks(
+                nodes = parsed.document.children(),
+                mathSource = parsed.mathSource,
+                darkMode = darkMode,
+                styles = styles,
+                onOpenFile = onOpenFile,
+                onOpenUrl = openUrl,
+            )
+        }
     }
 }
 
@@ -461,7 +493,10 @@ private fun MarkdownInlineText(
             .onGloballyPositioned(readingAnchor::positioned)
             .pointerInput(inline.text) {
                 detectTapGestures { position ->
-                    val offset = layoutResult?.getOffsetForPosition(position) ?: return@detectTapGestures
+                    val layout = layoutResult
+                        ?.takeIf { it.layoutInput.text == inline.text }
+                        ?: return@detectTapGestures
+                    val offset = layout.getOffsetForPosition(position)
                     inline.text.getStringAnnotations(AnnotationFile, offset, offset).firstOrNull()?.let {
                         onOpenFile(it.item)
                         return@detectTapGestures
@@ -1350,7 +1385,7 @@ private fun createLatexDrawable(
     colorArgb: Int,
 ): JLatexMathDrawable? {
     val trimmed = normalizeLatexSource(latex.trim())
-    if (trimmed.isEmpty()) return null
+    if (trimmed.isEmpty() || trimmed.length > 16_384) return null
     registerLatexExtensionsOnce()
     return runCatching {
         JLatexMathDrawable.builder(trimmed)
@@ -1468,7 +1503,7 @@ private fun LatexDrawableCanvas(
         val w = size.width.roundToInt().coerceAtLeast(1)
         val h = size.height.roundToInt().coerceAtLeast(1)
         drawable.setBounds(0, 0, w, h)
-        drawable.draw(drawContext.canvas.nativeCanvas)
+        runCatching { drawable.draw(drawContext.canvas.nativeCanvas) }
     }
 }
 
@@ -1589,6 +1624,8 @@ private class MarkdownMathSource private constructor(
     }
 
     companion object {
+        fun plain(markdown: String): MarkdownMathSource = MarkdownMathSource(markdown, emptyMap(), null)
+
         fun parse(markdown: String): MarkdownMathSource {
             if (!mayContainMath(markdown)) {
                 return MarkdownMathSource(markdown, emptyMap(), null)
