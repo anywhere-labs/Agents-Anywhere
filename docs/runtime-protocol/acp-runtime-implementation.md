@@ -2,6 +2,10 @@
 
 本文按当前工作树源码整理，描述 Connector 的通用 ACP 适配和默认 Pi 接入。源码入口见文末；能力是否可用以实例和会话实际返回值为准。
 
+## 集成与升级
+
+本功能对应 [Issue #483](https://github.com/anywhere-labs/Agents-Anywhere/issues/483) 和 [PR #484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)。部署 Server 时需按现有升级流程执行数据库迁移至 `v2_45`，持久化工作区准备、异步创建与事件接收凭据；Connector 和使用此功能的客户端需使用本 PR 配套代码。产品版本号保持不变，本功能尚未单独发布安装包。
+
 ## 默认执行路径
 
 ```text
