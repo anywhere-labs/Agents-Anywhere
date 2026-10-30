@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import secrets
@@ -102,6 +103,32 @@ class AttachmentService:
         data, metadata = await self._files.read(session_id, file_id)
         self._validate_blob_integrity(data, metadata)
         return data, metadata
+
+
+    async def verify_local_file(self, path: Path, metadata: dict[str, Any]) -> None:
+        """Validate the on-disk blob before handing it to FileResponse.
+
+        Streaming responses must keep the same integrity guarantee as the
+        byte-reading path. The check is chunked and runs in a worker thread so
+        a large upload cannot block the event loop or double peak memory.
+        """
+        expected = str(metadata.get("sha256") or "")
+        if not expected:
+            return
+
+        def digest() -> str:
+            hasher = hashlib.sha256()
+            with path.open("rb") as handle:
+                while True:
+                    chunk = handle.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    hasher.update(chunk)
+            return hasher.hexdigest()
+
+        actual = await asyncio.to_thread(digest)
+        if not secrets.compare_digest(actual, expected):
+            raise ValueError("attachment integrity check failed")
 
     async def local_signed_file(
         self,
@@ -221,13 +248,18 @@ class AttachmentService:
         saved: dict[str, Any],
         fallback_media_type: str,
     ) -> UploadedAttachment:
+        media_type = saved.get("mediaType") or fallback_media_type
+        # Thumbnails are generated from an on-disk blob. Remote/object backends
+        # cannot serve the local thumbnail route yet, so do not advertise a URL
+        # that would 404 for them.
+        has_local_blob = await self._files.local_path(session_id, saved["fileId"]) is not None
         return UploadedAttachment(
             fileId=saved["fileId"],
             sessionId=session_id,
             name=saved["name"],
             size=saved["size"],
             sha256=saved["sha256"],
-            mediaType=saved.get("mediaType") or fallback_media_type,
+            mediaType=media_type,
             createdAt=saved["createdAt"],
             downloadUrl=api_v2_path(f"/sessions/{session_id}/attachments/{saved['fileId']}"),
             openUrl=api_v2_path(f"/sessions/{session_id}/attachments/{saved['fileId']}/open"),
@@ -235,7 +267,7 @@ class AttachmentService:
                 api_v2_path(
                     f"/sessions/{session_id}/attachments/{saved['fileId']}/thumb?w=512"
                 )
-                if is_supported_media_type(saved.get("mediaType"))
+                if has_local_blob and is_supported_media_type(media_type)
                 else ""
             ),
         )

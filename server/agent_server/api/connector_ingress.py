@@ -475,6 +475,7 @@ async def connector_attachment_content(
             connector_id=connector_id,
         )
         if path is not None:
+            await attachments.verify_local_file(path, metadata)
             return _connector_file_response(path, metadata)
         data, metadata = await attachments.read_connector_attachment(
             session_id=session_id,

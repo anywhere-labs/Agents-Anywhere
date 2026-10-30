@@ -11232,7 +11232,7 @@ def test_client_uploads_attachment_and_connector_downloads_by_session(tmp_path):
     # An unknown suffix must not fall back to serving the blob; the bundled web
     # build answers unknown paths with its SPA shell instead of a 404.
     unknown_suffix = client.get(f"{upload_body['openUrl']}-token", headers=headers)
-    assert unknown_suffix.content != data
+    assert unknown_suffix.status_code == 404
 
     connector_download = client.get(
         f"/api/v2/connector/sessions/{session_id}/attachments/{upload_body['fileId']}/content",

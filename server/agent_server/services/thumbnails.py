@@ -2,15 +2,22 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from weakref import WeakValueDictionary
 
 THUMBNAIL_WIDTHS = (256, 512, 1024)
 DEFAULT_THUMBNAIL_WIDTH = 512
 _QUALITY = 76
 
-_locks: dict[str, asyncio.Lock] = {}
+_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 # Decoding a 12 MP photo costs ~50 MB of pixels; cap how many run at once so a
 # six-photo upload cannot balloon the worker while previews warm up.
 _render_slots = asyncio.Semaphore(2)
+
+# Thumbnail decoding is limited to formats that have bounded, predictable
+# decoders. TIFF and other Pillow plugins can allocate far more memory than
+# their header suggests, so they are deliberately not accepted here.
+_THUMBNAIL_FORMATS = ("JPEG", "PNG", "WEBP", "GIF", "BMP")
+_MAX_THUMBNAIL_PIXELS = 16_000_000
 
 
 def normalise_width(width: int | None) -> int:
@@ -41,8 +48,11 @@ def _render(blob: Path, destination: Path, width: int) -> bool:
         return False
     temp = destination.with_name(destination.name + ".part")
     try:
-        with Image.open(blob) as image:
+        Image.MAX_IMAGE_PIXELS = _MAX_THUMBNAIL_PIXELS * 2
+        with Image.open(blob, formats=list(_THUMBNAIL_FORMATS)) as image:
             if getattr(image, "is_animated", False):
+                return False
+            if image.width * image.height > _MAX_THUMBNAIL_PIXELS:
                 return False
             # JPEG can decode at 1/2, 1/4 or 1/8 scale: a 12 MP phone photo
             # drops to ~1 MP before it ever reaches the RGB buffer.
@@ -95,5 +105,4 @@ def is_supported_media_type(media_type: str | None) -> bool:
         "image/webp",
         "image/gif",
         "image/bmp",
-        "image/tiff",
     }

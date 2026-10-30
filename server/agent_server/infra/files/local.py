@@ -150,10 +150,15 @@ class LocalFileStorage(FileStorage):
             "size": total,
             "sha256": digest.hexdigest(),
         }
-        (session_dir / f"{file_id}.json").write_text(
-            json.dumps(stored, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        temporary_meta = session_dir / f".{file_id}.{uuid4().hex}.json"
+        try:
+            temporary_meta.write_text(
+                json.dumps(stored, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            temporary_meta.replace(session_dir / f"{file_id}.json")
+        finally:
+            temporary_meta.unlink(missing_ok=True)
         return stored
 
     def _read(self, session_id: str, file_id: str) -> tuple[bytes, dict[str, Any]]:

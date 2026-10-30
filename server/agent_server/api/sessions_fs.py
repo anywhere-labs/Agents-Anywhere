@@ -42,7 +42,7 @@ from agent_server.services.thumbnails import (
 router = APIRouter(prefix="/sessions", tags=["session-files"])
 
 
-MAX_UPLOAD_FILES_PER_REQUEST = 10
+MAX_UPLOAD_FILES_PER_REQUEST = 5
 MAX_UPLOAD_FILE_BYTES = 25 * 1024 * 1024  # 25 MiB
 
 _BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
@@ -85,6 +85,7 @@ async def attachment_open(
             user_id=user_id,
         )
         if path is not None:
+            await attachments.verify_local_file(path, metadata)
             return _attachment_file_response(request, path, metadata)
         url = await attachments.user_file_open_url(
             session_id=session_id,
@@ -152,6 +153,7 @@ async def local_file_raw(
             file_id=file_id,
         )
         if path is not None:
+            await attachments.verify_local_file(path, metadata)
             return _attachment_file_response(request, path, metadata)
         data, metadata = await attachments.read_local_signed_file(
             session_id=session_id,

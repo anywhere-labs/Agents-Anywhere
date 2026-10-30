@@ -146,6 +146,7 @@ async def public_share_attachment(
             file_id=file_id,
         )
         if path is not None:
+            await attachments.verify_local_file(path, metadata)
             return _shared_file_response(request, path, metadata)
         data, metadata = await attachments.read_shared_file(
             session_id=share["sessionId"],
