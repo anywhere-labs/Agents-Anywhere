@@ -78,6 +78,69 @@ class FilesController(
         }
     }
 
+    suspend fun downloadWorkspaceFile(
+        connectorId: String,
+        workspaceRoot: String,
+        path: String,
+        cacheDir: java.io.File,
+    ): Result<DownloadedFile> {
+        val normalizedPath = normalizeRemotePath(path)
+        val deviceOs = if (windowsDriveRoot(workspaceRoot) != null) "windows" else null
+        val root = remoteRootForPath(
+            targetPath = normalizedPath,
+            deviceOs = deviceOs,
+            fallbackRoot = workspaceRoot,
+        )
+        val safeName = normalizedPath.substringAfterLast('/').substringAfterLast('\\')
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .take(96)
+            .ifBlank { "image" }
+        val destination = java.io.File(cacheDir, "session-files/${normalizedPath.hashCode().toString(16)}-$safeName")
+        return downloadFile(
+            connectorId = connectorId,
+            root = root,
+            path = normalizedPath,
+            destination = destination,
+        )
+    }
+
+    suspend fun downloadFile(
+        connectorId: String,
+        root: String,
+        path: String,
+        destination: java.io.File,
+    ): Result<DownloadedFile> {
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val auth = authSession()
+                val transfer = filesApi.prepareFile(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    deviceId = connectorId,
+                    root = root,
+                    path = path,
+                )
+                val file = filesApi.downloadFile(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    transfer = transfer,
+                    destination = destination,
+                )
+                DownloadedFile(
+                    path = transfer.path,
+                    name = transfer.name,
+                    mediaType = transfer.mediaType,
+                    size = transfer.size,
+                    sha256 = transfer.sha256,
+                    file = file,
+                )
+            }.recoverCatching { error ->
+                if (error is ApiException) throw error
+                throw IllegalStateException(error.message ?: "Could not download file.", error)
+            }
+        }
+    }
+
     private fun authSession(): ApiAuth {
         val serverUrl = sessionStore.readServerUrl()
         val accessToken = sessionStore.readAccessToken()

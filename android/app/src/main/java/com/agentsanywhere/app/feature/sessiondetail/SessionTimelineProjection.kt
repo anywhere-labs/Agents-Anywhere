@@ -454,11 +454,36 @@ private fun RemoteTimelineItem.toToolCallMessage(title: String, subtitle: String
         output = outputSummary,
         toolError = errorSummary,
         rawContent = content.toString(2),
+        workspaceImages = workspaceImagePaths(),
         orderSeq = orderSeq,
         revision = revision,
         updatedSeq = updatedSeq,
         clientMessageId = source.text("clientMessageId"),
     )
+}
+
+private val WorkspaceImageFileRegex = Regex(
+    """<(?:file|capture_file)>\s*([^<\n]+?\.(?:png|jpe?g|webp|gif|bmp|heic|heif))\s*</(?:file|capture_file)>""",
+    RegexOption.IGNORE_CASE,
+)
+
+private fun RemoteTimelineItem.workspaceImagePaths(): List<String> {
+    val result = linkedSetOf<String>()
+    content.optJSONObject("dshResultMeta")
+        ?.optString("path")
+        ?.trim()
+        ?.takeIf(::isWorkspaceImagePath)
+        ?.let(result::add)
+    val output = content.opt("output")?.toString().orEmpty()
+    WorkspaceImageFileRegex.findAll(output).forEach { match ->
+        match.groupValues.getOrNull(1)?.trim()?.takeIf(::isWorkspaceImagePath)?.let(result::add)
+    }
+    return result.toList()
+}
+
+private fun isWorkspaceImagePath(path: String): Boolean {
+    val extension = path.substringAfterLast('.', "").lowercase()
+    return extension in setOf("png", "jpg", "jpeg", "webp", "gif", "bmp", "heic", "heif")
 }
 
 private fun RemoteTimelineItem.shortToolTitle(): String {

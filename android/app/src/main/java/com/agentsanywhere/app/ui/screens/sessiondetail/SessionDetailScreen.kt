@@ -1702,6 +1702,19 @@ fun SessionDetailScreen(
                                 sessionId = sessionId.orEmpty(),
                                 workspaceRoot = state.session?.cwd,
                                 controller = controller,
+                                loadWorkspaceImage = { path ->
+                                    val session = state.session
+                                    if (session == null) {
+                                        Result.failure(IllegalStateException("No active session."))
+                                    } else {
+                                        filesController.downloadWorkspaceFile(
+                                            connectorId = session.connectorId,
+                                            workspaceRoot = session.cwd.orEmpty(),
+                                            path = path,
+                                            cacheDir = context.cacheDir,
+                                        ).map { it.file }
+                                    }
+                                },
                                 forceLatestRequest = forceLatestRequest,
                                 streamLatestRequest = streamLatestRequest,
                                 workingLabel = workingLabel,

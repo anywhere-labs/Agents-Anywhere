@@ -46,6 +46,7 @@ data class TimelineMessage(
     val fileChanges: List<TimelineFileChange> = emptyList(),
     val agentCall: TimelineAgentCall? = null,
     val rawContent: String = "",
+    val workspaceImages: List<String> = emptyList(),
     val orderSeq: Int = 0,
     val revision: Int = 1,
     val updatedSeq: Int = 0,
