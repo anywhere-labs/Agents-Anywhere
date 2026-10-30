@@ -65,6 +65,9 @@ class SessionService:
         self.stopping = False
         self.on_binding_changed = None
         self.materialize_attachments = None
+        self.launch_for_session = None
+        self.launch_for_preparation = None
+        self.on_context_closed = None
         self.preparation_driver = preparation_driver or SessionPreparation()
 
     def start_background(self):
@@ -346,7 +349,8 @@ class SessionService:
 
     async def _open_preparation(self, context: dict, preparation: Preparation):
         try:
-            await context["client"].start(self.launch, str(self.root))
+            launch = await self.launch_for_preparation() if self.launch_for_preparation else self.launch
+            await context["client"].start(launch, str(self.root))
             process = context["client"].process.process
             self._job(self._watch(context, process))
             result = await self.preparation_driver.prepare(context)
@@ -646,7 +650,8 @@ class SessionService:
             context.update(sessionId=session_id, agentSessionId=binding.agent_session_id,
                            projection=self.projection_factory(session_id, context["generation"]))
             try:
-                await context["client"].start(self.launch, str(self.root))
+                launch = await self.launch_for_session(session_id) if self.launch_for_session else self.launch
+                await context["client"].start(launch, str(self.root))
                 guarantees = frozenset(context["client"].capabilities.get("_meta", {}).get("aa", {}).get("guarantees", []))
                 if not self.profile.required_guarantees <= guarantees:
                     raise AcpError("agent_guarantees_missing", "当前 Agent 不能满足该会话的恢复保证。")
@@ -934,6 +939,8 @@ class SessionService:
                         self.contexts.pop(key, None)
                 if context.get("sessionId"):
                     self.sessions.pop(context["sessionId"], None)
+                    if self.on_context_closed:
+                        self.on_context_closed(context["sessionId"])
 
         context["closeTask"] = asyncio.create_task(close())
         await asyncio.shield(context["closeTask"])

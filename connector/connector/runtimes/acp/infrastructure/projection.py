@@ -122,6 +122,8 @@ class Projection:
         else:
             return None
         item["source"] = {"runtime": self.runtime_type, "epoch": self.epoch}
+        if item.get("role") == "user" and item["content"].get("clientMessageId"):
+            item["source"]["clientMessageId"] = item["content"]["clientMessageId"]
         item.update(
             orderSeq=old.get("orderSeq", len(self.items) + 1),
             revision=old.get("revision", 0) + 1,

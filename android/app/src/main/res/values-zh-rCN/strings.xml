@@ -707,4 +707,14 @@
     <string name="announcement_title">公告</string>
     <string name="announcement_published_at">发布于 %1$s</string>
     <string name="announcement_acknowledge">我知道了</string>
+    <string name="native_history_title">原生历史</string>
+    <string name="native_history_continue">继续任务</string>
+    <string name="native_history_release">结束 AA 执行</string>
+    <string name="native_history_preparing">正在准备执行…</string>
+    <string name="native_history_release_hint">结束 AA 执行并等待释放后，可回到 CLI 恢复同一会话。</string>
+    <string name="native_history_browse_hint">历史可以浏览。退出 CLI 中对应会话后，可在这里继续任务。</string>
+    <string name="native_history_confirm_hint">将保留原生会话身份并写回后续历史。请先退出 CLI 中对应会话，继续期间不要在 CLI 同时打开它。</string>
+    <string name="native_history_cli_exited">我已退出 CLI 中对应会话</string>
+    <string name="native_history_check">查询恢复状态</string>
+    <string name="native_history_releasing">正在结束执行…</string>
 </resources>

@@ -45,6 +45,16 @@ def installation_lock(path: Path):
 
 
 def _node_pair(executable: Path) -> tuple[Path, Path] | None:
+    if not executable.is_file():
+        return None
+    try:
+        # Preserve argv[0] until a version-manager shim resolves its active Node.
+        resolved = subprocess.check_output([str(executable), "--print", "process.execPath"], timeout=10, text=True, stderr=subprocess.DEVNULL).strip()
+        if not Path(resolved).is_absolute():
+            return None
+        executable = Path(resolved)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
     candidates = (
         executable.parent / "node_modules/npm/bin/npm-cli.js",
         executable.parent.parent / "lib/node_modules/npm/bin/npm-cli.js",
@@ -64,7 +74,7 @@ def _node_pair(executable: Path) -> tuple[Path, Path] | None:
 
 def node_runtime(root: Path) -> tuple[Path, Path]:
     system = shutil.which("node")
-    if system and (pair := _node_pair(Path(system).resolve())):
+    if system and (pair := _node_pair(Path(system))):
         return pair
     machine = {"x86_64": "x64", "amd64": "x64", "aarch64": "arm64", "arm64": "arm64"}.get(platform.machine().lower())
     target = {"darwin": "darwin", "linux": "linux", "win32": "win"}.get(sys.platform)

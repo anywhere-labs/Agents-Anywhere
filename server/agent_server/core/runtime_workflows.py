@@ -131,3 +131,5 @@ class RecoverRuntimeSessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     operationId: str = Field(min_length=1, max_length=160)
     expectedGeneration: str = Field(min_length=1, max_length=160)
+    cliExited: StrictBool = False
+    sourceRevision: str | None = Field(default=None, min_length=1, max_length=160)

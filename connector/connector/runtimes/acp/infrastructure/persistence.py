@@ -66,6 +66,9 @@ class Store:
             )
         ]
 
+    def items(self, kind: str) -> list[tuple[str, dict]]:
+        return [(key, json.loads(body)) for key, body in self.db.execute("SELECT id, body FROM records WHERE kind=? ORDER BY id", (kind,))]
+
     def put(self, kind: str, key: str, value: dict) -> None:
         self.db.execute(
             "INSERT INTO records VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET body=excluded.body",

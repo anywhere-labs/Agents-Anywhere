@@ -16,6 +16,10 @@ final class SessionChatModel {
     private(set) var isLoadingSettings = false
     var error: String?
     var settingsError: String?
+    private(set) var nativeHistoryBusy = false
+    var nativeHistoryError: String?
+    @ObservationIgnored private var nativeRecovery: (id: String, generation: String, revision: String)?
+    var hasNativeRecovery: Bool { nativeRecovery != nil }
     private(set) var isOpeningPrepared = false
     var isOpeningReady: Bool { isOpeningPrepared && timeline.hasPresentedSnapshot }
     private(set) var openingError: String?
@@ -242,6 +246,53 @@ final class SessionChatModel {
     func refreshTakeover() async {
         await session.refresh()
         if session.runtime.isFresh { takeoverUncertain = false; takeoverError = nil }
+    }
+
+    func continueNativeTask() async {
+        guard !nativeHistoryBusy, let workflowAPI, let state = session.runtime.state else { return }
+        nativeHistoryBusy = true; nativeHistoryError = nil
+        defer { nativeHistoryBusy = false }
+        do {
+            if nativeRecovery == nil {
+                guard let generation = state.metadata["ownerGeneration"]?.stringValue,
+                      let revision = state.metadata["sourceRevision"]?.stringValue else { return }
+                if session.metadata?.takeover != true { try await repository.setTakeover(sessionId: session.id, enabled: true) }
+                nativeRecovery = (UUID().uuidString, generation, revision)
+            }
+            guard let request = nativeRecovery else { return }
+            for _ in 0..<360 {
+                guard session.isValid, !Task.isCancelled else { return }
+                let result = try await workflowAPI.recover(sessionID: session.id, generation: request.generation,
+                    operationID: request.id, sourceRevision: request.revision)
+                switch result["phase"]?.stringValue {
+                case "completed": nativeRecovery = nil; await session.refresh(); return
+                case "running": try await Task.sleep(for: .seconds(1))
+                case "rejected", "failed":
+                    nativeRecovery = nil
+                    throw NSError(domain: "NativeHistory", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                        result["failure"]?["message"]?.stringValue ?? String(localized: "恢复失败，历史仍可查看。")])
+                default: throw NSError(domain: "NativeHistory", code: 2, userInfo: [NSLocalizedDescriptionKey: String(localized: "恢复结果尚未确认，请查询原操作状态。")])
+                }
+            }
+            nativeHistoryError = String(localized: "恢复结果尚未确认，请查询原操作状态。")
+        } catch {
+            if let status = (error as? HTTPError)?.statusCode, (400..<500).contains(status) { nativeRecovery = nil }
+            if !Task.isCancelled { nativeHistoryError = error.localizedDescription; await session.refresh() }
+        }
+    }
+
+    func endNativeTask() async {
+        guard !nativeHistoryBusy, let workflowAPI,
+              let generation = session.runtime.state?.metadata["ownerGeneration"]?.stringValue else { return }
+        nativeHistoryBusy = true; nativeHistoryError = nil
+        defer { nativeHistoryBusy = false }
+        do {
+            let result = try await workflowAPI.closeSession(sessionID: session.id, generation: generation)
+            if result["closed"] != .bool(true) {
+                nativeHistoryError = String(localized: "尚未确认执行实例已释放，请刷新状态。")
+            }
+            await session.refresh()
+        } catch { nativeHistoryError = error.localizedDescription }
     }
 
     func loadSettings() async {

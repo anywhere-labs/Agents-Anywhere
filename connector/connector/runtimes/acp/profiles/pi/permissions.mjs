@@ -10,7 +10,7 @@ function freeze(value) {
 
 async function permission(ctx) {
   try {
-    const config = JSON.parse(await readFile(join(process.env.PI_CODING_AGENT_DIR, 'aa-permissions.json'), 'utf8'))
+    const config = JSON.parse(await readFile(process.env.AA_PI_PERMISSIONS_FILE || join(process.env.PI_CODING_AGENT_DIR, 'aa-permissions.json'), 'utf8'))
     return config[ctx.sessionManager.getSessionId()] ?? 'ask'
   } catch { return 'ask' }
 }
@@ -26,7 +26,8 @@ export default function aaPermissions(pi) {
     if (safeRead && mode !== 'ask_all') return
     if (mode === 'readonly') return { block: true, reason: 'AA 当前会话为只读模式。' }
     const request = JSON.stringify({ id: event.toolCallId, name: event.toolName, input: event.input })
-    const answer = await ctx.ui.confirm('AA_TOOL_PERMISSION\n' + request, '')
+    let answer = false
+    try { answer = await ctx.ui.confirm('AA_TOOL_PERMISSION\n' + request, '') } catch { /* Fail closed if the approval channel is lost. */ }
     if (!answer) return { block: true, reason: '用户拒绝了此操作。' }
   })
   pi.on('user_bash', async (event, ctx) => {
@@ -34,7 +35,9 @@ export default function aaPermissions(pi) {
       output: 'AA 当前会话为只读模式，不能执行命令。', exitCode: 1, cancelled: false, truncated: false,
     } }
     const request = JSON.stringify({ id: 'user-bash', name: 'bash', input: { command: event.command } })
-    if (!await ctx.ui.confirm('AA_TOOL_PERMISSION\n' + request, '')) return { result: {
+    let answer = false
+    try { answer = await ctx.ui.confirm('AA_TOOL_PERMISSION\n' + request, '') } catch { /* Fail closed. */ }
+    if (!answer) return { result: {
       output: '用户拒绝了此操作。', exitCode: 1, cancelled: false, truncated: false,
     } }
   })

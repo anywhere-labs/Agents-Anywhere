@@ -30,14 +30,25 @@ def build_services(config, host, profile, launch, *, preparation_driver=None, cl
     )
 
     async def publish(notifications):
-        await host.publish_runtime_notifications(
-            config.runtime,
-            [
-                {**item, "params": {**item["params"], "runtimeId": config.runtime_id}}
-                for item in notifications
-            ],
-            runtime_id=config.runtime_id,
-        )
+        batch = []
+
+        async def flush_batch():
+            if batch:
+                await host.publish_runtime_notifications(config.runtime, list(batch), runtime_id=config.runtime_id)
+                batch.clear()
+
+        for item in notifications:
+            params = {**item["params"], "runtimeId": config.runtime_id}
+            if item["method"] == "timeline.sync" and params.get("complete") and hasattr(host, "publish_runtime_snapshot"):
+                await flush_batch()
+                source = store.get("pi_native_source", params["sessionId"]) or {}
+                await host.publish_runtime_snapshot(config.runtime, params["sessionId"], {
+                    "externalSessionId": params.get("externalSessionId"),
+                    **({"cwd": source["cwd"], "title": source.get("title"), "orderingTime": source.get("updatedAt")} if source else {}),
+                }, params["items"], runtime_id=config.runtime_id)
+            else:
+                batch.append({**item, "params": params})
+        await flush_batch()
 
     sync = SynchronizationService(store, publish)
     return app, sync

@@ -7,6 +7,8 @@ class RuntimeWorkflowApi(private val client: ApiClient = ApiClient()) {
         client.postJson(serverUrl = server, authorizationToken = token, path = "/runtime-workflows/sessions/${sessionId.urlEncode()}/operations", body = body)
     fun recover(server: String, token: String, sessionId: String, body: JSONObject): JSONObject =
         client.postJson(serverUrl = server, authorizationToken = token, path = "/runtime-workflows/sessions/${sessionId.urlEncode()}/recover", body = body)
+    fun closeSession(server: String, token: String, sessionId: String, body: JSONObject): JSONObject =
+        client.postJson(serverUrl = server, authorizationToken = token, path = "/runtime-workflows/sessions/${sessionId.urlEncode()}/close", body = body)
     fun configuration(server: String, token: String, sessionId: String): JSONObject =
         client.getJson(serverUrl = server, authorizationToken = token, path = "/runtime-workflows/sessions/${sessionId.urlEncode()}/configuration")
     fun updateConfiguration(server: String, token: String, sessionId: String, body: JSONObject): JSONObject =

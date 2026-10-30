@@ -1741,6 +1741,20 @@ fun SessionDetailScreen(
                                         onSelect = ::chooseCommand,
                                     )
                                 }
+                                if (state.runtime.metadata["nativeHistory"] == true && sessionId != null) {
+                                    NativeHistoryControls(
+                                        sessionId = sessionId,
+                                        generation = state.runtime.metadata["ownerGeneration"] as? String ?: "",
+                                        revision = state.runtime.metadata["sourceRevision"] as? String ?: "",
+                                        canContinue = connectorOnline && state.capabilities.find("session.recover", runtimeId, runtimeType)?.let {
+                                            it.supported && it.available && (it.allowed || it.unavailableReason == "session_not_taken_over")
+                                        } == true,
+                                        canRelease = connectorOnline && state.capabilities.isUsable("session.close", runtimeId, runtimeType),
+                                        reason = state.runtime.error?.get("message") as? String,
+                                        onAction = { body, close -> controller.nativeHistoryAction(sessionId, body, close) },
+                                        onSettled = { loadInitialSnapshot() },
+                                    )
+                                }
                                 MessageComposer(
                                     darkMode = darkMode,
                                     draft = if (takeoverEnabled) draft else "",

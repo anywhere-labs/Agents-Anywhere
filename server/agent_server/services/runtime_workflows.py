@@ -235,7 +235,7 @@ class RuntimeWorkflowService:
         if not any(
             cap.get("capabilityId") == required
             and cap.get("supported")
-            and (cap.get("available") or method == "session.close")
+            and (cap.get("available") or method in {"session.close", "session.recover"})
             and cap.get("allowed")
             for cap in capabilities.get("capabilitySet", {}).get("capabilities", [])
         ):

@@ -15,11 +15,46 @@ Web / Desktop / Android / iOS
 
 默认 Provider 为 Codex、Claude、DSH、Pi。Pi 使用 `runtimeType=pi`、`implementationType=acp-stdio`，ACP 是内部对接协议。通用 `AcpRuntime` 通过注入 `AgentProfile`、启动配置、准备策略复用协调逻辑，其他 Agent 可以有自己的 Provider 身份；默认列表没有单独名为 ACP 的入口。
 
-Pi 的 `PiProvider` 直接实现 `RuntimeProvider` 的配置、发现和启动流程，托管安装并运行上游 npm 发布包。
+Pi 的 `PiProvider` 直接实现 `RuntimeProvider` 的配置、发现和启动流程，优先复用本机 npm 安装的 Pi SDK，第三方 `@openma/pi-acp` 提供 ACP 入口并在自己的进程内调用该 SDK。
+
+## 本机安装与原生历史
+
+```mermaid
+flowchart LR
+    CLI["本机 pi CLI"] --> Package["本机 Pi 安装包：CLI 与 SDK"]
+    CLI <--> Files["原生历史、配置与认证"]
+    Files -->|只读解析| Index["Connector 历史索引"]
+    Index --> Server["AA Server"]
+    Clients["Web / Desktop / Android / iOS"] <--> Server
+    Server <--> Runtime["Connector ACP Runtime"]
+    Runtime <-->|ACP stdio| Adapter["第三方 @openma/pi-acp"]
+    Adapter --> SDK["选定的 Pi SDK"]
+    Package -.绝对模块地址绑定.-> SDK
+    SDK <-->|恢复原会话并保存后续历史| Files
+    SDK --> Guard["AA 工具与命令审批"]
+```
+
+CLI 和 AA 对同一会话按顺序切换。浏览直接读取默认目录及额外历史目录，不启动 Pi、ACP 或用户扩展；模型、认证或执行环境不可用不影响历史浏览。四端通过有效能力提供「继续任务」和「结束 AA 执行」：退出 CLI 对应会话并确认后，恢复同一文件、原生 ID 和工作目录；实例实际释放后才可切回 CLI。不会自动新建或分叉。
+
+| 配置 | 含义 |
+| --- | --- |
+| `executionMode=auto` / `local` | 使用本机 Pi；不兼容或找不到时明确报错，不静默回退 |
+| `cliPath` | 可选的真实 CLI 入口；自动发现支持 PATH、活动 Node 版本管理器入口和 npm Windows 启动器 |
+| `agentDir` | 原生配置目录；默认遵循 `PI_CODING_AGENT_DIR`，否则 `~/.pi/agent` |
+| `historyDirs` | 额外历史目录，直接恢复其原文件 |
+| `executionMode=managed` | 使用 AA 隔离环境，需要模型网关配置 |
+
+当前本机执行支持经过验证的 `@earendil-works/pi-coding-agent@1.4.0` npm 安装形态。CLI 和 SDK 是同一个包的入口，不另装 `pi-sdk`；通过绝对模块地址绑定，不依赖 Node 对全局包的自动解析。独立二进制、无 SDK 导出的入口和其他版本保持可浏览并返回兼容性原因。
+
+上游适配器发布包经过固定文件摘要校验，在 AA 自己的缓存内应用 SDK 绑定、准确文件定位和审批装配的兼容补丁，不改用户安装。记录 Node、SDK、可解析依赖、适配器补丁及守卫摘要；来源变化不自动切换旧会话。已有只含模型网关的配置保留受管语义。
+
+浏览不初始化原生配置。执行允许 SDK 正常维护认证与缓存，不覆盖用户既有模型和设置；AA 权限文件保存在 AA 状态目录。当前原地恢复仅开放原生 v3 历史，需迁移的旧历史仍可浏览，避免未经确认的源文件重写。
+
+恢复前检查最新来源修订，执行期间在受控 SDK 写入前再次核对，同时监测外部变化。AA 内部锁防止重复执行实例；原版 CLI 不受该锁约束，因此不支持独立实例并发写入，也不承诺文件系统级原子独占。检测冲突后停止接纳并释放实例，不合并或重投未知消息。详细请求、状态与失败语义见 [Pi 原生历史契约](../api/pi-native-history.md)。
 
 ## Pi 实例配置与安装
 
-Pi 复用现有模型网关表单，必填 `modelGateway`，可填写 `customModels`。未填写自定义模型时，在启动实例时从网关 `/models` 获取最多 64 个模型；获取失败或目录为空时返回明确错误，提示填写模型 ID。
+受管模式复用现有模型网关表单，必填 `modelGateway`，可填写 `customModels`。未填写自定义模型时，在启动实例时从网关 `/models` 获取最多 64 个模型；获取失败或目录为空时返回明确错误，提示填写模型 ID。
 
 当前 Provider 固定安装以下依赖：
 
@@ -41,7 +76,7 @@ Pi 复用现有模型网关表单，必填 `modelGateway`，可填写 `customMod
 - `sessions/` 作为受管 Pi 原生会话目录。
 - 网关密钥通过子进程环境 `AA_PI_GATEWAY_KEY` 传递，模型配置引用该变量。
 
-启动发布包入口 `@openma/pi-acp/dist/bin.js`，传入隔离的 `--agent-dir`、`--session-dir`、`--quiet-startup` 和 `--no-delegation`。此路径不使用用户全局 `~/.pi/agent` 配置。
+受管模式启动经兼容处理的发布包入口 `@openma/pi-acp/dist/bin.js`，传入隔离的 `--agent-dir`、`--session-dir`、`--quiet-startup` 和 `--no-delegation`。此路径不使用用户全局 `~/.pi/agent` 配置。
 
 ## 准备、创建与消息
 
@@ -65,9 +100,9 @@ PiClient 将 Pi 的模型和推理配置映射到现有目录，并补充三个�
 | 全部工具审批（`ask_all`） | 每次工具调用均询问 |
 | 只读（`readonly`） | 允许上述读取工具，阻止其他工具 |
 
-Connector 显式加载 `permissions.mjs`，打开和恢复会话时核验 Agent 返回的扩展清单，缺失则阻止执行。扩展冻结工具输入，通过 Pi 的确认请求等待用户回答；PiClient 将该请求转换为 AA 工具审批。权限配置按原生会话 ID 存储，缺失或无效配置默认询问；原生 `/bash` 命令另在适配层执行同一权限检查，确定拒绝不会把会话置为需要恢复。此机制是工具事件层控制，不是操作系统沙箱，也不代表已实现旧方案的全部资源信任、最终请求守卫或外部写入所有权保证。
+Connector 显式加载 `permissions.mjs`，在首次加载、恢复及重载后将守卫放在扩展分发顺序首位，并核验加载报告，缺失则阻止执行。扩展冻结工具输入，通过 Pi 的确认请求等待用户回答；PiClient 将该请求转换为 AA 工具审批。权限配置按原生会话 ID 存储，缺失或无效配置默认询问；原生 `/bash` 命令另在适配层执行同一权限检查，确定拒绝不会把会话置为需要恢复。此机制是工具事件层控制，不是操作系统沙箱，也不代表已实现旧方案的全部资源信任、最终请求守卫或外部写入所有权保证。
 
-配置保存完整快照、内容摘要和单调 revision；逐项更新部分成功时保留真实结果。模型与权限选择通过会话配置更新。命令来自 Agent 的 `available_commands_update`，执行前再次核验命令仍在目录中，并保留原始输入的引号和换行，再交由 ACP prompt 处理。运行中追加指示复用既有 steer 入口，消息身份与普通发送共享去重记录。认证状态查询说明认证来自实例模型网关，资源查询返回当前命令；其他通用操作只在 Agent 明确提供对应能力时可用。
+配置保存完整快照、内容摘要和单调 revision；逐项更新部分成功时保留真实结果。模型与权限选择通过会话配置更新。命令来自 Agent 的 `available_commands_update`，执行前再次核验命令仍在目录中，并保留原始输入的引号和换行，再交由 ACP prompt 处理。运行中追加指示复用既有 steer 入口，消息身份与普通发送共享去重记录。认证状态查询说明认证来自执行来源的原生配置与环境，资源查询返回当前命令；其他通用操作只在 Agent 明确提供对应能力时可用。
 
 ## 同步、恢复与进程
 
@@ -105,3 +140,5 @@ uv run python scripts/verify-acp-processes.py
 实现变更时同步更新本页。
 
 默认 Pi 的直接功能检查为 `PYTHONPATH=connector connector/.venv/bin/python connector/scripts/verify-pi-managed.py --scenario allow`；另有 `deny`、`readonly`、`attachment`、`steer`、`slow`、`reasoning` 和 `interrupt` 场景，使用真实 OpenMA/Pi 包与本地 SSE 模型，不调用付费供应商。
+
+本机原生历史的直接功能检查为 `PYTHONPATH=connector connector/.venv/bin/python connector/scripts/verify-pi-native.py`，覆盖实际本机 CLI、ACP 恢复、允许与拒绝写入、重载、切回 CLI 和外部来源冲突，使用临时原生配置及本地 SSE 模型。

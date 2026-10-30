@@ -8,10 +8,17 @@ struct V2RuntimeWorkflowAPI {
             body: .object(["operation": .string(operation), "operationId": .string(UUID().uuidString),
                 "expectedGeneration": .string(generation), "values": .object([:])])))
     }
-    func recover(sessionID: String, generation: String) async throws -> JSONValue {
-        try await transport.send(HTTPRequest<JSONValue, JSONValue>(method: .post,
+    func recover(sessionID: String, generation: String, operationID: String = UUID().uuidString, sourceRevision: String? = nil) async throws -> JSONValue {
+        var body: [String: JSONValue] = ["operationId": .string(operationID), "expectedGeneration": .string(generation)]
+        if let sourceRevision { body["sourceRevision"] = .string(sourceRevision); body["cliExited"] = .bool(true) }
+        return try await transport.send(HTTPRequest<JSONValue, JSONValue>(method: .post,
             path: "/runtime-workflows/sessions/\(sessionID.v2URLPathComponentEncoded)/recover",
-            body: .object(["operationId": .string(UUID().uuidString), "expectedGeneration": .string(generation)])))
+            body: .object(body)))
+    }
+    func closeSession(sessionID: String, generation: String) async throws -> JSONValue {
+        try await transport.send(HTTPRequest<JSONValue, JSONValue>(method: .post,
+            path: "/runtime-workflows/sessions/\(sessionID.v2URLPathComponentEncoded)/close",
+            body: .object(["closeOperationId": .string(UUID().uuidString), "ownerGeneration": .string(generation)])))
     }
     func configuration(sessionID: String) async throws -> JSONValue {
         try await transport.send(HTTPRequest<EmptyRequestBody, JSONValue>(method: .get, path: "/runtime-workflows/sessions/\(sessionID.v2URLPathComponentEncoded)/configuration"))

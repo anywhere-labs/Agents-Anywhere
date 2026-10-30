@@ -47,6 +47,7 @@ import {
 } from "@/components/session/session-tool-cards"
 import { timelineRunCounts } from "@/components/session/timeline-summary"
 import { RuntimeCreationStatus } from "@/components/session/runtime-creation-status"
+import { NativeSessionHandoff } from "@/components/session/native-session-handoff"
 import { needsOlderTimelinePage } from "@/components/session/timeline-autofill"
 import { createTimelineScrollFollow } from "@/components/session/timeline-scroll-follow"
 import { createSessionEventBuffer } from "@/components/session/session-event-buffer"
@@ -1772,6 +1773,12 @@ export function SessionDetail({
             <SessionReviewTag files={turnReviewDisplay.activeReview.files} onReview={() => onOpenReview()} />
           ) : null}
           <RuntimeCreationStatus sessionId={sessionId} />
+          <NativeSessionHandoff key={sessionId} token={token} session={session} state={runtimeState}
+            capabilities={state?.effectiveCapabilities ?? null} onSettled={async () => {
+              const refreshed = await loadInitialSessionState(token, sessionId, { reason: "native-history.handoff" })
+              setState(current => current?.session.id === sessionId ? refreshed : current)
+              onSessionUpdated?.(refreshed.session)
+            }} />
           {creationFailed ? (
             <div className="mx-auto w-full max-w-3xl p-4">
               <Alert>

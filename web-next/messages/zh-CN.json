@@ -1109,6 +1109,23 @@
         "reviewOpenFilePreview": "打开 {file} 的完整文件预览",
         "reviewPreviewBlocked": "文件预览窗口被浏览器拦截了。",
         "reviewDiffCard": "第 {index}/{count} 次修改"
+      },
+      "nativeHistory": {
+        "title": "原生历史",
+        "continue": "继续任务",
+        "release": "结束 AA 执行",
+        "preparing": "正在准备执行…",
+        "active": "AA 正在使用此会话",
+        "activeHint": "结束 AA 执行并等待释放后，可回到 CLI 恢复同一会话。",
+        "browseHint": "历史可以浏览。退出 CLI 中对应会话后，可在这里恢复原会话继续任务。",
+        "confirmHint": "将保留原生会话身份并写回后续历史。请先退出 CLI 中对应会话，继续期间不要在 CLI 同时打开它。",
+        "cliExited": "我已退出 CLI 中对应会话",
+        "cancel": "取消",
+        "failed": "恢复失败，历史仍可查看。",
+        "unknown": "恢复结果尚未确认，请查询原操作状态。",
+        "check": "查询恢复状态",
+        "releaseFailed": "尚未确认执行实例已释放，请刷新状态。",
+        "releasing": "正在结束执行…"
       }
     },
     "sessionStatus": {

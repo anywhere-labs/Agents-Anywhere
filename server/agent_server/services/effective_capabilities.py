@@ -11,13 +11,14 @@ from agent_server.core.capabilities import (
     RUNTIME_ATTACHMENT,
     RUNTIME_CONFIG,
     SESSION_CLOSE,
+    SESSION_COMMANDS,
     SESSION_CONFIGURATION_READ,
     SESSION_CONFIGURATION_UPDATE,
-    SESSION_COMMANDS,
     SESSION_EXECUTION_POSITION_READ,
     SESSION_EXECUTION_POSITION_SELECT,
     SESSION_INTERACTION_APPROVAL,
     SESSION_INTERRUPT,
+    SESSION_RECOVER,
     SESSION_SEND_MESSAGE,
     SESSION_STEER,
 )
@@ -46,6 +47,7 @@ _INHERITED_RUNTIME_CAPABILITY_IDS = (
     CATALOG_PERMISSION,
     CATALOG_EFFORT,
     SESSION_CLOSE,
+    SESSION_RECOVER,
     SESSION_CONFIGURATION_READ,
     SESSION_CONFIGURATION_UPDATE,
     SESSION_EXECUTION_POSITION_READ,
@@ -212,7 +214,7 @@ class SessionCapabilityIndex:
         for capability_id in _INHERITED_RUNTIME_CAPABILITY_IDS:
             source = next((group[capability_id] for group in groups
                            if capability_id in group), None)
-            if source is None and capability_id in {SESSION_CLOSE, SESSION_EXECUTION_POSITION_READ, SESSION_EXECUTION_POSITION_SELECT, SESSION_CONFIGURATION_READ, SESSION_CONFIGURATION_UPDATE}:
+            if source is None and capability_id in {SESSION_CLOSE, SESSION_RECOVER, SESSION_EXECUTION_POSITION_READ, SESSION_EXECUTION_POSITION_SELECT, SESSION_CONFIGURATION_READ, SESSION_CONFIGURATION_UPDATE}:
                 continue
             capabilities.append(platform_scoped_session_capability(
                 session, capability_id, source,
