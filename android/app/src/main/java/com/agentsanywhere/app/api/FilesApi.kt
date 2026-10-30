@@ -1,5 +1,6 @@
 package com.agentsanywhere.app.api
 
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.io.File
@@ -7,6 +8,8 @@ import java.io.File
 class FilesApi(
     private val client: ApiClient = ApiClient(),
 ) {
+    private val downloadClient = OkHttpClient.Builder().build()
+
     fun listFiles(
         serverUrl: String,
         authorizationToken: String,
@@ -91,7 +94,7 @@ class FilesApi(
             .header("Authorization", "Bearer $authorizationToken")
             .get()
             .build()
-        HttpClientProvider.client.newCall(request).execute().use { response ->
+        downloadClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 val message = response.body?.string()?.takeIf(String::isNotBlank)
                     ?: "Could not download file."
