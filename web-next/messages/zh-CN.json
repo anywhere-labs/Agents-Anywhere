@@ -282,7 +282,8 @@
       "unarchiveSuccess": "会话已取消归档",
       "unpin": "取消置顶",
       "unpinChat": "取消置顶",
-      "viewNow": "立即查看"
+      "viewNow": "立即查看",
+      "tokensAnywhere": "Tokens Anywhere"
     },
     "account": {
       "menu": "账号菜单"
@@ -1240,6 +1241,16 @@
       "description": "Agents Anywhere 需要一台已配对且在线的设备，才能选择项目或开始会话。",
       "later": "稍后再说",
       "addDevice": "添加设备"
+    },
+    "tokensAnywhere": {
+      "headline": "所有模型，\n一个密钥。",
+      "description": "用你熟悉的 SDK，以 OpenAI、Anthropic 或 Gemini 格式调用模型。\n几分钟接入 Claude Code、Codex 或 DeepSeek Harness。",
+      "getApiKey": "获取 API 密钥",
+      "hideFromSidebar": "在侧边栏隐藏",
+      "showInSidebar": "在侧边栏显示",
+      "hiddenToast": "已在侧边栏隐藏“Tokens Anywhere”，可在设置 → 外观中重新显示。",
+      "shownToast": "已在侧边栏显示“Tokens Anywhere”。",
+      "unavailable": "Tokens Anywhere 暂未配置。"
     }
   },
   "privacy": {
@@ -1430,6 +1441,18 @@
       "submit": "重置密码",
       "submitting": "正在重置...",
       "failed": "无法重置密码。"
+    },
+    "tokensAnywhereOAuth": {
+      "eyebrow": "Agents Anywhere",
+      "title": "登录 Tokens Anywhere",
+      "description": "向 Tokens Anywhere 提供你的名称、邮箱和头像。",
+      "currentAccount": "当前账号",
+      "unknownAccount": "已登录账号",
+      "continue": "继续登录 Tokens Anywhere",
+      "switchAccount": "使用其他账号",
+      "cancel": "取消",
+      "opening": "正在继续登录 Tokens Anywhere…",
+      "invalid": "登录链接无效，请返回 Tokens Anywhere 重新发起登录。"
     }
   },
   "pages": {
@@ -1572,7 +1595,9 @@
         "displayNameSaved": "昵称已更新。",
         "emailSaved": "邮箱已更新。",
         "failed": "账号信息更新失败。"
-      }
+      },
+      "tokensAnywhereShow": "显示 Tokens Anywhere",
+      "tokensAnywhereShowDescription": "在侧边栏的手机连接下方显示 Tokens Anywhere 入口。"
     },
     "team": {
       "title": "团队",

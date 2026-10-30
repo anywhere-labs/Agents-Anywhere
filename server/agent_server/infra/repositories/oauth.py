@@ -81,7 +81,7 @@ class OAuthRepositoryMixin:
         now = now_dt.isoformat().replace("+00:00", "Z")
         expires_at = (now_dt + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
         async with self._engine.begin() as conn:
-            if first_party_client is not None:
+            if first_party_client is not None and first_party_client.client_secret is None:
                 existing_client = (
                     await conn.execute(
                         select(oauth_clients_t.c.id).where(oauth_clients_t.c.id == first_party_client.client_id)
@@ -133,29 +133,53 @@ class OAuthRepositoryMixin:
                     )
                 )
             ).mappings().first()
-            if row is None or row["consumed_at"] is not None:
+            if row is None:
                 raise ValueError("invalid authorization code")
             if row["redirect_uri"] != _normalize_redirect_uri(redirect_uri):
                 raise ValueError("redirect uri mismatch")
-            if row["expires_at"] < now:
-                raise ValueError("authorization code expired")
             if row["code_challenge_method"] != "S256":
                 raise ValueError("unsupported code challenge method")
             if _pkce_challenge(code_verifier) != row["code_challenge"]:
                 raise ValueError("invalid code verifier")
-            consumed = await conn.execute(
-                update(oauth_authorization_codes_t)
-                .where(
-                    oauth_authorization_codes_t.c.code_hash == code_hash,
-                    oauth_authorization_codes_t.c.consumed_at.is_(None),
+            replayed = row["consumed_at"] is not None
+            if not replayed:
+                if row["expires_at"] <= now:
+                    raise ValueError("authorization code expired")
+                consumed = await conn.execute(
+                    update(oauth_authorization_codes_t)
+                    .where(
+                        oauth_authorization_codes_t.c.code_hash == code_hash,
+                        oauth_authorization_codes_t.c.consumed_at.is_(None),
+                    )
+                    .values(consumed_at=now)
                 )
-                .values(consumed_at=now)
-            )
-            if consumed.rowcount != 1:
-                raise ValueError("invalid authorization code")
+                replayed = consumed.rowcount != 1
+            if replayed:
+                # Profile tokens reference this grant. Commit its deletion on
+                # authenticated replay so an already-issued token is revoked.
+                # The API verifies the web client's secret before reaching here.
+                client = first_party_oauth_client(client_id)
+                if client is not None and client.client_secret is not None:
+                    await conn.execute(delete(oauth_authorization_codes_t).where(
+                        oauth_authorization_codes_t.c.code_hash == code_hash,
+                    ))
             user_id = row["user_id"]
             scope = row["scope"]
+        if replayed:
+            raise ValueError("invalid authorization code")
         return await self.get_user(user_id), scope
+
+    async def oauth_profile_user(self, code_hash: str, client_id: str, redirect_uri: str) -> UserView:
+        async with self._engine.connect() as conn:
+            user_id = await conn.scalar(select(oauth_authorization_codes_t.c.user_id).where(
+                oauth_authorization_codes_t.c.code_hash == code_hash,
+                oauth_authorization_codes_t.c.client_id == client_id,
+                oauth_authorization_codes_t.c.redirect_uri == redirect_uri,
+                oauth_authorization_codes_t.c.consumed_at.is_not(None),
+            ))
+        if user_id is None:
+            raise KeyError(code_hash)
+        return await self.get_user(user_id)
 
 
 def _oauth_client_from_row(row: Any) -> OAuthClientView:

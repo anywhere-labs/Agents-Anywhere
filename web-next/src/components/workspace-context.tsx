@@ -60,7 +60,7 @@ export type PanelMode = "docked" | "floating" | "closed"
  *   home + project prefill       →  #/new-session/proj-1
  *   device/:id                   →  #/device/conn-3
  */
-export type AppPage = "home" | "session" | "settings" | "admin" | "mobile-connections" | "device"
+export type AppPage = "home" | "session" | "settings" | "admin" | "mobile-connections" | "tokens-anywhere" | "device"
 
 export type WorkspaceSessionView = DemoSessionView & {
   projectId?: string | null
@@ -91,6 +91,7 @@ type ParsedRoute =
   | { page: "settings"; tab: string }
   | { page: "admin"; section: AdminSection }
   | { page: "mobile-connections" }
+  | { page: "tokens-anywhere" }
   | { page: "device"; connectorId: string }
 
 function parseHash(hash: string): ParsedRoute {
@@ -114,6 +115,8 @@ function parseHash(hash: string): ParsedRoute {
     case "service":
       // Pre-2.1 administration routes keep opening the matching section.
       return { page: "admin", section: legacyAdminRoutes[parts[0]] ?? DEFAULT_ADMIN_SECTION }
+    case "tokens-anywhere":
+      return { page: "tokens-anywhere" }
     case "mobile-connections":
       return { page: "mobile-connections" }
     case "device": {
@@ -132,6 +135,7 @@ function buildHash(route: ParsedRoute): string {
     case "session":   return `#/session/${route.sessionId}`
     case "settings":  return `#/settings/${route.tab}`
     case "admin":     return `#/admin/${route.section}`
+    case "tokens-anywhere": return "#/tokens-anywhere"
     case "mobile-connections": return "#/mobile-connections"
     case "device":    return `#/device/${route.connectorId}`
   }
@@ -913,6 +917,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       else if (page === "session") pushRoute({ page: "session", sessionId: sub ?? "" })
       else if (page === "settings") pushRoute({ page: "settings", tab: sub ?? "account" })
       else if (page === "admin") pushRoute({ page: "admin", section: parseAdminSection(sub) })
+      else if (page === "tokens-anywhere") pushRoute({ page: "tokens-anywhere" })
       else if (page === "mobile-connections") pushRoute({ page: "mobile-connections" })
     },
     [pushRoute],
@@ -1383,7 +1388,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   // ── Derived route fields ──────────────────────────────────
 
-  const validPages: AppPage[] = ["home", "session", "settings", "admin", "mobile-connections", "device"]
+  const validPages: AppPage[] = ["home", "session", "settings", "admin", "mobile-connections", "tokens-anywhere", "device"]
   const page: AppPage = validPages.includes(route.page as AppPage) ? (route.page as AppPage) : "home"
 
   const routeSessionId = route.page === "session" ? route.sessionId : null

@@ -53,3 +53,23 @@ test('the four-page onboarding resumes both current and previously saved steps',
     assert.equal(restoreOnboardingStep(target, 'user1', { getItem: () => saved }), expected)
   }
 })
+
+test('Tokens Anywhere login and registration preserve the original authorization request', async () => {
+  const loader = registerSource()
+  const { readWebOAuthParams } = await import('../src/features/auth/native-oauth.ts')
+  loader.deregister()
+  const params = new URLSearchParams({ response_type: 'code', client_id: 'tokens-anywhere', redirect_uri: 'https://api.example.test/oauth/aa', code_challenge: 'a'.repeat(43), code_challenge_method: 'S256', scope: 'profile email', state: 'original-state' })
+  assert.equal(readWebOAuthParams(params)?.state, 'original-state')
+  const hash = `#/tokens-anywhere-oauth?${params}`
+  for (const screen of ['#/login', '#/register', '#/oauth/new', '#/oauth/link']) {
+    const store = storage()
+    rememberAuthFlow(hash, store)
+    assert.equal(takeAuthFlow(screen, store), hash)
+    assert.equal(takeAuthFlow(screen, store), null)
+  }
+  for (const [key, value] of [['client_id', 'evil'], ['redirect_uri', 'javascript:alert(1)'], ['redirect_uri', 'https://user:pass@api.example.test/'], ['code_challenge_method', 'plain'], ['code_challenge', ''], ['state', ''], ['scope', 'profile admin']]) {
+    const invalid = new URLSearchParams(params)
+    invalid.set(key, value)
+    assert.equal(readWebOAuthParams(invalid), null)
+  }
+})

@@ -337,7 +337,8 @@
       "unarchiveSuccess": "Session unarchived",
       "unpin": "Unpin",
       "unpinChat": "Unpin chat",
-      "viewNow": "View now"
+      "viewNow": "View now",
+      "tokensAnywhere": "Tokens Anywhere"
     },
     "account": {
       "menu": "Account menu"
@@ -1324,6 +1325,16 @@
       "description": "Agents Anywhere needs a paired online device before you can choose a project or start sessions.",
       "later": "Maybe later",
       "addDevice": "Add device"
+    },
+    "tokensAnywhere": {
+      "headline": "Every model,\none key.",
+      "description": "Call models in the OpenAI, Anthropic or Gemini format, with the SDK you already use.\nConnect Claude Code, Codex or DeepSeek Harness in minutes.",
+      "getApiKey": "Get your API key",
+      "hideFromSidebar": "Hide in sidebar",
+      "showInSidebar": "Show in sidebar",
+      "hiddenToast": "Tokens Anywhere hidden. Show it again in Settings → Appearance.",
+      "shownToast": "Tokens Anywhere is now shown in the sidebar.",
+      "unavailable": "Tokens Anywhere is not configured yet."
     }
   },
   "desktopConnector": {
@@ -1753,7 +1764,9 @@
         "displayNameSaved": "Nickname updated.",
         "emailSaved": "Email updated.",
         "failed": "Failed to update account."
-      }
+      },
+      "tokensAnywhereShow": "Show Tokens Anywhere",
+      "tokensAnywhereShowDescription": "Show Tokens Anywhere below Mobile Connections in the sidebar."
     },
     "team": {
       "title": "Team",

@@ -7,7 +7,7 @@ import { useRouteSearchParams } from "@/components/hash-route-params"
 import { LoadingState } from "@/components/loading-state"
 import { Button } from "@/components/ui/button"
 import { authApi } from "@/features/auth/api"
-import { readNativeOAuthParams, type NativeOAuthKind, type NativeOAuthParams } from "@/features/auth/native-oauth"
+import { readNativeOAuthParams, readWebOAuthParams, type NativeOAuthKind, type NativeOAuthParams } from "@/features/auth/native-oauth"
 import { AuthProvider, useAuth } from "./auth-context"
 import { BootstrapScreen } from "./bootstrap-screen"
 import { LoginScreen } from "./login-screen"
@@ -44,26 +44,32 @@ export function PluginOAuthFlow() {
   return <NativeOAuthFlow kind="plugin" />
 }
 
-function NativeOAuthFlow({ kind }: { kind: NativeOAuthKind }) {
+export function TokensAnywhereOAuthFlow() {
+  return <NativeOAuthFlow kind="web" />
+}
+
+function NativeOAuthFlow({ kind }: { kind: NativeOAuthKind | "web" }) {
   const mobileT = useTranslations("auth.mobileOAuth")
   const desktopT = useTranslations("auth.desktopOAuth")
-  const t = kind === 'plugin' ? (key: string) => pluginMessages[key] ?? key : kind === "desktop" ? desktopT : mobileT
+  const webT = useTranslations("auth.tokensAnywhereOAuth")
+  const translations = { mobile: mobileT, desktop: desktopT, web: webT, plugin: (key: string) => pluginMessages[key] ?? key }
+  const t = translations[kind]
   const params = useRouteSearchParams()
   const { me, screen, loading, isAuthenticated, session, signOut } = useAuth()
   const [error, setError] = React.useState<string | null>(null)
   const [authorizing, setAuthorizing] = React.useState(false)
 
-  const oauthParams = React.useMemo(() => readNativeOAuthParams(params, kind), [kind, params])
+  const oauthParams = React.useMemo(() => kind === "web" ? readWebOAuthParams(params) : readNativeOAuthParams(params, kind), [kind, params])
   const accessToken = session?.accessToken ?? null
 
-  const authorize = React.useCallback(async () => {
+  const authorize = React.useCallback(async (approved = true) => {
     if (!accessToken || !oauthParams) return
     setAuthorizing(true)
     const token = accessToken
     const payload = oauthParams
     setError(null)
     try {
-      const result = await authApi.authorizeOAuth(token, payload)
+      const result = await authApi.authorizeOAuth(token, { ...payload, approved })
       window.location.assign(result.redirectUrl)
     } catch (err) {
       setAuthorizing(false)
@@ -79,8 +85,12 @@ function NativeOAuthFlow({ kind }: { kind: NativeOAuthKind }) {
 
   const cancel = React.useCallback(() => {
     if (!oauthParams) return
+    if (kind === "web") {
+      void authorize(false)
+      return
+    }
     window.location.assign(mobileOAuthErrorRedirect(oauthParams, "access_denied", "The request was cancelled."))
-  }, [oauthParams])
+  }, [authorize, kind, oauthParams])
 
   if (!oauthParams) {
     return <MobileOAuthStatus message={t("invalid")} error />
@@ -127,7 +137,7 @@ function MobileOAuthConsent({
   onContinue,
   onSwitchAccount,
 }: {
-  kind: NativeOAuthKind
+  kind: NativeOAuthKind | "web"
   userId: string
   onCancel: () => void
   onContinue: () => void
@@ -135,7 +145,9 @@ function MobileOAuthConsent({
 }) {
   const mobileT = useTranslations("auth.mobileOAuth")
   const desktopT = useTranslations("auth.desktopOAuth")
-  const t = kind === 'plugin' ? (key: string) => pluginMessages[key] ?? key : kind === "desktop" ? desktopT : mobileT
+  const webT = useTranslations("auth.tokensAnywhereOAuth")
+  const translations = { mobile: mobileT, desktop: desktopT, web: webT, plugin: (key: string) => pluginMessages[key] ?? key }
+  const t = translations[kind]
   return (
     <main className="flex min-h-screen items-center justify-center bg-background px-6">
       <section className="w-full max-w-sm space-y-6 text-center">

@@ -45,6 +45,7 @@ import { LoadingState } from "@/components/loading-state"
 import { useWorkspace } from "@/components/workspace-context"
 import { authApi } from "@/features/auth/api"
 import type { AuthMe } from "@/features/auth/types"
+import { tokensAnywhereAvailable, useTokensAnywhereSidebarVisibility } from "@/features/tokens-anywhere/sidebar-visibility"
 import { useMobileConnectionsSidebarVisibility } from "@/features/mobile-connections/sidebar-visibility"
 import { cn } from "@/lib/utils"
 
@@ -464,6 +465,7 @@ const themes: { id: AppearanceMode; labelKey: string; descKey: string }[] = [
 ]
 
 function AppearanceTab() {
+  const [tokensAnywhereVisible, setTokensAnywhereVisible] = useTokensAnywhereSidebarVisibility()
   const t = useTranslations("pages.settings")
   const { theme, setTheme } = useTheme()
   const { sidebarShowsSessions, setSidebarShowsSessions, sidebarCompactSessions, setSidebarCompactSessions } = useWorkspace()
@@ -499,6 +501,15 @@ function AppearanceTab() {
 
       <SettingsSection title={t("desktopSidebar")} description={t("desktopSidebarDescription")}>
         <FieldGroup>
+          {tokensAnywhereAvailable ? (
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="settings-tokens-anywhere-visible">{t("tokensAnywhereShow")}</FieldLabel>
+                <FieldDescription>{t("tokensAnywhereShowDescription")}</FieldDescription>
+              </FieldContent>
+              <Switch id="settings-tokens-anywhere-visible" checked={tokensAnywhereVisible} onCheckedChange={setTokensAnywhereVisible} />
+            </Field>
+          ) : null}
           <Field orientation="horizontal">
             <FieldContent>
               <FieldLabel htmlFor="settings-sidebar-shows-sessions">

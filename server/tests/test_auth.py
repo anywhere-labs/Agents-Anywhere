@@ -1137,3 +1137,164 @@ def test_mobile_login_exchange_rejects_user_mismatch(tmp_path):
         json={"userId": "other", "loginToken": qr_body["loginToken"]},
     )
     assert exchanged.status_code == 401
+
+
+# ---------- Tokens Anywhere confidential web client ----------------------------
+
+
+def web_oauth_request(client, monkeypatch, *, scope="profile email"):
+    monkeypatch.setenv("AGENT_SERVER_SECRET", "test-signing-key-for-anywhere-oauth-32-bytes")
+    monkeypatch.setenv("AGENT_SERVER_TOKENS_ANYWHERE_CLIENT_SECRET", "test-anywhere-client-secret-at-least-32-bytes")
+    monkeypatch.setenv("AGENT_SERVER_TOKENS_ANYWHERE_REDIRECT_URI", "https://api.example.test/oauth/aa")
+    token = admin_token(client)
+    params = {
+        "response_type": "code", "client_id": "tokens-anywhere",
+        "redirect_uri": "https://api.example.test/oauth/aa",
+        "code_challenge": pkce_challenge("v" * 43), "code_challenge_method": "S256",
+        "scope": scope, "state": "browser-state-1234",
+    }
+    return token, params
+
+
+def web_oauth_grant(client, token, params):
+    authorized = client.post("/oauth/authorize", headers=bearer(token), json=params)
+    assert authorized.status_code == 200, authorized.text
+    query = parse_qs(urlparse(authorized.json()["redirectUrl"]).query)
+    assert query["state"] == [params["state"]]
+    return {
+        "grant_type": "authorization_code", "client_id": params["client_id"],
+        "client_secret": "test-anywhere-client-secret-at-least-32-bytes",
+        "redirect_uri": params["redirect_uri"], "code": query["code"][0], "code_verifier": "v" * 43,
+    }
+
+
+def test_web_oauth_browser_login_and_cancellation(tmp_path, monkeypatch):
+    client = make_client(tmp_path)
+    token, params = web_oauth_request(client, monkeypatch)
+    response = client.get("/oauth/authorize", params=params, follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["cache-control"] == "no-store"
+    target = urlparse(response.headers["location"])
+    assert target.path == "/"
+    assert target.fragment.startswith("/tokens-anywhere-oauth?")
+    assert parse_qs(target.fragment.split("?", 1)[1])["code_challenge"] == [params["code_challenge"]]
+    assert "code=" not in response.headers["location"]
+    assert client.post("/oauth/authorize", json=params).status_code == 401
+    denied = client.post("/oauth/authorize", headers=bearer(token), json={**params, "approved": False})
+    assert denied.status_code == 200
+    assert parse_qs(urlparse(denied.json()["redirectUrl"]).query) == {
+        "error": ["access_denied"], "state": [params["state"]],
+    }
+
+
+def test_web_oauth_profile_contains_avatar_and_token_cannot_access_account(tmp_path, monkeypatch):
+    client = make_client(tmp_path)
+    token, params = web_oauth_request(client, monkeypatch)
+    avatar = "data:image/png;base64,aGVsbG8="
+    assert client.put("/auth/me/avatar", headers=bearer(token), json={"avatar": avatar}).status_code == 200
+    form = web_oauth_grant(client, token, params)
+    response = client.post("/oauth/token", data=form)
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store"
+    body = response.json()
+    assert body["expires_in"] == 300
+    assert body["refresh_token"] is None
+    profile_token = body["access_token"]
+    profile = client.get("/oauth/userinfo", headers=bearer(profile_token))
+    assert profile.status_code == 200
+    me = client.get("/auth/me", headers=bearer(token)).json()
+    assert profile.json() == {
+        "userid": me["userId"], "name": me["displayName"], "email": me["email"],
+        "email_verified": me["emailVerified"], "avatar": avatar,
+    }
+    assert profile.headers["cache-control"] == "no-store"
+    assert client.get("/auth/me", headers=bearer(profile_token)).status_code == 401
+    assert client.get("/oauth/userinfo", headers=bearer(token)).status_code == 401
+    assert client.get("/oauth/userinfo", headers=bearer(profile_token + "x")).status_code == 401
+    assert client.get("/oauth/userinfo", params={"access_token": profile_token}).status_code == 401
+    # Only a fully authenticated replay revokes the issued grant.
+    assert client.post("/oauth/token", data={**form, "client_secret": "wrong"}).status_code == 401
+    assert client.get("/oauth/userinfo", headers=bearer(profile_token)).status_code == 200
+    assert client.post("/oauth/token", data=form).status_code == 400
+    assert client.get("/oauth/userinfo", headers=bearer(profile_token)).status_code == 401
+
+
+def test_web_oauth_rejects_invalid_parameters_and_exact_redirect_mismatches(tmp_path, monkeypatch):
+    client = make_client(tmp_path)
+    token, params = web_oauth_request(client, monkeypatch)
+    invalid = [
+        {"redirect_uri": "https://api.example.test/oauth/aa/"},
+        {"redirect_uri": "https://evil.test/oauth/aa"},
+        {"redirect_uri": "https://api.example.test/oauth/aa?next=evil"},
+        {"response_type": "token"}, {"code_challenge": ""}, {"code_challenge_method": "plain"},
+        {"scope": "profile email admin"}, {"state": ""},
+    ]
+    for change in invalid:
+        for approved in (True, False):
+            result = client.post("/oauth/authorize", headers=bearer(token), json={**params, **change, "approved": approved})
+            assert result.status_code == 422, result.text
+        result = client.get("/oauth/authorize", params={**params, **change}, follow_redirects=False)
+        assert result.status_code == 422, result.text
+        assert "location" not in result.headers
+    form = web_oauth_grant(client, token, params)
+    for change, status in [
+        ({"client_secret": "wrong"}, 401), ({"client_secret": ""}, 401),
+        ({"code_verifier": "x" * 43}, 400), ({"code_verifier": ""}, 422),
+        ({"redirect_uri": "https://evil.test/"}, 400),
+        ({"client_id": "agents-anywhere-mobile", "redirect_uri": "agents-anywhere://oauth/callback"}, 400),
+    ]:
+        result = client.post("/oauth/token", data={**form, **change})
+        assert result.status_code == status, result.text
+    assert client.post("/oauth/token", data=form).status_code == 200
+
+
+def test_web_oauth_profile_scope_expiry_disabled_and_deleted_accounts(tmp_path, monkeypatch):
+    from sqlalchemy import delete, update
+
+    from agent_server.core import auth
+    from agent_server.infra.db import users
+
+    client = make_client(tmp_path)
+    token, params = web_oauth_request(client, monkeypatch, scope="profile")
+    form = web_oauth_grant(client, token, params)
+    profile_token = client.post("/oauth/token", data=form).json()["access_token"]
+    profile = client.get("/oauth/userinfo", headers=bearer(profile_token)).json()
+    assert profile["email"] is None and profile["email_verified"] is False
+    assert profile["avatar"] is None
+    now = auth.time.time()
+    with monkeypatch.context() as clock:
+        clock.setattr(auth.time, "time", lambda: now + 301)
+        assert client.get("/oauth/userinfo", headers=bearer(profile_token)).status_code == 401
+    with monkeypatch.context() as config:
+        config.setenv("AGENT_SERVER_TOKENS_ANYWHERE_CLIENT_SECRET", "rotated-client-secret-at-least-32-bytes")
+        assert client.get("/oauth/userinfo", headers=bearer(profile_token)).status_code == 401
+
+    async def modify_user(statement):
+        async with client.app.state.store._engine.begin() as conn:
+            await conn.execute(statement.where(users.c.id == profile["userid"]))
+    asyncio.run(modify_user(update(users).values(disabled=1)))
+    assert client.get("/oauth/userinfo", headers=bearer(profile_token)).status_code == 401
+    assert client.post("/oauth/authorize", headers=bearer(token), json=params).status_code == 403
+    asyncio.run(modify_user(delete(users)))
+    assert client.get("/oauth/userinfo", headers=bearer(profile_token)).status_code == 401
+
+
+def test_web_oauth_expired_code_and_disabled_client(tmp_path, monkeypatch):
+    from sqlalchemy import update
+
+    from agent_server.infra.db import oauth_authorization_codes
+
+    client = make_client(tmp_path)
+    token, params = web_oauth_request(client, monkeypatch)
+    form = web_oauth_grant(client, token, params)
+    async def expire():
+        async with client.app.state.store._engine.begin() as conn:
+            await conn.execute(update(oauth_authorization_codes).values(expires_at="2000-01-01T00:00:00Z"))
+    asyncio.run(expire())
+    assert client.post("/oauth/token", data=form).status_code == 400
+    monkeypatch.delenv("AGENT_SERVER_TOKENS_ANYWHERE_CLIENT_SECRET")
+    monkeypatch.delenv("AGENT_SERVER_TOKENS_ANYWHERE_REDIRECT_URI")
+    assert client.get("/oauth/authorize", params=params, follow_redirects=False).status_code == 404
+    monkeypatch.setenv("AGENT_SERVER_TOKENS_ANYWHERE_CLIENT_SECRET", "short")
+    monkeypatch.setenv("AGENT_SERVER_TOKENS_ANYWHERE_REDIRECT_URI", "http://api.example.test/oauth/aa")
+    assert client.get("/oauth/authorize", params=params, follow_redirects=False).status_code == 503

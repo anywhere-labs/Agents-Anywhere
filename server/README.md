@@ -112,6 +112,8 @@ curl http://127.0.0.1:8000/api/v2/health/ready
 | `AGENT_SERVER_SECRET` | Secret used for signed auth tokens. Set this outside local dev. |
 | `AGENT_SERVER_SETUP_TOKEN_TTL` | First-run setup token TTL in seconds. |
 | `AGENT_SERVER_PUBLIC_ORIGIN` | Public Web origin used for OAuth redirect URLs when reverse-proxy headers or `returnTo` are unavailable. Example: `https://agents.example.com`. |
+| `AGENT_SERVER_TOKENS_ANYWHERE_CLIENT_SECRET` | Client secret that lets Tokens Anywhere offer "Sign in with Agents Anywhere". At least 32 characters, and `AGENT_SERVER_SECRET` must also be at least 32 characters. Leave it and the redirect URI unset to turn the client off. |
+| `AGENT_SERVER_TOKENS_ANYWHERE_REDIRECT_URI` | Tokens Anywhere's exact HTTPS callback URL, such as `https://tokens.example.com/oauth/aa`. No query or fragment. |
 | `AGENT_SERVER_CORS_ORIGINS` | Comma-separated explicit CORS origins. |
 | `AGENT_SERVER_CORS_ORIGIN_REGEX` | CORS origin regex. Defaults to local `localhost` / `127.0.0.1` ports. |
 | `AGENT_SERVER_STATIC_DIR` | Built frontend directory. When set, `/` serves `index.html` and `/assets` serves static assets. |

@@ -22,6 +22,7 @@ export type AuthScreen =
   | "oauth-link-existing"
   | "mobile-oauth"
   | "desktop-oauth"
+  | "tokens-anywhere-oauth"
   | "plugin-oauth"
   | "onboarding"
   | "preview"
@@ -78,6 +79,7 @@ function hashToScreen(hash: string): AuthScreen {
     "oauth/link": "oauth-link-existing",
     "mobile-oauth": "mobile-oauth",
     "desktop-oauth": "desktop-oauth",
+    "tokens-anywhere-oauth": "tokens-anywhere-oauth",
     "plugin-oauth": "plugin-oauth",
     onboarding: "onboarding",
     preview: "preview",
@@ -97,6 +99,7 @@ function hashToScreen(hash: string): AuthScreen {
     path === "team" ||
     path === "service" ||
     path === "mobile-connections" ||
+    path === "tokens-anywhere" ||
     path.startsWith("device")
 
   if (isAppRoute) return "app"
@@ -115,6 +118,7 @@ function screenToHash(s: AuthScreen): string {
     "oauth-link-existing": "#/oauth/link",
     "mobile-oauth": "#/mobile-oauth",
     "desktop-oauth": "#/desktop-oauth",
+    "tokens-anywhere-oauth": "#/tokens-anywhere-oauth",
     "plugin-oauth": "#/plugin-oauth",
     onboarding: "#/onboarding",
     preview: "#/preview",

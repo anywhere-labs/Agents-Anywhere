@@ -36,3 +36,22 @@ export function readNativeOAuthParams(params: { get(name: string): string | null
     ...(state ? { state } : {}),
   }
 }
+
+
+export function readWebOAuthParams(params: { get(name: string): string | null }): NativeOAuthParams | null {
+  const redirect = params.get('redirect_uri') ?? ''
+  const challenge = params.get('code_challenge') ?? ''
+  const state = params.get('state') ?? ''
+  const scope = params.get('scope') ?? ''
+  if (params.get('response_type') !== 'code' || params.get('client_id') !== 'tokens-anywhere') return null
+  if (params.get('code_challenge_method') !== 'S256' || !/^[A-Za-z0-9_-]{43}$/.test(challenge)) return null
+  if (!state || state.length > 512 || !scope.split(' ').includes('profile')) return null
+  if (scope.split(' ').filter(Boolean).some(value => !['profile', 'email'].includes(value))) return null
+  try {
+    const url = new URL(redirect)
+    if (url.protocol !== 'https:' || url.username || url.password || url.hash || url.search) return null
+  } catch { return null }
+  // The server checks the exact configured callback on approval AND cancellation.
+  return { response_type: 'code', client_id: 'tokens-anywhere', redirect_uri: redirect,
+    code_challenge: challenge, code_challenge_method: 'S256', scope, state }
+}

@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { DesktopConnectionStatus } from "@/components/desktop/desktop-shell-header"
-import { FolderPlus, Plus, Smartphone } from "lucide-react"
+import { FolderPlus, Link, Plus, Smartphone } from "lucide-react"
 import { toast } from "sonner"
 
 import { useAuth } from "@/components/auth/auth-context"
@@ -50,6 +50,7 @@ import { defaultFilter } from "@/lib/demo-api"
 import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
 import { availableProjectName, findWorkspaceProject, workspaceName } from "@/features/dashboard/project-workspaces"
 import type { ProjectView } from "@/features/dashboard/types"
+import { tokensAnywhereAvailable, useTokensAnywhereSidebarVisibility } from "@/features/tokens-anywhere/sidebar-visibility"
 import { useMobileConnectionsSidebarVisibility } from "@/features/mobile-connections/sidebar-visibility"
 import { useTranslations } from "next-intl"
 
@@ -82,6 +83,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   } = useWorkspace()
   const { signOut, me, session: authSession } = useAuth()
   const { isLocalConnector, binding, state: localConnectorState } = useDesktopConnector()
+  const [tokensAnywhereSidebarVisible] = useTokensAnywhereSidebarVisibility()
   const [mobileConnectionsSidebarVisible] = useMobileConnectionsSidebarVisibility()
   const t = useTranslations("dashboard")
   const [pairOpen, setPairOpen] = React.useState(false)
@@ -367,6 +369,15 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
               >
                 <Smartphone />
                 <span>{t("actions.mobileConnections")}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ) : null}
+          {tokensAnywhereAvailable && tokensAnywhereSidebarVisible ? (
+            <SidebarMenuItem>
+              <SidebarMenuButton className="h-10 font-medium"
+                isActive={page === "tokens-anywhere"} onClick={() => navigate("tokens-anywhere")}>
+                <Link />
+                <span>{t("actions.tokensAnywhere")}</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           ) : null}

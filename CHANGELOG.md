@@ -9,6 +9,11 @@
 - 修复接入 Codex 已有会话后，补入的旧消息出现在最新消息下方、历史消息交错或重排后顺序没有更新的问题；升级后同步会自动校准已有记录。（[#480](https://github.com/anywhere-labs/Agents-Anywhere/pull/480)）
 - Connector 上报的时间线条目序号超出范围时只拒绝这条上报，同批其他消息照常保存，不再让整个会话之后的消息都存不进数据库；升级前已经积压的条目会按原顺序排到时间线末尾保存，持续写入失败的会话也不再每秒重试刷屏日志。（[#464](https://github.com/anywhere-labs/Agents-Anywhere/pull/464)）
 
+### Web 与 Desktop 界面
+
+- Tokens Anywhere 可以用 Agents Anywhere 账号登录：Web 会先显示「登录 Tokens Anywhere」确认页，确认后才向 Tokens Anywhere 提供名称、邮箱和头像，选「取消」则不提供任何信息。部署者设置 `AGENT_SERVER_TOKENS_ANYWHERE_CLIENT_SECRET` 和 `AGENT_SERVER_TOKENS_ANYWHERE_REDIRECT_URI` 后开启。（[#470](https://github.com/anywhere-labs/Agents-Anywhere/pull/470)）
+- 侧边栏新增 Tokens Anywhere 入口，介绍页可以直接前往获取 API 密钥；不需要时可以在页面上或「设置 → 外观」里隐藏。构建 Web 和 Desktop 时设置 `NEXT_PUBLIC_TOKENS_ANYWHERE_URL` 才会出现这个入口。（[#470](https://github.com/anywhere-labs/Agents-Anywhere/pull/470)）
+
 ## 2.1.0（2026-10-27）
 
 [发布说明](docs/releases/2.1.0.md) · [GitHub Release](https://github.com/anywhere-labs/Agents-Anywhere/releases/tag/v2.1.0) · [与 2.0.3 的差异](https://github.com/anywhere-labs/Agents-Anywhere/compare/v2.0.3...v2.1.0)

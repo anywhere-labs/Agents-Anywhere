@@ -18,6 +18,7 @@ import { SidebarSwitch } from "@/components/sidebar-switch"
 import { AdminPage } from "@/components/admin/admin-page"
 import { AdminSidebar } from "@/components/admin/admin-sidebar"
 import { DevicePage } from "@/components/pages/device-page"
+import { TokensAnywherePage } from "@/components/pages/tokens-anywhere-page"
 import { MobileConnectionsPage } from "@/components/pages/mobile-connections-page"
 import { WorkspaceProvider, useWorkspace } from "@/components/workspace-context"
 import { LoadingState } from "@/components/loading-state"
@@ -347,6 +348,7 @@ function WorkspaceMain() {
   const content =
     page === "settings" ? <SettingsPage /> :
     page === "admin" ? <AdminPage /> :
+    page === "tokens-anywhere" ? <TokensAnywherePage /> :
     page === "mobile-connections" ? <MobileConnectionsPage /> :
     page === "session" ? <SessionView /> :
     page === "device" ? <DevicePage /> :
