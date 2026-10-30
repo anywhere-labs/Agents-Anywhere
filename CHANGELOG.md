@@ -11,6 +11,8 @@
 
 ### 会话创建与消息交付
 
+- Android 终端文件页可以预览工作区图片；对话中工具和命令输出产生的截图也会直接显示缩略图并可点击查看。（[#0](https://github.com/anywhere-labs/Agents-Anywhere/pull/0)）
+
 - 修复 Codex 查看图片的记录显示为 `unknown` 的问题，现可点击图片路径打开预览。（[#491](https://github.com/anywhere-labs/Agents-Anywhere/pull/491)）
 
 - 修复接入 Codex 已有会话后，补入的旧消息出现在最新消息下方、历史消息交错或重排后顺序没有更新的问题；升级后同步会自动校准已有记录。（[#480](https://github.com/anywhere-labs/Agents-Anywhere/pull/480)）
