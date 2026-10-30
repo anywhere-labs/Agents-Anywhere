@@ -351,7 +351,6 @@ export function SessionDetail({
   const [error, setError] = React.useState<string | null>(null)
   const planning = useSessionPlanning(token, sessionId)
   const planReader = usePlanReader(sessionId)
-  const planReviewHeading = React.useRef<HTMLHeadingElement>(null)
   const [sending, setSending] = React.useState(false)
   const [interrupting, setInterrupting] = React.useState(false)
   const [takeoverBusy, setTakeoverBusy] = React.useState(false)
@@ -1748,7 +1747,7 @@ export function SessionDetail({
                 </React.Fragment>
               )
             })}
-            <PlanningPanel key={session.id} planning={planning} canReview={capabilityIsUsable(effectiveCapabilities, CAPABILITY.planReview, sessionRuntimeScope)} onRead={planReader.open} onReview={() => { planReviewHeading.current?.focus({ preventScroll: true }); planReviewHeading.current?.scrollIntoView({ block: "nearest" }) }} />
+            <PlanningPanel key={session.id} planning={planning} canReview={capabilityIsUsable(effectiveCapabilities, CAPABILITY.planReview, sessionRuntimeScope)} onRead={planReader.open} />
             {detachedInteractions.map((notice) => (
               <InteractionCard
                 key={notice.noticeId}
@@ -1800,7 +1799,7 @@ export function SessionDetail({
           {onOpenReview && turnReviewDisplay.activeReview ? (
             <SessionReviewTag files={turnReviewDisplay.activeReview.files} onReview={() => onOpenReview()} />
           ) : null}
-          {planReview && <PlanningReviewPanel planning={planning} target={planReview} headingRef={planReviewHeading} onRead={planReader.open} />}
+          {planReview && <PlanningReviewPanel planning={planning} target={planReview} onRead={planReader.open} />}
           <div hidden={planReview !== null}>
           <SessionComposer
             token={token}

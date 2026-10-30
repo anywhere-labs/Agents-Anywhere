@@ -47,8 +47,8 @@ function download(document: PlanDocument) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-export function PlanningPanel({ planning, canReview = true, onRead, onReview }: {
-  planning: Planning; canReview?: boolean; onRead: (document: PlanDocument) => void; onReview: () => void
+export function PlanningPanel({ planning, canReview = true, onRead }: {
+  planning: Planning; canReview?: boolean; onRead: (document: PlanDocument) => void
 }) {
   const { state, documents, error } = planning
   const target = getPlanReviewTarget(state, canReview)
@@ -71,7 +71,6 @@ export function PlanningPanel({ planning, canReview = true, onRead, onReview }: 
       {document && <CardFooter className="flex flex-wrap gap-2">
         <Button variant="outline" size="sm" onClick={() => onRead(document)}>打开计划</Button>
         <Button variant="ghost" size="sm" onClick={() => download(document)}><Download data-icon="inline-start" />下载</Button>
-        {target?.document.planId === document.planId && target.document.revision === document.revision && <Button size="sm" variant="secondary" onClick={onReview}>{target.review.status === 'approved' ? '重试启动' : '审阅计划'}</Button>}
       </CardFooter>}
     </PlanCard>)}
     {error && !target && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
@@ -79,15 +78,15 @@ export function PlanningPanel({ planning, canReview = true, onRead, onReview }: 
   </section>
 }
 
-export function PlanningReviewPanel({ planning, target, headingRef, onRead }: {
-  planning: Planning; target: ReviewTarget; headingRef?: React.Ref<HTMLHeadingElement>; onRead: (document: PlanDocument) => void
+export function PlanningReviewPanel({ planning, target, onRead }: {
+  planning: Planning; target: ReviewTarget; onRead: (document: PlanDocument) => void
 }) {
   // New native identity/version remounts the form; ordinary projection updates preserve the draft.
-  return <PlanReviewForm key={`${planning.state?.sessionId}:${target.epoch}:${target.review.reviewId}:${target.document.planId}:${target.document.revision}:${target.document.contentHash}`} planning={planning} target={target} headingRef={headingRef} onRead={onRead} />
+  return <PlanReviewForm key={`${planning.state?.sessionId}:${target.epoch}:${target.review.reviewId}:${target.document.planId}:${target.document.revision}:${target.document.contentHash}`} planning={planning} target={target} onRead={onRead} />
 }
 
-function PlanReviewForm({ planning, target, headingRef, onRead }: {
-  planning: Planning; target: ReviewTarget; headingRef?: React.Ref<HTMLHeadingElement>; onRead: (document: PlanDocument) => void
+function PlanReviewForm({ planning, target, onRead }: {
+  planning: Planning; target: ReviewTarget; onRead: (document: PlanDocument) => void
 }) {
   const [feedback, setFeedback] = React.useState('')
   const id = React.useId()
@@ -102,7 +101,7 @@ function PlanReviewForm({ planning, target, headingRef, onRead }: {
   return <section aria-labelledby={`${id}-title`} className="mx-auto w-full max-w-[calc(48rem+2rem)] px-4 pb-4 pt-2">
     <Card>
       <CardHeader>
-        <CardTitle><h2 id={`${id}-title`} ref={headingRef} tabIndex={-1} className="rounded-sm focus-visible:outline-2 focus-visible:outline-ring">是否执行这个计划？</h2></CardTitle>
+        <CardTitle><h2 id={`${id}-title`}>是否执行这个计划？</h2></CardTitle>
         <CardDescription>{target.document.title} · 版本 {target.document.revision}</CardDescription>
       </CardHeader>
       <CardContent className="flex max-h-[40dvh] flex-col gap-3 overflow-y-auto">

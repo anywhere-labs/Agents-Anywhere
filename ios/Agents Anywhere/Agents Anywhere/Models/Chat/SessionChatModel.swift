@@ -23,8 +23,6 @@ final class SessionChatModel {
               review.planId == plan.planId, review.planRevision == plan.revision, review.contentHash == plan.contentHash else { return nil }
         return .init(state: state)
     }
-    var planReviewFocusRequest = 0
-    func openPlanReview() { if planReviewTarget != nil { planReviewFocusRequest += 1 } }
     func respondPlan(_ target: V2PlanningState, action: String, feedback: String) async {
         guard !isWorking, let review = target.review else { return }
         isWorking = true; error = nil

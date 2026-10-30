@@ -178,7 +178,6 @@ fun SessionDetailScreen(
     composerDraftStore: SessionComposerDraftStore,
     onSessionChanged: (AgentSession) -> Unit = {},
 ) {
-    val planReviewFocus = remember(sessionId) { androidx.compose.ui.focus.FocusRequester() }
     var planningCreation by remember(sessionId, preparedSession?.localSessionId) { mutableStateOf(false) }
     var planningBusy by remember(sessionId) { mutableStateOf(false) }
     val planningSession by rememberUpdatedState(sessionId)
@@ -1739,7 +1738,7 @@ fun SessionDetailScreen(
                             state.messages.isEmpty() && (state.planning == null || (state.planning?.effectiveMode != "plan" && state.planning?.draft == null && state.planning?.proposal == null && state.planning?.documents.isNullOrEmpty())) && openInteractions.isEmpty() && !hasOpenNotifications ->
                                 SessionWelcomeMessage()
                             else -> MessageList(
-                                planningContent = { SessionPlanningPanel(state.planning, darkMode, canReview = canReviewPlanning) { if (planTarget != null) planReviewFocus.requestFocus() } },
+                                planningContent = { SessionPlanningPanel(state.planning, darkMode) },
                                 messages = state.messages,
                                 darkMode = darkMode,
                                 sessionId = sessionId.orEmpty(),
@@ -1796,7 +1795,7 @@ fun SessionDetailScreen(
                                     )
                                 }
                                 planTarget?.let { target ->
-                                    PlanningReviewPanel(target, planningBusy, planReviewFocus, onRespond = { action, feedback -> respondPlan(target, action, feedback) })
+                                    PlanningReviewPanel(target, planningBusy, onRespond = { action, feedback -> respondPlan(target, action, feedback) })
                                 }
                                 if (planTarget == null) MessageComposer(
                                     darkMode = darkMode,

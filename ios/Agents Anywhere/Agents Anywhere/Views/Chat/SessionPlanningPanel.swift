@@ -41,11 +41,6 @@ struct SessionPlanningPanel: View {
                             ChatMarkdownView(text: plan.markdown).frame(maxHeight: 240, alignment: .top).clipped()
                             HStack {
                                 Button("打开计划") { reader = plan }.frame(minHeight: 44)
-                                if state.review?.planId == plan.planId, state.review?.planRevision == plan.revision,
-                                   state.review?.status == "open" || (state.review?.status == "approved" && state.execution?.status == "rejected" && state.execution?.retryable == true) {
-                                    Button(state.review?.status == "approved" ? "重试启动" : "审阅计划", action: chat.openPlanReview).frame(minHeight: 44)
-                                        .disabled(!chat.session.runtime.allows("session.plan_review") || state.freshness != "fresh" || state.capabilities?.actions.isEmpty != false)
-                                }
                             }
                         }
                     }.padding(16).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
@@ -99,14 +94,13 @@ struct SessionPlanReviewPanel: View {
     let chat: SessionChatModel
     let target: V2PlanningState
     @State private var feedback = ""
-    @AccessibilityFocusState private var titleFocused: Bool
     private func allowed(_ action: String) -> Bool {
         target.freshness == "fresh" && !target.epoch.isEmpty && target.capabilities?.actions.contains(action) == true && !chat.isWorking
     }
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                Text("是否执行这个计划？").font(.headline).accessibilityAddTraits(.isHeader).accessibilityFocused($titleFocused)
+                Text("是否执行这个计划？").font(.headline).accessibilityAddTraits(.isHeader)
                 Text("\(target.proposal?.title ?? "计划") · 版本 \(target.proposal?.revision ?? 1)").font(.caption).foregroundStyle(.secondary)
                 if target.freshness != "fresh" { Text("原生状态待核对，请刷新后再确认。").font(.caption) }
                 if target.review?.status == "open" {
@@ -126,7 +120,6 @@ struct SessionPlanReviewPanel: View {
                 }
             }.padding(16)
         }.frame(maxHeight: 300).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20)).padding(.horizontal, 12).padding(.vertical, 8)
-            .onChange(of: chat.planReviewFocusRequest) { titleFocused = true }
     }
     private func respond(_ action: String) { Task { await chat.respondPlan(target, action: action, feedback: action == "request_revision" ? feedback.trimmingCharacters(in: .whitespacesAndNewlines) : "") } }
 }

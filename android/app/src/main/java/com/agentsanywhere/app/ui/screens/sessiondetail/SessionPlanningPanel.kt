@@ -7,9 +7,6 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.focusable
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -27,7 +24,7 @@ import com.agentsanywhere.app.api.RemotePlanningState
 private data class PlanningCard(val id: String, val document: PlanDocument? = null, val draft: com.agentsanywhere.app.api.PlanDraft? = null)
 
 @Composable
-internal fun SessionPlanningPanel(state: RemotePlanningState?, darkMode: Boolean, canReview: Boolean = true, onReview: () -> Unit) {
+internal fun SessionPlanningPanel(state: RemotePlanningState?, darkMode: Boolean) {
     if (state == null || (state.effectiveMode != "plan" && state.draft == null && state.proposal == null && state.documents.isEmpty())) return
     var reader by remember(state.sessionId) { mutableStateOf<PlanDocument?>(null) }
     val positions = remember(state.sessionId) { mutableMapOf<String, androidx.compose.foundation.ScrollState>() }
@@ -50,10 +47,6 @@ internal fun SessionPlanningPanel(state: RemotePlanningState?, darkMode: Boolean
                         Box(Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState())) { AgentMarkdownText(document.markdown, darkMode, onOpenFile = {}) }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(onClick = { reader = document }) { Text("打开计划") }
-                            val retry = state.review?.status == "approved" && state.executionStatus == "rejected" && state.executionRetryable
-                            if (state.review?.planId == document.planId && state.review.planRevision == document.revision && (state.review.status == "open" || retry)) {
-                                TextButton(onClick = onReview, enabled = canReview && state.freshness == "fresh" && !state.actions.isNullOrEmpty()) { Text(if (retry) "重试启动" else "审阅计划") }
-                            }
                         }
                     }
                 }
@@ -101,13 +94,13 @@ private fun PlanningWritingTitle(writing: Boolean) {
 }
 
 @Composable
-internal fun PlanningReviewPanel(target: RemotePlanningState, busy: Boolean, focusRequester: FocusRequester, onRespond: (String, String) -> Unit) {
+internal fun PlanningReviewPanel(target: RemotePlanningState, busy: Boolean, onRespond: (String, String) -> Unit) {
     val document = target.proposal ?: return
     val review = target.review ?: return
     var feedback by remember(target.sessionId, target.epoch, review.reviewId, document.planId, document.revision, document.contentHash) { mutableStateOf("") }
     fun allowed(action: String) = target.freshness == "fresh" && target.epoch.isNotEmpty() && target.actions?.contains(action) == true
     Surface(shape = MaterialTheme.shapes.large, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), tonalElevation = 2.dp) {
-        Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()).padding(16.dp).focusRequester(focusRequester).focusable(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("是否执行这个计划？", style = MaterialTheme.typography.titleMedium)
             Text("${document.title} · 版本 ${document.revision}", style = MaterialTheme.typography.labelMedium)
             if (target.freshness != "fresh") Text("原生状态待核对，请刷新后再确认。")
