@@ -355,6 +355,7 @@ private fun RemoteTimelineItem.toCommandMessage(): TimelineMessage {
         command = command,
         output = listOf(output, exit).filter { it.isNotBlank() }.joinToString("\n"),
         toolError = content.opt("error").diagnosticSummary(),
+        workspaceImages = workspaceImagePaths(),
         rawContent = content.toString(2),
         orderSeq = orderSeq,
         revision = revision,
