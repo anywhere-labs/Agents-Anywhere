@@ -788,12 +788,13 @@ class AcpRuntime(AgentRuntime):
         )
         with self.app.store.transaction():
             for row in rows:
-                self.app._emit("session.meta.upsert", self.app.meta(row["session_id"]))
-                self.app._emit(
-                    "session.state.updated", self.app.state(row["session_id"])
-                )
-                self._publish_session_capabilities(row["session_id"])
+                self._republish_binding(row["session_id"])
         await self.sync.flush()
+
+    def _republish_binding(self, session_id):
+        self.app._emit("session.meta.upsert", self.app.meta(session_id))
+        self.app._emit("session.state.updated", self.app.state(session_id))
+        self._publish_session_capabilities(session_id)
 
     async def sync_session_timeline(self, session_id, external_session_id=None):
         await self.resynchronize(session_id, external_session_id)

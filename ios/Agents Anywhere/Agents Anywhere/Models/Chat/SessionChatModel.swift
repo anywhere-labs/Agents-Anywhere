@@ -353,7 +353,7 @@ final class SessionChatModel {
         let selected = draft.attachments
         guard selected.isEmpty || canAttach else { return }
         if case let .array(inputs) = session.runtime.capabilities?.capability(id: "runtime.attachment")?.metadata?["inputModalities"],
-           !inputs.contains(.string("image")), selected.contains(where: { $0.local.mediaType.lowercased().hasPrefix("image/") }) {
+           !inputs.contains(.string("image")), selected.contains(where: { AgentForm.isModelImage($0.local.mediaType) }) {
             fail(String(localized: "当前模型声明不支持图片输入，请移除图片或切换模型。"))
             return
         }

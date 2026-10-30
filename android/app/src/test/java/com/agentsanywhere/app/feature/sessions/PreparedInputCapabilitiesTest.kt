@@ -30,6 +30,8 @@ class PreparedInputCapabilitiesTest {
         assertNull(validateNewSessionDraft(value.copy(selections = NewSessionSelections(model = "opaque-vision"))))
         assertNull(validateNewSessionDraft(value.copy(attachments = listOf(image.copy(name = "note.txt", mediaType = "text/plain")))))
         assertTrue(validateNewSessionDraft(value.copy(attachments = listOf(image.copy(mediaType = "IMAGE/PNG"))))!!.contains("image input"))
+        // Only Connector image types become model input; other images travel as files.
+        assertNull(validateNewSessionDraft(value.copy(attachments = listOf(image.copy(name = "logo.svg", mediaType = "image/svg+xml")))))
     }
 
     @Test fun `older agents without modality metadata retain attachment transport`() {

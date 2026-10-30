@@ -267,11 +267,13 @@ class PiClient(AgentClient):
         return result
 
     def attachment_metadata(self, session_id):
+        # Capabilities republish on every state change; carry only the current
+        # model's declaration. Creation reads the full map from configuration.
         option = next((item for item in self.configuration.get(session_id, [])
                        if item.get("category") == "model"), {})
-        inputs = option.get("_meta", {}).get("aa", {}).get("modelInputModalities", {})
+        inputs = (option.get("_meta") or {}).get("aa", {}).get("modelInputModalities", {})
         current = inputs.get(option.get("currentValue"))
-        return {"modelInputModalities": inputs, **({"inputModalities": current} if isinstance(current, list) else {})}
+        return {"inputModalities": current} if isinstance(current, list) else {}
 
     def validate_input(self, session_id, blocks):
         modalities = self.attachment_metadata(session_id).get("inputModalities")

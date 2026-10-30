@@ -801,7 +801,7 @@ internal fun validateNewSessionDraft(draft: NewSessionCreateDraft): String? {
     if (draft.content.isBlank() && draft.attachments.isEmpty()) return "Enter a message or attach a file before starting."
     if (draft.clientMessageId.isBlank()) return "The client message ID is missing."
     val inputs = draft.preparedWorkspace?.inputModalities(draft.selections.model)
-    if (inputs != null && "image" !in inputs && draft.attachments.any { it.mediaType.startsWith("image/", ignoreCase = true) }) {
+    if (inputs != null && "image" !in inputs && draft.attachments.any { AgentForm.isModelImage(it.mediaType) }) {
         return "The selected model does not declare image input support. Remove the image or choose another model."
     }
     if (draft.attachments.size > MAX_CREATE_ATTACHMENTS) return "You can attach up to $MAX_CREATE_ATTACHMENTS files."

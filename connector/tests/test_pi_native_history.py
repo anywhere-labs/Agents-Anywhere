@@ -201,6 +201,54 @@ def test_native_runtime_browses_without_execution_environment(tmp_path):
     asyncio.run(run())
 
 
+def test_resynchronize_republishes_aa_sessions_not_yet_in_native_index(tmp_path):
+    from dataclasses import asdict
+
+    from connector.runtimes.acp.domain.definitions import Workspace
+    from connector.runtimes.acp.domain.sessions import SessionBinding
+
+    async def run():
+        agent = tmp_path / "agent"
+        history_file(agent / "sessions", tmp_path)
+
+        async def publish(_runtime, notifications, **kwargs):
+            pass
+
+        host = SimpleNamespace(
+            session_namespace="fixture",
+            runtime_id="pi",
+            runtime_kv=SimpleNamespace(path=tmp_path / "state/runtime.json"),
+            publish_runtime_notifications=publish,
+        )
+        provider = PiProvider()
+        config = replace(
+            await provider.validate_config(
+                {"agentDir": str(agent), "cliPath": str(tmp_path / "missing-pi")}
+            ),
+            runtime_id="pi",
+        )
+        runtime = await provider.create_runtime(config, host)
+        await runtime.start()
+        try:
+            native = (await runtime.list_sessions())[0].session_id
+            # A live AA-created session has a binding but no native source row yet.
+            binding = SessionBinding("aa-live", "pi", "fixture", Workspace(str(tmp_path), str(tmp_path)), "g", "g", "not-yet-indexed", attachment="attached", foreground="idle")
+            runtime.app.store.put("binding", "aa-live", asdict(binding))
+            events = []
+            runtime.app._emit = lambda method, params: events.append((method, params["sessionId"]))
+            await runtime.resynchronize()
+            for method in ("session.meta.upsert", "session.state.updated", "runtime.capability.updated"):
+                assert (method, "aa-live") in events
+            assert ("runtime.capability.updated", native) in events
+            events.clear()
+            await runtime.resynchronize(native)
+            assert all(session != "aa-live" for _method, session in events)
+        finally:
+            await runtime.stop()
+
+    asyncio.run(run())
+
+
 def test_legacy_gateway_configuration_keeps_managed_source():
     config = asyncio.run(
         PiProvider().validate_config(
@@ -424,34 +472,6 @@ assert.deepEqual(xs.map(m=>m.aaDisplayText),[undefined,'original',undefined]);
 assert.equal(xs[0].aaAttachments,undefined);assert.equal(xs[2].aaAttachments,undefined);
 """
     subprocess.run([node, "--input-type=module", "-e", script, bridge.as_uri()], check=True, timeout=20)
-
-
-def test_known_adapter_upgrade_without_old_cache(tmp_path):
-    from copy import deepcopy
-
-    from connector.runtimes.acp.domain.definitions import fingerprint
-    from connector.runtimes.acp.profiles.pi import adapter
-
-    # Revision 3 is the only bridge released before compatibility revisions were recorded.
-    revision = 3
-    assert set(adapter.LEGACY_BRIDGES) == {revision}
-    template = Path(adapter.__file__).with_name("compat").joinpath(f"bridge-v{revision}.mjs").read_text()
-    sdk_entry = tmp_path / "SDK 中文/dist/index.js"
-    bridge = template.replace("__AA_PI_SDK_URL__", sdk_entry.as_uri())
-    old = {"installation": {"sdk": "unchanged"}, "guardSha256": "guard", "adapterDependencies": {"version": "unchanged"},
-           "adapter": {"package": "@openma/pi-acp", "version": "0.1.8", "sdkEntry": str(sdk_entry),
-                       "sourceFiles": adapter.RELEASE_FILES,
-                       "patchDigest": fingerprint({"bridge": bridge, "source": adapter.RELEASE_FILES, "revision": revision})}}
-    current = deepcopy(old)
-    current["adapter"].update(compatibilityRevision=adapter.PATCH_REVISION, patchDigest="f" * 64)
-    assert adapter.is_known_compatibility_upgrade(old, current)
-    assert list(tmp_path.iterdir()) == []  # No legacy cache exists or is regenerated/executed.
-    for key in ("installation", "guardSha256", "adapterDependencies"):
-        altered = deepcopy(current)
-        altered[key] = "changed"
-        assert not adapter.is_known_compatibility_upgrade(old, altered)
-    old["adapter"]["patchDigest"] = "0" * 64
-    assert not adapter.is_known_compatibility_upgrade(old, current)
 
 
 @pytest.mark.parametrize("rejected,expected", [(True, "failed"), (False, "cancelled")])

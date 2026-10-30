@@ -1,6 +1,12 @@
 import Foundation
 
 nonisolated enum AgentForm {
+    /// Types the Connector submits as model image input; other image/* files travel as plain files.
+    static func isModelImage(_ mediaType: String) -> Bool {
+        let type = mediaType.split(separator: ";", maxSplits: 1).first.map(String.init) ?? mediaType
+        return ["image/png", "image/jpeg", "image/gif", "image/webp"].contains(type.trimmingCharacters(in: .whitespaces).lowercased())
+    }
+
     static func inputModalities(_ snapshot: JSONValue?, modelID: String) -> [String]? {
         guard case let .array(options) = snapshot?["options"],
               let model = options.first(where: { $0["category"] == .string("model") }) else { return nil }

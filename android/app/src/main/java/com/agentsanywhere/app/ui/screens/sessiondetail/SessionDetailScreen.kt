@@ -124,6 +124,7 @@ import com.agentsanywhere.app.feature.sessiondetail.selectionOptions
 import com.agentsanywhere.app.feature.sessiondetail.modelSelectionOptions
 import com.agentsanywhere.app.feature.sessiondetail.sessionComposerEnabled
 import com.agentsanywhere.app.feature.sessiondetail.validatedSelection
+import com.agentsanywhere.app.feature.sessions.AgentForm
 import com.agentsanywhere.app.feature.sessions.mergeAuthoritativeSessionMetadata
 import com.agentsanywhere.app.feature.sessions.NewSessionCreateOutcome
 import com.agentsanywhere.app.feature.sessions.NewSessionCreateDraft
@@ -1486,7 +1487,7 @@ fun SessionDetailScreen(
         } else {
             state.capabilities.find(SESSION_ATTACHMENT_CAPABILITY, runtimeId, runtimeType)?.metadata?.get("inputModalities") as? List<*>
         }
-        if (inputs != null && "image" !in inputs && attachments.any { it.mediaType.startsWith("image/", ignoreCase = true) }) {
+        if (inputs != null && "image" !in inputs && attachments.any { AgentForm.isModelImage(it.mediaType) }) {
             showError(context.getString(R.string.session_image_input_unsupported))
             return
         }

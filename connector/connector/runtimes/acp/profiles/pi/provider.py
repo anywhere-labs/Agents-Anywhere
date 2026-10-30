@@ -30,7 +30,7 @@ from connector.runtimes.model_gateway import (
 
 from ...domain.definitions import AcpError, LaunchDefinition
 from ...infrastructure.npm import install_npm_runtime
-from .adapter import is_known_compatibility_upgrade, prepare_adapter
+from .adapter import prepare_adapter
 from .client import PiClient
 from .installation import (
     PiInstallation,
@@ -247,13 +247,6 @@ class PiProvider(RuntimeProvider):
                 expected_identity = {
                     key: value for key, value in identity.items() if key != "agentDir"
                 }
-            if old_identity and old_identity != expected_identity and is_known_compatibility_upgrade(
-                old_identity, expected_identity
-            ):
-                # Keep the prior complete identity as an audit record. Only AA's
-                # fixed bridge changes; SDK, upstream package and dependencies stay pinned.
-                private_json(root / ("execution-source-" + old_identity["adapter"]["patchDigest"] + ".json"), json.loads(previous.read_text(encoding="utf-8")))
-                old_identity = expected_identity
             if old_identity and old_identity != expected_identity:
                 raise AcpError(
                     "pi_execution_source_changed",

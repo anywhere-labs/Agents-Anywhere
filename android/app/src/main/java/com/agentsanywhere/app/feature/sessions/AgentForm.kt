@@ -4,6 +4,12 @@ import org.json.JSONObject
 
 /** ACP form values stay typed; empty text, false and cancellation are distinct. */
 object AgentForm {
+    /** Types the Connector submits as model image input; other image types travel as plain files. */
+    private val modelImageTypes = setOf("image/png", "image/jpeg", "image/gif", "image/webp")
+
+    fun isModelImage(mediaType: String): Boolean =
+        mediaType.substringBefore(';').trim().lowercase() in modelImageTypes
+
     fun modelInputModalities(snapshot: JSONObject?): Pair<String?, Map<String, List<String>>> {
         val options = snapshot?.optJSONArray("options") ?: return null to emptyMap()
         val model = (0 until options.length()).map { options.getJSONObject(it) }

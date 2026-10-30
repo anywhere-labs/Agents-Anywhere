@@ -541,9 +541,17 @@ class NativePiRuntime(AcpRuntime):
 
     async def resynchronize(self, session_id=None, external_session_id=None):
         await self.scan(force=True)
-        for key, _source in self._source_rows():
+        sources = {key for key, _source in self._source_rows()}
+        for key in sources:
             if not session_id or key == session_id:
                 self._publish_native_state(key)
+        # Live AA-created sessions enter the native index only after release;
+        # until then they keep the ordinary ACP projection.
+        with self.app.store.transaction():
+            for row in self.app.store.values("binding"):
+                key = row["session_id"]
+                if key not in sources and (not session_id or key == session_id):
+                    self._republish_binding(key)
         await self.sync.flush()
 
     async def execute_workflow(self, request):

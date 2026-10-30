@@ -69,8 +69,34 @@ export function attachmentMimeAllowed(mediaType: string, allowedMimeTypes: reado
   return allowedMimeTypes === undefined || allowedMimeTypes.includes(mediaType.split(";", 1)[0]!.trim().toLowerCase())
 }
 
+/** Types the Connector submits as model image input; other image/* files travel as plain files. */
+const MODEL_IMAGE_TYPES: readonly string[] = ["image/png", "image/jpeg", "image/gif", "image/webp"]
+
 export function isImageMediaType(mediaType: string): boolean {
-  return mediaType.trim().toLowerCase().startsWith("image/")
+  return MODEL_IMAGE_TYPES.includes(mediaType.split(";", 1)[0]!.trim().toLowerCase())
+}
+
+export type AttachmentLimits = { enabled: boolean; allowedMimeTypes?: readonly string[]; imagesAllowed: boolean }
+
+/** Why one file cannot be attached: the Agent transport and the selected model are separate reasons. */
+export function attachmentRejection(mediaType: string, limits: AttachmentLimits): { image: boolean; type: boolean } {
+  return {
+    image: !limits.imagesAllowed && isImageMediaType(mediaType),
+    type: !limits.enabled || !attachmentMimeAllowed(mediaType, limits.allowedMimeTypes),
+  }
+}
+
+/** Every reason that applies to the attached files or the last rejected drop, so none is hidden. */
+export function attachmentErrorReasons(
+  mediaTypes: readonly string[],
+  rejected: { image: boolean; type: boolean },
+  limits: AttachmentLimits,
+): ("image" | "type")[] {
+  const current = mediaTypes.map((mediaType) => attachmentRejection(mediaType, limits))
+  return [
+    ...(limits.imagesAllowed || !(rejected.image || current.some((item) => item.image)) ? [] : ["image" as const]),
+    ...(rejected.type || current.some((item) => item.type) ? ["type" as const] : []),
+  ]
 }
 
 /** The selected model narrows the Agent's general attachment transport. */
