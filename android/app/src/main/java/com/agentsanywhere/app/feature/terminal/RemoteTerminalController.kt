@@ -3,6 +3,7 @@ package com.agentsanywhere.app.feature.terminal
 import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
+import com.agentsanywhere.app.api.HttpClientProvider
 import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
@@ -65,7 +66,9 @@ class RemoteTerminalController(
         this,
     )
 
-    private val http = OkHttpClient()
+    private val http = HttpClientProvider.client.newBuilder()
+        .readTimeout(0, java.util.concurrent.TimeUnit.MILLISECONDS)
+        .build()
     private val terminalScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val sendMutex = Mutex()
     private val groupId = "mobile_${UUID.randomUUID()}"

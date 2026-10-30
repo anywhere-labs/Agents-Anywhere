@@ -24,7 +24,7 @@ data class NewSessionDirectory(
 data class NewSessionAttachmentPart(
     val name: String,
     val mediaType: String,
-    val bytes: ByteArray,
+    val file: java.io.File,
 )
 
 data class NewSessionCreateDraft(

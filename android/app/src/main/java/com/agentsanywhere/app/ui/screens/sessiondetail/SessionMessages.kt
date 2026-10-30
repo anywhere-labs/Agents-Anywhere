@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -382,7 +383,14 @@ internal fun MessageList(
 
     CompositionLocalProvider(LocalTimelineReading provides reading) {
         Box(Modifier.fillMaxSize()) {
-            SessionSelectionContainer(modifier = Modifier.fillMaxSize()) {
+            SessionSelectionContainer(
+                // Keep lines readable on tablets; on phones the max width never kicks in.
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .widthIn(max = 820.dp)
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter),
+            ) {
                 LazyColumn(
                     state = listState,
                     reverseLayout = true,
@@ -437,7 +445,11 @@ internal fun MessageList(
                             }
                         }
                     }
-                    items(detachedNotices.asReversed(), key = { "notice:${it.noticeId}" }) { notice ->
+                    items(
+                        items = detachedNotices.asReversed(),
+                        key = { "notice:${it.noticeId}" },
+                        contentType = { "notice" },
+                    ) { notice ->
                         RuntimeNoticeCard(
                             notice = notice,
                             busy = notice.noticeId in respondingNoticeIds,
@@ -447,7 +459,11 @@ internal fun MessageList(
                             notificationOnly = notice.type == "notification",
                         )
                     }
-                    items(timelineItems.asReversed(), key = { it.key }) { item ->
+                    items(
+                        items = timelineItems.asReversed(),
+                        key = { it.key },
+                        contentType = { "timeline" },
+                    ) { item ->
                         CompositionLocalProvider(LocalReadingMessage provides item.messages.first().id) {
                             Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
                                 when (item) {
@@ -793,7 +809,7 @@ private fun ToolRunGroup(
                 .heightIn(min = 34.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(surface)
-                .noRippleClickable(onClick = ::toggleExpanded)
+                .timelineTap(onTap = ::toggleExpanded)
                 .padding(horizontal = 6.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -829,7 +845,7 @@ private fun ToolRunGroup(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 34.dp)
-                .noRippleClickable(onClick = ::toggleExpanded)
+                .timelineTap(onTap = ::toggleExpanded)
                 .padding(horizontal = 6.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -906,7 +922,7 @@ private fun AgentCallGroup(
                 .fillMaxWidth()
                 .heightIn(min = 34.dp)
                 .readingRegion(header)
-                .noRippleClickable { reading.toggleGroup(groupKind, members, header) }
+                .timelineTap { reading.toggleGroup(groupKind, members, header) }
                 .padding(horizontal = 6.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1029,7 +1045,7 @@ private fun ReconnectGroup(messages: List<TimelineMessage>, darkMode: Boolean) {
                 .fillMaxWidth()
                 .padding(horizontal = 4.dp, vertical = 6.dp)
                 .readingRegion(header)
-                .noRippleClickable { reading.toggleGroup(groupKind, members, header) },
+                .timelineTap { reading.toggleGroup(groupKind, members, header) },
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -1348,7 +1364,7 @@ private fun UserBubble(
                                             color = LocalAAColors.current.noticeWarning,
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.noRippleClickable { reading.toggle(message.id, "header:${message.id}") },
+                                            modifier = Modifier.timelineTap { reading.toggle(message.id, "header:${message.id}") },
                                         )
                                     }
                                 }
@@ -1539,7 +1555,7 @@ private fun ReasoningSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 34.dp)
-                .then(if (expandable) Modifier.noRippleClickable(onClick = ::toggleExpanded) else Modifier)
+                .then(if (expandable) Modifier.timelineTap(onTap = ::toggleExpanded) else Modifier)
                 .padding(horizontal = 6.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1645,7 +1661,7 @@ private fun ToolActivityCard(
                 .background(collapsedSurface)
                 .then(
                     when {
-                        expandable -> Modifier.noRippleClickable { toggleExpanded() }
+                        expandable -> Modifier.timelineTap { toggleExpanded() }
                         message.kind == TimelineMessageKind.Artifact && message.detail.isNotBlank() -> {
                             Modifier.noRippleClickable { onOpenFile(message.detail) }
                         }
@@ -2188,7 +2204,7 @@ private fun ToolPlaceholder(
             modifier = Modifier
                 .padding(horizontal = 4.dp)
                 .readingRegion("header:${message.id}")
-                .then(if (expandable) Modifier.noRippleClickable { reading.toggle(message.id, "header:${message.id}") } else Modifier),
+                .then(if (expandable) Modifier.timelineTap { reading.toggle(message.id, "header:${message.id}") } else Modifier),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

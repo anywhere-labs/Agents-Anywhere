@@ -2,16 +2,22 @@ package com.agentsanywhere.app.api
 
 import org.json.JSONArray
 import org.json.JSONObject
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.FormBody
+import okhttp3.MediaType
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.Buffer
+import okio.BufferedSink
+import okio.source
+import java.io.File
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import org.json.JSONException
 
 class ApiClient(
@@ -179,9 +185,10 @@ class ApiClient(
         path: String,
         files: List<UploadFilePart>,
         authorizationToken: String? = null,
+        onProgress: ((sent: Long, total: Long) -> Unit)? = null,
     ): JSONObject {
         return withTokenRefresh(serverUrl, authorizationToken) { token ->
-            postMultipartOnce(serverUrl, path, files, token)
+            postMultipartOnce(serverUrl, path, files, token, onProgress)
         }
     }
 
@@ -190,54 +197,121 @@ class ApiClient(
         path: String,
         files: List<UploadFilePart>,
         authorizationToken: String?,
+        onProgress: ((sent: Long, total: Long) -> Unit)?,
     ): JSONObject {
-        return try {
-            val endpoint = URL(apiUrl(serverUrl, path))
-            val boundary = "AA-${System.currentTimeMillis()}"
-            val connection = (endpoint.openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = 10_000
-                readTimeout = 60_000
-                doOutput = true
-                setRequestProperty("Accept", "application/json")
-                setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
-                setRequestProperty("ngrok-skip-browser-warning", "true")
-                if (!authorizationToken.isNullOrBlank()) {
-                    setRequestProperty("Authorization", "Bearer $authorizationToken")
+        var attempt = 0
+        var backoffMs = INITIAL_UPLOAD_BACKOFF_MS
+        while (true) {
+            attempt += 1
+            try {
+                return postMultipartRequest(serverUrl, path, files, authorizationToken, onProgress)
+            } catch (exc: ApiException) {
+                val status = exc.statusCode
+                val retryable = status == null || status >= 500
+                if (!retryable || attempt >= MAX_UPLOAD_ATTEMPTS) throw exc
+                runCatching { Thread.sleep(backoffMs) }
+                backoffMs *= 2
+            }
+        }
+    }
+
+    private fun postMultipartRequest(
+        serverUrl: String,
+        path: String,
+        files: List<UploadFilePart>,
+        authorizationToken: String?,
+        onProgress: ((sent: Long, total: Long) -> Unit)?,
+    ): JSONObject {
+        val url = apiUrl(serverUrl, path)
+        val totalBytes = files.sumOf { part -> part.size.coerceAtLeast(0L) }
+        val sentBytes = AtomicLong(0L)
+        val multipart = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .apply {
+                files.forEach { part ->
+                    addFormDataPart(
+                        name = "files",
+                        filename = part.name.httpQuoted(),
+                        body = ProgressRequestBody(part, totalBytes, sentBytes, onProgress),
+                    )
                 }
             }
-            try {
-                connection.outputStream.use { output ->
-                    files.forEach { file ->
-                        output.write("--$boundary\r\n".toByteArray(Charsets.UTF_8))
-                        output.write(
-                            "Content-Disposition: form-data; name=\"files\"; filename=\"${file.name.httpQuoted()}\"\r\n"
-                                .toByteArray(Charsets.UTF_8),
-                        )
-                        output.write("Content-Type: ${file.mediaType.ifBlank { "application/octet-stream" }}\r\n\r\n".toByteArray(Charsets.UTF_8))
-                        output.write(file.bytes)
-                        output.write("\r\n".toByteArray(Charsets.UTF_8))
-                    }
-                    output.write("--$boundary--\r\n".toByteArray(Charsets.UTF_8))
+            .build()
+        val request = Request.Builder()
+            .url(url)
+            .header("Accept", "application/json")
+            .header("ngrok-skip-browser-warning", "true")
+            .apply {
+                if (!authorizationToken.isNullOrBlank()) {
+                    header("Authorization", "Bearer $authorizationToken")
                 }
-                val responseCode = connection.responseCode
-                val responseText = readResponseText(connection, responseCode)
-                if (responseCode !in 200..299) {
+            }
+            .post(multipart)
+            .build()
+        return try {
+            HttpClientProvider.uploadClient.newCall(request).execute().use { response ->
+                val responseText = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
                     throw ApiException(
-                        message = parseErrorMessage(responseText) ?: defaultErrorMessage(responseCode),
-                        statusCode = responseCode,
+                        message = parseErrorMessage(responseText) ?: defaultErrorMessage(response.code),
+                        statusCode = response.code,
                         errorCode = parseErrorCode(responseText),
                     )
                 }
+                rememberApiUrl(serverUrl, url)
                 if (responseText.isBlank()) JSONObject() else JSONObject(responseText)
-            } finally {
-                connection.disconnect()
             }
         } catch (exc: ApiException) {
             throw exc
+        } catch (exc: IllegalArgumentException) {
+            throw ApiException("The server URL is invalid.", cause = exc)
         } catch (exc: IOException) {
             throw ApiException("Could not reach the server. Check the URL and network.", cause = exc)
         }
+    }
+
+    /**
+     * Opens a streaming attachment download. Returns null when the server does not
+     * expose the streaming endpoint (older builds), so the caller can fall back to
+     * the base64 JSON endpoint. The caller owns the response and must close it.
+     */
+    fun openAttachmentStream(
+        serverUrl: String,
+        path: String,
+        authorizationToken: String?,
+    ): okhttp3.Response? {
+        val url = apiUrl(serverUrl, path)
+        val request = Request.Builder()
+            .url(url)
+            .header("Accept", "application/octet-stream")
+            .header("ngrok-skip-browser-warning", "true")
+            .apply {
+                if (!authorizationToken.isNullOrBlank()) {
+                    header("Authorization", "Bearer $authorizationToken")
+                }
+            }
+            .get()
+            .build()
+        val response = try {
+            HttpClientProvider.client.newCall(request).execute()
+        } catch (exc: IOException) {
+            throw ApiException("Could not reach the server. Check the URL and network.", cause = exc)
+        }
+        if (response.code == 404 || response.code == 405) {
+            response.close()
+            return null
+        }
+        if (!response.isSuccessful) {
+            val responseText = runCatching { response.body?.string() }.getOrNull().orEmpty()
+            val error = ApiException(
+                message = parseErrorMessage(responseText) ?: defaultErrorMessage(response.code),
+                statusCode = response.code,
+                errorCode = parseErrorCode(responseText),
+            )
+            response.close()
+            throw error
+        }
+        return response
     }
 
     private fun requestJson(
@@ -352,19 +426,10 @@ class ApiClient(
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         val EMPTY_JSON_BODY = ByteArray(0).toRequestBody(JSON_MEDIA_TYPE)
-        val JSON_HTTP_CLIENT: OkHttpClient = OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
-            .build()
-    }
-
-    private fun readResponseText(connection: HttpURLConnection, responseCode: Int): String {
-        val stream = if (responseCode in 200..299) {
-            connection.inputStream
-        } else {
-            connection.errorStream
-        }
-        return stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+        val JSON_HTTP_CLIENT: OkHttpClient = HttpClientProvider.client
+        const val MAX_UPLOAD_ATTEMPTS = 3
+        const val INITIAL_UPLOAD_BACKOFF_MS = 2_000L
+        const val COPY_BUFFER_SIZE = 64L * 1024L
     }
 
     private fun parseErrorCode(responseText: String): String? = runCatching {
@@ -437,8 +502,33 @@ internal fun shouldNotifyUnauthorized(statusCode: Int, authorizationToken: Strin
 data class UploadFilePart(
     val name: String,
     val mediaType: String,
-    val bytes: ByteArray,
+    val file: File,
+    val size: Long = file.length(),
 )
+
+private class ProgressRequestBody(
+    private val part: UploadFilePart,
+    private val totalBytes: Long,
+    private val sentBytes: AtomicLong,
+    private val onProgress: ((sent: Long, total: Long) -> Unit)?,
+) : RequestBody() {
+    override fun contentType(): MediaType? =
+        part.mediaType.ifBlank { "application/octet-stream" }.toMediaTypeOrNull()
+
+    override fun contentLength(): Long = part.file.length()
+
+    override fun writeTo(sink: BufferedSink) {
+        part.file.source().use { source ->
+            val buffer = Buffer()
+            while (true) {
+                val read = source.read(buffer, 64L * 1024L)
+                if (read == -1L) break
+                sink.write(buffer, read)
+                onProgress?.invoke(sentBytes.addAndGet(read), totalBytes)
+            }
+        }
+    }
+}
 
 class ApiException(
     override val message: String,

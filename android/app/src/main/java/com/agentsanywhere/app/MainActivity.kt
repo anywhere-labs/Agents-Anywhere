@@ -13,6 +13,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.core.view.WindowCompat
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import coil3.disk.DiskCache
@@ -71,6 +72,7 @@ class MainActivity : ComponentActivity() {
         sidebarViewMode = HomeSidebarViewMode.normalize(
             preferences.getString(KEY_SIDEBAR_VIEW_MODE, HomeSidebarViewMode.Project),
         )
+        applyWindowTheme(appearanceMode)
         oauthCallbackUri.value = intent?.data
         setContent {
             AgentsAnywhereTheme(appearanceMode = appearanceMode) {
@@ -100,6 +102,29 @@ class MainActivity : ComponentActivity() {
                     onInstallUpdate = ::requestUpdateInstall,
                 )
             }
+        }
+    }
+
+    /**
+     * Paints the window itself before Compose takes over. Without this the platform
+     * keeps drawing its default (light) window background behind the keyboard, which
+     * showed up as a white band under the IME in dark mode.
+     */
+    private fun applyWindowTheme(appearanceMode: String) {
+        val systemDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+        val dark = when (appearanceMode) {
+            AAAppearanceMode.Dark -> true
+            AAAppearanceMode.Light -> false
+            else -> systemDark
+        }
+        val canvas = if (dark) 0xFF09090B.toInt() else 0xFFFDFCFB.toInt()
+        window.decorView.setBackgroundColor(canvas)
+        window.statusBarColor = canvas
+        window.navigationBarColor = canvas
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !dark
+            isAppearanceLightNavigationBars = !dark
         }
     }
 

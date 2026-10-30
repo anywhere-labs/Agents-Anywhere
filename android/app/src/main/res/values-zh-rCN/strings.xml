@@ -533,6 +533,7 @@
     <string name="session_attachment_file">文件</string>
     <string name="session_attachment_name_fallback">附件</string>
     <string name="session_runtime_select_model">选择模型</string>
+    <string name="session_switch_model">切换模型</string>
     <string name="session_runtime_settings_title">模型配置</string>
     <string name="session_runtime_mode_effort">模式与推理强度</string>
     <string name="session_runtime_effort_default">默认</string>
@@ -718,4 +719,8 @@
     <string name="native_history_check">查询恢复状态</string>
     <string name="native_history_releasing">正在结束执行…</string>
     <string name="session_image_input_unsupported">当前模型声明不支持图片输入，请移除图片或切换模型。</string>
+    <string name="workspace_empty_title">选择一个会话</string>
+    <string name="workspace_empty_message">从左侧列表中选择一个会话，或者新建一个。</string>
+    <string name="workspace_sidebar_collapse">收起侧栏</string>
+    <string name="workspace_sidebar_expand">展开侧栏</string>
 </resources>

@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.agentsanywhere.app.api.HttpClientProvider
 import com.agentsanywhere.app.api.AndroidAppRelease
 import com.agentsanywhere.app.api.AppUpdatesApi
 import com.agentsanywhere.app.api.compareUpdateVersions
@@ -46,7 +47,9 @@ data class AppUpdateUiState(
 
 class AppUpdateViewModel(application: Application) : AndroidViewModel(application) {
     private val api = AppUpdatesApi()
-    private val downloadClient = OkHttpClient()
+    private val downloadClient = HttpClientProvider.client.newBuilder()
+        .readTimeout(0, java.util.concurrent.TimeUnit.MILLISECONDS)
+        .build()
     private var downloadJob: Job? = null
     private var checkJob: Job? = null
     private var checkGeneration = 0

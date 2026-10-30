@@ -19,10 +19,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
@@ -30,6 +30,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -61,6 +62,8 @@ import androidx.compose.ui.window.Popup
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.composables.icons.lucide.ChevronDown
+import com.composables.icons.lucide.Lucide
 import kotlinx.coroutines.delay
 
 @Composable
@@ -72,7 +75,6 @@ internal fun ComposerVeil(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .imePadding()
             .height(height)
             .background(
                 Brush.verticalGradient(
@@ -98,6 +100,10 @@ internal fun MessageComposer(
     showInterrupt: Boolean,
     interrupting: Boolean,
     placeholder: String,
+    modelLabel: String?,
+    modelEffortLabel: String?,
+    modelLoading: Boolean,
+    onModelClick: () -> Unit,
     attachments: List<PendingAttachment>,
     onToggleTakeover: () -> Unit,
     onPickPhoto: () -> Unit,
@@ -202,6 +208,10 @@ internal fun MessageComposer(
                 sending = sending,
                 showInterrupt = showInterrupt,
                 interrupting = interrupting,
+                modelLabel = modelLabel,
+                modelEffortLabel = modelEffortLabel,
+                modelLoading = modelLoading,
+                onModelClick = onModelClick,
                 onToggleTakeover = onToggleTakeover,
                 onOpenAttachMenu = { if (attachmentsEnabled) showAttachMenu = true },
                 onSend = onSend,
@@ -324,6 +334,7 @@ private fun PendingImageAttachmentCard(
         )
         AttachmentUploadOverlay(
             state = attachment.uploadState,
+            progress = attachment.uploadProgress,
             onRemove = onRemove,
             onRetry = onRetry,
             modifier = Modifier.fillMaxSize(),
@@ -389,6 +400,7 @@ private fun PendingFileAttachmentCard(
         }
         AttachmentUploadOverlay(
             state = attachment.uploadState,
+            progress = attachment.uploadProgress,
             onRemove = onRemove,
             onRetry = onRetry,
             modifier = Modifier.fillMaxSize(),
@@ -399,6 +411,7 @@ private fun PendingFileAttachmentCard(
 @Composable
 private fun AttachmentUploadOverlay(
     state: AttachmentUploadState,
+    progress: Float,
     onRemove: () -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier,
@@ -408,11 +421,20 @@ private fun AttachmentUploadOverlay(
             modifier = modifier.background(Color.Black.copy(alpha = 0.28f)),
             contentAlignment = Alignment.Center,
         ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(38.dp),
-                color = Color.White,
-                strokeWidth = 5.dp,
-            )
+            if (progress > 0f) {
+                CircularProgressIndicator(
+                    progress = { progress.coerceIn(0f, 1f) },
+                    modifier = Modifier.size(38.dp),
+                    color = Color.White,
+                    strokeWidth = 5.dp,
+                )
+            } else {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(38.dp),
+                    color = Color.White,
+                    strokeWidth = 5.dp,
+                )
+            }
         }
         AttachmentUploadState.Uploaded -> Box(modifier = modifier) {
             AttachmentRemoveButton(
@@ -480,6 +502,10 @@ private fun ComposerActions(
     sending: Boolean,
     showInterrupt: Boolean,
     interrupting: Boolean,
+    modelLabel: String?,
+    modelEffortLabel: String?,
+    modelLoading: Boolean,
+    onModelClick: () -> Unit,
     onToggleTakeover: () -> Unit,
     onOpenAttachMenu: () -> Unit,
     onSend: () -> Unit,
@@ -567,37 +593,114 @@ private fun ComposerActions(
                 )
             }
         }
-        Box(
-            modifier = Modifier
-                .size(34.dp)
-                .clip(CircleShape)
-                .background(primaryActionSurface)
-                .then(
-                    if (primaryActionEnabled) {
-                        Modifier.noRippleClickable(
-                            onClick = if (showInterrupt) onInterrupt else onSend,
-                        )
-                    } else {
-                        Modifier
-                    },
-                ),
-            contentAlignment = Alignment.Center,
+        Row(
+            modifier = Modifier.weight(1f, fill = false),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            when {
-                primaryActionBusy -> CircularProgressIndicator(
-                    color = primaryActionIcon,
-                    strokeWidth = 2.dp,
-                    modifier = Modifier.size(17.dp),
-                )
-                showInterrupt -> Box(
-                    modifier = Modifier
-                        .size(10.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(primaryActionIcon),
-                )
-                else -> ArrowUpGlyph(primaryActionIcon)
+            ModelChip(
+                darkMode = darkMode,
+                label = modelLabel,
+                effortLabel = modelEffortLabel,
+                loading = modelLoading,
+                onClick = onModelClick,
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .widthIn(max = 200.dp),
+            )
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(primaryActionSurface)
+                    .then(
+                        if (primaryActionEnabled) {
+                            Modifier.noRippleClickable(
+                                onClick = if (showInterrupt) onInterrupt else onSend,
+                            )
+                        } else {
+                            Modifier
+                        },
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                when {
+                    primaryActionBusy -> CircularProgressIndicator(
+                        color = primaryActionIcon,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(17.dp),
+                    )
+                    showInterrupt -> Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(primaryActionIcon),
+                    )
+                    else -> ArrowUpGlyph(primaryActionIcon)
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun ModelChip(
+    darkMode: Boolean,
+    label: String?,
+    effortLabel: String?,
+    loading: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val surface = if (darkMode) LocalAAColors.current.raisedSurface else Color.White
+    val border = if (darkMode) Color(0xFF2E2E33) else Color(0xFFEFEDE9)
+    val text = if (darkMode) Color(0xFFD4D4D8) else Color(0xFF3A3935)
+    val accent = if (darkMode) Color(0xFF8A8A93) else Color(0xFF8A8984)
+    val resolved = label?.takeIf { it.isNotBlank() }
+        ?: stringResource(R.string.session_runtime_select_model)
+    val effort = effortLabel?.takeIf { it.isNotBlank() }
+    Row(
+        modifier = modifier
+            .height(28.dp)
+            .clip(CircleShape)
+            .background(surface)
+            .border(1.dp, border, CircleShape)
+            .noRippleClickable(onClick = onClick)
+            .padding(start = 10.dp, end = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (loading) {
+            CircularProgressIndicator(
+                color = accent,
+                strokeWidth = 1.5.dp,
+                modifier = Modifier.size(11.dp),
+            )
+        }
+        Text(
+            text = resolved,
+            color = text,
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        if (effort != null) {
+            Text(
+                text = "· $effort",
+                color = accent,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+            )
+        }
+        Icon(
+            imageVector = Lucide.ChevronDown,
+            contentDescription = stringResource(R.string.session_switch_model),
+            tint = accent,
+            modifier = Modifier.size(12.dp),
+        )
     }
 }
 
