@@ -6,7 +6,16 @@ import urllib.parse
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import FileResponse, RedirectResponse, Response
 
 from agent_server.core.auth import verify_signed_token, verify_user_access_token
@@ -20,8 +29,8 @@ from agent_server.deps import current_user_id, get_attachment_service, get_store
 from agent_server.infra.files.base import UploadEmpty, UploadTooLarge
 from agent_server.infra.repositories.facade import Store
 from agent_server.services.attachments import (
-    AttachmentService,
     LOCAL_FILE_TOKEN_KIND,
+    AttachmentService,
 )
 from agent_server.services.thumbnails import (
     DEFAULT_THUMBNAIL_WIDTH,
@@ -29,7 +38,6 @@ from agent_server.services.thumbnails import (
     is_supported_media_type,
     normalise_width,
 )
-
 
 router = APIRouter(prefix="/sessions", tags=["session-files"])
 

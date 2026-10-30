@@ -3,7 +3,6 @@ from __future__ import annotations
 import io
 
 from PIL import Image
-
 from test_backend_mvp import create_connector_and_session, make_client
 
 

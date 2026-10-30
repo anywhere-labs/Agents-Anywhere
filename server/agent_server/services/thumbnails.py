@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-
 THUMBNAIL_WIDTHS = (256, 512, 1024)
 DEFAULT_THUMBNAIL_WIDTH = 512
 _QUALITY = 76
