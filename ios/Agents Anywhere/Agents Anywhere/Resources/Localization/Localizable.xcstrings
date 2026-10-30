@@ -12025,6 +12025,40 @@
         }
       }
     },
+    "Runtime 默认值": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime default"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime 默认值"
+          }
+        }
+      }
+    },
+    "下一轮生效": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applies next turn"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下一轮生效"
+          }
+        }
+      }
+    },
     "权限": {
       "comment": "Shared with Web: dashboard.new.permissionMode. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -12039,6 +12073,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "权限模式"
+          }
+        }
+      }
+    },
+    "权限未同步": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permission not synced"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "权限未同步"
           }
         }
       }
@@ -14980,6 +15031,23 @@
         }
       }
     },
+    "模型未同步": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model not synced"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型未同步"
+          }
+        }
+      }
+    },
     "默认模型": {
       "extractionState": "manual",
       "localizations": {
@@ -16001,6 +16069,176 @@
           "stringUnit": {
             "state": "translated",
             "value": "运行指令前请移除附件；草稿会保留。"
+          }
+        }
+      }
+    },
+    "继续任务": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continue task"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "继续任务"
+          }
+        }
+      }
+    },
+    "原生历史": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Native history"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "原生历史"
+          }
+        }
+      }
+    },
+    "结束 AA 执行": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "End AA execution"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "结束 AA 执行"
+          }
+        }
+      }
+    },
+    "已退出 CLI，继续任务": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "I have exited the CLI — continue task"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已退出 CLI，继续任务"
+          }
+        }
+      }
+    },
+    "查询恢复状态": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check recovery status"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查询恢复状态"
+          }
+        }
+      }
+    },
+    "恢复失败，历史仍可查看。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recovery failed. History remains available."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复失败，历史仍可查看。"
+          }
+        }
+      }
+    },
+    "恢复结果尚未确认，请查询原操作状态。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recovery is unconfirmed. Check the existing operation."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复结果尚未确认，请查询原操作状态。"
+          }
+        }
+      }
+    },
+    "尚未确认执行实例已释放，请刷新状态。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Execution release is unconfirmed. Refresh the session state."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚未确认执行实例已释放，请刷新状态。"
+          }
+        }
+      }
+    },
+    "将保留原生会话身份并写回后续历史。请先退出 CLI 中对应会话，继续期间不要在 CLI 同时打开它。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AA will preserve this native session and save subsequent history. Exit this session in the CLI and keep it closed there while AA is using it."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将保留原生会话身份并写回后续历史。请先退出 CLI 中对应会话，继续期间不要在 CLI 同时打开它。"
+          }
+        }
+      }
+    },
+    "退出 CLI 中对应会话后可在 AA 继续；结束 AA 执行并等待释放后，可切回 CLI。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exit this session in the CLI before continuing it in AA. End AA execution and wait for release before returning to the CLI."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "退出 CLI 中对应会话后可在 AA 继续；结束 AA 执行并等待释放后，可切回 CLI。"
           }
         }
       }

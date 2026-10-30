@@ -5,6 +5,7 @@ description = "Local runtime connector for Agents Anywhere"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "agent-client-protocol==0.12.1",
     "asyncer>=0.0.18",
     "claude-agent-sdk",
     "httpx[socks]>=0.28.1",
@@ -40,15 +41,6 @@ dev = [
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple/"
 default = true
-
-# The mirror lags behind for recently published packages; get ours from PyPI.
-[[tool.uv.index]]
-name = "pypi"
-url = "https://pypi.org/simple/"
-explicit = true
-
-[tool.uv.sources]
-meshcall = { index = "pypi" }
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

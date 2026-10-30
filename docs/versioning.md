@@ -31,6 +31,8 @@ Agents Anywhere 的产品版本使用 `MAJOR.MINOR.PATCH`，三段各有明确�
 2. 旧客户端遇到新 Server 时，能降级或忽略新字段，而不是出错。
 3. **所有端**都要把版本号更新到 `2.1.0`，包括本次没有功能改动的端，这样 MINOR 号始终表示同一套接口；之后的修复继续按 PATCH 独立递增。
 
+无论哪种版本，发布时都要把 [CHANGELOG.md](../CHANGELOG.md) 的「未发布」节改成带日期的版本号，写法见仓库根目录 `AGENTS.md` 的「更新日志」一节。
+
 ## MAJOR：架构变更
 
 - API namespace 跟随 MAJOR，例如 `2.x` 对应 `/api/v2`。

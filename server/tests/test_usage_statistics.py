@@ -500,29 +500,40 @@ def test_usage_report_retention_cohorts(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
     carol = _create_member(client, headers, "carol")
+    # Relative to the real clock: the report has no clock hook, and the d7
+    # window must have elapsed while the d30 window has not.
+    signup = datetime.now(UTC).date() - timedelta(days=10)
+    cohort_start = signup - timedelta(days=signup.weekday())
 
     async def backdate() -> None:
         async with client.app.state.store.engine.begin() as conn:
             await conn.execute(
                 text("UPDATE users SET created_at = :created WHERE id = :user_id"),
-                {"created": "2026-09-28T09:00:00Z", "user_id": carol},
+                {"created": f"{signup.isoformat()}T09:00:00Z", "user_id": carol},
             )
 
     asyncio.run(backdate())
+    next_day = signup + timedelta(days=1)
     _insert(
         client,
         [
-            UsageEvent(EVENT_USER_ACTIVE, "2026-09-28T09:05:00Z", user_id=carol),
-            UsageEvent(EVENT_MESSAGE_SENT, "2026-09-29T10:00:00Z", user_id=carol, session_id="s3", runtime_type="codex"),
+            UsageEvent(EVENT_USER_ACTIVE, f"{signup.isoformat()}T09:05:00Z", user_id=carol),
+            UsageEvent(
+                EVENT_MESSAGE_SENT,
+                f"{next_day.isoformat()}T10:00:00Z",
+                user_id=carol,
+                session_id="s3",
+                runtime_type="codex",
+            ),
         ],
     )
 
-    body = _report(client, headers, **{"from": "2026-09-28", "to": "2026-09-28", "tz": "UTC"})
+    body = _report(client, headers, **{"from": signup.isoformat(), "to": signup.isoformat(), "tz": "UTC"})
     assert body["summary"]["newUsers"] == 1
     assert body["users"]["retention"] == [
         {
-            "cohortStart": "2026-09-28",
-            "cohortEnd": "2026-10-04",
+            "cohortStart": cohort_start.isoformat(),
+            "cohortEnd": (cohort_start + timedelta(days=6)).isoformat(),
             "cohortSize": 1,
             "d1": 1.0,
             "d7": 1.0,
@@ -588,7 +599,9 @@ def test_usage_maintenance_snapshots_inventory_and_prunes_old_events(tmp_path):
     admin_id = _user_id(client, headers)
     client.post("/connectors", headers=headers, json={"name": "mac"}).raise_for_status()
     old = UsageEvent(EVENT_MESSAGE_SENT, "2026-01-01T00:00:00Z", user_id=admin_id, session_id="old")
-    recent = UsageEvent(EVENT_MESSAGE_SENT, "2026-10-09T00:00:00Z", user_id=admin_id, session_id="recent")
+    # Must stay inside the 30-day retention window whatever today is.
+    recent_at = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    recent = UsageEvent(EVENT_MESSAGE_SENT, recent_at, user_id=admin_id, session_id="recent")
     _insert(client, [old, recent])
 
     loop = UsageMaintenanceLoop(client.app.state.store, client.app.state.redis, retention_days=30)

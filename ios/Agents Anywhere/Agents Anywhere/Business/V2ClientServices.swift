@@ -24,10 +24,12 @@ final class V2ClientServices {
     private var agentModels: [String: DeviceAgentModel] = [:]
     let deviceManagement: V2DeviceManagementService
     let workspaceFiles: V2WorkspaceFilesService
+    let runtimeWorkflows: V2RuntimeWorkflowAPI
     let newSession: NewSessionModel
 
     init(api: V2APIClient, accountID: String) {
         self.api = api
+        runtimeWorkflows = V2RuntimeWorkflowAPI(transport: api.sessions.transport)
         scope = V2ClientScope(serverURL: api.serverURL, accountID: accountID)
         let cacheDirectory = URL.applicationSupportDirectory.appendingPathComponent("AgentsAnywhere/Offline/v1")
             .appendingPathComponent(V2RestorationStore.scopeKey(scope))
@@ -63,7 +65,7 @@ final class V2ClientServices {
             serverURL: api.serverURL
         )
         newSession = NewSessionModel(scope: scope, devices: deviceManagement,
-            preparation: sessionPreparation, creation: sessionCreation, projectAPI: api.projects)
+            preparation: sessionPreparation, creation: sessionCreation, projectAPI: api.projects, workflowAPI: V2RuntimeWorkflowAPI(transport: api.sessions.transport))
         newSession.onProjectResolved = { [weak self] in self?.dashboardRepository.upsertProject($0) }
         newSession.onStaged = { [weak self] submission in
             guard let self else { return }

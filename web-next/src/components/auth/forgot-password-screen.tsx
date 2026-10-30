@@ -76,90 +76,95 @@ export function ForgotPasswordScreen() {
           )}
         </FieldGroup>
       ) : (
-        <FieldGroup>
-          <Field>
-            <Label htmlFor="reset-email">{t("fields.email")}</Label>
-            <InputGroup className="h-11 rounded-lg">
-              <InputGroupAddon><User className="size-4" /></InputGroupAddon>
-              <InputGroupInput
-                id="reset-email"
-                value={email}
-                onChange={(event) => { setEmail(event.currentTarget.value); setCode("") }}
-                placeholder={t("login.userPlaceholder")}
-                type="email"
-                autoComplete="email"
-                spellCheck={false}
-                className="code-mono"
-              />
-            </InputGroup>
-          </Field>
+        <form noValidate onSubmit={(event) => { event.preventDefault(); void submit() }}>
+          <FieldGroup>
+            <Field>
+              <Label htmlFor="reset-email">{t("fields.email")}</Label>
+              <InputGroup className="h-11 rounded-lg">
+                <InputGroupAddon><User className="size-4" /></InputGroupAddon>
+                <InputGroupInput
+                  id="reset-email"
+                  value={email}
+                  onChange={(event) => { setEmail(event.currentTarget.value); setCode("") }}
+                  placeholder={t("login.userPlaceholder")}
+                  type="email"
+                  name="email"
+                  inputMode="email"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  autoComplete="username"
+                  spellCheck={false}
+                  className="code-mono"
+                />
+              </InputGroup>
+            </Field>
 
-          <EmailCodeField
-            id="reset-code"
-            variant="auth"
-            purpose="reset"
-            email={email}
-            value={code}
-            onChange={setCode}
-            disabled={submitting}
-          />
+            <EmailCodeField
+              id="reset-code"
+              variant="auth"
+              purpose="reset"
+              email={email}
+              value={code}
+              onChange={setCode}
+              disabled={submitting}
+            />
 
-          <Field>
-            <Label htmlFor="reset-password">{t("forgotPassword.newPassword")}</Label>
-            <InputGroup className="h-11 rounded-lg">
-              <InputGroupAddon><Lock className="size-4" /></InputGroupAddon>
-              <InputGroupInput
-                id="reset-password"
-                type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={(event) => setPassword(event.currentTarget.value)}
-                placeholder={t("register.passwordPlaceholder")}
-                autoComplete="new-password"
-                spellCheck={false}
-                className="code-mono"
-              />
-              <InputGroupAddon align="inline-end">
-                <InputGroupButton onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? t("actions.hidePassword") : t("actions.showPassword")}>
-                  {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                </InputGroupButton>
-              </InputGroupAddon>
-            </InputGroup>
-          </Field>
+            <Field>
+              <Label htmlFor="reset-password">{t("forgotPassword.newPassword")}</Label>
+              <InputGroup className="h-11 rounded-lg">
+                <InputGroupAddon><Lock className="size-4" /></InputGroupAddon>
+                <InputGroupInput
+                  id="reset-password"
+                  name="password"
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(event) => setPassword(event.currentTarget.value)}
+                  placeholder={t("register.passwordPlaceholder")}
+                  autoComplete="new-password"
+                  spellCheck={false}
+                  className="code-mono"
+                />
+                <InputGroupAddon align="inline-end">
+                  <InputGroupButton onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? t("actions.hidePassword") : t("actions.showPassword")}>
+                    {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </InputGroupButton>
+                </InputGroupAddon>
+              </InputGroup>
+            </Field>
 
-          <Field>
-            <Label htmlFor="reset-confirm">{t("fields.confirmPassword")}</Label>
-            <InputGroup className="h-11 rounded-lg">
-              <InputGroupAddon><Lock className="size-4" /></InputGroupAddon>
-              <InputGroupInput
-                id="reset-confirm"
-                type="password"
-                value={confirm}
-                onChange={(event) => setConfirm(event.currentTarget.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") void submit()
-                }}
-                placeholder={t("register.confirmPlaceholder")}
-                autoComplete="new-password"
-                spellCheck={false}
-                className="code-mono"
-              />
-            </InputGroup>
-          </Field>
+            <Field>
+              <Label htmlFor="reset-confirm">{t("fields.confirmPassword")}</Label>
+              <InputGroup className="h-11 rounded-lg">
+                <InputGroupAddon><Lock className="size-4" /></InputGroupAddon>
+                <InputGroupInput
+                  id="reset-confirm"
+                  name="confirmPassword"
+                  type="password"
+                  value={confirm}
+                  onChange={(event) => setConfirm(event.currentTarget.value)}
+                  placeholder={t("register.confirmPlaceholder")}
+                  autoComplete="new-password"
+                  spellCheck={false}
+                  className="code-mono"
+                />
+              </InputGroup>
+            </Field>
 
-          <Button
-            className="h-11 w-full font-medium"
-            disabled={submitting || !ready}
-            onClick={() => void submit()}
-          >
-            {submitting ? t("forgotPassword.submitting") : t("forgotPassword.submit")}
-          </Button>
+            <Button
+              className="h-11 w-full font-medium"
+              disabled={submitting || !ready}
+              type="submit"
+            >
+              {submitting ? t("forgotPassword.submitting") : t("forgotPassword.submit")}
+            </Button>
 
-          {localError || error ? (
-            <p className="text-center text-sm text-destructive">{localError || error}</p>
-          ) : null}
+            {localError || error ? (
+              <p className="text-center text-sm text-destructive">{localError || error}</p>
+            ) : null}
 
-          {backToLogin}
-        </FieldGroup>
+            {backToLogin}
+          </FieldGroup>
+        </form>
       )}
     </AuthShell>
   )

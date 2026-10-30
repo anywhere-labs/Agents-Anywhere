@@ -2,14 +2,14 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { SessionPromptRequest } from '@deepseek-ai/dsh-api-session-controller'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionRecord } from '@deepseek-ai/dsh-session-query'
+import type { SessionLogSnapshot, SessionRecord } from '@deepseek-ai/dsh-session-query'
 import type {} from '@deepseek-ai/dsh-workspace'
 import type {} from '@deepseek-ai/dsh-storage-domain'
 import type {} from '@deepseek-ai/dsh-permission-presets'
 import { realpath, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { canonicalJson, digest, userMessageId } from './identity.js'
-import { BridgeError } from './errors.js'
+import { BridgeError, CreationNotStartedError } from './errors.js'
 import { ClientPresence } from './visibility.js'
 import { NativeSessionSource } from './sessions/source.js'
 import { record } from './types.js'
@@ -35,6 +35,8 @@ export type NativeChange = { type: 'stream', id: string, turn: number, step: num
   | { type: 'question', id: string } | { type: 'approval', id: string } | { type: 'capabilities' }
   | { type: 'visibility' } | { type: 'catalogs', catalogType: 'model' | 'permission' } | { type: 'commands' }
 export interface NativeWorkspace { id: string, title: string, path: string, sessionIds: string[] }
+
+export const MAX_RETAINED_FACTS = 128
 
 /** Configuration facts a session state read needs, without retaining the event log. */
 export interface SessionFacts {
@@ -100,7 +102,10 @@ export class NativeRuntime {
       this.approvals.observe(session.id, event)
       this.emit({ type: 'event', id: session.id, event })
     }, { global: true })
-    ctx.on('session/disposed', session => this.emit({ type: 'session', id: session.id }), { global: true })
+    ctx.on('session/disposed', session => {
+      this.source.release(session.id)
+      this.emit({ type: 'session', id: session.id })
+    }, { global: true })
     const attempts = new Map<string, { attemptId: string, turn: number, step: number }>()
     ctx.on('agent/assistant-stream', ({ agent, frame }) => {
       if (frame.type === 'start') attempts.set(agent.id, frame)
@@ -192,6 +197,8 @@ export class NativeRuntime {
     if (this.source.records.has(id) || this.ctx.sessions.get(id as SessionId) !== undefined) return
     await this.source.initialize(signal)
   }
+  get retainedFactCount(): number { return this.facts.size }
+
   /**
    * Read the configuration facts of one session.
    *
@@ -199,22 +206,33 @@ export class NativeRuntime {
    * from an unchanged log are reused. The key is the log identity, never wall time,
    * and nothing but the derived facts is retained.
    */
-  async stateFacts(id: SessionId): Promise<SessionFacts> {
-    const revision = await this.source.freshRevisionOf(id)
+  async stateFacts(id: SessionId, snapshot?: SessionLogSnapshot & { bridgeRevision?: string }): Promise<SessionFacts> {
+    const revision = snapshot?.bridgeRevision ?? await this.source.freshRevisionOf(id)
     if (revision !== undefined) {
       const cached = this.facts.get(id)
-      if (cached !== undefined && cached.revision === revision) return cached.value
+      if (cached !== undefined && cached.revision === revision) {
+        this.facts.delete(id)
+        this.facts.set(id, cached)
+        return cached.value
+      }
     }
     const live = this.ctx.sessions.get(id)
-    const snapshot = live !== undefined ? undefined : await this.source.readLog(id)
-    const configuration = await this.configuration.state(id, snapshot)
-    const events = live?.snapshotEvents() ?? snapshot!.events
+    const log = snapshot ?? (live !== undefined ? undefined : await this.source.readLog(id))
+    const configuration = await this.configuration.state(id, log)
+    const events = live?.snapshotEvents() ?? log!.events
     const value: SessionFacts = {
       configuration,
       lastTurnEndKind: lastTurnEndKind(events),
     }
-    if (revision !== undefined) {
-      this.facts.delete(id); this.facts.set(id, { revision, value })
+    const actualRevision = log && 'bridgeRevision' in log && typeof log.bridgeRevision === 'string' ? log.bridgeRevision : revision
+    if (actualRevision !== undefined) {
+      this.facts.delete(id)
+      this.facts.set(id, { revision: actualRevision, value })
+      while (this.facts.size > MAX_RETAINED_FACTS) {
+        const oldest = this.facts.keys().next().value
+        if (oldest === undefined) break
+        this.facts.delete(oldest)
+      }
     }
     return value
   }
@@ -280,12 +298,18 @@ export class NativeRuntime {
       }
       const store = this.ctx.get('attachments')
       if (images.length && (!store || !platformId)) throw new BridgeError('UNSUPPORTED_OPERATION', 'DSH attachments are unavailable.')
-      await this.configuration.validate(selections, create)
+      let preset: string | undefined
+      try {
+        await this.configuration.validate(selections, create)
+        if (create) preset = await this.configuration.validatePreset(agentPreset)
+      } catch (error) {
+        if (create && !log && !intent && error instanceof BridgeError) throw new CreationNotStartedError(error)
+        throw error
+      }
       if (create) {
         if (log?.events.some(event => event.type === 'turn/start')) throw new BridgeError('INVALID_PARAMS', 'This session has already started. Continue it with a new message.')
-        const preset = await this.configuration.validatePreset(agentPreset)
         if (!intent) await this.creations.write(id, { requestId, fingerprint: fingerprint! })
-        await this.configuration.controller().create({ sessionId: id, cwd: path!, agentPreset: preset })
+        await this.configuration.controller().create({ sessionId: id, cwd: path!, agentPreset: preset! })
         const workspace = await this.ctx.workspaceRegistry.create(path!)
         await workspace.attachSession(id)
       }

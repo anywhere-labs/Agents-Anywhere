@@ -4,6 +4,15 @@ from dataclasses import dataclass
 
 from agent_server.core.models import TimelineItem, TimelineItemIn
 
+# ``timeline_items.order_seq`` is a PostgreSQL INTEGER. Widening it would
+# rewrite the whole table, so every writer must stay inside this range.
+TIMELINE_ORDER_SEQ_MIN = -(2**31)
+TIMELINE_ORDER_SEQ_MAX = 2**31 - 1
+
+
+def timeline_order_seq_in_range(order_seq: int) -> bool:
+    return TIMELINE_ORDER_SEQ_MIN <= order_seq <= TIMELINE_ORDER_SEQ_MAX
+
 
 @dataclass(frozen=True, slots=True)
 class TimelineItemWriteResult:
@@ -15,6 +24,9 @@ class TimelineItemWriteResult:
 class TimelineBatchWriteResult:
     items: tuple[TimelineItem, ...]
     changed: bool
+    # Some items were stored at a different orderSeq than the pending value
+    # clients already received, so their copies must be refetched.
+    reordered: bool = False
 
 
 def timeline_item_state_is_unchanged(

@@ -361,6 +361,8 @@ class ConnectorNotificationRepository(
         session_id: str,
         source_observed_at: str | None = None,
         mark_read_on_change: bool = False,
+        source_event_id: str | None = None,
+        source_event_digest: str | None = None,
     ) -> SessionView: ...
 
     async def update_connector_preferences(
@@ -532,6 +534,10 @@ class SessionRunRepository(
 
     async def create_session(self, **values: Any) -> SessionView: ...
 
+    async def discard_unstarted_session(self, session_id: str) -> bool: ...
+
+    async def delete_runtime_session_files(self, session_ids: list[str]) -> None: ...
+
     async def save_user_uploaded_file(
         self,
         *,
@@ -540,6 +546,7 @@ class SessionRunRepository(
         name: str,
         data: bytes,
         media_type: str | None = None,
+        file_id: str | None = None,
     ) -> dict[str, Any]: ...
 
     async def read_uploaded_file(

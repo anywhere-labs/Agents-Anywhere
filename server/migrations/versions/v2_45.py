@@ -1,5 +1,4 @@
-"""Durable immutable plan documents and operation receipts.
-
+"""Durable workspace preparation and asynchronous session creation.
 Revision ID: v2_45
 Revises: v2_44
 """
@@ -15,58 +14,36 @@ depends_on = None
 
 def upgrade() -> None:
     op.create_table(
-        "planning_creations",
-        sa.Column(
-            "connector_id",
-            sa.Text(),
-            sa.ForeignKey("connectors.id", ondelete="CASCADE"),
-            primary_key=True,
+        "runtime_workflows",
+        sa.Column("user_id", sa.Text(), nullable=False),
+        sa.Column("kind", sa.Text(), nullable=False),
+        sa.Column("id", sa.Text(), nullable=False),
+        sa.Column("connector_id", sa.Text(), nullable=False),
+        sa.Column("runtime_id", sa.Text(), nullable=False),
+        sa.Column("runtime_type", sa.Text(), nullable=False),
+        sa.Column("project_id", sa.Text(), nullable=False),
+        sa.Column("session_id", sa.Text()),
+        sa.Column("input_digest", sa.Text(), nullable=False),
+        sa.Column("request_json", sa.Text(), nullable=False),
+        sa.Column("result_json", sa.Text(), nullable=False),
+        sa.Column("consumed_by", sa.Text()),
+        sa.PrimaryKeyConstraint("user_id", "kind", "id"),
+        sa.ForeignKeyConstraint(
+            ["connector_id"], ["connectors.id"], ondelete="CASCADE"
         ),
-        sa.Column("runtime_id", sa.Text(), primary_key=True),
-        sa.Column("operation_id", sa.Text(), primary_key=True),
-        sa.Column("fingerprint", sa.Text(), nullable=False),
-        sa.Column("payload", sa.Text(), nullable=False),
+        sa.ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="CASCADE"),
     )
+
     op.create_table(
-        "session_planning",
-        sa.Column(
-            "session_id",
-            sa.Text(),
-            sa.ForeignKey("sessions.id", ondelete="CASCADE"),
-            primary_key=True,
-        ),
-        sa.Column("payload", sa.Text(), nullable=False),
-    )
-    op.create_table(
-        "plan_documents",
-        sa.Column(
-            "session_id",
-            sa.Text(),
-            sa.ForeignKey("sessions.id", ondelete="CASCADE"),
-            primary_key=True,
-        ),
-        sa.Column("plan_id", sa.Text(), primary_key=True),
-        sa.Column("revision", sa.Integer(), primary_key=True),
-        sa.Column("content_hash", sa.Text(), nullable=False),
-        sa.Column("payload", sa.Text(), nullable=False),
-        sa.Column("created_at", sa.Text(), nullable=False),
-    )
-    op.create_table(
-        "planning_operations",
-        sa.Column(
-            "session_id",
-            sa.Text(),
-            sa.ForeignKey("sessions.id", ondelete="CASCADE"),
-            primary_key=True,
-        ),
-        sa.Column("operation_id", sa.Text(), primary_key=True),
-        sa.Column("fingerprint", sa.Text(), nullable=False),
-        sa.Column("payload", sa.Text(), nullable=False),
+        "session_runtime_event_receipts",
+        sa.Column("session_id", sa.Text(), nullable=False),
+        sa.Column("source_event_id", sa.Text(), nullable=False),
+        sa.Column("event_digest", sa.Text(), nullable=False),
+        sa.PrimaryKeyConstraint("session_id", "source_event_id"),
+        sa.ForeignKeyConstraint(["session_id"], ["sessions.id"], ondelete="CASCADE"),
     )
 
 
 def downgrade() -> None:
-    op.drop_table("planning_creations")
-    op.drop_table("planning_operations")
-    op.drop_table("plan_documents")
-    op.drop_table("session_planning")
+    op.drop_table("session_runtime_event_receipts")
+    op.drop_table("runtime_workflows")

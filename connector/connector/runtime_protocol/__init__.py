@@ -65,6 +65,7 @@ from connector.runtime_protocol.models import (
     RuntimeIdentity,
     RuntimeInventoryItem,
     RuntimeModelCatalog,
+    RuntimeModelGroup,
     RuntimeModelItem,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
@@ -233,6 +234,7 @@ __all__ = [
     "RuntimeInventoryItem",
     "RuntimeLifecycleStatus",
     "RuntimeModelCatalog",
+    "RuntimeModelGroup",
     "RuntimeModelItem",
     "RuntimeNoticePublishError",
     "RuntimeOperationResult",
@@ -258,6 +260,8 @@ __all__ = [
     "RuntimeUnavailableError",
     "RuntimeUnsupportedError",
     "RuntimeUpstreamError",
+    "RuntimeWorkflowRequest",
+    "RuntimeWorkflowResult",
     "SelectionScope",
     "SessionMeta",
     "SessionNotice",
@@ -296,3 +300,8 @@ __all__ = [
     "session_attachments_dir",
     "timeline_content_hash",
 ]
+
+from connector.runtime_protocol.workflows import (
+    RuntimeWorkflowRequest,
+    RuntimeWorkflowResult,
+)

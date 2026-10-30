@@ -19,13 +19,43 @@ function listFiles(root: string, current = root): string[] {
   return found;
 }
 
-/** Content-addressed, so a resolved uv.lock is reused until the bundled source changes. */
-function payloadDigest(source: string): string {
+/** The bundle's regular files, relative to `root`, in a stable order. */
+function payloadFiles(root: string): string[] {
+  return listFiles(root).map(file => path.relative(root, file));
+}
+
+/**
+ * Content-addressed, so a resolved uv.lock is reused until the bundled source
+ * changes. Hashing a copy against the bundle's own file list also verifies it.
+ */
+function payloadDigest(root: string, files: readonly string[]): string {
   const hash = createHash("sha256");
-  for (const file of listFiles(source)) {
-    hash.update(path.relative(source, file).split(path.sep).join("/")).update("\0").update(fs.readFileSync(file)).update("\0");
+  for (const file of files) {
+    hash.update(file.split(path.sep).join("/")).update("\0").update(fs.readFileSync(path.join(root, file))).update("\0");
   }
   return hash.digest("hex").slice(0, 16);
+}
+
+/**
+ * Recursive copy that follows symlinks, i.e. what `fs.cpSync(source,
+ * destination, { recursive: true, dereference: true })` does.
+ *
+ * `cpSync` without a `filter` hands the whole copy to Node's native
+ * `cpSyncCopyDir`, which on Windows decodes the UTF-8 path with the ANSI code
+ * page. In the Node 22 that Electron 39 ships, a destination under a profile
+ * such as `C:\Users\汐穹` therefore throws EIO/EPERM, copies nothing, or aborts
+ * the process (`0xC0000409`). These primitives are not affected.
+ */
+function copyTree(source: string, destination: string): void {
+  const stats = fs.statSync(source);
+  if (stats.isDirectory()) {
+    // Default modes: a read-only bundle directory must not become one the copy
+    // can neither fill nor clean up.
+    fs.mkdirSync(destination, { recursive: true });
+    for (const name of fs.readdirSync(source)) copyTree(path.join(source, name), path.join(destination, name));
+    return;
+  }
+  fs.copyFileSync(source, destination);
 }
 
 /**
@@ -39,15 +69,27 @@ function payloadDigest(source: string): string {
  * or publishes one.
  */
 export function materializeConnectorProject(source: string, dataPath: string): string {
-  if (!complete(source)) throw new Error("Bundled Connector source is incomplete.");
+  if (!complete(source)) throw new Error(`Bundled Connector source is incomplete: ${source}`);
+  const files = payloadFiles(source);
+  const digest = payloadDigest(source, files);
   const root = path.join(dataPath, "connector-source");
-  const target = path.join(root, payloadDigest(source));
-  if (complete(target)) return target;
+  const target = path.join(root, digest);
+  if (complete(target)) {
+    try { if (payloadDigest(target, files) === digest) return target; } catch { /* Repair incomplete payloads below. */ }
+  }
+  // The supervisor holds the environment lease before materializing or repairing.
+  if (fs.existsSync(target)) fs.rmSync(target, { recursive: true, force: true });
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   const staging = fs.mkdtempSync(`${target}.partial-`);
   try {
-    fs.cpSync(source, staging, { recursive: true, dereference: true });
-    if (!complete(staging)) throw new Error("Bundled Connector source is incomplete.");
+    try {
+      copyTree(source, staging);
+      // A copy that returned without copying everything is how this failed before.
+      if (payloadDigest(staging, files) !== digest) throw new Error("the copy does not match the bundle");
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`Could not copy the bundled Connector source to ${staging}: ${reason}`, { cause: error });
+    }
     try {
       fs.renameSync(staging, target);
     } catch (error) {

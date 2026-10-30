@@ -20,6 +20,7 @@ struct SessionChatView: View, Equatable {
     @State private var isDownloading = false
     @State private var toasts = ChatToastStore()
     @State private var pendingTakeover: Bool?
+    @State private var confirmingNativeContinue = false
     @State private var hasStartedLoading = false
     @Environment(\.colorScheme) private var colorScheme
     @ScaledMetric(relativeTo: .body) private var bodyLineHeight: CGFloat = 22
@@ -29,7 +30,7 @@ struct SessionChatView: View, Equatable {
          onMenu: @escaping () -> Void) {
         _storage = StateObject(wrappedValue: StableViewModel {
             let chat = SessionChatModel(session: session, repository: services.sessionRepository, attachments: services.attachments,
-                files: services.workspaceFiles)
+                files: services.workspaceFiles, workflowAPI: services.runtimeWorkflows)
             chat.onEditCreation = { [weak services, weak session] pending in
                 if let session { services?.editCreation(session, pending: pending) }
             }
@@ -72,6 +73,11 @@ struct SessionChatView: View, Equatable {
                         SessionInteractionDock(chat: model,
                             onShowAll: { expandedNoticeID = $0; sheet = .notices })
                             .traceChatLayout("interaction-dock")
+                        // 暂不展示 AA 持有会话时的状态卡片，保留状态和操作逻辑。
+                        if session.runtime.state?.metadata["nativeHistory"] == .bool(true)
+                            && !session.runtime.allows("session.close") {
+                            nativeHistoryControls
+                        }
                         if let target = model.planReviewTarget {
                             SessionPlanReviewPanel(chat: model, target: target.state)
                                 .id("\(target.state.epoch):\(target.id):\(target.state.review?.planId ?? ""):\(target.state.review?.planRevision ?? 0):\(target.state.review?.contentHash ?? "")")
@@ -136,6 +142,12 @@ struct SessionChatView: View, Equatable {
             model.error = nil
             if !(await model.setTakeover(enabled)), let error = model.takeoverError { model.error = error }
         })
+        .alert(String(localized: "继续任务"), isPresented: $confirmingNativeContinue) {
+            Button(String(localized: "已退出 CLI，继续任务")) { Task { await model.continueNativeTask() } }
+            Button(String(localized: "取消"), role: .cancel) {}
+        } message: {
+            Text(String(localized: "将保留原生会话身份并写回后续历史。请先退出 CLI 中对应会话，继续期间不要在 CLI 同时打开它。"))
+        }
         .completionFeedback(trigger: model.isRunning) { wasRunning, isRunning in
             wasRunning && !isRunning && model.isOpeningReady && session.runtime.isFresh
                 && session.runtime.state?.status == .idle
@@ -199,6 +211,35 @@ struct SessionChatView: View, Equatable {
         .onChange(of: model.openingError, initial: true) { _, message in
             toasts.update(source: "opening", failure: message.map { V2ClientFailure(kind: .unavailable, message: $0) })
         }
+    }
+
+    private var nativeHistoryControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(String(localized: "原生历史")).font(.subheadline.weight(.medium))
+            if let error = model.nativeHistoryError ?? session.runtime.state?.error?.message {
+                Text(error).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            } else {
+                Text(String(localized: "退出 CLI 中对应会话后可在 AA 继续；结束 AA 执行并等待释放后，可切回 CLI。"))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            HStack {
+                if model.nativeHistoryBusy { ProgressView() }
+                if session.runtime.allows("session.close") {
+                    Button(String(localized: "结束 AA 执行")) { Task { await model.endNativeTask() } }
+                        .disabled(model.nativeHistoryBusy)
+                } else {
+                    Button(model.hasNativeRecovery ? String(localized: "查询恢复状态") : String(localized: "继续任务")) {
+                        if model.hasNativeRecovery { Task { await model.continueNativeTask() } }
+                        else { confirmingNativeContinue = true }
+                    }.disabled(model.nativeHistoryBusy || (!canContinueNativeHistory && !model.hasNativeRecovery))
+                }
+            }.buttonStyle(.bordered)
+        }.padding(.horizontal, 16).padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var canContinueNativeHistory: Bool {
+        guard session.runtime.isFresh, let capability = session.runtime.capabilities?.capability(id: "session.recover") else { return false }
+        return capability.supported && capability.available && (capability.allowed || capability.unavailableReason == "session_not_taken_over")
     }
 
     private var openingMask: some View {

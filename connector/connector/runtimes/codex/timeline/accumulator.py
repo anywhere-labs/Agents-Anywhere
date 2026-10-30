@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from openai_codex.generated.v2_all import Thread
@@ -43,6 +44,7 @@ class CodexTimelineAccumulator:
         self._next_order = 0
         self._pending_messages = pending_messages
         self._active_turn_positions: dict[tuple[str, str], ActiveTurnPositions] = {}
+        self._async_input_call_ids_by_thread: dict[str, set[str]] = {}
 
     def begin_turn(self, external_session_id: str, turn_id: str) -> None:
         """Start bounded live-item position tracking for one active turn."""
@@ -136,6 +138,9 @@ class CodexTimelineAccumulator:
         ) or codex_timeline.timeline_projection_from_event(event)
         if projection is None:
             return None
+        self._remember_async_input_call(external_session_id, projection)
+        if self._is_accepted_async_input_output(external_session_id, projection):
+            return None
         projection = self._attach_client_message_id(external_session_id, projection)
         projection = self._assign_live_turn_position(
             external_session_id=external_session_id,
@@ -184,6 +189,7 @@ class CodexTimelineAccumulator:
             merged = projection.with_status(projection.status or "inProgress")
         elif event.event_type == "item/completed":
             merged = projection.with_status(projection.status or "completed")
+        merged = merge_web_search_projection(previous, merged)
         if state is not None and item_key is not None:
             state.projection_by_item_key[item_key] = merged
         merged = aggregate_live_reasoning_projection(state, merged)
@@ -245,7 +251,14 @@ class CodexTimelineAccumulator:
     ) -> tuple[RuntimeTimelineItem, ...]:
         prepared: list[tuple[codex_timeline.CodexTimelineProjection, int]] = []
         index_by_id: dict[str, int] = {}
+        for projection in projections:
+            self._remember_async_input_call(external_session_id, projection)
         for index, projection in enumerate(projections):
+            if self._is_accepted_async_input_output(
+                external_session_id,
+                projection,
+            ):
+                continue
             projection = self._attach_client_message_id(external_session_id, projection)
             projection = self.stabilize_projection_identity(
                 external_session_id=external_session_id,
@@ -254,6 +267,9 @@ class CodexTimelineAccumulator:
             item_id = projection.item_id(
                 external_session_id=external_session_id,
                 fallback_index=index,
+            )
+            projection = merge_web_search_projection(
+                self._projection_by_id.get(item_id), projection
             )
             # ContextCompaction snapshots carry only an ID, not item status.
             # While its turn is observed live, missing status must not overwrite
@@ -274,6 +290,27 @@ class CodexTimelineAccumulator:
             )
         items: list[RuntimeTimelineItem] = []
         for projection, fallback_index in prepared:
+            # Reuse known search fields while a turn is active; terminal turn
+            # cleanup releases these projections along with live items.
+            state = self._active_turn_state(external_session_id, projection.turn_id)
+            if projection.raw_type == "webSearch" and state is not None:
+                self._projection_by_id[
+                    projection.item_id(external_session_id, fallback_index)
+                ] = projection
+                item_key = live_projection_item_key(projection)
+                if item_key is not None and projection.turn_position is not None:
+                    lane = turn_item_lane(
+                        projection.raw_type, projection.effective_role()
+                    )
+                    state.position_by_item_key[item_key] = (
+                        lane,
+                        projection.turn_position,
+                    )
+                    state.next_position_by_lane[lane] = max(
+                        state.next_position_by_lane.get(lane, 0),
+                        projection.turn_position + 1,
+                    )
+                    state.projection_by_item_key[item_key] = projection
             items.append(
                 self._runtime_item(
                     session_id=session_id,
@@ -285,6 +322,41 @@ class CodexTimelineAccumulator:
                 )
             )
         return tuple(items)
+
+    def _remember_async_input_call(
+        self,
+        external_session_id: str,
+        projection: codex_timeline.CodexTimelineProjection,
+    ) -> None:
+        if (
+            projection.raw_type == "function_call"
+            and projection.name == "request_user_input_async"
+            and projection.call_id is not None
+        ):
+            self._async_input_call_ids_by_thread.setdefault(
+                external_session_id,
+                set(),
+            ).add(projection.call_id)
+
+    def _is_accepted_async_input_output(
+        self,
+        external_session_id: str,
+        projection: codex_timeline.CodexTimelineProjection,
+    ) -> bool:
+        if (
+            projection.raw_type not in {"function_call_output", "functionCallOutput"}
+            or projection.call_id is None
+            or projection.call_id
+            not in self._async_input_call_ids_by_thread.get(external_session_id, set())
+        ):
+            return False
+        output = projection.output
+        if isinstance(output, str):
+            try:
+                output = json.loads(output)
+            except json.JSONDecodeError:
+                return False
+        return isinstance(output, Mapping) and output.get("accepted") is True
 
     def stabilize_projection_identity(
         self,
@@ -485,6 +557,7 @@ def merge_snapshot_projection(
     existing: codex_timeline.CodexTimelineProjection,
     incoming: codex_timeline.CodexTimelineProjection,
 ) -> codex_timeline.CodexTimelineProjection:
+    incoming = merge_web_search_projection(existing, incoming)
     if existing.raw_type != "reasoning" or incoming.raw_type != "reasoning":
         return incoming
     texts = [
@@ -498,6 +571,34 @@ def merge_snapshot_projection(
     if not texts:
         return incoming
     return incoming.with_text("\n".join(texts))
+
+
+def merge_web_search_projection(
+    existing: codex_timeline.CodexTimelineProjection | None,
+    incoming: codex_timeline.CodexTimelineProjection,
+) -> codex_timeline.CodexTimelineProjection:
+    if (
+        existing is None
+        or existing.raw_type != "webSearch"
+        or incoming.raw_type != "webSearch"
+        or existing.native_id != incoming.native_id
+    ):
+        return incoming
+    status = incoming.status
+    if status is None or (
+        status in {"inProgress", "in_progress", "running"}
+        and existing.status
+        in {"completed", "done", "failed", "cancelled", "interrupted"}
+    ):
+        status = existing.status
+    return replace(
+        incoming,
+        message=existing.message if incoming.message is None else incoming.message,
+        arguments=existing.arguments
+        if incoming.arguments is None
+        else incoming.arguments,
+        status=status,
+    )
 
 
 def live_projection_item_key(

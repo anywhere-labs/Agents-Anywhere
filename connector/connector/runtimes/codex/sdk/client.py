@@ -39,6 +39,7 @@ from connector.runtime_protocol import (
     RuntimeInvalidRequestError,
 )
 from connector.runtimes.codex.domain.input_requests import CODEX_REQUEST_USER_INPUT
+from connector.runtimes.codex.domain.selections import permission_profile_id
 from connector.runtimes.codex.runtime_helpers import soft_codex_unavailable_reason
 from connector.runtimes.codex.sdk.binary import (
     codex_launch_command,
@@ -137,7 +138,9 @@ class CodexPlanningResumeResponse(BaseModel):
     collaboration_mode: dict | None = Field(default=None, alias="collaborationMode")
 
 
-class CodexSettingsResponse(BaseModel):
+class CodexSettingsUpdateResponse(BaseModel):
+    """``thread/settings/update`` and ``turn/settings/update`` answer ``{}``."""
+
     model_config = ConfigDict(extra="allow")
 
 
@@ -175,6 +178,7 @@ class CodexSdkClient:
         self._entered_client: Any | None = None
         self._threads: dict[str, Any] = {}
         self._loaded_thread_ids: set[str] = set()
+        self._thread_settings_update_supported = True
         self._turns: dict[str, Any] = {}
         self._stream_tasks: dict[str, asyncio.Task[None]] = {}
         self._stream_states: dict[str, TurnStreamState] = {}
@@ -542,7 +546,11 @@ class CodexSdkClient:
         if low_level_client is not None:
             generation = self._generation
             started = await low_level_client.thread_start(
-                codex_thread_start_params(request, self._model_gateway)
+                codex_permission_params(
+                    codex_thread_start_params(request, self._model_gateway),
+                    request.sandbox,
+                    "sandbox",
+                )
             )
             thread_id = id_of(started.thread)
             if thread_id:
@@ -726,9 +734,13 @@ class CodexSdkClient:
             return
         generation = self._generation
         try:
-            params = codex_thread_resume_params(request, self._model_gateway)
+            params = codex_permission_params(
+                codex_thread_resume_params(request, self._model_gateway),
+                request.sandbox,
+                "sandbox",
+            )
             if getattr(low_level_client, "_sync", None) is not None:
-                resumed = await low_level_client.request("thread/resume", params.model_dump(by_alias=True, exclude_none=True, mode="json"), response_model=CodexPlanningResumeResponse)
+                resumed = await low_level_client.request("thread/resume", params, response_model=CodexPlanningResumeResponse)
             else:
                 resumed = await thread_resume(request.thread_id, params)
         except JsonRpcError as exc:
@@ -766,8 +778,78 @@ class CodexSdkClient:
         if low is None:
             raise RuntimeInvalidRequestError("Native Plan controls require the Codex app-server interface")
         await self._resume_thread(low, CodexResumeThreadRequest(thread_id=thread_id))
-        await low.request("thread/settings/update", {"threadId": thread_id, "collaborationMode": collaboration}, response_model=CodexSettingsResponse)
+        await low.request("thread/settings/update", {"threadId": thread_id, "collaborationMode": collaboration}, response_model=CodexSettingsUpdateResponse)
         self._planning_modes[thread_id] = collaboration
+
+    def thread_loaded(self, thread_id: str) -> bool:
+        """Whether this app-server generation started or resumed ``thread_id``.
+
+        Only ``thread/start`` and ``thread/resume`` take the writer lock, so this
+        is the positive evidence that the Connector holds the thread. Reads never
+        load a thread.
+        """
+
+        return thread_id in self._loaded_thread_ids
+
+    async def update_thread_settings(
+        self, thread_id: str, settings: Mapping[str, Any]
+    ) -> bool:
+        """Apply settings to a thread this app-server holds, from its next turn on.
+
+        Codex Desktop changes settings the same way, so a window following the
+        thread shows the change at once instead of after AA's next message.
+
+        Returns False when nothing was applied: the thread is not loaded here
+        (loading it would take its writer lock) or app-server lacks the method.
+        Raises when app-server rejects the settings.
+        """
+
+        if not settings or not self._thread_settings_update_supported:
+            return False
+        if thread_id not in self._loaded_thread_ids:
+            return False
+        request = await self._settings_request()
+        if request is None:
+            return False
+        try:
+            await request(
+                "thread/settings/update",
+                {"threadId": thread_id, **settings},
+                response_model=CodexSettingsUpdateResponse,
+            )
+        except JsonRpcError as exc:
+            if not codex_method_unsupported(exc):
+                raise
+            logger.info("codex app-server cannot update thread settings: {}", exc.message)
+            self._thread_settings_update_supported = False
+            return False
+        return True
+
+    async def update_turn_settings(
+        self, thread_id: str, turn_id: str, settings: Mapping[str, Any]
+    ) -> bool:
+        """Apply settings to the running turn of a thread this app-server holds.
+
+        app-server takes the reviewer, model and effort here; the sandbox and
+        approval policy of a running turn cannot change.
+        """
+
+        if not settings or thread_id not in self._loaded_thread_ids:
+            return False
+        request = await self._settings_request()
+        if request is None:
+            return False
+        await request(
+            "turn/settings/update",
+            {"threadId": thread_id, "turnId": turn_id, **settings},
+            response_model=CodexSettingsUpdateResponse,
+        )
+        return True
+
+    async def _settings_request(self) -> Callable[..., Awaitable[Any]] | None:
+        await ensure_codex_initialized(self._client)
+        request = getattr(codex_low_level_client(self._client), "request", None)
+        return request if callable(request) else None
 
     def _observe_command_thread(self, thread_id: str) -> None:
         if self._command_notifications:
@@ -822,7 +904,7 @@ class CodexSdkClient:
             return await low_level_client.turn_start(
                 request.thread_id,
                 codex_turn_user_input_wire(request),
-                params=codex_turn_start_params(request),
+                params=codex_turn_start_payload(request),
             )
         except Exception as exc:
             if soft_codex_unavailable_reason(str(exc)) != "thread_not_found":
@@ -832,7 +914,7 @@ class CodexSdkClient:
             return await low_level_client.turn_start(
                 request.thread_id,
                 codex_turn_user_input_wire(request),
-                params=codex_turn_start_params(request),
+                params=codex_turn_start_payload(request),
             )
 
     async def force_thread_resume_for_turn(
@@ -1489,7 +1571,38 @@ def codex_thread_resume_params(
     )
 
 
-def codex_turn_start_params(request: CodexStartTurnRequest) -> TurnStartParams | dict:
+def codex_permission_params(
+    params: BaseModel, sandbox: str | None, sandbox_field: str
+) -> dict[str, Any]:
+    """Serialize typed params, selecting the permission profile by name.
+
+    The SDK models have no ``permissions`` field, but app-server accepts it on
+    thread/start, thread/resume and turn/start from 0.144.4 on. A named profile keeps
+    the thread's ``activePermissionProfile``; the legacy sandbox fields clear it,
+    and Codex Desktop then shows the wrong permission mode. The two cannot be
+    combined.
+    """
+
+    payload = params.model_dump(by_alias=True, exclude_none=True, mode="json")
+    profile = permission_profile_id(sandbox)
+    if profile is not None:
+        payload.pop(sandbox_field, None)
+        payload["permissions"] = profile
+    return payload
+
+
+def codex_method_unsupported(exc: JsonRpcError) -> bool:
+    """Whether app-server rejected a request because it lacks the method."""
+
+    if isinstance(exc, MethodNotFoundError):
+        return True
+    message = exc.message or ""
+    return exc.code == -32600 and (
+        "unknown variant" in message or "requires experimentalApi" in message
+    )
+
+
+def codex_turn_start_params(request: CodexStartTurnRequest) -> TurnStartParams:
     approval_policy, approvals_reviewer = codex_approval_settings(
         request.approval_policy,
         request.approvals_reviewer,
@@ -1504,9 +1617,16 @@ def codex_turn_start_params(request: CodexStartTurnRequest) -> TurnStartParams |
         sandboxPolicy=codex_turn_sandbox_policy(request.sandbox),
         threadId=request.thread_id,
     )
-    if request.collaboration_mode is not None:
-        return {**params.model_dump(by_alias=True, exclude_none=True, mode="json"), "collaborationMode": request.collaboration_mode}
     return params
+
+
+def codex_turn_start_payload(request: CodexStartTurnRequest) -> dict[str, Any]:
+    """turn/start params with the permission profile and native Plan mode applied."""
+
+    payload = codex_permission_params(codex_turn_start_params(request), request.sandbox, "sandboxPolicy")
+    if request.collaboration_mode is not None:
+        payload["collaborationMode"] = request.collaboration_mode
+    return payload
 
 
 def codex_turn_user_input(request: CodexStartTurnRequest) -> list[UserInput]:

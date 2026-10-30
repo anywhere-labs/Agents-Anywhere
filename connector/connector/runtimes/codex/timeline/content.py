@@ -15,6 +15,7 @@ from connector.runtime_protocol import (
     FileChangeToolContent,
     GenericMarkerContent,
     GenericSystemContent,
+    InputRequestToolContent,
     MarkdownMessageContent,
     McpToolContent,
     NoticeSystemContent,
@@ -131,6 +132,10 @@ def codex_tool_content_from_mapping(content: Mapping[str, Any]) -> TimelineConte
         )
     if kind == "web_search":
         return WebSearchToolContent(
+            metadata=mapping_without(content, ("kind",)),
+        )
+    if kind == "input_request":
+        return InputRequestToolContent(
             metadata=mapping_without(content, ("kind",)),
         )
     return UnknownToolContent(metadata=dict(content))

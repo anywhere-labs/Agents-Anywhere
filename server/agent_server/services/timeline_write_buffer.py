@@ -20,6 +20,7 @@ from agent_server.core.timeline import (
     next_timeline_item_revision,
     timeline_item_from_runtime_input,
     timeline_item_state_is_unchanged,
+    timeline_order_seq_in_range,
 )
 from agent_server.core.utc import utc_now
 from agent_server.infra.redis_coordinator import RedisCoordinator
@@ -40,6 +41,30 @@ DEFAULT_FLUSH_INTERVAL_SECONDS = 1.0
 DEFAULT_LANE_CACHE_ITEMS = 1024
 DEFAULT_LANE_IDLE_SECONDS = 900.0
 DEFAULT_MAX_LANES = 4096
+DEFAULT_MAX_FLUSH_RETRY_SECONDS = 60.0
+
+
+def _order_head(*order_seqs: int | None) -> int:
+    """Return the highest storable orderSeq, ignoring legacy unstorable values.
+
+    Without the filter one pending item with an out-of-range value would place
+    every later new item of the session out of range as well.
+    """
+
+    return max(
+        (
+            value
+            for value in order_seqs
+            if value is not None and timeline_order_seq_in_range(value)
+        ),
+        default=0,
+    )
+
+
+@dataclass(slots=True)
+class _FlushRetry:
+    failures: int
+    retry_at: float
 
 
 @dataclass(slots=True)
@@ -179,6 +204,7 @@ class TimelineWriteBuffer:
         single_instance: bool = False,
         lane_idle_seconds: float = DEFAULT_LANE_IDLE_SECONDS,
         max_lanes: int = DEFAULT_MAX_LANES,
+        max_flush_retry_seconds: float = DEFAULT_MAX_FLUSH_RETRY_SECONDS,
     ) -> None:
         if flush_interval_seconds <= 0:
             raise ValueError("timeline flush interval must be positive")
@@ -187,6 +213,12 @@ class TimelineWriteBuffer:
         self._coordinator = coordinator
         self._presence = presence
         self._flush_interval_seconds = flush_interval_seconds
+        self._max_flush_retry_seconds = max(
+            flush_interval_seconds,
+            max_flush_retry_seconds,
+        )
+        # Per-process sweeper backoff for sessions whose flush keeps failing.
+        self._flush_retries: dict[str, _FlushRetry] = {}
         self._profile_hotpath = profile_hotpath
         self._profile_min_ms = profile_min_ms
         self._single_instance = single_instance
@@ -299,6 +331,12 @@ class TimelineWriteBuffer:
             durable_item_checked = False
             if self._coordinator.distributed and not self._single_instance:
                 shared_existing = await self._pending_item(session_id, item.id)
+                if shared_existing is not None and not timeline_order_seq_in_range(
+                    shared_existing.orderSeq
+                ):
+                    await self._flush_locked(session_id)
+                    await self._seed_lane(session_id, lane)
+                    shared_existing = await self._pending_item(session_id, item.id)
                 if shared_existing is not None:
                     if (
                         existing is None
@@ -313,8 +351,8 @@ class TimelineWriteBuffer:
                         lane.latest.pop(item.id, None)
                     else:
                         self._remember(lane, existing)
-                        lane.max_order_seq = max(
-                            lane.max_order_seq or 0,
+                        lane.max_order_seq = _order_head(
+                            lane.max_order_seq,
                             existing.orderSeq,
                         )
             if (
@@ -327,26 +365,24 @@ class TimelineWriteBuffer:
                 # this process last used the lane. Refresh the shared order head
                 # only for that cross-instance cache case; the initial seed has
                 # already read the same projection and durable max.
-                shared_snapshot = await self._pending_snapshot(session_id)
+                shared_snapshot = await self._storable_pending_snapshot(session_id)
                 lane.latest.update(shared_snapshot.items)
                 self._trim_lane_cache(lane)
-                lane.max_order_seq = max(
-                    [
-                        lane.max_order_seq or 0,
-                        await self._store.get_max_timeline_order_seq(session_id),
-                    ]
-                    + [
+                lane.max_order_seq = _order_head(
+                    lane.max_order_seq,
+                    await self._store.get_max_timeline_order_seq(session_id),
+                    *(
                         pending_item.orderSeq
                         for pending_item in shared_snapshot.items.values()
-                    ]
+                    ),
                 )
                 existing = lane.latest.get(item.id)
             if existing is None and not durable_item_checked:
                 existing = await self._store.timeline.read_one(session_id, item.id)
                 if existing is not None:
                     self._remember(lane, existing)
-                    lane.max_order_seq = max(
-                        lane.max_order_seq or 0,
+                    lane.max_order_seq = _order_head(
+                        lane.max_order_seq,
                         existing.orderSeq,
                     )
 
@@ -361,6 +397,22 @@ class TimelineWriteBuffer:
                         source_observed_at=source_observed_at,
                     )
                 return TimelineItemWriteResult(item=existing, changed=False)
+
+            max_order_seq = lane.max_order_seq or 0
+            if existing is not None:
+                # A pending item buffered before the range check keeps its
+                # value here; the flush moves it to a storable position.
+                order_seq = existing.orderSeq
+            elif item.orderSeq > max_order_seq and timeline_order_seq_in_range(
+                item.orderSeq
+            ):
+                order_seq = item.orderSeq
+            else:
+                order_seq = max_order_seq + 1
+            if existing is None and not timeline_order_seq_in_range(order_seq):
+                # Refuse before reserving a revision: a buffered item the table
+                # cannot store would block every later flush of the session.
+                raise OverflowError("timeline orderSeq exceeds the column range")
 
             while True:
                 try:
@@ -381,13 +433,6 @@ class TimelineWriteBuffer:
                     "Redis server epoch changed during session revision allocation"
                 )
             probe.mark("epoch_recheck")
-            max_order_seq = lane.max_order_seq or 0
-            if existing is not None:
-                order_seq = existing.orderSeq
-            elif item.orderSeq > max_order_seq:
-                order_seq = item.orderSeq
-            else:
-                order_seq = max_order_seq + 1
             normalized = timeline_item_from_runtime_input(
                 item,
                 updated_seq=updated_seq,
@@ -406,7 +451,7 @@ class TimelineWriteBuffer:
             )
             probe.mark("stage")
             self._remember(lane, normalized)
-            lane.max_order_seq = max(max_order_seq, normalized.orderSeq)
+            lane.max_order_seq = _order_head(max_order_seq, normalized.orderSeq)
             await self._broker.publish_message(
                 session_id,
                 timeline_envelope_message(
@@ -560,9 +605,29 @@ class TimelineWriteBuffer:
             source_observed_at=snapshot.source_observed_at,
             mark_read_on_change=snapshot.mark_read_on_change,
         )
-        if result.items:
-            next_seq = await self._store.get_session_seq(session_id)
-            published_through = await self._sequences.published_head(session_id)
+        if result.reordered:
+            # Clients already hold these items at their pending position, and
+            # the lane cached it too; both must re-read the stored timeline.
+            lane = await self._lane(session_id)
+            lane.latest.clear()
+            lane.max_order_seq = None
+            lane.seeded = False
+        next_seq = await self._store.get_session_seq(session_id)
+        published_through = await self._sequences.published_head(session_id)
+        if result.reordered or (
+            not result.items
+            and (published_through is None or published_through < next_seq)
+        ):
+            # A retry after the repair transaction committed can have no
+            # persistable items: its raw pending snapshot predates the reset
+            # fence. Still publish that durable recovery boundary before clear.
+            await self._sequences.floor(session_id, next_seq)
+            await self._broker.publish(
+                session_id,
+                {"sessionId": session_id, "nextSeq": next_seq, "refetch": True},
+            )
+            await self._sequences.mark_published(session_id, next_seq)
+        elif result.items:
             if published_through is None or published_through < next_seq:
                 await self._broker.publish(
                     session_id,
@@ -575,6 +640,7 @@ class TimelineWriteBuffer:
                     },
                 )
                 await self._sequences.mark_published(session_id, next_seq)
+        if result.items:
             await publish_dashboard_changed(
                 self._store,
                 self._broker,
@@ -623,21 +689,62 @@ class TimelineWriteBuffer:
             session,
         )
 
-    async def flush_all(self, *, suppress_errors: bool = False) -> None:
+    async def flush_all(
+        self,
+        *,
+        suppress_errors: bool = False,
+        honor_retry_delay: bool = False,
+    ) -> None:
+        """Flush every dirty session.
+
+        ``honor_retry_delay`` lets the periodic sweeper skip sessions whose
+        previous flush failed until their backoff expires. Read barriers and
+        shutdown still flush them immediately.
+        """
+
         session_ids = await self._dirty_sessions()
+        for stale_session_id in set(self._flush_retries) - session_ids:
+            self._flush_retries.pop(stale_session_id, None)
         first_error: Exception | None = None
+        now = time.monotonic()
         for session_id in sorted(session_ids):
+            retry = self._flush_retries.get(session_id)
+            if honor_retry_delay and retry is not None and now < retry.retry_at:
+                continue
             try:
                 await self.flush_session(session_id)
             except KeyError:
+                self._flush_retries.pop(session_id, None)
                 await self.discard_session(session_id)
             except Exception as exc:  # noqa: BLE001 - drain every independent lane
+                failures = 1 if retry is None else retry.failures + 1
+                delay = min(
+                    self._max_flush_retry_seconds,
+                    self._flush_interval_seconds * 2 ** min(failures - 1, 16),
+                )
+                self._flush_retries[session_id] = _FlushRetry(
+                    failures=failures,
+                    retry_at=time.monotonic() + delay,
+                )
+                # Pending items stay in the shared projection; only the retry
+                # cadence of this process backs off.
                 logger.exception(
-                    "timeline buffer flush failed session_id={}",
+                    "timeline buffer flush failed session_id={} failures={} "
+                    "next_retry_seconds={:.0f}",
                     session_id,
+                    failures,
+                    delay,
                 )
                 if first_error is None:
                     first_error = exc
+            else:
+                if retry is not None:
+                    logger.info(
+                        "timeline buffer flush recovered session_id={} failures={}",
+                        session_id,
+                        retry.failures,
+                    )
+                    self._flush_retries.pop(session_id, None)
         if first_error is not None and not suppress_errors:
             raise first_error
 
@@ -665,7 +772,7 @@ class TimelineWriteBuffer:
         while True:
             await asyncio.sleep(self._flush_interval_seconds)
             try:
-                await self.flush_all(suppress_errors=True)
+                await self.flush_all(suppress_errors=True, honor_retry_delay=True)
             except Exception:  # noqa: BLE001 - retry coordinator failures
                 logger.exception("timeline buffer sweep failed")
             await self._evict_idle_lanes()
@@ -717,15 +824,27 @@ class TimelineWriteBuffer:
     async def _seed_lane(self, session_id: str, lane: _SessionLane) -> None:
         if lane.seeded:
             return
-        snapshot = await self._pending_snapshot(session_id)
+        snapshot = await self._storable_pending_snapshot(session_id)
         lane.latest.update(snapshot.items)
         self._trim_lane_cache(lane)
         durable_max_order_seq = await self._store.get_max_timeline_order_seq(session_id)
-        lane.max_order_seq = max(
-            [durable_max_order_seq]
-            + [item.orderSeq for item in snapshot.items.values()]
+        lane.max_order_seq = _order_head(
+            durable_max_order_seq,
+            *(item.orderSeq for item in snapshot.items.values()),
         )
         lane.seeded = True
+
+    async def _storable_pending_snapshot(self, session_id: str) -> _PendingSnapshot:
+        snapshot = await self._pending_snapshot(session_id)
+        if any(
+            not timeline_order_seq_in_range(item.orderSeq)
+            for item in snapshot.items.values()
+        ):
+            # Store items buffered before the range check first, so a new item
+            # is placed after them rather than in front of them.
+            await self._flush_locked(session_id)
+            snapshot = await self._pending_snapshot(session_id)
+        return snapshot
 
     async def _store_pending(
         self,

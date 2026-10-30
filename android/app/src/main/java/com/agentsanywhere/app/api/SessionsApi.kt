@@ -625,6 +625,10 @@ class SessionsApi(
         ).toRemoteRpcResponse()
     }
 
+    internal fun getWorkflowSession(server: String, token: String, id: String): RemoteSession = client.getJson(serverUrl = server, authorizationToken = token, path = "/sessions/${id.urlEncode()}/meta").getJSONObject("session").toRemoteSession()
+
+    internal fun parseScopedModelCatalog(value: JSONObject): RemoteRuntimeModelCatalogResponse = RemoteRuntimeModelCatalogResponse(catalog = value.toRemoteRuntimeModelCatalog(), serverTime = null)
+
     internal fun parseSession(value: JSONObject): RemoteSession = value.toRemoteSession()
 
     internal fun parseProject(value: JSONObject): RemoteProject = value.toRemoteProject()
@@ -850,6 +854,7 @@ class SessionsApi(
             allowed = optBoolean("allowed", true),
             unavailableReason = optNullableString("unavailableReason"),
             parameters = optJSONObject("parameters").toMap(),
+            metadata = optJSONObject("metadata").toMap(),
             runtimeId = optNullableString("runtimeId"),
             runtimeType = optNullableString("runtimeType") ?: optNullableString("runtime"),
         )

@@ -22,11 +22,14 @@ import org.json.JSONObject
 
 private const val INITIAL_TIMELINE_LIMIT = 100
 private const val TIMELINE_PAGE_LIMIT = 100
+class NativeHistoryRejected(message: String) : IllegalStateException(message)
 
 class SessionDetailController(
     private val sessionsApi: SessionsApi,
     private val sessionStore: AuthSessionReader,
 ) {
+
+
     private val optimisticStore = SessionOptimisticMessageStore()
     private val attachmentTransfer = SessionAttachmentTransfer(sessionsApi)
 
@@ -53,6 +56,32 @@ class SessionDetailController(
             sessionsApi.planning(auth.serverUrl, auth.accessToken, sessionId)
         }
     }
+    suspend fun nativeHistoryAction(sessionId: String, body: JSONObject, close: Boolean): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val auth = authSession()
+                val workflow = com.agentsanywhere.app.api.RuntimeWorkflowApi()
+                if (close) {
+                    val result = workflow.closeSession(auth.serverUrl, auth.accessToken, sessionId, body)
+                    check(result.optBoolean("closed")) { "Execution release is unconfirmed." }
+                } else {
+                    sessionsApi.enableTakeover(auth.serverUrl, auth.accessToken, sessionId)
+                    var completed = false
+                    repeat(360) {
+                        if (!completed) {
+                            val result = workflow.recover(auth.serverUrl, auth.accessToken, sessionId, body)
+                            when (result.optString("phase")) {
+                                "completed" -> completed = true
+                                "running" -> kotlinx.coroutines.delay(1000)
+                                "rejected", "failed" -> throw NativeHistoryRejected(result.optJSONObject("failure")?.optString("message") ?: "Recovery failed.")
+                                else -> error("Recovery is unconfirmed. Check the existing operation.")
+                            }
+                        }
+                    }
+                    check(completed) { "Recovery is unconfirmed. Check the existing operation." }
+                }
+            }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+        }
 
     suspend fun load(
         sessionId: String,

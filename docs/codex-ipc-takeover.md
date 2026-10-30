@@ -16,10 +16,13 @@
 ### 0.1 最终结论（2026-10-10 17:10）
 
 - **主方向是层 B（IpcRouter owner/follower）**，桌面 App 和 VS Code 都已在真机上端到端验证：discovery 毫秒级、snapshot、patch 流、`thread-follower-start-turn` 发起回合。Connector 两个方向都实现了：窗口持有的线程由 connector 跟随并代发；connector 持有的线程也对窗口应答 owner 发现并供给 snapshot，窗口可通过 `thread-follower-*` 操控（见 4.5）。下午一度得出“桌面不可用”的结论，后来确认是旧桌面实例里一个 IPC client 挂死造成的意外，重启后一切正常；VS Code 当时也因此接管不了，证明那是实例故障而不是协议限制。
-- 持有关系的权威判据是 `~/.codex/thread-writer-locks/<id>.lock` 的 flock 持有者。三种接管模式：有 owner 且可达 → IPC follower；无人持有 → 自家 app-server `thread/resume` 独占接管（任何来源的线程都适用）；有人持有但 discovery 找不到 owner → 只读等待，绝不 resume。
+- 持有关系的权威判据是 `~/.codex/thread-writer-locks/<id>.lock` 的 flock 持有者。三种接管模式：有 owner 且可达 → IPC follower；无人持有 → 自家 app-server `thread/resume` 独占接管（任何来源的线程都适用）；有人持有但 discovery 找不到 owner → 桌面 App 在运行时先通过 deeplink 让 App 接手再跟随，交接不成就拒绝这次写入，绝不 resume。
+- **只有写入才会接管**：读取会话状态、快照和后台同步只用 `thread/read`，绝不 `thread/resume`。resume 会拿走写锁，AA 只是看了一眼或同步了一下，桌面 App 再打开就提示“已在另一个应用中打开”。`thread/read` 不返回审批和沙箱设置，权限取自 rollout 末尾最新的 `turn_context` 或 `thread_settings_applied` 记录，读不到就不报告（客户端显示“未同步”）。Connector 是否持有线程，只看自家 app-server 这一代进程是否 `thread/start` / `thread/resume` 过它；读取或同步留下的缓存状态不算，否则 Connector 会替窗口持有的线程应答 discovery，AA 的写入也会被误判为本地。
 - **discovery 的实际语义（真机复核）**：窗口只对自己持有的线程应答 `canHandle: true`，对其它线程根本不应答，于是只要桌面或 VS Code 在线，所有非持有线程的 discovery 都会在 router 的 10 s 超时后返回 `no-client-found`。因此“10 s 超时”不能用来区分“无人持有”和“持有者挂死”，实现里统一按 `no_owner` 处理，持有与否要看写锁。
 - 层 A（daemon）保留给终端 TUI 会话，协议公开、成本低，但不在当前主线。“让桌面 App 改走 daemon”的隐藏开关方案已放弃。
 - 实现上必须处理：router 随进程生死动态转移（`ipc-connection-reset` 后重连并重发 `following`，必要时自己当 router）；revision 是 owner 进程内计数，owner 变化就重新拿 snapshot；方法版本表随 Codex 升级重新提取。
+- **自己当 router 时，为请求找处理方不能卡住这条连接的读取**（Codex 自己的 router 也不等）。否则某个 client 的请求还在 discovery 时，它对别人 discovery 的回答只能排在后面；两个 client 同时等对方回答，就会一起卡到 10 s 超时，结果要么晚 10 s，要么把有人持有的线程误判成 `no-client-found`。桌面 App 打开着会话时，任何 client 连上或断开都会让它发一次 `ide-context` 请求（没有 IDE 插件在线时无人处理），所以很容易撞上（2026-10-27 在本机遇到，并用隔离 socket 复现）。
+- **改设置立即生效，权限按配置名传**：AA 或窗口改模型、权限时，持有线程的一方当场调用 app-server 的 `thread/settings/update`（实验接口，0.144.4 起就有），不再等下一轮；Connector 持有时也这样做，没有任何进程加载的线程才留到下一轮（为改设置去 resume 会拿走写锁）。权限一律用命名配置 `permissions`（`:read-only` / `:workspace` / `:danger-full-access`）加审批策略和审查方，`thread/start`、`thread/resume`、`turn/start` 同样如此：旧的 `sandbox` / `sandboxPolicy` 会把线程的 `activePermissionProfile` 清空，桌面只按这个字段显示权限（于是一直显示“请求批准”），接管线程时还会套用自己的默认权限。两者不能同时出现，否则 app-server 报 `permissions cannot be combined with sandboxPolicy`。运行中的回合不改沙箱和审批策略，但会立即换成新的审查方（`turn/settings/update`），与桌面一致。
 
 两层都已在本机验证握手：A 完成 `initialize` + `thread/loaded/list`；B 完成 `initialize`、`thread-owner-discovery`、following、snapshot/patch、start-turn（详见 3.5）。
 
@@ -354,27 +357,59 @@ CodexRuntime
 
 - **原生 SDK 路径之前读不到模型 selection 的根因**：`sessions/reader.py` 的 `thread_state_from_sdk_thread` 只保留了 `id` / `modelProvider` / `name`，把 SDK `Thread` 上的 `model` 和 `reasoning_effort` 丢掉了，于是 `model_selection_from_thread_state` 永远拿不到模型。`thread/read` 在线程创建后（0 轮对话）就带 `model` 与 `reasoningEffort`，所以**不需要等一轮**；修复后真机 `get_session_state` 立即返回模型 selection。权限在 app-server 的 `thread/read` 里不存在（`Thread` 没有审批/沙箱字段），原生路径只能依赖我们自己缓存的 selection。
 - **窗口 → AA**：follower 投影把 `latestModel` / `latestReasoningEffort`（或 `latestThreadSettings`）和 `currentPermissions` 映射成 catalog selection（`projection.ipc_settings_state`），窗口里切换模型会随 `latestThreadSettings` patch 立即同步。权限目录里 `full_access` 没写 `approvalsReviewer`，而线程默认带 `user`，匹配规则已放宽为“默认 reviewer 可匹配未指定 reviewer 的目录项”。
-- **AA → 窗口**：`update_session_selections` 对 IPC 挂载线程发 `thread-follower-update-thread-settings {conversationId, threadSettings, condition:null, activeTurnId:null}`，`threadSettings` 以 owner 的 `latestThreadSettings` 为底并覆盖 model / effort / approvalPolicy / approvalsReviewer / sandboxPolicy / permissions profile；真机对桌面 owner 发送后返回 `applied: true`。
-- **connector 作为 owner**：snapshot 的 `latestModel` / `latestReasoningEffort` / `currentPermissions` / `latestThreadSettings` 由我们缓存的 selection 生成；窗口发来的 `update-thread-settings` 会映射回 selection 并通过 `update_session_selections` 应用。
+- **AA → 窗口**：`update_session_selections` 对 IPC 挂载线程发 `thread-follower-update-thread-settings {conversationId, threadSettings, condition:null, activeTurnId}`。`threadSettings` 只带有变化的字段，和桌面自己发的一样：模型是 `model` / `effort`，权限是 `permissions`（配置名）+ `approvalPolicy` + `approvalsReviewer`，不带 `sandboxPolicy`；owner 当场 `thread/settings/update`。改权限且有回合在跑时带上 `activeTurnId`，owner 会把新的审查方也用到当前回合。本地跟随副本仍按 `permission_block` 补全，保证下一条 `thread-follower-start-turn` 用新权限。（2026-10-27 前是以 owner 的 `latestThreadSettings` 为底整份重发，里面的 `sandboxPolicy` 每次都会清掉 `activePermissionProfile`。）
+- **connector 作为 owner**：snapshot 的 `latestModel` / `latestReasoningEffort` / `currentPermissions` / `latestThreadSettings` 由我们缓存的 selection 生成；窗口发来的 `update-thread-settings`（`sandboxPolicy` 或配置名 `permissions` / `activePermissionProfile` 都认）映射回 selection，经 `update_session_selections` 立即写进自家 app-server。
 
 已知限制：
 
 - owner 侧的 snapshot 已用模拟窗口验证字段与流程，但还没有用真实 VS Code / 桌面窗口确认渲染效果；`conversationState` 是对方的私有模型，若某个版本要求额外字段，窗口可能显示不全。验证方法：让 connector 持有一个线程（从手机发一条消息），再在 VS Code 里打开它。
 - 附件：IPC 路径与 SDK 路径一致，先经 host 下载到本机附件目录，图片以 `{type:"localImage", path}` 放进 `input`，其它文件在正文末尾追加 `[Attached file: …]` 引用；owner 侧收到窗口的 `localImage` 也会转成 SDK 附件。owner 的 app-server 与我们同机，读本地路径没有问题。
-- 推给 owner 的 `threadSettings` 只能带 `sandboxPolicy` + `activePermissionProfile`，**不能**再带 profile 字段 `permissions`，否则 app-server 报 `permissions cannot be combined with sandboxPolicy`（真机踩过）。
+- 推给 owner 的 `threadSettings` 里 `permissions` 和 `sandboxPolicy` 只能二选一，同时出现 app-server 报 `permissions cannot be combined with sandboxPolicy`（真机踩过，当时是在整份 `latestThreadSettings` 上加了 `permissions`）。现在只发 `permissions`，见 §0.1。
 - **接管竞态**：窗口刚打开线程时会先广播 `following`，稍后 resume 成功才登记 ownership；这时如果 AA 立刻发消息，discovery 还找不到 owner，原来会退回自家 app-server resume 并撞上写锁（真机报“该 Codex 会话正由其他进程持有写入权限”）。现在：(1) 对窗口广播过的线程，discovery 失败后 3 s 重试，最多 3 次；(2) 有写锁文件的线程 20 s 重探一次（无锁文件的仍是 5 min）；(3) `start_turn` / `steer_turn` / 选择更新在走 SDK 路径前，若该线程存在写锁文件，先做一次 3 s 上限的 owner 发现，找到就改走 IPC。
-- **Deeplink 交接（2026-10-11）**：桌面 App 注册了 `codex://` scheme，`codex://threads/<thread-id>` 会让正在运行的 App 跳到该线程并 resume（真机 `open -g` 后约 0.1 s 出现 `maybe_resume_started`，随即登记 ownership、应答 discovery）。用途：写锁被桌面 app-server 持有、但没有任何窗口应答 discovery 的线程（上面竞态里“AA 尚未接管”的情形），`_ipc_attach_for_write` 在 3 s 探测失败后，如果检测到桌面 App 进程在运行（macOS 看 `ChatGPT.app/Contents/MacOS/ChatGPT` 或 `Codex.app/Contents/MacOS/Codex` 主进程），就打开 deeplink，再用 5 s 上限做一次 discovery，成功即改走 IPC；App 没在运行或平台无法判断时不触发，避免把 App 拉起来。实现见 `ipc/deeplink.py` 与 `CodexRuntime._ipc_handoff_to_desktop`，可用 `ipc_deeplink_handoff=False` 关闭。同一能力也作为会话命令 `/open-in-codex-app`（别名 `open-in-codex`、`codex-app`）暴露，任何状态下可用，返回 `{deeplink, attached, ownerClientId}`；App 未运行时返回 `codex_app_not_running`。其它已见过的 deeplink 形式：`codex://threads/<id>?ephemeral`、`?artifact`、`codex://shared-thread/<id>`、`codex://review?pr=`、`codex://settings/connections`、`codex://plugins/`。注意 deeplink 走的是 `open`，平台差异：macOS `open -g`（不抢焦点）、Linux `xdg-open`、Windows `os.startfile`；Windows 的 IPC 本身还没实现。
+- **Deeplink 交接（2026-10-11）**：桌面 App 注册了 `codex://` scheme，`codex://threads/<thread-id>` 会让正在运行的 App 跳到该线程并 resume（真机 `open -g` 后约 0.1 s 出现 `maybe_resume_started`，随即登记 ownership、应答 discovery）。用途：写锁被桌面 app-server 持有、但没有任何窗口应答 discovery 的线程（上面竞态里“AA 尚未接管”的情形），`_ipc_route_for_write` 在 3 s 探测没有找到 owner（`no_owner` / `unreachable`）后，如果检测到桌面 App 进程在运行（macOS 看 `ChatGPT.app/Contents/MacOS/ChatGPT` 或 `Codex.app/Contents/MacOS/Codex` 主进程），就打开 deeplink，再用 5 s 上限做 discovery 并等 owner 的第一份 snapshot（discovery 先于 snapshot 应答，没有 snapshot 不能代发），成功即改走 IPC；交接失败返回 `codex_ipc_owner_unreachable`，不退回自家 app-server。App 没在运行或平台无法判断时不触发，避免把 App 拉起来。#437 曾把这一步连同“交接失败后退回自家 app-server”一起去掉，2026-10-27 恢复前者。实现见 `ipc/deeplink.py` 与 `CodexRuntime._ipc_handoff_to_desktop`，可用 `ipc_deeplink_handoff=False` 关闭。同一能力也作为会话命令 `/open-in-codex-app`（别名 `open-in-codex`、`codex-app`）暴露，任何状态下可用，返回 `{deeplink, attached, ownerClientId}`；App 未运行时返回 `codex_app_not_running`。其它已见过的 deeplink 形式：`codex://threads/<id>?ephemeral`、`?artifact`、`codex://shared-thread/<id>`、`codex://review?pr=`、`codex://settings/connections`、`codex://plugins/`。注意 deeplink 走的是 `open`，平台差异：macOS `open -g`（不抢焦点）、Linux `xdg-open`、Windows `os.startfile`。
 - 权限对象必须和桌面自己生成的一模一样（webview `app-shared` 里的 `aM` / `iM` / `rvt`），否则桌面线程页会被 React error boundary 打崩（真机报 `TypeError: e is not iterable`，刷新后恢复）：profile id 只有 `:read-only`、`:workspace`、`:danger-full-access`；read-only 的 `sandboxPolicy` 是 `{type:"readOnly", networkAccess:false}`；workspace-write 必须带 `writableRoots`（= `runtimeWorkspaceRoots`，缺了就是上面那个崩溃）、`excludeSlashTmp`、`excludeTmpdirEnvVar`、`networkAccess`，并同时给 `runtimeWorkspaceRoots`；full access 是 `{type:"dangerFullAccess"}` + `approvalPolicy: never`。实现见 `ipc/control.py::permission_block`，owner 侧共用。
-- `requests` 里的用户输入（`item/tool/requestUserInput`）尚无真机样本，投影只处理审批类请求；回复路径已实现。
+- `requests` 里的同步用户输入（`item/tool/requestUserInput`）与审批请求都会投影为 Notice/Form，并通过原 request ID 回复 owner。
+- `request_user_input_async` 不会留在 `requests`：Connector 从 Timeline 的 function call / async question item 重建稳定 Notice，答案按 Codex 的 `<send_user_message_question_reply>` envelope 作为 steer 或新 turn 发回；`{"accepted":true}` 的 function output 不单独展示。
+- 异步问答的 Notice、问题和 client message ID 都由 `call_id` 稳定生成；Connector 本机 JSON KV 记录投递状态（不保存答案文本）。提交中断后先用原生历史确认结果，结果仍未知时返回 `codex_async_input_outcome_unknown`，不自动重发。取消只关闭 AA 表单，原 turn 结束也不会自动关闭未回答的异步表单。
 - 桌面 / VS Code 只对自己持有的线程应答 discovery，其余线程统一报 `no-client-found`（约 10 s），扫描间隔 30 s、失败重试 5 min；新窗口 following 广播会触发即时跟进。
-- Windows 命名管道未实现，`CodexIpcClient.start()` 在 win32 直接跳过。
+- Windows 已支持（2026-10-12），见下文「Windows 适配与真机修复」。
 
 #### 配置开关、kill-chatgpt 与扫描策略（2026-10-11）
 
 - **配置开关**：Codex Runtime 配置新增 `ipcEnabled`（默认开）与 `ipcDeeplinkHandoff`（默认开，仅 IPC 开启时生效），schema revision 升到 8，i18n key 为 `dashboard.device.runtimeConfigFields.ipcEnabled.*` / `ipcDeeplinkHandoff.*`（Web / Desktop / iOS 已加文案，Android 读 schema 的 `title`）。`ipcEnabled=false` 时 Runtime 不连 IPC 路由、不跟随任何窗口、也不作为 owner 应答，所有线程走自家 app-server。
-- **`/kill-chatgpt` 命令**（别名 `kill-codex-app`、`quit-chatgpt`）：找到桌面 App 主进程（macOS 为 `ChatGPT.app/Contents/MacOS/ChatGPT` 或 `Codex.app/Contents/MacOS/Codex`），先 SIGTERM，5 s 后仍存活则 SIGKILL；App 退出后它持有的所有写锁随之释放，当前线程若正被跟随会立即 unfollow，下一条消息直接走自家 app-server。这个命令不依赖 IPC 开关，目的是在 IPC 关闭或 App 不可达时也能把线程"抢"回来。实现见 `ipc/desktop_app.py`，结果里带 `terminated` / `killed` / `survivors` 三组 pid。
+- **`/kill-chatgpt` 命令**（别名 `kill-codex-app`、`quit-chatgpt`）：找到桌面 App 主进程（macOS 为 `ChatGPT.app/Contents/MacOS/ChatGPT` 或 `Codex.app/Contents/MacOS/Codex`），先 SIGTERM，5 s 后仍存活则 SIGKILL（Windows 上按进程树 terminate / kill，见下文「Windows 适配与真机修复」）；App 退出后它持有的所有写锁随之释放，当前线程若正被跟随会立即 unfollow，下一条消息直接走自家 app-server。这个命令不依赖 IPC 开关，目的是在 IPC 关闭或 App 不可达时也能把线程"抢"回来。实现见 `ipc/desktop_app.py`，结果里带 `terminated` / `killed` / `survivors` 三组 pid。
 - **写锁判定改用 flock**：Codex 的 `thread-writer-locks/<id>.lock` 文件在持有者退出后并不会删除，所以"文件存在"不等于"被持有"。`CodexIpcService.thread_is_held` 现在对文件做一次非阻塞 `flock(LOCK_EX|LOCK_NB)`：拿不到就是真的被持有，拿到了立即释放并视为空闲。这样 kill 掉 App 后不会再为残留的锁文件白做 3 s 探测。
-- **不再定期扫描**：`CodexIpcService` 默认 `scan_interval=None`，只在启动（IPC 连上）时扫描一次写锁目录与最近会话；之后只由事件触发重探：窗口广播 `thread-stream-following-changed`、新客户端 `client-status-changed: connected`、announce 重试（3 s × 3），以及写前 `_ipc_attach_for_write` 的按需探测。需要周期扫描时可显式传 `scan_interval`。
+- **不再定期扫描**：`CodexIpcService` 默认 `scan_interval=None`，只在启动（IPC 连上）时扫描一次写锁目录与最近会话；之后只由事件触发重探：窗口广播 `thread-stream-following-changed`、新客户端 `client-status-changed: connected`、announce 重试（3 s × 3），以及写前 `_ipc_route_for_write` 的按需探测。需要周期扫描时可显式传 `scan_interval`。
+
+#### Windows 适配与真机修复（2026-10-12）
+
+依据：Windows 11、Codex App 26.1007.2314.0（内置 codex-cli 0.162.0-alpha.17.2）真机，AA Web 用 Playwright 操作，App 侧用 `codex://threads/<id>?prompt=` 预填后按回车。
+
+Windows 适配：
+
+- 路由是命名管道 `\\.\pipe\codex-ipc`。`pathlib` 会把它改写成 `\pipe\codex-ipc`，所以连接时直接用字符串常量 `WINDOWS_PIPE_PATH`，不经过 `Path`。
+- Windows 上 Connector **不当 router**：`IpcRouter` 只有 Unix socket 实现，命名管道服务端还没写、也没验证，所以等 App 或 VS Code 来当 router。选举本身是可行的：libuv 和 CPython asyncio 创建第一个管道实例时都带 `FILE_FLAG_FIRST_PIPE_INSTANCE`，第二个监听者会像 socket 的 `EADDRINUSE` 一样失败，不会出现两个 router。另外 Windows 上能不能启用 IPC 取决于事件循环而不是平台：`create_pipe_connection` 只有 `ProactorEventLoop` 才有（Windows 默认），`CodexIpcClient.start()` 据此判断，不满足就记日志并禁用。
+- 没有 uid 和 IPC 目录，`ensure_ipc_directory` 在 win32 直接返回（原实现调用 `os.getuid()` 会抛错）。
+- App 进程识别：主进程是 `...\WindowsApps\OpenAI.Codex_<version>_x64__<publisher>\app\ChatGPT.exe`，按包名 `OpenAI.Codex_` 匹配，不会误认同名的 ChatGPT 桌面版；Windows 没有 `ps`，改用 psutil。先按进程名 `ChatGPT.exe` 过滤，再对命中的进程取 `exe` / `ppid`：psutil 在 Windows 上每取一次 `ppid` 都要对全部进程拍一次快照，对所有进程都取会很慢（约 750 个进程时首次 34.84 s，改后 0.36 s）。探测套 `PROBE_TIMEOUT`，超时按「未知」（`None`）返回。
+- `/kill-chatgpt` 在 Windows 上按进程树退出：Windows 没有 SIGTERM / SIGKILL，`terminate()` 和 `kill()` 都是 `TerminateProcess`，不会连带子进程；而持有线程写锁的 app-server（`codex.exe ... app-server`）是 App 主进程的子进程，下面还挂着 MCP 进程，所以要把整棵树一起停掉。POSIX 那套 `os.kill(pid, 0)` / `os.waitpid(..., WNOHANG)` 探活在 Windows 上不可用：已退出的 pid 抛 `OSError [WinError 87]` 而不是 `ProcessLookupError`，`os.WNOHANG` 和 `signal.SIGKILL` 也不存在。
+- 写锁判定用 `msvcrt.locking` 非阻塞字节锁代替 `flock`。实测 Windows 上 Codex 释放写锁时会删除锁文件。
+
+真机验收中发现并修复的问题：
+
+- **App 往 Connector 持有的线程发消息被吞、一直转圈**：窗口作为 follower 发消息时不会请求 `thread-follower-start-turn`，而是把整个排队交给 owner（`thread-follower-set-queued-follow-ups-state`，`state[conversationId]` 是消息列表），由 owner 在空闲时取出执行（App 自身的 owner 实现是 `turnCoordinator.acceptFromFollower`）。原实现对这个请求只回 `{"ok": true}`。现在 owner 保存排队、广播 `thread-queued-followups-changed`（`{conversationId, hostId, messages}`），线程空闲时取第一条用 `clientUserMessageId = message.id` 开始一轮，回合结束后继续下一条；`remove-queued-message` / `clear-queued-messages` 按 App 的返回格式处理。附件目前只取文字。
+- **Connector 重启后往 AA 创建的会话发消息报 502** `connector returned sessionId that does not match the session binding`：投影在缓存里没有绑定时用派生 id（`stable_session_id`）发布状态，Server 读状态时按 externalSessionId 命中派生 id。现在投影优先用缓存里 Server 绑定的 id；读状态时若缓存是派生 id、调用方给的是绑定 id，就把缓存重新绑定。
+- **App 回 `thread-follower-start-turn-timeout` 时会话被标成 error**：App 自己的 turn start 超过约 5 s 时会回这个错误，但回合照样开始。现在 `-timeout` 结尾或无响应按结果未知处理，在 owner 状态流里等新回合（最多 20 s），等到即成功，等不到返回 `codex_ipc_start_turn_outcome_unknown`，不重发也不标 error。
+- **启动后 App 新建的线程只能靠轮询看到，重启 Connector 才实时跟随**：启动扫描之后，`thread-stream-following-status-requested` 只给已跟随的线程重发 following。现在收到这条广播且线程未跟随时立即探测（实测 0.5 s 内开始跟随）。
+- **AA 改权限后显示被旧值盖回**：`currentPermissions` 要等下一轮才更新，映射时改为 `latestThreadSettings` 优先，`currentPermissions` 只补缺。AA 发起回合时 `turn/start` 请求（`control.turn_start_request`）里的 `approvalPolicy` / `approvalsReviewer` / `sandboxPolicy` 也按同样顺序取：原来只取 `currentPermissions`，AA 改完权限后发的下一条消息会以旧权限运行，并把线程设置改回旧值（2026-10-20 真机，App 持有的线程在 AA 改成「请求批准」后，AA 发出的回合 rollout `turn_context` 仍是 `approval_policy: never`、`sandbox_policy: {"type": "danger-full-access"}`）。推理强度不受影响，同一回合 `effort` 已是改后的 `low`。
+- **切回 workspace-write 时 `writableRoots` 为空**：沿用 App 现有设置里的 `writableRoots`（App 自身的做法），没有时才用 `runtimeWorkspaceRoots` / cwd。
+- **AA 新建的会话要重启 App 才出现在侧边栏**：App 的会话列表只在启动时完整加载一次（`refreshRecentConversations({mode:'catalog'})`），之后只增量加入自己产生的会话。现在 owner 对 AA 自己新建的线程（会话状态来源出现过 `codex.thread/start`）广播 `thread-unarchived {hostId, conversationId}`：第一轮开始时一次（rollout 已落盘，App 读得到），第一轮结束时再一次（带上标题），之后不再发。App 的 `handleThreadUnarchived` 会 `readThread` 并 `upsertConversationFromThread`，会话立即出现在 Recents，不用重启。AA 只是 resume 的旧线程不发，避免把用户在 App 里归档的会话重新显示出来。广播失败只记警告。
+  - 已知副作用：发过广播的会话只进 Recents，**不会归到 App 的项目分组**，App 重启后才归组。对比实测：未广播的「6666」被 App 自己的目录同步（共享状态库增量同步，定时器最长约 1 h）归进了 AA 项目；广播过的「77777」一直只在 Recents。推断是广播让 App 提前认识了该会话，之后的目录同步不再为它分组。已排除：给线程写 app-server `projectId`（`thread/metadata/update`）后再广播无效，这版 App 分组不看该字段；`codex://threads/<id>` 打开也不会归组。外部无法触发 App 的完整重载（只在启动或 App 与自家 app-server 重连时发生）。
+
+已知未解决：
+
+- 一次 Connector 卡死：主线程停在 `threading.Thread.start()`（anyio 开工作线程，调用方 `reader._read_native_activity`），心跳超时 `keepalive ping timeout` 后不再重连；之后连续运行 2 小时以上未复现。再出现时用 `py-spy dump --native` 看本机层调用栈。
+- 本文的 IPC 测试（socket fake）在 win32 上整体跳过；Windows 相关的修复由 `tests/test_codex_ipc_windows_fixes.py` 覆盖，这个文件不跳过。
+- 从 Connector 经 IPC 让 App 开始一轮，App 端需要 3–6 s；App 内直接发送约 1.3 s，慢在 App 内部。
 
 ### 4.4 对现有行为的影响与跨端
 
@@ -388,7 +423,7 @@ CodexRuntime
 - 持有者释放写锁的时延（关闭标签 / 线程空闲卸载）与我们 `thread/unsubscribe` 后卸载的时延未测量。
 - 旧桌面实例 IPC client 挂死的根因未定位；实现侧按“discovery 超时 = 持有者不可达”防御即可。
 - 没有对 daemon 做任何写操作（`thread/resume`、`turn/start`、审批）；写路径的行为依据是上游源码与 Ember/codexctl 的实测记录。
-- Windows 命名管道与 108 字节 AF_UNIX 路径限制未测试。
+- 108 字节 AF_UNIX 路径限制未测试。
 - 上游明确 daemon 是实验特性，接口可能变化；复刻实现应把方法名、版本表、socket 路径集中在一处配置，便于随 Codex 升级调整。
 
 ## 6. 参考

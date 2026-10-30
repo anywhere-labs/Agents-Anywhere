@@ -7,6 +7,8 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Context } from '@deepseek-ai/cordis'
 import { nativeRuntime } from '../fixtures/native-runtime.js'
 import { RuntimeRouter } from '../../src/host/dsh-runtime/router.js'
+import type { SyncTransport } from '../../src/host/dsh-runtime/sync.js'
+import { MAX_RETAINED_LOGS } from '../../src/host/dsh-runtime/sessions/source.js'
 import { sessionId } from '../../src/host/dsh-runtime/identity.js'
 
 type StateResult = { status: string, selections: Record<string, string>, metadata: Record<string, unknown> }
@@ -27,7 +29,7 @@ async function fixture(name: string) {
   const router = new RuntimeRouter({ native: runtime, query: context.ctx.sessionQuery, status: id => runtime.status(id) }, 'instance')
   const request = (method: string, params: Record<string, unknown>) => router.request(method, params, new AbortController().signal)
   return { ...context, home, runtime, router, request, close: async () => {
-    router.close(); await context.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true })
+    router.shutdown(); await context.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true })
   } }
 }
 
@@ -80,6 +82,7 @@ test('a blank visibility verdict is reused until that log changes', { timeout: 6
     const reads = countLogReads(f.ctx)
     const before = reads.count()
     assert.equal(await f.runtime.visible('cold-empty'), false)
+    assert.equal(f.runtime.source.retainedLogCount, 0, 'blank cold logs are evicted immediately after recording their empty revision')
     const afterFirst = reads.count()
     assert.equal(afterFirst, before + 1, 'the first check reads the log')
 
@@ -134,5 +137,65 @@ test('cold observation cache detects file changes without an inventory scan', { 
     const next = await f.runtime.read(id)
     assert.equal(next.events.length, first.events.length + 1)
     assert.equal(next.events.at(-1)?.type, 'session/title')
+  } finally { await f.close() }
+})
+
+test('session observation cache bounds retained logs by LRU capacity', { timeout: 60_000 }, async () => {
+  const f = await fixture('aa-dsh-log-lru-')
+  try {
+    const total = MAX_RETAINED_LOGS + 4
+    for (let i = 0; i < total; i++) {
+      const cold = f.ctx.sessions.prepare(SessionId(`cold-lru-${i}`), { meta: { cwd: f.home, createdAt: i + 1 } })
+      const detach = f.ctx.sessions.enter(cold)
+      f.ctx.sessions.announce(cold)
+      cold.append('turn/start', { turn: 1 })
+      cold.append('user/message', {
+        id: `msg-${i}`,
+        role: 'user',
+        source: { kind: 'user' },
+        content: [{ type: 'text', text: `session ${i}` }],
+      }, { surfaceOp: 'append' })
+      cold.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+      await f.ctx.sessions.flush(cold)
+      detach()
+    }
+    await f.runtime.source.refresh()
+    for (let i = 0; i < total; i++) {
+      await f.runtime.read(SessionId(`cold-lru-${i}`))
+    }
+    assert.equal(f.runtime.source.retainedLogCount, MAX_RETAINED_LOGS, 'retained logs never exceed MAX_RETAINED_LOGS')
+
+    // On-demand getSessionSnapshot releases the observation it opened and its multi-page capture.
+    const reads = countLogReads(f.ctx)
+    const params = { sessionId: sessionId('instance', 'persisted-only'), externalSessionId: 'persisted-only' }
+    let page = await f.request('getSessionSnapshot', params) as { nextCursor: string | null }
+    assert.ok(page.nextCursor, 'the fixture history spans more than one page')
+    while (page.nextCursor) page = await f.request('getSessionSnapshot', { ...params, cursor: page.nextCursor }) as { nextCursor: string | null }
+    assert.equal(f.router.hasHistoryPage, false, 'the capture is cleared after its last page')
+    const afterSnapshot = reads.count()
+    await f.runtime.read(SessionId('persisted-only'))
+    assert.equal(reads.count(), afterSnapshot + 1, 'the snapshot did not leave its observation cached')
+  } finally { await f.close() }
+})
+
+test('paged snapshot reads survive a sync resubscription and end with the router', { timeout: 60_000 }, async () => {
+  const f = await fixture('aa-dsh-page-resubscribe-')
+  try {
+    const params = { sessionId: sessionId('instance', 'persisted-only'), externalSessionId: 'persisted-only' }
+    const first = await f.request('getSessionSnapshot', params) as { nextCursor: string | null }
+    assert.ok(first.nextCursor, 'the fixture history spans more than one page')
+    // A restarting sync stream replaces the feed through subscribe() and unsubscribe().
+    const transport: SyncTransport = {
+      ingestBatch: async () => {}, loadCheckpoint: async () => null, saveCheckpoint: async () => {},
+      deleteCheckpoint: async () => {}, ingestSnapshot: async () => ({ accepted: true }),
+    }
+    f.router.unsubscribe(f.router.subscribe('restarted-sync', true, transport, () => {}))
+    const last = await f.request('getSessionSnapshot', { ...params, cursor: first.nextCursor }) as { nextCursor: string | null }
+    assert.equal(last.nextCursor, null, 'the open cursor still reads its last page')
+
+    const unfinished = await f.request('getSessionSnapshot', params) as { nextCursor: string | null }
+    f.router.shutdown()
+    assert.equal(f.router.hasHistoryPage, false, 'shutdown releases an unfinished capture')
+    await assert.rejects(f.request('getSessionSnapshot', { ...params, cursor: unfinished.nextCursor }), { code: 'INVALID_PARAMS' })
   } finally { await f.close() }
 })

@@ -12,7 +12,45 @@
     "preparing": "Preparing the local Connector environment: downloading its dependencies. This can take a few minutes…",
     "quit": "Quit Desktop",
     "recheck": "Check again",
-    "checking": "Checking…"
+    "checking": "Checking…",
+    "provisioningTitle": "Could not prepare the Connector environment",
+    "provisioningDescription": "Downloading Python or the dependencies failed, usually because of the network or the mirror. Try another mirror, or clear the dependency cache to download everything again if an earlier download stopped halfway.",
+    "pypiMirrorHint": "Packages come from here first; anything the mirror lacks comes from the official PyPI.",
+    "resetEnvironment": "Clear cache and retry",
+    "retry": "Retry",
+    "backendStoppedTitle": "The Desktop background service stopped",
+    "backendStoppedDescription": "The local Connector, devices and settings all depend on it. Click Restart to recover. If this keeps happening, report it with the error and logs below.",
+    "restartBackend": "Restart",
+    "startingRpc": "Environment ready. Starting Connector…",
+    "preparingDescription": "Dependency installation can take a while. Connector will start when it finishes.",
+    "cancelled": "Environment preparation cancelled",
+    "cancelledDescription": "The installer has stopped. You can start again.",
+    "cancel": "Cancel preparation",
+    "cancelling": "Stopping…",
+    "stalled": "No activity detected recently. Installation may be stalled. View logs, or cancel and retry with another mirror.",
+    "packageProgress": "{completed} installed / {total} resolved dependencies",
+    "environmentPhase": {
+      "checking": "Checking environment",
+      "downloading": "Downloading dependencies",
+      "resolving": "Resolving dependencies",
+      "building": "Building dependencies",
+      "syncing": "Syncing environment",
+      "ready": "Environment ready",
+      "failed": "Preparation failed",
+      "cancelled": "Cancelled"
+    },
+    "environmentError": {
+      "network": "Download failed. Try another mirror.",
+      "resolution": "Dependency resolution failed. See conflict details below.",
+      "permission": "Permission denied. Check access to the path below.",
+      "disk": "Not enough disk space. Free space and retry.",
+      "process": "Installer failed. See exit code and logs below.",
+      "busy": "Another Desktop or installer is using this environment. Retry after it exits.",
+      "unknown": "Environment preparation failed. See logs for details."
+    },
+    "preparingTitle": "Preparing Connector environment",
+    "copyOutput": "Copy output",
+    "environmentFailedDescription": "The environment is incomplete. Use the error below to resolve the problem and retry, or view the logs."
   },
   "app": {
     "name": "Agents Anywhere"
@@ -343,10 +381,14 @@
       "settings": "Settings"
     },
     "new": {
+      "restoredTargetUnavailable": "The original device or runtime is unavailable. Select a target before sending.",
+      "restoredDraft": "Your uncreated task draft has been restored.",
+      "discardDraft": "Discard draft",
       "askApproval": "Ask approval",
       "attach": "Attach files",
       "attachmentLimit": "Up to {count} files",
       "attachmentsUnsupported": "This runtime does not support attachments. Remove them or choose another runtime.",
+      "imageInputUnsupported": "The selected model does not declare image input support. Remove the image or choose another model.",
       "attachmentTypesUnsupported": "Only these attachment types are supported: {types}.",
       "createSession": "Create session",
       "creating": "Creating session...",
@@ -360,6 +402,10 @@
       "model": "Model",
       "modelAndReasoning": "Model and reasoning",
       "permissionMode": "Permission mode",
+      "permissionUnsynced": "Permission not synced",
+      "modelUnsynced": "Model not synced",
+      "runtimeDefault": "Runtime default",
+      "nextTurn": "Next turn",
       "permissionModes": {
         "dsh": {
           "readOnly": {
@@ -427,6 +473,9 @@
       "sendTask": "Send task",
       "agent": "Agent",
       "createFailed": "Failed to create session.",
+      "selectModel": "Choose a model",
+      "modelCatalogUnavailable": "Model catalog not ready",
+      "recoveryConfigurationRequired": "Your draft and attachments are retained. Review the model, permissions and Agent mode in Runtime settings before sending.",
       "attachmentOnlyPrompt": "(No text content.)",
       "imagePreview": {
         "close": "Close",
@@ -786,6 +835,12 @@
       "createFailed": "Couldn't create the project.",
       "createSuccess": "Project saved.",
       "createTitle": "Add project",
+      "dropFolder": "Drop a local folder to add a project",
+      "folderAdded": "Project added from the local folder.",
+      "folderAlreadyAdded": "This folder is already a project.",
+      "singleFolderRequired": "Drop one folder at a time.",
+      "folderRequired": "Drop a folder, not a file.",
+      "localDeviceRequired": "Connect this computer's local device before adding a folder project.",
       "device": "Device",
       "edit": "Edit",
       "editDescription": "You can rename this project. Its device and workspace cannot be changed.",
@@ -875,6 +930,14 @@
       "waitingForScan": "Waiting for phone to scan"
     },
     "session": {
+      "creationFailed": "Task not created",
+      "creationUnconfirmed": "Creation result unconfirmed",
+      "checkCreatedSession": "Check allocated session",
+      "creationCheckFirst": "Check the device session list before creating again. Your draft is retained in this app.",
+      "creationDraftRetained": "Your input and attachments are retained. Retry manually when ready.",
+      "retryCreation": "Retry creation",
+      "editCreation": "Back to editing",
+      "checkDeviceSessions": "View device sessions",
       "device": "Device",
       "status": "Status",
       "sessionId": "Session ID",
@@ -1117,7 +1180,24 @@
       "fileChangeUnknown": "Changed",
       "showCode": "Show code",
       "hideCode": "Hide code",
-      "loadCodeFailed": "Failed to load code"
+      "loadCodeFailed": "Failed to load code",
+      "nativeHistory": {
+        "title": "Native history",
+        "continue": "Continue task",
+        "release": "End AA execution",
+        "preparing": "Preparing execution…",
+        "active": "AA is using this session",
+        "activeHint": "End AA execution and wait for release before resuming this session in the CLI.",
+        "browseHint": "History is available. Exit this session in the CLI before continuing it here.",
+        "confirmHint": "AA will preserve the native session identity and save subsequent history. Exit this session in the CLI and keep it closed there while AA is using it.",
+        "cliExited": "I have exited this session in the CLI",
+        "cancel": "Cancel",
+        "failed": "Recovery failed. History remains available.",
+        "unknown": "Recovery is unconfirmed. Check the existing operation.",
+        "check": "Check recovery status",
+        "releaseFailed": "Execution release is unconfirmed. Refresh the session state.",
+        "releasing": "Ending execution…"
+      }
     },
     "sessionStatus": {
       "idle": "Idle",
@@ -1532,7 +1612,7 @@
       "desktopPythonChosenByUv": "Chosen by uv (downloaded on first run when needed)",
       "desktopUvPypiIndexUrl": "uv PyPI mirror",
       "desktopUvPypiIndexUrlPlaceholder": "Leave empty to use the default PyPI index",
-      "desktopUvPypiIndexUrlDescription": "Used when uv installs or syncs Python packages.",
+      "desktopUvPypiIndexUrlDescription": "Used first when uv installs or syncs Python packages; anything the mirror lacks comes from the official PyPI.",
       "desktopPypiDefault": "Default",
       "desktopPypiTsinghua": "Tsinghua",
       "desktopPypiUstc": "USTC",

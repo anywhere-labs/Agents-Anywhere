@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from 'node:child_process'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
@@ -14,7 +14,7 @@ import { LogsServiceClient } from '../generated/connector-logs.js'
 import { RuntimeDiagnostics, RuntimeRpcLogger } from '../dsh-runtime/diagnostics.js'
 import { RpcLogOutput } from '../dsh-runtime/log-output.js'
 import { readRuntimeLogPage } from '../dsh-runtime/log-reader.js'
-import { resolveUv } from './environment.js'
+import { resolveUv, withPackageIndexes } from './environment.js'
 import { ConnectorLogs } from './logs.js'
 import { materializeConnectorProject } from './project.js'
 
@@ -82,6 +82,8 @@ export interface ConnectorProcess {
   prepare(settings?: ConnectorSettings): Promise<void>
   start(binding: BoundDevice, apiBaseUrl: string, signal: AbortSignal): Promise<void>
   stop(): Promise<void>
+  /** Stops the Connector and drops its dependency environment, so the next start reinstalls it. */
+  resetEnvironment(): Promise<void>
   assertHealthy(): Promise<void>
   hasRuntimeLogs?(): boolean
   resolveLogsPath?(): Promise<string | null>
@@ -187,6 +189,18 @@ export class SourceConnector implements ConnectorProcess {
   private updateState(value: unknown): void {
     if (!value || typeof value !== 'object') return
     const state = value as Partial<ControlState> & { logsPath?: unknown }
+    // Credential failures also carry lastError; they are reported as authFailed, not as a runtime failure.
+    if (!state.running && !state.authFailed && typeof state.lastError === 'string' && state.lastError && !this.stopping) {
+      const invalidState = /^(invalid|unsupported) connector sync state file:/.test(state.lastError)
+      const code = invalidState ? 'CONNECTOR_SYNC_STATE_INVALID' : 'CONNECTOR_RUNTIME_FAILED'
+      if ((this.failure as (Error & { code?: string }) | null)?.code !== code) {
+        this.failure = Object.assign(new Error(invalidState
+          ? 'Connector 同步状态文件无效，请查看启动前诊断。'
+          : 'Connector 运行失败，请查看启动前诊断。'), { code })
+        this.logs.output(`[connector] ${state.lastError}\n`)
+        this.diagnostics.log('error', 'connector.runtime_failed', {}, this.failure)
+      }
+    }
     const resolvedLogsPath = deriveLogsPath(state)
     if (resolvedLogsPath) {
       this.cachedLogsPath = resolvedLogsPath
@@ -244,7 +258,6 @@ export class SourceConnector implements ConnectorProcess {
     this.diagnostics.log('info', 'connector.starting', { connectorId: binding.connectorId, apiBaseUrl })
     const executable = await resolveUv(this.config, settings)
     const command = executable ?? (settings.uvPath || this.config.uvPath)
-    const pypiIndexUrl = settings.uvPypiIndexUrl || 'https://pypi.org/simple'
     signal.throwIfAborted()
     // 不依赖 prepare() 的调用顺序：start() 自己也要保证项目副本就位。
     const projectDir = this.projectDir ??= await materializeConnectorProject(this.config)
@@ -256,7 +269,7 @@ export class SourceConnector implements ConnectorProcess {
       cwd: projectDir,
       windowsHide: true,
       detached: process.platform !== 'win32',
-      env: {
+      env: withPackageIndexes({
         ...process.env,
         ...(typeof process.env['NO_PROXY'] === 'string' ? { NO_PROXY: process.env['NO_PROXY'].replaceAll('[::1]', '::1') } : {}),
         ...(typeof process.env['no_proxy'] === 'string' ? { no_proxy: process.env['no_proxy'].replaceAll('[::1]', '::1') } : {}),
@@ -268,10 +281,7 @@ export class SourceConnector implements ConnectorProcess {
         PYTHONUNBUFFERED: '1',
         UV_HTTP_TIMEOUT: process.env['UV_HTTP_TIMEOUT'] || UV_READ_TIMEOUT_SECONDS,
         UV_PYTHON_INSTALL_MIRROR: settings.uvPythonInstallMirror || 'https://github.com/astral-sh/python-build-standalone/releases/download',
-        UV_DEFAULT_INDEX: pypiIndexUrl,
-        UV_INDEX_URL: pypiIndexUrl,
-        PIP_INDEX_URL: pypiIndexUrl,
-      },
+      }, settings.uvPypiIndexUrl),
     })
     this.child = child
     child.stdout.setEncoding('utf8')
@@ -320,6 +330,7 @@ export class SourceConnector implements ConnectorProcess {
     const state = await this.requireControl().getState({ timeoutMs: 15_000 })
     this.updateState(state)
     if (state.authFailed) throw new ConnectorCredentialError()
+    if (this.failure) throw this.failure
     if (!state.running) throw new Error('Connector 尚未运行，请返回插件重试。')
   }
 
@@ -327,6 +338,24 @@ export class SourceConnector implements ConnectorProcess {
     if (this.stopping) return this.stopping
     this.stopping = this.stopChild().finally(async () => { await this.logs.flush(); this.failure = null; this.stopping = null })
     return this.stopping
+  }
+
+  /**
+   * A half-downloaded or broken install survives every restart, because uv reuses whatever the
+   * environment and the project copy already hold. Only the plugin-owned pieces go: the venv and
+   * the materialized project with its uv.lock. The uv cache is the user's and shared with other
+   * projects, so it is only pruned of the dangling entries an interrupted download left behind.
+   */
+  async resetEnvironment(): Promise<void> {
+    await this.stop()
+    this.projectDir = null
+    for (const name of ['connector-venv', 'connector-source']) {
+      // Windows can hold a file briefly after the child exits.
+      await rm(join(this.config.stateRoot, name), { recursive: true, force: true, maxRetries: 5 })
+    }
+    const executable = await resolveUv(this.config, this.settings()).catch(() => null)
+    if (executable) { try { await this.prune(executable) } catch { /* Housekeeping only. */ } }
+    this.diagnostics.log('info', 'connector.environment_reset', {})
   }
 
   private async stopChild(): Promise<void> {

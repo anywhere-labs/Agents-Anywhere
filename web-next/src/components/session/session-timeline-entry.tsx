@@ -99,6 +99,8 @@ function TimelineEntryContextMenu({ item, children }: { item: TimelineItem; chil
   const tSession = useTranslations("dashboard.session")
   const tCommon = useTranslations("common")
   const text = timelineItemCopyText(item)
+  // 鼠标右键时如果已有选中文字，交给浏览器原生菜单；触屏长按仍走 Radix 的长按菜单。
+  const nativeMenuRef = React.useRef(false)
   const copyTimelineValue = async (value: string) => {
     if (!value) return
     try {
@@ -110,7 +112,19 @@ function TimelineEntryContextMenu({ item, children }: { item: TimelineItem; chil
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        <div className="min-w-0 max-w-full select-text">{children}</div>
+        <div
+          className="min-w-0 max-w-full select-text"
+          onPointerDownCapture={(event) => {
+            const secondary = event.button === 2 || (event.button === 0 && event.ctrlKey)
+            nativeMenuRef.current = event.pointerType === "mouse" && secondary && hasSelectionWithin(event.currentTarget)
+          }}
+          onContextMenuCapture={(event) => {
+            if (nativeMenuRef.current) event.stopPropagation()
+            nativeMenuRef.current = false
+          }}
+        >
+          {children}
+        </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-48">
         <ContextMenuItem disabled={!text} onSelect={() => copyTimelineValue(text)}>
@@ -129,6 +143,16 @@ function TimelineEntryContextMenu({ item, children }: { item: TimelineItem; chil
       </ContextMenuContent>
     </ContextMenu>
   )
+}
+
+// 在 pointerdown 时判断，避免 macOS 右键先自动选中单词导致误判。
+function hasSelectionWithin(element: HTMLElement): boolean {
+  const selection = window.getSelection()
+  if (!selection || selection.isCollapsed || !selection.toString().trim()) return false
+  for (let index = 0; index < selection.rangeCount; index += 1) {
+    if (selection.getRangeAt(index).intersectsNode(element)) return true
+  }
+  return false
 }
 
 function timelineItemCopyText(item: TimelineItem): string {

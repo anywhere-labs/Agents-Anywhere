@@ -1014,9 +1014,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_45() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_45"
-    assert CURRENT_SCHEMA_VERSION == "2.45"
+def test_current_schema_version_is_v2_46() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_46"
+    assert CURRENT_SCHEMA_VERSION == "2.46"
 
 
 def _insert_required(connection, table: str, values: dict) -> None:

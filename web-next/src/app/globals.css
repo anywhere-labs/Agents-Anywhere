@@ -125,7 +125,8 @@
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    /* Nonzero transitions distort Mermaid's synchronous SVG geometry measurements. */
+    transition-duration: 0s !important;
   }
 }
 
@@ -235,7 +236,7 @@ body {
 .hljs-attribute,
 .hljs-variable,
 .hljs-template-variable {
-  color: #0891b2;
+  color: #0e7490;
 }
 
 .hljs-meta,
@@ -290,6 +291,8 @@ body {
   color: #7dd3fc;
 }
 
+.dark .hljs-comment,
+.dark .hljs-quote,
 .dark .hljs-meta,
 .dark .hljs-operator,
 .dark .hljs-punctuation {

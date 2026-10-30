@@ -50,6 +50,8 @@ import {
   ToolMarkerRowContent,
 } from "@/components/session/session-tool-cards"
 import { timelineRunCounts } from "@/components/session/timeline-summary"
+import { RuntimeCreationStatus } from "@/components/session/runtime-creation-status"
+import { NativeSessionHandoff } from "@/components/session/native-session-handoff"
 import { needsOlderTimelinePage } from "@/components/session/timeline-autofill"
 import { createTimelineScrollFollow } from "@/components/session/timeline-scroll-follow"
 import { createSessionEventBuffer } from "@/components/session/session-event-buffer"
@@ -77,7 +79,7 @@ import {
   timelineClientMessageId,
 } from "@/components/session/optimistic-timeline"
 import { nextTimelineResetVersion } from "@/components/session/session-review-history"
-import { buildTurnReviewDisplay, type SessionReviewTarget } from "@/components/session/session-review-model"
+import { createTurnReviewDisplaySelector, type SessionReviewTarget } from "@/components/session/session-review-model"
 import { SessionReviewCard } from "@/components/session/session-review-card"
 import { SessionReviewTag } from "@/components/session/session-review-tag"
 import { isVisibleTimelineItem, messageText, runtimeLabel, textOf } from "@/components/session/session-utils"
@@ -340,6 +342,11 @@ export function SessionDetail({
     getOptimisticItems,
     getOptimisticSessionState,
     isOptimisticSession,
+    sessionCreations,
+    retrySessionCreation,
+    editSessionCreation,
+    navigateToDevice,
+    openSession,
     markOptimisticMessageFailed,
     replaceHome,
   } = useWorkspace()
@@ -476,6 +483,8 @@ export function SessionDetail({
 
   const composerDraft = composerDraftState.sessionId === sessionId ? composerDraftState.value : ""
   const isLocalOptimisticSession = isOptimisticSession(sessionId)
+  const creation = sessionCreations[sessionId]
+  const creationFailed = creation?.status === "failed"
   const hasInitialSessionState = state !== null
 
   React.useEffect(() => {
@@ -556,9 +565,7 @@ export function SessionDetail({
       return true
     } catch (err) {
       // An official operation can partially succeed. Read the actual selection before rolling back.
-      const actual = sessionRuntimeType(session) === "dsh"
-        ? await dashboardApi.getSessionRuntimeState(token, session.id).catch(() => null)
-        : null
+      const actual = await dashboardApi.getSessionRuntimeState(token, session.id).catch(() => null)
       if (selectionUpdateSeqRef.current === selectionUpdateSeq) {
         setState((current) =>
           current
@@ -980,55 +987,63 @@ export function SessionDetail({
               sessionId,
               cursorSequence(recovery.nextCursor),
             )
-            if (shouldReadLiveCapabilities) {
-              // Split the queue before starting the live read. On success,
-              // only capability projections older than that boundary are
-              // superseded; updates arriving during the request stay queued.
-              const bufferedBeforeLiveRead = bufferedEvents
-              bufferedEvents = []
-              try {
-                const liveCapabilities = await dashboardApi.getSessionRuntimeCapabilities(
-                  token,
-                  sessionId,
-                )
-                if (cancelled) {
-                  bufferedEvents = bufferedEventsAfterLiveCapabilityRead(
-                    bufferedBeforeLiveRead,
-                    bufferedEvents,
-                    false,
-                  )
-                  return
-                }
-                bufferedEvents = bufferedEventsAfterLiveCapabilityRead(
-                  bufferedBeforeLiveRead,
-                  bufferedEvents,
-                  true,
-                )
-                renderBuffer.flush()
-                setState((current) => {
-                  if (!current) return current
-                  const nextCapabilities = mergeEffectiveCapabilities(
-                    current.effectiveCapabilities,
-                    liveCapabilities.capabilitySet,
-                  )
-                  return nextCapabilities === current.effectiveCapabilities
-                    ? current
-                    : {
-                        ...current,
-                        effectiveCapabilities: nextCapabilities,
-                        serverTime: liveCapabilities.serverTime,
-                      }
-                })
-              } catch {
-                bufferedEvents = bufferedEventsAfterLiveCapabilityRead(
-                  bufferedBeforeLiveRead,
-                  bufferedEvents,
-                  false,
-                )
-                // Keep the last live/snapshot value instead of replacing it
-                // with a potentially older persisted recovery projection.
-              }
-            }
+            // Runtime state is not recovered by /events. Read it even when
+            // offline so the Server can return its last cached/persisted fact.
+            // Keep events received during these reads queued until both settle.
+            const bufferedBeforeLiveRead = bufferedEvents
+            bufferedEvents = []
+            const liveReadConnection = connectionSequence
+            const [stateResult, capabilitiesResult] = await Promise.allSettled([
+              dashboardApi.getSessionRuntimeState(token, sessionId),
+              shouldReadLiveCapabilities
+                ? dashboardApi.getSessionRuntimeCapabilities(token, sessionId)
+                : Promise.resolve(null),
+            ])
+            if (cancelled) return
+            const liveReadIsCurrent = liveReadConnection === connectionSequence
+            const liveState = liveReadIsCurrent && stateResult.status === "fulfilled"
+              ? stateResult.value
+              : null
+            const liveCapabilities = liveReadIsCurrent && capabilitiesResult.status === "fulfilled"
+              ? capabilitiesResult.value
+              : null
+            bufferedEvents = bufferedEventsAfterLiveCapabilityRead(
+              liveState
+                ? bufferedBeforeLiveRead.filter((event) => event.type !== "runtime.state.updated")
+                : bufferedBeforeLiveRead,
+              bufferedEvents,
+              liveCapabilities !== null,
+            )
+            renderBuffer.flush()
+            setState((current) => {
+              if (!current || current.session.id !== sessionId) return current
+              // Include facts received before the read in its version check.
+              // Other buffered domains (including refetch signals) keep their
+              // existing ordering and are drained after recovery is released.
+              const stateBeforeRead = bufferedBeforeLiveRead.reduce(
+                (latest, event) => event.type === "runtime.state.updated" && event.sessionId === sessionId
+                  ? mergeRuntimeState(
+                      latest,
+                      readPayloadValue<SessionRuntimeState>(event.payload.state),
+                      sessionId,
+                    )
+                  : latest,
+                current.state,
+              )
+              const nextRuntimeState = mergeRuntimeState(stateBeforeRead, liveState?.state, sessionId)
+              const nextCapabilities = mergeEffectiveCapabilities(
+                current.effectiveCapabilities,
+                liveCapabilities?.capabilitySet ?? null,
+              )
+              return nextRuntimeState === current.state && nextCapabilities === current.effectiveCapabilities
+                ? current
+                : {
+                    ...current,
+                    state: nextRuntimeState,
+                    effectiveCapabilities: nextCapabilities,
+                    serverTime: liveState?.serverTime ?? liveCapabilities?.serverTime ?? current.serverTime,
+                  }
+            })
           })
           .catch(() => refetch(`${reason}:recovery-failed`))
         recoveryPromise = settleSessionEventRecovery(
@@ -1181,7 +1196,7 @@ export function SessionDetail({
   const handleSend = async (
     content: string,
     attachments: AttachedFile[],
-    selections: { model?: string; permission?: string },
+    _selections: { model?: string; permission?: string },
   ): Promise<boolean> => {
     if (!session || (!content.trim() && attachments.length === 0)) return false
     const planIntent = parsePlanningCommand(content)
@@ -1190,8 +1205,8 @@ export function SessionDetail({
       if (uploaded.length !== attachments.length) return false
       if (planIntent.command !== "submit_task" && attachments.length) { toast.error("此规划命令不接受附件，请填写规划任务。"); return false }
       try {
+        // Selections are written when changed; only wait for a pending write.
         await selectionWritesRef.current.get(session.id)
-        if (!await handleSelectionChange(selections)) return false
       } catch (error) {
         toast.error(error instanceof Error ? error.message : tSession("updateSelectionsFailed")); return false
       }
@@ -1229,23 +1244,7 @@ export function SessionDetail({
     })
     setSending(true)
     try {
-      const selectionPatch = selectionPatchFromComposerSelections(runtimeState?.selections ?? {}, selections)
-      if (Object.keys(selectionPatch).length > 0) {
-        const selectionResult = await dashboardApi.updateSessionSelections(token, session.id, selectionPatch)
-        setState((current) =>
-          current
-            ? {
-                ...current,
-                state: runtimeStateWithSelectionResult(
-                  current.state,
-                  current.session,
-                  selectionPatch,
-                  selectionResult.state,
-                ),
-              }
-            : current,
-        )
-      }
+      await selectionWritesRef.current.get(session.id)
       await dashboardApi.sendSessionMessage(token, session.id, messageText, {
         attachments: uploadedAttachments.map((attachment) => ({ fileId: attachment.fileId })),
         clientMessageId,
@@ -1374,7 +1373,7 @@ export function SessionDetail({
     })
   }, [])
 
-  const handleRespondInteraction = async (
+  const handleRespondInteraction = React.useCallback(async (
     noticeId: string,
     actionId: string,
     input?: Record<string, unknown>,
@@ -1405,7 +1404,7 @@ export function SessionDetail({
       setResolvingNoticeId(null)
       setResolvingActionId(null)
     }
-  }
+  }, [removeNoticeFromState, resolvingNoticeId, session, tSession, token])
 
   React.useLayoutEffect(() => {
     const pendingPrependScrollRestore = pendingPrependScrollRestoreRef.current
@@ -1613,13 +1612,14 @@ export function SessionDetail({
     () => groupTimelineItems((state?.items ?? []).filter(isVisibleTimelineItem), interactionTargetIds),
     [interactionTargetIds, state?.items],
   )
+  const selectTurnReviewDisplay = React.useMemo(() => createTurnReviewDisplaySelector(), [sessionId])
   const turnReviewDisplay = React.useMemo(() => {
-    return buildTurnReviewDisplay(state?.session.id === sessionId ? state.items.filter(isVisibleTimelineItem) : [], {
+    return selectTurnReviewDisplay(state?.session.id === sessionId ? state.items.filter(isVisibleTimelineItem) : [], {
       root: state?.session.cwd,
       caseInsensitivePaths: connectorDeviceOs === "windows",
       turnInProgress,
     })
-  }, [connectorDeviceOs, sessionId, state?.items, state?.session.id, state?.session.cwd, turnInProgress])
+  }, [connectorDeviceOs, selectTurnReviewDisplay, sessionId, state?.items, state?.session.id, state?.session.cwd, turnInProgress])
   const completedTurnReviewsByEndItemId = React.useMemo(
     () => new Map(turnReviewDisplay.completedTurns.map((turn) => [turn.endItemId, turn])),
     [turnReviewDisplay.completedTurns],
@@ -1684,7 +1684,7 @@ export function SessionDetail({
         >
           <div
             ref={timelineContentRef}
-            aria-busy={runtimeStatus === "waiting" || runtimeStatus === "pending" || runtimeStatus === "running"}
+            aria-busy={!creationFailed && (runtimeStatus === "waiting" || runtimeStatus === "pending" || runtimeStatus === "running")}
             className={cn(
               "mx-auto flex w-full min-w-0 max-w-[calc(48rem+2rem)] flex-col gap-3 overflow-hidden px-4 pb-44 pt-20",
             )}
@@ -1712,7 +1712,7 @@ export function SessionDetail({
                 .find((turn) => turn !== undefined)
               return (
                 <React.Fragment key={groupKey}>
-                  <TimelineGroupEntry
+                  <LiveTimelineGroupEntry
                     group={group}
                     token={token}
                     session={session}
@@ -1721,9 +1721,7 @@ export function SessionDetail({
                     resolvingActionId={resolvingActionId}
                     groupOpen={group.kind === "single" ? false : timelineGroupOpenByKey[group.key] ?? false}
                     itemOpenById={timelineItemOpenById}
-                    onGroupOpenChange={group.kind === "single"
-                      ? undefined
-                      : (open) => handleTimelineGroupOpenChange(group.key, open)}
+                    onGroupOpenChange={handleTimelineGroupOpenChange}
                     onItemOpenChange={handleTimelineItemOpenChange}
                     onRespondInteraction={handleRespondInteraction}
                   />
@@ -1760,7 +1758,7 @@ export function SessionDetail({
             {detachedNotifications.map((notice) => (
               <NotificationCard key={notice.noticeId} notice={notice} />
             ))}
-            {runtimeStatus === "waiting" || runtimeStatus === "pending" || runtimeStatus === "running" ? (
+            {!creationFailed && (runtimeStatus === "waiting" || runtimeStatus === "pending" || runtimeStatus === "running") ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" />
                 <span>
@@ -1799,6 +1797,31 @@ export function SessionDetail({
           {onOpenReview && turnReviewDisplay.activeReview ? (
             <SessionReviewTag files={turnReviewDisplay.activeReview.files} onReview={() => onOpenReview()} />
           ) : null}
+          <RuntimeCreationStatus sessionId={sessionId} />
+          <NativeSessionHandoff key={sessionId} token={token} session={session} state={runtimeState}
+            capabilities={state?.effectiveCapabilities ?? null} onSettled={async () => {
+              const refreshed = await loadInitialSessionState(token, sessionId, { reason: "native-history.handoff" })
+              setState(current => current?.session.id === sessionId ? refreshed : current)
+              onSessionUpdated?.(refreshed.session)
+            }} />
+          {creationFailed ? (
+            <div className="mx-auto w-full max-w-3xl p-4">
+              <Alert>
+                <CircleAlert />
+                <AlertTitle>{tSession(creation.resultUnknown ? "creationUnconfirmed" : "creationFailed")}</AlertTitle>
+                <AlertDescription>
+                  <p>{creation.message || tSession("creationFailed")}</p>
+                  <p>{tSession(creation.resultUnknown ? "creationCheckFirst" : "creationDraftRetained")}</p>
+                  <div className="flex flex-wrap gap-2 pt-2">
+                    {creation.retryable ? <Button onClick={() => retrySessionCreation(sessionId)}>{tSession("retryCreation")}</Button> : null}
+                    {!creation.resultUnknown ? <Button variant="outline" onClick={() => editSessionCreation(sessionId)}>{tSession("editCreation")}</Button> : null}
+                    {creation.resultUnknown && creation.serverSessionId ? <Button variant="outline" onClick={() => openSession(creation.serverSessionId!)}>{tSession("checkCreatedSession")}</Button> : null}
+                    <Button variant="outline" onClick={() => navigateToDevice(session.connectorId)}>{tSession("checkDeviceSessions")}</Button>
+                  </div>
+                </AlertDescription>
+              </Alert>
+            </div>
+          ) : <>
           {planReview && <PlanningReviewPanel planning={planning} target={planReview} />}
           <div hidden={planReview !== null}>
           <SessionComposer
@@ -1826,6 +1849,7 @@ export function SessionDetail({
             onToggleTakeover={() => setPendingTakeover(!session.takeover)}
           />
           </div>
+          </>}
         </div>
       </div>
       <Dialog
@@ -2214,6 +2238,36 @@ function isToolRunBarItem(item: TimelineItem): boolean {
   return (item.content.kind ?? "artifact") !== "diff"
 }
 
+type LiveTimelineGroupProps = Omit<React.ComponentProps<typeof TimelineGroupEntry>, "onGroupOpenChange"> & {
+  onGroupOpenChange: (key: string, open: boolean) => void
+}
+
+// Group objects are rebuilt when any item changes. Compare their immutable item
+// references so a streamed tail (or composer keystroke) does not render every
+// historical context menu, attachment list and message again.
+const LiveTimelineGroupEntry = React.memo(function LiveTimelineGroupEntry({
+  group, onGroupOpenChange, ...props
+}: LiveTimelineGroupProps) {
+  return <TimelineGroupEntry {...props} group={group} onGroupOpenChange={group.kind === "single"
+    ? undefined : (open) => onGroupOpenChange(group.key, open)} />
+}, (previous, next) => {
+  const left = previous.group
+  const right = next.group
+  if (left.kind !== right.kind) return false
+  if (left.kind === "single") {
+    if (right.kind !== "single" || left.item !== right.item) return false
+  } else {
+    if (right.kind === "single" || left.key !== right.key
+      || left.items.length !== right.items.length
+      || left.items.some((item, index) => item !== right.items[index])) return false
+    if (left.kind === "agent-calls"
+      && (right.kind !== "agent-calls" || left.parentItemId !== right.parentItemId)) return false
+  }
+  const keys = Object.keys(previous) as Array<keyof LiveTimelineGroupProps>
+  return keys.length === Object.keys(next).length
+    && keys.every((key) => key === "group" || previous[key] === next[key])
+})
+
 export function TimelineGroupEntry({
   group,
   token,
@@ -2597,12 +2651,7 @@ function mergeSessionEvent(
       acceptsRuntimeState,
     })
   }
-  const nextRuntimeState =
-    acceptsRuntimeState &&
-    runtimeState &&
-    !runtimeStatesSemanticallyEqual(current.state ?? null, runtimeState)
-      ? runtimeState
-      : current.state
+  const nextRuntimeState = mergeRuntimeState(current.state, runtimeState, current.session.id)
   const nextEffectiveCapabilities = mergeEffectiveCapabilities(
     current.effectiveCapabilities,
     capabilitySet,
@@ -2733,6 +2782,21 @@ function sessionSemanticallyEqual(left: SessionView, right: SessionView): boolea
     runtimeSettings: right.runtimeSettings,
     runtimeSettingsOverride: right.runtimeSettingsOverride,
   })
+}
+
+function mergeRuntimeState(
+  current: SessionRuntimeState | null | undefined,
+  incoming: SessionRuntimeState | null | undefined,
+  sessionId: string,
+): SessionRuntimeState | null | undefined {
+  if (!incoming || incoming.sessionId !== sessionId || incoming.updatedSeq < (current?.updatedSeq ?? 0)) {
+    return current
+  }
+  // Even identical facts must advance the version watermark. Otherwise a
+  // later, older observation could replace them with different facts.
+  return current && incoming.updatedSeq === current.updatedSeq && runtimeStatesSemanticallyEqual(current, incoming)
+    ? current
+    : incoming
 }
 
 function runtimeStatesSemanticallyEqual(

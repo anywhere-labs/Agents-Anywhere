@@ -100,7 +100,7 @@ class ConnectorRuntimeHost(RuntimeHostClient):
             raise RuntimeError("Synchronous notification ingestion is unavailable")
         allowed = {"session.meta.upsert", "session.source.updated", "session.state.updated",
                    "session.turnEnded", "session.inventory.begin", "session.inventory.complete",
-                   "timeline.sync", "timeline.itemUpsert"}
+                   "timeline.sync", "timeline.itemUpsert", "notice.upsert", "runtime.capability.updated"}
         bound = []
         for notice in notifications:
             if notice.get("method") not in allowed or not isinstance(notice.get("params"), dict):

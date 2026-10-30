@@ -611,18 +611,17 @@ async def _test_codex_sdk_client_uses_low_level_permission_payloads() -> None:
     assert native.initialized is True
     assert native.low_level.thread_start_params[0]["approvalPolicy"] == "on-request"
     assert native.low_level.thread_start_params[0]["approvalsReviewer"] == "user"
-    assert native.low_level.thread_start_params[0]["sandbox"] == "workspace-write"
+    # Permissions go by profile name, never together with the sandbox fields.
+    assert native.low_level.thread_start_params[0]["permissions"] == ":workspace"
+    assert "sandbox" not in native.low_level.thread_start_params[0]
     assert native.low_level.turn_start_params[0]["approvalPolicy"] == "on-request"
     assert native.low_level.turn_start_params[0]["approvalsReviewer"] == "auto_review"
-    assert native.low_level.turn_start_params[0]["sandboxPolicy"]["type"] == (
-        "workspaceWrite"
-    )
-    assert (
-        native.low_level.turn_start_params[0]["sandboxPolicy"]["networkAccess"] is False
-    )
+    assert native.low_level.turn_start_params[0]["permissions"] == ":workspace"
+    assert "sandboxPolicy" not in native.low_level.turn_start_params[0]
     assert native.low_level.thread_start_params[1]["approvalPolicy"] == "never"
     assert "approvalsReviewer" not in native.low_level.thread_start_params[1]
-    assert native.low_level.thread_start_params[1]["sandbox"] == "danger-full-access"
+    assert native.low_level.thread_start_params[1]["permissions"] == ":danger-full-access"
+    assert "sandbox" not in native.low_level.thread_start_params[1]
 
 
 async def _test_codex_sdk_client_sends_attachments_as_user_input() -> None:
@@ -701,7 +700,8 @@ async def _test_codex_sdk_client_resumes_thread_before_low_level_turn_start() ->
     assert native.low_level.thread_resume_params[0]["model"] == "gpt-example"
     assert native.low_level.thread_resume_params[0]["approvalPolicy"] == "on-request"
     assert native.low_level.thread_resume_params[0]["approvalsReviewer"] == "user"
-    assert native.low_level.thread_resume_params[0]["sandbox"] == "workspace-write"
+    assert native.low_level.thread_resume_params[0]["permissions"] == ":workspace"
+    assert "sandbox" not in native.low_level.thread_resume_params[0]
 
 
 async def _test_codex_sdk_client_resumes_thread_after_read_handle_cache() -> None:
@@ -1185,8 +1185,10 @@ class _FakeLowLevelAsyncCodex:
 
 
 def generated_params_payload(
-    params: ThreadResumeParams | ThreadStartParams | TurnStartParams,
+    params: ThreadResumeParams | ThreadStartParams | TurnStartParams | dict[str, Any],
 ) -> dict[str, Any]:
+    if isinstance(params, dict):
+        return dict(params)
     payload = params.model_dump(
         by_alias=True,
         exclude_none=True,

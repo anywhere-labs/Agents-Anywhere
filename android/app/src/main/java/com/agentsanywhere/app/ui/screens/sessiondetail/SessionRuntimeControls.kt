@@ -177,6 +177,26 @@ internal fun RuntimeNoticeCard(
     expanded: Boolean = true,
     onExpandedChange: ((Boolean) -> Unit)? = null,
 ) {
+    val runtimeDialog = notice.actions.firstOrNull { it.input.uiSchema?.get("component") == "runtimeDialog" }
+    if (runtimeDialog != null || notice.metadata["kind"] == "form") {
+        val ui = if (notice.metadata["kind"] == "form") notice.metadata else runtimeDialog?.input?.uiSchema.orEmpty()
+        val request = org.json.JSONObject().put("interactionId", notice.noticeId).put("ownerGeneration", notice.metadata["ownerGeneration"])
+            .put("kind", ui["kind"]).put("title", notice.title).put("metadata", org.json.JSONObject(ui))
+            .put("actions", org.json.JSONArray(notice.actions.map { org.json.JSONObject().put("actionId", it.actionId).put("label", it.label) }))
+        notice.message?.let { request.put("message", it) }
+        androidx.compose.runtime.key(notice.noticeId, notice.metadata["ownerGeneration"]) {
+            androidx.compose.foundation.layout.Column(modifier) {
+                com.agentsanywhere.app.ui.screens.home.RuntimeWorkflowInput(request, busy || actionsDisabled) { action, value ->
+                    notice.actions.firstOrNull { it.actionId == action }?.let { selected ->
+                        val input = value?.let { raw -> raw.keys().asSequence().associateWith { raw.get(it) } }
+                        onRespond(selected, input)
+                    }
+                }
+                if (errorMessage != null) Text(errorMessage)
+            }
+        }
+        return
+    }
     val colors = LocalAAColors.current
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current

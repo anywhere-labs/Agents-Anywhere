@@ -255,3 +255,59 @@ test("updates require an authenticated server matching a saved server and never 
   syncDesktopUpdateSession(server.serverUrl);
   assert.deepEqual(calls.pop(), server);
 });
+
+test("a backend that stops after ready opens the gate, and its recheck starts a new backend", async () => {
+  const published: Array<{ status: string; recovery?: { kind: string } }> = [];
+  const clients: Array<{ options: { onExit: (message: string) => void; onEvent: (event: { event: string; data: unknown }) => void } }> = [];
+  let failStart = false;
+  class FakeBackendClient {
+    constructor(readonly options: { onExit: (message: string) => void; onEvent: (event: { event: string; data: unknown }) => void }) {
+      clients.push(this);
+    }
+    async start() { if (failStart) throw new Error("Desktop backend did not become ready in time."); }
+    getOwnership() { return { status: "checking" }; }
+  }
+  const globals = {
+    DesktopBackendClient: FakeBackendClient,
+    backend: null as unknown,
+    ownership: { status: "owned" } as { status: string },
+    isQuitting: false,
+    app: { isPackaged: false },
+    net: { fetch: () => assert.fail("no network in this test") },
+    backendInit: () => ({}),
+    applyLoginItemSettings: () => {},
+    appendMainLog: () => {},
+    errorMessage: (error: unknown) => error instanceof Error ? error.message : String(error),
+    sendToRenderer: (_channel: string, state: { status: string; recovery?: { kind: string } }) => published.push(state),
+    drainDesktopOAuthCallbacks: async () => {},
+  };
+  const { startDesktopBackend, restartDesktopBackend } = loadFunctions(
+    ["startDesktopBackend", "restartDesktopBackend", "publishOwnership"],
+    globals,
+  ) as { startDesktopBackend: () => Promise<void>; restartDesktopBackend: () => Promise<{ status: string }> };
+
+  await startDesktopBackend();
+  globals.ownership = { status: "owned" };
+  clients[0].options.onExit("Desktop backend stopped unexpectedly (code 1).");
+  // States built inside the vm context have its prototypes; compare their data.
+  const plain = (value: unknown) => JSON.parse(JSON.stringify(value)) as unknown;
+  assert.deepEqual(plain(published.at(-1)), {
+    status: "error",
+    message: "Desktop backend stopped unexpectedly (code 1).",
+    recovery: { kind: "backendStopped" },
+  }, "an owned window is told the backend is gone");
+
+  assert.equal((await restartDesktopBackend()).status, "checking");
+  assert.equal(clients.length, 2);
+  assert.equal(globals.backend, clients[1]);
+  assert.equal(published.at(-1)?.status, "checking");
+  const count = published.length;
+  clients[0].options.onExit("late exit of the old backend");
+  clients[0].options.onEvent({ event: "ownership", data: { status: "conflict" } });
+  assert.equal(published.length, count, "the replaced backend no longer speaks for the window");
+
+  failStart = true;
+  const failed = await restartDesktopBackend();
+  assert.equal(failed.status, "error");
+  assert.deepEqual(plain(published.at(-1)?.recovery), { kind: "backendStopped" }, "a failed restart can be retried");
+});

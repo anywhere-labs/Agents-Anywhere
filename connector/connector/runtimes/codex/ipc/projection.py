@@ -29,6 +29,13 @@ from connector.runtimes.codex.domain.approvals import (
     approval_notice_from_request,
     is_approval_request,
 )
+from connector.runtimes.codex.domain.async_inputs import AsyncInputSubmissions
+from connector.runtimes.codex.domain.input_requests import (
+    codex_input_request,
+    is_input_request_context,
+    is_user_input_request,
+    user_input_notice,
+)
 from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
 from connector.runtimes.codex.domain.selections import (
     ModelCatalogReader,
@@ -41,7 +48,9 @@ from connector.runtimes.codex.ipc.timeline import (
     thread_snapshot_from_conversation_state,
     touches_turn_history,
 )
+from connector.runtimes.codex.notifications.notices import CodexNoticeHandler
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
+from connector.runtimes.codex.timeline.order import is_append_only, timeline_order
 
 IPC_SOURCE = "codex.ipc"
 STATE_SOURCE_KEYS = (
@@ -74,18 +83,38 @@ class CodexIpcSessionProjector:
     timeline: CodexTimelineAccumulator | None = None
     read_model_catalog: ModelCatalogReader | None = None
     read_permission_catalog: PermissionCatalogReader | None = None
+    async_submissions: AsyncInputSubmissions | None = None
     _published_meta: dict[str, tuple[Any, ...]] = field(default_factory=dict, init=False)
     _notice_ids: dict[str, set[str]] = field(default_factory=dict, init=False)
     _timeline_items: dict[str, dict[str, RuntimeTimelineItem]] = field(
         default_factory=dict, init=False
     )
     _active_turns: dict[str, str] = field(default_factory=dict, init=False)
+    _notice_handler: CodexNoticeHandler = field(init=False)
+
+    def __post_init__(self) -> None:
+        self._notice_handler = CodexNoticeHandler(
+            host=self.host,
+            session_states=self.session_states,
+            active_turn_ids=(
+                self.active_turn_ids
+                if self.active_turn_ids is not None
+                else {}
+            ),
+            notices=self.notices,
+            async_submissions=self.async_submissions,
+        )
 
     @property
     def namespace(self) -> str:
         return getattr(self.host, "session_namespace", self.host.connector_id)
 
     def session_id_for(self, thread_id: str) -> str:
+        # A session AA created has a server-assigned id; only threads AA has
+        # never bound fall back to the derived id the server aliases.
+        cached = self.session_states.get_by_external_session_id(thread_id)
+        if cached is not None:
+            return cached.session_id
         return codex_sessions.stable_session_id(self.namespace, thread_id)
 
     async def handle(self, event: FollowerEvent) -> None:
@@ -142,13 +171,14 @@ class CodexIpcSessionProjector:
         pending = _pending_requests(state)
         notice_ids = await self._sync_notices(session_id, thread, pending)
         status = _runtime_status(state, has_pending=bool(notice_ids))
+        previous_turn_id = self._active_turns.get(session_id)
         turn_id = await self._track_turn(session_id, thread, status)
         selections = await self._selections(state)
         await self.session_states.update(
             session_id=session_id,
             external_session_id=thread.thread_id,
             status=status,
-            selections=selections or None,
+            selections=selections,
             metadata={
                 "source": IPC_SOURCE,
                 "attachment": "ipc",
@@ -160,7 +190,13 @@ class CodexIpcSessionProjector:
                 },
                 **({"notice_id": min(notice_ids)} if notice_ids else {}),
                 **({"turn_id": turn_id} if turn_id else {}),
+                **(
+                    {"pendingSelectionScopes": []}
+                    if turn_id is not None and turn_id != previous_turn_id
+                    else {}
+                ),
             },
+            replace_selections=True,
         )
 
     async def _selections(self, state: Mapping[str, Any]) -> dict[str, str]:
@@ -221,8 +257,18 @@ class CodexIpcSessionProjector:
             thread=snapshot,
             limit=None,
         )
+        await self._notice_handler.sync_async_input_items(
+            session_id=session_id,
+            thread_id=thread.thread_id,
+            items=items,
+            transport="ipc",
+        )
         known = self._timeline_items.get(session_id)
-        if full or known is None:
+        if (
+            full
+            or known is None
+            or not is_append_only(timeline_order(known.values()), timeline_order(items))
+        ):
             await self.host.timeline_sync(
                 session_id=session_id,
                 runtime="codex",
@@ -241,8 +287,8 @@ class CodexIpcSessionProjector:
                 and previous.status == item.status
             ):
                 continue
-            known[item.id] = item
             await self.host.timeline_item_upsert(item)
+            known[item.id] = item
 
     async def _project_detached(self, thread: FollowedThread) -> None:
         session_id = self.session_id_for(thread.thread_id)
@@ -281,21 +327,33 @@ class CodexIpcSessionProjector:
             request_id = request.get("requestId", request.get("id"))
             if not method or not isinstance(params, Mapping) or request_id is None:
                 continue
-            if not is_approval_request(method):
+            if is_approval_request(method):
+                notice = approval_notice_from_request(
+                    session_id=session_id,
+                    thread_id=thread.thread_id,
+                    method=method,
+                    params=params,
+                    request_id=request_id,
+                    turn_id=_first_string(params, "turnId", "turn_id"),
+                )
+            elif is_user_input_request(method):
+                parsed = codex_input_request(params)
+                notice = user_input_notice(
+                    session_id=session_id,
+                    thread_id=thread.thread_id,
+                    turn_id=_first_string(params, "turnId", "turn_id"),
+                    item_id=_first_string(params, "itemId", "item_id"),
+                    request_id=str(request_id),
+                    request=parsed,
+                    is_blocking=params.get("isBlocking", True) is not False,
+                )
+            else:
                 logger.debug(
                     "codex ipc pending request not projected method={} thread={}",
                     method,
                     thread.thread_id,
                 )
                 continue
-            notice = approval_notice_from_request(
-                session_id=session_id,
-                thread_id=thread.thread_id,
-                method=method,
-                params=params,
-                request_id=request_id,
-                turn_id=_first_string(params, "turnId", "turn_id"),
-            )
             notice = _with_ipc_source(notice, thread)
             current.add(notice.notice_id)
             existing = self.notices.get(notice.notice_id)
@@ -315,7 +373,11 @@ class CodexIpcSessionProjector:
                 response_required=False,
                 blocking=None,
                 actions=(),
-                context={"approvalStatus": "resolved"},
+                context={
+                    "inputStatus"
+                    if is_input_request_context(existing.context)
+                    else "approvalStatus": "resolved"
+                },
                 metadata={"source": IPC_SOURCE, "close_reason": "request no longer pending"},
             )
             if closed is not None:
@@ -338,21 +400,24 @@ def ipc_settings_state(state: Mapping[str, Any]) -> dict[str, Any]:
     collaboration_settings = (
         collaboration_settings if isinstance(collaboration_settings, Mapping) else {}
     )
+    # latestThreadSettings is what the next turn uses, including a change a
+    # follower just applied; latestModel / currentPermissions lag until that
+    # turn runs, so they only fill keys the settings lack.
     flat: dict[str, Any] = {}
-    model = state.get("latestModel") or settings.get("model") or collaboration_settings.get("model")
+    model = settings.get("model") or state.get("latestModel") or collaboration_settings.get("model")
     if isinstance(model, str) and model:
         flat["model"] = model
     effort = (
-        state.get("latestReasoningEffort")
-        or settings.get("effort")
+        settings.get("effort")
+        or state.get("latestReasoningEffort")
         or collaboration_settings.get("reasoning_effort")
     )
     if isinstance(effort, str) and effort:
         flat["reasoningEffort"] = effort
     for key in ("approvalPolicy", "approvalsReviewer", "sandboxPolicy"):
-        value = permissions.get(key)
+        value = settings.get(key)
         if value is None:
-            value = settings.get(key)
+            value = permissions.get(key)
         if value is not None:
             flat[key] = value
     return flat

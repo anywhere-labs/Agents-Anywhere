@@ -29,10 +29,12 @@ _TRACKED_LOCK_IDLE_SECONDS = 900.0
 
 
 from agent_server.infra.repositories.planning import PlanningRepositoryMixin
+from agent_server.infra.repositories.runtime_workflows import RuntimeWorkflowRepositoryMixin
 
 
 class Store(
     PlanningRepositoryMixin,
+    RuntimeWorkflowRepositoryMixin,
     DeviceRuntimeRepositoryMixin,
     ProtocolCatalogRepositoryMixin,
     UserRepositoryMixin,

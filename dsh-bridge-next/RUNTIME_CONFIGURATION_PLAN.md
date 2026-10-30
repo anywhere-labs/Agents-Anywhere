@@ -2,12 +2,14 @@
 
 更新日期：2026-09-08。状态：图片、模型/effort/权限和 Agent 模式配置已在 `codex/dsh-features-with-sync-fix` 恢复，包含坏历史会话的 headless 检查通过，真实模型与客户端操作仍待验收。下文保留设计约束和实施前差距，当前检查结果见 [验证记录](./VERIFICATION.md)。
 
+2026-10-23 修订：AA Runtime 未保存“新会话默认模式”时改为跟随 DSH 自己的默认模式（§2、§6 第 4 条）。
+
 核对基线：`dsh-bridge-next` 使用的官方 DSH `0.1.2-rc.1` 类型、发布包实现和预设文件，并参考官方插件文档。本文中的“当前实现”指本仓库现状；“需要实现”不表示功能已经接通。
 
 ## 1. 已确认的业务规则
 
 1. DSH Runtime 向 AA 提供权限、模型、effort 的能力及可选值，并提供 Agent 模式目录。
-2. 模型的实际身份是 `provider ID + model ID`。界面按模型名称是否跨 provider 重复，决定是否显示 provider。
+2. 模型的实际身份是 `provider ID + model ID`。目录里有两个及以上 provider 时，选择器按 provider 分组；模型名称跨 provider 重复时，名称本身也带上 provider（§5）。
 3. 新建会话要把权限、provider、model、effort、cwd、Agent 模式完整传到插件，并在首条消息开始执行前完成设置。
 4. **AA 新会话继续使用 AA 现有偏好机制。不得根据 DSH 返回的默认值、最近选择或默认标记覆盖 AA 的选择。**
 5. **保持 AA 现有偏好的存储结构、作用域、保存时机和失效回退逻辑不变。**本次补齐 DSH 的目录、请求透传和执行，不重写平台偏好功能。
@@ -37,7 +39,7 @@
 | AA Runtime 的默认 Agent 模式 | AA 中当前设备、Runtime 实例的配置 | 新建 DSH 会话时补齐 `agentPreset` |
 | 当前会话配置 | DSH 会话状态 | 展示、执行、恢复和跨客户端同步 |
 
-DSH 自己保存的“以后会话默认使用什么”不参与 AA 新会话选值。恢复已有会话时，也不能用 AA 新会话偏好或 Runtime 默认模式重新初始化它。
+DSH 自己保存的模型、effort、权限默认值不参与 AA 新会话选值。Agent 模式例外：AA Runtime 没有保存默认模式时，跟随 DSH 自己的默认模式（`agentPresets.defaultId`，即 DSH 设置里选的模式或部署默认值），见 §6 第 4 条。恢复已有会话时，也不能用 AA 新会话偏好或 Runtime 默认模式重新初始化它。
 
 ## 3. 已核实的官方接口
 
@@ -46,7 +48,7 @@ DSH 自己保存的“以后会话默认使用什么”不参与 AA 新会话选
 | provider、模型和 effort 目录 | `ctx.sessionController.modelCatalog()`；底层 `ctx.llm.listProviders()`、`listModels(provider)`、`resolveModelInfo(provider, model)` | 获取 provider/model 标识、名称及模型级 effort 信息；不采用目录的全局 `default` |
 | 权限目录 | `ctx.permissionPresets.names`、`optionOf(name)` | 使用当前部署真实的预设表；不把 `defaultPreset` 当成 AA 默认选择 |
 | 当前权限 | `ctx.permissionPresets.current(session)`，或官方 `permissions` 会话投影 | 按实际沙箱和审批状态读取，支持派生的 `custom` 状态 |
-| Agent 模式目录 | `ctx.agentPresets.list()` / `remoteExportList()` | 可以获取内置及用户自定义模式；AA 丢弃 `isDefault`，不使用 DSH 的 `defaultId` |
+| Agent 模式目录 | `ctx.agentPresets.list()` / `remoteExportList()` | 可以获取内置及用户自定义模式；AA 丢弃 `isDefault`；`defaultId` 只用作 Runtime 配置的初始值（§6 第 4 条） |
 | 创建会话 | `ctx.sessionController.create({ sessionId, cwd, agentPreset })` | 支持 cwd 和 Agent 模式；**没有**一次携带模型、effort、权限的参数 |
 | 切换模型和 effort | `ctx.sessionController.selectModel({ sessionId, provider, model, reasoningEffort })` | 一次提交完整模型选择，返回官方解析后的 `selected` |
 | 初始化权限 | `ctx.permissionPresets.set(session, preset)` | 写入当前会话的权限事实；须在第一条消息入队前完成 |
@@ -110,7 +112,7 @@ AA 的本次规则保持简单：模式在创建并发送首条消息之前确�
 3. 某个 provider 查询失败时保留其他成功目录，并上报该 provider 的错误。不要把暂时查询失败当成整个 Runtime 永久不支持，也不要把临时空目录写成用户的新偏好。
 4. 模型目录不等于路由的完整白名单。官方允许可路由 provider 的目录为空；已有选择不在目录中时，先展示真实值和可用性，最终以官方路由解析、校验结果为准。
 5. `custom` 权限可以展示为当前值，但不可放进新建或切换目标。权限服务未组合时，明确说明该部署不支持权限选择。
-6. 目录中的 DSH `default`、`defaultPreset`、`defaultId`、`isDefault` 不得映射成驱动 AA 新建选值的默认标记，也不得据此重排 AA 的选择。
+6. 目录中的 DSH `default`、`defaultPreset`、`defaultId`、`isDefault` 不得映射成驱动 AA 新建选值的默认标记，也不得据此重排 AA 的选择。唯一例外是 Agent 模式目录的 `configField.default` 取 DSH 的 `defaultId`，作为 Runtime 未保存默认模式时的初始值。
 7. 配置目录、能力和状态应带版本或事件序号，避免重连补偿、查询结果和实时更新互相覆盖。
 
 ## 5. provider、模型名称与 effort
@@ -151,6 +153,15 @@ effort 处理规则：
 - `null / 未指定` 若作为“模型默认推理”的显式选择保留，其含义是采用模型适配器的默认行为，不是读取 DSH 最近保存的全局 effort。不得用全局默认 effort 填补 AA 的参数。
 - 请求的 effort 被官方规范化时，以返回的实际选择回显；不能显示 high，却实际已选成另一值而不告知用户。
 
+### 5.3 按 provider 分组
+
+与 DSH 自己的模型选择器一致，AA 选择器按 provider 分组：组标题是 provider 显示名，组内不重复 provider。
+
+- 协议：模型条目新增可选 `group: {id, displayName, itemDisplayName}`（`contracts/protocol/1.0`）。Connector 从插件模型的 `metadata.provider` / `metadata.providerName` 生成它；两个 provider 显示名相同时，组名为 `providerName / provider ID`。`itemDisplayName` 取 `metadata.modelName`，同一 provider 内同名时追加 `[model ID]`。插件不需要为分组单独升级。
+- 客户端：目录中出现两个及以上不同 `group.id` 时才分组；组按首次出现排序，组内保持目录顺序；没有 `group` 的模型放在末尾、不带标题。只有一个 provider 时保持平铺列表。
+- 分组标题下的行显示 `itemDisplayName`，不再重复 provider；平铺列表与选中态（输入框上的模型按钮）仍用 §5.1 的名称，跨 provider 同名时带 provider，以便选中后能确认来源。
+- §5.1 的名称规则不变：未识别 `group` 的旧客户端仍能区分同名模型。
+
 ## 6. 设备详情：新会话默认模式
 
 位置：设备详情 → DSH Runtime → 配置。
@@ -162,7 +173,7 @@ effort 处理规则：
 1. 选项来自对应 DSH Host 的实时模式目录，内置及自定义模式一并显示。`broken` 模式不可新选，并展示原因。
 2. 值保存到 AA 当前 Runtime 实例配置；不调用 DSH 的默认模式设置入口，也不写入 AA 通用的新会话 model/permission 偏好对象。
 3. 创建会话时读取这个 AA 配置，并把确定后的 `agentPreset` 显式传给插件。已经提交的创建请求固定自己的模式快照，不因设备配置随后改变而变更。
-4. 首次接入、旧配置缺字段时，建议 AA 以可用的 `standard` 作为初始模式；此为 AA 的初始规则，不读取 DSH 默认模式。没有可用 `standard` 的自定义部署要求先选择模式，不擅自选另一个模式。该初始规则只针对新增模式字段。
+4. 首次接入、旧配置缺字段时，跟随 DSH 自己的默认模式（`agentPresets.defaultId`）：插件把它作为 `configField.default` 上报；Runtime 配置在 DSH 离线时保存、因而缺这个字段的，Connector 在新建会话时向插件读取同一个值补齐。DSH 默认模式不可用（`broken`）时不补值，由插件提示先选择模式，不擅自选另一个模式。此前此处为“可用的 `standard`”。
 5. 已保存的模式被删除或变成 `broken` 时，保留原配置供用户识别，提示重新选择并拒绝用它创建新会话；已有会话不被重置。不得静默落回 DSH 默认模式。
 6. Runtime 离线时可展示已保存值，不能把未知状态解释为模式已经删除；恢复连接后再校验目录。
 7. 只修改这个默认模式不能中断正在执行的 DSH turn。现有 Runtime 配置保存可能重建适配器连接，实施时要验证并保证不因此重启 DSH Host、销毁 Agent 或丢失切换请求。

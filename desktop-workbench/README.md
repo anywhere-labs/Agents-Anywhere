@@ -28,6 +28,25 @@ Connector running. Click the tray icon or choose **打开 Agents Anywhere** to
 reopen the window. Choose **退出** from the tray menu to confirm exit and stop
 the local Connector; cancelling keeps the app running.
 
+## Add projects by dropping folders
+
+Drop one local folder anywhere over the Desktop sidebar to add it as a project
+on this computer's online local Connector. The name comes from the folder name;
+automatically discovered projects keep their existing names when added manually.
+A successful drop switches to the project list and expands it.
+
+An already-added folder displays an informational message without creating a
+second project. Ordinary files and unavailable paths display a folder-required
+message. Dropping multiple items (including a mixture of files and folders)
+displays “Drop one folder at a time” and adds none of them. The drop cue remains
+centered in the sidebar while its project list scrolls. This native drop action
+is unavailable in a browser, where local filesystem paths cannot be resolved.
+The cue appears only when drag metadata confirms a directory. If the OS hides
+that information until drop, the sidebar stays unobstructed and still accepts
+the drop for native directory validation. Cancelling a drag, leaving the window,
+or dropping elsewhere clears the cue; an idle timeout also clears it if an
+external drag ends without sending a cancellation event to the app.
+
 ## Run
 
 From the repository root, the local Desktop launcher starts Docker-backed
@@ -157,12 +176,25 @@ shows a preparing screen while the ownership probe waits for it; that probe
 alone allows up to 15 minutes, while every later RPC keeps its 30-second
 deadline. The same applies when the existing environment was created by another
 interpreter, such as the Python uv downloaded before Desktop bundled one: uv
-replaces that environment. The saved `uvPypiIndexUrl` mirror covers
-package downloads through `UV_DEFAULT_INDEX`, `UV_INDEX_URL` and `PIP_INDEX_URL`.
-The saved `uvPythonInstallMirror` sets `UV_PYTHON_INSTALL_MIRROR` for the Python
-interpreter download (GitHub python-build-standalone when empty); it only
-matters without a bundled or saved interpreter, and Settings hides it otherwise.
-`UV_HTTP_TIMEOUT` defaults to 60 seconds.
+replaces that environment, and when an earlier sync failed before installing
+the Connector (the environment has `pyvenv.cfg` but no `anywhere-cli`). The
+saved `uvPypiIndexUrl` mirror is uv's first index (`UV_INDEX`) and official PyPI
+the fallback (`UV_DEFAULT_INDEX`, `UV_INDEX_URL`): uv takes each package from
+the first index that has it, so a mirror that filters large wheels (TUNA, USTC
+and BFSU carry no `openai-codex`) still installs. `PIP_INDEX_URL` follows the
+mirror. The saved `uvPythonInstallMirror` sets `UV_PYTHON_INSTALL_MIRROR` for
+the Python interpreter download (GitHub python-build-standalone when empty); it
+only matters without a bundled or saved interpreter, and Settings hides it
+otherwise. `UV_HTTP_TIMEOUT` defaults to 60 seconds.
+
+When building the environment fails, or uv itself reports the failure on a
+normal launch (`error:`, `×` or `Caused by:` lines), the ownership gate offers
+recovery in place of a bare recheck, because Settings is out of reach until the
+Connector answers: the PyPI and Python mirror choices, saved at once, and
+**Clear cache and retry**. Clearing stops the RPC process and deletes the
+project environment (only a directory holding `pyvenv.cfg`) and, when packaged,
+`uv-cache` and the `connector-source` copy with its `uv.lock`; credentials and
+settings stay. A development launch keeps the developer's uv cache.
 
 Do not start a second Connector with the same Desktop config while the app is
 running. Standalone CLI devices remain supported and should use their own
@@ -267,9 +299,12 @@ icon. Ignoring persists the exact server version in
 version prompts again. The download icon beside the account avatar remains
 visible whenever the Server is ahead of the build baseline, including after ignoring a version.
 
-Set `updates.downloadUrl` in `config.json` to the fixed HTTPS installer address
-before distribution. The `.invalid` URL is an explicit placeholder and does not
-download an installer. Downloads stream into `<Electron userData>/updates/downloads`
+`updates.downloadUrls` in `config.json` maps `process.platform` to the fixed
+HTTPS installer address. `darwin` and `win32` point at
+`https://www.agents-anywhere.com/api/download/<mac|windows>/latest`, which the
+official site redirects to the latest installer. The site has no Linux
+installer, so Linux and `.invalid` placeholder addresses report that the
+download is not available. Downloads stream into `<Electron userData>/updates/downloads`
 with progress, remove incomplete files on failure/quit, and open the completed
 installer with the OS. Installing the new app remains an installer operation.
 
@@ -343,10 +378,18 @@ that quotes the underlying error and offers to copy it or open the logs folder.
 When the RPC process exits or times out before answering, the error includes its
 last stderr lines, where uv and Python explain a failed launch; stderr is logged
 in whole lines. Every failed acquisition, including a retry, is logged. If the
-backend stops before the Connector is owned, the dialog quotes the backend's exit
-code, last reported error and output. The backend owns the log, so Main appends
-to it directly whenever no ready backend is running. A launch whose backend never
-becomes ready shows a native error box with the log directory before quitting.
+backend stops after it became ready, owned or not, the dialog quotes the
+backend's exit code, last reported error and output, and its **Restart** starts a
+new backend, which probes ownership again; the Connector exits with the old one
+when its stdin closes. The backend owns the log, so Main appends to it directly
+whenever no ready backend is running. A launch whose backend never becomes ready
+shows a native error box with the log directory before quitting.
+
+Startup work after `ready` (shell environment, ownership, installation record,
+binding adoption, the launch auto-start) reports failures where the renderer
+looks: the gate while ownership is not settled, the Connector's `lastError` once
+it is. An RPC process that exits without being stopped also records its exit and
+last stderr lines in `lastError` until a new process reports its own state.
 
 - Successful Desktop login reuses a matching local device or provisions a
   `connectorKind: "desktop"` device with the user-authenticated Connector API.
@@ -364,8 +407,8 @@ becomes ready shows a native error box with the log directory before quitting.
 - On first initialization without a saved mirror choice, Main checks the OS
   preferred languages and selects Aliyun PyPI and npmmirror Python builds for
   Chinese systems, or the official sources otherwise. It persists the choice before any `uv` provisioning process and
-  applies it through `UV_DEFAULT_INDEX`, `UV_INDEX_URL`, and `PIP_INDEX_URL`,
-  without a renderer prompt. Existing choices, including official PyPI, are
+  applies it as uv's first index ahead of the official PyPI fallback (see
+  first-run provisioning above), without a renderer prompt. Existing choices, including official PyPI, are
   preserved; factory reset reapplies the system default.
 - An authentication failure is surfaced to the renderer and is not retried
   automatically. Reconnection must be confirmed on that physical Desktop.

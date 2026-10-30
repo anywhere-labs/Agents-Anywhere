@@ -35,13 +35,13 @@ DSH 左侧边栏「设置」上方 → 远程控制 → 云端登录或连接自
 - **登录和连接**：登录前可选云端或自建服务器；登录后显示头像、账号和 Connector 运行状态，提供打开 Web、手机连接和退出登录。手机连接按钮下方直接展开二维码，不显示安装链接；扫码后可确认或拒绝，过期可刷新，完成后显示手机已连接。关闭或切换页签停止前端轮询，退出登录和 Host 卸载清除内存中的二维码流程。
 - **设置**：查看设备 ID 与服务器，启动、停止或重启 Connector；设置 uv 绝对路径（留空自动查找）、PyPI 镜像和同步间隔。插件启动时自动恢复已授权的本机连接，连接时始终同步已有会话，心跳与重连间隔分别固定为 20 秒和 3 秒。设置保存后重启正在运行的 Connector；停止状态下保存不会启动进程。
 - **桥接日志**：只读取 Anywhere Bridge 的运行日志，显示最近 200 条，每 2 秒刷新，可暂停或手动刷新。即使 CLI 正占用 Connector、尚未登录、安装检测失败或 AA Desktop 已安装，也可以查看。记录连接、RPC、会话读取、快照、同步批次和 ACK；错误带会话标识、阶段、错误码和调用栈位置，不记录请求正文、原生事件内容、令牌或原始异常消息。
-- **维护**：并排提供打开数据目录、打开日志目录和恢复出厂设置三个按钮，不展示数据与日志路径；headless 环境禁用打开目录。日志仅记录经过筛选的生命周期事件，滚动保留约两份 512 KiB 文件，不记录原始进程输出和凭据。恢复出厂设置先撤销当前设备凭据，再清理本插件的账号、绑定、同步缓存、日志及设置；服务端撤销失败时先保留本地状态，用户可另行确认仅清理本地。DSH 会话、运行时端点、共享 `connector-runtime.json` 和下载好的 Python 环境保留。
+- **维护**：并排提供打开数据目录、打开日志目录、重装依赖环境和恢复出厂设置四个按钮，不展示数据与日志路径；headless 环境禁用打开目录。日志仅记录经过筛选的生命周期事件，滚动保留约两份 512 KiB 文件，不记录原始进程输出和凭据。恢复出厂设置先撤销当前设备凭据，再清理本插件的账号、绑定、同步缓存、日志及设置；服务端撤销失败时先保留本地状态，用户可另行确认仅清理本地。DSH 会话、运行时端点、共享 `connector-runtime.json` 和下载好的 Python 环境保留。重装依赖环境用于依赖下载中断或环境损坏：确认后中断正在进行的安装、停止 Connector，删除 `connector-venv/` 和 `connector-source/`（项目副本及其 `uv.lock`），再执行 `uv cache prune` 清掉未完成的下载；uv 全局缓存中已完成的下载、账号、设备绑定、同步缓存和设置都保留。已登录且没有待恢复的设备时立即重新启动 Connector 并重新安装，否则在下次连接时安装。连接出错时，设置页会提示切换 PyPI 镜像或重装依赖环境。
 
 Bridge 与 Connector 运行日志统一由 Connector 保存到操作系统用户目录的 `~/.agents-anywhere/logs/`，使用分段 JSONL 文件；Connector 决定轮转、保留和持久确认。插件通过 `aa.local.v2.Logs.write/read/tail` 上报及读取，不再写 `dsh-runtime.jsonl` 或向 Cordis 重复输出运行日志。业务 logger 在入口注入；RPC 请求使用 MeshCall 的 dependency/meta 注入 namespace 和带调用上下文的 logger。断线时缓存最多 512 条未确认日志，重连带稳定事件 ID 重发；插件离线退出会丢失未确认部分，溢出会记录丢弃计数。安装引导日志仍本地保存到 `<stateRoot>/logs/onboarding.jsonl`。详细契约见 [日志服务](../contracts/dsh-bridge/2.0/logs.md)。
 
 AA Desktop 正在运行时，连接功能显示桌面端引导；仅安装而未运行时，插件仍可管理连接。桥接运行日志需 Connector 日志服务可用；无连接时不读取旧插件日志文件。手机连接复用已有 `/auth/mobile-login/qr`、`status`、`confirm` 接口；二维码包含手机扫描协议要求的临时登录凭据，使用当前账号的后端地址，不使用 DSH 地址或 OAuth Web 开发端口。无需新增 AA Server 接口。
 
-插件基于 DSH `0.2.0-rc.2` 开发和测试，peer 声明支持 `>=0.2.0-rc.1 <0.3.0-0`，支持附件和模型/effort/权限、Agent 模式配置。Runtime 提供 DSH 一键配置、官方侧栏过滤、原生会话和历史读取、首次完整校准、归档同步、实时事件、文本、图片和普通文件新建/续聊、中断、`ask_user_question` 以及受限操作的单次批准或拒绝。新建使用 AA 显式传入的模型和权限选择；已有会话可切换配置。AA 发来的 PNG/JPEG/WebP/GIF 使用图片接口，普通文件通过本机暂存文件和官方 `fileUploads.uploadStream` 上传，RPC 只传文件元数据。平台发出的附件保留 AA 文件引用；不回传 DSH 本地产生的附件。首次会话清单成功提交到平台之前，runtime 保持初始化状态；同步中断时自动重试。
+插件基于 DSH `0.2.1-rc.2` 开发和测试，peer 声明支持 `>=0.2.0-rc.1 <0.3.0-0`（自动化检查只覆盖 `0.2.1-rc.2`），支持附件和模型/effort/权限、Agent 模式配置。Runtime 提供 DSH 一键配置、官方侧栏过滤、原生会话和历史读取、首次完整校准、归档同步、实时事件、文本、图片和普通文件新建/续聊、中断、`ask_user_question` 以及受限操作的单次批准或拒绝。新建使用 AA 显式传入的模型和权限选择；已有会话可切换配置。AA 发来的 PNG/JPEG/WebP/GIF 使用图片接口，普通文件通过本机暂存文件和官方 `fileUploads.uploadStream` 上传，RPC 只传文件元数据。平台发出的附件保留 AA 文件引用；不回传 DSH 本地产生的附件。首次会话清单成功提交到平台之前，runtime 保持初始化状态；同步中断时自动重试。
 
 实机日志定位到官方历史读取器拒绝一个序号不连续的会话，进而拖断整个同步流。当前通过 `ctx.sessionQuery` 读取，按会话隔离读取失败，保留 AA 已接收的历史，并允许后续刷新重试。图片及配置恢复后，包含坏历史的完整回传测试继续通过。桥接日志页、Python 启动互斥、ID 历史和 Desktop 安装信息职责调整保留；检查与实机状态见 [验证记录](./VERIFICATION.md)。
 
@@ -78,7 +78,7 @@ cd /Users/t4wefan/code/github/Agents-Anywhere/dsh-bridge-next
 corepack yarn install
 corepack yarn check
 
-DSH_HOME="$HOME/.dsh" npx -y -p @deepseek-ai/dsh@0.2.0-rc.2 \
+DSH_HOME="$HOME/.dsh" npx -y -p @deepseek-ai/dsh@0.2.1-rc.2 \
   dsh plugin --profile desktop add "link:$PWD"
 ```
 
@@ -162,13 +162,15 @@ Host 配置位于 DSH 的插件配置行。常用项如下：
 | `connectorSourceDir` | 包内 `lib/bundled-connector`；覆盖时必须为绝对路径 |
 | `uvPath` | 优先使用显式配置或 `UV_PATH`，否则使用 npm 依赖 `@dataiku/uv` 中的平台二进制；依赖不可用时尝试系统 PATH |
 
-设置页将 uv 路径、Python 下载镜像、PyPI 镜像和同步间隔原子写入 `connector-settings.json`；下次启动时恢复，uv 路径覆盖配置行中的 `uvPath`。首次初始化且没有保存过镜像选择时，Host 根据系统首选语言自动设置镜像：包含中文时直接使用阿里云，否则使用官方 PyPI，不弹出询问。macOS 读取系统语言列表，其他平台使用 Intl / POSIX 语言环境，headless 启动同样生效。选择在创建 venv 前持久化，并通过 `UV_DEFAULT_INDEX`、`UV_INDEX_URL` 和 `PIP_INDEX_URL` 传给实际子进程；已保存的镜像（包括手动选择默认 PyPI）保持不变。恢复出厂设置会重新应用系统默认镜像。
+设置页将 uv 路径、Python 下载镜像、PyPI 镜像和同步间隔原子写入 `connector-settings.json`；下次启动时恢复，uv 路径覆盖配置行中的 `uvPath`。首次初始化且没有保存过镜像选择时，Host 根据系统首选语言自动设置镜像：包含中文时直接使用阿里云，否则使用官方 PyPI，不弹出询问。macOS 读取系统语言列表，其他平台使用 Intl / POSIX 语言环境，headless 启动同样生效。选择在创建 venv 前持久化后再传给实际子进程：所选镜像是 uv 的首选源（`UV_INDEX`），官方 PyPI 是后备源（`UV_DEFAULT_INDEX`、`UV_INDEX_URL`）；`PIP_INDEX_URL` 跟随所选镜像，选择官方 PyPI 时清除继承来的 `UV_INDEX`。uv 会从第一个有该包的源下载，所以镜像上没有的包会改从 PyPI 下载，例如清华、中科大、北外镜像都没有 `openai-codex`。镜像只有旧版本时不会回退到 PyPI。规则与 Desktop 相同；已保存的镜像（包括手动选择默认 PyPI）保持不变。恢复出厂设置会重新应用系统默认镜像。
 
 Python 下载镜像独立于 PyPI 镜像，提供官方源与 npmmirror。首次初始化缺少该设置时，中文系统默认使用 npmmirror，其他语言使用官方源；已有的手动选择保持不变，恢复出厂设置重新应用语言默认值。选择通过 `UV_PYTHON_INSTALL_MIRROR` 传给 uv，仅影响解释器下载。`@dataiku/uv` 的平台可选依赖由包管理器安装，Host 直接执行其中的原生二进制，不要求 postinstall 脚本运行。
 
 日志页可以切换 Bridge 和 Connector。运行日志通过生成的 Logs 客户端从 Connector 读取，保留全局 seq，支持来源过滤和分页。Connector 不可用时，Connector 页仍可显示本地启动诊断（uv/Python stderr 与进程状态，`<stateRoot>/logs/connector-output.json`）；该日志仅用于启动排错，不复制已接收的运行日志。stdout 只用于 `anywhere-cli rpc` 启动时的一行就绪信息。
 
 “启动前诊断”还通过插件管理 RPC `readStartupDiagnostics()` 展示当前插件初始化和 Bridge 启动失败的故障快照（每个来源至多一条），保留错误码、调用栈位置和 cause 链，沿用运行诊断的脱敏规则。此快照不依赖 Connector 或日志目录可读写；即使终端输出读取失败，已捕获的权限错误仍可展开查看。成功重试后移除对应故障，插件重新加载后重新采集；历史排查仍使用现有安装引导和 Host 日志。快照与终端输出独立读取，均不冒充中央运行日志、不混用分页游标。
+
+连接阶段（登录后连接、启动或恢复 Connector）的失败同样保留一条快照：停止进程后仍可查看，连接成功或退出登录后清除。登录前的地址检查、uv 检查等错误由发起的操作直接提示，不写入快照。Connector 运行失败时（控制接口返回 `lastError`，凭据失效除外），原始错误写入终端输出，其中凭据已脱敏、路径保留。`CONNECTOR_SYNC_STATE_INVALID` 表示同步状态文件无法解析：插件为 Connector 配置的状态文件是 `connector/<connectorId>.sqlite3`（沿用旧文件名，内容是 JSON），各 Runtime 首次启动时复制为 `connector/<connectorId>/<runtimeId>/sync-state.json`。零字节文件视为没有检查点；非空的损坏文件继续报错、不自动覆盖，按终端输出中的路径移走该文件后重启 Connector 即可。进程退出码 `0` 可能来自失败后的主动清理，不能据此判断连接成功。
 
 受限权限请求通过 DSH 官方 `approval/request` 转成 AA 交互通知，显示工具名与申请原因，提供“允许一次”和“拒绝”。结果通过官方待处理请求返回 DSH，不修改会话权限模式或批准策略。原生客户端作答或请求取消后，远端通知同步关闭；重连恢复同一个待处理请求，重复提交不会重复批准。计划审批 `plan-review` 复用问答卡片，展示完整计划正文和 DSH 提供的选项，也可填写修改意见。批准选项按 DSH 声明的标签匹配，不按位置推断；原生客户端作答、取消和重连沿用同一待处理请求。
 
@@ -264,4 +266,4 @@ scripts/               构建、源码复制与产物检查
 tests/                 单元及集成测试
 ```
 
-Host 输出 `lib/index.js`，Client 输出 DSH 模块加载格式的 `lib/client.js`，不能当独立网页打开。开发依赖统一锁定 Harness `0.2.0-rc.2`；Cordis、Typert 与 Schemastery 使用 Host 提供的 peer 依赖，以免破坏服务类型身份。DSH 只按 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*` peer 判断插件兼容性（预发布版本参与范围匹配），因此 Typert peer 的范围就是插件声明支持的 DSH 版本范围：同一 minor 内的新 rc 和正式版无需改声明，升级到新 minor 前需要重新验证并放宽上限。握手上报的 `runtimeVersion` 读取 Host 实际提供的 Typert 包版本，`bridgeVersion` 读取插件自身 `package.json`。依赖、构建产物和锁文件遵循仓库现有忽略规则。
+Host 输出 `lib/index.js`，Client 输出 DSH 模块加载格式的 `lib/client.js`，不能当独立网页打开。开发依赖统一锁定 Harness `0.2.1-rc.2`；Cordis、Typert 与 Schemastery 使用 Host 提供的 peer 依赖，以免破坏服务类型身份。DSH 只按 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*` peer 判断插件兼容性（预发布版本参与范围匹配），因此 Typert peer 的范围就是插件声明支持的 DSH 版本范围：同一 minor 内的新 rc 和正式版无需改声明，升级到新 minor 前需要重新验证并放宽上限。握手上报的 `runtimeVersion` 读取 Host 实际提供的 Typert 包版本，`bridgeVersion` 读取插件自身 `package.json`。依赖、构建产物和锁文件遵循仓库现有忽略规则。

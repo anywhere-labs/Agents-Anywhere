@@ -1,0 +1,290 @@
+{
+  "$defs": {
+    "ProtocolModelCatalog": {
+      "properties": {
+        "models": {
+          "items": {
+            "$ref": "#/$defs/ProtocolModelItem"
+          },
+          "title": "Models",
+          "type": "array"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "runtime": {
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Runtime",
+          "type": "string"
+        }
+      },
+      "required": [
+        "runtime",
+        "revision",
+        "models"
+      ],
+      "title": "ProtocolModelCatalog",
+      "type": "object"
+    },
+    "ProtocolModelGroup": {
+      "description": "Where a model is routed from, e.g. a DSH provider or relay.",
+      "properties": {
+        "displayName": {
+          "minLength": 1,
+          "title": "Displayname",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "itemDisplayName": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Itemdisplayname"
+        }
+      },
+      "required": [
+        "id",
+        "displayName",
+        "itemDisplayName"
+      ],
+      "title": "ProtocolModelGroup",
+      "type": "object"
+    },
+    "ProtocolModelItem": {
+      "properties": {
+        "default": {
+          "default": false,
+          "title": "Default",
+          "type": "boolean"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "displayName": {
+          "title": "Displayname",
+          "type": "string"
+        },
+        "group": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProtocolModelGroup"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "reasoningItems": {
+          "items": {
+            "$ref": "#/$defs/ProtocolReasoningItem"
+          },
+          "title": "Reasoningitems",
+          "type": "array"
+        },
+        "selectionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Selectionid"
+        }
+      },
+      "required": [
+        "displayName",
+        "id",
+        "selectionId",
+        "description",
+        "default",
+        "reasoningItems",
+        "group",
+        "metadata"
+      ],
+      "title": "ProtocolModelItem",
+      "type": "object"
+    },
+    "ProtocolReasoningItem": {
+      "properties": {
+        "default": {
+          "default": false,
+          "title": "Default",
+          "type": "boolean"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "displayName": {
+          "title": "Displayname",
+          "type": "string"
+        },
+        "fullModelId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fullmodelid"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "selectionId": {
+          "title": "Selectionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "displayName",
+        "id",
+        "fullModelId",
+        "selectionId",
+        "description",
+        "default",
+        "metadata"
+      ],
+      "title": "ProtocolReasoningItem",
+      "type": "object"
+    },
+    "WorkflowState": {
+      "additionalProperties": true,
+      "description": "Keep runtime extensions while validating the shared model catalog.",
+      "properties": {
+        "catalog": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProtocolModelCatalog"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "WorkflowState",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:runtime-workflows:1.2:workflow-view",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "connectorId": {
+      "title": "Connectorid",
+      "type": "string"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "preparation",
+        "creation"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "projectId": {
+      "title": "Projectid",
+      "type": "string"
+    },
+    "protocolVersion": {
+      "default": "1.1",
+      "enum": [
+        "1.1",
+        "1.2"
+      ],
+      "title": "Protocolversion",
+      "type": "string"
+    },
+    "runtimeId": {
+      "title": "Runtimeid",
+      "type": "string"
+    },
+    "sessionId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sessionid"
+    },
+    "state": {
+      "$ref": "#/$defs/WorkflowState"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "connectorId",
+    "runtimeId",
+    "projectId",
+    "state"
+  ],
+  "title": "WorkflowView",
+  "type": "object",
+  "x-direction": "egress",
+  "x-protocol-version": "1.2",
+  "x-pydantic-mode": "serialization"
+}

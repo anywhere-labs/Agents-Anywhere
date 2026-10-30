@@ -326,10 +326,14 @@
       "settings": "Settings"
     },
     "new": {
+      "restoredTargetUnavailable": "The original device or runtime is unavailable. Select a target before sending.",
+      "restoredDraft": "Your uncreated task draft has been restored.",
+      "discardDraft": "Discard draft",
       "askApproval": "Ask approval",
       "attach": "Attach files",
       "attachmentLimit": "Up to {count} files",
       "attachmentsUnsupported": "This runtime does not support attachments. Remove them or choose another runtime.",
+      "imageInputUnsupported": "The selected model does not declare image input support. Remove the image or choose another model.",
       "attachmentTypesUnsupported": "Only these attachment types are supported: {types}.",
       "createSession": "Create session",
       "creating": "Creating session...",
@@ -343,6 +347,10 @@
       "model": "Model",
       "modelAndReasoning": "Model and reasoning",
       "permissionMode": "Permission mode",
+      "permissionUnsynced": "Permission not synced",
+      "modelUnsynced": "Model not synced",
+      "runtimeDefault": "Runtime default",
+      "nextTurn": "Next turn",
       "permissionModes": {
         "dsh": {
           "readOnly": {
@@ -410,6 +418,9 @@
       "sendTask": "Send task",
       "agent": "Agent",
       "createFailed": "Failed to create session.",
+      "selectModel": "Choose a model",
+      "modelCatalogUnavailable": "Model catalog not ready",
+      "recoveryConfigurationRequired": "Your draft and attachments are retained. Review the model, permissions and Agent mode in Runtime settings before sending.",
       "attachmentOnlyPrompt": "(No text content.)",
       "imagePreview": {
         "close": "Close",
@@ -845,6 +856,14 @@
       "sessions": "Sessions"
     },
     "session": {
+      "creationFailed": "Task not created",
+      "creationUnconfirmed": "Creation result unconfirmed",
+      "checkCreatedSession": "Check allocated session",
+      "creationCheckFirst": "Check the device session list before creating again. Your draft is retained in this app.",
+      "creationDraftRetained": "Your input and attachments are retained. Retry manually when ready.",
+      "retryCreation": "Retry creation",
+      "editCreation": "Back to editing",
+      "checkDeviceSessions": "View device sessions",
       "device": "Device",
       "status": "Status",
       "sessionId": "Session ID",
@@ -1091,6 +1110,23 @@
         "reviewOpenFilePreview": "Open full preview for {file}",
         "reviewPreviewBlocked": "The file preview window was blocked.",
         "reviewDiffCard": "Change {index} of {count}"
+      },
+      "nativeHistory": {
+        "title": "Native history",
+        "continue": "Continue task",
+        "release": "End AA execution",
+        "preparing": "Preparing execution…",
+        "active": "AA is using this session",
+        "activeHint": "End AA execution and wait for release before resuming this session in the CLI.",
+        "browseHint": "History is available. Exit this session in the CLI before continuing it here.",
+        "confirmHint": "AA will preserve the native session identity and save subsequent history. Exit this session in the CLI and keep it closed there while AA is using it.",
+        "cliExited": "I have exited this session in the CLI",
+        "cancel": "Cancel",
+        "failed": "Recovery failed. History remains available.",
+        "unknown": "Recovery is unconfirmed. Check the existing operation.",
+        "check": "Check recovery status",
+        "releaseFailed": "Execution release is unconfirmed. Refresh the session state.",
+        "releasing": "Ending execution…"
       }
     },
     "sessionStatus": {

@@ -21,6 +21,10 @@ from connector.runtime_protocol.models import (
     SessionNotice,
     SessionState,
 )
+from connector.runtime_protocol.workflows import (
+    RuntimeWorkflowRequest,
+    RuntimeWorkflowResult,
+)
 
 
 class AgentRuntime(ABC):
@@ -47,6 +51,16 @@ class AgentRuntime(ABC):
     async def start(self) -> None:
         pass
 
+    async def execute_workflow(self, request: RuntimeWorkflowRequest) -> RuntimeWorkflowResult:
+        """Control-plane operation: never queue behind an engine/UI continuation."""
+        raise RuntimeUnsupportedError(request.operation)
+
+    async def get_session_configuration(self, session_id: str) -> dict[str, Any]:
+        raise RuntimeUnsupportedError("get_session_configuration")
+
+    async def update_session_configuration(self, session_id: str, values: Mapping[str, Any]) -> dict[str, Any]:
+        raise RuntimeUnsupportedError("update_session_configuration")
+
     async def stop(self) -> None:
         pass
 
@@ -67,6 +81,9 @@ class AgentRuntime(ABC):
         limit: int = 100,
     ) -> RuntimeModelCatalog:
         raise RuntimeUnsupportedError("list_model_catalog")
+
+    async def list_scoped_model_catalog(self, session_id: str, query: str | None = None, limit: int = 100) -> RuntimeModelCatalog:
+        return await self.list_model_catalog(query=query, limit=limit)
 
     async def list_permission_catalog(
         self,

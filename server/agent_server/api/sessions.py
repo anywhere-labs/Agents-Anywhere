@@ -238,6 +238,7 @@ def runtime_state_semantically_equal(
         and left.externalSessionId == right.externalSessionId
         and left.statusReason == right.statusReason
         and left.error == right.error
+        and left.metadata == right.metadata
     )
 
 
@@ -810,6 +811,7 @@ async def patch_session_selections(
         )
     except SessionRunError as exc:
         _raise_session_run_error(exc)
+    await runtime_state_cache.put(state)
     await _best_effort_publish_session_protocol_update(
         db,
         broker,
@@ -1595,6 +1597,10 @@ async def respond_interaction(
         session_id,
         user_id=user_id,
     )
+    if isinstance(result, dict) and result.get("ok") is False:
+        return RpcResponsePayload(ok=False, result=result, error=RpcError(
+            code=str(result.get("code") or "runtime_operation_failed"),
+            message=str(result.get("message") or "Runtime 未接受该回答。")))
     return RpcResponsePayload(ok=True, result=result)
 
 
@@ -1776,6 +1782,7 @@ async def request_session_runtime_catalog(
                 "runtime": session.runtime,
                 "runtimeId": _session_runtime_id(session),
                 "limit": limit,
+                "sessionId": session.id,
             },
             timeout=30,
         )

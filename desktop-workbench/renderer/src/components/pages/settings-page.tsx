@@ -76,6 +76,7 @@ import { accountDisplayName } from "@/features/auth/account-profile"
 import { normalizeAuthMe } from "@/features/auth/normalize-me"
 import type { AuthMe } from "@/features/auth/types"
 import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
+import { PYPI_MIRROR_OPTIONS, PYTHON_MIRROR_OPTIONS } from "@/features/desktop/package-mirrors"
 import {
   getDesktopWorkbenchBridge,
   type DesktopConnectorLog,
@@ -90,21 +91,6 @@ const AVATAR_OUTPUT_SIZE = 256
 const AVATAR_MAX_FILE_SIZE = 8 * 1024 * 1024
 
 const SYNC_INTERVAL_OPTIONS = [15, 30, 60, 300] as const
-const PYPI_MIRROR_OPTIONS = [
-  { id: "default", url: "", labelKey: "desktopPypiDefault" },
-  { id: "tsinghua", url: "https://pypi.tuna.tsinghua.edu.cn/simple", labelKey: "desktopPypiTsinghua" },
-  { id: "ustc", url: "https://mirrors.ustc.edu.cn/pypi/simple", labelKey: "desktopPypiUstc" },
-  { id: "bfsu", url: "https://mirrors.bfsu.edu.cn/pypi/web/simple", labelKey: "desktopPypiBfsu" },
-  { id: "aliyun", url: "https://mirrors.aliyun.com/pypi/simple", labelKey: "desktopPypiAliyun" },
-  { id: "tencent", url: "https://mirrors.cloud.tencent.com/pypi/simple", labelKey: "desktopPypiTencent" },
-  { id: "huawei", url: "https://repo.huaweicloud.com/repository/pypi/simple", labelKey: "desktopPypiHuawei" },
-] as const
-
-const PYTHON_MIRROR_OPTIONS = [
-  { id: "default", url: "", labelKey: "desktopPythonMirrorDefault" },
-  { id: "npmmirror", url: "https://registry.npmmirror.com/-/binary/python-build-standalone", labelKey: "desktopPythonMirrorNpmmirror" },
-] as const
-
 function AccountTab({
   me,
   token,

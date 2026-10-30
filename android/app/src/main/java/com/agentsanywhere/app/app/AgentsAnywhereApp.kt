@@ -33,6 +33,7 @@ import com.agentsanywhere.app.api.TerminalApi
 import com.agentsanywhere.app.config.AppConfig
 import com.agentsanywhere.app.feature.auth.AuthController
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
+import com.agentsanywhere.app.feature.auth.MobileAuthSessionRefresher
 import com.agentsanywhere.app.feature.auth.WebLoginState
 import com.agentsanywhere.app.feature.auth.WebLoginViewModel
 import com.agentsanywhere.app.feature.update.AppUpdateViewModel
@@ -119,10 +120,12 @@ fun AgentsAnywhereApp(
     var deviceSetupReturnDestinationName by rememberSaveable { mutableStateOf(AppDestination.Devices.name) }
     var selectedHomeTabName by rememberSaveable { mutableStateOf(HomeTab.Active.name) }
     val unauthorizedTokens = remember { Channel<String>(capacity = Channel.UNLIMITED) }
-    val apiClient = remember(unauthorizedTokens) {
-        ApiClient(onUnauthorized = { accessToken ->
-            unauthorizedTokens.trySend(accessToken)
-        })
+    val sessionRefresher = remember(sessionStore) { MobileAuthSessionRefresher(sessionStore) }
+    val apiClient = remember(unauthorizedTokens, sessionRefresher) {
+        ApiClient(
+            onUnauthorized = { accessToken -> unauthorizedTokens.trySend(accessToken) },
+            refreshAccessToken = sessionRefresher::refreshAccessToken,
+        )
     }
     val realtimeApi = remember(apiClient) { RealtimeApi(client = apiClient) }
     val announcementsApi = remember(apiClient) { AnnouncementsApi(apiClient) }
@@ -136,6 +139,8 @@ fun AgentsAnywhereApp(
     val sessionsController = remember(context, sessionStore, apiClient) {
         SessionsController(
             sessionsApi = SessionsApi(apiClient),
+            workflowApi = com.agentsanywhere.app.api.RuntimeWorkflowApi(apiClient),
+            workflowReferences = com.agentsanywhere.app.feature.sessions.RuntimeWorkflowReferenceStore(context),
             devicesApi = DevicesApi(apiClient),
             filesApi = FilesApi(apiClient),
             sessionStore = sessionStore,
@@ -163,6 +168,7 @@ fun AgentsAnywhereApp(
         TerminalController(
             terminalApi = TerminalApi(apiClient),
             sessionStore = sessionStore,
+            authApi = AuthApi(apiClient),
         )
     }
     val remoteTerminalPool = remember(terminalController) {
@@ -176,6 +182,7 @@ fun AgentsAnywhereApp(
     }
     val currentDestination = AppDestination.valueOf(destinationName)
     val hasAuthSession = sessionStore.hasAuthSession()
+    LaunchedEffect(hasAuthSession, sessionStore.readServerUrl(), sessionStore.readUserId()) { if (hasAuthSession) sessionsController.workflows.restore() else sessionsController.workflows.clear() }
     val updateServerUrl = sessionStore.readServerUrl()
     val updatesAllowed = hasAuthSession && updateServerUrl.isNotBlank() && currentDestination !in setOf(
         AppDestination.LoginMethods, AppDestination.ServerSetup, AppDestination.QrLogin, AppDestination.QrWaiting,
@@ -359,10 +366,11 @@ fun AgentsAnywhereApp(
     }
 
     suspend fun reloadProjects(): Result<List<AgentProject>> {
-        val token = sessionStore.readAccessToken()
+        val authSessionId = sessionStore.readAuthSessionId()
+            ?: return Result.failure(IllegalStateException("Sign in again to load projects."))
         val version = ++projectsRequestVersion
         return sessionsController.loadProjects().onSuccess { projects ->
-            if (sessionStore.readAccessToken() == token && projectsRequestVersion == version) {
+            if (sessionStore.readAuthSessionId() == authSessionId && projectsRequestVersion == version) {
                 sessionsState = sessionsState.copy(projects = projects)
             }
         }
@@ -370,7 +378,7 @@ fun AgentsAnywhereApp(
 
     fun loadProjectSessions(projectId: String, status: ProjectSessionStatusFilter = ProjectSessionStatusFilter.Active) {
         if (projectId.isBlank()) return
-        val token = sessionStore.readAccessToken()
+        val authSessionId = sessionStore.readAuthSessionId() ?: return
         status.archiveStates.forEach { archived ->
             val key = ProjectSessionLoadKey(projectId, archived)
             if (key in loadingProjectRequests) return@forEach
@@ -381,23 +389,23 @@ fun AgentsAnywhereApp(
             scope.launch {
                 try {
                     projectLoadSlots.withPermit {
-                        if (sessionStore.readAccessToken() != token || sessionsState.projects.none { it.id == projectId }) return@withPermit
+                        if (sessionStore.readAuthSessionId() != authSessionId || sessionsState.projects.none { it.id == projectId }) return@withPermit
                         sessionsController.loadProjectSessions(projectId, sessionsState.devices, archived)
                             .onSuccess { sessions ->
-                                if (sessionStore.readAccessToken() == token && sessionsState.projects.any { it.id == projectId }) {
+                                if (sessionStore.readAuthSessionId() == authSessionId && sessionsState.projects.any { it.id == projectId }) {
                                     val retained = projectSessionsById[projectId].orEmpty().filter { it.archived != archived }
                                     projectSessionsById = projectSessionsById + (projectId to (retained + sessions).associateBy { it.id }.values.toList())
                                     projectSessionsLoadedAt = projectSessionsLoadedAt + (key to SystemClock.elapsedRealtime())
                                 }
                             }.onFailure { error ->
                                 if (error is kotlinx.coroutines.CancellationException) throw error
-                                if (sessionStore.readAccessToken() == token) {
+                                if (sessionStore.readAuthSessionId() == authSessionId) {
                                     projectSessionErrors = projectSessionErrors + (key to (error.message ?: "Could not load project sessions."))
                                 }
                             }
                     }
                 } finally {
-                    if (sessionStore.readAccessToken() == token) {
+                    if (sessionStore.readAuthSessionId() == authSessionId) {
                         loadingProjectRequests = loadingProjectRequests - key
                     }
                 }
@@ -868,6 +876,7 @@ fun AgentsAnywhereApp(
         onLoadNewSessionRuntimeCapabilities = { connectorId, runtime ->
             sessionsController.loadNewSessionRuntimeCapabilities(connectorId, runtime)
         },
+        onPrepareRuntimeWorkspace = { connector, runtime, project -> sessionsController.prepareRuntimeWorkspace(connector, runtime, project) },
         onLoadNewSessionModelCatalog = { connectorId, runtime ->
             sessionsController.loadNewSessionModelCatalog(connectorId, runtime)
         },
@@ -882,6 +891,14 @@ fun AgentsAnywhereApp(
             destinationName = AppDestination.QrWaiting.name
         },
     )
+    com.agentsanywhere.app.ui.screens.home.RuntimeWorkflowDialog(sessionsController.workflows) {
+        sessionsController.openAcceptedWorkflow(sessionsState.devices).onSuccess { session ->
+            sessionsState = sessionsState.withPatchedSession(session)
+            preparedSessionDraft = null
+            selectedSessionId = session.id
+            destinationName = AppDestination.SessionDetail.name
+        }
+    }
     AnnouncementGate(
         api = announcementsApi,
         serverUrl = updateServerUrl.ifBlank { AppConfig.OFFICIAL_SERVER_URL },

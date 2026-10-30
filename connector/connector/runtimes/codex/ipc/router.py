@@ -42,6 +42,8 @@ class _RouterClient:
     id: str
     type: str
     writer: asyncio.StreamWriter
+    # Requests from this client that are still looking for a handler.
+    routing: set[asyncio.Task[None]] = field(default_factory=set)
 
     def send(self, message: Mapping[str, Any]) -> None:
         if self.writer.is_closing():
@@ -122,6 +124,8 @@ class IpcRouter:
                 discovery.future.set_exception(RuntimeError("server-closed"))
         self._pending_discovery.clear()
         for client in list(self._clients.values()):
+            for task in list(client.routing):
+                task.cancel()
             client.writer.close()
         self._clients.clear()
         self._clients_by_id.clear()
@@ -155,7 +159,7 @@ class IpcRouter:
                     logger.warning("codex ipc router dropped connection: {}", exc)
                     break
                 for message in messages:
-                    await self._handle_message(writer, message)
+                    self._handle_message(writer, message)
         except (asyncio.CancelledError, ConnectionError, OSError):
             pass
         finally:
@@ -164,7 +168,7 @@ class IpcRouter:
             if task is not None:
                 self._connections.discard(task)
 
-    async def _handle_message(
+    def _handle_message(
         self,
         writer: asyncio.StreamWriter,
         message: Mapping[str, Any],
@@ -173,7 +177,7 @@ class IpcRouter:
         if kind == "broadcast":
             self._handle_broadcast(writer, message)
         elif kind == "request":
-            await self._handle_request(writer, message)
+            self._handle_request(writer, message)
         elif kind == "response":
             self._handle_response(message)
         elif kind == "client-discovery-response":
@@ -199,7 +203,7 @@ class IpcRouter:
                 continue
             client.writer.write(payload)
 
-    async def _handle_request(
+    def _handle_request(
         self,
         writer: asyncio.StreamWriter,
         message: Mapping[str, Any],
@@ -212,10 +216,24 @@ class IpcRouter:
         if source is None:
             _send(writer, _error_response(request_id, "no-client-found"))
             return
+        # Discovery can take the full discovery timeout, so it must not hold up
+        # this connection's reader: the client's answers to other discoveries
+        # would queue behind it, and two clients waiting on each other's answers
+        # would both stall until the timeout. Codex's own router does not wait
+        # here either.
+        task = asyncio.create_task(self._route_request(source, message))
+        source.routing.add(task)
+        task.add_done_callback(source.routing.discard)
+
+    async def _route_request(
+        self,
+        source: _RouterClient,
+        message: Mapping[str, Any],
+    ) -> None:
         try:
             target = await self._find_client(source, message)
         except Exception:  # noqa: BLE001 - any discovery failure maps to one error
-            source.send(_error_response(request_id, "no-client-found"))
+            source.send(_error_response(str(message.get("requestId")), "no-client-found"))
             return
         self._forward(source, message, target)
 
@@ -251,6 +269,9 @@ class IpcRouter:
             for task in tasks:
                 if not task.done():
                     task.cancel()
+                elif not task.cancelled():
+                    # Candidates that lost the race are expected to fail.
+                    task.exception()
 
     async def _discover(
         self,
@@ -363,6 +384,8 @@ class IpcRouter:
         if client is None:
             return
         self._clients_by_id.pop(client.id, None)
+        for task in list(client.routing):
+            task.cancel()
         self._broadcast_status(client, "disconnected")
         for request_id, pending in list(self._pending_requests.items()):
             if pending.target_client_id != client.id and pending.source is not client:

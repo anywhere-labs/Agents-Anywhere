@@ -1,0 +1,39 @@
+{
+  "$id": "urn:agents-anywhere:runtime-workflows:1.1:prepare-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "clientPreparationId": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Clientpreparationid",
+      "type": "string"
+    },
+    "connectorId": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Connectorid",
+      "type": "string"
+    },
+    "projectId": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Projectid",
+      "type": "string"
+    },
+    "runtimeId": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Runtimeid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "connectorId",
+    "runtimeId",
+    "projectId",
+    "clientPreparationId"
+  ],
+  "title": "PrepareWorkspaceRequest",
+  "type": "object"
+}

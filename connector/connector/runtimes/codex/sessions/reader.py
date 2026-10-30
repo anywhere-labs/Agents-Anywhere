@@ -34,6 +34,7 @@ from connector.runtimes.codex.domain.pending_messages import (
     PendingClientMessageRegistry,
 )
 from connector.runtimes.codex.domain.selections import selections_from_thread_state
+from connector.runtimes.codex.notifications.notices import CodexNoticeHandler
 from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.sessions.history_index import (
     NativeThreadActivity,
@@ -43,16 +44,46 @@ from connector.runtimes.codex.sessions.history_index import (
     valid_read_state,
 )
 from connector.runtimes.codex.sessions.inventory import list_all_codex_threads
+from connector.runtimes.codex.sessions.rollout_settings import (
+    rollout_permission_settings,
+)
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
+from connector.runtimes.codex.timeline.order import (
+    TimelineOrder,
+    checkpoint_order,
+    is_append_only,
+    timeline_order,
+)
 
 ListModelCatalog = Callable[[str | None, int], Awaitable[RuntimeModelCatalog]]
 ListPermissionCatalog = Callable[[str | None, int], Awaitable[RuntimePermissionCatalog]]
 
 EnsureStarted = Callable[[], Awaitable[None]]
+TIMELINE_CHECKPOINT_VERSION = 2
 
 
 def _session_sync_key(thread_id: str) -> str:
     return f"codex/session-sync/{thread_id}"
+
+
+def _timeline_checkpoint(
+    value: Mapping[str, Any] | None,
+    session_id: str,
+) -> tuple[dict[str, str], TimelineOrder] | None:
+    if (
+        not isinstance(value, Mapping)
+        or value.get("version") != TIMELINE_CHECKPOINT_VERSION
+        or value.get("sessionId") != session_id
+    ):
+        return None
+    items = value.get("items")
+    if not isinstance(items, dict) or not all(
+        isinstance(key, str) and isinstance(fingerprint, str)
+        for key, fingerprint in items.items()
+    ):
+        return None
+    order = checkpoint_order(value.get("order"), items)
+    return (items, order) if order is not None else None
 
 
 def _utc_now() -> str:
@@ -70,11 +101,13 @@ class CodexSessionReader:
     list_permission_catalog: ListPermissionCatalog
     pending_messages: PendingClientMessageRegistry | None = None
     timeline: CodexTimelineAccumulator | None = None
+    notice_handler: CodexNoticeHandler | None = None
     _pending_sync_states: dict[str, tuple[str, dict[str, Any]]] = field(
         default_factory=dict,
         init=False,
     )
     _observed_threads: dict[str, dict[str, Any]] = field(default_factory=dict, init=False)
+    _async_notice_threads: set[str] = field(default_factory=set, init=False)
 
     async def list_sessions(
         self,
@@ -203,9 +236,7 @@ class CodexSessionReader:
             getattr(self.host, "session_namespace", self.host.connector_id),
             thread_id,
         )
-        if (not isinstance(checkpoint, dict) or checkpoint.get("version") != 1
-                or checkpoint.get("sessionId") != session_id or not isinstance(checkpoint.get("items"), dict)
-                or not all(isinstance(k, str) and isinstance(v, str) for k, v in checkpoint["items"].items())):
+        if _timeline_checkpoint(checkpoint, session_id) is None:
             changed = True
         sync_state = {
             "marker": sync_marker,
@@ -264,8 +295,9 @@ class CodexSessionReader:
         checkpoint_key = f"codex/timeline-sync/{external_session_id}"
         previous = await self.host.sync_state_read(checkpoint_key) if external_session_id else None
         # Version changes deliberately invalidate projections from older implementations.
-        old_items = previous.get("items") if isinstance(previous, Mapping) and previous.get("version") == 1 and previous.get("sessionId") == session_id else None
-        valid = isinstance(old_items, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in old_items.items())
+        checkpoint = _timeline_checkpoint(previous, session_id)
+        valid = checkpoint is not None
+        old_items, old_order = checkpoint if checkpoint is not None else ({}, ())
         # Capture before any history awaits: a newer scan must not be acknowledged here.
         pending = self._pending_sync_states.get(session_id)
         indexed = await self._read_indexed_snapshot(session_id, external_session_id, previous if valid else None)
@@ -284,19 +316,28 @@ class CodexSessionReader:
             item.id: hashlib.sha256(json.dumps(asdict(item), sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
             for item in items
         })
-        removed = valid and bool(old_items.keys() - fingerprints.keys())
-        if removed and prefix:
+        # An indexed read returns only the changed tail. Preserve the explicit
+        # order of its acknowledged prefix instead of relying on dict key order.
+        order = tuple(entry for entry in old_order if entry[0] in prefix) + timeline_order(items)
+        reordered = valid and not is_append_only(old_order, order)
+        replacement = (
+            self.client is not None
+            and external_session_id is not None
+            and (not valid or reordered)
+        )
+        if replacement and prefix:
             # A replacement must contain the entire surviving timeline, not just its tail.
             snapshot = await self.get_session_snapshot(session_id, external_session_id)
             items = tuple(item for item in snapshot.items if item.type not in {"turn.start", "turn.end"})
             fingerprints = {item.id: hashlib.sha256(json.dumps(asdict(item), sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest() for item in items}
             read_state = None
-        replacement = previous is not None and (not valid or removed)
+            order = timeline_order(items)
         delta = items if not valid or replacement else tuple(item for item in items if old_items.get(item.id) != fingerprints[item.id])
         prepared_snapshot = replace(snapshot, items=delta, complete=bool(replacement)) if snapshot is not None and (delta or replacement) else None
         async def commit() -> None:
             if external_session_id:
-                await self.host.sync_state_write(checkpoint_key, {"version": 1, "sessionId": session_id, "items": fingerprints,
+                await self.host.sync_state_write(checkpoint_key, {"version": TIMELINE_CHECKPOINT_VERSION, "sessionId": session_id, "items": fingerprints,
+                    "order": [list(entry) for entry in order],
                     **({"readState": read_state} if read_state is not None else {})})
             if pending is not None:
                 sync_key, sync_state = pending
@@ -371,6 +412,12 @@ class CodexSessionReader:
         projected = await asyncer.asyncify(self.timeline.items_from_thread_snapshot)(
             session_id=session_id, external_session_id=external_session_id,
             thread={"turns": turns}, limit=None)
+        if self.notice_handler is not None:
+            await self.notice_handler.sync_async_input_items(
+                session_id=session_id,
+                thread_id=external_session_id,
+                items=projected,
+            )
         prefix_ids = ids[:start]
         counts = {id: old["counts"][id] for id in prefix_ids} if usable else {}
         item_ids = {id: old["itemIds"][id] for id in prefix_ids} if usable else {}
@@ -418,13 +465,13 @@ class CodexSessionReader:
         if external_session_id is None:
             return None
         selections = await self._read_session_selections(external_session_id)
-        return SessionState(
+        return await self.session_states.update(
             session_id=session_id,
             external_session_id=external_session_id,
-            runtime="codex",
             status="idle",
             selections=selections,
             metadata={"source": "codex.thread/read.state"},
+            replace_selections=True,
         )
 
     async def _read_native_activity(
@@ -452,10 +499,17 @@ class CodexSessionReader:
         )
         if isinstance(result.thread, Thread):
             thread_state = thread_state_from_sdk_thread(result.thread)
+            rollout_path: Any = result.thread.path
         else:
             thread_state = dict(result.thread)
+            rollout_path = thread_state.get("path")
         if not thread_state:
             return {}
+        # thread/read reports no approval or sandbox settings and thread/resume
+        # would take the writer lock, so permission comes from the rollout.
+        if isinstance(rollout_path, str):
+            permission = await asyncer.asyncify(rollout_permission_settings)(rollout_path)
+            thread_state = {**permission, **thread_state}
         selections = await selections_from_thread_state(
             thread_state,
             lambda: self.list_model_catalog(None, 100),
@@ -545,6 +599,14 @@ class CodexSessionReader:
                 pending_messages=self.pending_messages,
             )
         project_elapsed_ms = (time.monotonic() - project_started_at) * 1000
+        if self.notice_handler is not None:
+            await self.notice_handler.sync_async_input_items(
+                session_id=session_id,
+                thread_id=external_session_id,
+                items=items,
+            )
+            if limit is None:
+                self._async_notice_threads.add(external_session_id)
         logger.info(
             "codex session snapshot built session_id={} external_session_id={} limit={} items={} read_elapsed_ms={:.1f} project_elapsed_ms={:.1f}",
             session_id,
@@ -562,6 +624,34 @@ class CodexSessionReader:
             complete=False,
             metadata={"source": snapshot_source},
         )
+
+    async def refresh_async_input_notices(
+        self,
+        session_id: str,
+        external_session_id: str | None,
+        *,
+        force: bool = False,
+    ) -> None:
+        if (
+            self.notice_handler is None
+            or self.client is None
+            or external_session_id is None
+            or (not force and external_session_id in self._async_notice_threads)
+        ):
+            return
+        try:
+            await self.get_session_snapshot(
+                session_id=session_id,
+                external_session_id=external_session_id,
+                limit=None,
+            )
+        except RuntimeInvalidRequestError as exc:
+            logger.debug(
+                "codex async input notice refresh skipped thread_id={} error={}",
+                external_session_id,
+                exc,
+            )
+            return
 
 
 def reconcile_native_activity(

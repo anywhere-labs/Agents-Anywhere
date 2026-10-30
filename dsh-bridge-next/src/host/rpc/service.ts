@@ -141,7 +141,7 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
   @Remote('readStartupDiagnostics')
   async readStartupDiagnostics(): Promise<StartupFailureDiagnostic[]> {
     const bridgeFailure = this.ctx.get('agentsAnywhereRuntime')?.startupDiagnostic()
-    return [this.managerFailureSnapshot, bridgeFailure]
+    return [this.managerFailureSnapshot, this.manager.startupDiagnostic(), bridgeFailure]
       .filter((entry): entry is StartupFailureDiagnostic => Boolean(entry))
       .map(entry => ({ ...entry }))
   }
@@ -164,6 +164,8 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
   }
   @Remote('resetConnector')
   resetConnector(forceLocal: boolean): Promise<null> { return this.manager.resetConnector(forceLocal) }
+  @Remote('resetConnectorEnvironment')
+  resetConnectorEnvironment(): Promise<null> { return this.manager.resetConnectorEnvironment() }
   @Remote('createMobileLogin')
   createMobileLogin(): Promise<MobileLoginSnapshot> { return this.manager.createMobileLogin() }
   @Remote('inspectMobileLogin')

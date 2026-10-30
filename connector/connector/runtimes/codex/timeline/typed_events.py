@@ -19,6 +19,7 @@ from openai_codex.generated.v2_all import (
     FileChangePatchUpdatedNotification,
     FileChangeThreadItem,
     FileUpdateChange,
+    FunctionCallOutputResponseItem,
     FunctionCallResponseItem,
     InputImageContentItem,
     InputImageDynamicToolCallOutputContentItem,
@@ -48,6 +49,11 @@ from openai_codex.generated.v2_all import (
     WebSearchThreadItem,
 )
 
+from connector.runtimes.codex.domain.input_requests import (
+    CODEX_REQUEST_USER_INPUT_ASYNC,
+    async_input_timeline_item_id,
+    parse_async_input_reply,
+)
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
 from connector.runtimes.codex.timeline.agent_calls import (
     subagent_activity_arguments,
@@ -59,6 +65,7 @@ from connector.runtimes.codex.timeline.identity import (
     uses_turn_position_identity,
 )
 from connector.runtimes.codex.timeline.projection import CodexTimelineProjection
+from connector.runtimes.codex.timeline.web_search import web_search_values
 
 
 def timeline_projection_from_sdk_event(
@@ -205,6 +212,23 @@ def timeline_projection_from_thread_item(
 ) -> CodexTimelineProjection | None:
     root = item.root
     if isinstance(root, AgentMessageThreadItem):
+        if root.questions:
+            return CodexTimelineProjection(
+                native_id=root.id,
+                raw_type="function_call",
+                platform_id=async_input_timeline_item_id(root.id),
+                status=event_status,
+                role="tool",
+                turn_id=turn_id,
+                name=CODEX_REQUEST_USER_INPUT_ASYNC,
+                arguments={
+                    "questions": [
+                        {"title": question.title, "options": question.options or []}
+                        for question in root.questions
+                    ]
+                },
+                call_id=root.id,
+            )
         return CodexTimelineProjection(
             native_id=root.id,
             raw_type="agentMessage",
@@ -214,15 +238,26 @@ def timeline_projection_from_thread_item(
             text=root.text,
         )
     if isinstance(root, UserMessageThreadItem):
+        text = user_input_text(root.content)
+        full_message_text = "\n".join(
+            entry.root.text
+            for entry in root.content
+            if isinstance(entry.root, TextUserInput)
+        )
+        async_reply = parse_async_input_reply(full_message_text)
         return CodexTimelineProjection(
             native_id=root.id,
             raw_type="userMessage",
             status=event_status,
             role="user",
             turn_id=turn_id,
-            text=user_input_text(root.content),
+            text=async_reply.readable_text if async_reply is not None else text,
             attachments=user_input_attachments(root.content),
             client_message_id=root.client_id,
+            async_reply_call_ids=(
+                async_reply.call_ids if async_reply is not None else ()
+            ),
+            native_message_text=text if async_reply is not None else None,
         )
     if isinstance(root, ReasoningThreadItem):
         return CodexTimelineProjection(
@@ -294,14 +329,18 @@ def timeline_projection_from_thread_item(
             ),
         )
     if isinstance(root, WebSearchThreadItem):
+        query, action = web_search_values(
+            root.query,
+            root.action.root.type if root.action is not None else None,
+        )
         return CodexTimelineProjection(
             native_id=root.id,
             raw_type="webSearch",
             status=event_status,
             role="tool",
             turn_id=turn_id,
-            message=root.query,
-            arguments=web_search_action_value(root),
+            message=query,
+            arguments=action,
         )
     if isinstance(root, FileChangeThreadItem):
         return CodexTimelineProjection(
@@ -346,23 +385,49 @@ def timeline_projection_from_response_item(
     root = item.root
     if isinstance(root, MessageResponseItem):
         raw_type = "agentMessage" if root.role == "assistant" else "userMessage"
+        text = content_items_text(root.content)
+        async_reply = (
+            parse_async_input_reply(text)
+            if root.role == "user" and text is not None
+            else None
+        )
         return CodexTimelineProjection(
             native_id=root.id,
             raw_type=raw_type,
             status=event_status,
             role=root.role,
             turn_id=turn_id,
-            text=content_items_text(root.content),
+            text=async_reply.readable_text if async_reply is not None else text,
+            async_reply_call_ids=(
+                async_reply.call_ids if async_reply is not None else ()
+            ),
+            native_message_text=text if async_reply is not None else None,
         )
     if isinstance(root, FunctionCallResponseItem):
         return CodexTimelineProjection(
             native_id=root.id or root.call_id,
             raw_type="function_call",
+            platform_id=(
+                async_input_timeline_item_id(root.call_id)
+                if root.name == CODEX_REQUEST_USER_INPUT_ASYNC
+                else None
+            ),
             status=event_status,
             role="tool",
             turn_id=turn_id,
             name=root.name,
             arguments=root.arguments,
+            call_id=root.call_id,
+        )
+    if isinstance(root, FunctionCallOutputResponseItem):
+        return CodexTimelineProjection(
+            native_id=root.id,
+            raw_type="function_call_output",
+            status=event_status,
+            role="tool",
+            turn_id=turn_id,
+            call_id=root.call_id,
+            output=root.output.root,
         )
     return CodexTimelineProjection(
         native_id=None,
@@ -431,12 +496,6 @@ def collab_agent_tool_output(states: dict[str, CollabAgentState]) -> dict[str, o
         }
         for agent_id, state in states.items()
     }
-
-
-def web_search_action_value(item: WebSearchThreadItem) -> object | None:
-    if item.action is None:
-        return None
-    return item.action.root.type
 
 
 def user_input_text(items: Sequence[UserInput]) -> str | None:

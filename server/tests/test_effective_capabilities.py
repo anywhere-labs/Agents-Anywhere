@@ -59,6 +59,20 @@ def test_capability_is_usable_fails_closed_when_missing() -> None:
     )
 
 
+def test_native_recovery_capability_survives_effective_projection():
+    session = _session(takeover=False)
+    facts = ProtocolCapabilitySet(revision=4, capabilities=[ProtocolCapability(
+        capabilityId="session.recover", scope="session", runtime=session.runtime, sessionId=session.id,
+        metadata={"nativeHistory": True, "sourceRevision": "sha256:fixture"},
+    )])
+    result = derive_session_effective_capabilities(session=session, runtime_capabilities=facts)
+    recovery = find_capability(result, "session.recover")
+    assert recovery is not None and recovery.supported and recovery.available
+    assert not recovery.allowed
+    assert recovery.unavailableReason == "session_not_taken_over"
+    assert recovery.metadata["nativeHistory"] is True
+
+
 def test_effective_capabilities_apply_session_takeover_to_allowed() -> None:
     session = _session(takeover=False)
     runtime_capabilities = ProtocolCapabilitySet(

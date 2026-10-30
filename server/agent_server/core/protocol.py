@@ -25,10 +25,10 @@ from agent_server.core.planning.models import (
 )
 
 PROTOCOL_VERSION_1 = "1.0"
-SUPPORTED_PROTOCOL_VERSIONS = [PROTOCOL_VERSION_1]
+SUPPORTED_PROTOCOL_VERSIONS = ["1.1", PROTOCOL_VERSION_1]
 PROTOCOL_MAX_REVISION = 9_007_199_254_740_991
 
-ProtocolVersion = Literal["1.0"]
+ProtocolVersion = Literal["1.0", "1.1"]
 ProtocolCapabilityScope = Literal["runtime", "session"]
 
 
@@ -155,6 +155,16 @@ class ProtocolReasoningItem(ProtocolWireModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ProtocolModelGroup(ProtocolWireModel):
+    """Where a model is routed from, e.g. a DSH provider or relay."""
+
+    id: str = Field(min_length=1)
+    displayName: str = Field(min_length=1)
+    # Row text under this group's header, without the provider the header already
+    # shows. The item's displayName stays unique on its own for selections.
+    itemDisplayName: str | None = Field(default=None, min_length=1)
+
+
 class ProtocolModelItem(ProtocolWireModel):
     displayName: str
     id: str
@@ -162,6 +172,8 @@ class ProtocolModelItem(ProtocolWireModel):
     description: str | None = None
     default: bool = False
     reasoningItems: list[ProtocolReasoningItem] = Field(default_factory=list)
+    # Clients section the picker by group only when a catalog has 2+ groups.
+    group: ProtocolModelGroup | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

@@ -7,6 +7,12 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from connector.runtime_protocol import TimelineSource
+from connector.runtimes.codex.domain.input_requests import (
+    CODEX_REQUEST_USER_INPUT_ASYNC,
+    async_input_timeline_item_id,
+    codex_async_input_call,
+    parse_async_input_reply,
+)
 from connector.runtimes.codex.domain.sessions import (
     first_string_from_mapping,
 )
@@ -51,6 +57,7 @@ from connector.runtimes.codex.timeline.raw_item import (
     timeline_raw_status,
     timeline_raw_type,
 )
+from connector.runtimes.codex.timeline.web_search import web_search_values
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +85,9 @@ class CodexTimelineProjection:
     changes: Any = None
     client_message_id: str | None = None
     client_message_id_is_bound: bool = False
+    call_id: str | None = None
+    async_reply_call_ids: tuple[str, ...] = ()
+    native_message_text: str | None = None
     explicit_derived_key: str | None = None
     attachments: tuple[Mapping[str, Any], ...] = ()
     revision: int = 1
@@ -95,11 +105,16 @@ class CodexTimelineProjection:
         text: str,
         attachments: tuple[Mapping[str, Any], ...],
     ) -> CodexTimelineProjection:
+        reply = parse_async_input_reply(text)
         return replace(
             self,
             client_message_id=client_message_id,
             client_message_id_is_bound=True,
-            text=text,
+            text=reply.readable_text if reply is not None else text,
+            native_message_text=text,
+            async_reply_call_ids=(
+                reply.call_ids if reply is not None else self.async_reply_call_ids
+            ),
             attachments=attachments,
         )
 
@@ -155,7 +170,7 @@ class CodexTimelineProjection:
         )
 
     def pending_message_text(self) -> str:
-        text = self.text or self.message
+        text = self.native_message_text or self.text or self.message
         if text is None:
             return ""
         return text
@@ -287,6 +302,28 @@ class CodexTimelineProjection:
     def function_call_content(self) -> Mapping[str, Any]:
         name = self.name or "function"
         arguments = self.arguments if self.arguments is not None else self.input_value
+        if name == CODEX_REQUEST_USER_INPUT_ASYNC:
+            call = codex_async_input_call(
+                {
+                    "type": "function_call",
+                    "name": name,
+                    "arguments": arguments,
+                    "call_id": self.call_id,
+                }
+            )
+            if call is not None:
+                return {
+                    "kind": "input_request",
+                    "callId": call.call_id,
+                    "questions": [
+                        {
+                            "id": question.question_id,
+                            "title": question.prompt,
+                            "options": [option.label for option in question.options],
+                        }
+                        for question in call.request.form.questions
+                    ],
+                }
         if name in {"web_search", "web_search_preview"}:
             return {
                 "kind": "web_search",
@@ -412,6 +449,12 @@ class CodexTimelineProjection:
                 if self.client_message_id
                 else {}
             ),
+            **({"callId": self.call_id} if self.call_id else {}),
+            **(
+                {"_asyncInputReplyCallIds": list(self.async_reply_call_ids)}
+                if self.async_reply_call_ids
+                else {}
+            ),
             **(
                 {"_derivedKey": self.explicit_derived_key}
                 if self.explicit_derived_key
@@ -434,27 +477,80 @@ def timeline_projection_from_event(
 def timeline_projection_from_raw(raw: Mapping[str, Any]) -> CodexTimelineProjection:
     raw_dict = dict(raw)
     raw_type = timeline_raw_type(raw_dict)
+    if raw_type == "agentMessage" and isinstance(raw_dict.get("questions"), list):
+        # thread/read and IPC use an async AgentMessage item, while raw model
+        # notifications carry the original function call. Both share call_id.
+        call_id = native_item_id(raw_dict)
+        if call_id is not None and raw_dict["questions"]:
+            async_raw = dict(raw_dict)
+            async_raw.update(
+                type="function_call",
+                role="tool",
+                name=CODEX_REQUEST_USER_INPUT_ASYNC,
+                call_id=call_id,
+                arguments={"questions": raw_dict["questions"]},
+            )
+            if codex_async_input_call(async_raw) is not None:
+                raw_dict = async_raw
+                raw_dict.pop("text", None)
+                raw_dict.pop("content", None)
+                raw_type = "function_call"
+    raw_text = (
+        pending_text_from_raw(raw_dict)
+        or user_message_text_from_raw(raw_dict, raw_type)
+        or text_from_value(raw_dict)
+    )
+    full_message_text = pending_text_from_raw(raw_dict) or text_from_value(raw_dict)
+    async_reply = (
+        parse_async_input_reply(full_message_text)
+        if (
+            raw_type in {"userMessage", "steeringUserMessage"}
+            or (raw_type == "message" and raw_dict.get("role") == "user")
+        )
+        and full_message_text is not None
+        else None
+    )
+    search_query, search_action = (
+        web_search_values(
+            raw_dict.get("query", raw_dict.get("message")), raw_dict.get("action")
+        )
+        if raw_type == "webSearch"
+        else (None, None)
+    )
+    name = (
+        subagent_activity_native_action(
+            first_string_from_mapping(raw_dict, "kind", "activityKind")
+        )
+        if raw_type in {"SubAgentActivityThreadItem", "subAgentActivity"}
+        else first_string_from_mapping(raw_dict, "name", "function", "tool")
+    )
+    call_id = first_string_from_mapping(raw_dict, "call_id", "callId")
     return CodexTimelineProjection(
         native_id=native_item_id(raw_dict),
         raw_type=raw_type,
+        platform_id=(
+            async_input_timeline_item_id(call_id)
+            if raw_type == "function_call"
+            and name == CODEX_REQUEST_USER_INPUT_ASYNC
+            and call_id is not None
+            else None
+        ),
         status=timeline_raw_status(raw_dict),
         role=timeline_item_role(raw_dict),
         turn_id=timeline_item_turn_id(raw_dict),
-        text=pending_text_from_raw(raw_dict)
-        or user_message_text_from_raw(raw_dict, raw_type)
-        or text_from_value(raw_dict),
+        text=async_reply.readable_text if async_reply is not None else raw_text,
         input_value=raw_dict.get("input"),
-        message=first_string_from_mapping(raw_dict, "message"),
-        name=(
-            subagent_activity_native_action(
-                first_string_from_mapping(raw_dict, "kind", "activityKind")
-            )
-            if raw_type in {"SubAgentActivityThreadItem", "subAgentActivity"}
-            else first_string_from_mapping(raw_dict, "name", "function", "tool")
+        message=(
+            search_query
+            if raw_type == "webSearch"
+            else first_string_from_mapping(raw_dict, "message")
         ),
+        name=name,
         server=first_string_from_mapping(raw_dict, "server"),
         arguments=(
-            collab_agent_arguments_from_raw(raw_dict)
+            search_action
+            if raw_type == "webSearch"
+            else collab_agent_arguments_from_raw(raw_dict)
             if raw_type == "collabAgentToolCall"
             else subagent_activity_arguments_from_raw(raw_dict)
             if raw_type in {"SubAgentActivityThreadItem", "subAgentActivity"}
@@ -477,6 +573,9 @@ def timeline_projection_from_raw(raw: Mapping[str, Any]) -> CodexTimelineProject
         patch=first_string_from_mapping(raw_dict, "patch", "diff"),
         changes=normalized_file_changes(raw_dict.get("changes")),
         client_message_id=client_message_id_from_raw(raw_dict),
+        call_id=call_id,
+        async_reply_call_ids=(async_reply.call_ids if async_reply is not None else ()),
+        native_message_text=raw_text if async_reply is not None else None,
         explicit_derived_key=explicit_derived_key(raw_dict),
         attachments=attachments_from_raw(raw_dict, raw_type),
         revision=timeline_item_revision(raw_dict),

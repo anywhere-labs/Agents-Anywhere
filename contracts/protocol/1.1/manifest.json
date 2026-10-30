@@ -1,0 +1,111 @@
+{
+  "artifacts": [
+    {
+      "direction": "ingress",
+      "model": "ProtocolHandshakeRequest",
+      "path": "schemas/handshake-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "51f969deefb0fad0245f43be407d3e396d79298b82ba4d36a2b33b011bce90db",
+      "slug": "handshake-request"
+    },
+    {
+      "direction": "egress",
+      "model": "ProtocolHandshakeResponse",
+      "path": "schemas/handshake-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "f3a091d78b6acf75d52f31f6d9ee396681858013d668187a2c4f191436eea5e1",
+      "slug": "handshake-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ProtocolCapabilitySet",
+      "path": "schemas/capability-set.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "34fa8448480f1b76a414c730bdee8e2dcc7c1569558b1133335e5a2dcf26d295",
+      "slug": "capability-set"
+    },
+    {
+      "direction": "egress",
+      "model": "ProtocolCapabilitiesResponse",
+      "path": "schemas/capabilities-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "65ef0c6f97ce97d7b1e944752c525e3dae722e193ea7cc58af5923ab7db4fe19",
+      "slug": "capabilities-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ProtocolModelCatalog",
+      "path": "schemas/model-catalog.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "9ea2e369efc757fbd1dcdd4e754087642396266406a85c7b1b9dc762f504f57a",
+      "slug": "model-catalog"
+    },
+    {
+      "direction": "egress",
+      "model": "ProtocolModelCatalogResponse",
+      "path": "schemas/model-catalog-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "a3cf8aef0940be13559f38156d94d317093f7688b873ebbe1e9cd66baaa14733",
+      "slug": "model-catalog-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ProtocolPermissionCatalog",
+      "path": "schemas/permission-catalog.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "23f868037f1f221f18f57c807b116552a864b19ae7224cabff125471f7eb9ac2",
+      "slug": "permission-catalog"
+    },
+    {
+      "direction": "egress",
+      "model": "ProtocolPermissionCatalogResponse",
+      "path": "schemas/permission-catalog-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "d1da24de3a2353922258734f52a05bfe61935bdc1eafeb2e552f0352a7180172",
+      "slug": "permission-catalog-response"
+    },
+    {
+      "direction": "egress",
+      "model": "ProtocolSessionSnapshotResponse",
+      "path": "schemas/session-snapshot-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "566db7f99df706a995fd2cd05c4c6f0dd5d27eae459bfe0d4c7e6cd11563b170",
+      "slug": "session-snapshot-response"
+    },
+    {
+      "direction": "ingress",
+      "model": "ProtocolWsTicketRequest",
+      "path": "schemas/ws-ticket-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "95cb42109774ebc9e57640396d9298892a16851c1821e17ef785a24f7bc4febf",
+      "slug": "ws-ticket-request"
+    },
+    {
+      "direction": "egress",
+      "model": "ProtocolWsTicketResponse",
+      "path": "schemas/ws-ticket-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "e2e1873a953b30ed9f1c6314dc8f8813fac9d3253225a4ebd0eef86391773cf4",
+      "slug": "ws-ticket-response"
+    },
+    {
+      "direction": "egress",
+      "model": "ProtocolEventEnvelope",
+      "path": "schemas/event-envelope.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "3c60de61a1c29f6df2a5b67839ad9b7d761088234ce652c36b1a01ef5cb9112e",
+      "slug": "event-envelope"
+    },
+    {
+      "direction": "egress",
+      "model": "ProtocolEventRecoveryResponse",
+      "path": "schemas/event-recovery-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "80c7d7609620c33e22297d5a8abae58ec76d3a2115b94c9be60911f0b14e6dd1",
+      "slug": "event-recovery-response"
+    }
+  ],
+  "jsonSchemaDraft": "https://json-schema.org/draft/2020-12/schema",
+  "protocolVersion": "1.1",
+  "source": "server/agent_server/core/protocol.py"
+}

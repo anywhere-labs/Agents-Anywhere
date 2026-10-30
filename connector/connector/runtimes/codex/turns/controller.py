@@ -76,6 +76,7 @@ class CodexTurnController:
             active_turn_ids=self.active_turn_ids,
             notices=self.notices,
             ensure_started=self.ensure_started,
+            turn_actions=self.actions,
         )
         self.selections = CodexSelectionController(
             client=self.client,
@@ -83,6 +84,7 @@ class CodexTurnController:
             ensure_started=self.ensure_started,
             list_model_catalog=self.list_model_catalog,
             list_permission_catalog=self.list_permission_catalog,
+            active_turn_ids=self.active_turn_ids,
         )
         self.session_starter = CodexSessionStartController(
             host=self.host,

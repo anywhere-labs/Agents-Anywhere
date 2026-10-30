@@ -3,27 +3,27 @@ import type {
   ProtocolCapability,
   ProtocolCapabilitySet,
   ProtocolCapabilitiesResponse,
-} from "@/generated/protocol/v1/capabilities-response";
-import type { ProtocolModelCatalog } from "@/generated/protocol/v1/model-catalog-response";
-import type { ProtocolPermissionCatalog } from "@/generated/protocol/v1/permission-catalog-response";
-import type { ProtocolSessionSnapshotResponse } from "@/generated/protocol/v1/session-snapshot-response";
-import type { ProtocolWsTicketResponse } from "@/generated/protocol/v1/ws-ticket-response";
+} from "@/generated/protocol/v1_1/capabilities-response";
+import type { ProtocolModelCatalog } from "@/generated/protocol/v1_1/model-catalog-response";
+import type { ProtocolPermissionCatalog } from "@/generated/protocol/v1_1/permission-catalog-response";
+import type { ProtocolSessionSnapshotResponse } from "@/generated/protocol/v1_1/session-snapshot-response";
+import type { ProtocolWsTicketResponse } from "@/generated/protocol/v1_1/ws-ticket-response";
 
 export type {
   ProtocolEventEnvelope,
   ProtocolEventRecoveryResponse,
-} from "@/generated/protocol/v1/event-recovery-response";
+} from "@/generated/protocol/v1_1/event-recovery-response";
 export type {
   ProtocolModelCatalog,
   ProtocolModelCatalogResponse,
   ProtocolModelItem,
   ProtocolReasoningItem,
-} from "@/generated/protocol/v1/model-catalog-response";
+} from "@/generated/protocol/v1_1/model-catalog-response";
 export type {
   ProtocolPermissionCatalog,
   ProtocolPermissionCatalogResponse,
   ProtocolPermissionItem,
-} from "@/generated/protocol/v1/permission-catalog-response";
+} from "@/generated/protocol/v1_1/permission-catalog-response";
 
 export type { ProtocolCapability, ProtocolCapabilitySet, ProtocolCapabilitiesResponse };
 

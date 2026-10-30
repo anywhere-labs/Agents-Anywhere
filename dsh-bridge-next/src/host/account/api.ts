@@ -48,13 +48,21 @@ export class AccountApi {
 
   private async request<T>(path: string, options: RequestInit, signal?: AbortSignal): Promise<T> {
     const timeout = AbortSignal.timeout(20_000)
-    const response = await this.fetcher(`${this.baseUrl}/api/v2${path}`, {
-      ...options,
-      redirect: 'error',
-      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-    })
-    if (!response.ok) throw new ApiError(response.status)
-    return await response.json() as T
+    try {
+      const response = await this.fetcher(`${this.baseUrl}/api/v2${path}`, {
+        ...options,
+        redirect: 'error',
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+      })
+      if (!response.ok) throw new ApiError(response.status)
+      return await response.json() as T
+    } catch (error) {
+      // Explicit cancellation belongs to the caller (stop/dispose), even if the
+      // request deadline also expired while the response was being read.
+      signal?.throwIfAborted()
+      if (timeout.aborted) throw new Error('连接服务器超时，请检查地址和网络后重试。', { cause: error })
+      throw error
+    }
   }
 
   async exchange(code: string, verifier: string, redirectUri: string, signal: AbortSignal): Promise<Account> {

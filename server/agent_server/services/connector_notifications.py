@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, ClassVar
 
 from loguru import logger
@@ -23,6 +25,11 @@ from agent_server.core.protocol import (
     ProtocolPermissionCatalog,
 )
 from agent_server.core.runtime_identity import RuntimeIdentity, RuntimeIdentityError
+from agent_server.core.timeline import (
+    TIMELINE_ORDER_SEQ_MAX,
+    TIMELINE_ORDER_SEQ_MIN,
+    timeline_order_seq_in_range,
+)
 from agent_server.infra.repositories.projects import MissingWorkspaceError
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.ingest_effects import IngestEffect
@@ -417,8 +424,11 @@ class SessionSourceNotificationHandler:
             except KeyError:
                 pass
         if await self._store.refresh_unchanged_session_source(
-            session_id, connector_id=connector_id, runtime=runtime,
-            runtime_id=runtime_id, **observation,
+            session_id,
+            connector_id=connector_id,
+            runtime=runtime,
+            runtime_id=runtime_id,
+            **observation,
         ):
             return IngestEffect()
         try:
@@ -695,7 +705,29 @@ class SessionTurnEndedNotificationHandler:
                 "invalid_turn_outcome",
                 "session.turnEnded outcome must be completed, interrupted, cancelled, or failed",
             )
-        turn_id = params.get("turnId")
+        source_event_id = params.get("sourceEventId")
+        if source_event_id is not None and (
+            not isinstance(source_event_id, str)
+            or not source_event_id
+            or len(source_event_id) > 160
+        ):
+            raise NotificationValidationError(
+                "invalid_source_event_id",
+                "sourceEventId must be a non-empty bounded string",
+            )
+        source_event = (
+            {
+                "source_event_id": source_event_id,
+                "source_event_digest": hashlib.sha256(
+                    json.dumps(
+                        [outcome, params.get("sourceObservedAt")], sort_keys=True
+                    ).encode()
+                ).hexdigest(),
+            }
+            if source_event_id
+            else {}
+        )
+        turn_id = params.get("turnId") or source_event_id
         if turn_id is not None and (not isinstance(turn_id, str) or not turn_id):
             raise NotificationValidationError(
                 "invalid_turn_id",
@@ -747,6 +779,7 @@ class SessionTurnEndedNotificationHandler:
                 session_id=session_id,
                 source_observed_at=_string_or_none(params.get("sourceObservedAt")),
                 mark_read_on_change=False,
+                **source_event,
             )
         else:
             async with self._timeline_write_buffer.session_fence(session_id):
@@ -754,6 +787,7 @@ class SessionTurnEndedNotificationHandler:
                     session_id=session_id,
                     source_observed_at=_string_or_none(params.get("sourceObservedAt")),
                     mark_read_on_change=False,
+                    **source_event,
                 )
         if session.takeover:
             # Only platform-driven sessions count as usage; a turn started from
@@ -805,6 +839,7 @@ class TimelineNotificationHandler:
         items = [
             TimelineItemIn.model_validate(item) for item in params.get("items", [])
         ]
+        _require_storable_order_seq(items)
         runtime, runtime_id = await timeline_runtime_identity_from_params(
             self._store,
             params,
@@ -887,6 +922,7 @@ class TimelineNotificationHandler:
                 "turn lifecycle markers must use dedicated session notifications",
             )
         item = TimelineItemIn.model_validate(params["item"])
+        _require_storable_order_seq([item])
         resolution = await self._store.resolve_connector_session_binding(
             connector_id=connector_id,
             session_id=params["sessionId"],
@@ -1609,6 +1645,23 @@ def runtime_state_from_session_state_params(
         "error": _object_or_none(params.get("error")),
         "metadata": _object_or_none(params.get("metadata")) or {},
     }
+
+
+def _require_storable_order_seq(items: list[TimelineItemIn]) -> None:
+    """Refuse an item the timeline table cannot store before it is buffered.
+
+    An out-of-range ``orderSeq`` accepted into the shared pending projection
+    used to fail every later flush of the session, and later new items were
+    placed after it, so they could not be stored either.
+    """
+
+    for item in items:
+        if not timeline_order_seq_in_range(item.orderSeq):
+            raise NotificationValidationError(
+                "invalid_order_seq",
+                f"timeline item {item.id} orderSeq {item.orderSeq} is outside "
+                f"{TIMELINE_ORDER_SEQ_MIN}..{TIMELINE_ORDER_SEQ_MAX}",
+            )
 
 
 def _timeline_item_for_session(

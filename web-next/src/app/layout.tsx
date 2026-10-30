@@ -42,19 +42,23 @@ export const metadata: Metadata = {
   manifest: "/site.webmanifest",
   icons: {
     icon: [
+      // Chromium ignores `media` on icon links; the SVG switches colors itself.
+      {
+        url: "/favicon.svg",
+        type: "image/svg+xml",
+        sizes: "any"
+      },
       {
         url: "/favicon-dark-mode.png",
         type: "image/png",
+        sizes: "64x64",
         media: "(prefers-color-scheme: dark)"
       },
       {
         url: "/favicon-light-mode.png",
         type: "image/png",
+        sizes: "64x64",
         media: "(prefers-color-scheme: light)"
-      },
-      {
-        url: "/favicon-dark-mode.png",
-        type: "image/png"
       }
     ],
     apple: [

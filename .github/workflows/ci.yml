@@ -76,7 +76,7 @@ jobs:
             git diff --name-only --no-renames "$BASE_SHA" "$GITHUB_SHA" > "$RUNNER_TEMP/changed-paths"
             while IFS= read -r path; do
               case "$path" in
-                .github/workflows/*|contracts/*)
+                .github/workflows/*|.github/actions/*|contracts/*)
                   run_everything "shared file changed: $path"
                   ;;
                 dsh-bridge-next/*) plugin=true ;;
@@ -111,6 +111,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s
           --health-timeout 5s
@@ -122,10 +123,14 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - name: Install plugin dependencies
+        uses: ./.github/actions/setup-yarn
         with:
+          project: dsh-bridge-next
           node-version: ${{ env.NODE_VERSION }}
+        env:
+          # Validate explicitly pinned DSH release candidates immediately after publication.
+          YARN_NPM_MINIMAL_AGE_GATE: "0"
       - name: Set up uv and Python
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
@@ -135,20 +140,16 @@ jobs:
           cache-dependency-glob: |
             connector/pyproject.toml
             server/pyproject.toml
-      - name: Enable Corepack
-        run: corepack enable
       - name: Prepare Python integration fixtures
         run: |
           uv sync --project connector
           uv sync --project server
-      - name: Install plugin dependencies
-        working-directory: dsh-bridge-next
-        env:
-          # Validate explicitly pinned DSH release candidates immediately after publication.
-          YARN_NPM_MINIMAL_AGE_GATE: "0"
-        run: corepack yarn install
+          uv pip install --python server/.venv/bin/python --editable ./connector
       - name: Typecheck, build and test plugin
         working-directory: dsh-bridge-next
+        env:
+          # Nested Python probes reuse the prepared environments, without repeated resolution.
+          UV_NO_SYNC: "true"
         run: corepack yarn check
 
   connector:
@@ -173,7 +174,45 @@ jobs:
         working-directory: connector
         # `timeout` ends a stalled run with the faulthandler stacks still in the
         # log; the job timeout alone would discard them.
-        run: timeout 900 uv run --frozen pytest -q -o faulthandler_timeout=120
+        run: timeout --kill-after=30s 900 uv run --no-sync pytest -q --durations=20 -o faulthandler_timeout=120
+
+  acp:
+    name: ACP coordination (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.connector == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install Connector dependencies
+        run: uv sync --project connector
+      - name: Verify actual ACP transport and ownership
+        working-directory: connector
+        shell: bash
+        run: |
+          uv run python scripts/verify-acp-runtime.py
+          uv run python scripts/verify-acp-processes.py
+          uv run python scripts/verify-acp-generic-boundary.py
+      - name: Verify published Pi runtime with a local model
+        working-directory: connector
+        shell: bash
+        run: |
+          for scenario in allow deny readonly attachment steer slow reasoning interrupt; do
+            uv run python scripts/verify-pi-managed.py --scenario "$scenario" --cache-root "$RUNNER_TEMP/aa-pi-runtime-checks"
+          done
 
   server:
     name: Server tests
@@ -191,6 +230,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s
           --health-timeout 5s
@@ -215,10 +255,14 @@ jobs:
         # and its dependencies have to live in the Server environment.
         run: |
           uv sync --project server
-          uv pip install --python server/.venv/bin/python ./connector
+          uv pip install --python server/.venv/bin/python --editable ./connector
+      - name: Check runtime workflow contracts
+        working-directory: server
+        run: uv run --no-sync python -m scripts.export_workflow_schemas --check
       - name: Test Server
         working-directory: server
-        run: timeout 1200 uv run --frozen pytest -q -o faulthandler_timeout=120
+        # Verbose names identify a stalled WebSocket test before the outer timeout.
+        run: timeout --kill-after=30s 1200 uv run --no-sync pytest -v --durations=20 -o faulthandler_timeout=120
 
   web:
     name: Web headless checks
@@ -232,17 +276,15 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      - name: Enable Corepack
-        run: corepack enable
       - name: Install client dependencies
-        run: corepack yarn install
+        uses: ./.github/actions/setup-yarn
+        with:
+          project: web-next
+          node-version: ${{ env.NODE_VERSION }}
       - name: Verify Web
         run: |
           corepack yarn test
+          node scripts/verify-runtime-workflows.mjs
           corepack yarn typecheck
           corepack yarn protocol:check
 
@@ -258,17 +300,15 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      - name: Enable Corepack
-        run: corepack enable
       - name: Install client dependencies
-        run: corepack yarn install
+        uses: ./.github/actions/setup-yarn
+        with:
+          project: desktop-workbench
+          node-version: ${{ env.NODE_VERSION }}
       - name: Verify Desktop renderer and main process
         run: |
           corepack yarn workspace agents-anywhere-desktop-renderer test
+          corepack yarn workspace agents-anywhere-desktop-renderer exec node scripts/verify-runtime-workflows.mjs
           corepack yarn renderer:typecheck
           corepack yarn workspace agents-anywhere-desktop-renderer protocol:check
           corepack yarn test:main

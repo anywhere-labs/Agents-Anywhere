@@ -326,10 +326,14 @@
       "clear": "清除筛选"
     },
     "new": {
+      "restoredTargetUnavailable": "原设备或 Runtime 当前不可用，请重新选择后再发送。",
+      "restoredDraft": "已恢复未创建的任务草稿",
+      "discardDraft": "放弃草稿",
       "askApproval": "请求确认",
       "attach": "添加附件",
       "attachmentLimit": "最多 {count} 个文件",
       "attachmentsUnsupported": "当前 Runtime 不支持附件。请移除附件或切换其他 Runtime。",
+      "imageInputUnsupported": "当前模型声明不支持图片输入，请移除图片或切换模型。",
       "attachmentTypesUnsupported": "仅支持以下附件类型：{types}。",
       "createSession": "创建会话",
       "creating": "正在创建会话...",
@@ -343,6 +347,10 @@
       "model": "模型",
       "modelAndReasoning": "模型和推理强度",
       "permissionMode": "权限模式",
+      "permissionUnsynced": "权限未同步",
+      "modelUnsynced": "模型未同步",
+      "runtimeDefault": "Runtime 默认值",
+      "nextTurn": "下一轮生效",
       "permissionModes": {
         "dsh": {
           "readOnly": {
@@ -410,6 +418,9 @@
       "sendTask": "发送任务",
       "agent": "Agent",
       "createFailed": "无法创建会话。",
+      "selectModel": "请选择模型",
+      "modelCatalogUnavailable": "模型目录尚未就绪",
+      "recoveryConfigurationRequired": "草稿和附件已保留。请重新确认模型、权限及 Runtime 配置中的 Agent 模式后再发送。",
       "attachmentOnlyPrompt": "（无文字内容。）",
       "imagePreview": {
         "close": "关闭",
@@ -845,6 +856,14 @@
       "sessions": "会话"
     },
     "session": {
+      "creationFailed": "任务尚未创建",
+      "creationUnconfirmed": "创建结果未确认",
+      "checkCreatedSession": "查看已分配会话",
+      "creationCheckFirst": "请先核对设备会话列表，避免重复创建。草稿仍保留在当前应用中。",
+      "creationDraftRetained": "输入内容和附件已保留；准备就绪后请手动重试。",
+      "retryCreation": "重试创建",
+      "editCreation": "返回编辑",
+      "checkDeviceSessions": "查看设备会话",
       "device": "设备",
       "status": "状态",
       "sessionId": "会话 ID",
@@ -1091,6 +1110,23 @@
         "reviewOpenFilePreview": "打开 {file} 的完整文件预览",
         "reviewPreviewBlocked": "文件预览窗口被浏览器拦截了。",
         "reviewDiffCard": "第 {index}/{count} 次修改"
+      },
+      "nativeHistory": {
+        "title": "原生历史",
+        "continue": "继续任务",
+        "release": "结束 AA 执行",
+        "preparing": "正在准备执行…",
+        "active": "AA 正在使用此会话",
+        "activeHint": "结束 AA 执行并等待释放后，可回到 CLI 恢复同一会话。",
+        "browseHint": "历史可以浏览。退出 CLI 中对应会话后，可在这里恢复原会话继续任务。",
+        "confirmHint": "将保留原生会话身份并写回后续历史。请先退出 CLI 中对应会话，继续期间不要在 CLI 同时打开它。",
+        "cliExited": "我已退出 CLI 中对应会话",
+        "cancel": "取消",
+        "failed": "恢复失败，历史仍可查看。",
+        "unknown": "恢复结果尚未确认，请查询原操作状态。",
+        "check": "查询恢复状态",
+        "releaseFailed": "尚未确认执行实例已释放，请刷新状态。",
+        "releasing": "正在结束执行…"
       }
     },
     "sessionStatus": {

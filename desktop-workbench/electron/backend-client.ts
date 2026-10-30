@@ -18,6 +18,8 @@ const STREAM_RETRY_MS = 1_000;
 const OUTPUT_DRAIN_MS = 250;
 const RECENT_OUTPUT_LINES = 12;
 
+type BackendExit = { code: number | null; signal: NodeJS.Signals | null };
+
 export type BackendClientOptions = {
   /** Chromium network stack, so outbound requests honour the system proxy. */
   fetcher: (input: string, init?: RequestInit) => Promise<Response>;
@@ -92,6 +94,18 @@ export class DesktopBackendClient {
       stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
     this.child = child;
+    const exited = new Promise<BackendExit>((resolve) => {
+      child.once("exit", (code, signal) => resolve({ code, signal }));
+      // Every send passes a callback, so what still lands here is a failed
+      // spawn or kill. A failed spawn never emits `exit`; settling here keeps
+      // startup from waiting out the ready timeout and shutdown from hanging.
+      child.on("error", (error) => {
+        console.error(`[desktop-backend] ${error.message}`);
+        if (child.pid !== undefined) return;
+        this.lastError = `Desktop backend could not be started: ${error.message}`;
+        resolve({ code: child.exitCode, signal: null });
+      });
+    });
     // The bridge must outlive startup: device registration and reconnect keep
     // issuing netFetch long after the backend reports ready. A listener removed
     // with the startup handshake silently drops them, and the backend only
@@ -101,18 +115,15 @@ export class DesktopBackendClient {
       // A crash after `ready` reports itself here just before the process exits.
       else if (message.type === "error") this.lastError = message.message;
     });
-    this.exitPromise = new Promise<void>((resolve) => {
-      child.once("exit", (code, signal) => {
-        this.child = null;
-        this.stream?.abort();
-        this.stream = null;
-        // Before `ready`, the startup handshake reports the exit instead.
-        if (!this.closing && this.port !== 0) {
-          const summary = `Desktop backend stopped unexpectedly (${exitReason(code, signal)}).`;
-          void this.drainOutput().then(() => this.options.onExit?.(this.describe(summary)));
-        }
-        resolve();
-      });
+    this.exitPromise = exited.then(({ code, signal }) => {
+      this.child = null;
+      this.stream?.abort();
+      this.stream = null;
+      // Before `ready`, the startup handshake reports the exit instead.
+      if (!this.closing && this.port !== 0) {
+        const summary = `Desktop backend stopped unexpectedly (${exitReason(code, signal)}).`;
+        void this.drainOutput().then(() => this.options.onExit?.(this.describe(summary)));
+      }
     });
     if (child.stderr) {
       const output = readline.createInterface({ input: child.stderr });
@@ -124,7 +135,7 @@ export class DesktopBackendClient {
       });
       this.outputClosed = new Promise((resolve) => output.once("close", () => resolve()));
     }
-    await this.waitForReady(child);
+    await this.waitForReady(child, exited);
     void this.consumeEvents();
   }
 
@@ -167,17 +178,7 @@ export class DesktopBackendClient {
     this.stream = null;
     const child = this.child;
     if (!child) return;
-    // `send` on a closed channel emits `error` asynchronously, which a
-    // try/catch cannot see. Keep this listener for the rest of the child's
-    // lifetime: the event fires after `send` returns, so removing it in a
-    // finally would leave the error unhandled again.
-    const ignoreChannelError = () => undefined;
-    child.on("error", ignoreChannelError);
-    try {
-      if (child.connected) child.send({ type: "shutdown" } satisfies BackendControlMessage);
-    } catch {
-      // The channel is already gone; the exit race below handles it.
-    }
+    this.sendToChild({ type: "shutdown" });
     const exited = await Promise.race([
       this.exitPromise?.then(() => true) ?? Promise.resolve(true),
       delay(SHUTDOWN_GRACE_MS).then(() => false),
@@ -188,8 +189,22 @@ export class DesktopBackendClient {
     }
   }
 
-  private waitForReady(child: ChildProcess): Promise<void> {
+  /**
+   * The IPC channel closes before `exit` arrives, so `this.child` can outlive
+   * it. Without a callback a failed send surfaces later as an `error` event
+   * that no try/catch can see; with one, the failure stays with the message.
+   */
+  private sendToChild(message: BackendControlMessage): void {
+    const child = this.child;
+    if (!child?.connected) return;
+    child.send(message, (error) => {
+      if (error) console.error(`[desktop-backend] could not deliver ${message.type}: ${error.message}`);
+    });
+  }
+
+  private waitForReady(child: ChildProcess, exited: Promise<BackendExit>): Promise<void> {
     return new Promise<void>((resolve, reject) => {
+      let settled = false;
       const timer = setTimeout(() => {
         cleanup();
         child.kill("SIGKILL");
@@ -208,18 +223,18 @@ export class DesktopBackendClient {
           reject(new Error(message.message));
         }
       };
-      const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      const cleanup = () => {
+        settled = true;
+        clearTimeout(timer);
+        child.off("message", onMessage);
+      };
+      child.on("message", onMessage);
+      void exited.then(({ code, signal }) => {
+        if (settled) return;
         cleanup();
         const summary = `Desktop backend exited before it became ready (${exitReason(code, signal)}).`;
         void this.drainOutput().then(() => reject(new Error(this.describe(summary))));
-      };
-      const cleanup = () => {
-        clearTimeout(timer);
-        child.off("message", onMessage);
-        child.off("exit", onExit);
-      };
-      child.on("message", onMessage);
-      child.once("exit", onExit);
+      });
     });
   }
 
@@ -244,7 +259,7 @@ export class DesktopBackendClient {
       const headers: Record<string, string> = {};
       response.headers.forEach((value, key) => { headers[key] = value; });
       const body = await response.text();
-      this.child?.send({
+      this.sendToChild({
         type: "netFetchResult",
         id: message.id,
         ok: response.ok,
@@ -253,7 +268,7 @@ export class DesktopBackendClient {
         body,
       } satisfies BackendControlMessage);
     } catch (error) {
-      this.child?.send({
+      this.sendToChild({
         type: "netFetchError",
         id: message.id,
         message: error instanceof Error ? error.message : String(error),

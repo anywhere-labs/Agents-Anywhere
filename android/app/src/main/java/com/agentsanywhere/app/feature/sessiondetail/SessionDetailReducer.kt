@@ -11,7 +11,7 @@ internal fun reduceRealtimeEvent(
     event: RemoteSessionEventEnvelope,
     devices: List<AgentDevice>,
 ): SessionDetailState {
-    if (event.protocolVersion != "1.0" || event.sessionId != current.session?.id) return current
+    if (event.protocolVersion !in setOf("1.0", "1.1") || event.sessionId != current.session?.id) return current
     if (event.eventId in current.realtime.processedEventIds) return current
 
     var next = current.copy(realtime = current.realtime.rememberEvent(event.eventId, event.cursor))
@@ -119,7 +119,7 @@ internal fun reduceRealtimeEvents(
         if (pendingTimeline.isEmpty()) return
         val seen = mutableSetOf<String>()
         val accepted = pendingTimeline.filter { event ->
-            event.protocolVersion == "1.0" &&
+            event.protocolVersion in setOf("1.0", "1.1") &&
                 event.sessionId == next.session?.id &&
                 event.eventId !in next.realtime.processedEventIds &&
                 seen.add(event.eventId)
@@ -305,14 +305,15 @@ private fun SessionDetailState.applyTimelineRealtimeItems(
     replace: Boolean,
     cursor: String,
 ): SessionDetailState {
-    val currentReal = messages.filterNot { it.optimistic }
+    val hasOptimistic = messages.any { it.optimistic }
+    val currentReal = if (hasOptimistic) messages.filterNot { it.optimistic } else messages
     val projection = mergeRemoteTimelineItems(
         currentOrdering = timeline.orderingItems,
         currentMessages = currentReal,
         incoming = incoming,
         replace = replace,
     )
-    val messages = mergeReducerOptimistic(
+    val messages = if (!hasOptimistic) projection.messages else mergeReducerOptimistic(
         projection.messages,
         this.messages,
         projection.orderingItems,

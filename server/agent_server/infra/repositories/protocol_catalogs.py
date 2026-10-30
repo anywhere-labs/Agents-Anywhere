@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_server.core.catalogs import CatalogType, CatalogUpdateOutcome
+from agent_server.core.catalogs import (
+    CatalogType,
+    CatalogUpdateOutcome,
+    compare_same_revision_catalogs,
+)
 from agent_server.infra.repositories.store_support import *
 
 
@@ -50,8 +54,14 @@ class ProtocolCatalogRepositoryMixin:
             if existing is not None and int(existing.revision) > revision:
                 return "stale"
             if existing is not None and int(existing.revision) == revision:
-                current = _json_loads(existing.catalog_json)
-                return "idempotent" if current == catalog else "conflict"
+                match = compare_same_revision_catalogs(
+                    catalog_type,
+                    _json_loads(existing.catalog_json),
+                    catalog,
+                )
+                # A regrouped catalog falls through and replaces the stored copy.
+                if match != "regrouped":
+                    return match
             values = {
                 "connector_id": connector_id,
                 "runtime": str(identity.runtime_type),

@@ -143,7 +143,8 @@ test('catalogs omit defaults, distinguish provider routes before filtering and t
     assert.ok(catalog.models.every(item => !('default' in item) && item.reasoningItems.every(effort => !('default' in effort))))
     assert.ok(runtime.catalogs.permissions().permissions.every(item => !('default' in item)))
     const modes = await runtime.catalogs.agentPresets()
-    assert.equal(modes.configField.default, 'standard')
+    assert.equal(modes.configField.default, f.ctx.agentPresets.defaultId, 'an unsaved AA Runtime follows the DSH default mode')
+    assert.equal(modes.configField.default, 'minimal')
     assert.ok(modes.presets.every(item => !('isDefault' in item) && !('path' in item)))
     const router = new RuntimeRouter({ native: runtime, query: f.ctx.sessionQuery, status: id => runtime.status(id) }, 'test')
     const filtered = await router.request('listModels', { query: 'other', limit: 1 }, signal()) as typeof catalog

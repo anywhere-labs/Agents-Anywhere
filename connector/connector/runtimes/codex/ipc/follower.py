@@ -77,6 +77,7 @@ class ThreadFollower:
     _listeners: list[FollowerListener] = field(default_factory=list, init=False)
     _unsubscribe: list[Callable[[], None]] = field(default_factory=list, init=False)
     _locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False)
+    _change_events: dict[str, asyncio.Event] = field(default_factory=dict, init=False)
     _attached: bool = field(default=False, init=False)
 
     # -- lifecycle -----------------------------------------------------------
@@ -195,8 +196,38 @@ class ThreadFollower:
     async def unfollow(self, thread_id: str) -> None:
         thread = self._threads.pop(thread_id, None)
         self._locks.pop(thread_id, None)
+        self._change_events.pop(thread_id, None)
         if thread is not None and thread.owner_client_id and self.client.initialized:
             await self._announce(thread_id, thread.owner_client_id, following=False)
+
+    async def wait_until_state(
+        self,
+        thread_id: str,
+        *,
+        timeout: float,
+    ) -> FollowedThread | None:
+        """Wait until a discovered owner publishes its first full snapshot."""
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        event = self._change_events.setdefault(thread_id, asyncio.Event())
+        while True:
+            thread = self._threads.get(thread_id)
+            if thread is None or thread.status != "following":
+                return None
+            if thread.state is not None:
+                return thread
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return None
+            event.clear()
+            thread = self._threads.get(thread_id)
+            if thread is not None and thread.status == "following" and thread.state is not None:
+                return thread
+            try:
+                await asyncio.wait_for(event.wait(), timeout=remaining)
+            except TimeoutError:
+                return None
 
     async def resync(self, thread_id: str) -> None:
         """Ask the owner for a fresh snapshot by re-announcing the follow."""
@@ -205,6 +236,30 @@ class ThreadFollower:
         if thread is None or thread.owner_client_id is None:
             return
         await self._announce(thread_id, thread.owner_client_id, following=True)
+
+    async def apply_thread_settings(
+        self,
+        thread_id: str,
+        thread_settings: Mapping[str, Any],
+    ) -> FollowedThread | None:
+        """Atomically expose owner-accepted settings to the next local write.
+
+        The owner confirms the settings request before its state broadcast is
+        guaranteed to arrive.  Updating the followed snapshot here prevents an
+        immediately following turn from being constructed with stale values;
+        the next owner snapshot remains authoritative and will replace it.
+        """
+
+        lock = self._locks.setdefault(thread_id, asyncio.Lock())
+        async with lock:
+            thread = self._threads.get(thread_id)
+            if thread is None or thread.state is None:
+                return thread
+            state = dict(thread.state)
+            state["latestThreadSettings"] = dict(thread_settings)
+            updated = replace(thread, state=state, updated_at=time.time())
+            self._threads[thread_id] = updated
+            return updated
 
     async def refollow_all(self) -> None:
         for thread_id in list(self._threads):
@@ -389,6 +444,7 @@ class ThreadFollower:
             self._threads[thread_id] = thread
             return thread
         self._threads[thread_id] = thread
+        self._change_events.setdefault(thread_id, asyncio.Event()).set()
         event = FollowerEvent(
             kind=kind,
             thread=thread,

@@ -8,6 +8,8 @@ verified live (see ``docs/codex-ipc-takeover.md`` §3.5).
 
 from __future__ import annotations
 
+import asyncio
+import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -19,6 +21,7 @@ from connector.runtime_protocol import (
     RuntimeInvalidRequestError,
     RuntimeOperationResult,
     RuntimeSessionStateCache,
+    SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain.approvals import (
@@ -38,10 +41,12 @@ from connector.runtimes.codex.domain.pending_messages import (
     PendingClientMessageRegistry,
 )
 from connector.runtimes.codex.domain.selections import (
+    PERMISSION_PROFILE_IDS,
     ModelCatalogReader,
     PermissionCatalogReader,
     model_settings_from_selection,
     permission_settings_from_selection,
+    thread_settings_update,
 )
 from connector.runtimes.codex.ipc.client import (
     CodexIpcClient,
@@ -53,11 +58,25 @@ from connector.runtimes.codex.ipc.follower import (
     FollowedThread,
     ThreadFollower,
 )
-from connector.runtimes.codex.ipc.timeline import active_turn_id
+from connector.runtimes.codex.ipc.timeline import (
+    active_turn_id,
+    turn_entities_in_order,
+)
 from connector.runtimes.codex.sdk.runtime_client import CodexTurnInputAttachment
 from connector.runtimes.codex.turns.attachments import materialize_codex_attachments
 
 DEFAULT_REQUEST_TIMEOUT_MS = 30_000
+# The App answers thread-follower-start-turn with "...-timeout" when its own
+# turn start takes longer than ~5 s, although the turn does start; its state
+# stream then shows the new turn.
+START_TURN_CONFIRM_TIMEOUT = 20.0
+UNKNOWN_OUTCOME_ERRORS = frozenset(
+    {"timeout", "request-timeout", "client-disconnected", "server-closed", "connection-closed"}
+)
+UNKNOWN_OUTCOME_MESSAGE = (
+    "Codex App 没有在时限内确认这次发送，消息可能已经开始执行。"
+    "AA 不会自动重发；请在会话里确认结果后再决定是否重试。"
+)
 IPC_SOURCE = "codex.ipc"
 
 _APPROVAL_METHODS: dict[str, str] = {
@@ -97,8 +116,18 @@ def turn_start_request(
 ) -> dict[str, Any]:
     """Mirror the owner's current settings into a ``turn/start`` request."""
 
+    # latestThreadSettings carries a permission change a follower just applied;
+    # currentPermissions lags until the next turn runs, and the turn would run
+    # with (and reinstate) the old permissions, so it only fills missing keys.
+    settings = state.get("latestThreadSettings")
+    settings = settings if isinstance(settings, Mapping) else {}
     permissions = state.get("currentPermissions")
     permissions = permissions if isinstance(permissions, Mapping) else {}
+
+    def permission(key: str) -> Any:
+        value = settings.get(key)
+        return permissions.get(key) if value is None else value
+
     collaboration = state.get("latestCollaborationMode")
     return {
         "threadId": thread_id,
@@ -112,9 +141,9 @@ def turn_start_request(
         "multiAgentMode": "explicitRequestOnly",
         "serviceTier": None,
         "collaborationMode": collaboration if isinstance(collaboration, Mapping) else None,
-        "approvalPolicy": permissions.get("approvalPolicy"),
-        "approvalsReviewer": permissions.get("approvalsReviewer"),
-        "sandboxPolicy": permissions.get("sandboxPolicy"),
+        "approvalPolicy": permission("approvalPolicy"),
+        "approvalsReviewer": permission("approvalsReviewer"),
+        "sandboxPolicy": permission("sandboxPolicy"),
         "permissions": None,
         "runtimeWorkspaceRoots": None,
         "summary": "none",
@@ -197,7 +226,11 @@ class CodexIpcTurnController:
             session_id=session_id,
             external_session_id=thread.thread_id,
             status="waiting",
-            metadata={"attachment": "ipc", "source": f"{IPC_SOURCE}.turn/start.requested"},
+            metadata={
+                "attachment": "ipc",
+                "source": f"{IPC_SOURCE}.turn/start.requested",
+                "pendingSelectionScopes": [],
+            },
         )
         params = {
             "conversationId": thread.thread_id,
@@ -212,8 +245,27 @@ class CodexIpcTurnController:
                 "context": {"inheritThreadSettings": True},
             },
         }
+        known_turns = {key for key, _ in turn_entities_in_order(thread.state or {})}
         response = await self._send(thread, "thread-follower-start-turn", params)
-        if response is None or not response.ok:
+        if response is not None and response.ok:
+            turn = _turn_from_result(response.result)
+            turn_id = turn.get("id") if isinstance(turn, Mapping) else None
+        elif _outcome_unknown(response):
+            turn, turn_id = {}, await self._new_turn(thread.thread_id, known_turns)
+            logger.info(
+                "codex ipc start-turn outcome thread={} error={} confirmed={}",
+                thread.thread_id,
+                response.error if response is not None else "no-response",
+                turn_id is not None,
+            )
+            if turn_id is None:
+                return RuntimeOperationResult(
+                    ok=False,
+                    code="codex_ipc_start_turn_outcome_unknown",
+                    message=UNKNOWN_OUTCOME_MESSAGE,
+                    result={"externalSessionId": thread.thread_id, "transport": "ipc"},
+                )
+        else:
             return await self._failed(
                 session_id,
                 thread,
@@ -221,8 +273,6 @@ class CodexIpcTurnController:
                 response,
                 result={"externalSessionId": thread.thread_id},
             )
-        turn = _turn_from_result(response.result)
-        turn_id = turn.get("id") if isinstance(turn, Mapping) else None
         if isinstance(turn_id, str) and turn_id:
             self.active_turn_ids[session_id] = turn_id
         await self.session_states.update(
@@ -353,10 +403,15 @@ class CodexIpcTurnController:
     ) -> RuntimeOperationResult:
         """Push model / permission selections to the owner window.
 
-        The owner applies them to its thread settings for the next turn
-        (``thread-follower-update-thread-settings``); the resulting
-        ``latestThreadSettings`` patch flows back through the follower and
-        updates our cached selections.
+        The owner applies them to its thread at once
+        (``thread-follower-update-thread-settings`` → ``thread/settings/update``);
+        the resulting ``latestThreadSettings`` patch flows back through the
+        follower and updates our cached selections.
+
+        Only the changed fields go to the owner, the permission by profile
+        name, as Codex Desktop sends them. Resending the owner's own
+        ``sandboxPolicy`` would clear the thread's ``activePermissionProfile``
+        and the window would show the wrong permission mode.
         """
 
         if self.read_model_catalog is None or self.read_permission_catalog is None:
@@ -388,11 +443,17 @@ class CodexIpcTurnController:
             approvals_reviewer=permission.approvals_reviewer,
             sandbox=permission.sandbox,
         )
+        # A permission change also reaches the running turn's reviewer.
+        turn_id = (
+            self.active_turn_ids.get(session_id) or active_turn_id(thread.state or {})
+            if "permission" in selections
+            else None
+        )
         params = {
             "conversationId": thread.thread_id,
-            "threadSettings": thread_settings,
+            "threadSettings": thread_settings_update(model, permission),
             "condition": None,
-            "activeTurnId": None,
+            "activeTurnId": turn_id,
         }
         response = await self._send(thread, "thread-follower-update-thread-settings", params)
         if response is None or not response.ok:
@@ -405,15 +466,26 @@ class CodexIpcTurnController:
         result = response.result if isinstance(response.result, Mapping) else {}
         applied = bool(result.get("applied", True))
         cached = self.session_states.get(session_id)
+        updated_state = cached
         if applied:
-            await self.session_states.update(
+            apply_thread_settings = getattr(
+                self.follower,
+                "apply_thread_settings",
+                None,
+            )
+            if callable(apply_thread_settings):
+                await apply_thread_settings(thread.thread_id, thread_settings)
+            updated_state = await self.session_states.update(
                 session_id=session_id,
                 external_session_id=thread.thread_id,
                 status=cached.status if cached is not None else "idle",
-                selections={
-                    scope: value for scope, value in selections.items() if value is not None
+                selections=dict(selections),
+                metadata={
+                    "attachment": "ipc",
+                    "source": f"{IPC_SOURCE}.selections/updated",
+                    "selection_effect": "applied",
+                    "pendingSelectionScopes": [],
                 },
-                metadata={"attachment": "ipc", "source": f"{IPC_SOURCE}.selections/updated"},
             )
         return RuntimeOperationResult(
             ok=applied,
@@ -424,6 +496,11 @@ class CodexIpcTurnController:
                 "selections": dict(selections),
                 "applied": applied,
                 "transport": "ipc",
+                **(
+                    {"state": _session_state_payload(updated_state)}
+                    if applied and updated_state is not None
+                    else {}
+                ),
             },
         )
 
@@ -445,6 +522,22 @@ class CodexIpcTurnController:
         """
 
         notice = self.notices.get(notice_id)
+        if notice is not None and notice.status in {
+            "closed",
+            "resolved",
+            "cancelled",
+            "expired",
+        }:
+            return RuntimeOperationResult(
+                ok=True,
+                result={
+                    "resolved": True,
+                    "alreadyProcessed": True,
+                    "noticeId": notice_id,
+                    "sessionId": session_id,
+                    "transport": "ipc",
+                },
+            )
         context: dict[str, Any] = dict(notice.context) if notice is not None else {}
         data = dict(input_data or {})
         request_id = data.get("requestId")
@@ -452,6 +545,8 @@ class CodexIpcTurnController:
             source = context.get("approvalSource")
             if isinstance(source, Mapping):
                 request_id = source.get("requestId")
+        if not isinstance(request_id, str | int):
+            request_id = context.get("requestId")
         if not isinstance(request_id, str | int):
             raise TypeError("requestId is required to respond to a Codex interaction")
         if is_input_request_context(context):
@@ -533,6 +628,21 @@ class CodexIpcTurnController:
         )
 
     # -- helpers -------------------------------------------------------------
+
+    async def _new_turn(self, thread_id: str, known_turns: set[str]) -> str | None:
+        """Wait until the owner's state shows a turn started after ``known_turns``."""
+
+        deadline = time.monotonic() + START_TURN_CONFIRM_TIMEOUT
+        while time.monotonic() < deadline:
+            followed = self.follower.get(thread_id)
+            for key, entity in turn_entities_in_order(
+                (followed.state if followed is not None else None) or {}
+            ):
+                turn_id = entity.get("turnId")
+                if key not in known_turns and isinstance(turn_id, str) and turn_id:
+                    return turn_id
+            await asyncio.sleep(0.2)
+        return None
 
     async def _send(
         self,
@@ -641,13 +751,6 @@ class CodexIpcTurnController:
             await self.host.notice_upsert(updated)
 
 
-PERMISSION_PROFILE_IDS = {
-    "read-only": ":read-only",
-    "workspace-write": ":workspace",
-    "danger-full-access": ":danger-full-access",
-}
-
-
 def permission_block(
     sandbox: str,
     roots: list[str],
@@ -746,10 +849,15 @@ def thread_settings_with_overrides(
                     "settings": {**inner, "reasoning_effort": effort},
                 }
     if sandbox is not None:
+        # Switching back to workspace write keeps the App's own writable roots,
+        # as the App does, instead of deriving them from the cwd.
+        existing = _writable_roots(settings.get("sandboxPolicy")) or _writable_roots(
+            permissions.get("sandboxPolicy")
+        )
         settings.update(
             permission_block(
                 sandbox,
-                workspace_roots(state),
+                existing if existing is not None else workspace_roots(state),
                 approval_policy=approval_policy,
                 approvals_reviewer=approvals_reviewer,
             )
@@ -775,7 +883,40 @@ def _turn_from_result(result: Any) -> Mapping[str, Any] | None:
         return inner["turn"]
     if isinstance(result.get("turn"), Mapping):
         return result["turn"]
+
+
+def _session_state_payload(state: SessionState) -> dict[str, Any]:
+    return {
+        "sessionId": state.session_id,
+        "runtime": state.runtime,
+        **({"runtimeId": state.runtime_id} if state.runtime_id is not None else {}),
+        "externalSessionId": state.external_session_id,
+        "status": state.status,
+        "selections": dict(state.selections),
+        "statusReason": state.status_reason,
+        "error": dict(state.error) if state.error is not None else None,
+        "metadata": dict(state.metadata),
+    }
+
+
+def _writable_roots(policy: Any) -> list[str] | None:
+    if not isinstance(policy, Mapping) or policy.get("type") != "workspaceWrite":
+        return None
+    roots = policy.get("writableRoots")
+    if isinstance(roots, list) and roots and all(isinstance(root, str) for root in roots):
+        return list(roots)
+    # An empty list is not a useful policy: the App's workspace-write view
+    # iterates writableRoots, so fall back to the workspace roots instead.
     return None
+
+
+def _outcome_unknown(response: IpcResponse | None) -> bool:
+    """Whether the owner may have run the request although no success came back."""
+
+    if response is None:
+        return True
+    error = response.error or ""
+    return error in UNKNOWN_OUTCOME_ERRORS or error.endswith("-timeout")
 
 
 def _error_code(response: IpcResponse | None) -> str:

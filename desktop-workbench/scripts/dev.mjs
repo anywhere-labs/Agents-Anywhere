@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import http from "node:http";
+import { createRequire } from "node:module";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,14 +47,16 @@ if (!explicitWebUrl) {
 try {
   await waitForUrl(devUrl);
   await uvBundle;
-  const electronProcess = spawn(path.join(root, "node_modules", ".bin", process.platform === "win32" ? "electron.cmd" : "electron"), ["."], {
+  // What electron.cmd does, minus cmd.exe: a shell would split a project path
+  // that contains a space.
+  const electronCli = createRequire(import.meta.url).resolve("electron/cli.js");
+  const electronProcess = spawn(process.execPath, [electronCli, "."], {
     cwd: root,
     stdio: "inherit",
     env: {
       ...process.env,
       WORKBENCH_WEB_URL: devUrl,
     },
-    shell: usesShell,
   });
 
   const shutdown = () => {

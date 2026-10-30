@@ -1,0 +1,113 @@
+{
+  "$defs": {
+    "configuration": {
+      "properties": {
+        "options": {
+          "items": {
+            "anyOf": [
+              {
+                "required": [
+                  "configId"
+                ]
+              },
+              {
+                "required": [
+                  "id"
+                ]
+              }
+            ],
+            "properties": {
+              "configId": {
+                "type": "string"
+              },
+              "currentValue": {
+                "type": [
+                  "string",
+                  "boolean"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "options": {
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "select",
+                  "boolean"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "name",
+              "currentValue"
+            ],
+            "type": "object"
+          },
+          "maxItems": 128,
+          "type": "array"
+        },
+        "revision": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "revision",
+        "options"
+      ],
+      "type": "object"
+    },
+    "formResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "form"
+        },
+        "values": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "kind",
+        "values"
+      ],
+      "type": "object"
+    },
+    "sourceReplacement": {
+      "additionalProperties": false,
+      "properties": {
+        "complete": {
+          "const": true
+        },
+        "epoch": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "sourceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "sourceId",
+        "epoch",
+        "complete",
+        "items"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:acp-runtime:1.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

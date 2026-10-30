@@ -101,8 +101,21 @@ class ConnectorIngestService:
                     connector_id,
                     notification,
                 )
-            except NotificationValidationError:
-                raise
+            except NotificationValidationError as exc:
+                # Preserve the single-notification 400 response, but do not
+                # let an invalid timeline order discard unrelated batched work.
+                if exc.code != "invalid_order_seq" or len(payload.notifications) == 1:
+                    raise
+                rejected.append(
+                    ConnectorIngestRejectedNotification(
+                        index=index,
+                        method=notification.method,
+                        code=exc.code,
+                        message=exc.message[:INGEST_REJECTION_MESSAGE_MAX_LENGTH],
+                        errorType=type(exc).__name__,
+                    )
+                )
+                continue
             except Exception as exc:  # noqa: BLE001
                 rejected.append(
                     ingest_rejection_from_exception(

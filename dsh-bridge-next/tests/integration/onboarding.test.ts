@@ -56,6 +56,8 @@ class FakeConnector implements ConnectorProcess {
   startError: Error | null = null
   async start() { if (this.startError) throw this.startError; this.running = true; this.starts++ }
   async stop() { this.running = false; this.stops++ }
+  environmentResets = 0
+  async resetEnvironment() { await this.stop(); this.environmentResets++ }
   async assertHealthy() { if (!this.running) throw new Error('not running') }
   async resolveLogsPath() { return this.logsPath }
 }
@@ -108,6 +110,47 @@ async function until(check: () => Promise<boolean>) {
   for (let count = 0; count < 200; count++) { if (await check()) return; await delay(10) }
   assert.fail('expected state did not arrive')
 }
+
+test('connection failure diagnostics survive cleanup and clear after a successful retry', async () => {
+  const h = await fixture()
+  h.api.online = true
+  h.connector.startError = Object.assign(new Error('PRIVATE_TOKEN'), { code: 'CONNECTOR_SYNC_STATE_INVALID' })
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'error')
+    const failure = h.manager.startupDiagnostic()
+    assert.equal(failure?.event, 'connector.start_failed')
+    assert.match(failure!.details, /CONNECTOR_SYNC_STATE_INVALID/)
+    assert.match(failure!.message, /移走该文件/, 'the snapshot says how to recover')
+    assert.doesNotMatch(JSON.stringify(failure), /PRIVATE_TOKEN/)
+    await h.manager.controlConnector('stop')
+    assert.deepEqual(h.manager.startupDiagnostic(), failure)
+    // Errors before the connection phase are answered by their own call and keep the snapshot.
+    h.failHealthCheck()
+    await assert.rejects(h.manager.begin(), /无法连接服务器/)
+    assert.deepEqual(h.manager.startupDiagnostic(), failure)
+    h.connector.startError = null
+    await h.manager.controlConnector('start')
+    assert.equal(h.manager.startupDiagnostic(), null)
+  } finally { await h.close() }
+})
+
+test('a Connector failure while recreating a deleted device is kept in startup diagnostics', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    assert.equal(h.manager.startupDiagnostic(), null)
+    h.api.deleted = true
+    h.connector.expire()
+    await until(async () => (await h.manager.inspect()).deviceRecovery?.status === 'deleted')
+    h.connector.startError = Object.assign(new Error('PRIVATE_TOKEN'), { code: 'CONNECTOR_SYNC_STATE_INVALID' })
+    assert.equal(await h.manager.recoverDevice('recreate'), null)
+    assert.equal((await h.manager.inspect()).deviceRecovery?.status, 'unavailable')
+    assert.match(h.manager.startupDiagnostic()?.details ?? '', /CONNECTOR_SYNC_STATE_INVALID/)
+  } finally { await h.close() }
+})
 
 test('Connector controls preserve identity and startup restores the connection despite retired settings', async () => {
   const h = await fixture()
@@ -214,6 +257,38 @@ test('reset preserves credentials on failed revoke and explicit local reset remo
   } finally { await h.close() }
 })
 
+test('reinstalling dependencies keeps the account and device, then starts the Connector again', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    const account = await readJson(join(h.root, 'account.json'))
+    await h.manager.resetConnectorEnvironment()
+    assert.equal(h.connector.environmentResets, 1)
+    assert.equal(h.connector.starts, 2)
+    assert.equal(h.connector.running, true)
+    const snapshot = await h.manager.inspect()
+    assert.equal(snapshot.stage, 'ready')
+    assert.equal(snapshot.connectorId, 'conn_test')
+    assert.deepEqual(await readJson(join(h.root, 'account.json')), account)
+    assert.equal(h.api.registrations, 1)
+    assert.equal(h.api.renewals, 0)
+  } finally { await h.close() }
+})
+
+test('reinstalling dependencies before sign-in only clears them', async () => {
+  const h = await fixture()
+  try {
+    await h.manager.resetConnectorEnvironment()
+    assert.equal(h.connector.environmentResets, 1)
+    assert.equal(h.connector.starts, 0)
+    const snapshot = await h.manager.inspect()
+    assert.equal(snapshot.stage, 'idle')
+    assert.match(snapshot.message, /下次连接时会重新安装/)
+  } finally { await h.close() }
+})
+
 test('installed Desktop blocks every new standalone management and phone endpoint', async () => {
   const h = await fixture()
   try {
@@ -221,7 +296,7 @@ test('installed Desktop blocks every new standalone management and phone endpoin
     for (const action of [
       () => h.manager.controlConnector('start'), () => h.manager.controlConnector('stop'),
       () => h.manager.saveConnectorSettings(DEFAULT_CONNECTOR_SETTINGS), () => h.manager.openConnectorFolder('data'),
-      () => h.manager.resetConnector(true), () => h.manager.createMobileLogin(),
+      () => h.manager.resetConnector(true), () => h.manager.resetConnectorEnvironment(), () => h.manager.createMobileLogin(),
       () => h.manager.inspectMobileLogin('qr'), () => h.manager.confirmMobileLogin('qr', true),
     ]) await assert.rejects(action, /managed by Desktop/)
     assert.equal(h.connector.starts, 0)

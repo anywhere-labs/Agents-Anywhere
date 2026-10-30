@@ -3,7 +3,7 @@ import test from 'node:test'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { LocalRouter, Mesh, MeshCallError, Router, mutates, query, service, stream, z } from 'meshcall'
@@ -41,12 +41,13 @@ const stateSchema = z.looseObject({
 })
 const eventSchema = z.looseObject({ seq: z.int(), kind: z.enum(['state', 'pairing']) })
 type ConnectorState = { status: 'running' | 'expired credential' | 'error' | 'stopped', running: boolean, pairing: boolean,
-  authFailed: boolean, lastError: null, configPath: string, runtimePath: string, hasConfig: boolean }
+  authFailed: boolean, lastError: string | null, configPath: string, runtimePath: string, hasConfig: boolean }
 
 /** The state machine behind the fake Control service, driven by the test's mode. */
 class FakeControlBackend {
   running = false
   authFailed = false
+  lastError: string | null = null
   private sequence = 0
   private readonly history: { seq: number, kind: 'state', state: ConnectorState }[] = []
   private readonly waiters = new Set<() => void>()
@@ -54,7 +55,7 @@ class FakeControlBackend {
 
   snapshot(): ConnectorState {
     return { status: this.authFailed ? 'expired credential' : this.running ? 'running' : 'stopped',
-      running: this.running, pairing: false, authFailed: this.authFailed, lastError: null,
+      running: this.running, pairing: false, authFailed: this.authFailed, lastError: this.lastError,
       configPath: '/fixture/connector.json', runtimePath: '/fixture/runtime.json', hasConfig: true }
   }
 
@@ -66,7 +67,10 @@ class FakeControlBackend {
 
   startClock(): void {
     // The plugin subscribes to `events` after `start` returns; emit later so it sees the change.
-    if (this.mode === 'auth-failed') setTimeout(() => { this.running = false; this.authFailed = true; this.emit() }, 100)
+    // Like the Python controller, a credential failure also records lastError.
+    if (this.mode === 'auth-failed') setTimeout(() => {
+      this.running = false; this.authFailed = true; this.lastError = 'invalid connector credential'; this.emit()
+    }, 100)
   }
 
   async *events(since?: number | null): AsyncIterable<{ seq: number, kind: 'state', state: ConnectorState }> {
@@ -99,6 +103,10 @@ class FakeControl {
       throw new MeshCallError('connector_already_running', 'Connector conflict', { details: { reason: 'connector_already_running' } })
     }
     this.backend.running = true
+    if (this.backend.mode === 'invalid-state') {
+      this.backend.running = false
+      this.backend.lastError = 'invalid connector sync state file: /fixture/PRIVATE-DEVICE-TOKEN.sqlite3'
+    }
     this.backend.emit()
     this.backend.startClock()
     return this.backend.snapshot()
@@ -168,11 +176,13 @@ async function fixture(mode = 'normal', settings: ConnectorSettings = DEFAULT_CO
     assert.doesNotMatch(JSON.stringify(args), /PRIVATE-DEVICE-TOKEN/)
     assert.equal(options.env?.UV_PROJECT_ENVIRONMENT, join(root, 'data', 'connector-venv'))
     assert.equal(options.env?.DSH_HOME, join(root, 'dsh-home'))
-    const expectedIndex = settings.uvPypiIndexUrl || 'https://pypi.org/simple'
+    const mirror = settings.uvPypiIndexUrl
     assert.equal(options.env?.UV_PYTHON_INSTALL_MIRROR, settings.uvPythonInstallMirror || 'https://github.com/astral-sh/python-build-standalone/releases/download')
-    assert.equal(options.env?.UV_DEFAULT_INDEX, expectedIndex)
-    assert.equal(options.env?.UV_INDEX_URL, expectedIndex)
-    assert.equal(options.env?.PIP_INDEX_URL, expectedIndex)
+    // The mirror comes first and PyPI is the fallback for packages it lacks.
+    assert.equal(options.env?.UV_DEFAULT_INDEX, 'https://pypi.org/simple')
+    assert.equal(options.env?.UV_INDEX_URL, 'https://pypi.org/simple')
+    assert.equal(options.env?.UV_INDEX, mirror || undefined)
+    assert.equal(options.env?.PIP_INDEX_URL, mirror || 'https://pypi.org/simple')
     assert.equal(options.env?.UV_HTTP_TIMEOUT, process.env['UV_HTTP_TIMEOUT'] || '60')
     child = spawn(command, [script, mode, JSON.stringify(endpoint.rendezvous), key], options)
     child.once('spawn', didSpawn)
@@ -205,6 +215,41 @@ test('source Connector uses the MeshCall Control service and a private config, t
     // A start that reached the Connector downloaded nothing partially, so it owes no reclamation.
     assert.deepEqual(h.pruned, [])
     await assert.rejects(h.connector.assertHealthy())
+  } finally { await h.close() }
+})
+
+test('resetting the environment stops the child and drops only the venv and the project copy', async () => {
+  const h = await fixture()
+  try {
+    await h.connector.start(binding, 'https://api.example.test', new AbortController().signal)
+    const data = join(h.root, 'data')
+    await mkdir(join(data, 'connector-venv'), { recursive: true })
+    await writeFile(join(data, 'connector-venv', 'pyvenv.cfg'), '')
+    const firstProject = (await readdir(join(data, 'connector-source')))[0]
+    await h.connector.resetEnvironment()
+    assert.equal(h.connector.running, false)
+    assert.equal(h.child?.exitCode, 0)
+    assert.equal(existsSync(join(data, 'connector-venv')), false)
+    assert.equal(existsSync(join(data, 'connector-source')), false)
+    assert.equal(existsSync(join(data, 'connector', 'connector.json')), true, 'credentials stay')
+    // The shared uv cache keeps finished downloads; only dangling entries go.
+    assert.deepEqual(h.pruned, [process.execPath])
+    // The next start materializes the project again instead of reusing the deleted path.
+    await h.connector.start(binding, 'https://api.example.test', new AbortController().signal)
+    assert.deepEqual(await readdir(join(data, 'connector-source')), [firstProject])
+  } finally { await h.close() }
+})
+
+test('runtime state failure retains a reason and redacted diagnostics before the process is stopped', async () => {
+  const h = await fixture('invalid-state')
+  try {
+    await h.connector.start(binding, 'https://api.example.test', new AbortController().signal)
+    await assert.rejects(h.connector.assertHealthy(), { code: 'CONNECTOR_SYNC_STATE_INVALID' })
+    assert.match(h.connector.lastError!, /同步状态文件无效/)
+    await h.connector.stop()
+    const logs = await readFile(join(h.root, 'data', 'logs', 'connector-output.json'), 'utf8')
+    assert.match(logs, /invalid connector sync state file/)
+    assert.doesNotMatch(logs, /PRIVATE-DEVICE-TOKEN/)
   } finally { await h.close() }
 })
 
@@ -267,6 +312,7 @@ test('auth failure is delivered over the unsolicited Control events stream while
     assert.equal(h.child?.exitCode, null)
     assert.equal(h.connector.running, false)
     await assert.rejects(h.connector.assertHealthy(), /本机设备连接已失效/)
+    assert.equal(h.connector.lastError, null, 'a credential failure is not reported as a runtime failure')
   } finally { detach(); await h.close() }
 })
 

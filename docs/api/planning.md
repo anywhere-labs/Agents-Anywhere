@@ -71,4 +71,4 @@ DSH 必须组合原生 Plan 插件；缺少服务的旧 composition 返回明确
 
 终稿按原生完整正文替换草稿，不 trim 或转换换行；SHA-256 基于严格 UTF-8 字节，最多 2 MiB。原生 thread/call/request 引用留在 Connector。SQLite outbox 在传输失败后保留每个版本；Server 的不可变正文不受 Connector 离线、重启或原生文件清理影响。重启后历史不制造新的待答交互，必须向当前原生状态重新校准。
 
-Server 新增数据库迁移 `v2_45`，保存当前投影、不可变文档、操作回执与创建身份。本次未修改产品版本；启用该功能应配套使用本次 Server、Connector 与客户端代码，DSH 同时更新 Bridge 并组合原生 Plan 插件。缺少有效能力的端只保留既有功能，不会假装开启 Plan。
+Server 新增数据库迁移 `v2_46`，保存当前投影、不可变文档、操作回执与创建身份。本次未修改产品版本；启用该功能应配套使用本次 Server、Connector 与客户端代码，DSH 同时更新 Bridge 并组合原生 Plan 插件。缺少有效能力的端只保留既有功能，不会假装开启 Plan。

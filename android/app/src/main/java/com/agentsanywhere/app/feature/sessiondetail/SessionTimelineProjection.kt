@@ -33,6 +33,9 @@ internal fun mergeRemoteTimelineItems(
     replace: Boolean,
 ): TimelineProjection {
     val latestIncoming = latestTimelineItemsById(incoming)
+    if (!replace && latestIncoming.size == 1) {
+        mergeStreamedMessage(currentOrdering, currentMessages, latestIncoming.single())?.let { return it }
+    }
     val normalizedIncoming = normalizeTimelineOrderingItems(currentOrdering, latestIncoming)
     val orderingItems = if (replace) {
         normalizedIncoming
@@ -57,6 +60,40 @@ internal fun mergeRemoteTimelineItems(
         mergeTimelineMessages(currentMessages, incomingMessages, orderingItems)
     }
     return TimelineProjection(orderingItems, messages)
+}
+
+/** Replace a stable assistant row without regrouping and sorting the history. */
+private fun mergeStreamedMessage(
+    ordering: List<TimelineOrderingItem>,
+    messages: List<TimelineMessage>,
+    item: RemoteTimelineItem,
+): TimelineProjection? {
+    if (item.type != "message" || item.role != "assistant") return null
+    // Streamed rows are normally at the end. Lists stay immutable for Compose.
+    val rowIndex = messages.indexOfLast { it.sourceItemId == item.id }
+    val orderIndex = ordering.indexOfLast { it.id == item.id }
+    if (rowIndex < 0 || orderIndex < 0) return null
+    val old = messages[rowIndex]
+    val oldOrder = ordering[orderIndex]
+    if (old.type != "message" || old.author != MessageAuthor.Agent || old.id != item.id || old.optimistic) return null
+    if (old.revision != oldOrder.revision || old.updatedSeq != oldOrder.updatedSeq) return null
+    if (item.revision <= old.revision && item.updatedSeq < old.updatedSeq) return TimelineProjection(ordering, messages)
+    val orderSeq = item.orderSeq.takeIf { it > 0 } ?: oldOrder.orderSeq
+    if (orderSeq != oldOrder.orderSeq || orderSeq != old.orderSeq) return null
+    // Equal-order neighbours need the full updatedSeq/id tie breaker.
+    if (messages.getOrNull(rowIndex - 1)?.orderSeq == orderSeq || messages.getOrNull(rowIndex + 1)?.orderSeq == orderSeq) return null
+    val next = item.toMessageOrNull()?.copy(orderSeq = orderSeq) ?: return null
+    if (next.sourceRuntime != old.sourceRuntime || next.sourceItemType != old.sourceItemType ||
+        next.sourceReplacedBy != old.sourceReplacedBy
+    ) return null
+    if (next.sourceRuntime == "dsh" && (next.status != old.status ||
+        (next.status == "done" && (next.contentHash != old.contentHash || (next.revision > 1) != (old.revision > 1))))
+    ) return null
+    val nextMessages = messages.toMutableList()
+    nextMessages[rowIndex] = next.inheritLocalAttachmentPreviews(listOf(old))
+    val nextOrdering = ordering.toMutableList()
+    nextOrdering[orderIndex] = oldOrder.copy(revision = item.revision, updatedSeq = item.updatedSeq)
+    return TimelineProjection(nextOrdering, nextMessages)
 }
 
 private fun latestTimelineItemsById(incoming: List<RemoteTimelineItem>): List<RemoteTimelineItem> {
@@ -661,26 +698,23 @@ private fun reconcileDshAssistantActivity(messages: List<TimelineMessage>): List
             ?.let { message.sourceItemId }
     }
 
-    messages.forEachIndexed { finalIndex, finalMessage ->
-        if (!finalMessage.isCompletedDshAssistantMessage()) return@forEachIndexed
-
-        for (candidateIndex in finalIndex - 1 downTo 0) {
-            val candidate = messages[candidateIndex]
-            if (candidate.type == "message" && candidate.author == MessageAuthor.User) break
-            if (!candidate.isCompletedDshAssistantMessage()) continue
-            if (candidate.contentHash.isBlank() || candidate.contentHash != finalMessage.contentHash) continue
-
-            val nativeReplacement = candidate.sourceItemType == "assistant_activity" &&
-                finalMessage.sourceItemType == "message"
-            val legacyReplacement = candidate.sourceItemType == null &&
-                finalMessage.sourceItemType == null &&
-                candidate.revision > 1 &&
-                finalMessage.revision == 1
-            if (!nativeReplacement && !legacyReplacement) continue
-
-            supersededSourceIds += candidate.sourceItemId
-            break
+    val nativeByHash = mutableMapOf<String, String>()
+    val legacyByHash = mutableMapOf<String, String>()
+    messages.forEach { message ->
+        if (message.type == "message" && message.author == MessageAuthor.User) {
+            nativeByHash.clear()
+            legacyByHash.clear()
+            return@forEach
         }
+        if (!message.isCompletedDshAssistantMessage() || message.contentHash.isBlank()) return@forEach
+        val candidate = when {
+            message.sourceItemType == "message" -> nativeByHash[message.contentHash]
+            message.sourceItemType == null && message.revision == 1 -> legacyByHash[message.contentHash]
+            else -> null
+        }
+        if (candidate != null) supersededSourceIds += candidate
+        if (message.sourceItemType == "assistant_activity") nativeByHash[message.contentHash] = message.sourceItemId
+        if (message.sourceItemType == null && message.revision > 1) legacyByHash[message.contentHash] = message.sourceItemId
     }
 
     return if (supersededSourceIds.isEmpty()) {

@@ -2,7 +2,7 @@
 
 > 状态：设计已在本分支落地，2026-10-30。实际接口见统一 Plan 文档，验证记录见第 15 节。
 > 基线：执行 `git fetch origin` 后的 `origin/main`，提交 `27b89aba79cd7e04c77c2aa91688983dbc857747`。
-> 工作分支：`feat/con+be+fe+dsk+apk+ios+dsh/unified-plan`。产品版本保持原值；新增数据库迁移 `v2_45`。
+> 工作分支：`feat/con+be+fe+dsk+apk+ios+dsh/unified-plan`。产品版本保持原值；新增数据库迁移 `v2_46`。
 
 ## 1. 目标、范围与交付边界
 
@@ -517,7 +517,7 @@ Server 测试前按开发指南把 Connector 包安装到 Server 测试环境，
 
 ## 15. 本分支实施记录
 
-统一协议、Connector 领域／应用／基础设施层、Codex／Claude／DSH 原生端口、Server 持久化 API，以及 Web／Desktop／Android／iOS 的命令、卡片、阅读器和版本绑定审阅已落地。实际接口及模块说明以[统一 Plan](../api/planning.md)和 schemas 为准；数据库迁移为 `v2_45`，产品版本保持原值。
+统一协议、Connector 领域／应用／基础设施层、Codex／Claude／DSH 原生端口、Server 持久化 API，以及 Web／Desktop／Android／iOS 的命令、卡片、阅读器和版本绑定审阅已落地。实际接口及模块说明以[统一 Plan](../api/planning.md)和 schemas 为准；数据库迁移为 `v2_46`，产品版本保持原值。
 
 原生直接演练已确认：Codex 0.163.0 的无模型模式控制；Claude Code 2.1.309／SDK 0.2.174 的无模型控制，以及原生 Write → ExitPlanMode 的补充 `plan`／`planFilePath` 回调、批准／反馈／中止行为；DSH Plan 插件 0.2.0-rc.2 的首轮规划、真实参数增量、审阅与批准后下一步退出。Claude 与 DSH 的模型输出使用本地受控提供方，原生 CLI／SDK、工具和交互服务真实运行。
 

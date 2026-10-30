@@ -15,6 +15,17 @@ export function bundledPythonExecutable(
   return platform === "win32" ? path.join(root, "python.exe") : path.join(root, "bin", "python3");
 }
 
+/**
+ * Whether uv finished installing the Connector into an environment. A failed
+ * first sync leaves pyvenv.cfg behind without the project's entry point.
+ */
+export function environmentHasConnector(environmentPath: string, platform: NodeJS.Platform = process.platform): boolean {
+  const script = platform === "win32"
+    ? path.join(environmentPath, "Scripts", "anywhere-cli.exe")
+    : path.join(environmentPath, "bin", "anywhere-cli");
+  return fs.existsSync(script);
+}
+
 /** The interpreter directory (`home`) an environment's pyvenv.cfg records; null without an environment. */
 export function environmentHome(environmentPath: string): string | null {
   let config: string;

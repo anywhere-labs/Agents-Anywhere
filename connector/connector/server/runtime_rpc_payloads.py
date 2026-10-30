@@ -19,6 +19,9 @@ from connector.runtime_protocol import (
     SessionNotice,
     SessionSourceObservation,
 )
+from connector.runtime_protocol.catalogs import (
+    model_catalog_payload as project_model_catalog,
+)
 
 
 def runtime_config_schema_payload(schema: RuntimeConfigSchema) -> dict[str, Any]:
@@ -272,49 +275,7 @@ def session_notice_payload(notice: SessionNotice) -> dict[str, Any]:
 
 
 def model_catalog_payload(catalog: RuntimeModelCatalog) -> dict[str, Any]:
-    return {
-        "runtime": catalog.runtime,
-        **({"runtimeId": catalog.runtime_id} if catalog.runtime_id is not None else {}),
-        "revision": catalog.revision,
-        "models": [
-            {
-                "id": model.id,
-                "displayName": model.title,
-                "selectionId": model.selection_id,
-                "description": model.description,
-                "default": False,
-                "reasoningItems": [
-                    {
-                        "id": reasoning.id,
-                        "displayName": reasoning.title,
-                        "selectionId": reasoning.selection_id,
-                        "description": reasoning.description,
-                        "default": False,
-                        "metadata": {
-                            **dict(reasoning.metadata),
-                            "enabled": reasoning.enabled,
-                            **(
-                                {"disabledReason": reasoning.disabled_reason}
-                                if reasoning.disabled_reason is not None
-                                else {}
-                            ),
-                        },
-                    }
-                    for reasoning in model.reasoning_items
-                ],
-                "metadata": {
-                    **dict(model.metadata),
-                    "enabled": model.enabled,
-                    **(
-                        {"disabledReason": model.disabled_reason}
-                        if model.disabled_reason is not None
-                        else {}
-                    ),
-                },
-            }
-            for model in catalog.models
-        ],
-    }
+    return project_model_catalog(catalog)
 
 
 def permission_catalog_payload(catalog: RuntimePermissionCatalog) -> dict[str, Any]:

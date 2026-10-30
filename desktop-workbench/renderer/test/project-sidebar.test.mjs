@@ -49,6 +49,29 @@ test("a new loaded session updates order before the server project aggregate cat
   assert.deepEqual(ids(sortProjectsBySessionActivity(projects.slice(0, 2), [{ projectId: "first", sortAt: time(3) }])), ["first", "updated"])
 })
 
+test("projects with running sessions ignore high-frequency sortAt churn and use ASCII id order", () => {
+  const projects = [project("proj-a", time(10)), project("proj-b", time(9)), project("older", time(8))]
+  const streams = (aSortAt, bSortAt) => [
+    { projectId: "proj-b", sortAt: bSortAt, status: "running" },
+    { projectId: "proj-a", sortAt: aSortAt, status: "running" },
+  ]
+  assert.deepEqual(ids(sortProjectsBySessionActivity(projects, streams(time(11), time(20)))), ["proj-a", "proj-b", "older"])
+  assert.deepEqual(ids(sortProjectsBySessionActivity(projects, streams(time(22), time(21)))), ["proj-a", "proj-b", "older"])
+})
+
+test("a project leaves the running top group once none of its sessions is running", () => {
+  const projects = [project("proj-a", time(10)), project("proj-b", time(9))]
+  const sessions = [
+    { projectId: "proj-a", sortAt: time(20), status: "idle" },
+    { projectId: "proj-b", sortAt: time(9), status: "running" },
+  ]
+  assert.deepEqual(ids(sortProjectsBySessionActivity(projects, sessions)), ["proj-b", "proj-a"])
+  assert.deepEqual(
+    ids(sortProjectsBySessionActivity(projects, sessions.map(({ projectId, sortAt }) => ({ projectId, sortAt })))),
+    ["proj-a", "proj-b"],
+  )
+})
+
 test("empty priority follows the existing Web manual-project exception without revealing hidden projects", () => {
   const projects = [
     project("automatic-empty", null, { manuallyCreated: false }),

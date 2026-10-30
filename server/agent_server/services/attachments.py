@@ -5,12 +5,11 @@ import hashlib
 import secrets
 from typing import Any
 
-from agent_server.infra.files import FileStorage
-from agent_server.core.models import UploadedAttachment
-from agent_server.core.auth import create_signed_token
 from agent_server.core.api_namespace import api_v2_path
+from agent_server.core.auth import create_signed_token
+from agent_server.core.models import UploadedAttachment
 from agent_server.core.utc import utc_now
-
+from agent_server.infra.files import FileStorage
 
 LOCAL_FILE_TOKEN_KIND = "local_file"
 LOCAL_FILE_TOKEN_EXPIRES_IN = 300
@@ -30,6 +29,7 @@ class AttachmentService:
         name: str,
         data: bytes,
         media_type: str | None = None,
+        file_id: str | None = None,
     ) -> dict[str, Any]:
         async with self._store.attachment_write_fence(session_id, user_id=user_id):
             return await self._persist_file_blob(
@@ -38,6 +38,7 @@ class AttachmentService:
                 name=name,
                 media_type=media_type,
                 origin="user",
+                file_id=file_id,
             )
 
     async def read_user_file(
@@ -170,8 +171,10 @@ class AttachmentService:
         source_path: str | None = None,
         media_type: str | None = None,
         origin: str,
+        file_id: str | None = None,
     ) -> dict[str, Any]:
-        file_id = f"file_{secrets.token_urlsafe(12)}"
+        file_id = file_id or f"file_{secrets.token_urlsafe(12)}"
+        self._validate_file_id(file_id)
         created_at = utc_now()
         metadata: dict[str, Any] = {
             "fileId": file_id,
