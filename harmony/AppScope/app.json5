@@ -1,0 +1,14 @@
+{
+  "app": {
+    /*
+     * Kept identical to the Android applicationId so one account, one server
+     * and one set of logs can identify the same client across platforms.
+     */
+    "bundleName": "com.agentsanywhere.app",
+    "vendor": "Agents Anywhere",
+    "versionCode": 2000000,
+    "versionName": "2.0.0",
+    "icon": "$media:layered_image",
+    "label": "$string:app_name"
+  }
+}

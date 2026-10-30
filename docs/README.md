@@ -15,6 +15,7 @@
 | Desktop 环境准备与故障恢复 | [Connector 环境](desktop-connector-environment.md) |
 | 接入无图形界面的机器 | [Connector](../connector/README.md) |
 | Android 构建 | [Android](../android/README.md) |
+| HarmonyOS 构建 | [HarmonyOS](../harmony/README.md) |
 | 架构和 API | [Server 架构](server-architecture.md)、[API](api/README.md) |
 | DSH 大历史内存 | [实现与验证](dsh-snapshot-uploads.md) |
 | DSH 慢速历史上传 | [实现与验证](dsh-slow-upload.md)、[2.1.0 发布说明](releases/2.1.0.md) |
