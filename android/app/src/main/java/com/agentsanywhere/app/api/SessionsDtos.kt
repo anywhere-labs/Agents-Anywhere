@@ -262,7 +262,7 @@ data class RemoteDownloadedAttachment(
     val name: String,
     val size: Long,
     val sha256: String,
-    val bytes: ByteArray,
+    val file: java.io.File,
     val createdAt: String?,
     val serverTime: String?,
 )

@@ -531,8 +531,24 @@
     <string name="session_attachment_camera">相机</string>
     <string name="session_attachment_photos">照片</string>
     <string name="session_attachment_file">文件</string>
+    <string name="session_attachment_video">视频</string>
+    <string name="session_attachment_audio">音频</string>
+    <string name="session_attachment_clipboard">粘贴</string>
+    <string name="session_attachment_compress_image">压缩图片</string>
+    <string name="session_attachment_compact_context">压缩上下文</string>
+    <string name="session_clipboard_empty">剪贴板是空的。</string>
+    <string name="session_queue_section">待发消息（%1$d）</string>
+    <string name="session_queue_attachments_only">%1$d 个附件</string>
+    <string name="session_queue_more">还有 %1$d 条</string>
+    <string name="session_queue_added">已加入待发，当前回复结束后自动发送。</string>
+    <string name="session_clipboard_unsupported">剪贴板中的内容无法作为附件。</string>
+    <string name="session_clipboard_text_pasted">已粘贴到输入框。</string>
+    <string name="session_video_picker_failed">无法打开视频选择器。</string>
+    <string name="session_audio_picker_failed">无法打开音频选择器。</string>
+    <string name="session_compact_unavailable">当前运行时没有提供上下文压缩命令。</string>
     <string name="session_attachment_name_fallback">附件</string>
     <string name="session_runtime_select_model">选择模型</string>
+    <string name="session_switch_model">切换模型</string>
     <string name="session_runtime_settings_title">模型配置</string>
     <string name="session_runtime_mode_effort">模式与推理强度</string>
     <string name="session_runtime_effort_default">默认</string>
@@ -718,4 +734,8 @@
     <string name="native_history_check">查询恢复状态</string>
     <string name="native_history_releasing">正在结束执行…</string>
     <string name="session_image_input_unsupported">当前模型声明不支持图片输入，请移除图片或切换模型。</string>
+    <string name="workspace_empty_title">选择一个会话</string>
+    <string name="workspace_empty_message">从左侧列表中选择一个会话，或者新建一个。</string>
+    <string name="workspace_sidebar_collapse">收起侧栏</string>
+    <string name="workspace_sidebar_expand">展开侧栏</string>
 </resources>

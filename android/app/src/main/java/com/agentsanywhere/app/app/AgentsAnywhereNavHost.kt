@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,6 +62,9 @@ import com.agentsanywhere.app.ui.screens.home.NewSessionScreen
 import com.agentsanywhere.app.ui.screens.sessiondetail.SessionComposerDraftStore
 import com.agentsanywhere.app.ui.screens.sessiondetail.SessionDetailScreen
 import com.agentsanywhere.app.ui.screens.terminal.TerminalScreen
+import com.agentsanywhere.app.ui.screens.workspace.rememberWideLayout
+import com.agentsanywhere.app.ui.screens.workspace.SessionWorkspace
+import com.agentsanywhere.app.ui.screens.workspace.WorkspaceEmptyState
 
 @Composable
 internal fun AgentsAnywhereNavHost(
@@ -144,10 +148,13 @@ internal fun AgentsAnywhereNavHost(
     onLoadNewSessionPermissionCatalog: suspend (String, String) -> Result<NewSessionPermissionCatalog>,
     onSessionChanged: (AgentSession) -> Unit,
     onMobileLoginQrRequested: (MobileLoginQrPayload) -> Unit,
+    onClearSelectedSession: () -> Unit,
 ) {
     val context = LocalContext.current
     val colors = LocalAAColors.current
+    val wideLayout = rememberWideLayout()
     var profileOpen by rememberSaveable(serverUrl, userId) { mutableStateOf(false) }
+    var sidebarCollapsed by rememberSaveable(serverUrl, userId) { mutableStateOf(false) }
     var deviceAgentPreviewRefreshKey by remember { mutableLongStateOf(0L) }
     val deviceAgentPreviews = rememberDeviceAgentPreviews(
         devices = sessionsState.devices,
@@ -157,6 +164,103 @@ internal fun AgentsAnywhereNavHost(
     )
     val sessionComposerDraftStore = remember(context, userId) {
         SessionComposerDraftStore(context.applicationContext, userId)
+    }
+
+    // Tablet layout: the session list stays visible as a sidebar while a conversation is open.
+    val homeContent: @Composable (Boolean) -> Unit = { compact ->
+        HomeScreen(
+            navigate = navigate,
+            state = sessionsState,
+            selectedTab = selectedHomeTab,
+            onLoadProjects = onLoadProjects,
+            isRefreshing = isRefreshingSessions,
+            userId = userId,
+            role = role,
+            serverUrl = serverUrl,
+            appearanceMode = appearanceMode,
+            languageMode = languageMode,
+            sidebarViewMode = sidebarViewMode,
+            appUpdateViewModel = appUpdateViewModel,
+            projectSessionsById = projectSessionsById,
+            loadingProjectRequests = loadingProjectRequests,
+            projectSessionErrors = projectSessionErrors,
+            onRefresh = onRefreshSessions,
+            onLoadMore = { tab -> onLoadMoreSessions(tab == HomeTab.Archived) },
+            onTabSelected = onHomeTabSelected,
+            onAppearanceModeChange = onAppearanceModeChange,
+            onLanguageModeChange = onLanguageModeChange,
+            onSidebarViewModeChange = onSidebarViewModeChange,
+            profileOpen = profileOpen,
+            onProfileOpenChange = { profileOpen = it },
+            onOpenArchivedSessions = { navigate(AppDestination.ArchivedSessions) },
+            onLoadAccount = onLoadAccount,
+            onLoadAccountAuthConfig = onLoadAccountAuthConfig,
+            onUpdateDisplayName = onUpdateDisplayName,
+            onSendEmailCode = onSendEmailCode,
+            onBindEmail = onBindEmail,
+            onUpdateAvatar = onUpdateAvatar,
+            onClearAvatar = onClearAvatar,
+            onChangePassword = onChangePassword,
+            onSignOut = onSignOut,
+            onRenameSession = onRenameSession,
+            onSetSessionPinned = onSetSessionPinned,
+            onSetSessionArchived = onSetSessionArchived,
+            onLoadProjectSessions = onLoadProjectSessions,
+            onUpdateProject = onUpdateProject,
+            onArchiveProjectSessions = onArchiveProjectSessions,
+            onNewSessionInProject = onNewSessionInProject,
+            onOpenSession = onOpenSession,
+            onOpenDevice = onOpenDevice,
+            deviceAgentPreviews = deviceAgentPreviews,
+            onPairDevice = { navigate(AppDestination.DeviceSetup) },
+            compact = compact,
+        )
+    }
+
+    val sessionDetailPane: @Composable () -> Unit = {
+        val paneSessionId = selectedSessionId ?: preparedSessionDraft?.localSessionId
+        if (paneSessionId == null) {
+            WorkspaceEmptyState(
+                onNewSession = { navigate(AppDestination.NewSession) },
+                sidebarCollapsed = sidebarCollapsed,
+                onToggleSidebar = if (wideLayout) ({ sidebarCollapsed = !sidebarCollapsed }) else null,
+            )
+        } else {
+            key(paneSessionId) {
+                SessionDetailScreen(
+                    navigate = navigate,
+                    onBack = {
+                        // Leaving the conversation must be a single navigation step: clearing the
+                        // selection first would swap the outgoing screen to the empty state and
+                        // make the back gesture flash twice.
+                        if (wideLayout) {
+                            onClearSelectedSession()
+                        } else {
+                            navigate(AppDestination.Sessions)
+                        }
+                    },
+                    sessionId = selectedSessionId,
+                    initialSession = preparedSessionDraft?.previewSession() ?: sessionsState.sessions
+                        .asSequence()
+                        .plus(sessionsState.archivedSessions.asSequence())
+                        .firstOrNull { it.id == selectedSessionId },
+                    preparedSession = preparedSessionDraft,
+                    onCreatePreparedSession = onCreateSession,
+                    onPreparedSessionCreated = onPreparedSessionCreated,
+                    onLoadPreparedModelCatalog = onLoadNewSessionModelCatalog,
+                    onLoadPreparedPermissionCatalog = onLoadNewSessionPermissionCatalog,
+                    devices = sessionsState.devices,
+                    controller = sessionDetailController,
+                    realtimeController = sessionRealtimeController,
+                    filesController = filesController,
+                    terminalPool = remoteTerminalPool,
+                    composerDraftStore = sessionComposerDraftStore,
+                    onSessionChanged = onSessionChanged,
+                    sidebarCollapsed = sidebarCollapsed,
+                    onToggleSidebar = if (wideLayout) ({ sidebarCollapsed = !sidebarCollapsed }) else null,
+                )
+            }
+        }
     }
 
     Surface(
@@ -170,17 +274,22 @@ internal fun AgentsAnywhereNavHost(
                 val enterOffset: (Int) -> Int = { width -> if (forward) width / 5 else -width / 5 }
                 val exitOffset: (Int) -> Int = { width -> if (forward) -width / 5 else width / 5 }
 
-                slideInHorizontally(
+                val slideIn = slideInHorizontally(
                     animationSpec = tween(durationMillis = 260),
                     initialOffsetX = enterOffset,
-                ) + fadeIn(
-                    animationSpec = tween(durationMillis = 180),
-                ) togetherWith slideOutHorizontally(
+                )
+                val slideOut = slideOutHorizontally(
                     animationSpec = tween(durationMillis = 260),
                     targetOffsetX = exitOffset,
-                ) + fadeOut(
-                    animationSpec = tween(durationMillis = 160),
                 )
+                if (forward) {
+                    (slideIn + fadeIn(animationSpec = tween(durationMillis = 180))) togetherWith
+                        (slideOut + fadeOut(animationSpec = tween(durationMillis = 160)))
+                } else {
+                    // Going back must not cross-fade: the two full-screen pages briefly turn
+                    // translucent over each other and read as a flash. A plain slide is clean.
+                    slideIn togetherWith slideOut
+                }
             },
             label = "App destination transition",
         ) { destination ->
@@ -195,52 +304,21 @@ internal fun AgentsAnywhereNavHost(
                     navigate = navigate,
                     mobileLoginQr = pendingMobileLoginQr,
                 )
-                AppDestination.Sessions -> HomeScreen(
-                    navigate = navigate,
-                    state = sessionsState,
-                    selectedTab = selectedHomeTab,
-                    onLoadProjects = onLoadProjects,
-                    isRefreshing = isRefreshingSessions,
-                    userId = userId,
-                    role = role,
-                    serverUrl = serverUrl,
-                    appearanceMode = appearanceMode,
-                    languageMode = languageMode,
-                    sidebarViewMode = sidebarViewMode,
-                    appUpdateViewModel = appUpdateViewModel,
-                    projectSessionsById = projectSessionsById,
-                    loadingProjectRequests = loadingProjectRequests,
-                    projectSessionErrors = projectSessionErrors,
-                    onRefresh = onRefreshSessions,
-                    onLoadMore = { tab -> onLoadMoreSessions(tab == HomeTab.Archived) },
-                    onTabSelected = onHomeTabSelected,
-                    onAppearanceModeChange = onAppearanceModeChange,
-                    onLanguageModeChange = onLanguageModeChange,
-                    onSidebarViewModeChange = onSidebarViewModeChange,
-                    profileOpen = profileOpen,
-                    onProfileOpenChange = { profileOpen = it },
-                    onOpenArchivedSessions = { navigate(AppDestination.ArchivedSessions) },
-                    onLoadAccount = onLoadAccount,
-                    onLoadAccountAuthConfig = onLoadAccountAuthConfig,
-                    onUpdateDisplayName = onUpdateDisplayName,
-                    onSendEmailCode = onSendEmailCode,
-                    onBindEmail = onBindEmail,
-                    onUpdateAvatar = onUpdateAvatar,
-                    onClearAvatar = onClearAvatar,
-                    onChangePassword = onChangePassword,
-                    onSignOut = onSignOut,
-                    onRenameSession = onRenameSession,
-                    onSetSessionPinned = onSetSessionPinned,
-                    onSetSessionArchived = onSetSessionArchived,
-                    onLoadProjectSessions = onLoadProjectSessions,
-                    onUpdateProject = onUpdateProject,
-                    onArchiveProjectSessions = onArchiveProjectSessions,
-                    onNewSessionInProject = onNewSessionInProject,
-                    onOpenSession = onOpenSession,
-                    onOpenDevice = onOpenDevice,
-                    deviceAgentPreviews = deviceAgentPreviews,
-                    onPairDevice = { navigate(AppDestination.DeviceSetup) },
-                )
+                AppDestination.Sessions -> if (wideLayout) {
+                    // Back should close the open conversation, not the whole app.
+                    androidx.activity.compose.BackHandler(
+                        enabled = selectedSessionId != null || preparedSessionDraft != null,
+                    ) {
+                        onClearSelectedSession()
+                    }
+                    SessionWorkspace(
+                        sidebar = { homeContent(true) },
+                        detail = sessionDetailPane,
+                        sidebarCollapsed = sidebarCollapsed,
+                    )
+                } else {
+                    homeContent(false)
+                }
                 AppDestination.NewSession, AppDestination.NewProject -> androidx.compose.runtime.key(serverUrl, userId, destination) { NewSessionScreen(
                     navigate = navigate,
                     sessionsState = sessionsState,
@@ -262,26 +340,7 @@ internal fun AgentsAnywhereNavHost(
                     onLoadProjects = onLoadProjects,
                     onCreateProject = onCreateProject,
                 ) }
-                AppDestination.SessionDetail -> SessionDetailScreen(
-                    navigate = navigate,
-                    sessionId = selectedSessionId,
-                    initialSession = preparedSessionDraft?.previewSession() ?: sessionsState.sessions
-                        .asSequence()
-                        .plus(sessionsState.archivedSessions.asSequence())
-                        .firstOrNull { it.id == selectedSessionId },
-                    preparedSession = preparedSessionDraft,
-                    onCreatePreparedSession = onCreateSession,
-                    onPreparedSessionCreated = onPreparedSessionCreated,
-                    onLoadPreparedModelCatalog = onLoadNewSessionModelCatalog,
-                    onLoadPreparedPermissionCatalog = onLoadNewSessionPermissionCatalog,
-                    devices = sessionsState.devices,
-                    controller = sessionDetailController,
-                    realtimeController = sessionRealtimeController,
-                    filesController = filesController,
-                    terminalPool = remoteTerminalPool,
-                    composerDraftStore = sessionComposerDraftStore,
-                    onSessionChanged = onSessionChanged,
-                )
+                AppDestination.SessionDetail -> sessionDetailPane()
                 AppDestination.DeviceDetail -> DeviceDetailScreen(
                     navigate = navigate,
                     state = sessionsState,

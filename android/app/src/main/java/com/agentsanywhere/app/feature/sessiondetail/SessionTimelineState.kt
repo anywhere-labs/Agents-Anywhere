@@ -104,7 +104,7 @@ data class DownloadedAttachment(
     val mediaType: String,
     val size: Long,
     val sha256: String,
-    val bytes: ByteArray,
+    val file: java.io.File,
 )
 
 enum class MessageAuthor {

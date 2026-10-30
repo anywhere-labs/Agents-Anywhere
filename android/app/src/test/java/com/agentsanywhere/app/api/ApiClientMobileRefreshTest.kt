@@ -44,8 +44,12 @@ class ApiClientMobileRefreshTest {
 
     @Test
     fun multipartAlsoRefreshesAndRetries() = withServer { server ->
+        val upload = java.io.File.createTempFile("note", ".txt").apply {
+            writeText("hello")
+            deleteOnExit()
+        }
         server.client().postMultipart(
-            server.origin, "/upload", listOf(UploadFilePart("note.txt", "text/plain", "hello".toByteArray())), "expired",
+            server.origin, "/upload", listOf(UploadFilePart("note.txt", "text/plain", upload, upload.length())), "expired",
         )
         assertEquals(listOf("Bearer expired", "Bearer renewed"), server.authorizations)
         assertEquals(1, server.refreshCalls.get())

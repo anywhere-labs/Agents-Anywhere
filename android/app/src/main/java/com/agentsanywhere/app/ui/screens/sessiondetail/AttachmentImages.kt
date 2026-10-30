@@ -47,7 +47,9 @@ import coil3.network.NetworkHeaders
 import coil3.network.httpHeaders
 import coil3.request.ImageRequest
 import coil3.request.crossfade
+import coil3.size.Size
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.feature.attachment.ImageCompressionProfile
 import com.agentsanywhere.app.feature.sessiondetail.AttachmentImageRequest
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessiondetail.TimelineAttachment
@@ -68,8 +70,10 @@ internal data class PendingAttachment(
     val size: Long,
     val id: String = uri.toString(),
     val uploadState: AttachmentUploadState = AttachmentUploadState.Uploading,
+    val uploadProgress: Float = 0f,
     val remote: TimelineAttachment? = null,
     val errorMessage: String? = null,
+    val compressionProfile: ImageCompressionProfile = ImageCompressionProfile.Standard,
 ) {
     val isImage: Boolean
         get() = mediaType.startsWith("image/")
@@ -517,6 +521,9 @@ private fun AttachmentImageRequest.toCoilRequest(context: Context): ImageRequest
         .httpHeaders(headers)
         .memoryCacheKey(cacheKey)
         .diskCacheKey(cacheKey)
+        // Timeline thumbnails never need more than a couple of hundred dp; decoding the
+        // full-size photo for a 96dp tile wasted both memory and bandwidth.
+        .size(Size(588, 426))
         .crossfade(true)
         .build()
 }

@@ -15,14 +15,15 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
@@ -30,6 +31,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -51,6 +53,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.IntOffset
@@ -61,6 +64,8 @@ import androidx.compose.ui.window.Popup
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.composables.icons.lucide.ChevronDown
+import com.composables.icons.lucide.Lucide
 import kotlinx.coroutines.delay
 
 @Composable
@@ -72,7 +77,6 @@ internal fun ComposerVeil(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .imePadding()
             .height(height)
             .background(
                 Brush.verticalGradient(
@@ -83,6 +87,12 @@ internal fun ComposerVeil(
             ),
     )
 }
+
+internal data class QueuedDraftUi(
+    val id: String,
+    val text: String,
+    val attachmentCount: Int,
+)
 
 @Composable
 internal fun MessageComposer(
@@ -98,11 +108,23 @@ internal fun MessageComposer(
     showInterrupt: Boolean,
     interrupting: Boolean,
     placeholder: String,
+    modelLabel: String?,
+    modelEffortLabel: String?,
+    modelLoading: Boolean,
+    onModelClick: () -> Unit,
     attachments: List<PendingAttachment>,
     onToggleTakeover: () -> Unit,
     onPickPhoto: () -> Unit,
     onPickFile: () -> Unit,
     onOpenCamera: () -> Unit,
+    onPickVideo: () -> Unit = {},
+    onPickAudio: () -> Unit = {},
+    onPasteClipboard: () -> Unit = {},
+    onPickCompressedPhoto: () -> Unit = {},
+    onCompactContext: (() -> Unit)? = null,
+    onAttachMenuOpen: () -> Unit = {},
+    queuedMessages: List<QueuedDraftUi> = emptyList(),
+    onRemoveQueued: (String) -> Unit = {},
     onRemoveAttachment: (PendingAttachment) -> Unit,
     onRetryAttachment: (PendingAttachment) -> Unit,
     onPreviewAttachment: (PendingAttachment) -> Unit,
@@ -140,7 +162,7 @@ internal fun MessageComposer(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 104.dp, max = 218.dp)
+                .heightIn(min = 104.dp, max = 300.dp)
                 .shadow(28.dp, RoundedCornerShape(22.dp), ambientColor = Color(0x12000000), spotColor = Color(0x12000000))
                 .clip(RoundedCornerShape(22.dp))
                 .background(surface)
@@ -149,6 +171,13 @@ internal fun MessageComposer(
                 .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            if (queuedMessages.isNotEmpty()) {
+                QueuedDraftStrip(
+                    queued = queuedMessages,
+                    darkMode = darkMode,
+                    onRemove = onRemoveQueued,
+                )
+            }
             if (attachments.isNotEmpty()) {
                 PendingAttachmentStrip(
                     attachments = attachments,
@@ -202,8 +231,17 @@ internal fun MessageComposer(
                 sending = sending,
                 showInterrupt = showInterrupt,
                 interrupting = interrupting,
+                modelLabel = modelLabel,
+                modelEffortLabel = modelEffortLabel,
+                modelLoading = modelLoading,
+                onModelClick = onModelClick,
                 onToggleTakeover = onToggleTakeover,
-                onOpenAttachMenu = { if (attachmentsEnabled) showAttachMenu = true },
+                onOpenAttachMenu = {
+                    if (attachmentsEnabled) {
+                        showAttachMenu = true
+                        onAttachMenuOpen()
+                    }
+                },
                 onSend = onSend,
                 onInterrupt = onInterrupt,
             )
@@ -238,12 +276,94 @@ internal fun MessageComposer(
                         showAttachMenu = false
                         onPickPhoto()
                     },
+                    onVideo = {
+                        showAttachMenu = false
+                        onPickVideo()
+                    },
+                    onAudio = {
+                        showAttachMenu = false
+                        onPickAudio()
+                    },
                     onFile = {
                         showAttachMenu = false
                         onPickFile()
                     },
+                    onClipboard = {
+                        showAttachMenu = false
+                        onPasteClipboard()
+                    },
+                    onCompressPhoto = {
+                        showAttachMenu = false
+                        onPickCompressedPhoto()
+                    },
+                    onCompactContext = onCompactContext?.let { compact ->
+                        {
+                            showAttachMenu = false
+                            compact()
+                        }
+                    },
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun QueuedDraftStrip(
+    queued: List<QueuedDraftUi>,
+    darkMode: Boolean,
+    onRemove: (String) -> Unit,
+) {
+    val colors = LocalAAColors.current
+    val background = if (darkMode) colors.subtle else Color(0xFFF5F4F1)
+    val textColor = if (darkMode) Color(0xFFD4D4D8) else Color(0xFF3A3935)
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.session_queue_section, queued.size),
+            color = colors.muted,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        queued.take(2).forEach { item ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(background)
+                    .padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = item.text.ifBlank {
+                        stringResource(R.string.session_queue_attachments_only, item.attachmentCount)
+                    },
+                    color = textColor,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = "×",
+                    color = colors.muted,
+                    fontSize = 17.sp,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .noRippleClickable { onRemove(item.id) }
+                        .padding(horizontal = 6.dp),
+                )
+            }
+        }
+        if (queued.size > 2) {
+            Text(
+                text = stringResource(R.string.session_queue_more, queued.size - 2),
+                color = colors.muted,
+                fontSize = 11.sp,
+            )
         }
     }
 }
@@ -324,6 +444,7 @@ private fun PendingImageAttachmentCard(
         )
         AttachmentUploadOverlay(
             state = attachment.uploadState,
+            progress = attachment.uploadProgress,
             onRemove = onRemove,
             onRetry = onRetry,
             modifier = Modifier.fillMaxSize(),
@@ -389,6 +510,7 @@ private fun PendingFileAttachmentCard(
         }
         AttachmentUploadOverlay(
             state = attachment.uploadState,
+            progress = attachment.uploadProgress,
             onRemove = onRemove,
             onRetry = onRetry,
             modifier = Modifier.fillMaxSize(),
@@ -399,6 +521,7 @@ private fun PendingFileAttachmentCard(
 @Composable
 private fun AttachmentUploadOverlay(
     state: AttachmentUploadState,
+    progress: Float,
     onRemove: () -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier,
@@ -408,11 +531,20 @@ private fun AttachmentUploadOverlay(
             modifier = modifier.background(Color.Black.copy(alpha = 0.28f)),
             contentAlignment = Alignment.Center,
         ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(38.dp),
-                color = Color.White,
-                strokeWidth = 5.dp,
-            )
+            if (progress > 0f) {
+                CircularProgressIndicator(
+                    progress = { progress.coerceIn(0f, 1f) },
+                    modifier = Modifier.size(38.dp),
+                    color = Color.White,
+                    strokeWidth = 5.dp,
+                )
+            } else {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(38.dp),
+                    color = Color.White,
+                    strokeWidth = 5.dp,
+                )
+            }
         }
         AttachmentUploadState.Uploaded -> Box(modifier = modifier) {
             AttachmentRemoveButton(
@@ -480,6 +612,10 @@ private fun ComposerActions(
     sending: Boolean,
     showInterrupt: Boolean,
     interrupting: Boolean,
+    modelLabel: String?,
+    modelEffortLabel: String?,
+    modelLoading: Boolean,
+    onModelClick: () -> Unit,
     onToggleTakeover: () -> Unit,
     onOpenAttachMenu: () -> Unit,
     onSend: () -> Unit,
@@ -494,19 +630,23 @@ private fun ComposerActions(
         darkMode -> Color(0xFFA1A1AA)
         else -> Color(0xFF3A3935)
     }
-    val primaryActionEnabled = if (showInterrupt) !interrupting else canSend
-    val primaryActionBusy = sending || interrupting
+    val primaryActionEnabled = when {
+        canSend -> true
+        showInterrupt -> !interrupting
+        else -> false
+    }
+    val primaryActionBusy = sending || (interrupting && !canSend)
     val primaryActionSurface = when {
-        showInterrupt -> Color(0xFFEF4444)
         canSend && darkMode -> Color(0xFFFAFAFA)
         canSend -> Color(0xFF2B2B2B)
+        showInterrupt -> Color(0xFFEF4444)
         darkMode -> Color(0xFF3F3F46)
         else -> Color(0xFFE2E0DC)
     }
     val primaryActionIcon = when {
-        showInterrupt -> Color.White
         canSend && darkMode -> Color(0xFF09090B)
         canSend -> Color.White
+        showInterrupt -> Color.White
         darkMode -> Color(0xFF71717A)
         else -> Color(0xFFA7A5A0)
     }
@@ -567,125 +707,244 @@ private fun ComposerActions(
                 )
             }
         }
-        Box(
-            modifier = Modifier
-                .size(34.dp)
-                .clip(CircleShape)
-                .background(primaryActionSurface)
-                .then(
-                    if (primaryActionEnabled) {
-                        Modifier.noRippleClickable(
-                            onClick = if (showInterrupt) onInterrupt else onSend,
-                        )
-                    } else {
-                        Modifier
-                    },
-                ),
-            contentAlignment = Alignment.Center,
+        Row(
+            modifier = Modifier.weight(1f, fill = false),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            when {
-                primaryActionBusy -> CircularProgressIndicator(
-                    color = primaryActionIcon,
-                    strokeWidth = 2.dp,
-                    modifier = Modifier.size(17.dp),
-                )
-                showInterrupt -> Box(
+            ModelChip(
+                darkMode = darkMode,
+                label = modelLabel,
+                effortLabel = modelEffortLabel,
+                loading = modelLoading,
+                onClick = onModelClick,
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .widthIn(max = 200.dp),
+            )
+            if (showInterrupt && canSend) {
+                Box(
                     modifier = Modifier
-                        .size(10.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(primaryActionIcon),
-                )
-                else -> ArrowUpGlyph(primaryActionIcon)
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFEF4444))
+                        .noRippleClickable(onClick = onInterrupt),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(9.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(Color.White),
+                    )
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(primaryActionSurface)
+                    .then(
+                        if (primaryActionEnabled) {
+                            Modifier.noRippleClickable(
+                                onClick = if (canSend) onSend else onInterrupt,
+                            )
+                        } else {
+                            Modifier
+                        },
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                when {
+                    primaryActionBusy -> CircularProgressIndicator(
+                        color = primaryActionIcon,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(17.dp),
+                    )
+                    canSend -> ArrowUpGlyph(primaryActionIcon)
+                    showInterrupt -> Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(primaryActionIcon),
+                    )
+                    else -> ArrowUpGlyph(primaryActionIcon)
+                }
             }
         }
     }
 }
 
 @Composable
+private fun ModelChip(
+    darkMode: Boolean,
+    label: String?,
+    effortLabel: String?,
+    loading: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val surface = if (darkMode) LocalAAColors.current.raisedSurface else Color.White
+    val border = if (darkMode) Color(0xFF2E2E33) else Color(0xFFEFEDE9)
+    val text = if (darkMode) Color(0xFFD4D4D8) else Color(0xFF3A3935)
+    val accent = if (darkMode) Color(0xFF8A8A93) else Color(0xFF8A8984)
+    val resolved = label?.takeIf { it.isNotBlank() }
+        ?: stringResource(R.string.session_runtime_select_model)
+    val effort = effortLabel?.takeIf { it.isNotBlank() }
+    Row(
+        modifier = modifier
+            .height(28.dp)
+            .clip(CircleShape)
+            .background(surface)
+            .border(1.dp, border, CircleShape)
+            .noRippleClickable(onClick = onClick)
+            .padding(start = 10.dp, end = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (loading) {
+            CircularProgressIndicator(
+                color = accent,
+                strokeWidth = 1.5.dp,
+                modifier = Modifier.size(11.dp),
+            )
+        }
+        Text(
+            text = resolved,
+            color = text,
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        if (effort != null) {
+            Text(
+                text = "· $effort",
+                color = accent,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+            )
+        }
+        Icon(
+            imageVector = Lucide.ChevronDown,
+            contentDescription = stringResource(R.string.session_switch_model),
+            tint = accent,
+            modifier = Modifier.size(12.dp),
+        )
+    }
+}
+
+private data class AttachmentMenuAction(
+    val labelRes: Int,
+    val iconRes: Int,
+    val onClick: () -> Unit,
+)
+
+@Composable
 private fun AttachmentSourceMenu(
     darkMode: Boolean,
     onCamera: () -> Unit,
     onPhoto: () -> Unit,
+    onVideo: () -> Unit,
+    onAudio: () -> Unit,
     onFile: () -> Unit,
+    onClipboard: () -> Unit,
+    onCompressPhoto: () -> Unit,
+    onCompactContext: (() -> Unit)?,
 ) {
     val surface = if (darkMode) Color(0xFF202023) else Color.White
     val border = if (darkMode) Color(0xFF38383C) else Color(0xFFEFEDE9)
     val shadow = if (darkMode) Color(0x80000000) else Color(0x1A000000)
     val text = if (darkMode) Color(0xFFF4F4F5) else Color(0xFF2F302D)
     val iconSurface = if (darkMode) Color(0xFF3A3A3D) else Color(0xFFF1F1EF)
-    val cameraIcon = if (darkMode) R.drawable.ic_attachment_camera_white else R.drawable.ic_attachment_camera_black
-    val photoIcon = if (darkMode) R.drawable.ic_attachment_photo_white else R.drawable.ic_attachment_photo_black
-    val fileIcon = if (darkMode) R.drawable.ic_attachment_file_white else R.drawable.ic_attachment_file_black
+    val iconTint = if (darkMode) Color(0xFFE4E4E7) else Color(0xFF3F3F46)
+    val actions = listOfNotNull(
+        AttachmentMenuAction(R.string.session_attachment_photos, R.drawable.ic_attachment_photo_black, onPhoto),
+        AttachmentMenuAction(R.string.session_attachment_camera, R.drawable.ic_attachment_camera_black, onCamera),
+        AttachmentMenuAction(R.string.session_attachment_video, R.drawable.ic_attachment_video, onVideo),
+        AttachmentMenuAction(R.string.session_attachment_audio, R.drawable.ic_attachment_audio, onAudio),
+        AttachmentMenuAction(R.string.session_attachment_file, R.drawable.ic_attachment_file_black, onFile),
+        AttachmentMenuAction(R.string.session_attachment_clipboard, R.drawable.ic_attachment_clipboard, onClipboard),
+        AttachmentMenuAction(R.string.session_attachment_compress_image, R.drawable.ic_attachment_compress, onCompressPhoto),
+        onCompactContext?.let {
+            AttachmentMenuAction(R.string.session_attachment_compact_context, R.drawable.ic_attachment_compact, it)
+        },
+    )
     Column(
         modifier = Modifier
-            .width(270.dp)
-            .height(190.dp)
-            .shadow(34.dp, RoundedCornerShape(24.dp), ambientColor = shadow, spotColor = shadow)
-            .clip(RoundedCornerShape(24.dp))
+            .width(300.dp)
+            .shadow(30.dp, RoundedCornerShape(22.dp), ambientColor = shadow, spotColor = shadow)
+            .clip(RoundedCornerShape(22.dp))
             .background(surface)
-            .border(1.dp, border, RoundedCornerShape(24.dp))
-            .padding(horizontal = 18.dp, vertical = 10.dp),
+            .border(1.dp, border, RoundedCornerShape(22.dp))
+            .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        AttachmentSourceRow(
-            label = stringResource(R.string.session_attachment_camera),
-            iconRes = cameraIcon,
-            iconSurface = iconSurface,
-            text = text,
-            onClick = onCamera,
-        )
-        AttachmentSourceRow(
-            label = stringResource(R.string.session_attachment_photos),
-            iconRes = photoIcon,
-            iconSurface = iconSurface,
-            text = text,
-            onClick = onPhoto,
-        )
-        AttachmentSourceRow(
-            label = stringResource(R.string.session_attachment_file),
-            iconRes = fileIcon,
-            iconSurface = iconSurface,
-            text = text,
-            onClick = onFile,
-        )
+        actions.chunked(4).forEach { rowActions ->
+            Row(
+                modifier = Modifier.fillMaxWidth().height(72.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                rowActions.forEach { action ->
+                    AttachmentActionTile(
+                        action = action,
+                        iconSurface = iconSurface,
+                        iconTint = iconTint,
+                        text = text,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                repeat(4 - rowActions.size) {
+                    Spacer(Modifier.weight(1f))
+                }
+            }
+        }
     }
 }
 
 @Composable
-private fun AttachmentSourceRow(
-    label: String,
-    iconRes: Int,
+private fun AttachmentActionTile(
+    action: AttachmentMenuAction,
     iconSurface: Color,
+    iconTint: Color,
     text: Color,
-    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(50.dp)
-            .noRippleClickable(onClick = onClick),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    val label = stringResource(action.labelRes)
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .clip(RoundedCornerShape(14.dp))
+            .noRippleClickable(onClick = action.onClick)
+            .padding(vertical = 7.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Box(
             modifier = Modifier
-                .size(42.dp)
+                .size(36.dp)
                 .clip(CircleShape)
                 .background(iconSurface),
             contentAlignment = Alignment.Center,
         ) {
-            Image(
-                painter = painterResource(iconRes),
-                contentDescription = label,
-                modifier = Modifier.size(22.dp),
+            Icon(
+                painter = painterResource(action.iconRes),
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(19.dp),
             )
         }
         Text(
             text = label,
             color = text,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.SemiBold,
+            fontSize = 11.sp,
+            lineHeight = 13.sp,
+            fontWeight = FontWeight.Medium,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
         )
     }
 }

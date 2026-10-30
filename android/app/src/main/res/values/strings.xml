@@ -533,8 +533,24 @@
     <string name="session_attachment_camera">Camera</string>
     <string name="session_attachment_photos">Photos</string>
     <string name="session_attachment_file">File</string>
+    <string name="session_attachment_video">Video</string>
+    <string name="session_attachment_audio">Audio</string>
+    <string name="session_attachment_clipboard">Paste</string>
+    <string name="session_attachment_compress_image">Compress</string>
+    <string name="session_attachment_compact_context">Compact</string>
+    <string name="session_clipboard_empty">Clipboard is empty.</string>
+    <string name="session_queue_section">Queued messages (%1$d)</string>
+    <string name="session_queue_attachments_only">%1$d attachment(s)</string>
+    <string name="session_queue_more">+%1$d more</string>
+    <string name="session_queue_added">Added to queue. It will send after the current reply.</string>
+    <string name="session_clipboard_unsupported">This clipboard item cannot be attached.</string>
+    <string name="session_clipboard_text_pasted">Pasted text into the message.</string>
+    <string name="session_video_picker_failed">Could not open the video picker.</string>
+    <string name="session_audio_picker_failed">Could not open the audio picker.</string>
+    <string name="session_compact_unavailable">This runtime does not expose a context compaction command.</string>
     <string name="session_attachment_name_fallback">attachment</string>
     <string name="session_runtime_select_model">Select model</string>
+    <string name="session_switch_model">Switch model</string>
     <string name="session_runtime_settings_title">Model settings</string>
     <string name="session_runtime_mode_effort">Mode &amp; effort</string>
     <string name="session_runtime_effort_default">Default</string>
@@ -720,4 +736,8 @@
     <string name="native_history_check">Check recovery status</string>
     <string name="native_history_releasing">Ending execution…</string>
     <string name="session_image_input_unsupported">The selected model does not declare image input support. Remove the image or choose another model.</string>
+    <string name="workspace_empty_title">Pick a conversation</string>
+    <string name="workspace_empty_message">Choose a session from the sidebar, or start a new one.</string>
+    <string name="workspace_sidebar_collapse">Collapse sidebar</string>
+    <string name="workspace_sidebar_expand">Expand sidebar</string>
 </resources>

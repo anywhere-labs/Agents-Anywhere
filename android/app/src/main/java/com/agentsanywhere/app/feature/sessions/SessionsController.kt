@@ -806,14 +806,15 @@ internal fun validateNewSessionDraft(draft: NewSessionCreateDraft): String? {
     }
     if (draft.attachments.size > MAX_CREATE_ATTACHMENTS) return "You can attach up to $MAX_CREATE_ATTACHMENTS files."
     draft.attachments.firstOrNull { it.name.isBlank() }?.let { return "An attachment name is missing." }
-    draft.attachments.firstOrNull { it.bytes.isEmpty() }?.let { return "Attachments cannot be empty." }
-    draft.attachments.firstOrNull { it.bytes.size > MAX_CREATE_ATTACHMENT_BYTES }?.let {
+    draft.attachments.firstOrNull { it.file.length() <= 0L }?.let { return "Attachments cannot be empty." }
+    draft.attachments.firstOrNull { it.file.length() > MAX_CREATE_ATTACHMENT_BYTES }?.let {
         return "Attachment ${it.name} is too large."
     }
     return null
 }
 
 internal fun NewSessionAttachmentPart.toInlineAttachmentRef(): RemoteInlineAttachmentRef {
+    val bytes = file.readBytes()
     val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
     val sha256 = digest.joinToString(separator = "") { byte -> "%02x".format(byte) }
     return RemoteInlineAttachmentRef(

@@ -135,6 +135,7 @@ fun HomeScreen(
     onOpenDevice: (AgentDevice) -> Unit,
     deviceAgentPreviews: DeviceAgentPreviews,
     onPairDevice: () -> Unit,
+    compact: Boolean = false,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -240,6 +241,7 @@ fun HomeScreen(
                 onOpenDevice = onOpenDevice,
                 deviceAgentPreviews = deviceAgentPreviews,
                 onPairDevice = onPairDevice,
+                compact = compact,
             )
             actionMenu?.let { menu ->
                 HomeSessionActionOverlay(
@@ -483,6 +485,7 @@ private fun HomeContent(
     onOpenDevice: (AgentDevice) -> Unit,
     deviceAgentPreviews: DeviceAgentPreviews,
     onPairDevice: () -> Unit,
+    compact: Boolean,
 ) {
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
@@ -497,7 +500,7 @@ private fun HomeContent(
             .padding(start = 18.dp, top = 6.dp, end = 18.dp),
         verticalArrangement = Arrangement.spacedBy(15.dp),
     ) {
-        HomeHeader(onProfile = onProfile, onSearch = onSearch)
+        HomeHeader(onProfile = onProfile, onSearch = onSearch, compact = compact)
         QuickEntries(
             onDevicesClick = { navigate(AppDestination.Devices) },
             onTerminalClick = { navigate(AppDestination.Terminal) },
@@ -646,7 +649,7 @@ private fun HomeProjectModeList(
 }
 
 @Composable
-private fun HomeHeader(onProfile: () -> Unit, onSearch: () -> Unit) {
+private fun HomeHeader(onProfile: () -> Unit, onSearch: () -> Unit, compact: Boolean = false) {
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
     val icon = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF1C1C1E)
@@ -673,8 +676,8 @@ private fun HomeHeader(onProfile: () -> Unit, onSearch: () -> Unit) {
         ) {
             AAWordmark(
                 color = colors.ink,
-                fontSize = 31.sp,
-                lineHeight = 40.sp,
+                fontSize = if (compact) 24.sp else 31.sp,
+                lineHeight = if (compact) 30.sp else 40.sp,
             )
         }
         RoundLucideButton(
