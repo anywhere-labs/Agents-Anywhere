@@ -1,5 +1,4 @@
 from __future__ import annotations
-from connector.runtime_protocol.host import runtime_kv_store
 
 import sys
 from collections.abc import Callable, Mapping
@@ -20,7 +19,7 @@ from connector.runtime_protocol import (
     RuntimeUnavailableError,
 )
 from connector.runtime_protocol.filesystem import filesystem_resource_key
-from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtime_protocol.host import RuntimeHostClient, runtime_kv_store
 from connector.runtimes.codex import provider_config
 from connector.runtimes.codex.runtime import CodexRuntime
 from connector.runtimes.codex.sdk.binary import (
@@ -29,6 +28,7 @@ from connector.runtimes.codex.sdk.binary import (
     select_codex_runtime_binary,
 )
 from connector.runtimes.codex.sdk.client import sdk_client_from_config
+from connector.runtimes.codex.sdk.config_files import persist_codex_model_gateway
 from connector.runtimes.codex.sdk.discovery import check_codex_sdk
 from connector.runtimes.custom_models import normalize_custom_models
 from connector.runtimes.model_gateway import model_gateway_from_config
@@ -246,7 +246,12 @@ class CodexProvider(RuntimeProvider):
         sdk = config.metadata.get("sdk") if isinstance(config.metadata, dict) else None
         if isinstance(sdk, dict) and not sdk.get("available", True):
             raise RuntimeUnavailableError("Codex SDK is not available")
-        provider_config.ensure_codex_home(str(config.values["codexHome"]))
+        codex_home = str(config.values["codexHome"])
+        provider_config.ensure_codex_home(codex_home)
+        persist_codex_model_gateway(
+            codex_home,
+            model_gateway_from_config(config.values.get("modelGateway")),
+        )
         client = self._sdk_client_factory(config)
         return CodexRuntime(
             config=config,
