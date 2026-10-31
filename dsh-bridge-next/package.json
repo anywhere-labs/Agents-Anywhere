@@ -52,8 +52,9 @@
     "build": "yarn clean && tsdown && node scripts/bundle-connector.ts",
     "dev": "node scripts/bundle-connector.ts && tsdown --watch",
     "typecheck": "tsc -p tsconfig.host.json && tsc -p tsconfig.client.json && tsc -p tsconfig.scripts.json",
+    "check:deps": "node scripts/check-dependency-dedupe.ts",
     "check:build": "node scripts/check-build.ts",
-    "check": "yarn typecheck && yarn build && yarn check:build && yarn test",
+    "check": "yarn check:deps && yarn typecheck && yarn build && yarn check:build && yarn test",
     "prepack": "yarn check",
     "test": "tsx --test tests/unit/*.test.ts tests/integration/*.test.ts"
   },
@@ -174,6 +175,9 @@
   },
   "engines": {
     "node": "^22.19.0 || >=24"
+  },
+  "resolutions": {
+    "@deepseek-ai/schemastery": "3.18.5"
   },
   "packageManager": "yarn@4.18.0",
   "license": "MIT",
