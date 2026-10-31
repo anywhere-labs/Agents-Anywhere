@@ -2,7 +2,7 @@ import { constants } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { lstat, mkdir, open, realpath } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import type { AttachmentStore, ImageMediaType } from '@deepseek-ai/dsh-attachment'
+import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import type { PromptContentPart } from '@deepseek-ai/dsh-api-session-controller'
 import type { FileUploads } from '@deepseek-ai/dsh-client-file-upload'
 import type { SessionId } from '@deepseek-ai/dsh-session'
@@ -12,8 +12,9 @@ import { readJson, writeJson } from '../storage/files.js'
 import { canonicalJson, digest } from './identity.js'
 import { BridgeError } from './errors.js'
 import { record } from './types.js'
+import { isImageInputType, prepareImage } from './image-input.js'
 
-export const IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const
+export { IMAGE_MIME_TYPES } from './image-input.js'
 
 /** lstat, so a symbolic link counts as present and is then refused by the staging checks. */
 async function exists(path: string): Promise<boolean> {
@@ -55,7 +56,7 @@ export function parseAttachments(value: unknown): StagedAttachment[] {
     }
     files.add(item.fileId); uploads.add(item.uploadId)
     return { fileId: item.fileId, uploadId: item.uploadId, name: item.name,
-      mediaType: item.mediaType as ImageMediaType, size: item.size, sha256: item.sha256 }
+      mediaType: item.mediaType, size: item.size, sha256: item.sha256 }
   })
 }
 
@@ -106,7 +107,7 @@ export class RuntimeAttachments {
 
   async prepare(images: readonly StagedAttachment[], store: AttachmentStore, signal: AbortSignal,
     upload?: { service: FileUploads, sessionId: SessionId }): Promise<PromptContentPart[]> {
-    const imageFiles = images.filter(image => IMAGE_MIME_TYPES.includes(image.mediaType as ImageMediaType))
+    const imageFiles = images.filter(image => isImageInputType(image.mediaType))
     if (imageFiles.length !== images.length && !upload) throw new BridgeError(
       'UNSUPPORTED_OPERATION', 'File attachments require DSH 0.1.5-rc.1 or later. Update DSH and restart the plugin.')
     const limits = store.imageLimits
@@ -116,6 +117,7 @@ export class RuntimeAttachments {
     }
     const primary = await realpath(this.staging)
     const parts: PromptContentPart[] = []
+    let imageBytes = 0
     for (const image of images) {
       signal.throwIfAborted()
       const root = await this.stagingRoot(primary, image.uploadId)
@@ -127,12 +129,17 @@ export class RuntimeAttachments {
       try {
         const stat = await file.stat()
         if (!stat.isFile() || stat.size !== image.size) throw new BridgeError('INVALID_PARAMS', 'Staged attachment size does not match its upload.')
-        if (IMAGE_MIME_TYPES.includes(image.mediaType as ImageMediaType)) {
+        if (isImageInputType(image.mediaType)) {
           const data = await file.readFile()
           if (data.length !== image.size || createHash('sha256').update(data).digest('hex') !== image.sha256) {
             throw new BridgeError('INVALID_PARAMS', 'Staged attachment content does not match its upload.')
           }
-          parts.push({ type: 'image', name: image.name, mediaType: image.mediaType as ImageMediaType, data: data.toString('base64') })
+          const prepared = await prepareImage(data, image.mediaType, limits, signal)
+          imageBytes += prepared.data.length
+          if (imageBytes > limits.maxMessageImageBytes) {
+            throw new BridgeError('INVALID_PARAMS', 'Converted images exceed the DSH aggregate image-byte limit. Send fewer images and retry.')
+          }
+          parts.push({ type: 'image', name: image.name, mediaType: prepared.mediaType, data: prepared.data.toString('base64') })
         } else {
           // Validate while streaming. Throw before EOF so DSH cannot commit a corrupt upload.
           const data = async function* () {

@@ -15,7 +15,7 @@ export function capabilities(sessionId?: string, writable = false, userQuestions
     ...(controls.commands?.available ? ['session.commands'] : []),
     ...(writable && controls.attachments ? ['runtime.attachment'] : [])])
   return {
-    runtime: 'dsh', revision: 7, ...(sessionId ? { sessionId } : {}),
+    runtime: 'dsh', revision: 8, ...(sessionId ? { sessionId } : {}),
     capabilities: ['runtime.config', ...unsupported].map(capabilityId => ({
       capabilityId, runtime: 'dsh', scope: sessionId ? 'session' : 'runtime',
       supported: enabled.has(capabilityId), available: enabled.has(capabilityId),

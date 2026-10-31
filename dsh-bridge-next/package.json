@@ -182,6 +182,7 @@
     "clsx": "2.1.1",
     "lucide-react": "1.41.0",
     "meshcall": "0.3.0",
-    "qrcode": "1.5.4"
+    "qrcode": "1.5.4",
+    "sharp": "0.35.5"
   }
 }

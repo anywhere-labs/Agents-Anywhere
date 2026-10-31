@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import sharp from 'sharp'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { bridgePath, nativeRuntime } from '../fixtures/native-runtime.js'
 import { corruptHistory } from '../fixtures/corrupt-history.js'
@@ -41,6 +42,48 @@ async function stage(images: RuntimeAttachments, data = png, fileId = 'file_imag
   await writeFile(join(images.staging, uploadId), data, { flag: 'wx', mode: 0o600 })
   return { uploadId, fileId, name: 'image.png', mediaType: 'image/png' as const,
     size: data.length, sha256: createHash('sha256').update(data).digest('hex') }
+}
+
+for (const format of ['avif', 'tiff'] as const) {
+  test(`${format} reaches the model as an image and retains its AA reference after retry and reload`, { timeout: 40_000 }, async () => {
+    const home = await mkdtemp(join(tmpdir(), `aa-dsh-${format}-`))
+    const adapter = new VisionAdapter()
+    const fixture = await nativeRuntime(home, ctx => mountAgents(ctx, adapter), `${format}-`)
+    const native = fixture.ctx.agentsAnywhereRuntime.native
+    const router = new RuntimeRouter({ native, query: fixture.ctx.sessionQuery, status: id => native.status(id) }, 'images')
+    let reopened: NativeRuntime | undefined
+    try {
+      const data = await sharp(png)[format]().toBuffer()
+      const image = { ...await stage(native.attachments, data), name: `photo.${format}`, mediaType: `image/${format}` }
+      const params = { sessionId: `sess_${format}`, clientMessageId: `${format}-message`, content: '', cwd: home,
+        agentPreset: 'standard', selections: initialSelections, attachments: [image] }
+      const result = await router.request('createAndStartSession', params, new AbortController().signal) as { accepted: boolean }
+      assert.equal(result.accepted, true, JSON.stringify(result))
+      await until(() => adapter.requests.length === 1)
+      assert.ok(adapter.requests[0]!.messages.some(message => message.role === 'user' && message.content.some(part => part.type === 'image')))
+      const id = SessionId(nativeSessionId('images', `sess_${format}`))
+      const user = fixture.ctx.sessions.get(id)!.snapshotEvents().find(event => event.type === 'user/message')!
+      if (user.type !== 'user/message') throw new Error('missing message')
+      const block = user.data.content.find(part => part.type === 'image')!
+      if (block.type !== 'image') throw new Error('missing image')
+      assert.equal(block.attachment.mediaType, 'image/png')
+      const stored = await fixture.ctx.attachments.readImage(block.attachment)
+      assert.equal((await sharp(stored.data).metadata()).format, 'png')
+      await rm(join(native.attachments.staging, image.uploadId))
+      assert.equal((await router.request('createAndStartSession', params, new AbortController().signal) as { accepted: boolean }).accepted, true)
+      assert.equal(adapter.requests.length, 1)
+      adapter.release?.()
+      await until(() => native.status(id) === 'idle')
+      await fixture.ctx.sessions.flush(fixture.ctx.sessions.get(id)!)
+      reopened = new NativeRuntime(fixture.ctx, bridgePath(home, 'create-intents'))
+      const projected = projectHistory(await reopened.read(id), `sess_${format}`).find(item => item.role === 'user')!
+      assert.deepEqual(projected.content.attachments, [{ fileId: image.fileId, name: image.name,
+        mediaType: image.mediaType, size: image.size, sha256: image.sha256 }])
+    } finally {
+      router.close(); adapter.release?.(); await reopened?.close()
+      await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true })
+    }
+  })
 }
 
 test('official image admission, image-only create, retries and cold history preserve AA attachments', { timeout: 40_000 }, async () => {
@@ -117,7 +160,8 @@ test('unsupported types, forged bytes and unsafe staging never enqueue a user me
   const home = await mkdtemp(join(tmpdir(), 'aa-dsh-image-refusal-'))
   const adapter = new VisionAdapter()
   const fixture = await nativeRuntime(home, ctx => mountAgents(ctx, adapter), 'refuse-')
-  const native = fixture.ctx.agentsAnywhereRuntime.native
+  // Match the source router's BridgeError class when checking errors before official DSH admission.
+  const native = new NativeRuntime(fixture.ctx, bridgePath(home, 'create-intents'))
   const router = new RuntimeRouter({ native, query: fixture.ctx.sessionQuery, status: id => native.status(id) }, 'images')
   try {
     const good = await stage(native.attachments)
@@ -131,16 +175,18 @@ test('unsupported types, forged bytes and unsafe staging never enqueue a user me
       await symlink(join(native.attachments.staging, good.uploadId), join(native.attachments.staging, linked.uploadId))
       await assert.rejects(native.attachments.prepare([linked], fixture.ctx.attachments, new AbortController().signal), /symbolic links/)
     }
-    const fake = await stage(native.attachments, Buffer.from('not a PNG'), 'file_fake')
-    const result = await router.request('createAndStartSession', { sessionId: 'sess_reject', content: 'test',
-      clientMessageId: 'refused', cwd: home, agentPreset: 'standard', selections: initialSelections, attachments: [good, fake] }, new AbortController().signal) as { ok: boolean, code: string }
-    assert.equal(result.ok, false)
-    assert.equal(result.code, 'INVALID_PARAMS')
-    const id = SessionId(nativeSessionId('images', 'sess_reject'))
-    assert.equal(fixture.ctx.sessions.get(id)?.snapshotEvents().some(event => event.type === 'user/message' || event.type === 'agent/inbox/spliced'), false)
-    assert.equal(adapter.requests.length, 0)
+    for (const format of ['png', 'avif', 'tiff']) {
+      const fake = { ...await stage(native.attachments, Buffer.from('not an image'), `file_fake_${format}`), mediaType: `image/${format}` }
+      const result = await router.request('createAndStartSession', { sessionId: `sess_reject_${format}`, content: 'test',
+        clientMessageId: `refused_${format}`, cwd: home, agentPreset: 'standard', selections: initialSelections, attachments: [good, fake] }, new AbortController().signal) as { ok: boolean, code: string }
+      assert.equal(result.ok, false)
+      assert.equal(result.code, 'INVALID_PARAMS')
+      const id = SessionId(nativeSessionId('images', `sess_reject_${format}`))
+      assert.equal(fixture.ctx.sessions.get(id)?.snapshotEvents().some(event => event.type === 'user/message' || event.type === 'agent/inbox/spliced'), false)
+      assert.equal(adapter.requests.length, 0)
+    }
     assert.equal((await readFile(join(native.attachments.staging, good.uploadId))).length, png.length)
-  } finally { router.close(); adapter.release?.(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+  } finally { router.close(); adapter.release?.(); await native.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })
 
 test('official admission refuses images for a text-only model with an actionable error', async () => {
