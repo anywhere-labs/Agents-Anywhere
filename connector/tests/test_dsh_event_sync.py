@@ -69,6 +69,32 @@ def test_snapshot_replacement_waits_for_complete_capture_and_preserves_empty_sna
     asyncio.run(exercise())
 
 
+def test_snapshot_items_are_dated_by_session_activity_not_by_the_sync_moment():
+    """#277: an untimed item is dated at ingest, so a first import sorted by sync order."""
+    async def exercise():
+        receiver = host()
+        relay = ready_relay(receiver)
+        try:
+            dated = {**item("dated"), "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-02T00:00:00Z"}
+            await begin_snapshot(relay, meta={"externalSessionId": "native", "lastActivityAt": "2026-05-20T15:00:00.000Z"})
+            await add_page(relay, [item(), dated])
+            await relay.commit_snapshot()
+            items = receiver.publish_runtime_notifications.call_args.args[1][1]["params"]["items"]
+            assert [(i["createdAt"], i["updatedAt"]) for i in items] == [
+                ("2026-05-20T15:00:00.000Z", "2026-05-20T15:00:00.000Z"),
+                ("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"),
+            ]
+            # Without an activity time there is nothing better than the backend's own stamp.
+            await begin_snapshot(relay, meta={"externalSessionId": "native"})
+            await add_page(relay, [item()])
+            await relay.commit_snapshot()
+            untimed = receiver.publish_runtime_notifications.call_args.args[1][1]["params"]["items"][0]
+            assert "createdAt" not in untimed and "updatedAt" not in untimed
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
 def test_snapshot_abort_foreign_items_and_duplicate_pages_do_not_publish_partial_history():
     async def exercise():
         receiver = host()

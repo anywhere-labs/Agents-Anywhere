@@ -77,6 +77,22 @@ class _Quarantine:
                 "observedAt": _observed_now(), "observationOrigin": "event"}
 
 
+def _with_activity_time(items: Iterator[dict[str, Any]], activity: Any) -> Iterator[dict[str, Any]]:
+    """Date replayed items with the session's last activity when they carry no time.
+
+    DSH items keep their event time only inside ``source``, so the backend dates an
+    untimed item with the moment it was ingested. For a complete capture that is
+    the sync moment: a first import, or any re-capture, would sort every session
+    by the order this relay happened to walk them instead of by when it was used.
+    The polling path fills the same fields from the session's ordering time.
+    """
+    if not isinstance(activity, str) or not activity:
+        yield from items
+        return
+    for item in items:
+        yield {"createdAt": activity, "updatedAt": activity, **item}
+
+
 def _checkpoint(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, Mapping):
         return None
@@ -223,8 +239,9 @@ class SyncRelay:
 
     async def deliver_snapshot(self, session_id: str, snapshot: dict[str, Any]) -> None:
         meta = snapshot["meta"]
+        items = _with_activity_time(self.iter_items(), meta.get("lastActivityAt"))
         try:
-            await self.host.publish_runtime_snapshot("dsh", session_id, meta, self.iter_items())
+            await self.host.publish_runtime_snapshot("dsh", session_id, meta, items)
         except (ConnectorIngestRejectedError, httpx.HTTPStatusError) as error:
             if isinstance(error, httpx.HTTPStatusError) and not 400 <= error.response.status_code < 500:
                 raise
