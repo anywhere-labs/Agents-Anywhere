@@ -1801,7 +1801,8 @@ fun SessionDetailScreen(
                             modifier = Modifier.align(Alignment.TopCenter),
                         )
                         SessionDetailHeader(
-                            title = state.session?.title ?: stringResource(R.string.session_title_fallback),
+                            title = state.session?.title?.takeIf(String::isNotBlank)
+                                ?: stringResource(R.string.session_title_fallback),
                             darkMode = darkMode,
                             onLeftClick = ::openRuntimeSettings,
                             onRightClick = { scope.launch { pagerState.animateScrollToPage(1) } },
