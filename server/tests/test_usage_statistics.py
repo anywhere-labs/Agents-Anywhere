@@ -496,6 +496,53 @@ def test_usage_report_rolling_windows_look_before_the_range(tmp_path):
     assert body["summary"]["mau"] == 2
 
 
+def test_usage_report_percentiles_and_read_only_sessions_per_day_and_range(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+    alice = _create_member(client, headers, "alice")
+
+    def turn(at: str, runtime: str | None, duration_ms: int, outcome: str = "completed") -> UsageEvent:
+        return UsageEvent(
+            EVENT_TURN_ENDED, at, session_id="s1", runtime_type=runtime, outcome=outcome, duration_ms=duration_ms
+        )
+
+    _insert(
+        client,
+        [
+            turn("2026-10-03T01:00:00Z", "claude", 10),
+            turn("2026-10-03T02:00:00Z", "claude", 20),
+            turn("2026-10-03T03:00:00Z", "claude", 30),
+            turn("2026-10-03T04:00:00Z", "claude", 40),
+            turn("2026-10-04T01:00:00Z", "codex", 100),
+            turn("2026-10-04T02:00:00Z", None, 50),
+            turn("2026-10-04T03:00:00Z", "codex", 999, outcome="failed"),
+            # s1 is read on the 3rd and written to on the 4th; s2 is only read.
+            UsageEvent(EVENT_SESSION_VIEWED, "2026-10-03T05:00:00Z", user_id=alice, session_id="s1", runtime_type="codex"),
+            UsageEvent(EVENT_MESSAGE_SENT, "2026-10-04T05:00:00Z", user_id=alice, session_id="s1", runtime_type="codex"),
+            UsageEvent(EVENT_SESSION_VIEWED, "2026-10-04T06:00:00Z", user_id=alice, session_id="s2", runtime_type="codex"),
+        ],
+    )
+
+    body = _report(client, headers, **{"from": "2026-10-03", "to": "2026-10-04", "tz": "UTC"})
+    days = _daily(body)
+    # Nearest rank: the ceil(n * fraction)-th smallest sample.
+    assert (days["2026-10-03"]["turnDurationP50Ms"], days["2026-10-03"]["turnDurationP90Ms"]) == (20, 40)
+    assert (days["2026-10-04"]["turnDurationP50Ms"], days["2026-10-04"]["turnDurationP90Ms"]) == (50, 100)
+    assert body["summary"]["turnDurationMs"] == {"p50": 30, "p90": 100, "p99": 100, "samples": 6}
+    assert body["summary"]["approvalWaitMs"] == {"p50": None, "p90": None, "p99": None, "samples": 0}
+    runtimes = {row["runtimeType"]: row for row in body["runtimes"]}
+    assert runtimes["claude"]["turnDurationP50Ms"] == 20
+    assert runtimes["codex"]["turnDurationP50Ms"] == 100
+    assert runtimes["codex"]["sessions"] == 1 and runtimes["codex"]["activeUsers"] == 1
+    assert "" not in runtimes
+
+    assert (days["2026-10-03"]["sessions"], days["2026-10-03"]["sessionsViewed"], days["2026-10-03"]["sessionsReadOnly"]) == (0, 1, 1)
+    assert (days["2026-10-04"]["sessions"], days["2026-10-04"]["sessionsViewed"], days["2026-10-04"]["sessionsReadOnly"]) == (1, 1, 1)
+    summary = body["summary"]
+    assert (summary["sessions"], summary["sessionsViewed"], summary["sessionsReadOnly"], summary["sessionViews"]) == (1, 2, 1, 2)
+    assert [day["date"] for day in body["daily"] if day["activeUsers"]] == ["2026-10-03", "2026-10-04"]
+
+
 def test_usage_report_retention_cohorts(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
@@ -575,6 +622,14 @@ def test_usage_report_validation_and_authorization(tmp_path):
 def test_usage_live_reports_presence_and_running_turns(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
+    # A connector being deleted counts neither as online nor towards the total.
+    deleting = client.post("/connectors", headers=headers, json={"name": "old"}).json()["connector"]["id"]
+
+    async def mark_deleting() -> None:
+        async with client.app.state.store.engine.begin() as conn:
+            await conn.execute(text("UPDATE connectors SET revoked = 2 WHERE id = :id"), {"id": deleting})
+
+    asyncio.run(mark_deleting())
     fake_rpc = _take_over_session(client, connector_id, session_id, headers)
     response = client.post(
         f"/sessions/{session_id}/runtime/messages",
@@ -583,6 +638,10 @@ def test_usage_live_reports_presence_and_running_turns(tmp_path):
     )
     assert response.status_code == 200, response.text
     wait_for_rpc_method(fake_rpc, "session.send_message")
+    # Older than the 15-minute window, possibly in the same hour bucket.
+    stale = _create_member(client, headers, "stale")
+    stale_at = (datetime.now(UTC) - timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _insert(client, [UsageEvent(EVENT_USER_ACTIVE, stale_at, user_id=stale)])
 
     live = client.get("/admin/usage/live", headers=headers)
     assert live.status_code == 200, live.text

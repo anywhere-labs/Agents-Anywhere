@@ -65,10 +65,13 @@ reported in `devices.inventoryAsOf` (`"live"` or the snapshot date).
 
 ### Timezone handling
 
-Events are aggregated per UTC hour in SQL; the service then maps each hour onto
-the local day of `tz`. Whole-hour timezones map exactly. Timezones with a
-30/45-minute offset attribute an edge hour to the day in which its UTC hour
-starts, so a day boundary can be off by up to that offset.
+Events are grouped per UTC hour in SQL, then each hour is mapped onto the local
+day and hour of `tz` with PostgreSQL's `AT TIME ZONE` and aggregated per local
+day in the same query, so the Server receives per-day totals (and, for the
+rolling windows, one row per user and active day) rather than per-event or
+per-hour detail. Whole-hour timezones map exactly. Timezones with a 30/45-minute
+offset attribute an edge hour to the day in which its UTC hour starts, so a day
+boundary can be off by up to that offset.
 
 ### Definitions
 
@@ -84,7 +87,7 @@ starts, so a day boundary can be off by up to that offset.
 | `summary.sessionsViewed` | Distinct sessions opened in the range. |
 | `summary.sessionsReadOnly` | Sessions opened in the range that received no platform message in it — the ones people only read. `daily[]` carries all three per local day. |
 | `summary.turns`, `turnFailureRate` | `turn.ended` events and the share with `outcome=failed` (`null` without turns). |
-| `summary.turnDurationMs` | Nearest-rank p50 / p90 / p99 over completed turns with a known duration (newest 200 000 samples). |
+| `summary.turnDurationMs` | Nearest-rank p50 / p90 / p99 (`percentile_disc`) over every completed turn in the range with a known duration. |
 | `summary.approvalsRequested` / `approvalsResolved` / `approvalWaitMs` | Approval events and percentiles of `approval.resolved` durations. |
 | `summary.runtimeErrors` | `runtime.error` events. |
 | `summary.connectorsOnline` | Distinct connectors with a `connector.online` event in the range. |
@@ -142,9 +145,12 @@ any date range:
 {"onlineConnectors": 3, "totalConnectors": 11, "runningTurns": 2, "activeUsers15m": 4, "serverTime": "..."}
 ```
 
-`onlineConnectors` comes from connector presence (not the SQL status column),
-`runningTurns` from `session_active_runs`, and `activeUsers15m` from distinct
-users with any usage event in the last 15 minutes.
+`onlineConnectors` comes from connector presence (not the SQL status column)
+for the ids of all non-revoked connectors, `totalConnectors` is the number of
+those ids, `runningTurns` comes from `session_active_runs`, and `activeUsers15m`
+from distinct users with any usage event in the last 15 minutes. Clients poll
+this endpoint, so it reads only connector ids and bounds the event scan by hour
+bucket.
 
 ## Client notes
 

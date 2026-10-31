@@ -1,10 +1,11 @@
 """Build the admin usage report from recorded usage events.
 
-Events are stored with UTC hour buckets. The repository aggregates per hour in
-SQL; this module maps every hour onto the local day of the requested timezone
-and assembles the response. Whole-hour timezones map exactly; timezones with a
-30 or 45 minute offset attribute the edge hour to the day its UTC hour starts
-in, so day boundaries can be off by up to that offset.
+Events are stored with UTC hour buckets. The repository maps every bucket onto
+the local day of the requested timezone and aggregates per day in SQL, so the
+rows it returns grow with the number of days (and, for rolling windows, active
+user-days) rather than with the number of events. Whole-hour timezones map
+exactly; timezones with a 30 or 45 minute offset attribute the edge hour to the
+day its UTC hour starts in, so day boundaries can be off by up to that offset.
 """
 
 from __future__ import annotations
@@ -16,7 +17,6 @@ from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent_server.core.models import (
-    ConnectorView,
     UsageBucket,
     UsageDailyPoint,
     UsageDevicesSection,
@@ -40,7 +40,6 @@ from agent_server.core.usage import (
     EVENT_APPROVAL_RESOLVED,
     EVENT_MESSAGE_SENT,
     EVENT_RUNTIME_ERROR,
-    EVENT_SESSION_VIEWED,
     EVENT_TURN_ENDED,
     INVENTORY_CONNECTORS_BY_OS,
     INVENTORY_CONNECTORS_SEEN_7D,
@@ -53,16 +52,17 @@ from agent_server.core.usage import (
     TURN_OUTCOME_FAILED,
     InventoryRow,
     InventorySnapshotRow,
-    UsageConnectorRow,
+    UsageConnectorTotalsRow,
     UsageCountRow,
-    UsageDurationRow,
-    UsageSessionRow,
-    UsageUserRow,
+    UsageDurationStatsRow,
+    UsageRuntimeReachRow,
+    UsageSessionTotalsRow,
+    UsageUserActivity,
 )
 from agent_server.core.utc import utc_now
 from agent_server.services.connector_presence import (
     ConnectorPresencePort,
-    with_effective_connector_statuses,
+    connector_online_statuses,
 )
 from agent_server.services.repository_ports import UsageReportRepository
 
@@ -122,28 +122,25 @@ class UsageReportService:
         wide_start = clock.hour_key(wide_start_date)
         wide_end = clock.hour_key(wide_end_date + timedelta(days=1))
 
-        counts = await self._store.usage_event_counts(
+        # Queries run one after another on purpose: running them concurrently
+        # would hold one pooled connection per query for every report.
+        in_range = {"start_hour": range_start, "end_hour": range_end, "timezone": timezone}
+        counts = await self._store.usage_event_counts(**in_range)
+        user_activity = await self._store.usage_user_activity(
+            **in_range, days_start_hour=wide_start, days_end_hour=wide_end
+        )
+        session_totals = await self._store.usage_session_totals(**in_range)
+        runtime_reach = await self._store.usage_runtime_reach(
             start_hour=range_start, end_hour=range_end
         )
-        user_rows = await self._store.usage_user_activity(
-            start_hour=wide_start, end_hour=wide_end
-        )
-        session_rows = await self._store.usage_session_activity(
-            start_hour=range_start, end_hour=range_end
-        )
-        connector_rows = await self._store.usage_connector_online(
-            start_hour=range_start, end_hour=range_end
-        )
-        turn_durations = await self._store.usage_durations(
-            start_hour=range_start,
-            end_hour=range_end,
+        connector_totals = await self._store.usage_connector_totals(**in_range)
+        turn_durations = await self._store.usage_duration_stats(
+            **in_range,
             event_type=EVENT_TURN_ENDED,
             outcomes=(TURN_OUTCOME_COMPLETED,),
         )
-        approval_durations = await self._store.usage_durations(
-            start_hour=range_start,
-            end_hour=range_end,
-            event_type=EVENT_APPROVAL_RESOLVED,
+        approval_durations = await self._store.usage_duration_stats(
+            **in_range, event_type=EVENT_APPROVAL_RESOLVED
         )
         created_users = await self._store.users_created_between(
             start=clock.utc_iso(from_date),
@@ -160,9 +157,10 @@ class UsageReportService:
 
         builder = _ReportBuilder(clock=clock, days=days, today=today_local)
         builder.add_counts(counts)
-        builder.add_users(user_rows)
-        builder.add_sessions(session_rows)
-        builder.add_connectors(connector_rows)
+        builder.add_users(user_activity)
+        builder.add_sessions(session_totals)
+        builder.add_runtime_reach(runtime_reach)
+        builder.add_connectors(connector_totals)
         builder.add_turn_durations(turn_durations)
         builder.add_approval_durations(approval_durations)
         builder.add_new_users(created_users)
@@ -184,15 +182,15 @@ class UsageReportService:
         )
 
     async def live(self, *, presence: ConnectorPresencePort) -> UsageLiveResponse:
-        connectors: list[ConnectorView] = await self._store.list_connectors()
-        with_status = await with_effective_connector_statuses(presence, connectors)
-        online = sum(1 for connector in with_status if connector.status == "online")
+        connector_ids = await self._store.active_connector_ids()
+        statuses = await connector_online_statuses(presence, connector_ids)
+        online = sum(1 for is_online in statuses.values() if is_online)
         running = await self._store.count_active_runs()
         since = _iso(datetime.now(UTC) - timedelta(seconds=LIVE_ACTIVE_WINDOW_SECONDS))
         active = await self._store.count_active_usage_users(since=since)
         return UsageLiveResponse(
             onlineConnectors=online,
-            totalConnectors=len(connectors),
+            totalConnectors=len(connector_ids),
             runningTurns=running,
             activeUsers15m=active,
             serverTime=utc_now(),
@@ -222,11 +220,10 @@ class UsageReportService:
 
 
 class _LocalClock:
-    """Map UTC hour buckets onto local days for one timezone."""
+    """Local day boundaries of one timezone, as UTC hour buckets and instants."""
 
     def __init__(self, tz: ZoneInfo) -> None:
         self._tz = tz
-        self._cache: dict[str, tuple[str, int]] = {}
 
     def hour_key(self, day: date) -> str:
         """UTC hour bucket in which the local day starts."""
@@ -238,16 +235,6 @@ class _LocalClock:
 
     def day_start_utc(self, day: date) -> datetime:
         return datetime.combine(day, time.min, tzinfo=self._tz).astimezone(UTC)
-
-    def local(self, hour_bucket: str) -> tuple[str, int]:
-        cached = self._cache.get(hour_bucket)
-        if cached is not None:
-            return cached
-        moment = datetime.strptime(hour_bucket, "%Y-%m-%dT%H").replace(tzinfo=UTC)
-        local = moment.astimezone(self._tz)
-        value = (local.date().isoformat(), local.hour)
-        self._cache[hour_bucket] = value
-        return value
 
     def local_date(self, iso_utc: str) -> date:
         parsed = datetime.fromisoformat(iso_utc)
@@ -278,11 +265,12 @@ class _DayAgg:
     runtime_errors: int = 0
     new_users: int = 0
     users: set[str] = field(default_factory=set)
-    sessions: set[str] = field(default_factory=set)
+    sessions: int = 0
     session_views: int = 0
-    viewed_sessions: set[str] = field(default_factory=set)
-    connectors: set[str] = field(default_factory=set)
-    turn_durations: list[int] = field(default_factory=list)
+    sessions_viewed: int = 0
+    sessions_read_only: int = 0
+    connectors: int = 0
+    turn_durations: UsagePercentiles = field(default_factory=UsagePercentiles)
 
 
 @dataclass
@@ -291,9 +279,9 @@ class _RuntimeAgg:
     turns: int = 0
     turns_failed: int = 0
     runtime_errors: int = 0
-    sessions: set[str] = field(default_factory=set)
-    users: set[str] = field(default_factory=set)
-    turn_durations: list[int] = field(default_factory=list)
+    sessions: int = 0
+    users: int = 0
+    turn_duration_p50: int | None = None
 
 
 @dataclass(frozen=True)
@@ -338,36 +326,32 @@ class _ReportBuilder:
         self._clock = clock
         self._days = days
         self._today = today
-        self._day_keys = {day.isoformat() for day in days}
         self._daily: dict[str, _DayAgg] = {day.isoformat(): _DayAgg() for day in days}
         self._runtimes: dict[str, _RuntimeAgg] = defaultdict(_RuntimeAgg)
         self._turn_outcomes: Counter[str] = Counter()
         self._approval_outcomes: Counter[str] = Counter()
         self._hour_messages: Counter[int] = Counter()
-        self._hour_users: dict[int, set[str]] = defaultdict(set)
+        self._hour_users: dict[int, int] = {}
         self._user_days: dict[str, set[int]] = defaultdict(set)
         self._user_messages: Counter[str] = Counter()
-        self._sessions: set[str] = set()
-        self._session_views = 0
-        self._viewed_sessions: set[str] = set()
-        self._connectors: set[str] = set()
-        self._os_online: dict[str, set[str]] = defaultdict(set)
-        self._turn_durations: list[int] = []
-        self._approval_durations: list[int] = []
+        self._sessions = UsageSessionTotalsRow(None, 0, 0, 0, 0)
+        self._connectors = 0
+        self._os_online: dict[str, int] = {}
+        self._turn_durations = UsagePercentiles()
+        self._approval_durations = UsagePercentiles()
         self._signups: list[tuple[str, date]] = []
 
     # --- inputs -------------------------------------------------------------
 
     def add_counts(self, rows: list[UsageCountRow]) -> None:
         for row in rows:
-            day, local_hour = self._clock.local(row.hour_bucket)
-            agg = self._daily.get(day)
+            agg = self._daily.get(row.local_date)
             if agg is None:
                 continue
             runtime = self._runtimes[row.runtime_type] if row.runtime_type else None
             if row.event_type == EVENT_MESSAGE_SENT:
                 agg.messages += row.count
-                self._hour_messages[local_hour] += row.count
+                self._hour_messages[row.local_hour] += row.count
                 if runtime is not None:
                     runtime.messages += row.count
             elif row.event_type == EVENT_TURN_ENDED:
@@ -389,64 +373,61 @@ class _ReportBuilder:
                 if runtime is not None:
                     runtime.runtime_errors += row.count
 
-    def add_users(self, rows: list[UsageUserRow]) -> None:
-        for row in rows:
-            day, local_hour = self._clock.local(row.hour_bucket)
-            self._user_days[row.user_id].add(date.fromisoformat(day).toordinal())
-            agg = self._daily.get(day)
+    def add_users(self, activity: UsageUserActivity) -> None:
+        for row in activity.days:
+            self._user_days[row.user_id].add(date.fromisoformat(row.local_date).toordinal())
+            agg = self._daily.get(row.local_date)
             if agg is None:
                 continue
             agg.users.add(row.user_id)
             self._user_messages[row.user_id] += row.messages
-            self._hour_users[local_hour].add(row.user_id)
+        self._hour_users = dict(activity.hour_of_day)
 
-    def add_sessions(self, rows: list[UsageSessionRow]) -> None:
+    def add_sessions(self, rows: list[UsageSessionTotalsRow]) -> None:
         for row in rows:
-            day, _ = self._clock.local(row.hour_bucket)
-            agg = self._daily.get(day)
+            if row.local_date is None:
+                self._sessions = row
+                continue
+            agg = self._daily.get(row.local_date)
             if agg is None:
                 continue
-            if row.event_type == EVENT_SESSION_VIEWED:
-                agg.session_views += row.count
-                agg.viewed_sessions.add(row.session_id)
-                self._session_views += row.count
-                self._viewed_sessions.add(row.session_id)
-                continue
-            agg.sessions.add(row.session_id)
-            self._sessions.add(row.session_id)
-            if row.runtime_type:
-                runtime = self._runtimes[row.runtime_type]
-                runtime.sessions.add(row.session_id)
-                if row.user_id:
-                    runtime.users.add(row.user_id)
+            agg.sessions = row.sessions
+            agg.session_views = row.session_views
+            agg.sessions_viewed = row.sessions_viewed
+            agg.sessions_read_only = row.sessions_read_only
 
-    def add_connectors(self, rows: list[UsageConnectorRow]) -> None:
+    def add_runtime_reach(self, rows: list[UsageRuntimeReachRow]) -> None:
         for row in rows:
-            day, _ = self._clock.local(row.hour_bucket)
-            agg = self._daily.get(day)
-            if agg is None:
-                continue
-            agg.connectors.add(row.connector_id)
-            self._connectors.add(row.connector_id)
-            self._os_online[row.device_os or "unknown"].add(row.connector_id)
+            runtime = self._runtimes[row.runtime_type]
+            runtime.sessions = row.sessions
+            runtime.users = row.users
 
-    def add_turn_durations(self, rows: list[UsageDurationRow]) -> None:
+    def add_connectors(self, rows: list[UsageConnectorTotalsRow]) -> None:
         for row in rows:
-            day, _ = self._clock.local(row.hour_bucket)
-            agg = self._daily.get(day)
-            if agg is None:
-                continue
-            agg.turn_durations.append(row.duration_ms)
-            self._turn_durations.append(row.duration_ms)
-            if row.runtime_type:
-                self._runtimes[row.runtime_type].turn_durations.append(row.duration_ms)
+            if row.local_date is not None:
+                agg = self._daily.get(row.local_date)
+                if agg is not None:
+                    agg.connectors = row.connectors
+            elif row.device_os is not None:
+                self._os_online[row.device_os] = row.connectors
+            else:
+                self._connectors = row.connectors
 
-    def add_approval_durations(self, rows: list[UsageDurationRow]) -> None:
+    def add_turn_durations(self, rows: list[UsageDurationStatsRow]) -> None:
         for row in rows:
-            day, _ = self._clock.local(row.hour_bucket)
-            if day not in self._day_keys:
-                continue
-            self._approval_durations.append(row.duration_ms)
+            if row.local_date is not None:
+                agg = self._daily.get(row.local_date)
+                if agg is not None:
+                    agg.turn_durations = _percentiles(row)
+            elif row.runtime_type is not None:
+                self._runtimes[row.runtime_type].turn_duration_p50 = row.p50
+            else:
+                self._turn_durations = _percentiles(row)
+
+    def add_approval_durations(self, rows: list[UsageDurationStatsRow]) -> None:
+        for row in rows:
+            if row.local_date is None and row.runtime_type is None:
+                self._approval_durations = _percentiles(row)
 
     def add_new_users(self, rows: list[tuple[str, str]]) -> None:
         for user_id, created_at in rows:
@@ -478,7 +459,6 @@ class _ReportBuilder:
         for day in self._days:
             key = day.isoformat()
             agg = self._daily[key]
-            turn_pct = _percentiles(agg.turn_durations)
             daily.append(
                 UsageDailyPoint(
                     date=key,
@@ -487,18 +467,18 @@ class _ReportBuilder:
                     wau=wau.get(day.toordinal(), 0),
                     mau=mau.get(day.toordinal(), 0),
                     messages=agg.messages,
-                    sessions=len(agg.sessions),
+                    sessions=agg.sessions,
                     sessionViews=agg.session_views,
-                    sessionsViewed=len(agg.viewed_sessions),
-                    sessionsReadOnly=len(agg.viewed_sessions - agg.sessions),
+                    sessionsViewed=agg.sessions_viewed,
+                    sessionsReadOnly=agg.sessions_read_only,
                     turns=agg.turns,
                     turnsFailed=agg.turns_failed,
-                    turnDurationP50Ms=turn_pct.p50,
-                    turnDurationP90Ms=turn_pct.p90,
+                    turnDurationP50Ms=agg.turn_durations.p50,
+                    turnDurationP90Ms=agg.turn_durations.p90,
                     approvalsRequested=agg.approvals_requested,
                     approvalsResolved=agg.approvals_resolved,
                     runtimeErrors=agg.runtime_errors,
-                    connectorsOnline=len(agg.connectors),
+                    connectorsOnline=agg.connectors,
                 )
             )
 
@@ -508,8 +488,8 @@ class _ReportBuilder:
         total_messages = sum(point.messages for point in daily)
         total_turns = sum(point.turns for point in daily)
         total_failed = sum(point.turnsFailed for point in daily)
-        turn_pct = _percentiles(self._turn_durations)
-        approval_pct = _percentiles(self._approval_durations)
+        turn_pct = self._turn_durations
+        approval_pct = self._approval_durations
         approvals_requested = sum(point.approvalsRequested for point in daily)
         approvals_resolved = sum(point.approvalsResolved for point in daily)
         runtime_errors = sum(point.runtimeErrors for point in daily)
@@ -523,10 +503,10 @@ class _ReportBuilder:
             mau=last.mau,
             totalUsers=inventory.users_total,
             messages=total_messages,
-            sessions=len(self._sessions),
-            sessionViews=self._session_views,
-            sessionsViewed=len(self._viewed_sessions),
-            sessionsReadOnly=len(self._viewed_sessions - self._sessions),
+            sessions=self._sessions.sessions,
+            sessionViews=self._sessions.session_views,
+            sessionsViewed=self._sessions.sessions_viewed,
+            sessionsReadOnly=self._sessions.sessions_read_only,
             turns=total_turns,
             turnFailureRate=round(total_failed / total_turns, 4) if total_turns else None,
             turnDurationMs=turn_pct,
@@ -534,7 +514,7 @@ class _ReportBuilder:
             approvalsResolved=approvals_resolved,
             approvalWaitMs=approval_pct,
             runtimeErrors=runtime_errors,
-            connectorsOnline=len(self._connectors),
+            connectorsOnline=self._connectors,
             totalConnectors=inventory.connectors_total,
         )
 
@@ -542,7 +522,7 @@ class _ReportBuilder:
             UsageHourPoint(
                 hour=hour,
                 messages=self._hour_messages.get(hour, 0),
-                activeUsers=len(self._hour_users.get(hour, ())),
+                activeUsers=self._hour_users.get(hour, 0),
             )
             for hour in range(24)
         ]
@@ -559,11 +539,11 @@ class _ReportBuilder:
                 runtimeType=key,
                 displayName=runtime_names.get(key, key),
                 messages=agg.messages,
-                sessions=len(agg.sessions),
-                activeUsers=len(agg.users),
+                sessions=agg.sessions,
+                activeUsers=agg.users,
                 turns=agg.turns,
                 turnsFailed=agg.turns_failed,
-                turnDurationP50Ms=_percentiles(agg.turn_durations).p50,
+                turnDurationP50Ms=agg.turn_duration_p50,
                 runtimeErrors=agg.runtime_errors,
                 configuredConnectors=inventory.configured.get(key, 0),
                 discoveredConnectors=inventory.discovered.get(key, 0),
@@ -579,7 +559,7 @@ class _ReportBuilder:
             UsageOsRow(
                 os=key,
                 connectors=inventory.by_os.get(key, 0),
-                connectorsOnline=len(self._os_online.get(key, ())),
+                connectorsOnline=self._os_online.get(key, 0),
             )
             for key in sorted(os_keys, key=lambda name: (-inventory.by_os.get(name, 0), name))
         ]
@@ -658,16 +638,8 @@ def _mark(diff: dict[int, int], lo: int, hi: int, start_ord: int, end_ord: int) 
     diff[hi + 1] -= 1
 
 
-def _percentiles(values: list[int]) -> UsagePercentiles:
-    if not values:
-        return UsagePercentiles()
-    ordered = sorted(values)
-    return UsagePercentiles(
-        p50=_percentile(ordered, 0.5),
-        p90=_percentile(ordered, 0.9),
-        p99=_percentile(ordered, 0.99),
-        samples=len(ordered),
-    )
+def _percentiles(row: UsageDurationStatsRow) -> UsagePercentiles:
+    return UsagePercentiles(p50=row.p50, p90=row.p90, p99=row.p99, samples=row.samples)
 
 
 def _percentile(ordered: list[int], fraction: float) -> int:

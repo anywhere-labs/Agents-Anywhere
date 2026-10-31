@@ -29,6 +29,10 @@
 
 - Connector 上报的时间线条目序号超出范围时只拒绝这条上报，同批其他消息照常保存，不再让整个会话之后的消息都存不进数据库；升级前已经积压的条目会按原顺序排到时间线末尾保存，持续写入失败的会话也不再每秒重试刷屏日志。（[#464](https://github.com/anywhere-labs/Agents-Anywhere/pull/464)）
 
+### Web 与 Desktop 界面
+
+- 管理看板顶部的实时状态不再随设备数和使用事件增多而变慢；使用报表的轮次耗时和审批等待分位数改为统计范围内的全部样本，不再只取最新的 20 万条。（[#472](https://github.com/anywhere-labs/Agents-Anywhere/pull/472)）
+
 ## 2.1.0（2026-10-27）
 
 [发布说明](docs/releases/2.1.0.md) · [GitHub Release](https://github.com/anywhere-labs/Agents-Anywhere/releases/tag/v2.1.0) · [与 2.0.3 的差异](https://github.com/anywhere-labs/Agents-Anywhere/compare/v2.0.3...v2.1.0)
