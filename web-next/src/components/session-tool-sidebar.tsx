@@ -16,6 +16,7 @@ import {
 } from "lucide-react"
 import { useTranslations } from "next-intl"
 
+import { SessionPlanEditor } from "@/components/session/session-plan-editor"
 import { FilesPanelBody } from "@/components/panels/files-panel"
 import { TerminalSessionPanel } from "@/components/panels/terminal-panel"
 import { SessionReviewPanel } from "@/components/session/session-review-panel"
@@ -784,7 +785,7 @@ export function SessionToolSidebar({
                 )}
               >
                 {tab.kind === "review" ? (
-                  <SessionFilePreviewProvider onOpenFilePreview={controller.openFilePreview}>
+                  <SessionFilePreviewProvider onOpenFilePreview={controller.openFilePreview} planLocation={token && connectorId ? { token, connectorId, root } : undefined}>
                   <SessionReviewPanel
                     sessionId={sessionId}
                     token={token}
@@ -869,6 +870,12 @@ function SessionFilesToolPanel({
     (file, options) => onOpenFilePreview(file, { ...options, sourceTabId: tabId }),
     [onOpenFilePreview, tabId],
   )
+
+  if (filePreview?.source === "plan" && filePreview.planDraft) {
+    return (
+      <SessionPlanEditor draft={filePreview.planDraft} documentKey={filePreview.path} />
+    )
+  }
 
   return (
     <FilesPanelBody
