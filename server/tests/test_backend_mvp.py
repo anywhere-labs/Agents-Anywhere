@@ -441,15 +441,22 @@ def test_revoke_connector_rotates_token_and_disconnects(tmp_path):
     assert new_auth.status_code == 200
 
 
-def wait_for(predicate, *, attempts: int = 20, interval: float = 0.01):
-    for _ in range(attempts):
+def wait_for(predicate, *, timeout: float = 5.0, interval: float = 0.01):
+    """Poll ``predicate`` until it returns a truthy value and return that value.
+
+    The budget is wall-clock time, not a number of polls: three connector
+    notifications already take about 0.3 s on an idle machine, and a fixed
+    20-poll budget ran out whenever the test database was busy. Running out
+    fails the test here instead of handing ``None`` to the caller.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
         value = predicate()
         if value:
             return value
-        import time
-
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"condition not met within {timeout:g} s: {predicate!r}")
         time.sleep(interval)
-    return predicate()
 
 
 def wait_for_item_update(client: TestClient, session_id: str, headers: dict[str, str], after_seq: int):
@@ -11699,6 +11706,20 @@ def test_read_endpoint_marks_owned_sessions_read(tmp_path):
                     },
                 }
             )
+            # Only a turn end makes a session unread.
+            ws.send_json(
+                {
+                    "type": "notification",
+                    "method": "session.turnEnded",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "runtimeId": "codex",
+                        "turnId": f"turn_{item_id}",
+                        "outcome": "completed",
+                    },
+                }
+            )
         wait_for(
             lambda: (
                 state
@@ -11754,6 +11775,20 @@ def test_read_endpoint_accepts_session_id_array(tmp_path):
                             "revision": 1,
                             "contentHash": f"sha256:{item_id}",
                         },
+                    },
+                }
+            )
+            # Only a turn end makes a session unread.
+            ws.send_json(
+                {
+                    "type": "notification",
+                    "method": "session.turnEnded",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "runtimeId": "codex",
+                        "turnId": f"turn_{item_id}",
+                        "outcome": "completed",
                     },
                 }
             )
