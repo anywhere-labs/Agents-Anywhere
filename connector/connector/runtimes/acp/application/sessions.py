@@ -856,9 +856,12 @@ class SessionService:
         except PromptRejectedBeforeDispatch as error:
             operation = operation.reject("adapter_rejected_before_dispatch", failure={"code": error.code, "message": str(error)})
             stop_reason = "refusal"
-        except Exception:  # noqa: BLE001 -- v1 errors do not establish pre-insertion rejection
+        except Exception as error:  # noqa: BLE001 -- v1 errors do not establish pre-insertion rejection
             failed = True
-            operation = operation.lose_connection()
+            operation = replace(
+                operation.lose_connection(),
+                failure={"code": "agent_error", "message": str(error)[:300]},
+            )
         finally:
             session_id = operation.session_id
             with self.store.transaction():

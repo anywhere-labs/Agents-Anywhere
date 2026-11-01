@@ -410,3 +410,93 @@ def test_takeover_attach_failure_rolls_back_binding(tmp_path, monkeypatch):
             await runtime.stop()
 
     asyncio.run(run())
+
+
+def test_start_turn_reports_in_progress_turns_as_delivered(tmp_path, monkeypatch):
+    async def run():
+        runtime, _notifications, _native_id = make_runtime(
+            tmp_path, tmp_path / "db.sqlite"
+        )
+        runtime.turn_wait_seconds = 0.3
+        await runtime.start()
+        try:
+            source = next(iter(runtime.app.store.values("zcode_native_source")))
+            platform_id = source["platformSessionId"]
+
+            async def ok_recover(session_id):
+                return {"status": "attached"}
+
+            async def slow_submit(session_id, message_id, content, *, creation_id=None, blocks=None):
+                from connector.runtimes.acp.domain.definitions import fingerprint
+
+                runtime.app.store.put(
+                    "prompt",
+                    fingerprint([session_id, message_id]),
+                    {"phase": "dispatching", "message_accepted": None},
+                )
+                return {"ok": True}
+
+            monkeypatch.setattr(runtime.app, "recover", ok_recover)
+            monkeypatch.setattr(runtime.app, "submit", slow_submit)
+
+            result = await runtime.start_turn(
+                platform_id,
+                source["sessionId"],
+                "慢回合也要算送达",
+                client_message_id="cm-slow",
+            )
+            # A turn still running at the wait window is a delivered message,
+            # not a failure.
+            assert result.ok is True
+            assert result.code == "turn_in_progress"
+            assert result.result.get("messageAccepted") is True
+        finally:
+            await runtime.stop()
+
+    asyncio.run(run())
+
+
+def test_start_turn_surfaces_agent_failure_message(tmp_path, monkeypatch):
+    async def run():
+        runtime, _notifications, _native_id = make_runtime(
+            tmp_path, tmp_path / "db.sqlite"
+        )
+        runtime.turn_wait_seconds = 0.3
+        await runtime.start()
+        try:
+            source = next(iter(runtime.app.store.values("zcode_native_source")))
+            platform_id = source["platformSessionId"]
+
+            async def ok_recover(session_id):
+                return {"status": "attached"}
+
+            async def failing_submit(session_id, message_id, content, *, creation_id=None, blocks=None):
+                from connector.runtimes.acp.domain.definitions import fingerprint
+
+                runtime.app.store.put(
+                    "prompt",
+                    fingerprint([session_id, message_id]),
+                    {
+                        "phase": "outcome_unknown",
+                        "message_accepted": None,
+                        "failure": {"code": "agent_error", "message": "exceed quota limit"},
+                    },
+                )
+                return {"ok": True}
+
+            monkeypatch.setattr(runtime.app, "recover", ok_recover)
+            monkeypatch.setattr(runtime.app, "submit", failing_submit)
+
+            result = await runtime.start_turn(
+                platform_id,
+                source["sessionId"],
+                "失败要带原始错误",
+                client_message_id="cm-failmsg",
+            )
+            assert result.ok is False
+            assert result.code == "operation_outcome_unknown"
+            assert result.message == "exceed quota limit"
+        finally:
+            await runtime.stop()
+
+    asyncio.run(run())

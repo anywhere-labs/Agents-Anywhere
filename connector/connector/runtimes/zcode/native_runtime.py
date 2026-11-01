@@ -59,6 +59,11 @@ class NativeZcodeRuntime(AcpRuntime):
         super().__init__(*args, **kwargs)
         self.history_db_path = Path(history_db_path)
         self.scan_lock = asyncio.Lock()
+        # How long start_turn waits for an early accept/reject before
+        # reporting "turn in progress". Keep this small: the server's
+        # send-message RPC budget is 30s and the first attach already costs
+        # several seconds; real turns run for minutes regardless.
+        self.turn_wait_seconds = 6.0
         self.leases: dict[str, int] = {}
         self.app.launch_for_session = self._session_launch
         self.app.on_context_closed = self._release
@@ -712,7 +717,7 @@ class NativeZcodeRuntime(AcpRuntime):
         result = await self.app.submit(session_id, client_message_id, content, blocks=blocks)
         if result.get("messageAccepted") is None:
             try:
-                async with asyncio.timeout(20):
+                async with asyncio.timeout(self.turn_wait_seconds):
                     while True:
                         row = self.app.store.require(
                             "prompt", fingerprint([session_id, client_message_id])
@@ -736,11 +741,28 @@ class NativeZcodeRuntime(AcpRuntime):
             except TimeoutError:
                 pass
             if result.get("messageAccepted") is None:
-                result = {
-                    **result,
-                    "code": "operation_outcome_unknown",
-                    "message": "消息已提交但 Agent 未确认接收：会话可能被模型配额、网络或桌面端中断。请检查 ZCode 账号额度后重试。",
-                }
+                row = self.app.store.get(
+                    "prompt", fingerprint([session_id, client_message_id])
+                ) or {}
+                if row.get("phase") == "dispatching":
+                    # The agent accepted the message and the turn is simply
+                    # still running; long turns outlive this call by design.
+                    result = {
+                        **result,
+                        "ok": True,
+                        "code": "turn_in_progress",
+                        "messageAccepted": True,
+                        "message": "消息已送达，回合仍在执行，结果稍后出现在时间线。",
+                    }
+                else:
+                    failure_message = (row.get("failure") or {}).get("message")
+                    result = {
+                        **result,
+                        "ok": False,
+                        "code": "operation_outcome_unknown",
+                        "message": failure_message
+                        or "消息已提交但 Agent 未确认接收：会话可能被模型配额、网络或桌面端中断，请稍后重试。",
+                    }
         return RuntimeOperationResult(
             ok=result["ok"], code=result.get("code"), message=result.get("message"), result=result
         )
