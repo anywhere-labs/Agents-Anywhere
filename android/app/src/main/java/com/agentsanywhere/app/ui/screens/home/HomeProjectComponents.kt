@@ -450,9 +450,17 @@ private fun ProjectStatusDots(sessions: List<AgentSession>) {
             SessionStatus.Stopping,
         )
     }
+    // Imported native history reads as a completed task with unviewed output:
+    // it carries content but never recorded a turn end, so the server-side
+    // unread flag stays false. Red stays reserved for stuck/errored sessions.
+    val hasImportedHistory = sessions.any {
+        it.status == SessionStatus.Idle &&
+            it.lastItemOrderSeq != null &&
+            (it.latestTurnEndSeq ?: 0) == 0
+    }
     val hasCompletedUnread = sessions.any {
         it.unread && it.status in setOf(SessionStatus.Idle, SessionStatus.Unknown)
-    }
+    } || hasImportedHistory
 
     if (!hasError && !hasWaitingOrConfirming && !hasCompletedUnread) return
 

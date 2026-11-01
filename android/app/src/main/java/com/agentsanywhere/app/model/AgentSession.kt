@@ -31,6 +31,10 @@ data class AgentSession(
     val optimisticTopUntil: Long = 0L,
     // Preserve the canonical timestamp, including null, separately from the display activity fallback.
     val sortAt: String? = null,
+    // Import-history signal: content exists while no turn has ever ended —
+    // only connector-imported native sessions look like this.
+    val lastItemOrderSeq: Int? = null,
+    val latestTurnEndSeq: Int? = null,
 ) {
     val runtimeLabels: RuntimeInstanceLabels
         get() = runtimeInstanceLabels(runtimeName, runtimeType)

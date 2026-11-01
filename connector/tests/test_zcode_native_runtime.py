@@ -115,7 +115,7 @@ def test_scan_publishes_native_session(tmp_path):
             assert texts == ["请修复登录页"]
 
             state = await runtime.get_session_state(platform_id)
-            assert state.status == "blocked"
+            assert state.status == "idle"
             assert state.status_reason == "zcode_continue_required"
 
             caps = runtime._session_capabilities(platform_id)

@@ -38,7 +38,9 @@ from connector.runtimes.acp.runtime import AcpRuntime
 
 from .native_history import discover_sessions, read_history, timeline
 
-PROJECTION_REVISION = 2
+# v3: native continue-required sessions publish as idle (green) instead of
+# blocked (red); failures alone stay blocked.
+PROJECTION_REVISION = 3
 SCAN_INTERVAL_SECONDS = 5.0
 
 RESUME_BLOCKING_FAILURES = {
@@ -293,7 +295,9 @@ class NativeZcodeRuntime(AcpRuntime):
             else {
                 "sessionId": session_id,
                 "externalSessionId": source["sessionId"],
-                "status": "blocked",
+                # Browsing imported history is a normal resting state, not a
+                # blockage: clients render it green, red stays for failures.
+                "status": "idle",
                 "statusReason": "zcode_continue_required",
                 "selections": {},
                 "metadata": {},
@@ -352,7 +356,9 @@ class NativeZcodeRuntime(AcpRuntime):
                 session_id=session_id,
                 external_session_id=source["sessionId"],
                 runtime=self.config.runtime,
-                status="blocked",
+                # Normal resting state for imported history; failures below
+                # still surface as blocked.
+                status="idle",
                 status_reason="zcode_continue_required",
             )
         )
