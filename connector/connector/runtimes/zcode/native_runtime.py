@@ -22,9 +22,11 @@ from dataclasses import asdict, replace
 from pathlib import Path
 from uuid import uuid4
 
+from connector.runtime_protocol.errors import RuntimeInvalidRequestError
 from connector.runtime_protocol.models import (
     RuntimeCapability,
     RuntimeCapabilitySet,
+    RuntimeOperationResult,
     RuntimeTimelineItem,
     RuntimeTimelineSnapshot,
     SessionMeta,
@@ -40,7 +42,7 @@ from .native_history import discover_sessions, read_history, timeline
 
 # v3: native continue-required sessions publish as idle (green) instead of
 # blocked (red); failures alone stay blocked.
-PROJECTION_REVISION = 3
+PROJECTION_REVISION = 4
 SCAN_INTERVAL_SECONDS = 5.0
 
 RESUME_BLOCKING_FAILURES = {
@@ -289,9 +291,10 @@ class NativeZcodeRuntime(AcpRuntime):
             self._publish_session_capabilities(session_id)
             return
         binding = self.app.store.get("binding", session_id)
+        live = self.app.sessions.get(session_id)
         state = (
             self.app.state(session_id)
-            if binding
+            if binding and live and not live["closing"]
             else {
                 "sessionId": session_id,
                 "externalSessionId": source["sessionId"],
@@ -349,15 +352,17 @@ class NativeZcodeRuntime(AcpRuntime):
         if not source:
             return await super().get_session_state(session_id, external_session_id)
         row = self.app.store.get("binding", session_id)
+        live = self.app.sessions.get(session_id)
         state = (
             await super().get_session_state(session_id, external_session_id)
-            if row
+            if row and live and not live["closing"]
             else SessionState(
                 session_id=session_id,
                 external_session_id=source["sessionId"],
                 runtime=self.config.runtime,
-                # Normal resting state for imported history; failures below
-                # still surface as blocked.
+                # Normal resting state for imported history (and for dropped
+                # links: the next message reattaches); failures below still
+                # surface as blocked.
                 status="idle",
                 status_reason="zcode_continue_required",
             )
@@ -393,15 +398,18 @@ class NativeZcodeRuntime(AcpRuntime):
             metadata["reasonMessage"] = failure["message"]
         blocked_source = bool(failure and failure["code"] in RESUME_BLOCKING_FAILURES)
         caps = [cap for cap in caps if cap.capability_id != "session.recover"]
-        if not row:
+        if not ready:
+            # Takeover parity with other agents + self-healing: the composer
+            # enables as soon as the user flips takeover, and the first message
+            # (re)attaches lazily — whether browsing or after a dropped link.
+            caps = [cap for cap in caps if cap.capability_id != "session.send_message"]
             caps.append(
                 RuntimeCapability(
                     capability_id="session.send_message",
                     scope="session",
                     runtime=self.config.runtime,
                     session_id=session_id,
-                    available=False,
-                    unavailable_reason="zcode_continue_required",
+                    available=True,
                 )
             )
         caps.append(
@@ -607,7 +615,139 @@ class NativeZcodeRuntime(AcpRuntime):
             )
         return self.launch
 
+    async def _preattach_checks(self, session_id):
+        source = self._source(session_id)
+        history = await asyncio.to_thread(
+            read_history, self.history_db_path, source["sessionId"]
+        )
+        history.require_resumable()
+        if history.revision != source["revision"]:
+            await self._refresh_source(session_id)
+            raise AcpError(
+                "zcode_source_changed", "历史已变化，请查看最新内容后重新继续。"
+            )
+        return history
+
+    async def _attach_native(self, session_id):
+        """Attach the bridge to an imported conversation on demand (takeover)."""
+        history = await self._preattach_checks(session_id)
+        self._acquire(session_id)
+        binding = self.app.store.get("binding", session_id)
+        if not binding:
+            generation = uuid4().hex
+            binding = asdict(
+                SessionBinding(
+                    session_id,
+                    self.profile.id,
+                    self.launch.release_id,
+                    Workspace(history.cwd, str(Path(history.cwd).resolve())),
+                    generation,
+                    generation,
+                    # The bridge exposes engine conversations as "zc-<zsid>".
+                    "zc-" + history.native_id,
+                    attachment="recovery_required",
+                )
+            )
+            self.app.store.put("binding", session_id, binding)
+            self.app.store.delete("zcode_native_failure", session_id)
+            self._publish_native_state(session_id)
+        try:
+            await self.app.recover(session_id)
+        except Exception:
+            context = self.app.sessions.get(session_id)
+            if context:
+                await self.app._close_context(context)
+            self._release(session_id)
+            # Roll back to a clean browsable state: a half-recovered binding
+            # keeps the session blocked (409) for every later message.
+            self.app.store.delete("binding", session_id)
+            self._publish_native_state(session_id)
+            raise
+
+    async def start_turn(
+        self,
+        session_id,
+        external_session_id,
+        content,
+        selections=None,
+        attachments=(),
+        client_message_id=None,
+        cwd=None,
+    ):
+        if not self._source(session_id):
+            return await super().start_turn(
+                session_id,
+                external_session_id,
+                content,
+                selections=selections,
+                attachments=attachments,
+                client_message_id=client_message_id,
+                cwd=cwd,
+            )
+        if external_session_id != self._source(session_id)["sessionId"]:
+            raise RuntimeInvalidRequestError("原生会话身份不匹配。")
+        if session_id not in self.app.sessions:
+            await self._attach_native(session_id)
+        current = self.app.state(session_id)["selections"]
+        changes = {
+            key: value
+            for key, value in (selections or {}).items()
+            if value is not None and current.get(key) != value
+        }
+        if changes:
+            updated = await self.update_session_selections(
+                session_id, external_session_id, changes
+            )
+            if not updated.ok:
+                return updated
+        blocks = None
+        if attachments:
+            from connector.runtimes.acp.infrastructure.attachments import materialize
+
+            if not self.agent_capabilities.supported(session_id, "runtime.attachment"):
+                raise RuntimeInvalidRequestError("当前 Agent 不支持附件。")
+            blocks = await materialize(
+                self.host, session_id, attachments, self.app.root / "attachments"
+            )
+        result = await self.app.submit(session_id, client_message_id, content, blocks=blocks)
+        if result.get("messageAccepted") is None:
+            try:
+                async with asyncio.timeout(20):
+                    while True:
+                        row = self.app.store.require(
+                            "prompt", fingerprint([session_id, client_message_id])
+                        )
+                        if row["message_accepted"] is not None:
+                            result = {
+                                "ok": row["message_accepted"],
+                                "messageAccepted": row["message_accepted"],
+                                "phase": row["phase"],
+                                "clientMessageId": client_message_id,
+                            }
+                            if row["message_accepted"] is False:
+                                result.update(
+                                    row.get("failure")
+                                    or {"code": "message_rejected", "message": "当前权限或用户审批未允许此消息。"}
+                                )
+                            break
+                        if row["phase"] == "outcome_unknown":
+                            break
+                        await asyncio.sleep(0.01)
+            except TimeoutError:
+                pass
+            if result.get("messageAccepted") is None:
+                result = {
+                    **result,
+                    "code": "operation_outcome_unknown",
+                    "message": "消息已提交但 Agent 未确认接收：会话可能被模型配额、网络或桌面端中断。请检查 ZCode 账号额度后重试。",
+                }
+        return RuntimeOperationResult(
+            ok=result["ok"], code=result.get("code"), message=result.get("message"), result=result
+        )
+
     def _acquire(self, session_id):
+        if session_id in self.leases:
+            return  # Already holding the cross-process lease for this session.
         source = self._source(session_id)
         directory = Path.home() / ".cache/agents-anywhere/zcode-native-locks"
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)

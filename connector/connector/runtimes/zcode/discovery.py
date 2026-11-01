@@ -33,3 +33,20 @@ def discover_zcode(*, app_root: Path | None = None) -> ZCodeLaunch | None:
     if not node:
         return None
     return ZCodeLaunch(node, (str(entry), "app-server"))
+
+
+def electron_node_exec(entry: str | Path) -> str | None:
+    """ZCode 桌面端 Electron 本体（ELECTRON_RUN_AS_NODE=1 时可当完整 Node 用）。
+
+    引擎 3.17.1+ 依赖 node:sqlite 内置模块；系统里常见精简/老 Node 构建没有
+    该模块，而桌面端 Electron 自带的 Node 是完整的。桌面端自己生成的
+    node-fallback shim（~/.zcode/cli/node-fallback/v1/node）就是靠这个可执行
+    文件工作的。
+    """
+    entry_path = Path(entry)
+    for parent in entry_path.parents:
+        if parent.suffix != ".app":
+            continue
+        binary = parent / "Contents/MacOS" / parent.stem
+        return str(binary) if binary.is_file() else None
+    return None

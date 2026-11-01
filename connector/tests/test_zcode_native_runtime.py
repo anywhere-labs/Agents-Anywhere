@@ -8,7 +8,10 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from connector.runtime_protocol import RuntimeConfig
+from connector.runtime_protocol.errors import RuntimeInvalidRequestError
 from connector.runtime_protocol.workflows import RuntimeWorkflowRequest
 from connector.runtimes.acp.domain.definitions import AgentProfile, LaunchDefinition
 from connector.runtimes.zcode.discovery import ZCodeLaunch
@@ -121,8 +124,8 @@ def test_scan_publishes_native_session(tmp_path):
             caps = runtime._session_capabilities(platform_id)
             by_id = {cap.capability_id: cap for cap in caps.capabilities}
             assert by_id["session.recover"].available is True
-            assert by_id["session.send_message"].available is False
-            assert by_id["session.send_message"].unavailable_reason == "zcode_continue_required"
+            # Takeover parity: composer enables like other agents.
+            assert by_id["session.send_message"].available is True
 
             sessions = await runtime.list_sessions()
             assert any(row.session_id == platform_id for row in sessions)
@@ -285,5 +288,125 @@ def test_provider_uses_native_runtime_and_metadata(tmp_path, monkeypatch):
         runtime = await provider.create_runtime(config, host)
         assert isinstance(runtime, NativeZcodeRuntime)
         assert runtime.history_db_path == tmp_path / "db.sqlite"
+
+    asyncio.run(run())
+
+
+def test_takeover_send_attaches_and_submits(tmp_path, monkeypatch):
+    async def run():
+        runtime, _notifications, native_id = make_runtime(
+            tmp_path, tmp_path / "db.sqlite"
+        )
+        await runtime.start()
+        try:
+            source = next(iter(runtime.app.store.values("zcode_native_source")))
+            platform_id = source["platformSessionId"]
+
+            recovered, submitted = [], []
+
+            async def fake_recover(session_id):
+                recovered.append(session_id)
+                return {"status": "attached"}
+
+            async def fake_submit(session_id, message_id, content, *, creation_id=None, blocks=None):
+                submitted.append((session_id, message_id, content))
+                return {"ok": True, "messageAccepted": True, "phase": "accepted"}
+
+            monkeypatch.setattr(runtime.app, "recover", fake_recover)
+            monkeypatch.setattr(runtime.app, "submit", fake_submit)
+
+            result = await runtime.start_turn(
+                platform_id,
+                native_id,
+                "继续帮我完成登录页",
+                client_message_id="cm-1",
+            )
+            assert result.ok is True
+            assert recovered == [platform_id]
+            assert submitted == [(platform_id, "cm-1", "继续帮我完成登录页")]
+            binding = runtime.app.store.get("binding", platform_id)
+            assert binding is not None
+            assert binding["agent_session_id"] == "zc-" + native_id
+            assert binding["attachment"] == "recovery_required"
+            # The lease is held while the attached session stays live.
+            assert platform_id in runtime.leases
+
+            # Self-healing: a dropped link (dead context) keeps the composer
+            # sendable and the session restorable instead of blocking sends.
+            runtime.app.sessions.pop(platform_id, None)
+            runtime._publish_native_state(platform_id)
+            state = await runtime.get_session_state(platform_id)
+            assert state.status == "idle"
+            healed = {c.capability_id: c for c in runtime._session_capabilities(platform_id).capabilities}
+            assert healed["session.send_message"].available is True
+            assert healed["session.recover"].available is True
+
+            # A wrong external identity is rejected.
+            with pytest.raises(RuntimeInvalidRequestError):
+                await runtime.start_turn(
+                    platform_id,
+                    "sess-other",
+                    "第二条",
+                    client_message_id="cm-2",
+                )
+        finally:
+            await runtime.stop()
+        assert not runtime.leases
+
+    asyncio.run(run())
+
+
+def test_takeover_attach_failure_rolls_back_binding(tmp_path, monkeypatch):
+    async def run():
+        runtime, _notifications, _native_id = make_runtime(
+            tmp_path, tmp_path / "db.sqlite"
+        )
+        await runtime.start()
+        try:
+            source = next(iter(runtime.app.store.values("zcode_native_source")))
+            platform_id = source["platformSessionId"]
+
+            async def failing_recover(session_id):
+                raise RuntimeError("bridge exploded")
+
+            monkeypatch.setattr(runtime.app, "recover", failing_recover)
+
+            with pytest.raises(RuntimeError):
+                await runtime.start_turn(
+                    platform_id,
+                    source["sessionId"],
+                    "失败也要能恢复",
+                    client_message_id="cm-fail",
+                )
+            # No half-recovered binding may remain: the session must return to
+            # a clean browsable state instead of blocking later messages.
+            assert runtime.app.store.get("binding", platform_id) is None
+            assert platform_id not in runtime.leases
+            state = await runtime.get_session_state(platform_id)
+            assert state.status == "idle"
+            assert state.status_reason == "zcode_continue_required"
+
+            # Retry succeeds after the failure is cleared.
+            submitted = []
+
+            async def ok_recover(session_id):
+                return {"status": "attached"}
+
+            async def ok_submit(session_id, message_id, content, *, creation_id=None, blocks=None):
+                submitted.append(content)
+                return {"ok": True, "messageAccepted": True, "phase": "accepted"}
+
+            monkeypatch.setattr(runtime.app, "recover", ok_recover)
+            monkeypatch.setattr(runtime.app, "submit", ok_submit)
+            result = await runtime.start_turn(
+                platform_id,
+                source["sessionId"],
+                "重试成功",
+                client_message_id="cm-retry",
+            )
+            assert result.ok is True
+            assert submitted == ["重试成功"]
+        finally:
+            await runtime.stop()
 
     asyncio.run(run())

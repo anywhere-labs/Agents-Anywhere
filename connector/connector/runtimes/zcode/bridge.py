@@ -44,6 +44,7 @@ import threading
 import time
 import urllib.request
 import uuid
+from pathlib import Path
 
 ZC_CJS = os.environ.get(
     "ZCODE_CJS",
@@ -1129,19 +1130,59 @@ def _child_sid_from_tool_call(tid):
     return f"sess_{m.group(1)}" if m else None
 
 
+_NODE_SQLITE_CACHE = {}
+
+
+def _node_supports_sqlite(executable):
+    """引擎 3.17.1+ 依赖 node:sqlite 内置模块（Node ≥22.5 完整构建）。
+
+    精简/老构建（实测 ~/.local/bin 的 v22.11 精简版）没有该模块——引擎
+    启动即崩（表现为主管道 Broken pipe）。这里实际 require 一次做能力探测。
+    """
+    if executable in _NODE_SQLITE_CACHE:
+        return _NODE_SQLITE_CACHE[executable]
+    import subprocess
+    try:
+        done = subprocess.run(
+            [executable, "-e", "require('node:sqlite')"],
+            capture_output=True, timeout=20,
+        )
+        ok = done.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        ok = False
+    _NODE_SQLITE_CACHE[executable] = ok
+    return ok
+
+
 def find_node():
-    """GUI/受限 PATH 下也能找到 node（nvm/homebrew/系统顺序）。"""
+    """GUI/受限 PATH 下也能找到 node（nvm/homebrew/系统顺序）。
+
+    逐个候选做 node:sqlite 能力探测，全部不支持时回退 ZCode 桌面端生成的
+    node-fallback shim（~/.zcode/cli/node-fallback/v1/node，经
+    ZCODE_NODE_FALLBACK_EXEC_PATH 以 ELECTRON_RUN_AS_NODE 方式复用桌面
+    Electron 自带的完整 Node）。
+    """
     from shutil import which
+    candidates = []
     n = which("node")
     if n:
-        return n
+        candidates.append(n)
     import glob
     for pat in ("/Users/*/.nvm/versions/node/*/bin/node",
                 "/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"):
         g = sorted(glob.glob(pat), reverse=True)
-        if g:
-            return g[0]
-    return "node"
+        candidates.extend(g)
+    for candidate in candidates:
+        if _node_supports_sqlite(candidate):
+            return candidate
+    fallback_exec = os.environ.get("ZCODE_NODE_FALLBACK_EXEC_PATH")
+    if fallback_exec and Path(fallback_exec).is_file():
+        # 桌面端 Electron 本体 + engine_env 注入的 ELECTRON_RUN_AS_NODE=1
+        # 即完整 Node；不依赖桌面端生成的 shim 文件（MacMini 等未生成过
+        # shim 的机器同样可用）。
+        log("node 候选均缺少 node:sqlite，回退 ZCode Electron（ELECTRON_RUN_AS_NODE）")
+        return fallback_exec
+    return candidates[0] if candidates else "node"
 
 
 def resolve_builtin_table_path():
@@ -1272,6 +1313,10 @@ def engine_env():
     （实测样本 118 字符）→ 必炸。过长的 TMPDIR 换成 /tmp 下的短目录；
     其余情况原样继承，不打扰。"""
     env = dict(os.environ)
+    # find_node() 可能回退到 Electron 本体当 Node 用（node:sqlite 兼容性）；
+    # 真实 node 会忽略此变量。
+    if env.get("ZCODE_NODE_FALLBACK_EXEC_PATH"):
+        env.setdefault("ELECTRON_RUN_AS_NODE", "1")
     td = (env.get("TMPDIR") or "/tmp").rstrip("/") or "/"
     if len(td) + 1 + 45 > 103:
         short = "/tmp/zcode-acp-tmp"

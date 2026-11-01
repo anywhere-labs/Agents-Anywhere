@@ -14,7 +14,7 @@ from connector.runtimes.acp.domain.definitions import AcpError, AgentProfile, La
 from connector.runtimes.acp.infrastructure.acp.client import AgentClient
 
 from .catalogs import ZCODE_PERMISSION_OPTIONS, load_zcode_model_catalog
-from .discovery import discover_zcode
+from .discovery import discover_zcode, electron_node_exec
 from .native_runtime import NativeZcodeRuntime
 
 HISTORY_DB_ENV = "ZCODE_CLI_DB"
@@ -88,13 +88,21 @@ class ZCodeProvider(RuntimeProvider):
         entry = detected.arguments[0]
         # The bridge's trace is enabled by default and may contain conversation
         # text. Suppress both its trace and engine stderr for private sessions.
-        environment = (
+        env_items = [
             ("ZCODE_CJS", entry),
+        ]
+        electron_exec = electron_node_exec(entry)
+        if electron_exec:
+            # 引擎 3.17.1+ 需要 node:sqlite；find_node() 探测失败时用桌面端
+            # node-fallback shim（ELECTRON_RUN_AS_NODE 复用 Electron 自带 Node）。
+            env_items.append(("ZCODE_NODE_FALLBACK_EXEC_PATH", electron_exec))
+        env_items.extend([
             ("ZCODE_ACP_TRACE", "0"),
             ("ZCODE_ACP_APPROVAL_BRIDGE", "0"),
             ("ZCODE_ACP_ENGINE_LOG", os.devnull),
             ("PATH", str(Path(detected.executable).parent) + os.pathsep + os.environ.get("PATH", "")),
-        )
+        ])
+        environment = tuple(env_items)
         launch = LaunchDefinition(sys.executable, ("-m", module_name), "zcode-bridge-0.9.1", environment)
         profile = AgentProfile(
             id="zcode",
