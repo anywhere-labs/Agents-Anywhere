@@ -21,6 +21,8 @@ import androidx.work.WorkerParameters
 import com.agentsanywhere.app.MainActivity
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.api.ApiClient
+import com.agentsanywhere.app.api.RemoteDashboardSnapshot
+import com.agentsanywhere.app.api.RemoteSession
 import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.api.optNullableInt
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
@@ -59,10 +61,68 @@ internal fun sessionAlert(previous: SessionAlertState?, current: SessionAlertSta
     return null
 }
 
+internal data class SessionAlertInput(val id: String, val title: String?, val state: SessionAlertState)
+internal data class SessionAlertNotification(val sessionId: String, val sessionTitle: String, val alert: SessionAlert)
+
+internal fun sessionAlertInputs(sessions: List<RemoteSession>): List<SessionAlertInput> = sessions.map { session ->
+    SessionAlertInput(
+        id = session.id,
+        title = session.title,
+        state = SessionAlertState(
+            status = session.status,
+            itemSeq = session.lastItemOrderSeq ?: -1,
+            unread = session.unread,
+            turnEndSeq = session.latestTurnEndSeq,
+        ),
+    )
+}
+
+/** Computes alerts against [previous] and returns them together with the next full state map. */
+internal fun computeAlertList(
+    previous: Map<String, SessionAlertState>,
+    inputs: List<SessionAlertInput>,
+    baseline: Boolean,
+): Pair<List<SessionAlertNotification>, Map<String, SessionAlertState>> {
+    val next = previous.toMutableMap()
+    val alerts = mutableListOf<SessionAlertNotification>()
+    for (input in inputs) {
+        val old = if (baseline) null else previous[input.id]
+        sessionAlert(old, input.state, baseline)?.let { alert ->
+            alerts.add(SessionAlertNotification(input.id, input.title.orEmpty(), alert))
+        }
+        next[input.id] = input.state
+    }
+    return alerts to next
+}
+
+private fun JSONObject.toSessionAlertState(): SessionAlertState = SessionAlertState(
+    status = optString("status"),
+    itemSeq = optInt("seq", -1),
+    unread = optBoolean("unread"),
+    turnEndSeq = optNullableInt("turnEndSeq") ?: optNullableInt("turnSeq"),
+)
+
+private fun JSONObject.toSessionAlertStateMap(): Map<String, SessionAlertState> {
+    val states = mutableMapOf<String, SessionAlertState>()
+    keys().forEach { key -> optJSONObject(key)?.let { states[key] = it.toSessionAlertState() } }
+    return states
+}
+
+private fun SessionAlertState.toJson(): JSONObject {
+    val json = JSONObject().put("status", status).put("seq", itemSeq).put("unread", unread)
+    turnEndSeq?.let { json.put("turnEndSeq", it) }
+    return json
+}
+
 object SessionNotifications {
     private const val PREFS = "session_notification_settings"
     private const val WORK = "session_notification_poll"
     internal const val CHANNEL = "session_activity"
+    private const val STATE_PREFS = "session_notification_state"
+
+    // Both the periodic worker and the realtime observer mutate the persisted alert state; keep
+    // read-compare-write cycles atomic so a transition is never alerted twice or lost.
+    private val stateLock = Any()
 
     fun isEnabled(context: Context): Boolean = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("enabled", false)
 
@@ -72,7 +132,7 @@ object SessionNotifications {
         val manager = WorkManager.getInstance(app)
         if (!enabled) {
             manager.cancelUniqueWork(WORK)
-            app.getSharedPreferences("session_notification_state", Context.MODE_PRIVATE).edit().clear().apply()
+            app.getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE).edit().clear().apply()
             return
         }
         val request = PeriodicWorkRequestBuilder<SessionNotificationWorker>(15, TimeUnit.MINUTES)
@@ -80,70 +140,59 @@ object SessionNotifications {
             .build()
         manager.enqueueUniquePeriodicWork(WORK, ExistingPeriodicWorkPolicy.UPDATE, request)
     }
-}
 
-class SessionNotificationWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
-    override fun doWork(): Result {
-        val context = applicationContext
-        if (!SessionNotifications.isEnabled(context)) return Result.success()
-        if (!NotificationManagerCompat.from(context).areNotificationsEnabled() ||
-            (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)) return Result.success()
-        val store = AuthSessionStore(context)
-        if (!store.hasAuthSession()) return Result.success()
-        val identity = store.readAuthSessionId() ?: return Result.success()
-        val refresher = MobileAuthSessionRefresher(store)
-        val api = SessionsApi(ApiClient(refreshAccessToken = refresher::refreshAccessToken))
-        return try {
-            val prefs = context.getSharedPreferences("session_notification_state", Context.MODE_PRIVATE)
+    private fun readAlertStates(prefs: android.content.SharedPreferences): Map<String, SessionAlertState> =
+        prefs.getString("sessions", null)?.let { stored ->
+            runCatching { JSONObject(stored) }.getOrNull()?.toSessionAlertStateMap()
+        } ?: emptyMap()
+
+    private fun writeAlertStates(prefs: android.content.SharedPreferences, identity: String, states: Map<String, SessionAlertState>) {
+        val nextJson = JSONObject()
+        states.forEach { (id, state) -> nextJson.put(id, state.toJson()) }
+        prefs.edit().putString("identity", identity).putString("sessions", nextJson.toString()).apply()
+    }
+
+    /**
+     * Compares [inputs] against the persisted alert state and stores the new view. A mismatched
+     * stored identity (fresh login, cleared state) turns the pass into a baseline: nothing is
+     * alerted, the state is just seeded.
+     */
+    internal fun consumeAlertInputs(
+        context: Context,
+        identity: String,
+        inputs: List<SessionAlertInput>,
+        baseline: Boolean = false,
+    ): List<SessionAlertNotification> = synchronized(stateLock) {
+        val prefs = context.getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE)
+        val sameIdentity = prefs.getString("identity", null) == identity
+        val effectiveBaseline = baseline || !sameIdentity
+        val previous = if (sameIdentity) readAlertStates(prefs) else emptyMap()
+        val (alerts, next) = computeAlertList(previous, inputs, effectiveBaseline)
+        writeAlertStates(prefs, identity, next)
+        alerts
+    }
+
+    /** Stores the current view without alerting; skips the write when nothing changed. */
+    internal fun recordAlertInputs(context: Context, identity: String, inputs: List<SessionAlertInput>) {
+        synchronized(stateLock) {
+            val prefs = context.getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE)
             val sameIdentity = prefs.getString("identity", null) == identity
-            val previous = if (sameIdentity) JSONObject(prefs.getString("sessions", "{}").orEmpty()) else JSONObject()
-            val next = JSONObject()
-            val alerts = mutableListOf<Triple<String, String, SessionAlert>>()
-            var cursor: String? = null
-            var pages = 0
-            do {
-                val page = api.listSessions(store.readServerUrl(), store.readAccessToken(), archived = false, limit = 100, cursor = cursor)
-                for (session in page.sessions) {
-                    val current = SessionAlertState(
-                        status = session.status,
-                        itemSeq = session.lastItemOrderSeq ?: -1,
-                        unread = session.unread,
-                        turnEndSeq = session.latestTurnEndSeq,
-                    )
-                    val old = previous.optJSONObject(session.id)?.let {
-                        SessionAlertState(
-                            status = it.optString("status"),
-                            itemSeq = it.optInt("seq", -1),
-                            unread = it.optBoolean("unread"),
-                            turnEndSeq = it.optNullableInt("turnEndSeq") ?: it.optNullableInt("turnSeq"),
-                        )
-                    }
-                    sessionAlert(old, current, !sameIdentity)?.let { alerts.add(Triple(session.id, session.title.orEmpty(), it)) }
-                    val sessionJson = JSONObject()
-                        .put("status", current.status)
-                        .put("seq", current.itemSeq)
-                        .put("unread", current.unread)
-                    current.turnEndSeq?.let { sessionJson.put("turnEndSeq", it) }
-                    next.put(session.id, sessionJson)
-                }
-                cursor = page.nextCursor.takeIf { page.hasMore }
-                pages++
-            } while (cursor != null && pages < 20)
-            if (store.readAuthSessionId() != identity || !SessionNotifications.isEnabled(context)) return Result.success()
-            alerts.forEach { (id, title, alert) -> showAlert(id, title, alert) }
-            // Retain entries not seen in a truncated result; a later scan may still see them.
-            if (cursor != null) previous.keys().forEach { key -> if (!next.has(key)) next.put(key, previous.get(key)) }
-            prefs.edit().putString("identity", identity).putString("sessions", next.toString()).apply()
-            Result.success()
-        } catch (_: Exception) {
-            Result.retry()
+            val previous = if (sameIdentity) readAlertStates(prefs) else emptyMap()
+            if (sameIdentity && inputs.all { previous[it.id] == it.state }) return
+            val next = previous.toMutableMap()
+            inputs.forEach { next[it.id] = it.state }
+            writeAlertStates(prefs, identity, next)
         }
     }
 
-    private fun showAlert(sessionId: String, sessionTitle: String, alert: SessionAlert) {
-        val context = applicationContext
+    internal fun canPostNotifications(context: Context): Boolean =
+        NotificationManagerCompat.from(context).areNotificationsEnabled() &&
+            (Build.VERSION.SDK_INT < 33 ||
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED)
+
+    internal fun showAlert(context: Context, sessionId: String, sessionTitle: String, alert: SessionAlert) {
         val manager = context.getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(NotificationChannel(SessionNotifications.CHANNEL,
+        manager.createNotificationChannel(NotificationChannel(CHANNEL,
             context.getString(R.string.notification_check_channel), NotificationManager.IMPORTANCE_DEFAULT))
         val label = context.getString(when (alert) {
             SessionAlert.Approval -> R.string.notification_waiting
@@ -155,12 +204,67 @@ class SessionNotificationWorker(context: Context, params: WorkerParameters) : Wo
             .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val pending = PendingIntent.getActivity(context, sessionId.hashCode(), intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val notification = NotificationCompat.Builder(context, SessionNotifications.CHANNEL)
+        val notification = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(label)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setContentText(sessionTitle.ifBlank { context.getString(R.string.app_name) })
             .setContentIntent(pending).setAutoCancel(true).build()
         manager.notify(sessionId.hashCode(), notification)
+    }
+
+    /**
+     * Keeps the persisted alert state fresh from a foreground dashboard snapshot without
+     * alerting, so the background observer compares against current data instead of the last
+     * worker poll.
+     */
+    fun recordDashboardSnapshot(context: Context, store: AuthSessionStore, snapshot: RemoteDashboardSnapshot) {
+        if (!isEnabled(context)) return
+        val identity = store.readAuthSessionId() ?: return
+        recordAlertInputs(context, identity, sessionAlertInputs(snapshot.sessions.filter { !it.archived }))
+    }
+
+    /**
+     * Consumes a dashboard snapshot while the app is backgrounded: transitions since the last
+     * recorded view are alerted immediately instead of waiting for the periodic poll.
+     */
+    fun handleDashboardSnapshot(context: Context, store: AuthSessionStore, snapshot: RemoteDashboardSnapshot) {
+        if (!isEnabled(context)) return
+        if (!canPostNotifications(context)) return
+        val identity = store.readAuthSessionId() ?: return
+        consumeAlertInputs(context, identity, sessionAlertInputs(snapshot.sessions.filter { !it.archived })).forEach { alert ->
+            showAlert(context, alert.sessionId, alert.sessionTitle, alert.alert)
+        }
+    }
+}
+
+class SessionNotificationWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
+    override fun doWork(): Result {
+        val context = applicationContext
+        if (!SessionNotifications.isEnabled(context)) return Result.success()
+        if (!SessionNotifications.canPostNotifications(context)) return Result.success()
+        val store = AuthSessionStore(context)
+        if (!store.hasAuthSession()) return Result.success()
+        val identity = store.readAuthSessionId() ?: return Result.success()
+        val refresher = MobileAuthSessionRefresher(store)
+        val api = SessionsApi(ApiClient(refreshAccessToken = refresher::refreshAccessToken))
+        return try {
+            val sessions = mutableListOf<RemoteSession>()
+            var cursor: String? = null
+            var pages = 0
+            do {
+                val page = api.listSessions(store.readServerUrl(), store.readAccessToken(), archived = false, limit = 100, cursor = cursor)
+                sessions += page.sessions
+                cursor = page.nextCursor.takeIf { page.hasMore }
+                pages++
+            } while (cursor != null && pages < 20)
+            if (store.readAuthSessionId() != identity || !SessionNotifications.isEnabled(context)) return Result.success()
+            SessionNotifications.consumeAlertInputs(context, identity, sessionAlertInputs(sessions)).forEach { alert ->
+                SessionNotifications.showAlert(context, alert.sessionId, alert.sessionTitle, alert.alert)
+            }
+            Result.success()
+        } catch (_: Exception) {
+            Result.retry()
+        }
     }
 }

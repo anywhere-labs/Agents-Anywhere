@@ -1,10 +1,87 @@
 package com.agentsanywhere.app.feature.notifications
 
+import com.agentsanywhere.app.api.ApiClient
+import com.agentsanywhere.app.api.SessionsApi
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SessionAlertsTest {
+    private val api = SessionsApi(ApiClient())
+
+    private fun remoteSession(
+        id: String = "sess-1",
+        status: String = "idle",
+        itemSeq: Int? = 5,
+        unread: Boolean = false,
+        turnEndSeq: Int? = 2,
+    ) = api.parseSession(
+        JSONObject(
+            """
+            {
+                "id": "$id",
+                "connectorId": "conn-1",
+                "status": "$status",
+                "takeover": false,
+                "pinned": false,
+                "archived": false,
+                "unread": $unread,
+                "lastReadSeq": 0,
+                "lastItemOrderSeq": ${itemSeq ?: "null"},
+                "latestTurnEndSeq": ${turnEndSeq ?: "null"},
+                "updatedSeq": 1
+            }
+            """.trimIndent(),
+        ),
+    )
+
+    @Test fun mapsRemoteSessionsToAlertInputs() {
+        val input = sessionAlertInputs(listOf(remoteSession())).single()
+        assertEquals("sess-1", input.id)
+        assertEquals(SessionAlertState("idle", 5, false, 2), input.state)
+    }
+
+    @Test fun mapsMissingSeqFieldsToNeutralDefaults() {
+        val input = sessionAlertInputs(listOf(remoteSession(itemSeq = null, turnEndSeq = null))).single()
+        assertEquals(SessionAlertState("idle", -1, false, null), input.state)
+    }
+
+    @Test fun computeAlertListAlertsOnChangeAndRetainsUnseenKeys() {
+        val previous = mapOf(
+            "a" to SessionAlertState("running", 1, false),
+            "b" to SessionAlertState("idle", 2, false),
+        )
+        val inputs = listOf(SessionAlertInput("a", "A", SessionAlertState("idle", 2, true)))
+        val (alerts, next) = computeAlertList(previous, inputs, baseline = false)
+        assertEquals(listOf(SessionAlertNotification("a", "A", SessionAlert.Response)), alerts)
+        assertEquals(SessionAlertState("idle", 2, true), next["a"])
+        assertEquals(SessionAlertState("idle", 2, false), next["b"])
+    }
+
+    @Test fun computeAlertListBaselineOnlyAlertsPendingApprovals() {
+        val (alerts, next) = computeAlertList(
+            emptyMap(),
+            listOf(
+                SessionAlertInput("a", "A", SessionAlertState("waiting_approval", 1, true)),
+                SessionAlertInput("b", "B", SessionAlertState("idle", 1, true)),
+                SessionAlertInput("c", "C", SessionAlertState("error", 1, false)),
+            ),
+            baseline = true,
+        )
+        assertEquals(listOf(SessionAlertNotification("a", "A", SessionAlert.Approval)), alerts)
+        assertEquals(setOf("a", "b", "c"), next.keys)
+    }
+
+    @Test fun computeAlertListDoesNotRepeatAfterConsume() {
+        val inputs = listOf(SessionAlertInput("a", "A", SessionAlertState("waiting_approval", 1, true)))
+        val (first, next) = computeAlertList(emptyMap(), inputs, baseline = true)
+        assertTrue(first.isNotEmpty())
+        val (second, _) = computeAlertList(next, inputs, baseline = false)
+        assertTrue(second.isEmpty())
+    }
+
     @Test fun detectsNewApprovalWithoutRepeatingIt() {
         val approval = SessionAlertState("waiting_approval", 3, true)
         assertEquals(SessionAlert.Approval, sessionAlert(null, approval, true))

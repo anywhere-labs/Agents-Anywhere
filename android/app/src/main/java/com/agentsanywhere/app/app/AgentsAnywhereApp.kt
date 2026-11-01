@@ -182,6 +182,9 @@ fun AgentsAnywhereApp(
     val sessionRealtimeController = remember(realtimeApi, sessionStore, realtimeClientId) {
         SessionRealtimeController(realtimeApi, sessionStore, realtimeClientId)
     }
+    val alertsRealtimeController = remember(realtimeApi, sessionStore, realtimeClientId) {
+        DashboardRealtimeController(realtimeApi, sessionStore, realtimeClientId)
+    }
     val currentDestination = AppDestination.valueOf(destinationName)
     val hasAuthSession = sessionStore.hasAuthSession()
     LaunchedEffect(notificationSessionId, hasAuthSession) {
@@ -244,7 +247,7 @@ fun AgentsAnywhereApp(
         appVisible = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    DisposableEffect(context, dashboardRealtimeController, sessionRealtimeController) {
+    DisposableEffect(context, dashboardRealtimeController, sessionRealtimeController, alertsRealtimeController) {
         val connectivity = context.getSystemService(ConnectivityManager::class.java)
         val networkWasLost = AtomicBoolean(false)
         val callback = object : ConnectivityManager.NetworkCallback() {
@@ -252,6 +255,7 @@ fun AgentsAnywhereApp(
                 if (networkWasLost.getAndSet(false)) {
                     dashboardRealtimeController.requestImmediateReconnect()
                     sessionRealtimeController.requestImmediateReconnect()
+                    alertsRealtimeController.requestImmediateReconnect()
                 }
             }
 
@@ -484,6 +488,11 @@ fun AgentsAnywhereApp(
         dashboardRealtimeController.start(
             scope = this,
             onSnapshot = { snapshot ->
+                if (sessionStore.readServerUrl() == realtimeServerUrl &&
+                    sessionStore.readAccessToken() == realtimeAccessToken
+                ) {
+                    com.agentsanywhere.app.feature.notifications.SessionNotifications.recordDashboardSnapshot(context, sessionStore, snapshot)
+                }
                 scope.launch {
                     if (sessionStore.readServerUrl() != realtimeServerUrl ||
                         sessionStore.readAccessToken() != realtimeAccessToken
@@ -502,6 +511,23 @@ fun AgentsAnywhereApp(
                     if (!sessionsState.hasLoaded) {
                         refreshSessions(showInitialLoading = true, showRefreshIndicator = false)
                     }
+                }
+            },
+        ).join()
+    }
+
+    LaunchedEffect(hasAuthSession, appVisible, alertsRealtimeController, realtimeServerUrl, realtimeAccessToken) {
+        if (!hasAuthSession || appVisible) return@LaunchedEffect
+        if (!com.agentsanywhere.app.feature.notifications.SessionNotifications.isEnabled(context)) return@LaunchedEffect
+        // While backgrounded the UI dashboard socket is stopped; a dedicated connection turns
+        // session transitions into immediate alerts, with the periodic worker as the fallback.
+        alertsRealtimeController.start(
+            scope = this,
+            onSnapshot = { snapshot ->
+                if (sessionStore.readServerUrl() == realtimeServerUrl &&
+                    sessionStore.readAccessToken() == realtimeAccessToken
+                ) {
+                    com.agentsanywhere.app.feature.notifications.SessionNotifications.handleDashboardSnapshot(context, sessionStore, snapshot)
                 }
             },
         ).join()
