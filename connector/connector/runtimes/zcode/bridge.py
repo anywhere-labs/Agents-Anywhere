@@ -4449,6 +4449,9 @@ class AcpServer:
         zsid = self._engine_sid(params.get("sessionId"))
         if not zsid:
             return {"error": "sessionId required"}
+        if self.acp_session and self.acp_session != f"zc-{zsid}":
+            # AA 模型下一进程一会话；静默覆盖会让旧会话的订阅与状态全部悬空。
+            return {"error": f"acp session busy: {self.acp_session} is active"}
         try:
             cwd = params.get("cwd") or (self.zcode and self.zcode.cwd) or os.getcwd()
             zc = self._engine(cwd)
@@ -4463,7 +4466,7 @@ class AcpServer:
             # 会话身份 = 它自己的 workspace(path+key,list 记录里带)——
             # registry 推送和 resume 必须用同一个,否则引擎判模型不可用
             ws = {"workspacePath": cwd, "workspaceKey": "acp-list"}
-            lr = zc.engine_call("session/list", {"includeArchived": False, "limit": 50,
+            lr = zc.engine_call("session/list", {"includeArchived": True, "limit": 200,
                                                   "workspace": dict(ws)}, timeout=25)
             for s in (lr or {}).get("sessions") or []:
                 if s.get("sessionId") == zsid and s.get("workspace"):

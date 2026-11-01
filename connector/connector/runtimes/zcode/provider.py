@@ -12,10 +12,19 @@ from connector.runtime_protocol import RuntimeConfig, RuntimeConfigSchema, Runti
 from connector.runtime_protocol.errors import RuntimeInvalidRequestError
 from connector.runtimes.acp.domain.definitions import AcpError, AgentProfile, LaunchDefinition
 from connector.runtimes.acp.infrastructure.acp.client import AgentClient
-from connector.runtimes.acp.runtime import AcpRuntime
 
 from .catalogs import ZCODE_PERMISSION_OPTIONS, load_zcode_model_catalog
 from .discovery import discover_zcode
+from .native_runtime import NativeZcodeRuntime
+
+HISTORY_DB_ENV = "ZCODE_CLI_DB"
+
+
+def history_db_path() -> Path:
+    configured = os.environ.get(HISTORY_DB_ENV, "").strip()
+    if configured:
+        return Path(configured)
+    return Path.home() / ".zcode" / "cli" / "db" / "db.sqlite"
 
 
 class ZCodeClient(AgentClient):
@@ -57,7 +66,7 @@ class ZCodeProvider(RuntimeProvider):
                 "modelCatalog": True,
                 "permissionCatalog": True,
             },
-            metadata={"nativeHistory": False, "localInstallation": True},
+            metadata={"nativeHistory": True, "localInstallation": True},
         )
 
     async def validate_config(self, values):
@@ -98,4 +107,11 @@ class ZCodeProvider(RuntimeProvider):
             ),
             model_catalog_loader=load_zcode_model_catalog,
         )
-        return AcpRuntime(config, host, profile, launch, client_factory=ZCodeClient)
+        return NativeZcodeRuntime(
+            config,
+            host,
+            profile,
+            launch,
+            client_factory=ZCodeClient,
+            history_db_path=history_db_path(),
+        )
