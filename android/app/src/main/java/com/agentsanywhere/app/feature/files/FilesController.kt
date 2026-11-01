@@ -4,13 +4,19 @@ import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.FilesApi
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 class FilesController(
     private val filesApi: FilesApi,
     private val sessionStore: AuthSessionStore,
 ) {
+    private val workspaceCache = ConcurrentHashMap<String, java.io.File>()
+    private val workspaceLocks = ConcurrentHashMap<String, Mutex>()
+
     suspend fun listFiles(
         connectorId: String,
         root: String,
@@ -79,13 +85,70 @@ class FilesController(
         }
     }
 
+    /**
+     * Returns an image this process already downloaded for [path], or null.
+     * Lets timeline rows show a thumbnail again after scrolling back into view
+     * without another Connector round trip.
+     */
+    fun cachedWorkspaceFile(
+        connectorId: String,
+        workspaceRoot: String,
+        path: String,
+    ): java.io.File? {
+        val key = workspaceCacheKey(connectorId, workspaceRoot, path)
+        val cached = workspaceCache[key] ?: return null
+        if (!cached.isFile) {
+            workspaceCache.remove(key, cached)
+            return null
+        }
+        cached.setLastModified(System.currentTimeMillis())
+        return cached
+    }
+
+    /**
+     * Downloads [path] into the session image cache. With [preferCache] a file
+     * already downloaded for the same path is reused; otherwise it is fetched
+     * again so an explicit open shows the current contents. Concurrent calls
+     * for the same path share one download.
+     */
     suspend fun downloadWorkspaceFile(
         connectorId: String,
         workspaceRoot: String,
         path: String,
         cacheDir: java.io.File,
+        preferCache: Boolean = false,
+        maxBytes: Long = FilesApi.MAX_DOWNLOAD_BYTES,
     ): Result<DownloadedFile> {
         val normalizedPath = normalizeRemotePath(path)
+        val key = workspaceCacheKey(connectorId, workspaceRoot, normalizedPath)
+        val lock = workspaceLocks.getOrPut(key) { Mutex() }
+        return lock.withLock {
+            if (preferCache) {
+                cachedWorkspaceFile(connectorId, workspaceRoot, normalizedPath)?.let { cached ->
+                    return@withLock Result.success(
+                        DownloadedFile(
+                            path = normalizedPath,
+                            name = fileNameFromRemotePath(normalizedPath),
+                            mediaType = "",
+                            size = cached.length(),
+                            sha256 = "",
+                            file = cached,
+                        ),
+                    )
+                }
+            }
+            downloadWorkspaceFileLocked(connectorId, workspaceRoot, normalizedPath, cacheDir, maxBytes)
+                .onSuccess { workspaceCache[key] = it.file }
+        }
+    }
+
+    private suspend fun downloadWorkspaceFileLocked(
+        connectorId: String,
+        workspaceRoot: String,
+        normalizedPath: String,
+        cacheDir: java.io.File,
+        maxBytes: Long,
+    ): Result<DownloadedFile> {
         val deviceOs = if (windowsDriveRoot(workspaceRoot) != null) "windows" else null
         val root = remoteRootForPath(
             targetPath = normalizedPath,
@@ -97,25 +160,33 @@ class FilesController(
             .take(96)
             .ifBlank { "image" }
         val cacheRoot = java.io.File(cacheDir, "session-files").apply { mkdirs() }
-        pruneCache(cacheRoot)
-        val temporary = java.io.File(cacheRoot, ".incoming-${UUID.randomUUID()}.part")
+        withContext(Dispatchers.IO) { pruneCache(cacheRoot) }
+        val incoming = java.io.File(cacheRoot, ".incoming-${UUID.randomUUID()}.part")
         return downloadFile(
             connectorId = connectorId,
             root = root,
             path = normalizedPath,
-            destination = temporary,
-        ).map { downloaded ->
-            val key = downloaded.sha256.takeIf { it.isNotBlank() }
-                ?: downloaded.file.nameWithoutExtension
-            val cached = java.io.File(cacheRoot, "${key.take(64)}-$safeName")
-            if (downloaded.file != cached) {
-                if (cached.exists()) cached.delete()
-                if (!downloaded.file.renameTo(cached)) {
-                    downloaded.file.copyTo(cached, overwrite = true)
-                    downloaded.file.delete()
+            destination = incoming,
+            maxBytes = maxBytes,
+        ).mapCatching { downloaded ->
+            withContext(Dispatchers.IO) {
+                try {
+                    val key = downloaded.sha256.takeIf { it.isNotBlank() }
+                        ?: UUID.randomUUID().toString()
+                    val cached = java.io.File(cacheRoot, "${key.take(64)}-$safeName")
+                    // The name carries the content hash, so an existing file
+                    // already holds these bytes. Never delete it first: another
+                    // row may be decoding it right now.
+                    if (cached.isFile) {
+                        cached.setLastModified(System.currentTimeMillis())
+                    } else if (!downloaded.file.renameTo(cached)) {
+                        downloaded.file.copyTo(cached, overwrite = true)
+                    }
+                    downloaded.copy(file = cached)
+                } finally {
+                    incoming.delete()
                 }
             }
-            downloaded.copy(file = cached)
         }
     }
 
@@ -124,6 +195,7 @@ class FilesController(
         root: String,
         path: String,
         destination: java.io.File,
+        maxBytes: Long = FilesApi.MAX_DOWNLOAD_BYTES,
     ): Result<DownloadedFile> {
         return withContext(Dispatchers.IO) {
             runCatching {
@@ -140,6 +212,7 @@ class FilesController(
                     authorizationToken = auth.accessToken,
                     transfer = transfer,
                     destination = destination,
+                    maxBytes = maxBytes,
                 )
                 DownloadedFile(
                     path = transfer.path,
@@ -167,18 +240,30 @@ class FilesController(
 
     private fun pruneCache(cacheRoot: java.io.File) {
         val entries = cacheRoot.listFiles() ?: return
-        val cutoff = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
+        val now = System.currentTimeMillis()
+        val cutoff = now - 7L * 24 * 60 * 60 * 1000
+        // Temporary files belong to downloads that may still be running in
+        // another coroutine; only clear the ones left behind by a crash.
+        val staleIncomingCutoff = now - 60L * 60 * 1000
         entries.filter { it.isFile }.forEach { file ->
-            if (file.name.endsWith(".part") || file.lastModified() < cutoff) {
-                file.delete()
+            val stale = if (file.name.endsWith(".part")) {
+                file.lastModified() < staleIncomingCutoff
+            } else {
+                file.lastModified() < cutoff
             }
+            if (stale) file.delete()
         }
-        val remaining = cacheRoot.listFiles()?.filter { it.isFile }?.sortedBy { it.lastModified() }
+        val remaining = cacheRoot.listFiles()
+            ?.filter { it.isFile && !it.name.endsWith(".part") }
+            ?.sortedBy { it.lastModified() }
             ?: return
         if (remaining.size > 64) {
             remaining.take(remaining.size - 64).forEach { it.delete() }
         }
     }
+
+    private fun workspaceCacheKey(connectorId: String, workspaceRoot: String, path: String): String =
+        "$connectorId\u0000${normalizeRemotePath(workspaceRoot)}\u0000${normalizeRemotePath(path)}"
 
     private fun authSession(): ApiAuth {
         val serverUrl = sessionStore.readServerUrl()

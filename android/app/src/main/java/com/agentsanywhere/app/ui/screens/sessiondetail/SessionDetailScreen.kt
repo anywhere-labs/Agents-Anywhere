@@ -82,6 +82,7 @@ import com.agentsanywhere.app.api.AttachmentTransferException
 import com.agentsanywhere.app.api.AttachmentTransferFailure
 import com.agentsanywhere.app.api.UploadFilePart
 import com.agentsanywhere.app.feature.files.FilesController
+import com.agentsanywhere.app.feature.files.MAX_INLINE_WORKSPACE_IMAGE_BYTES
 import com.agentsanywhere.app.feature.realtime.SessionRealtimeController
 import com.agentsanywhere.app.feature.sessiondetail.DownloadedAttachment
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
@@ -1702,17 +1703,21 @@ fun SessionDetailScreen(
                                 sessionId = sessionId.orEmpty(),
                                 workspaceRoot = state.session?.cwd,
                                 controller = controller,
-                                loadWorkspaceImage = { path ->
+                                loadWorkspaceImage = { path, cacheOnly ->
                                     val session = state.session
                                     val root = session?.cwd.orEmpty()
                                     if (session == null || root.isBlank() || !filesController.isWithinWorkspace(root, path)) {
                                         Result.failure(IllegalStateException("Image path is outside the workspace."))
+                                    } else if (cacheOnly) {
+                                        Result.success(filesController.cachedWorkspaceFile(session.connectorId, root, path))
                                     } else {
                                         filesController.downloadWorkspaceFile(
                                             connectorId = session.connectorId,
                                             workspaceRoot = root,
                                             path = path,
                                             cacheDir = context.cacheDir,
+                                            preferCache = true,
+                                            maxBytes = MAX_INLINE_WORKSPACE_IMAGE_BYTES,
                                         ).map { it.file }
                                     }
                                 },

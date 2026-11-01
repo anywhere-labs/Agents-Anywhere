@@ -261,9 +261,7 @@ internal fun MessageList(
     sessionId: String,
     workspaceRoot: String?,
     controller: SessionDetailController,
-    loadWorkspaceImage: suspend (String) -> Result<File> = {
-        Result.failure(IllegalStateException("Workspace image loading is unavailable."))
-    },
+    loadWorkspaceImage: WorkspaceImageLoader = UnavailableWorkspaceImageLoader,
     forceLatestRequest: Int,
     streamLatestRequest: Int,
     workingLabel: String?,
@@ -777,9 +775,7 @@ private fun ToolRunGroup(
     darkMode: Boolean,
     workspaceRoot: String?,
     onOpenFile: (String) -> Unit = {},
-    loadWorkspaceImage: suspend (String) -> Result<File> = {
-        Result.failure(IllegalStateException("Workspace image loading is unavailable."))
-    },
+    loadWorkspaceImage: WorkspaceImageLoader = UnavailableWorkspaceImageLoader,
 ) {
     val colors = LocalAAColors.current
     val primary = colors.ink
@@ -1150,7 +1146,7 @@ private fun TimelineMessageRow(
     sessionId: String,
     workspaceRoot: String?,
     controller: SessionDetailController,
-    loadWorkspaceImage: suspend (String) -> Result<File>,
+    loadWorkspaceImage: WorkspaceImageLoader,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
     onOpenAttachment: (TimelineAttachment) -> Unit,
     onCopyMessage: (String) -> Unit,
@@ -1614,9 +1610,7 @@ private fun ToolActivityCard(
     embedded: Boolean = false,
     workspaceRoot: String? = null,
     onOpenFile: (String) -> Unit = {},
-    loadWorkspaceImage: suspend (String) -> Result<File> = {
-        Result.failure(IllegalStateException("Workspace image loading is unavailable."))
-    },
+    loadWorkspaceImage: WorkspaceImageLoader = UnavailableWorkspaceImageLoader,
     interaction: RuntimeNotice? = null,
     interactionBusy: Boolean = false,
     actionsDisabled: Boolean = false,
@@ -1800,9 +1794,7 @@ private fun ToolActivityDetailCard(
     darkMode: Boolean,
     workspaceRoot: String?,
     onOpenFile: (String) -> Unit = {},
-    loadWorkspaceImage: suspend (String) -> Result<File> = {
-        Result.failure(IllegalStateException("Workspace image loading is unavailable."))
-    },
+    loadWorkspaceImage: WorkspaceImageLoader = UnavailableWorkspaceImageLoader,
     modifier: Modifier = Modifier,
 ) {
     val muted = LocalAAColors.current.muted
@@ -1913,23 +1905,40 @@ internal fun TimelineMessage.toolSummaryTarget(): String {
     }
 }
 
+/**
+ * Loads a workspace image shown in a timeline row. With `cacheOnly` it never
+ * touches the network and returns null when nothing was downloaded yet.
+ */
+internal typealias WorkspaceImageLoader = suspend (path: String, cacheOnly: Boolean) -> Result<File?>
+
+private val UnavailableWorkspaceImageLoader: WorkspaceImageLoader = { _, _ ->
+    Result.failure(IllegalStateException("Workspace image loading is unavailable."))
+}
+
 @Composable
 private fun WorkspaceImagePreview(
     path: String,
     darkMode: Boolean,
     onOpenFile: (String) -> Unit,
-    loadWorkspaceImage: suspend (String) -> Result<File>,
+    loadWorkspaceImage: WorkspaceImageLoader,
 ) {
     val colors = LocalAAColors.current
     var image by remember(path) { mutableStateOf<File?>(null) }
     var requested by remember(path) { mutableStateOf(false) }
+    var attempt by remember(path) { mutableStateOf(0) }
     var loading by remember(path) { mutableStateOf(false) }
     var error by remember(path) { mutableStateOf<String?>(null) }
-    LaunchedEffect(path, requested) {
-        if (!requested) return@LaunchedEffect
+    LaunchedEffect(path, requested, attempt) {
+        if (image != null) return@LaunchedEffect
+        if (!requested) {
+            // Rows are recomposed when they scroll back into view: reuse an
+            // image downloaded earlier instead of asking for another tap.
+            loadWorkspaceImage(path, true).getOrNull()?.let { image = it }
+            return@LaunchedEffect
+        }
         loading = true
         error = null
-        loadWorkspaceImage(path)
+        loadWorkspaceImage(path, false)
             .onSuccess { image = it }
             .onFailure { error = it.message }
         loading = false
@@ -1944,7 +1953,14 @@ private fun WorkspaceImagePreview(
             .background(if (darkMode) Color(0xFF18181B) else Color(0xFFF5F4F0))
             .border(1.dp, colors.border, shape)
             .noRippleClickable {
-                if (requested && image != null) onOpenFile(path) else requested = true
+                when {
+                    image != null -> onOpenFile(path)
+                    loading -> Unit
+                    else -> {
+                        requested = true
+                        attempt += 1
+                    }
+                }
             },
         contentAlignment = Alignment.Center,
     ) {
@@ -1981,7 +1997,7 @@ private fun ToolCallPreview(
     message: TimelineMessage,
     darkMode: Boolean,
     onOpenFile: (String) -> Unit,
-    loadWorkspaceImage: suspend (String) -> Result<File>,
+    loadWorkspaceImage: WorkspaceImageLoader,
 ) {
     val input = message.input.ifBlank { message.detail }
     val output = message.output

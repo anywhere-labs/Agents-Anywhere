@@ -9,3 +9,6 @@ fun isImageFileName(name: String): Boolean =
 
 fun isImageFilePath(path: String): Boolean =
     isImageFileName(path.substringAfterLast('/').substringAfterLast('\\'))
+
+/** Inline timeline thumbnails stay well below the file browser's download limit. */
+const val MAX_INLINE_WORKSPACE_IMAGE_BYTES = 16L * 1024 * 1024

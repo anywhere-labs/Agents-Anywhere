@@ -1,7 +1,5 @@
 package com.agentsanywhere.app.api
 
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import org.json.JSONObject
 import java.io.File
 import java.net.URI
@@ -11,11 +9,9 @@ import java.util.UUID
 class FilesApi(
     private val client: ApiClient = ApiClient(),
 ) {
-    private val downloadClient = OkHttpClient.Builder().build()
-
-    private companion object {
+    companion object {
         const val MAX_DOWNLOAD_BYTES = 64L * 1024 * 1024
-        const val DOWNLOAD_BUFFER_BYTES = 64 * 1024
+        private const val DOWNLOAD_BUFFER_BYTES = 64 * 1024
     }
 
     fun listFiles(
@@ -95,56 +91,51 @@ class FilesApi(
         authorizationToken: String,
         transfer: RemoteFileTransfer,
         destination: File,
+        maxBytes: Long = MAX_DOWNLOAD_BYTES,
     ): File {
-        if (transfer.size > MAX_DOWNLOAD_BYTES) {
+        val limit = minOf(maxBytes, MAX_DOWNLOAD_BYTES)
+        if (transfer.size > limit) {
             throw ApiException("The file is too large to preview.", 413)
         }
         val url = absoluteDownloadUrl(serverUrl, transfer.downloadUrl)
-        val requestBuilder = Request.Builder().url(url).get()
-        if (isSameOrigin(url, serverUrl)) {
-            requestBuilder.header("Authorization", "Bearer $authorizationToken")
-        }
+        destination.parentFile?.mkdirs()
         val temporary = File(
             destination.parentFile,
             ".${destination.name}.${UUID.randomUUID()}.part",
         )
-        val digest = MessageDigest.getInstance("SHA-256")
-        var total = 0L
         try {
-            downloadClient.newCall(requestBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) {
-                    val message = response.body?.string()?.takeIf(String::isNotBlank)
-                        ?: "Could not download file."
-                    throw ApiException(message, response.code)
-                }
-                val body = response.body ?: throw ApiException("The server returned an empty file.", response.code)
-                destination.parentFile?.mkdirs()
-                body.byteStream().use { input ->
-                    temporary.outputStream().use { output ->
-                        val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
-                        while (true) {
-                            val read = input.read(buffer)
-                            if (read < 0) break
-                            total += read
-                            if (total > MAX_DOWNLOAD_BYTES) {
-                                throw ApiException("The file is too large to preview.", 413)
-                            }
-                            digest.update(buffer, 0, read)
-                            output.write(buffer, 0, read)
+            // Only send the account token back to the API origin; a 401 there
+            // refreshes it through ApiClient like every other request.
+            val actualSha = client.downloadStream(
+                serverUrl = serverUrl,
+                url = url,
+                authorizationToken = authorizationToken.takeIf { isSameOrigin(url, serverUrl) },
+            ) { input ->
+                val digest = MessageDigest.getInstance("SHA-256")
+                var total = 0L
+                temporary.outputStream().use { output ->
+                    val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        total += read
+                        if (total > limit) {
+                            throw ApiException("The file is too large to preview.", 413)
                         }
+                        digest.update(buffer, 0, read)
+                        output.write(buffer, 0, read)
                     }
                 }
+                if (transfer.size > 0 && total != transfer.size) {
+                    throw ApiException("The file download was incomplete.", 502)
+                }
+                digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
             }
-            if (transfer.size > 0 && total != transfer.size) {
-                throw ApiException("The file download was incomplete.", 502)
-            }
-            val actualSha = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
             if (transfer.sha256.isNotBlank() && !actualSha.equals(transfer.sha256, ignoreCase = true)) {
                 throw ApiException("The downloaded file failed its integrity check.", 502)
             }
             if (!temporary.renameTo(destination)) {
                 temporary.copyTo(destination, overwrite = true)
-                temporary.delete()
             }
             return destination
         } finally {
