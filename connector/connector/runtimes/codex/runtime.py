@@ -17,6 +17,7 @@ from connector.runtime_protocol import (
     RuntimeCommand,
     RuntimeCommandResult,
     RuntimeConfig,
+    RuntimeConflictError,
     RuntimeIdentity,
     RuntimeModelCatalog,
     RuntimeOperationResult,
@@ -69,6 +70,7 @@ from connector.runtimes.codex.lifecycle.runtime_lifecycle import CodexRuntimeLif
 from connector.runtimes.codex.notifications import CodexNotificationProjector
 from connector.runtimes.codex.notifications.projector import notification_event
 from connector.runtimes.codex.sdk.runtime_client import (
+    CodexCompactResult,
     CodexModelListResult,
     CodexRuntimeClient,
 )
@@ -181,6 +183,7 @@ class CodexRuntime(AgentRuntime):
         # Async answers are ordinary start/steer writes and must use the same
         # owner routing as messages, including after a Connector restart.
         self._turns.interactions.turn_actions = self
+        self._turns.commands.compact_thread = self._compact_thread
 
     @property
     def identity(self) -> RuntimeIdentity:
@@ -459,6 +462,22 @@ class CodexRuntime(AgentRuntime):
             started_at=started_at,
             detail=detail,
         )
+
+    async def _compact_thread(self, session_id: str, thread_id: str) -> CodexCompactResult:
+        """Compact through the same writer a message to this thread would use."""
+
+        route = await self._ipc_route_for_write(session_id, thread_id)
+        if route.kind == "blocked":
+            raise RuntimeConflictError(
+                route.message or "The Codex session owner is unavailable."
+            )
+        if route.thread is not None:
+            controller = self._ipc_controller()
+            assert controller is not None
+            return await controller.compact_thread(route.thread)
+        if self.client is None:
+            raise RuntimeUnsupportedError("session.commands")
+        return await self.client.compact_thread(thread_id)
 
     async def _legacy_ipc_write_route(
         self,
