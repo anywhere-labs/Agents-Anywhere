@@ -20,7 +20,7 @@ data class DeviceDetailWorkspace(
 )
 
 fun SessionsState.deviceDetailState(deviceId: String?): DeviceDetailState {
-    val device = devices.firstOrNull { it.id == deviceId } ?: devices.firstOrNull()
+    val device = devices.firstOrNull { it.id == deviceId }
     val allSessions = sessions + archivedSessions
     val deviceSessions = allSessions.filter { session -> session.connectorId == device?.id }
 

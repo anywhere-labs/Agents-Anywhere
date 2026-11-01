@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.Image
@@ -37,6 +38,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -82,6 +84,9 @@ fun DevicesScreen(
     onBack: (() -> Unit)? = null,
     agentPreviews: DeviceAgentPreviews,
     onAddDevice: () -> Unit,
+    onRenameDevice: suspend (String, String) -> Result<AgentDevice>,
+    onRevokeDevice: suspend (String) -> Result<Unit>,
+    onDeleteDevice: suspend (String) -> Result<Unit>,
 ) {
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
@@ -92,6 +97,11 @@ fun DevicesScreen(
     if (onBack != null) {
         BackHandler(onBack = onBack)
     }
+    val scope = rememberCoroutineScope()
+    var actionsDevice by remember { mutableStateOf<AgentDevice?>(null) }
+    var confirmAction by remember { mutableStateOf<Pair<AgentDevice, DeviceConfirmAction>?>(null) }
+    var actionBusy by remember { mutableStateOf(false) }
+    var actionError by remember { mutableStateOf<String?>(null) }
 
     Box(
         modifier = Modifier
@@ -151,6 +161,10 @@ fun DevicesScreen(
                                     agentPreview = agentPreviews.byDeviceId[device.id],
                                     darkMode = darkMode,
                                     onClick = { onOpenDevice(device) },
+                                    onLongClick = {
+                                        actionError = null
+                                        actionsDevice = device
+                                    },
                                 )
                             }
                         }
@@ -159,7 +173,53 @@ fun DevicesScreen(
             }
         }
     }
-
+    actionsDevice?.let { device ->
+        DeviceActionsSheet(
+            device = device,
+            onDismiss = { actionsDevice = null },
+            onRenameDevice = onRenameDevice,
+            onRevokeDevice = {
+                actionsDevice = null
+                actionError = null
+                confirmAction = device to DeviceConfirmAction.RevokeDevice(device.name)
+            },
+            onDeleteDevice = {
+                actionsDevice = null
+                actionError = null
+                confirmAction = device to DeviceConfirmAction.DeleteDevice
+            },
+        )
+    }
+    confirmAction?.let { (device, action) ->
+        DeviceConfirmDialog(
+            action = action,
+            busy = actionBusy,
+            errorMessage = actionError,
+            onDismiss = {
+                confirmAction = null
+                actionError = null
+            },
+            onConfirm = {
+                if (actionBusy) return@DeviceConfirmDialog
+                actionBusy = true
+                actionError = null
+                scope.launch {
+                    val result = when (action) {
+                        DeviceConfirmAction.DeleteDevice -> onDeleteDevice(device.id)
+                        is DeviceConfirmAction.RevokeDevice -> onRevokeDevice(device.id)
+                        else -> Result.success(Unit)
+                    }
+                    actionBusy = false
+                    result.onSuccess {
+                        confirmAction = null
+                        actionError = null
+                    }.onFailure { error ->
+                        actionError = error.message
+                    }
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -344,11 +404,13 @@ private fun AddDeviceRow(
 }
 
 @Composable
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 internal fun DeviceRow(
     device: AgentDevice,
     agentPreview: DeviceAgentPreviewState?,
     darkMode: Boolean,
     onClick: () -> Unit,
+    onLongClick: () -> Unit = {},
 ) {
     val colors = LocalAAColors.current
     val surface = colors.raisedSurface
@@ -375,13 +437,18 @@ internal fun DeviceRow(
             .clip(shape)
             .background(surface)
             .border(1.dp, border, shape)
-            .clickable(
+            .combinedClickable(
                 interactionSource = interactionSource,
                 indication = null,
-            ) {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                onClick()
-            }
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onClick()
+                },
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongClick()
+                },
+            )
             .padding(start = 12.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

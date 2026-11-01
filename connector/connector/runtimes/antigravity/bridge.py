@@ -6,7 +6,6 @@ import asyncio
 import os
 import re
 import subprocess
-import sys
 import tempfile
 import uuid
 from typing import Any
@@ -21,11 +20,80 @@ from acp.schema import (
     PromptResponse,
     ResumeSessionResponse,
     SessionCapabilities,
+    SessionConfigOptionSelect,
     SessionMode,
     SessionModeState,
+    SetSessionConfigOptionResponse,
 )
 
+from .catalogs import (
+    ANTIGRAVITY_PERMISSION_OPTIONS,
+    ANTIGRAVITY_REASONING_LEVELS,
+    load_antigravity_model_catalog,
+)
 from .discovery import discover_antigravity
+
+# 配置项 id ↔ 桥接内部状态；selectionCategory 经 _meta 让上层把 legacy
+# 选择（model/effort/permission）唯一映射到配置项（与 zcode bridge 同机制）。
+PERMISSION_BYPASS = "bypassPermissions"
+PERMISSION_DEFAULT = "default"
+DEFAULT_EFFORT = "medium"
+
+
+def _model_options() -> list[dict[str, str]]:
+    """模型目录与 App 端选择器同源，保证 selectionId 可直接校验。"""
+    catalog = load_antigravity_model_catalog("antigravity")
+    return [{"value": model.id, "name": model.title or model.id} for model in catalog.models]
+
+
+def _config_options(
+    model: str | None = None,
+    effort: str | None = None,
+    permission: str | None = None,
+) -> list[SessionConfigOptionSelect]:
+    models = _model_options()
+    current_model = model or (models[0]["value"] if models else None)
+    efforts = [{"value": eid, "name": etitle} for eid, etitle in ANTIGRAVITY_REASONING_LEVELS]
+    current_effort = effort if effort in {item["value"] for item in efforts} else DEFAULT_EFFORT
+    permissions = [{"value": pid, "name": pname} for pid, pname in ANTIGRAVITY_PERMISSION_OPTIONS]
+    current_permission = (
+        permission
+        if permission in {item["value"] for item in permissions}
+        else PERMISSION_BYPASS
+    )
+    options = []
+    if models and current_model:
+        options.append(
+            SessionConfigOptionSelect(
+                id="model",
+                name="模型",
+                type="select",
+                options=models,
+                currentValue=current_model,
+                field_meta={"aa": {"selectionCategory": "model"}},
+            )
+        )
+    options.append(
+        SessionConfigOptionSelect(
+            id="reasoning_effort",
+            name="推理强度",
+            type="select",
+            options=efforts,
+            currentValue=current_effort,
+            field_meta={"aa": {"selectionCategory": "effort"}},
+        )
+    )
+    options.append(
+        SessionConfigOptionSelect(
+            id="permission",
+            name="权限模式",
+            type="select",
+            options=permissions,
+            currentValue=current_permission,
+            field_meta={"aa": {"selectionCategory": "permission"}},
+        )
+    )
+    return options
 
 
 class AntigravityAgent:
@@ -54,7 +122,7 @@ class AntigravityAgent:
         return InitializeResponse(
             protocol_version=1,
             agent_capabilities=caps,
-            agent_info=Implementation(name="Antigravity", version="1.2.10"),
+            agent_info=Implementation(name="Antigravity", version="1.3.0"),
         )
 
     async def new_session(
@@ -68,23 +136,32 @@ class AntigravityAgent:
         self.sessions[session_id] = {
             "cwd": cwd or os.getcwd(),
             "conversation_id": None,
+            "config": {
+                "model": None,
+                "reasoning_effort": DEFAULT_EFFORT,
+                "permission": PERMISSION_BYPASS,
+            },
         }
         modes = SessionModeState(
-            current_mode_id="bypassPermissions",
+            current_mode_id=PERMISSION_BYPASS,
             available_modes=[
                 SessionMode(
-                    id="bypassPermissions",
+                    id=PERMISSION_BYPASS,
                     name="完全访问",
                     description="不受限制地使用工具",
                 ),
                 SessionMode(
-                    id="default",
+                    id=PERMISSION_DEFAULT,
                     name="变更前确认",
                     description="修改前确认",
                 ),
             ],
         )
-        return NewSessionResponse(session_id=session_id, modes=modes)
+        return NewSessionResponse(
+            session_id=session_id,
+            modes=modes,
+            config_options=_config_options(),
+        )
 
     async def resume_session(
         self,
@@ -98,8 +175,44 @@ class AntigravityAgent:
             self.sessions[session_id] = {
                 "cwd": cwd or os.getcwd(),
                 "conversation_id": None,
+                "config": {
+                    "model": None,
+                    "reasoning_effort": DEFAULT_EFFORT,
+                    "permission": PERMISSION_BYPASS,
+                },
             }
+        session = self.sessions[session_id]
+        # "ag-<conversation id>" = AA 导入的桌面原生会话，直接绑定引擎对话。
+        if session.get("conversation_id") is None and session_id.startswith("ag-"):
+            session["conversation_id"] = session_id[len("ag-"):]
         return ResumeSessionResponse(session_id=session_id)
+
+    async def set_config_option(
+        self, config_id: str, session_id: str, value: str | bool, **kwargs: Any
+    ) -> SetSessionConfigOptionResponse | None:
+        session = self.sessions.get(session_id)
+        if not session:
+            session = {
+                "cwd": os.getcwd(),
+                "conversation_id": None,
+                "config": {
+                    "model": None,
+                    "reasoning_effort": DEFAULT_EFFORT,
+                    "permission": PERMISSION_BYPASS,
+                },
+            }
+            self.sessions[session_id] = session
+        config = session["config"]
+        if config_id not in config or not isinstance(value, str):
+            return None
+        config[config_id] = value
+        return SetSessionConfigOptionResponse(
+            config_options=_config_options(
+                model=config.get("model"),
+                effort=config.get("reasoning_effort"),
+                permission=config.get("permission"),
+            )
+        )
 
     async def prompt(
         self,
@@ -109,7 +222,15 @@ class AntigravityAgent:
     ) -> PromptResponse:
         session = self.sessions.get(session_id)
         if not session:
-            session = {"cwd": os.getcwd(), "conversation_id": None}
+            session = {
+                "cwd": os.getcwd(),
+                "conversation_id": None,
+                "config": {
+                    "model": None,
+                    "reasoning_effort": DEFAULT_EFFORT,
+                    "permission": PERMISSION_BYPASS,
+                },
+            }
             self.sessions[session_id] = session
 
         text_parts = []
@@ -132,11 +253,20 @@ class AntigravityAgent:
                 )
             return PromptResponse(stop_reason="end_turn")
 
+        config = session.get("config") or {}
+
         # Create temp log file to track created conversation ID
         with tempfile.NamedTemporaryFile(prefix="antigravity_cli_", suffix=".log", delete=False) as tf:
             log_path = tf.name
 
-        cmd = [launch.executable, "--dangerously-skip-permissions", "--log-file", log_path]
+        cmd = [launch.executable]
+        if config.get("permission") == PERMISSION_BYPASS:
+            cmd.append("--dangerously-skip-permissions")
+        if config.get("model"):
+            cmd.extend(["--model", str(config["model"])])
+        if config.get("reasoning_effort"):
+            cmd.extend(["--effort", str(config["reasoning_effort"])])
+        cmd.extend(["--log-file", log_path])
         if session.get("conversation_id"):
             cmd.extend(["--conversation", session["conversation_id"]])
         if session.get("cwd"):

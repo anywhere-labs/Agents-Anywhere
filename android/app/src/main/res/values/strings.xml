@@ -79,7 +79,9 @@
     <string name="qr_consumed">QR code already used.</string>
     <string name="qr_waiting">Waiting for web confirmation...</string>
 
-    <string name="home_search_coming_soon">Search is coming soon.</string>
+    <string name="home_search_title">Search</string>
+    <string name="home_search_hint">Search by title, folder or device</string>
+    <string name="home_search_empty">No matching sessions</string>
     <string name="home_session_pinned">Session pinned.</string>
     <string name="home_session_unpinned">Session unpinned.</string>
     <string name="home_pin_update_failed">Could not update pin state.</string>

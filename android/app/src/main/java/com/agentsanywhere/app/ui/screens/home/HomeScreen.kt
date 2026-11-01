@@ -218,7 +218,7 @@ fun HomeScreen(
                 onLoadMore = onLoadMore,
                 onTabSelected = onTabSelected,
                 onProfile = { onProfileOpenChange(true) },
-                onSearch = { showToast(context.getString(R.string.home_search_coming_soon)) },
+                onSearch = { navigate(AppDestination.Search) },
                 onSessionLongPress = { session, bounds ->
                     actionMenu = HomeSessionActionMenu(
                         session = session,

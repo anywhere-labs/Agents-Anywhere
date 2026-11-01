@@ -313,6 +313,9 @@ internal fun AgentsAnywhereNavHost(
                     onBack = { navigate(AppDestination.Sessions) },
                     agentPreviews = deviceAgentPreviews,
                     onAddDevice = { navigate(AppDestination.DeviceSetup) },
+                    onRenameDevice = onRenameDevice,
+                    onRevokeDevice = { onPrepareDeviceSetup(it).map { } },
+                    onDeleteDevice = onDeleteDevice,
                 )
                 AppDestination.Terminal -> TerminalScreen(
                     navigate = navigate,
@@ -340,6 +343,13 @@ internal fun AgentsAnywhereNavHost(
                         onClaimPairCode = onClaimDevicePairCode,
                         onWaitForDevice = onWaitForPairingDevice,
                         onClearPairing = onClearDevicePairing,
+                    )
+                }
+                AppDestination.Search -> androidx.compose.runtime.key(serverUrl, userId) {
+                    com.agentsanywhere.app.ui.screens.home.SearchScreen(
+                        sessions = sessionsState.sessions + sessionsState.archivedSessions,
+                        onBack = { navigate(AppDestination.Sessions) },
+                        onOpenSession = onOpenSession,
                     )
                 }
                 AppDestination.ArchivedSessions -> androidx.compose.runtime.key(serverUrl, userId) {

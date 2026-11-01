@@ -21,6 +21,20 @@ from connector.runtimes.acp.runtime import AcpRuntime
 
 from .catalogs import ANTIGRAVITY_PERMISSION_OPTIONS, load_antigravity_model_catalog
 from .discovery import discover_antigravity
+from .native_runtime import NativeAntigravityRuntime
+
+HISTORY_SUMMARIES_ENV = "ANTIGRAVITY_SUMMARIES_DB"
+
+
+def history_db_path() -> Path:
+    configured = os.environ.get(HISTORY_SUMMARIES_ENV, "").strip()
+    if configured:
+        return Path(configured)
+    return Path.home() / ".gemini" / "antigravity" / "conversation_summaries.db"
+
+
+def conversations_dir() -> Path:
+    return Path.home() / ".gemini" / "antigravity" / "conversations"
 
 
 class AntigravityClient(AgentClient):
@@ -62,7 +76,7 @@ class AntigravityProvider(RuntimeProvider):
                 "modelCatalog": True,
                 "permissionCatalog": True,
             },
-            metadata={"nativeHistory": False, "localInstallation": True},
+            metadata={"nativeHistory": True, "localInstallation": True},
         )
 
     async def validate_config(self, values):
@@ -97,10 +111,12 @@ class AntigravityProvider(RuntimeProvider):
             ),
             model_catalog_loader=load_antigravity_model_catalog,
         )
-        return AcpRuntime(
+        return NativeAntigravityRuntime(
             config,
             host,
             profile,
             launch,
             client_factory=AntigravityClient,
+            history_db_path=history_db_path(),
+            conversations_dir=conversations_dir(),
         )

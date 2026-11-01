@@ -655,6 +655,15 @@ fun AgentsAnywhereApp(
                         if (selectedDeviceId == connectorId) selectedDeviceId = null
                         destinationName = AppDestination.Devices.name
                     }
+                    .onFailure { error ->
+                        // 404 = 设备已在别处删除（僵尸条目）：同样从本地列表清除，
+                        // 否则用户面对一个永远删不掉的幽灵设备。
+                        if ((error as? com.agentsanywhere.app.api.ApiException)?.statusCode == 404) {
+                            sessionsState = sessionsState.withDeletedDevice(connectorId)
+                            if (selectedDeviceId == connectorId) selectedDeviceId = null
+                            destinationName = AppDestination.Devices.name
+                        }
+                    }
             }
         },
         onPrepareDeviceSetup = { connectorId ->

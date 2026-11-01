@@ -189,6 +189,7 @@ class ApiClient(
         serverUrl: String,
         path: String,
         authorizationToken: String? = null,
+        readTimeoutSeconds: Long? = null,
     ): JSONObject {
         return requestJson(
             serverUrl = serverUrl,
@@ -196,6 +197,7 @@ class ApiClient(
             method = "DELETE",
             bodyText = null,
             authorizationToken = authorizationToken,
+            readTimeoutSeconds = readTimeoutSeconds,
         )
     }
 

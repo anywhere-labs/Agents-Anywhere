@@ -45,16 +45,21 @@ from .native_history import discover_sessions, read_history, timeline
 PROJECTION_REVISION = 4
 SCAN_INTERVAL_SECONDS = 5.0
 
-RESUME_BLOCKING_FAILURES = {
-    "zcode_source_missing",
-    "zcode_source_unreadable",
-    "zcode_history_invalid",
-    "zcode_history_incomplete",
-    "zcode_workspace_missing",
-}
-
-
 class NativeZcodeRuntime(AcpRuntime):
+    # Failure codes that block resume; subclasses override per runtime family.
+    RESUME_BLOCKING_FAILURES = frozenset({
+        "zcode_source_missing",
+        "zcode_source_unreadable",
+        "zcode_history_invalid",
+        "zcode_history_incomplete",
+        "zcode_workspace_missing",
+        "antigravity_source_missing",
+        "antigravity_history_unreadable",
+        "antigravity_history_invalid",
+        "antigravity_history_incomplete",
+        "antigravity_workspace_missing",
+    })
+
     def __init__(self, *args, history_db_path, **kwargs):
         super().__init__(*args, **kwargs)
         self.history_db_path = Path(history_db_path)
@@ -68,6 +73,21 @@ class NativeZcodeRuntime(AcpRuntime):
         self.app.launch_for_session = self._session_launch
         self.app.on_context_closed = self._release
         self.app.on_binding_changed = self._publish_native_state
+
+    # --- native history hooks (overridden by other runtime importers) ---
+
+    def discover_native_sessions(self):
+        return discover_sessions(self.history_db_path)
+
+    def read_native_history(self, native_id):
+        return read_history(self.history_db_path, native_id)
+
+    def agent_session_id(self, native_id: str) -> str:
+        # The bridge exposes engine conversations as "zc-<zsid>".
+        return "zc-" + native_id
+
+    def native_timeline(self, history, session_id: str) -> list[dict]:
+        return timeline(history, session_id, self.config.runtime)
 
     async def start(self):
         await super().start()
@@ -127,9 +147,7 @@ class NativeZcodeRuntime(AcpRuntime):
         async with self.scan_lock:
             errors: list[dict] = []
             try:
-                inventory = await asyncio.to_thread(
-                    discover_sessions, self.history_db_path
-                )
+                inventory = await asyncio.to_thread(self.discover_native_sessions)
             except AcpError as error:
                 inventory, errors = {}, [{"code": error.code, "message": str(error)}]
             # Bindings created by a previous recovery pin their platform id even
@@ -159,9 +177,7 @@ class NativeZcodeRuntime(AcpRuntime):
                 ):
                     continue
                 try:
-                    history = await asyncio.to_thread(
-                        read_history, self.history_db_path, native_id
-                    )
+                    history = await asyncio.to_thread(self.read_native_history, native_id)
                 except AcpError as error:
                     errors.append({"code": error.code, "message": str(error)})
                     self._failure(session_id, error.code, str(error))
@@ -178,7 +194,7 @@ class NativeZcodeRuntime(AcpRuntime):
                     old_failure = (
                         self.app.store.get("zcode_native_failure", session_id) or {}
                     )
-                    if old_failure.get("code") in RESUME_BLOCKING_FAILURES:
+                    if old_failure.get("code") in self.RESUME_BLOCKING_FAILURES:
                         self.app.store.delete("zcode_native_failure", session_id)
                 if (
                     force
@@ -218,7 +234,7 @@ class NativeZcodeRuntime(AcpRuntime):
                     },
                 },
             )
-            items = timeline(history, session_id, self.config.runtime)
+            items = self.native_timeline(history, session_id)
             previous = {
                 item["id"]: item
                 for item in self.app.store.values("projection")
@@ -401,7 +417,7 @@ class NativeZcodeRuntime(AcpRuntime):
         metadata = self._metadata(session_id, source)
         if failure:
             metadata["reasonMessage"] = failure["message"]
-        blocked_source = bool(failure and failure["code"] in RESUME_BLOCKING_FAILURES)
+        blocked_source = bool(failure and failure["code"] in self.RESUME_BLOCKING_FAILURES)
         caps = [cap for cap in caps if cap.capability_id != "session.recover"]
         if not ready:
             # Takeover parity with other agents + self-healing: the composer
@@ -538,9 +554,7 @@ class NativeZcodeRuntime(AcpRuntime):
             raise AcpError("owner_changed", "会话执行者已变化，请刷新。")
         if session_id in self.app.sessions:
             raise AcpError("zcode_session_already_running", "此会话已在 AA 执行。")
-        history = await asyncio.to_thread(
-            read_history, self.history_db_path, source["sessionId"]
-        )
+        history = await asyncio.to_thread(self.read_native_history, source["sessionId"])
         history.require_resumable()
         if (
             values.get("sourceRevision") != source["revision"]
@@ -562,8 +576,7 @@ class NativeZcodeRuntime(AcpRuntime):
                     Workspace(history.cwd, str(Path(history.cwd).resolve())),
                     generation,
                     generation,
-                    # The bridge exposes engine conversations as "zc-<zsid>".
-                    "zc-" + history.native_id,
+                    self.agent_session_id(history.native_id),
                     attachment="recovery_required",
                 )
             )
@@ -610,9 +623,7 @@ class NativeZcodeRuntime(AcpRuntime):
         source = self._source(session_id)
         if not source:
             return self.launch
-        history = await asyncio.to_thread(
-            read_history, self.history_db_path, source["sessionId"]
-        )
+        history = await asyncio.to_thread(self.read_native_history, source["sessionId"])
         history.require_resumable()
         if history.revision != source["revision"]:
             raise AcpError(
@@ -622,9 +633,7 @@ class NativeZcodeRuntime(AcpRuntime):
 
     async def _preattach_checks(self, session_id):
         source = self._source(session_id)
-        history = await asyncio.to_thread(
-            read_history, self.history_db_path, source["sessionId"]
-        )
+        history = await asyncio.to_thread(self.read_native_history, source["sessionId"])
         history.require_resumable()
         if history.revision != source["revision"]:
             await self._refresh_source(session_id)
@@ -648,8 +657,7 @@ class NativeZcodeRuntime(AcpRuntime):
                     Workspace(history.cwd, str(Path(history.cwd).resolve())),
                     generation,
                     generation,
-                    # The bridge exposes engine conversations as "zc-<zsid>".
-                    "zc-" + history.native_id,
+                    self.agent_session_id(history.native_id),
                     attachment="recovery_required",
                 )
             )
@@ -802,9 +810,7 @@ class NativeZcodeRuntime(AcpRuntime):
 
     async def _refresh_source(self, session_id):
         source = self._source(session_id)
-        history = await asyncio.to_thread(
-            read_history, self.history_db_path, source["sessionId"]
-        )
+        history = await asyncio.to_thread(self.read_native_history, source["sessionId"])
         if history.native_id != source["sessionId"] or (
             self.app.store.get("binding", session_id) and history.cwd != source["cwd"]
         ):

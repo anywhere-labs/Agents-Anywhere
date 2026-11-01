@@ -69,6 +69,7 @@ class DevicesApi(
             serverUrl = serverUrl,
             path = "/connectors/${deviceId.urlEncode()}",
             authorizationToken = authorizationToken,
+            readTimeoutSeconds = 60,
         )
     }
 

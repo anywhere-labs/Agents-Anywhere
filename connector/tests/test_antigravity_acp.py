@@ -66,3 +66,46 @@ def test_antigravity_provider_create_runtime(monkeypatch, tmp_path):
         assert str(fake_bin.parent) in env.get("PATH", "")
 
     asyncio.run(run())
+
+
+def test_antigravity_config_options_map_legacy_selections():
+    """App 发送的 model/permission 选择必须能唯一映射到 bridge 的配置项。"""
+    from connector.runtimes.acp.application.configuration import ConfigurationService
+    from connector.runtimes.acp.domain.catalogs import selection_id
+    from connector.runtimes.antigravity.bridge import _config_options
+
+    class MemStore:
+        def __init__(self):
+            self.rows = {}
+
+        def get(self, kind, key):
+            return self.rows.get((kind, key))
+
+        def put(self, kind, key, value):
+            self.rows[(kind, key)] = value
+
+    service = ConfigurationService(MemStore())
+    options = [
+        option.model_dump(by_alias=True, exclude_none=True)
+        for option in _config_options()
+    ]
+    service.observe("sess-1", options)
+    snapshot = service.snapshot("sess-1")
+    categories = {}
+    for option in snapshot.options:
+        categories.setdefault(option["category"], []).append(option["id"])
+    assert categories["model"] == ["model"]
+    assert categories["effort"] == ["reasoning_effort"]
+    assert categories["permission"] == ["permission"]
+
+    # 两种模型选择形态：裸 id 与 acp-selection 编码（含 effort）。
+    merged = snapshot.merge_legacy({}, {"model": "gemini-3.8-flash", "permission": "default"})
+    assert merged["model"] == "gemini-3.8-flash"
+    assert merged["permission"] == "default"
+    assert "reasoning_effort" not in merged
+
+    encoded = selection_id("claude-sonnet-4-6", "high")
+    merged2 = snapshot.merge_legacy({}, {"model": encoded, "permission": "bypassPermissions"})
+    assert merged2["model"] == "claude-sonnet-4-6"
+    assert merged2["reasoning_effort"] == "high"
+    assert merged2["permission"] == "bypassPermissions"

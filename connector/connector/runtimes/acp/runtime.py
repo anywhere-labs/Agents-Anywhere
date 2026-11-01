@@ -34,6 +34,9 @@ from .domain.definitions import AcpError, PromptRejectedBeforeDispatch
 
 class AcpRuntime(AgentRuntime):
     def __init__(self, config, host, profile, launch, *, preparation_driver=None, client_factory=None):
+        # How long start_turn waits for an early accept/reject before reporting
+        # "turn in progress"; real turns may run for minutes regardless.
+        self.turn_wait_seconds = 6.0
         self.config, self.host, self.profile, self.launch = (
             config,
             host,
@@ -671,7 +674,7 @@ class AcpRuntime(AgentRuntime):
 
             from .domain.definitions import fingerprint
             try:
-                async with asyncio.timeout(20):
+                async with asyncio.timeout(self.turn_wait_seconds):
                     while True:
                         row = self.app.store.require("prompt", fingerprint([session_id, client_message_id]))
                         if row["message_accepted"] is not None:
@@ -686,7 +689,28 @@ class AcpRuntime(AgentRuntime):
             except TimeoutError:
                 pass
             if result.get("messageAccepted") is None:
-                result = {**result, "code": "operation_outcome_unknown"}
+                row = self.app.store.get(
+                    "prompt", fingerprint([session_id, client_message_id])
+                ) or {}
+                if row.get("phase") == "dispatching":
+                    # The agent accepted the message and the turn is simply
+                    # still running; long turns outlive this call by design.
+                    result = {
+                        **result,
+                        "ok": True,
+                        "code": "turn_in_progress",
+                        "messageAccepted": True,
+                        "message": "消息已送达，回合仍在执行，结果稍后出现在时间线。",
+                    }
+                else:
+                    failure_message = (row.get("failure") or {}).get("message")
+                    result = {
+                        **result,
+                        "ok": False,
+                        "code": "operation_outcome_unknown",
+                        "message": failure_message
+                        or "消息已提交但 Agent 未确认接收，请稍后重试。",
+                    }
         return RuntimeOperationResult(
             ok=result["ok"], code=result.get("code"), message=result.get("message"), result=result
         )
