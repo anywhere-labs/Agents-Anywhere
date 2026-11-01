@@ -79,10 +79,8 @@ class NativeAntigravityHistory:
         }
 
     def require_resumable(self):
-        if not self.complete:
-            raise AcpError(
-                "antigravity_history_incomplete", "原生历史存在损坏记录，请重新校准。"
-            )
+        # 转录解析是 best-effort 启发式（protobuf 无公开 schema）：不完整时
+        # 时间线可能缺条目，但继续任务以引擎会话为准，不应因此阻断。
         if not Path(self.cwd).is_absolute() or not Path(self.cwd).is_dir():
             raise AcpError(
                 "antigravity_workspace_missing", "原会话的项目工作目录不存在或无效。"

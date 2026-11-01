@@ -167,9 +167,22 @@ class NativeZcodeRuntime(AcpRuntime):
                 )
                 if session_id in self.app.sessions:
                     continue
+                # AA 自己创建/接管的会话由 ACP 流程管理：引擎对话也会出现在
+                # 原生库里，回合进行中的半写记录会被误判为损坏，绝不能让它
+                # 反过来阻断正在使用的会话。
+                if self.app.store.get("binding", session_id):
+                    # 绑定后会话归 ACP 流程所有：清掉遗留的原生来源与失败，
+                    # 让 start_turn/state 走普通 ACP 路径，而不是原生浏览路径。
+                    self.app.store.delete("zcode_native_source", session_id)
+                    self.app.store.delete("zcode_native_failure", session_id)
+                    continue
                 previous = self._source(session_id)
+                existing_failure = self.app.store.get(
+                    "zcode_native_failure", session_id
+                )
                 if (
                     not force
+                    and not existing_failure
                     and previous
                     and previous.get("signature") == entry["signature"]
                     and previous.get("publishedRevision") == previous["revision"]
@@ -196,6 +209,8 @@ class NativeZcodeRuntime(AcpRuntime):
                     )
                     if old_failure.get("code") in self.RESUME_BLOCKING_FAILURES:
                         self.app.store.delete("zcode_native_failure", session_id)
+                        # 失败自愈后必须重推状态，否则服务端会一直停留在 blocked。
+                        self._publish_native_state(session_id)
                 if (
                     force
                     or not previous
@@ -208,6 +223,8 @@ class NativeZcodeRuntime(AcpRuntime):
             # Conversations deleted in ZCode keep their browsable content but
             # lose resume until the source reappears.
             for platform_id, source in self._source_rows():
+                if self.app.store.get("binding", platform_id):
+                    continue
                 if source["sessionId"] not in inventory:
                     self._failure(
                         platform_id,
@@ -327,7 +344,7 @@ class NativeZcodeRuntime(AcpRuntime):
                 "metadata": {},
             }
         )
-        failure = self.app.store.get("zcode_native_failure", session_id)
+        failure = None if binding else self.app.store.get("zcode_native_failure", session_id)
         state["metadata"].update(self._metadata(session_id, source))
         if failure:
             state.update(status="blocked", statusReason=failure["code"], error=failure)

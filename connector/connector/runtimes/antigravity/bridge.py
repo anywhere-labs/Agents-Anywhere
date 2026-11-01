@@ -40,6 +40,39 @@ PERMISSION_DEFAULT = "default"
 DEFAULT_EFFORT = "medium"
 
 
+LOCAL_PROXY_PORTS = (7897, 7890, 1087, 8118, 9090)
+PROXY_ENV_KEYS = ("ANTIGRAVITY_CLI_PROXY", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy")
+
+
+def resolve_proxy() -> str | None:
+    """Antigravity 云端点在国内直连不可达，CLI 是 Go 程序、不走 macOS 系统代理。
+
+    优先用显式环境变量；否则探测本机常见代理端口（Clash 混合端口等）。
+    """
+    for key in PROXY_ENV_KEYS:
+        value = os.environ.get(key, "").strip()
+        if value:
+            return value
+    import socket
+
+    for port in LOCAL_PROXY_PORTS:
+        with socket.socket() as probe:
+            probe.settimeout(0.15)
+            if probe.connect_ex(("127.0.0.1", port)) == 0:
+                return f"http://127.0.0.1:{port}"
+    return None
+
+
+def cli_environment() -> dict[str, str]:
+    env = dict(os.environ)
+    proxy = resolve_proxy()
+    if proxy:
+        for key in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY",
+                    "https_proxy", "http_proxy", "all_proxy"):
+            env.setdefault(key, proxy)
+    return env
+
+
 def _model_options() -> list[dict[str, str]]:
     """模型目录与 App 端选择器同源，保证 selectionId 可直接校验。"""
     catalog = load_antigravity_model_catalog("antigravity")
@@ -284,6 +317,7 @@ class AntigravityAgent:
                     stderr=subprocess.PIPE,
                     text=True,
                     bufsize=1,
+                    env=cli_environment(),
                 ),
             )
             self.current_proc = proc

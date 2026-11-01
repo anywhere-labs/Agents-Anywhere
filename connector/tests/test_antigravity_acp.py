@@ -109,3 +109,25 @@ def test_antigravity_config_options_map_legacy_selections():
     assert merged2["model"] == "claude-sonnet-4-6"
     assert merged2["reasoning_effort"] == "high"
     assert merged2["permission"] == "bypassPermissions"
+
+
+def test_antigravity_bridge_proxy_resolution(monkeypatch):
+    """CLI 不读 macOS 系统代理，bridge 必须为子进程补代理环境。"""
+    from connector.runtimes.antigravity import bridge
+
+    monkeypatch.setenv("ANTIGRAVITY_CLI_PROXY", "http://127.0.0.1:9999")
+    assert bridge.resolve_proxy() == "http://127.0.0.1:9999"
+    env = bridge.cli_environment()
+    assert env["HTTPS_PROXY"] == "http://127.0.0.1:9999"
+    assert env["https_proxy"] == "http://127.0.0.1:9999"
+
+    # 无显式变量时探测本机端口（测试里用 monkeypatch 模拟探测结果）。
+    monkeypatch.delenv("ANTIGRAVITY_CLI_PROXY")
+    for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(
+        bridge,
+        "LOCAL_PROXY_PORTS",
+        (),
+    )
+    assert bridge.resolve_proxy() is None

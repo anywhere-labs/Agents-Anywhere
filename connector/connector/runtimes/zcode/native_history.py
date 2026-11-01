@@ -63,10 +63,8 @@ class NativeZcodeHistory:
         }
 
     def require_resumable(self):
-        if not self.complete:
-            raise AcpError(
-                "zcode_history_incomplete", "原生历史存在损坏记录，请重新校准。"
-            )
+        # 未完成读取（写入中的暂存状态）不阻断继续：引擎会话是权威来源，
+        # 时间线可能暂时缺条目，下一次扫描会补齐。
         if not Path(self.cwd).is_absolute() or not Path(self.cwd).is_dir():
             raise AcpError("zcode_workspace_missing", "原会话的项目工作目录不存在或无效。")
 

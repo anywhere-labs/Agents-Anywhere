@@ -829,8 +829,18 @@ class AcpRuntime(AgentRuntime):
     ):
         self.agent_capabilities.context(session_id, external_session_id)
         snapshot = self.app.configurations.snapshot(session_id)
+        # 客户端的 legacy 选择可能编码了模型+推理强度（acp-selection:…），
+        # 与 create 路径的 merge_legacy 一样先展开再映射到配置项。
+        from .domain.catalogs import decode_selection
+
+        expanded = dict(selections)
+        if expanded.get("model") is not None:
+            decoded = decode_selection(expanded["model"])
+            if "effort" in decoded and expanded.get("effort") not in (None, decoded["effort"]):
+                raise RuntimeInvalidRequestError("模型选择与推理强度不一致。")
+            expanded.update(decoded)
         values = {}
-        for category, value in selections.items():
+        for category, value in expanded.items():
             if value is None:
                 continue
             option = next(

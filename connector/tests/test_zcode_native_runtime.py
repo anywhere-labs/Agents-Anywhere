@@ -500,3 +500,40 @@ def test_start_turn_surfaces_agent_failure_message(tmp_path, monkeypatch):
             await runtime.stop()
 
     asyncio.run(run())
+
+
+def test_bound_sessions_are_never_poisoned_by_native_scan(tmp_path):
+    """AA 管理的会话即使引擎库里的转录半写损坏，也不得被原生扫描阻断。"""
+    async def run():
+        runtime, _notifications, native_id = make_runtime(
+            tmp_path, tmp_path / "db.sqlite"
+        )
+        await runtime.start()
+        try:
+            source = next(iter(runtime.app.store.values("zcode_native_source")))
+            platform_id = source["platformSessionId"]
+            # 模拟 AA 已接管该会话。
+            runtime.app.store.put(
+                "binding",
+                platform_id,
+                {
+                    "session_id": platform_id,
+                    "profile_id": "zcode",
+                    "release_id": "zcode-bridge-0.9.1",
+                    "workspace": {"registered_path": str(tmp_path), "canonical_path": str(tmp_path)},
+                    "owner_generation": "g1",
+                    "connection_generation": "g1",
+                    "agent_session_id": "zc-" + native_id,
+                    "attachment": "recovery_required",
+                    "foreground": "unknown",
+                    "revision": 1,
+                },
+            )
+            await runtime.scan(force=True)
+            # 绑定会话不产生原生失败，也不会保留原生来源行。
+            assert runtime.app.store.get("zcode_native_failure", platform_id) is None
+            assert runtime.app.store.get("zcode_native_source", platform_id) is None
+        finally:
+            await runtime.stop()
+
+    asyncio.run(run())
