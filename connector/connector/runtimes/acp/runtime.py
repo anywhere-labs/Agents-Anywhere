@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any, Mapping
+
 from connector.runtime_protocol import AgentRuntime
 from connector.runtime_protocol.errors import (
     RuntimeInvalidRequestError,
@@ -7,6 +9,7 @@ from connector.runtime_protocol.errors import (
     RuntimeUpstreamError,
 )
 from connector.runtime_protocol.models import (
+    RuntimeAttachment,
     RuntimeCapability,
     RuntimeCapabilitySet,
     RuntimeCommand,
@@ -173,7 +176,80 @@ class AcpRuntime(AgentRuntime):
                     )
         return row["result"]
 
+    async def create_and_start_session(
+        self,
+        session_id: str,
+        content: str,
+        title: str | None = None,
+        cwd: str | None = None,
+        selections: Mapping[str, str | None] | None = None,
+        attachments: tuple[RuntimeAttachment, ...] = (),
+        client_message_id: str | None = None,
+        *,
+        runtime_options: Mapping[str, Any] | None = None,
+    ) -> RuntimeOperationResult:
+        if not cwd:
+            raise RuntimeInvalidRequestError("工作目录不能为空。")
+        try:
+            binding_row = await self.app.create_session(
+                session_id=session_id,
+                cwd=cwd,
+                selections=dict(selections or {}),
+            )
+            agent_session_id = binding_row["agent_session_id"]
+        except Exception as error:
+            return RuntimeOperationResult(
+                ok=False,
+                code=getattr(error, "code", "session_create_failed"),
+                message=str(error),
+                result={
+                    "sessionId": session_id,
+                    "runtime": self.config.runtime,
+                    "runtimeId": self.config.runtime_id,
+                    "created": False,
+                    "messageAccepted": False,
+                },
+            )
+
+        if not content.strip() and not attachments:
+            return RuntimeOperationResult(
+                ok=True,
+                result={
+                    "sessionId": session_id,
+                    "externalSessionId": agent_session_id,
+                    "runtime": self.config.runtime,
+                    "runtimeId": self.config.runtime_id,
+                    "created": True,
+                },
+            )
+
+        turn_result = await self.start_turn(
+            session_id=session_id,
+            external_session_id=agent_session_id,
+            content=content,
+            selections=selections,
+            attachments=attachments,
+            client_message_id=client_message_id,
+            cwd=cwd,
+        )
+        return RuntimeOperationResult(
+            ok=turn_result.ok,
+            code=turn_result.code,
+            message=turn_result.message,
+            result={
+                "sessionId": session_id,
+                "externalSessionId": agent_session_id,
+                "runtime": self.config.runtime,
+                "runtimeId": self.config.runtime_id,
+                "created": True,
+                **turn_result.result,
+            },
+        )
+
     async def get_runtime_capabilities(self):
+        keys = ["runtime.session.async_create", *self.profile.runtime_capabilities]
+        if getattr(self.profile, "supports_workspace_preparation", False):
+            keys.insert(0, "runtime.workspace.prepare")
         return RuntimeCapabilitySet(
             runtime=self.config.runtime,
             runtime_id=self.config.runtime_id,
@@ -185,7 +261,7 @@ class AcpRuntime(AgentRuntime):
                     runtime=self.config.runtime,
                     metadata={"maxFiles": 10, "maxBytes": 33554432} if key == "runtime.attachment" else {"workflowVersion": "1.2"},
                 )
-                for key in ("runtime.workspace.prepare", "runtime.session.async_create", *self.profile.runtime_capabilities)
+                for key in keys
             ),
         )
 
@@ -413,6 +489,12 @@ class AcpRuntime(AgentRuntime):
             raise mapped from error
 
     async def list_model_catalog(self, query=None, limit=100):
+        loader = getattr(self.profile, "model_catalog_loader", None)
+        if callable(loader):
+            import inspect
+            if inspect.iscoroutinefunction(loader):
+                return await loader(self.config.runtime, query=query, limit=limit)
+            return loader(self.config.runtime, query=query, limit=limit)
         return RuntimeModelCatalog(runtime=self.config.runtime, revision=0, models=())
 
     async def list_permission_catalog(self, query=None, limit=100):

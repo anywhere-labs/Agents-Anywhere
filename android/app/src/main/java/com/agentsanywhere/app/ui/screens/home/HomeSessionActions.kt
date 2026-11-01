@@ -119,6 +119,7 @@ internal fun HomeSessionActionOverlay(
                 HomeProjectSessionRow(
                     session = menu.session,
                     inset = !menu.session.pinned || menu.session.archived,
+                    contextLabel = menu.contextLabel,
                     onClick = {},
                     onLongPress = {},
                 )

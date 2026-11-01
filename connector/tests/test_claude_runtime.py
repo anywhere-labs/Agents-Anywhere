@@ -5609,3 +5609,37 @@ async def _wait_until(predicate: Any) -> None:
             return
         await asyncio.sleep(0)
     assert predicate()
+
+
+def test_claude_runtime_bypass_permissions_auto_approves_tool() -> None:
+    asyncio.run(_test_claude_runtime_bypass_permissions_auto_approves_tool())
+
+
+async def _test_claude_runtime_bypass_permissions_auto_approves_tool() -> None:
+    host = _RecordingHost()
+    client = _ApprovalClaudeClient()
+    runtime = _runtime(host=host, client=client)
+
+    catalog = await runtime.list_permission_catalog()
+    bypass_item = next(item for item in catalog.permissions if item.id == "bypassPermissions")
+
+    await runtime.update_session_selections(
+        "sess_bypass",
+        "claude_session_bypass",
+        {"permission": bypass_item.selection_id},
+    )
+
+    result = await runtime.start_turn(
+        "sess_bypass",
+        "claude_session_bypass",
+        "run ls",
+    )
+    task = runtime._sessions["sess_bypass"].active_task
+    assert result.ok is True
+    assert task is not None
+    await task
+
+    assert len(host.notice_upserts) == 0
+    assert len(client.permission_results) == 1
+    assert client.permission_results[0].behavior == "allow"
+

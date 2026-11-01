@@ -8,6 +8,8 @@ KNOWN_RUNTIME_CAPABILITY_IDS = {
     "dsh",
     "opencode",
     "acp",
+    "zcode",
+    "antigravity",
 }
 
 _RUNTIME_CAPABILITY_MAP: tuple[tuple[str, str], ...] = (

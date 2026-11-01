@@ -288,7 +288,7 @@ private fun SessionList(
                         session = session,
                         contextLabel = session.sidebarContextLabel(
                             projectName = projectsById[session.projectId]?.name,
-                            deviceName = devicesById[session.connectorId]?.name,
+                            deviceName = deviceContextLabel(devices, session.connectorId, session.deviceName),
                         ),
                         showDivider = session.id != pinned.lastOrNull()?.id,
                         onClick = { onOpenSession(session) },
@@ -313,7 +313,7 @@ private fun SessionList(
                         session = session,
                         contextLabel = session.sidebarContextLabel(
                             projectName = projectsById[session.projectId]?.name,
-                            deviceName = devicesById[session.connectorId]?.name,
+                            deviceName = deviceContextLabel(devices, session.connectorId, session.deviceName),
                         ),
                         onClick = { onOpenSession(session) },
                         onLongPress = { bounds -> onSessionLongPress(session, bounds) },

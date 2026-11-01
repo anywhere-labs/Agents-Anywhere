@@ -51,6 +51,28 @@ class FilesApi(
         ).toRemoteTextFile()
     }
 
+    fun downloadFile(serverUrl: String, authorizationToken: String, deviceId: String, root: String, path: String): ByteArray {
+        val result = client.postJson(
+            serverUrl, "/connectors/${deviceId.urlEncode()}/fs/read?root=${root.urlEncode()}",
+            JSONObject().put("path", path), authorizationToken,
+        ).getJSONObject("result")
+        val bytes = client.getFileBytes(serverUrl, result.getString("downloadUrl"), authorizationToken)
+        require(result.optLong("size", -1L) == bytes.size.toLong()) { "Downloaded file size does not match." }
+        val expected = result.optString("sha256").lowercase()
+        val actual = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+            .joinToString("") { "%02x".format(it) }
+        require(expected.length == 64 && expected == actual) { "Downloaded file checksum does not match." }
+        return bytes
+    }
+
+    fun createPreviewToken(serverUrl: String, authorizationToken: String, deviceId: String, root: String, path: String): String {
+        val result = client.postJson(
+            serverUrl, "/connectors/${deviceId.urlEncode()}/fs/preview-token?root=${root.urlEncode()}",
+            JSONObject().put("path", path), authorizationToken,
+        )
+        return result.getString("previewToken")
+    }
+
     private fun JSONObject.toRemoteDirectoryEntry(): RemoteDirectoryEntry {
         return RemoteDirectoryEntry(
             name = optString("name", "Untitled").ifBlank { "Untitled" },

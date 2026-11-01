@@ -19,6 +19,7 @@ data class RemoteSession(
     val archivedAt: String?,
     val unread: Boolean,
     val lastReadSeq: Int,
+    val latestTurnEndSeq: Int? = null,
     val lastSyncedAt: String?,
     val sourceObservedAt: String?,
     val lastActivityAt: String?,

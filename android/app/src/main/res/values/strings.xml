@@ -595,6 +595,7 @@
     <string name="files_empty_directory">This directory is empty.</string>
     <string name="files_loading_file">Loading file...</string>
     <string name="files_binary_preview_unavailable">This file cannot be previewed.</string>
+    <string name="files_open_with_external_app">Open with external app</string>
     <string name="files_open_file_to_preview">Open a file to preview it.</string>
     <string name="files_search_in_file">Search in file</string>
     <string name="files_copied_code">Copied code</string>
@@ -720,4 +721,13 @@
     <string name="native_history_check">Check recovery status</string>
     <string name="native_history_releasing">Ending execution…</string>
     <string name="session_image_input_unsupported">The selected model does not declare image input support. Remove the image or choose another model.</string>
+    <string name="notification_settings">Session notifications</string>
+    <string name="notification_on">On · periodic checks</string>
+    <string name="notification_off">Off</string>
+    <string name="notification_waiting">Needs approval</string>
+    <string name="notification_finished">New agent response</string>
+    <string name="notification_error">Needs attention</string>
+    <string name="notification_check_channel">Session activity</string>
+    <string name="notification_check_description">Checks run at least 15 minutes apart and may be delayed.</string>
+    <string name="notification_permission_denied">Allow notifications in Android settings to enable alerts.</string>
 </resources>

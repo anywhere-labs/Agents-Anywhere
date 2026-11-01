@@ -66,6 +66,31 @@ class ApiClient(
         )
     }
 
+    internal fun getFileBytes(serverUrl: String, path: String, authorizationToken: String): ByteArray =
+        withTokenRefresh(serverUrl, authorizationToken) { token ->
+            require(path.startsWith("/api/v2/connectors/") && !path.startsWith("//")) { "Invalid download path" }
+            val request = Request.Builder().url(apiUrl(serverUrl, path))
+                .header("Authorization", "Bearer $token").get().build()
+            val client = JSON_HTTP_CLIENT.newBuilder().followRedirects(false).followSslRedirects(false)
+                .readTimeout(120, TimeUnit.SECONDS).build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) throw ApiException("Could not download file.", response.code)
+                val body = response.body ?: throw ApiException("Empty download response.")
+                val limit = 50L * 1024 * 1024
+                if (body.contentLength() > limit) throw ApiException("File is larger than 50 MB.")
+                val source = body.source()
+                val output = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val count = source.read(buffer)
+                    if (count < 0) break
+                    if (output.size().toLong() + count > limit) throw ApiException("File is larger than 50 MB.")
+                    output.write(buffer, 0, count)
+                }
+                output.toByteArray()
+            }
+        }
+
     fun postJson(
         serverUrl: String,
         path: String,
@@ -321,11 +346,11 @@ class ApiClient(
         }
     }
 
-    private fun withTokenRefresh(
+    private fun <T> withTokenRefresh(
         serverUrl: String,
         authorizationToken: String?,
-        request: (String?) -> JSONObject,
-    ): JSONObject {
+        request: (String?) -> T,
+    ): T {
         try {
             return request(authorizationToken)
         } catch (exc: ApiException) {

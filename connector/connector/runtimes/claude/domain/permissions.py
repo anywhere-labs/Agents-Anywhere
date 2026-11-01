@@ -94,7 +94,7 @@ def permission_mode_from_selection_id(selection_id: str | None) -> str | None:
         return None
     for item in CLAUDE_PERMISSION_MODES:
         permission_id = str(item["id"])
-        if selection_id == _selection_id(permission_id):
+        if selection_id == _selection_id(permission_id) or selection_id == permission_id:
             return permission_id
     raise RuntimeInvalidRequestError(
         f"unknown Claude permission selection: {selection_id}"

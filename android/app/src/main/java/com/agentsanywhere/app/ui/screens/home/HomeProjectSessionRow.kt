@@ -3,6 +3,7 @@ package com.agentsanywhere.app.ui.screens.home
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -32,13 +33,14 @@ import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 internal fun HomeProjectSessionRow(
     session: AgentSession,
     inset: Boolean = true,
+    contextLabel: String = "",
     onClick: () -> Unit,
     onLongPress: (Rect) -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
     var bounds by remember { mutableStateOf(Rect.Zero) }
     Row(
-        modifier = Modifier.fillMaxWidth().height(44.dp)
+        modifier = Modifier.fillMaxWidth().height(if (contextLabel.isBlank()) 44.dp else 60.dp)
             .onGloballyPositioned { bounds = it.boundsInRoot() }
             .pointerInput(onClick, onLongPress, bounds) {
                 detectTapGestures(
@@ -53,15 +55,23 @@ internal fun HomeProjectSessionRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         SessionAgentIcon(runtime = session.runtime, runtimeType = session.runtimeType)
-        Text(
-            text = session.title,
-            modifier = Modifier.weight(1f),
-            color = LocalAAColors.current.inkSoft,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = session.title,
+                color = LocalAAColors.current.inkSoft,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (contextLabel.isNotBlank()) Text(
+                text = contextLabel,
+                color = LocalAAColors.current.faint,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         SessionStatusIndicator(session.listIndicator())
     }
 }

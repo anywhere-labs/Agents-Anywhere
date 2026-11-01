@@ -94,6 +94,8 @@ fun AgentsAnywhereApp(
     onSidebarViewModeChange: (String) -> Unit = {},
     oauthCallbackUri: Uri? = null,
     onOAuthCallbackConsumed: () -> Unit = {},
+    notificationSessionId: String? = null,
+    onNotificationConsumed: () -> Unit = {},
     webLoginViewModel: WebLoginViewModel,
     appUpdateViewModel: AppUpdateViewModel,
     onInstallUpdate: (File) -> Unit = {},
@@ -182,6 +184,15 @@ fun AgentsAnywhereApp(
     }
     val currentDestination = AppDestination.valueOf(destinationName)
     val hasAuthSession = sessionStore.hasAuthSession()
+    LaunchedEffect(notificationSessionId, hasAuthSession) {
+        val id = notificationSessionId?.takeIf { it.isNotBlank() && it.length <= 256 } ?: return@LaunchedEffect
+        if (!hasAuthSession) return@LaunchedEffect
+        preparedSessionDraft = null
+        selectedSessionId = id
+        destinationName = AppDestination.SessionDetail.name
+        onNotificationConsumed()
+    }
+
     LaunchedEffect(hasAuthSession, sessionStore.readServerUrl(), sessionStore.readUserId()) { if (hasAuthSession) sessionsController.workflows.restore() else sessionsController.workflows.clear() }
     val updateServerUrl = sessionStore.readServerUrl()
     val updatesAllowed = hasAuthSession && updateServerUrl.isNotBlank() && currentDestination !in setOf(
@@ -260,6 +271,7 @@ fun AgentsAnywhereApp(
         }
         if (!didClearSession) return
 
+        com.agentsanywhere.app.feature.notifications.SessionNotifications.setEnabled(context, false)
         appUpdateViewModel.syncSession(false)
         remoteTerminalPool.disposeLocal()
         sessionsState = SessionsState()

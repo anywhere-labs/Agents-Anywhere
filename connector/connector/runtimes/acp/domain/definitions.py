@@ -35,6 +35,8 @@ class AgentProfile:
     required_guarantees: frozenset[str] = frozenset()
     permission_options: tuple[tuple[str, str], ...] = ()
     runtime_capabilities: tuple[str, ...] = ()
+    model_catalog_loader: Any = None
+    supports_workspace_preparation: bool = False
 
 
 @dataclass(frozen=True)

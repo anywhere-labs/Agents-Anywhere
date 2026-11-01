@@ -73,6 +73,7 @@ import com.agentsanywhere.app.feature.sessions.ProjectDeviceAgentFilter
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.model.AgentSession
+import com.agentsanywhere.app.model.SessionStatus
 import com.agentsanywhere.app.model.runtimeTypeLabel
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.screens.common.AppEmptyState
@@ -96,6 +97,18 @@ internal data class HomeProjectActionMenu(
     val anchorBounds: Rect? = null,
     val expanded: Boolean = false,
 )
+
+internal fun deviceContextLabel(devices: List<AgentDevice>, connectorId: String, fallback: String = ""): String {
+    val device = devices.firstOrNull { it.id == connectorId } ?: return fallback.ifBlank { connectorId }
+    val name = device.name.ifBlank { connectorId }
+    val duplicates = devices.count { it.name.isNotBlank() && it.name == device.name }
+    return if (duplicates > 1) "$name · ${connectorId.takeLast(6)}" else name
+}
+
+internal fun formatProjectDisplayName(projectName: String, count: Int): String {
+    val baseName = projectName.replace(Regex("""\s*\(\d+\)$"""), "").trim()
+    return "$baseName ($count)"
+}
 
 @Composable
 internal fun HomeProjectList(
@@ -172,7 +185,7 @@ internal fun HomeProjectList(
                 items(pinnedProjects, key = { "pinned-project-${it.id}" }) { project ->
                     HomeProjectTreeItem(
                         project = project,
-                        agentLabel = agentLabel,
+                        agentLabel = listOfNotNull(deviceContextLabel(devices, project.connectorId).takeIf(String::isNotBlank), agentLabel).joinToString(" · ").ifBlank { project.connectorId },
                         sessions = sessionsByProject[project.id].orEmpty(),
                         expanded = project.id in expandedProjectIds,
                         loading = project.id in loadingProjectIds,
@@ -189,6 +202,7 @@ internal fun HomeProjectList(
                     HomeProjectSessionRow(
                         session = session,
                         inset = false,
+                        contextLabel = deviceContextLabel(devices, session.connectorId, session.deviceName),
                         onClick = { onOpenSession(session) },
                         onLongPress = { onSessionLongPress(session, it) },
                     )
@@ -220,7 +234,7 @@ internal fun HomeProjectList(
                 items(regularProjects, key = { "project-${it.id}" }) { project ->
                     HomeProjectTreeItem(
                         project = project,
-                        agentLabel = agentLabel,
+                        agentLabel = listOfNotNull(deviceContextLabel(devices, project.connectorId).takeIf(String::isNotBlank), agentLabel).joinToString(" · ").ifBlank { project.connectorId },
                         sessions = sessionsByProject[project.id].orEmpty(),
                         expanded = project.id in expandedProjectIds,
                         loading = project.id in loadingProjectIds,
@@ -270,6 +284,7 @@ private fun HomeProjectTreeItem(
     HomeProjectRow(
         project = project,
         agentLabel = agentLabel,
+        sessions = sessions,
         expanded = expanded,
         onClick = { onExpandedChange(!expanded) },
         onMenu = onMenu,
@@ -329,6 +344,7 @@ private fun HomeProjectTreeItem(
 private fun HomeProjectRow(
     project: AgentProject,
     agentLabel: String?,
+    sessions: List<AgentSession>,
     expanded: Boolean,
     onClick: () -> Unit,
     onMenu: (HomeProjectActionMenu) -> Unit,
@@ -366,7 +382,28 @@ private fun HomeProjectRow(
             modifier = Modifier.size(21.dp),
         )
         Column(modifier = Modifier.weight(1f)) {
-            HomeProjectTitle(project, Modifier.fillMaxWidth())
+            val count = if (sessions.isNotEmpty()) {
+                sessions.size
+            } else {
+                maxOf(0, project.sidebarSessionCounts?.active ?: project.activeSessionCount)
+            }
+            val displayName = formatProjectDisplayName(project.name, count)
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = displayName,
+                    color = colors.inkSoft,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                ProjectStatusDots(sessions = sessions)
+            }
             if (agentLabel != null) Text(
                 text = agentLabel,
                 color = colors.faint,
@@ -394,6 +431,57 @@ private fun HomeProjectRow(
                 contentDescription = stringResource(R.string.home_new_session_in_project, project.name),
                 tint = colors.faint,
                 modifier = Modifier.size(19.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProjectStatusDots(sessions: List<AgentSession>) {
+    if (sessions.isEmpty()) return
+
+    val hasError = sessions.any { it.status == SessionStatus.Error || it.status == SessionStatus.Blocked }
+    val hasWaitingOrConfirming = sessions.any {
+        it.status in setOf(
+            SessionStatus.WaitingApproval,
+            SessionStatus.Waiting,
+            SessionStatus.Pending,
+            SessionStatus.Running,
+            SessionStatus.Stopping,
+        )
+    }
+    val hasCompletedUnread = sessions.any {
+        it.unread && it.status in setOf(SessionStatus.Idle, SessionStatus.Unknown)
+    }
+
+    if (!hasError && !hasWaitingOrConfirming && !hasCompletedUnread) return
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        if (hasError) {
+            Box(
+                modifier = Modifier
+                    .size(7.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFEF4444)),
+            )
+        }
+        if (hasWaitingOrConfirming) {
+            Box(
+                modifier = Modifier
+                    .size(7.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFF59E0B)),
+            )
+        }
+        if (hasCompletedUnread) {
+            Box(
+                modifier = Modifier
+                    .size(7.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF10B981)),
             )
         }
     }

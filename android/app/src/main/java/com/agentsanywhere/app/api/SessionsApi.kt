@@ -683,6 +683,7 @@ class SessionsApi(
             archivedAt = optNullableString("archivedAt"),
             unread = optBoolean("unread", false),
             lastReadSeq = optInt("lastReadSeq", 0),
+            latestTurnEndSeq = optNullableInt("latestTurnEndSeq"),
             lastSyncedAt = optNullableString("lastSyncedAt"),
             sourceObservedAt = optNullableString("sourceObservedAt"),
             lastActivityAt = optNullableString("lastActivityAt"),

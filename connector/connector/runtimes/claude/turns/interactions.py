@@ -16,6 +16,9 @@ from connector.runtimes.claude.domain.approvals import (
     notice_transition,
     permission_result_from_decision,
 )
+from connector.runtimes.claude.domain.permissions import (
+    permission_mode_from_selection_id,
+)
 from connector.runtimes.claude.domain.session import ClaudeSession
 from connector.runtimes.claude.domain.input_requests import (
     ClaudeInputRequest,
@@ -151,13 +154,45 @@ class ClaudeInteractionController:
                     context=context,
                 )
             else:
-                decision = await self.request_tool_approval(
-                    session=session,
-                    turn_id=turn_id,
-                    tool_name=tool_name,
-                    tool_input=tool_input,
-                    context=context,
-                )
+                permission_mode = None
+                try:
+                    permission_mode = permission_mode_from_selection_id(
+                        session.selections.get("permission")
+                    )
+                except Exception:
+                    pass
+
+                if permission_mode == "bypassPermissions":
+                    decision = ClaudeApprovalDecision(
+                        allowed=True,
+                        action_id="auto_allow",
+                        message="Allowed by bypassPermissions mode",
+                    )
+                elif permission_mode == "acceptEdits" and tool_name in {
+                    "Edit",
+                    "Write",
+                    "Replace",
+                    "NotebookEditCell",
+                }:
+                    decision = ClaudeApprovalDecision(
+                        allowed=True,
+                        action_id="auto_allow",
+                        message="Allowed by acceptEdits mode",
+                    )
+                elif permission_mode == "dontAsk":
+                    decision = ClaudeApprovalDecision(
+                        allowed=False,
+                        action_id="auto_deny",
+                        message="Denied by dontAsk mode",
+                    )
+                else:
+                    decision = await self.request_tool_approval(
+                        session=session,
+                        turn_id=turn_id,
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                        context=context,
+                    )
             return permission_result_from_decision(
                 sdk,
                 decision,

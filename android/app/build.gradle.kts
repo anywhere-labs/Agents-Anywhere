@@ -39,6 +39,8 @@ android {
 
     buildTypes {
         debug {
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
             buildConfigField("String", "OFFICIAL_SERVER_URL", debugServerUrl.asBuildConfigString())
         }
         release {
@@ -98,6 +100,7 @@ dependencies {
     implementation(libs.androidx.webkit)
     implementation(libs.lucide.icons)
     implementation(libs.mlkit.barcode.scanning)
+    implementation("androidx.work:work-runtime-ktx:2.10.5")
     implementation(libs.okhttp)
     implementation(libs.sora.editor)
     implementation(libs.sora.language.textmate)

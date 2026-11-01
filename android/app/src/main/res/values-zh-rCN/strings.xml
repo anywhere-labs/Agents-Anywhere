@@ -593,6 +593,7 @@
     <string name="files_empty_directory">这个目录是空的。</string>
     <string name="files_loading_file">正在加载文件...</string>
     <string name="files_binary_preview_unavailable">这个文件无法预览。</string>
+    <string name="files_open_with_external_app">在外部应用中打开</string>
     <string name="files_open_file_to_preview">打开文件后可在这里预览。</string>
     <string name="files_search_in_file">在文件中搜索</string>
     <string name="files_copied_code">已复制代码</string>
@@ -718,4 +719,13 @@
     <string name="native_history_check">查询恢复状态</string>
     <string name="native_history_releasing">正在结束执行…</string>
     <string name="session_image_input_unsupported">当前模型声明不支持图片输入，请移除图片或切换模型。</string>
+    <string name="notification_settings">会话通知</string>
+    <string name="notification_on">已开启 · 定期检查</string>
+    <string name="notification_off">已关闭</string>
+    <string name="notification_waiting">需要审批</string>
+    <string name="notification_finished">Agent 有新回复</string>
+    <string name="notification_error">需要关注</string>
+    <string name="notification_check_channel">会话动态</string>
+    <string name="notification_check_description">至少每隔 15 分钟检查，可能受省电影响延迟。</string>
+    <string name="notification_permission_denied">请在安卓设置中允许通知，再开启提醒。</string>
 </resources>

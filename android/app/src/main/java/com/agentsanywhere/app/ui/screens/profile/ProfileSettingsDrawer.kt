@@ -1,5 +1,12 @@
 package com.agentsanywhere.app.ui.screens.profile
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.provider.Settings
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -32,7 +39,9 @@ import com.agentsanywhere.app.R
 import com.agentsanywhere.app.api.AuthMeResponse
 import com.agentsanywhere.app.config.AppConfig
 import com.agentsanywhere.app.feature.update.AppUpdateViewModel
+import com.agentsanywhere.app.feature.notifications.SessionNotifications
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
+import com.composables.icons.lucide.Bell
 import com.composables.icons.lucide.Archive
 import com.composables.icons.lucide.ChevronsUpDown
 import com.composables.icons.lucide.Download
@@ -102,6 +111,15 @@ fun ProfileSettingsDrawer(
     var sidebarViewMenuOpen by remember { mutableStateOf(false) }
     var passwordOpen by remember { mutableStateOf(false) }
     var signOutOpen by remember { mutableStateOf(false) }
+    var notificationsEnabled by remember { mutableStateOf(SessionNotifications.isEnabled(context)) }
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted && NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+            SessionNotifications.setEnabled(context, true)
+            notificationsEnabled = true
+        } else {
+            onNotice(context.getString(R.string.notification_permission_denied), true)
+        }
+    }
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
     ) { uri ->
@@ -136,6 +154,10 @@ fun ProfileSettingsDrawer(
             sidebarViewMenuOpen = false
             return@LaunchedEffect
         }
+        if (SessionNotifications.isEnabled(context) && !NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+            SessionNotifications.setEnabled(context, false)
+        }
+        notificationsEnabled = SessionNotifications.isEnabled(context)
         appUpdateViewModel.checkForUpdate(showPrompt = false)
         onLoadAccount()
             .onSuccess { account = it }
@@ -226,6 +248,30 @@ fun ProfileSettingsDrawer(
                                     appearanceMenuOpen = false
                                 },
                                 onDismiss = { appearanceMenuOpen = false },
+                            )
+                        }
+                    }
+                    item("session-notifications") {
+                        ProfileCard {
+                            ProfileRow(
+                                icon = Lucide.Bell,
+                                title = stringResource(R.string.notification_settings),
+                                subtitle = stringResource(R.string.notification_check_description),
+                                trailing = stringResource(if (notificationsEnabled) R.string.notification_on else R.string.notification_off),
+                                showChevron = false,
+                                onClick = {
+                                    if (notificationsEnabled) {
+                                        SessionNotifications.setEnabled(context, false)
+                                        notificationsEnabled = false
+                                    } else if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                                        notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    } else if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+                                        context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
+                                    } else {
+                                        SessionNotifications.setEnabled(context, true)
+                                        notificationsEnabled = true
+                                    }
+                                },
                             )
                         }
                     }

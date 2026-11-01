@@ -399,8 +399,57 @@ fun SessionDetailScreen(
     fun openReferencedFile(path: String) {
         val trimmed = path.trim()
         if (trimmed.isBlank()) return
-        pendingOpenFilePath = trimmed
-        scope.launch { pagerState.animateScrollToPage(1) }
+        val extension = trimmed.substringAfterLast('.', "").lowercase()
+        val openExternally = extension in setOf("html", "htm", "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "png", "jpg", "jpeg", "gif", "webp", "svg")
+        if (!openExternally) {
+            pendingOpenFilePath = trimmed
+            scope.launch { pagerState.animateScrollToPage(1) }
+            return
+        }
+        val session = state.session ?: return
+        val root = com.agentsanywhere.app.feature.files.remoteRootForPath(
+            trimmed, currentDevices.firstOrNull { it.id == session.connectorId }?.deviceOs, session.cwd,
+        )
+
+        fun downloadAndOpenLocally() {
+            scope.launch {
+                filesController.downloadFile(session.connectorId, root, trimmed)
+                    .onSuccess { bytes ->
+                        runCatching {
+                            val name = trimmed.substringAfterLast('/').substringAfterLast('\\')
+                            val target = withContext(Dispatchers.IO) {
+                                cacheDownloadedAttachment(context.cacheDir, com.agentsanywhere.app.feature.sessiondetail.DownloadedAttachment(
+                                    fileId = session.id, name = name, mediaType = "", size = bytes.size.toLong(), sha256 = "", bytes = bytes,
+                                ))
+                            }
+                            val uri = FileProvider.getUriForFile(context, "${context.packageName}.attachments", target)
+                            val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+                                ?: "application/octet-stream"
+                            context.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, mime)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            })
+                        }.onFailure { showError(context.getString(R.string.session_attachment_open_failed)) }
+                    }
+                    .onFailure { showError(context.getString(R.string.session_attachment_download_failed)) }
+            }
+        }
+
+        if (extension in setOf("html", "htm")) {
+            scope.launch {
+                filesController.createPreviewUrl(session.connectorId, root, trimmed)
+                    .onSuccess { previewUrl ->
+                        val opened = runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(previewUrl)))
+                        }.isSuccess
+                        if (!opened) downloadAndOpenLocally()
+                    }
+                    .onFailure { downloadAndOpenLocally() }
+            }
+            return
+        }
+
+        downloadAndOpenLocally()
     }
 
     fun openAttachment(attachment: com.agentsanywhere.app.feature.sessiondetail.TimelineAttachment) {

@@ -324,6 +324,96 @@ class SessionService:
         self.contexts[scope_id] = context
         return context
 
+    async def create_session(
+        self,
+        session_id: str,
+        cwd: str,
+        selections: dict | None = None,
+    ) -> dict:
+        existing = self.store.get("binding", session_id)
+        if existing:
+            return existing
+
+        original = Path(cwd)
+        if not original.is_absolute() or not original.is_dir():
+            raise AcpError("invalid_cwd", "请选择存在的绝对工作目录。")
+        workspace = Workspace(str(original), str(original.resolve(strict=True)))
+
+        context = self._new_context(session_id, workspace)
+        try:
+            launch = (
+                await self.launch_for_preparation()
+                if self.launch_for_preparation
+                else self.launch
+            )
+            await context["client"].start(launch, str(self.root))
+            process = context["client"].process.process
+            self._job(self._watch(context, process))
+
+            result = await self.preparation_driver.prepare(context)
+            agent_session_id = result["sessionId"]
+            context["agentSessionId"] = agent_session_id
+            context["deferredSession"] = result.get("deferred", False)
+            context.update(scopeId=session_id, sessionId=session_id)
+            context["projection"] = self.projection_factory(
+                session_id, context["generation"]
+            )
+            self.sessions[session_id] = context
+
+            if context.get("deferredSession"):
+                act_result = await self.preparation_driver.activate(context, session_id)
+                if (
+                    context["closing"]
+                    or act_result["sessionId"] != context["agentSessionId"]
+                ):
+                    raise AcpError(
+                        "agent_session_mismatch", "正式会话与准备身份不一致。"
+                    )
+                context["deferredSession"] = False
+
+            binding = SessionBinding(
+                session_id,
+                self.profile.id,
+                self.launch.release_id,
+                context["workspace"],
+                context["generation"],
+                context["generation"],
+                context["agentSessionId"],
+                attachment="attached",
+                foreground="idle",
+            )
+            with self.store.transaction():
+                self.configurations.observe(session_id, result.get("configOptions", []))
+                self.store.put(
+                    "configuration",
+                    binding.session_id,
+                    asdict(self.configurations.snapshot(session_id)),
+                )
+                self.store.put("binding", binding.session_id, asdict(binding))
+                self.store.put(
+                    "binding_capabilities",
+                    binding.session_id,
+                    context["client"].capabilities,
+                )
+                self._emit("session.meta.upsert", self.meta(binding.session_id))
+                self._save_binding(binding)
+
+            if selections:
+                configured = self.configurations.snapshot(session_id).merge_legacy(
+                    {},
+                    dict(selections),
+                )
+                await self.configurations.update(
+                    session_id,
+                    context["agentSessionId"],
+                    context["client"],
+                    configured,
+                )
+            return self.store.require("binding", session_id)
+        except Exception:
+            await self._close_context(context)
+            raise
+
     def prepare(self, values: dict) -> dict:
         key = values["preparationId"]
         digest = fingerprint(

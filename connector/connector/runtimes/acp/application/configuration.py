@@ -19,6 +19,15 @@ class ConfigurationService:
         normalized = []
         for option in options:
             category = option.get("_meta", {}).get("aa", {}).get("selectionCategory")
+            if not category:
+                opt_id = option.get("id", "")
+                opt_cat = option.get("category", "")
+                if opt_id in ("mode", "permission", "permissions") or opt_cat in ("mode", "permission"):
+                    category = "permission"
+                elif opt_id in ("reasoning_effort", "effort", "thought") or opt_cat == "effort":
+                    category = "effort"
+                elif opt_id in ("model", "models") or opt_cat == "model":
+                    category = "model"
             normalized.append(
                 {
                     **option,

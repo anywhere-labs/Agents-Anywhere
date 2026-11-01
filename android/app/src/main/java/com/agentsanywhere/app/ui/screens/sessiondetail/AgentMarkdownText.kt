@@ -575,14 +575,23 @@ private fun buildMarkdownInline(
                     }
                     is Link -> {
                         val destination = mathSource.restoreLiteral(node.destination)
-                        val filePath = if (isFilePath(destination)) stripLine(destination) else null
+                        val filePath = if (isFilePath(destination)) stripLine(android.net.Uri.decode(destination.removePrefix("file://"))) else null
                         pushStringAnnotation(if (filePath != null) AnnotationFile else AnnotationUrl, filePath ?: destination)
                         withSpan(SpanStyle(color = styles.linkColor, textDecoration = TextDecoration.Underline)) {
                             appendNodes(node.children())
                         }
                         pop()
                     }
-                    is Image -> appendNodes(node.children())
+                    is Image -> {
+                        val destination = mathSource.restoreLiteral(node.destination)
+                        val filePath = if (isFilePath(destination)) stripLine(android.net.Uri.decode(destination.removePrefix("file://"))) else null
+                        pushStringAnnotation(if (filePath != null) AnnotationFile else AnnotationUrl, filePath ?: destination)
+                        withSpan(SpanStyle(color = styles.linkColor, textDecoration = TextDecoration.Underline)) {
+                            if (node.firstChild == null) append(destination.substringAfterLast('/').ifBlank { destination })
+                            else appendNodes(node.children())
+                        }
+                        pop()
+                    }
                     is HtmlInline -> append(mathSource.restoreLiteral(node.literal))
                     else -> appendNodes(node.children())
                 }
@@ -1091,11 +1100,22 @@ private fun String.isMarkdownFenceBoundary(): Boolean {
 
 private fun stripLine(path: String): String = path.replace(Regex(""":\d+(:\d+)?$"""), "")
 
+private val KnownFileExtensions = setOf(
+    "html", "htm", "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx",
+    "png", "jpg", "jpeg", "gif", "webp", "svg",
+    "py", "kt", "java", "ts", "js", "tsx", "jsx", "rs", "go", "c", "cpp", "h",
+    "json", "yaml", "yml", "toml", "xml", "txt", "md", "sh", "sql"
+)
+
 private fun parseFileRef(text: String): String? {
     if (text.isBlank() || text.contains(" ") || text.contains("://")) return null
-    if (!text.contains("/")) return null
-    if (!Regex("""\.[a-zA-Z0-9]+(?::\d+(?::\d+)?)?$""").containsMatchIn(text)) return null
-    return stripLine(text)
+    val stripped = stripLine(text)
+    val ext = stripped.substringAfterLast('.', "").lowercase()
+    if (ext.isBlank()) return null
+    if (text.contains("/") || text.contains("\\") || ext in KnownFileExtensions) {
+        return stripped
+    }
+    return null
 }
 
 private fun isFilePath(href: String): Boolean {

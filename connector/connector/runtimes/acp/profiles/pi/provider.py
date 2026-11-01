@@ -125,6 +125,7 @@ class PiProvider(RuntimeProvider):
                 "workspacePreparation": True,
                 "asyncCreation": True,
                 "attachments": True,
+                "createAndStartSession": True,
             },
             metadata={
                 "managedInstallation": True,

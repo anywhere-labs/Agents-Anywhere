@@ -263,6 +263,8 @@ private val deviceRuntimeComparator = compareBy<DeviceRuntime> {
         "codex" -> 0
         "claude" -> 1
         "dsh" -> 2
+        "zcode" -> 3
+        "antigravity" -> 4
         else -> 99
     }
 }.thenBy { it.displayName.lowercase() }

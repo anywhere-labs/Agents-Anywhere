@@ -226,7 +226,7 @@ fun HomeScreen(
                         projectView = sidebarViewMode == HomeSidebarViewMode.Project,
                         contextLabel = session.sidebarContextLabel(
                             projectName = state.projects.firstOrNull { it.id == session.projectId }?.name,
-                            deviceName = state.devices.firstOrNull { it.id == session.connectorId }?.name,
+                            deviceName = deviceContextLabel(state.devices, session.connectorId, session.deviceName),
                         ),
                     )
                 },

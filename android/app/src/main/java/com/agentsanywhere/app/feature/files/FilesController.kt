@@ -78,6 +78,26 @@ class FilesController(
         }
     }
 
+    suspend fun downloadFile(connectorId: String, root: String, path: String): Result<ByteArray> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val auth = authSession()
+                filesApi.downloadFile(auth.serverUrl, auth.accessToken, connectorId, root, path)
+            }
+        }
+
+    suspend fun createPreviewUrl(connectorId: String, root: String, path: String): Result<String> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val auth = authSession()
+                val token = filesApi.createPreviewToken(auth.serverUrl, auth.accessToken, connectorId, root, path)
+                val fileName = path.substringAfterLast('/').substringAfterLast('\\').ifBlank { "preview" }
+                val encodedToken = java.net.URLEncoder.encode(token, "UTF-8")
+                val encodedName = java.net.URLEncoder.encode(fileName, "UTF-8")
+                "${auth.serverUrl.trimEnd('/')}/#/preview?previewToken=$encodedToken&name=$encodedName"
+            }
+        }
+
     private fun authSession(): ApiAuth {
         val serverUrl = sessionStore.readServerUrl()
         val accessToken = sessionStore.readAccessToken()

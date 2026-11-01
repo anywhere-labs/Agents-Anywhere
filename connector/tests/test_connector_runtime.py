@@ -1922,12 +1922,15 @@ def test_connector_runtime_discovers_agent_runtime_inventory() -> None:
 def test_default_runtime_providers_use_new_protocol_providers() -> None:
     providers = default_runtime_providers()
 
-    assert tuple(provider.runtime for provider in providers) == (
-        "codex",
-        "claude",
-        "dsh",
-        "pi",
-    )
+    expected = ["codex", "claude", "dsh"]
+    from connector.runtimes.providers import _HAS_PI, _HAS_ZCODE, _HAS_ANTIGRAVITY
+    if _HAS_PI:
+        expected.append("pi")
+    if _HAS_ZCODE:
+        expected.append("zcode")
+    if _HAS_ANTIGRAVITY:
+        expected.append("antigravity")
+    assert [provider.runtime for provider in providers] == expected
     assert isinstance(providers[0], CodexProvider)
     assert isinstance(providers[1], ClaudeProvider)
     assert all(

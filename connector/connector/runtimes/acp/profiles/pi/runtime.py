@@ -46,6 +46,11 @@ class ManagedPiRuntime(AcpRuntime):
         if self.startup_error:
             raise self.startup_error
 
+    async def create_and_start_session(self, *args, **kwargs):
+        if not self.ready:
+            await self.wait_ready()
+        return await super().create_and_start_session(*args, **kwargs)
+
     async def get_runtime_capabilities(self):
         value = await super().get_runtime_capabilities()
         return replace(value, capabilities=tuple(replace(cap, available=cap.available and self.ready) for cap in value.capabilities))

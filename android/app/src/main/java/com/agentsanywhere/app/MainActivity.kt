@@ -34,6 +34,7 @@ import okio.Path.Companion.toOkioPath
 
 class MainActivity : ComponentActivity() {
     private val oauthCallbackUri = mutableStateOf<Uri?>(null)
+    private val notificationSessionId = mutableStateOf<String?>(null)
     private val webLoginViewModel by viewModels<WebLoginViewModel>()
     private val appUpdateViewModel by viewModels<AppUpdateViewModel>()
     private var appearanceMode by mutableStateOf(AAAppearanceMode.System)
@@ -72,6 +73,7 @@ class MainActivity : ComponentActivity() {
             preferences.getString(KEY_SIDEBAR_VIEW_MODE, HomeSidebarViewMode.Project),
         )
         oauthCallbackUri.value = intent?.data
+        notificationSessionId.value = intent?.getStringExtra("notification_session_id")
         setContent {
             AgentsAnywhereTheme(appearanceMode = appearanceMode) {
                 AgentsAnywhereApp(
@@ -95,6 +97,8 @@ class MainActivity : ComponentActivity() {
                     },
                     oauthCallbackUri = oauthCallbackUri.value,
                     onOAuthCallbackConsumed = { oauthCallbackUri.value = null },
+                    notificationSessionId = notificationSessionId.value,
+                    onNotificationConsumed = { notificationSessionId.value = null },
                     webLoginViewModel = webLoginViewModel,
                     appUpdateViewModel = appUpdateViewModel,
                     onInstallUpdate = ::requestUpdateInstall,
@@ -107,6 +111,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         oauthCallbackUri.value = intent.data
+        notificationSessionId.value = intent.getStringExtra("notification_session_id")
     }
 
     override fun onResume() {

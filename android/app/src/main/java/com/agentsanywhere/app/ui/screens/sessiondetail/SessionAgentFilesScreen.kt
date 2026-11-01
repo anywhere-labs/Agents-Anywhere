@@ -1,6 +1,8 @@
 package com.agentsanywhere.app.ui.screens.sessiondetail
 
+import android.content.Intent
 import android.graphics.Typeface
+import android.net.Uri
 import android.util.TypedValue
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -34,6 +36,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -83,6 +87,7 @@ import com.agentsanywhere.app.feature.files.FilesController
 import com.agentsanywhere.app.feature.files.FilesDirectory
 import com.agentsanywhere.app.feature.files.initialRemoteFilePath
 import com.agentsanywhere.app.feature.files.isWindowsDeviceOs
+import androidx.core.content.FileProvider
 import com.agentsanywhere.app.feature.files.isWindowsDriveOverview
 import com.agentsanywhere.app.feature.files.normalizeRemotePath
 import com.agentsanywhere.app.feature.files.remoteFileRequest
@@ -90,6 +95,8 @@ import com.agentsanywhere.app.feature.files.remoteParentPath
 import com.agentsanywhere.app.feature.files.remoteRootForPath
 import com.agentsanywhere.app.feature.files.TextFile
 import com.agentsanywhere.app.feature.files.windowsDriveRoot
+import com.agentsanywhere.app.feature.sessiondetail.DownloadedAttachment
+import com.agentsanywhere.app.feature.sessiondetail.cacheDownloadedAttachment
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalController
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalStatus
 import com.agentsanywhere.app.feature.terminal.TerminalShortcut
@@ -105,6 +112,7 @@ import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.ChevronUp
 import com.composables.icons.lucide.Copy
+import com.composables.icons.lucide.ExternalLink
 import com.composables.icons.lucide.FileCode
 import com.composables.icons.lucide.FileText
 import com.composables.icons.lucide.Folder
@@ -116,8 +124,10 @@ import com.composables.icons.lucide.Trash2
 import com.termux.terminal.TextStyle as TermuxTextStyle
 import com.termux.view.RemoteTerminalView
 import com.termux.view.RemoteTerminalViewClient
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 @Composable
@@ -246,6 +256,47 @@ internal fun SessionAgentFilesScreen(
         previewLoading = false
     }
 
+    val context = LocalContext.current
+    fun openExternalFile(file: FileEntry) {
+        val current = session ?: return
+        val root = current.cwd?.takeIf { it.isNotBlank() } ?: "~"
+        val trimmed = normalizeRemotePath(file.path)
+        val extension = trimmed.substringAfterLast('.', "").lowercase()
+        val targetRoot = remoteRootForPath(trimmed, deviceOs, root)
+        scope.launch {
+            if (extension in setOf("html", "htm")) {
+                filesController.createPreviewUrl(current.connectorId, targetRoot, trimmed)
+                    .onSuccess { previewUrl ->
+                        val opened = runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(previewUrl)))
+                        }.isSuccess
+                        if (opened) return@launch
+                    }
+            }
+            filesController.downloadFile(current.connectorId, targetRoot, trimmed)
+                .onSuccess { bytes ->
+                    runCatching {
+                        val name = trimmed.substringAfterLast('/').substringAfterLast('\\')
+                        val target = withContext(Dispatchers.IO) {
+                            cacheDownloadedAttachment(
+                                context.cacheDir,
+                                DownloadedAttachment(
+                                    fileId = current.id, name = name, mediaType = "", size = bytes.size.toLong(), sha256 = "", bytes = bytes,
+                                )
+                            )
+                        }
+                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.attachments", target)
+                        val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+                            ?: "application/octet-stream"
+                        context.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(uri, mime)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        })
+                    }
+                }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -322,6 +373,7 @@ internal fun SessionAgentFilesScreen(
                     onToggleSearch = { searchOpen = !searchOpen },
                     onSearchQueryChange = { searchQuery = it },
                     onSearchResult = { searchResult = it },
+                    onOpenExternal = { selectedFile?.let(::openExternalFile) },
                 )
             }
         }
@@ -335,6 +387,7 @@ internal fun DeviceFilesContent(
     darkMode: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var directory by remember(device?.id) { mutableStateOf(FilesDirectory(path = ".")) }
     var resolvedRoot by remember(device?.id) { mutableStateOf<String?>(null) }
@@ -438,6 +491,49 @@ internal fun DeviceFilesContent(
         previewLoading = false
     }
 
+    fun openExternalFile(file: FileEntry) {
+        val current = device ?: return
+        val trimmed = normalizeRemotePath(file.path)
+        val extension = trimmed.substringAfterLast('.', "").lowercase()
+        val root = remoteRootForPath(
+            targetPath = trimmed,
+            deviceOs = deviceOs,
+            fallbackRoot = resolvedRoot?.takeIf { it.isNotBlank() } ?: "~",
+        )
+        scope.launch {
+            if (extension in setOf("html", "htm")) {
+                controller.createPreviewUrl(current.id, root, trimmed)
+                    .onSuccess { previewUrl ->
+                        val opened = runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(previewUrl)))
+                        }.isSuccess
+                        if (opened) return@launch
+                    }
+            }
+            controller.downloadFile(current.id, root, trimmed)
+                .onSuccess { bytes ->
+                    runCatching {
+                        val name = trimmed.substringAfterLast('/').substringAfterLast('\\')
+                        val target = withContext(Dispatchers.IO) {
+                            cacheDownloadedAttachment(
+                                context.cacheDir,
+                                DownloadedAttachment(
+                                    fileId = current.id, name = name, mediaType = "", size = bytes.size.toLong(), sha256 = "", bytes = bytes,
+                                )
+                            )
+                        }
+                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.attachments", target)
+                        val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+                            ?: "application/octet-stream"
+                        context.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(uri, mime)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        })
+                    }
+                }
+        }
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         val file = selectedFile
         val rootPath = if (isWindowsDriveOverview(directory.path, deviceOs)) "" else resolvedRoot ?: "~"
@@ -483,6 +579,7 @@ internal fun DeviceFilesContent(
                 onToggleSearch = { searchOpen = !searchOpen },
                 onSearchQueryChange = { searchQuery = it },
                 onSearchResult = { searchResult = it },
+                onOpenExternal = { selectedFile?.let(::openExternalFile) },
             )
         }
     }
@@ -997,6 +1094,7 @@ private fun FilePreviewContent(
     onToggleSearch: () -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onSearchResult: (SoraFileSearchResult) -> Unit,
+    onOpenExternal: (() -> Unit)? = null,
 ) {
     val windowsDriveOverviewLabel = stringResource(R.string.files_windows_drives)
     Column(
@@ -1028,6 +1126,7 @@ private fun FilePreviewContent(
             onToggleSearch = onToggleSearch,
             onSearchQueryChange = onSearchQueryChange,
             onSearchResult = onSearchResult,
+            onOpenExternal = onOpenExternal,
             modifier = Modifier.weight(1f),
         )
     }
@@ -1091,6 +1190,7 @@ private fun PreviewCard(
     onToggleSearch: () -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onSearchResult: (SoraFileSearchResult) -> Unit,
+    onOpenExternal: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val clipboard = LocalClipboardManager.current
@@ -1142,7 +1242,33 @@ private fun PreviewCard(
             when {
                 loading -> PreviewMessage(stringResource(R.string.files_loading_file), darkMode)
                 error != null -> PreviewMessage(error, darkMode)
-                preview?.binary == true -> PreviewMessage(stringResource(R.string.files_binary_preview_unavailable), darkMode)
+                preview?.binary == true -> {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.files_binary_preview_unavailable),
+                            color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        if (onOpenExternal != null) {
+                            Button(
+                                onClick = onOpenExternal,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (darkMode) Color(0xFF27272A) else Color(0xFFE4E4E7),
+                                    contentColor = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF18181B),
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                            ) {
+                                Icon(Lucide.ExternalLink, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(stringResource(R.string.files_open_with_external_app))
+                            }
+                        }
+                    }
+                }
                 preview == null -> PreviewMessage(stringResource(R.string.files_open_file_to_preview), darkMode)
                 else -> SoraFilePreview(
                     text = preview.content,

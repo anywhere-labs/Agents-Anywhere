@@ -3,6 +3,7 @@ from ...domain.definitions import AgentProfile
 PI_PROFILE = AgentProfile(
     id="pi",
     title="Pi",
+    supports_workspace_preparation=True,
     runtime_capabilities=("runtime.attachment",),
     permission_options=(
         ("ask", "写入与命令审批"),

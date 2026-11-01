@@ -30,7 +30,11 @@ internal fun SessionAgentIcon(
         R.drawable.ic_session_agent_codex -> "Codex"
         R.drawable.ic_session_agent_claude -> "Claude Code"
         R.drawable.ic_session_agent_deepseek -> "DeepSeek Harness"
-        else -> runtime
+        else -> when (type) {
+            "zcode" -> "ZCode"
+            "antigravity" -> "Antigravity"
+            else -> runtime
+        }
     }
     if (drawable != null) {
         Icon(
