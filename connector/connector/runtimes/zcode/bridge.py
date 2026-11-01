@@ -1314,9 +1314,10 @@ def engine_env():
     其余情况原样继承，不打扰。"""
     env = dict(os.environ)
     # find_node() 可能回退到 Electron 本体当 Node 用（node:sqlite 兼容性）；
-    # 真实 node 会忽略此变量。
+    # 真实 node 会忽略此变量。强制赋值而非 setdefault：继承环境里若已存在
+    # ELECTRON_RUN_AS_NODE=0/空，Electron 会按 GUI 启动并在 Dock 上留下图标。
     if env.get("ZCODE_NODE_FALLBACK_EXEC_PATH"):
-        env.setdefault("ELECTRON_RUN_AS_NODE", "1")
+        env["ELECTRON_RUN_AS_NODE"] = "1"
     td = (env.get("TMPDIR") or "/tmp").rstrip("/") or "/"
     if len(td) + 1 + 45 > 103:
         short = "/tmp/zcode-acp-tmp"
