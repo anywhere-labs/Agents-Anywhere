@@ -78,10 +78,10 @@ enum PlanTimeline {
         guard let value, !value.isEmpty else { return nil }
         return fractional.date(from: value) ?? plain.date(from: value)
     }
-    nonisolated(unsafe) private static let fractional: ISO8601DateFormatter = {
+    private static let fractional: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
-    nonisolated(unsafe) private static let plain = ISO8601DateFormatter()
+    private static let plain = ISO8601DateFormatter()
 }

@@ -216,7 +216,7 @@ struct SessionChatView: View, Equatable {
     private var nativeHistoryControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(String(localized: "原生历史")).font(.subheadline.weight(.medium))
-            if let error = model.nativeHistoryError ?? session.runtime.state?.error?.message {
+            if let error = model.nativeHistoryError ?? session.runtime.state?.error?.errorDescription {
                 Text(error).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             } else {
                 Text(String(localized: "退出 CLI 中对应会话后可在 AA 继续；结束 AA 执行并等待释放后，可切回 CLI。"))

@@ -302,9 +302,9 @@ final class SessionChatModel {
                 case "running": try await Task.sleep(for: .seconds(1))
                 case "rejected", "failed":
                     nativeRecovery = nil
-                    throw NSError(domain: "NativeHistory", code: 1, userInfo: [NSLocalizedDescriptionKey:
-                        result["failure"]?["message"]?.stringValue ?? String(localized: "恢复失败，历史仍可查看。")])
-                default: throw NSError(domain: "NativeHistory", code: 2, userInfo: [NSLocalizedDescriptionKey: String(localized: "恢复结果尚未确认，请查询原操作状态。")])
+                    throw V2RuntimeError(code: result["failure"]?["code"]?.stringValue ?? "native_history_recovery_failed",
+                        message: result["failure"]?["message"]?.stringValue ?? String(localized: "恢复失败，历史仍可查看。"))
+                default: throw V2RuntimeError(code: "native_history_recovery_unconfirmed", message: String(localized: "恢复结果尚未确认，请查询原操作状态。"))
                 }
             }
             nativeHistoryError = String(localized: "恢复结果尚未确认，请查询原操作状态。")

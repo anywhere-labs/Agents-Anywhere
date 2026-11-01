@@ -1,5 +1,6 @@
 "use client"
 
+import { runtimeFailureOf, type RuntimeFailure } from "@/lib/runtime-error-text"
 import * as React from "react"
 import { useTranslations } from "next-intl"
 import { apiClient } from "@/lib/api"
@@ -40,7 +41,7 @@ export function useSessionCreation(options: Options) {
   latest.current = options
   const [creations, setCreations] = React.useState<Record<string, SessionCreation>>({})
   const [workflowCreations, setWorkflowCreations] = React.useState<Record<string, WorkflowView>>({})
-  const [workflowError, setWorkflowError] = React.useState<string>()
+  const [workflowError, setWorkflowError] = React.useState<RuntimeFailure>()
   const [workflowPending, setWorkflowPending] = React.useState(false)
   const [editorDraft, setEditorDraft] = React.useState<SessionCreationDraft | null>(null)
   const entries = React.useRef<Record<string, SessionCreation>>({})
@@ -200,7 +201,7 @@ export function useSessionCreation(options: Options) {
     if (!token || workflowPending) return
     setWorkflowPending(true)
     try { await workflowApi.respond(token, operation, request, actionId, input); if (isCurrent()) setWorkflowError(undefined) }
-    catch (error) { if (isCurrent()) setWorkflowError(String(error)) }
+    catch (error) { if (isCurrent()) setWorkflowError(runtimeFailureOf(error)) }
     finally { if (isCurrent()) setWorkflowPending(false) }
   }
   const cancelWorkflow = async (operation: WorkflowView) => {
@@ -208,7 +209,7 @@ export function useSessionCreation(options: Options) {
     if (!token || workflowPending) return
     setWorkflowPending(true)
     try { const value = await workflowApi.cancel(token, operation); if (isCurrent()) { setWorkflowCreations(current => ({ ...current, [operation.id]: value })); setWorkflowError(undefined) } }
-    catch (error) { if (isCurrent()) setWorkflowError(String(error)) }
+    catch (error) { if (isCurrent()) setWorkflowError(runtimeFailureOf(error)) }
     finally { if (isCurrent()) setWorkflowPending(false) }
   }
   const dismissWorkflow = (id: string) => setWorkflowCreations(current => { const next = { ...current }; delete next[id]; return next })
@@ -231,7 +232,7 @@ export function useSessionCreation(options: Options) {
         rememberOperation(latest.current.storageScope, operation.id, true)
         dismissWorkflow(operation.id); publish()
       }
-    } catch (error) { if (isCurrent()) setWorkflowError(String(error)) }
+    } catch (error) { if (isCurrent()) setWorkflowError(runtimeFailureOf(error)) }
     finally { if (isCurrent()) setWorkflowPending(false) }
   }
   React.useEffect(() => {
@@ -243,7 +244,7 @@ export function useSessionCreation(options: Options) {
       setWorkflowCreations(current => ({ ...current, [id]: placeholder }))
       void workflowApi.get(options.token, "creation", id).then(value => {
         if (!cancelled) setWorkflowCreations(current => ({ ...current, [id]: value }))
-      }).catch(error => { if (!cancelled) setWorkflowError(String(error)) })
+      }).catch(error => { if (!cancelled) setWorkflowError(runtimeFailureOf(error)) })
     }
     return () => { cancelled = true }
   }, [options.storageScope, options.userId])
@@ -264,7 +265,7 @@ export function useSessionCreation(options: Options) {
           setWorkflowCreations(current => ({ ...current, [id]: value }))
           if (value.state.messageAccepted === true) await refreshWorkflow(value)
         }
-      } catch (error) { if (!cancelled && version === generation.current) setWorkflowError(String(error)) }
+      } catch (error) { if (!cancelled && version === generation.current) setWorkflowError(runtimeFailureOf(error)) }
       finally { querying = false }
     }, 1500)
     return () => { cancelled = true; window.clearInterval(timer) }

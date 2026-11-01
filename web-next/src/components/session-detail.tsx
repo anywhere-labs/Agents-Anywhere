@@ -1,5 +1,6 @@
 "use client"
 
+import { useRuntimeErrorText } from "@/lib/runtime-error-text"
 import { useSessionPlanning } from "@/features/planning/use-session-planning"
 import { parsePlanningCommand } from "@/features/planning/commands"
 import { PlanningPanel, PlanningReviewPanel, PlanningReader, PlanTimelineEntry, usePlanReader, getPlanReviewTarget } from "@/components/session/planning-panel"
@@ -359,6 +360,7 @@ export function SessionDetail({
   const [loading, setLoading] = React.useState(() => !initialOptimisticState)
   const [error, setError] = React.useState<string | null>(null)
   const planning = useSessionPlanning(token, sessionId)
+  const runtimeErrorText = useRuntimeErrorText()
   const planReader = usePlanReader(sessionId)
   const [sending, setSending] = React.useState(false)
   const [interrupting, setInterrupting] = React.useState(false)
@@ -1827,7 +1829,7 @@ export function SessionDetail({
                 <CircleAlert />
                 <AlertTitle>{tSession(creation.resultUnknown ? "creationUnconfirmed" : "creationFailed")}</AlertTitle>
                 <AlertDescription>
-                  <p>{creation.message || tSession("creationFailed")}</p>
+                  <p>{runtimeErrorText(creation, tSession("creationFailed"))}</p>
                   <p>{tSession(creation.resultUnknown ? "creationCheckFirst" : "creationDraftRetained")}</p>
                   <div className="flex flex-wrap gap-2 pt-2">
                     {creation.retryable ? <Button onClick={() => retrySessionCreation(sessionId)}>{tSession("retryCreation")}</Button> : null}

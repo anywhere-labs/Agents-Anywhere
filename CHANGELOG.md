@@ -20,6 +20,7 @@
 - 计划按不可变版本保存，设备离线仍可查阅；旧版本批准、重复执行和结果未知后的自动重发会被阻止，批准计划继续使用用户当前权限设置。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
 - 提交修改意见后的新计划作为同一份计划的下一版本（版本 2、3…），旧版本在时间线中收为一行，可随时打开；计划卡片按产生时间排在时间线中，批准后紧贴在实施内容上方，Codex 不再额外显示一条重复的计划系统消息。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
 - 斜杠菜单在支持规划的会话中提供 `/plan`，并显示中英文说明；Codex 内置指令的说明随客户端语言显示。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- Runtime、工作区准备、会话创建和原生历史的错误改为按稳定错误码显示中英文文案，英文界面不再出现 Connector 或 Server 固定输出的中文；Android 新建会话的输入校验提示也随语言显示。错误码文案集中在 `contracts/runtime-errors/1.0/messages.json`，由脚本生成到四端。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
 
 ### 会话创建与消息交付
 

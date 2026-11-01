@@ -452,6 +452,8 @@ class NativePiRuntime(AcpRuntime):
         failure = self.app.store.get("pi_native_failure", session_id)
         metadata = self._metadata(session_id, source)
         if failure:
+            # Clients translate the code; the message is only a fallback for unknown codes.
+            metadata["reasonCode"] = failure["code"]
             metadata["reasonMessage"] = failure["message"]
         blocked_source = failure and failure["code"] in {
             "pi_source_missing",

@@ -1,4 +1,5 @@
 "use client"
+import { runtimeFailureOf, type RuntimeFailure } from "@/lib/runtime-error-text"
 import * as React from "react"
 import { workflowApi, type RuntimeDialogValue, type WorkflowInteraction, type WorkflowView } from "@/features/dashboard/runtime-workflows"
 
@@ -7,7 +8,7 @@ export function useWorkspacePreparation(token: string | undefined, target: strin
   const scope = JSON.stringify([token, target])
   const [stateScope, setStateScope] = React.useState(scope)
   const [operation, setOperation] = React.useState<WorkflowView | null>(null)
-  const [error, setError] = React.useState<string>()
+  const [error, setError] = React.useState<RuntimeFailure>()
   const [pending, setPending] = React.useState(false)
   const generation = React.useRef(0)
   const busy = React.useRef(false)
@@ -29,7 +30,7 @@ export function useWorkspacePreparation(token: string | undefined, target: strin
       if (version !== generation.current) return
       const value = await workflowApi.prepare(token, { ...body, clientPreparationId: crypto.randomUUID() })
       if (version === generation.current) setOperation(value)
-    } catch (reason) { if (version === generation.current) setError(String(reason)) }
+    } catch (reason) { if (version === generation.current) setError(runtimeFailureOf(reason)) }
     finally { if (version === generation.current) { busy.current = false; setPending(false) } }
   }, [token, target])
 
@@ -49,7 +50,7 @@ export function useWorkspacePreparation(token: string | undefined, target: strin
       try {
         const value = await workflowApi.get(token, "preparation", operation.id)
         if (!closed && version === generation.current) { setOperation(value); setError(undefined) }
-      } catch (reason) { if (!closed && version === generation.current) setError(String(reason)) }
+      } catch (reason) { if (!closed && version === generation.current) setError(runtimeFailureOf(reason)) }
       finally { querying = false }
     }, 1500)
     return () => { closed = true; window.clearInterval(timer) }
@@ -62,7 +63,7 @@ export function useWorkspacePreparation(token: string | undefined, target: strin
       await workflowApi.respond(token, operation, interaction, actionId, input)
       const value = await workflowApi.get(token, "preparation", operation.id)
       if (version === generation.current) { setOperation(value); setError(undefined) }
-    } catch (reason) { if (version === generation.current) setError(String(reason)) }
+    } catch (reason) { if (version === generation.current) setError(runtimeFailureOf(reason)) }
     finally { if (version === generation.current) { busy.current = false; setPending(false) } }
   }
   const cancel = async () => {
@@ -71,7 +72,7 @@ export function useWorkspacePreparation(token: string | undefined, target: strin
     try {
       const value = await workflowApi.cancel(token, operation)
       if (version === generation.current) setOperation(value)
-    } catch (reason) { if (version === generation.current) setError(String(reason)) }
+    } catch (reason) { if (version === generation.current) setError(runtimeFailureOf(reason)) }
     finally { if (version === generation.current) { busy.current = false; setPending(false) } }
   }
   return { operation: stateScope === scope ? operation : null, pending: stateScope === scope && pending,

@@ -66,8 +66,12 @@ class RuntimeWorkflowCoordinator(
                 }, RuntimeWorkflowFailure.Reason.TargetChanged)
                 return value
             }
-            check(state.optString("phase") !in setOf("failed", "rejected", "expired", "cancelled", "outcome_unknown")) {
-                state.optJSONObject("failure")?.optString("message") ?: state.optString("phase")
+            if (state.optString("phase") in setOf("failed", "rejected", "expired", "cancelled", "outcome_unknown")) {
+                val failure = state.optJSONObject("failure")
+                throw RuntimeOperationFailure(
+                    failure?.optString("code")?.takeIf(String::isNotBlank) ?: state.optString("phase"),
+                    failure?.optString("message")?.takeIf(String::isNotBlank) ?: state.optString("phase"),
+                )
             }
             delay(1000)
             value = withContext(Dispatchers.IO) { api.get(target.server, target.token, value.getString("kind"), value.getString("id")) }
@@ -185,6 +189,9 @@ data class PreparedRuntimeWorkspace(
         return inputModalitiesByModel[model.id]
     }
 }
+
+/** A runtime or workflow failure with its stable code; the UI translates known codes. */
+class RuntimeOperationFailure(val code: String?, message: String) : IllegalStateException(message)
 
 internal class RuntimeWorkflowFailure(val reason: Reason) : IllegalStateException() {
     enum class Reason { TargetChanged, BindingInProgress, CreationMissing, SessionMismatch }

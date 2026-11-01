@@ -1,4 +1,5 @@
 import type { AttachedFile } from "@/components/attachment-input"
+import { runtimeFailureOf } from "@/lib/runtime-error-text"
 import type { WorkspaceSelection } from "@/components/workspace-picker"
 import type { InlineAttachmentRef, SessionCreateAndStartRequest } from "@/features/dashboard/types"
 import { isApiError } from "@/lib/api/errors"
@@ -22,6 +23,7 @@ export type SessionCreation = {
   draft: SessionCreationDraft
   status: "creating" | "failed"
   message?: string
+  code?: string
   retryable?: boolean
   resultUnknown?: boolean
   serverSessionId?: string
@@ -42,6 +44,8 @@ export function creationFailure(error: unknown, requestSent: boolean) {
     serverSessionId: typeof payload?.detail?.sessionId === "string" ? payload.detail.sessionId : undefined,
     message: retryable && typeof phaseMessage === "string" && phaseMessage.trim()
       ? phaseMessage : error instanceof Error ? error.message : undefined,
+    // A known code is translated when shown; the message only covers unknown codes.
+    code: retryable ? undefined : runtimeFailureOf(error).code,
   }
 }
 

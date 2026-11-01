@@ -64,6 +64,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import com.agentsanywhere.app.ui.designsystem.runtimeOperationErrorMessage
+import com.agentsanywhere.app.ui.designsystem.runtimeErrorText
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
@@ -1833,7 +1834,7 @@ fun SessionDetailScreen(
                                             it.supported && it.available && (it.allowed || it.unavailableReason == "session_not_taken_over")
                                         } == true,
                                         canRelease = connectorOnline && state.capabilities.isUsable("session.close", runtimeId, runtimeType),
-                                        reason = state.runtime.error?.get("message") as? String,
+                                        reason = runtimeErrorText(context, state.runtime.error?.get("code") as? String, state.runtime.error?.get("message") as? String),
                                         onAction = { body, close -> controller.nativeHistoryAction(sessionId, body, close) },
                                         onSettled = { loadInitialSnapshot() },
                                     )

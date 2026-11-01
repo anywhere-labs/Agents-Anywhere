@@ -1,5 +1,6 @@
 "use client"
 
+import { useRuntimeErrorText } from "@/lib/runtime-error-text"
 import { RuntimeWorkflowPanel } from "@/components/session/runtime-workflow-panel"
 import { useWorkspacePreparation } from "@/components/session/use-workspace-preparation"
 import { RuntimeCreationStatus } from "@/components/session/runtime-creation-status"
@@ -148,6 +149,7 @@ export function TaskComposer() {
   } = useWorkspace()
   const t = useTranslations("dashboard.new")
   const tPlanning = useTranslations("planning")
+  const errorText = useRuntimeErrorText()
   const tCommon = useTranslations("common")
   const tWorkspace = useTranslations("dashboard.workspacePicker")
   const typewriterTitles = React.useMemo(
@@ -1010,7 +1012,7 @@ export function TaskComposer() {
         {needsPreparation && preparationNeedsAttention ? (
           <div className="mb-4">
             {preparation.operation ? <RuntimeWorkflowPanel operation={preparation.operation} pending={preparation.pending} error={preparation.error} onRespond={preparation.respond} onCancel={preparation.cancel} />
-              : <div role="alert" className="flex items-center gap-2 text-sm"><span>{preparation.error}</span><Button variant="outline" size="sm" disabled={preparation.pending} onClick={preparation.retry}>{tCommon("retry")}</Button></div>}
+              : <div role="alert" className="flex items-center gap-2 text-sm"><span>{errorText(preparation.error, tCommon("loadFailed"))}</span><Button variant="outline" size="sm" disabled={preparation.pending} onClick={preparation.retry}>{tCommon("retry")}</Button></div>}
             {preparation.operation && (preparation.error || preparationStopped) ? <Button variant="outline" size="sm" disabled={preparation.pending} onClick={preparation.retry}>{tCommon("retry")}</Button> : null}
           </div>
         ) : null}

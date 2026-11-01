@@ -39,7 +39,9 @@ fun RuntimeWorkflowDialog(coordinator: RuntimeWorkflowCoordinator, onOpenAccepte
     LaunchedEffect(value.optString("id"), accepted) {
         if (accepted && !binding) onOpenAccepted()
     }
-    val runtimeFailure = state.optJSONObject("failure")?.optString("message")?.takeIf { it.isNotBlank() }
+    val runtimeFailure = state.optJSONObject("failure")?.let { failure ->
+        com.agentsanywhere.app.ui.designsystem.runtimeErrorText(context, failure.optString("code").takeIf(String::isNotBlank), failure.optString("message").takeIf(String::isNotBlank))
+    }
     val stopped = state.optString("phase") in setOf("failed", "rejected", "cancelled", "expired", "outcome_unknown")
     if (!hasQuestions && error == null && runtimeFailure == null && !stopped) return
     AlertDialog(onDismissRequest = {}, title = { Text(openRequests.firstOrNull()?.getString("title") ?: androidx.compose.ui.res.stringResource(com.agentsanywhere.app.R.string.new_session_create_failed)) },

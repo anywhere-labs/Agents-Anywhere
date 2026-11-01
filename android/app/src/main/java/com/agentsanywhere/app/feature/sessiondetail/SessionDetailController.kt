@@ -22,7 +22,7 @@ import org.json.JSONObject
 
 private const val INITIAL_TIMELINE_LIMIT = 100
 private const val TIMELINE_PAGE_LIMIT = 100
-class NativeHistoryRejected(message: String) : IllegalStateException(message)
+class NativeHistoryRejected(val code: String?, message: String) : IllegalStateException(message)
 
 class SessionDetailController(
     private val sessionsApi: SessionsApi,
@@ -67,7 +67,7 @@ class SessionDetailController(
                 val workflow = com.agentsanywhere.app.api.RuntimeWorkflowApi()
                 if (close) {
                     val result = workflow.closeSession(auth.serverUrl, auth.accessToken, sessionId, body)
-                    check(result.optBoolean("closed")) { "Execution release is unconfirmed." }
+                    if (!result.optBoolean("closed")) throw com.agentsanywhere.app.feature.sessions.RuntimeOperationFailure("native_history_release_unconfirmed", "Execution release is unconfirmed.")
                 } else {
                     sessionsApi.enableTakeover(auth.serverUrl, auth.accessToken, sessionId)
                     var completed = false
@@ -77,12 +77,18 @@ class SessionDetailController(
                             when (result.optString("phase")) {
                                 "completed" -> completed = true
                                 "running" -> kotlinx.coroutines.delay(1000)
-                                "rejected", "failed" -> throw NativeHistoryRejected(result.optJSONObject("failure")?.optString("message") ?: "Recovery failed.")
-                                else -> error("Recovery is unconfirmed. Check the existing operation.")
+                                "rejected", "failed" -> {
+                                    val failure = result.optJSONObject("failure")
+                                    throw NativeHistoryRejected(
+                                        failure?.optString("code")?.takeIf(String::isNotBlank) ?: "native_history_recovery_failed",
+                                        failure?.optString("message")?.takeIf(String::isNotBlank) ?: "Recovery failed.",
+                                    )
+                                }
+                                else -> throw com.agentsanywhere.app.feature.sessions.RuntimeOperationFailure("native_history_recovery_unconfirmed", "Recovery is unconfirmed. Check the existing operation.")
                             }
                         }
                     }
-                    check(completed) { "Recovery is unconfirmed. Check the existing operation." }
+                    if (!completed) throw com.agentsanywhere.app.feature.sessions.RuntimeOperationFailure("native_history_recovery_unconfirmed", "Recovery is unconfirmed. Check the existing operation.")
                 }
             }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
         }
