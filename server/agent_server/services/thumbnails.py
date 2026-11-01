@@ -52,14 +52,17 @@ def _render(blob: Path, destination: Path, width: int) -> bool:
         with Image.open(blob, formats=list(_THUMBNAIL_FORMATS)) as image:
             if getattr(image, "is_animated", False):
                 return False
-            if image.width * image.height > _MAX_THUMBNAIL_PIXELS:
-                return False
             # JPEG can decode at 1/2, 1/4 or 1/8 scale: a 12 MP phone photo
             # drops to ~1 MP before it ever reaches the RGB buffer.
             try:
                 image.draft("RGB", (width * 2, width * 2))
             except Exception:
                 pass
+            # Measure after ``draft`` so 24/48 MP phone JPEGs, which decode at a
+            # fraction of their size, still get a preview; other formats keep
+            # their full header size here.
+            if image.width * image.height > _MAX_THUMBNAIL_PIXELS:
+                return False
             image.load()
             image = ImageOps.exif_transpose(image)
             if image.width > width:
