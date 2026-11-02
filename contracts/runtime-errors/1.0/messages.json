@@ -227,20 +227,20 @@
       "en": "The Pi ACP dependency directory is missing."
     },
     "pi_adapter_incompatible": {
-      "zh-CN": "Pi ACP 适配器版本不匹配。",
-      "en": "The Pi ACP adapter version does not match."
+      "zh-CN": "Pi ACP 适配器版本不受支持，需要 0.1.x。",
+      "en": "The Pi ACP adapter version is not supported; 0.1.x is required."
     },
     "pi_adapter_integrity_failed": {
       "zh-CN": "Pi ACP 发布包摘要不匹配，未应用兼容补丁。",
       "en": "The Pi ACP package digest does not match, so the compatibility patch was not applied."
     },
     "pi_adapter_patch_failed": {
-      "zh-CN": "Pi ACP 模型就绪校验入口已变化。",
-      "en": "The Pi ACP model readiness check has changed."
+      "zh-CN": "Pi ACP 适配器的兼容入口已变化，暂不支持此版本。",
+      "en": "The Pi ACP adapter's compatibility entry points changed, so this version is not supported yet."
     },
     "pi_authentication_required": {
-      "zh-CN": "原生 Pi 的模型或认证不可用，请先在本机 pi 中完成配置和登录。",
-      "en": "The native Pi model or authentication is unavailable. Configure and sign in with the local pi first."
+      "zh-CN": "Pi 没有可用的模型或认证：本机模式请先运行 pi 完成登录或模型配置，受管环境请检查模型网关。",
+      "en": "Pi has no usable model or credentials. In local mode, run pi to sign in or configure a model first; in the managed environment, check the model gateway."
     },
     "pi_cli_exit_required": {
       "zh-CN": "请先退出 CLI 中对应会话，并确认后继续。",
@@ -263,8 +263,8 @@
       "en": "Preparing the Pi environment failed. Check the installation and network."
     },
     "pi_execution_source_changed": {
-      "zh-CN": "此 Pi 来源的 SDK、依赖或适配器已变化；请保留旧来源，或新建 Pi 实例使用新环境。",
-      "en": "The SDK, dependencies or adapter of this Pi source changed. Keep the old source or create a new Pi instance for the new environment."
+      "zh-CN": "此 Pi 实例的运行模式或配置目录已变化；请恢复原配置，或新建 Pi 实例。",
+      "en": "The run mode or configuration directory of this Pi instance changed. Restore the previous setting or create a new Pi instance."
     },
     "pi_history_incomplete": {
       "zh-CN": "原生历史正在写入或存在损坏记录，请重新校准。",
@@ -335,8 +335,8 @@
       "en": "Scanning the native history failed."
     },
     "pi_sdk_incompatible": {
-      "zh-CN": "此安装的 Pi SDK 版本不受支持，不会使用其他 SDK 替代。",
-      "en": "This installation's Pi SDK version is not supported, and no other SDK is used instead."
+      "zh-CN": "此 Pi 版本不受支持：需要 1.2.0 及之后的 1.x npm 安装，且能加载 AA 需要的 SDK 接口；不会使用其他 SDK 替代。",
+      "en": "This Pi version is not supported. A Pi 1.x npm installation from 1.2.0 on whose SDK provides the interfaces AA needs is required; no other SDK is used instead."
     },
     "pi_session_already_running": {
       "zh-CN": "此会话已在 AA 执行。",

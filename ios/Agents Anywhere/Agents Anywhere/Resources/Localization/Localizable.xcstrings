@@ -18877,6 +18877,91 @@
           }
         }
       }
+    },
+    "Pi ACP 适配器版本不受支持，需要 0.1.x。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The Pi ACP adapter version is not supported; 0.1.x is required."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pi ACP 适配器版本不受支持，需要 0.1.x。"
+          }
+        }
+      }
+    },
+    "Pi ACP 适配器的兼容入口已变化，暂不支持此版本。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The Pi ACP adapter's compatibility entry points changed, so this version is not supported yet."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pi ACP 适配器的兼容入口已变化，暂不支持此版本。"
+          }
+        }
+      }
+    },
+    "Pi 没有可用的模型或认证：本机模式请先运行 pi 完成登录或模型配置，受管环境请检查模型网关。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pi has no usable model or credentials. In local mode, run pi to sign in or configure a model first; in the managed environment, check the model gateway."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pi 没有可用的模型或认证：本机模式请先运行 pi 完成登录或模型配置，受管环境请检查模型网关。"
+          }
+        }
+      }
+    },
+    "此 Pi 实例的运行模式或配置目录已变化；请恢复原配置，或新建 Pi 实例。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The run mode or configuration directory of this Pi instance changed. Restore the previous setting or create a new Pi instance."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此 Pi 实例的运行模式或配置目录已变化；请恢复原配置，或新建 Pi 实例。"
+          }
+        }
+      }
+    },
+    "此 Pi 版本不受支持：需要 1.2.0 及之后的 1.x npm 安装，且能加载 AA 需要的 SDK 接口；不会使用其他 SDK 替代。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This Pi version is not supported. A Pi 1.x npm installation from 1.2.0 on whose SDK provides the interfaces AA needs is required; no other SDK is used instead."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此 Pi 版本不受支持：需要 1.2.0 及之后的 1.x npm 安装，且能加载 AA 需要的 SDK 接口；不会使用其他 SDK 替代。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
