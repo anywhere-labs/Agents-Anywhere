@@ -168,8 +168,9 @@ def plan_mode(capability: dict[str, Any], config: dict[str, Any] | None, default
     current = (config or {}).get(field, defaults.get(field))
     if current in supported:
         return ModePlan(field, current, False)
-    # An unconfigured instance can simply start in a supported mode.
-    return ModePlan(field, supported[0], config is not None)
+    # Even an unconfigured instance stays as it is: it is how the runtime's own
+    # mode is reached, so the connection gets a managed instance of its own.
+    return ModePlan(field, supported[0], True)
 
 
 def _custom_model(spec: ModelSpec) -> dict[str, Any]:

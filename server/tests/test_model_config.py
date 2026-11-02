@@ -362,6 +362,18 @@ def test_restore_brings_back_the_previous_connection(tmp_path, server_secret):
     assert runtime["secretFields"]["modelGateway.apiKey"]["hint"] == "sk-old-…0000"
 
 
+def test_unconfigured_runtime_in_an_unsupported_mode_stays_untouched(tmp_path, server_secret):
+    client, _rpc, connector_id, headers = _client(
+        tmp_path, PI_LIKE, instancePolicy="multiple", maxInstances=4
+    )
+    profile = _profile(client, headers, formats=("openai_chat",))
+
+    [created] = _applied(client, headers, profile["id"], [_target(connector_id)])["results"]
+
+    assert created["createdRuntime"] is True
+    assert _runtimes(client, connector_id, headers)["codex"]["configured"] is False
+
+
 def test_unsupported_mode_gets_a_managed_instance(tmp_path, server_secret):
     client, _rpc, connector_id, headers = _client(
         tmp_path, PI_LIKE, instancePolicy="multiple", maxInstances=4
