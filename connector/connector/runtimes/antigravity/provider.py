@@ -41,6 +41,10 @@ class AntigravityClient(AgentClient):
     async def start(self, launch: LaunchDefinition, cwd: str) -> dict:
         result = await super().start(launch, cwd)
         self.capabilities["sessionCapabilities"] = {"list": {}, "resume": {}, "close": {}}
+        # AA 扩展能力：CLI 的 --print 只收文本，附件由 bridge 落盘后
+        # 以本机绝对路径写进提示词，Agent 用自己的文件工具读取。
+        aa = self.capabilities.setdefault("_meta", {}).setdefault("aa", {})
+        aa["capabilities"] = ["runtime.attachment"]
         return result
 
 
@@ -108,6 +112,7 @@ class AntigravityProvider(RuntimeProvider):
                 "catalog.model",
                 "catalog.effort",
                 "catalog.permission",
+                "runtime.attachment",
             ),
             model_catalog_loader=load_antigravity_model_catalog,
         )

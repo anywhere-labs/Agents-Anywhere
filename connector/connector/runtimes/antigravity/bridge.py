@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 import re
 import subprocess
 import tempfile
 import uuid
+from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 import acp
 from acp.schema import (
@@ -127,6 +130,105 @@ def _config_options(
         )
     )
     return options
+
+
+def _block_value(block: Any, attr: str, camel: str | None = None) -> Any:
+    """SDK 校验过的块是 snake_case 属性；上游透传的 dict 是 camelCase 键。"""
+    if isinstance(block, dict):
+        value = block.get(camel or attr)
+        return value if value is not None else block.get(attr)
+    return getattr(block, attr, None)
+
+
+def _attachment_info(block: Any) -> dict:
+    meta = _block_value(block, "field_meta", "_meta")
+    info = meta.get("aa", {}).get("attachment") if isinstance(meta, dict) else None
+    return info if isinstance(info, dict) else {}
+
+
+def _is_image_block(block: Any) -> bool:
+    return _block_value(block, "type") == "image"
+
+
+def _is_resource_block(block: Any) -> bool:
+    return _block_value(block, "type") == "resource_link"
+
+
+def _attachments_dir(session_id: str) -> Path:
+    safe = re.sub(r"[^\w.\-]+", "_", session_id)[:64] or "session"
+    return Path(tempfile.gettempdir()) / "antigravity-aa-attachments" / safe
+
+
+def _materialize_image(session_id: str, block: Any) -> dict | None:
+    """图片块内联 base64；落盘成文件后让 Agent 用自己的文件工具读取。"""
+    data = _block_value(block, "data")
+    if not data:
+        return None
+    media_type = _block_value(block, "mime_type", "mimeType") or "image/png"
+    info = _attachment_info(block)
+    name = info.get("name") or "image." + (media_type.split("/", 1)[-1] or "png")
+    try:
+        content = base64.b64decode(data)
+    except Exception:
+        return None
+    directory = _attachments_dir(session_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / (uuid.uuid4().hex[:8] + "-" + re.sub(r"[^\w.\-]+", "_", name)[:80])
+    path.write_bytes(content)
+    return {"path": path, "name": name, "media_type": media_type, "size": len(content)}
+
+
+def _resource_attachment(block: Any) -> dict | None:
+    """resource_link 指向 connector 落盘的缓存文件；file:// 直接换成本机路径。"""
+    uri = _block_value(block, "uri")
+    if not uri:
+        return None
+    info = _attachment_info(block)
+    name = _block_value(block, "name") or info.get("name") or "file"
+    media_type = _block_value(block, "mime_type", "mimeType") or "application/octet-stream"
+    size = _block_value(block, "size")
+    path = None
+    parsed = urlparse(str(uri))
+    if parsed.scheme == "file":
+        candidate = Path(unquote(parsed.path))
+        if candidate.is_file():
+            path = candidate
+            if size is None:
+                size = candidate.stat().st_size
+    return {"path": path, "uri": str(uri), "name": name,
+            "media_type": media_type, "size": size}
+
+
+def _attachment_note(attachments: list[dict]) -> str:
+    """CLI 的 --print 只收文本：把附件落盘路径写进提示词，Agent 读文件看内容。"""
+    lines = ["[附件] 以下文件随本条消息附加，回答前请先读取（图片请直接查看）："]
+    for item in attachments:
+        location = str(item["path"]) if item.get("path") else item.get("uri", "")
+        size = f"，{item['size']} 字节" if item.get("size") is not None else ""
+        lines.append(f"- {item['name']}（{item['media_type']}{size}）：{location}")
+    return "\n".join(lines)
+
+
+def _parse_prompt_blocks(session_id: str, blocks: Any) -> tuple[list[str], list[dict]]:
+    """ContentBlock[] → (文本段, 附件信息)；附件图片落盘、文件解析出本机路径。"""
+    text_parts: list[str] = []
+    attachments: list[dict] = []
+    for block in blocks or []:
+        if hasattr(block, "text") and block.text:
+            text_parts.append(block.text)
+        elif isinstance(block, dict) and block.get("text"):
+            text_parts.append(block["text"])
+        elif isinstance(block, str):
+            text_parts.append(block)
+        elif _is_image_block(block):
+            attachment = _materialize_image(session_id, block)
+            if attachment:
+                attachments.append(attachment)
+        elif _is_resource_block(block):
+            attachment = _resource_attachment(block)
+            if attachment:
+                attachments.append(attachment)
+    return text_parts, attachments
 
 
 class AntigravityAgent:
@@ -266,16 +368,11 @@ class AntigravityAgent:
             }
             self.sessions[session_id] = session
 
-        text_parts = []
-        for block in prompt:
-            if hasattr(block, "text") and block.text:
-                text_parts.append(block.text)
-            elif isinstance(block, dict) and block.get("text"):
-                text_parts.append(block["text"])
-            elif isinstance(block, str):
-                text_parts.append(block)
+        text_parts, attachments = _parse_prompt_blocks(session_id, prompt)
 
         user_text = "\n".join(text_parts).strip() or "Hello"
+        if attachments:
+            user_text += "\n\n" + _attachment_note(attachments)
 
         launch = discover_antigravity()
         if not launch:
@@ -304,6 +401,10 @@ class AntigravityAgent:
             cmd.extend(["--conversation", session["conversation_id"]])
         if session.get("cwd"):
             cmd.extend(["--add-dir", session["cwd"]])
+        # 附件落盘在会话工作区之外（图片在临时目录、文件在 connector 缓存），
+        # 逐个父目录加进工作区，Agent 的文件工具才可读。
+        for directory in sorted({str(item["path"].parent) for item in attachments if item.get("path")}):
+            cmd.extend(["--add-dir", directory])
         cmd.extend(["--print", user_text])
 
         try:
