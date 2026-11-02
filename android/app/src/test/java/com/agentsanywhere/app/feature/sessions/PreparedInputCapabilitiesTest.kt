@@ -25,11 +25,11 @@ class PreparedInputCapabilitiesTest {
     @Test fun `first image is rejected before creation and its draft remains unchanged`() {
         val image = NewSessionAttachmentPart("image.png", "image/png", byteArrayOf(1))
         val value = NewSessionCreateDraft("connector", "pi", null, "/workspace", "describe", NewSessionSelections(model = "opaque-reasoning"), listOf(image), "message", emptySet(), preparedWorkspace = prepared())
-        assertTrue(validateNewSessionDraft(value)!!.contains("image input"))
+        assertEquals(NewSessionDraftInvalid.Reason.ImageInputUnsupported, validateNewSessionDraft(value)?.reason)
         assertEquals(listOf(image), value.attachments)
         assertNull(validateNewSessionDraft(value.copy(selections = NewSessionSelections(model = "opaque-vision"))))
         assertNull(validateNewSessionDraft(value.copy(attachments = listOf(image.copy(name = "note.txt", mediaType = "text/plain")))))
-        assertTrue(validateNewSessionDraft(value.copy(attachments = listOf(image.copy(mediaType = "IMAGE/PNG"))))!!.contains("image input"))
+        assertEquals(NewSessionDraftInvalid.Reason.ImageInputUnsupported, validateNewSessionDraft(value.copy(attachments = listOf(image.copy(mediaType = "IMAGE/PNG"))))?.reason)
         // Only Connector image types become model input; other images travel as files.
         assertNull(validateNewSessionDraft(value.copy(attachments = listOf(image.copy(name = "logo.svg", mediaType = "image/svg+xml")))))
     }

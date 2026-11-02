@@ -11,7 +11,7 @@ struct RuntimeWorkflowView: View {
                 RuntimeWorkflowInput(request: request, pending: pending) { action, value in onRespond(request, action, value) }
             }
             if operation.state.interactions.contains(where: { $0.status == "open" }) && (operation.state.canCancel == true || operation.state.canCancelInitialization == true) {
-                Button("取消", role: .cancel, action: onCancel).disabled(pending)
+                Button(String(localized: "取消"), role: .cancel, action: onCancel).disabled(pending)
             }
         }
     }
@@ -41,9 +41,9 @@ struct RuntimeWorkflowInput: View {
             if let message = request.message { Text(message).font(.caption).textSelection(.enabled) }
             switch request.kind {
             case "form": StructuredAgentFields(schema: request.metadata["formSchema"] ?? .object([:]), values: $formValues, disabled: pending)
-            case "confirm": Toggle("确认", isOn: $confirmed)
-            case "select": Picker("请选择", selection: $selected) {
-                Text("请选择").tag("")
+            case "confirm": Toggle(String(localized: "确认"), isOn: $confirmed)
+            case "select": Picker(String(localized: "请选择"), selection: $selected) {
+                Text(String(localized: "请选择")).tag("")
                 ForEach(options, id: \.self) { option in Text(option["label"]?.stringValue ?? "").tag(option["id"]?.stringValue ?? "") }
             }
             case "editor": TextEditor(text: $text).frame(minHeight: 100)

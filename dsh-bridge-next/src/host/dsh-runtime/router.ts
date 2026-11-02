@@ -119,6 +119,16 @@ export class RuntimeRouter {
   async request(method: string, params: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {
     signal.throwIfAborted()
     switch (method) {
+      case 'getPlanning':
+      case 'setPlanning': {
+        const native = this.reader.native
+        if (!native) return { available: false }
+        if (method === 'getPlanning' && !params.externalSessionId && !params.sessionId) return { available: Boolean(native.planning.service()) }
+        const id = await this.resolve(params, signal)
+        if (method === 'getPlanning') return native.planning.read(id)
+        if (typeof params.active !== 'boolean') throw new BridgeError('INVALID_PARAMS', 'A planning mode is required.')
+        return native.planning.set(id, params.active)
+      }
       case 'refreshSync': {
         // Unreadable sessions must remain addressable for an explicit retry.
         const id = await this.resolve(params, signal, true)
@@ -136,7 +146,7 @@ export class RuntimeRouter {
         const id = create ? nativeSessionId(this.namespace, params.sessionId) as SessionId : await this.resolve(params, signal, true)
         try {
           await native.send(id, params.content, params.clientMessageId, typeof params.cwd === 'string' ? params.cwd : undefined, create,
-            parseSelections(params.selections), typeof params.agentPreset === 'string' ? params.agentPreset : undefined, signal, attachments, params.sessionId)
+            parseSelections(params.selections), typeof params.agentPreset === 'string' ? params.agentPreset : undefined, signal, attachments, params.sessionId, params.planningIntent === true)
         } catch (error) {
           const failure = publicError(error)
           const sourceState = await native.source.state(id)

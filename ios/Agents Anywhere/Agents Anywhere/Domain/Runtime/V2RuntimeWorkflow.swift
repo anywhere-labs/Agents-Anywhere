@@ -31,7 +31,7 @@ nonisolated struct V2RuntimeWorkflowFailure: Error, LocalizedError {
         workflow.kind == "creation" && workflow.state.messageAccepted == false
             && ["failed", "rejected", "cancelled", "expired"].contains(workflow.state.phase)
     }
-    var errorDescription: String? { workflow.state.failure?.message ?? workflow.state.phase }
+    var errorDescription: String? { workflow.state.failure?.errorDescription ?? RuntimeErrorText.text(code: workflow.state.phase, fallback: workflow.state.phase) }
 }
 
 nonisolated struct V2WorkflowInteraction: Decodable, Hashable, Identifiable {

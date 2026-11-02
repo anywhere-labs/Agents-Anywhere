@@ -44,6 +44,7 @@ internal fun NativeHistoryControls(
     var error by remember(sessionId) { mutableStateOf<String?>(null) }
     var pending by remember(sessionId) { mutableStateOf<JSONObject?>(null) }
     val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
     fun execute(close: Boolean) {
         if (busy) return
         val body = if (close) JSONObject().put("ownerGeneration", generation).put("closeOperationId", UUID.randomUUID().toString())
@@ -59,7 +60,7 @@ internal fun NativeHistoryControls(
                     onSuccess = { pending = null },
                     onFailure = {
                         if (it is com.agentsanywhere.app.feature.sessiondetail.NativeHistoryRejected || (it is com.agentsanywhere.app.api.ApiException && it.statusCode in 400..499)) pending = null
-                        error = it.message
+                        error = com.agentsanywhere.app.ui.designsystem.runtimeOperationErrorMessage(context, it, R.string.runtime_error_native_history_recovery_failed)
                     },
                 )
                 onSettled()

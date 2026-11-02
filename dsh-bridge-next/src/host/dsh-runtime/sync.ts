@@ -1,4 +1,5 @@
 import { jsonBytes } from './json-size.js'
+import { PlanDrafts } from './plan-draft.js'
 import { randomUUID } from 'node:crypto'
 import { receiptKey } from './attachments.js'
 import type { SnapshotPage, SnapshotRequest, SnapshotResult, SyncBatch as WireBatch } from '../generated/dsh-sync.js'
@@ -36,6 +37,7 @@ class SyncTransportError extends Error {}
 
 /** One ordered subscription. A batch's delivery call returns only after the Connector ingested it. */
 export class SyncFeed {
+  private readonly planDrafts = new PlanDrafts()
   private batchSeq = 0
   private queue: NativeChange[] = []
   private queuedInvalidations = new Set<string>()
@@ -354,11 +356,21 @@ export class SyncFeed {
           if (this.published.has(id)) reconcile = true
           return
         }
-        if (change.type === 'refresh') { await this.baseline(id); return }
+        if (change.type === 'refresh') {
+          if (change.interrupted) {
+            this.planDrafts.reset(id)
+            await this.notification('planning.observed', { sessionId: sessionId(this.namespace, id), externalSessionId: id, kind: 'interrupted' })
+          }
+          await this.baseline(id); return
+        }
         if (!this.published.has(id)) await this.baseline(id)
         if (!this.published.has(id)) return
         if (change.type === 'question' || change.type === 'approval') await this.notices(id)
         if (change.type === 'stream') {
+          const mode = await this.native.planning.read(id as SessionId)
+          if ('active' in mode && mode.active === false) await this.notification('planning.observed', { sessionId: sessionId(this.namespace, id), externalSessionId: id, kind: 'execution' })
+          const draft = this.planDrafts.observe(id, change.turn, change.step, change.chunk)
+          if (draft) await this.notification('planning.observed', { sessionId: sessionId(this.namespace, id), externalSessionId: id, ...draft })
           // Running sessions are never evicted. A chunk without a projection waits
           // for the next event to restore it instead of rereading the log per chunk.
           const projection = this.projections.get(id)
@@ -369,7 +381,13 @@ export class SyncFeed {
           return
         }
         if (change.type === 'event') {
+          const rawEvent = change.event as unknown as { type: string, data: { active?: boolean } }
+          if (rawEvent.type === 'plan/mode' && typeof rawEvent.data.active === 'boolean') await this.notification('planning.observed', { sessionId: sessionId(this.namespace, id), externalSessionId: id, kind: 'mode', mode: rawEvent.data.active ? 'plan' : 'normal' })
           if (['model/selection', 'agent-preset/selected'].includes(change.event.type)) capabilities.add(id)
+          if (change.event.type === 'turn/end') {
+            this.planDrafts.reset(id)
+            await this.notification('planning.observed', { sessionId: sessionId(this.namespace, id), externalSessionId: id, kind: 'interrupted' })
+          }
           if (change.event.type === 'turn/end') ended.push([id, {
             sessionId: this.published.get(id), externalSessionId: id,
             sourceObservedAt: new Date(change.event.time).toISOString(),

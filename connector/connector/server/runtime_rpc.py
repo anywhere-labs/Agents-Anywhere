@@ -64,6 +64,9 @@ class RuntimeRpcHandler:
     """Route Runtime Control and Agent Runtime Protocol calls."""
 
     METHODS: ClassVar[set[str]] = {
+        "session.planning.operation",
+        "session.planning.get",
+        "session.planning.execute",
         "runtime.discover",
         "session.configuration.get",
         "session.configuration.update",
@@ -105,6 +108,17 @@ class RuntimeRpcHandler:
         return method in self.METHODS or method in WORKFLOW_RPC
 
     async def dispatch(self, method: str, params: dict[str, Any]) -> Any:
+        if method in {"session.planning.get", "session.planning.execute", "session.planning.operation"}:
+            runtime = self._resolve_agent_runtime(params)
+            parsed = SessionReadParams.parse(params)
+            planning = runtime.planning
+            if planning is None:
+                return {"capabilities": {"supported": False, "actions": []}, "freshness": "unknown"}
+            if method == "session.planning.operation":
+                return {"operation": await planning.operation(parsed.session_id, str(params.get("operationId", "")))}
+            if method == "session.planning.get":
+                return await planning.snapshot(parsed.session_id, parsed.external_session_id, allow_control=params.get("controlAllowed") is True)
+            return await planning.execute(parsed.session_id, parsed.external_session_id, dict(params.get("request") or {}))
         if method in {"session.configuration.get", "session.configuration.update"}:
             runtime = self._resolve_agent_runtime(params)
             session_id = params.get("sessionId")

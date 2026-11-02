@@ -12,6 +12,7 @@ from pydantic import (
     model_validator,
 )
 
+from agent_server.core.planning.models import PlanningCreationIntent
 from agent_server.core.email_settings import EmailSettingsUpdate, EmailSettingsView
 from agent_server.core.runtime_identity import (
     RuntimeIdentity,
@@ -805,12 +806,15 @@ class SessionCreateAndStartRequest(BaseModel):
     cwd: str | None = None
     content: str
     selections: dict[str, str | None] = Field(default_factory=dict)
+    planningIntent: PlanningCreationIntent | None = None
     runtimeOptions: dict[str, Any] = Field(default_factory=dict, max_length=16)
     attachments: list[InlineAttachmentRef] = Field(default_factory=list, max_length=10)
     clientMessageId: str | None = None
 
     @model_validator(mode="after")
     def _validate_runtime_identity(self) -> SessionCreateAndStartRequest:
+        if self.planningIntent is not None and not self.content.strip() and not self.attachments:
+            raise ValueError("裸 /plan 只设置客户端创建意图，请填写规划任务后再创建会话。")
         identity = RuntimeIdentity.create(
             runtime_type=self.runtime,
             runtime_id=self.runtimeId or self.runtime,
@@ -1181,6 +1185,7 @@ class MessageCreateRequest(BaseModel):
 
 
 class SessionCommandRequest(BaseModel):
+    operationId: str | None = Field(default=None, min_length=1, max_length=160)
     model_config = ConfigDict(extra="forbid")
 
     command: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")

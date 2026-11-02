@@ -6,6 +6,11 @@ const unsupported = [
   'catalog.model', 'catalog.permission', 'catalog.effort', 'session.commands', 'runtime.attachment',
 ]
 
+export interface RuntimeCapability {
+  capabilityId: string; runtime: string; scope: 'session' | 'runtime'; sessionId?: string; version?: string
+  supported: boolean; available: boolean; allowed: boolean; unavailableReason?: string | null
+  metadata?: Record<string, unknown>
+}
 export function capabilities(sessionId?: string, writable = false, userQuestions = false,
   controls: { approval?: boolean, model?: boolean, effort?: boolean, permission?: boolean, attachments?: boolean, files?: boolean, commands?: CommandCapability } = {}) {
   const enabled = new Set(['runtime.config', ...(writable ? ['session.send_message', 'session.interrupt'] : []),
@@ -16,7 +21,7 @@ export function capabilities(sessionId?: string, writable = false, userQuestions
     ...(writable && controls.attachments ? ['runtime.attachment'] : [])])
   return {
     runtime: 'dsh', revision: 7, ...(sessionId ? { sessionId } : {}),
-    capabilities: ['runtime.config', ...unsupported].map(capabilityId => ({
+    capabilities: ['runtime.config', ...unsupported, 'session.planning'].map<RuntimeCapability>(capabilityId => ({
       capabilityId, runtime: 'dsh', scope: sessionId ? 'session' : 'runtime',
       supported: enabled.has(capabilityId), available: enabled.has(capabilityId),
       allowed: enabled.has(capabilityId),

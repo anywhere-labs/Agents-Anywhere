@@ -1,4 +1,5 @@
 "use client"
+import { useRuntimeErrorText, type RuntimeFailure } from "@/lib/runtime-error-text"
 import * as React from "react"
 import { useTranslations } from "next-intl"
 import { StructuredAgentFields } from "./structured-agent-fields"
@@ -42,18 +43,19 @@ export function RuntimeInteractionForm({ request, pending, onRespond }: {
 }
 
 export function RuntimeWorkflowPanel({ operation, pending, error, onRespond, onCancel, onRefresh, onDismiss }: {
-  operation: WorkflowView; pending: boolean; error?: string;
+  operation: WorkflowView; pending: boolean; error?: RuntimeFailure;
   onRespond: (request: WorkflowInteraction, actionId: string, input?: RuntimeDialogValue) => void;
   onCancel: () => void; onRefresh?: () => void; onDismiss?: () => void;
 }) {
   const tCommon = useTranslations("common")
+  const errorText = useRuntimeErrorText()
   const requests = operation.state.interactions.filter(request => request.status === "open")
-  const failure = error ?? operation.state.failure?.message
+  const failure = errorText(error ?? operation.state.failure)
   const stopped = ["failed", "cancelled", "rejected", "expired", "outcome_unknown"].includes(operation.state.phase)
   if (!requests.length && !failure && !stopped) return null
   return <Alert><AlertTitle>{requests[0]?.title ?? tCommon(operation.kind === "preparation" ? "loadFailed" : "createFailed")}</AlertTitle><AlertDescription className="flex flex-col gap-3">
     {requests.map(request => <RuntimeInteractionForm key={request.interactionId + request.ownerGeneration} request={request} pending={pending} onRespond={(action, input) => onRespond(request, action, input)} />)}
-    {error || operation.state.failure ? <p role="alert">{error ?? operation.state.failure?.message}</p> : null}
+    {failure ? <p role="alert">{failure}</p> : null}
     {onRefresh ? <Button variant="outline" size="sm" disabled={pending} onClick={onRefresh}>{tCommon("refresh")}</Button> : null}
     {onDismiss && ["failed", "cancelled", "rejected", "outcome_unknown"].includes(operation.state.phase) ? <Button variant="outline" size="sm" onClick={onDismiss}>{tCommon("close")}</Button> : null}
     {operation.state.canCancel || operation.state.canCancelInitialization ? <Button variant="outline" size="sm" disabled={pending} onClick={onCancel}>{tCommon("cancel")}</Button> : null}

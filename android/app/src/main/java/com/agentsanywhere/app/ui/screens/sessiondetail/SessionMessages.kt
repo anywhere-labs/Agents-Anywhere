@@ -1,6 +1,8 @@
 package com.agentsanywhere.app.ui.screens.sessiondetail
 
 import android.net.Uri
+import com.agentsanywhere.app.api.PlanDocument
+import com.agentsanywhere.app.feature.sessiondetail.placePlanDocuments
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -256,6 +258,10 @@ private fun SkeletonBlock(
 
 @Composable
 internal fun MessageList(
+    planningContent: (@Composable () -> Unit)? = null,
+    planDocuments: List<PlanDocument> = emptyList(),
+    planEntry: (@Composable (PlanDocument) -> Unit)? = null,
+    hideMessage: (TimelineMessage) -> Boolean = { false },
     messages: List<TimelineMessage>,
     darkMode: Boolean,
     sessionId: String,
@@ -283,7 +289,7 @@ internal fun MessageList(
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    val displayMessages = messages
+    val displayMessages = remember(messages, hideMessage) { messages.filterNot(hideMessage) }
     val displayWorkingLabel = workingLabel
     val openInteractions = remember(notices, sessionId) {
         notices.filter { it.openInteraction && !it.blocksSession(sessionId) }
@@ -297,6 +303,9 @@ internal fun MessageList(
     val interactionTargetIds = remember(interactionByTarget) { interactionByTarget.keys }
     val timelineItems = remember(displayMessages, interactionTargetIds) {
         groupTimelineMessages(displayMessages, interactionTargetIds)
+    }
+    val planPlacement = remember(planDocuments, timelineItems) {
+        placePlanDocuments(planDocuments, timelineItems.map { it.key to it.messages })
     }
     val agentActionsByTurnEnd = remember(timelineItems, turnInProgress) {
         buildAgentActionsByTurnEnd(timelineItems, turnInProgress)
@@ -435,6 +444,12 @@ internal fun MessageList(
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     item(key = "bottom-space") { Spacer(Modifier.height(bottomContentPadding)) }
+                    if (planningContent != null || planPlacement.end.isNotEmpty()) item(key = "planning") {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            if (planEntry != null) planPlacement.end.forEach { key("plan:${it.planId}:${it.revision}") { planEntry(it) } }
+                            planningContent?.invoke()
+                        }
+                    }
                     if (displayWorkingLabel != null) {
                         item(key = "working-indicator") {
                             DisableSelection {
@@ -455,6 +470,11 @@ internal fun MessageList(
                     items(timelineItems.asReversed(), key = { it.key }) { item ->
                         CompositionLocalProvider(LocalReadingMessage provides item.messages.first().id) {
                             Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                                // Plans that preceded this group, e.g. the plan an implementation started from.
+                                val plans = planPlacement.before[item.key].orEmpty()
+                                if (planEntry != null && plans.isNotEmpty()) Column(Modifier.padding(bottom = 9.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    plans.forEach { key("plan:${it.planId}:${it.revision}") { planEntry(it) } }
+                                }
                                 when (item) {
                                     is TimelineRenderItem.Single -> ReadingMessage(item.message.id) {
                                         TimelineMessageRow(

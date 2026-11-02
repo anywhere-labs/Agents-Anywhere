@@ -1,11 +1,13 @@
 "use client"
 
+import { useRuntimeErrorText } from "@/lib/runtime-error-text"
 import { RuntimeWorkflowPanel } from "@/components/session/runtime-workflow-panel"
 import { useWorkspacePreparation } from "@/components/session/use-workspace-preparation"
 import { RuntimeCreationStatus } from "@/components/session/runtime-creation-status"
 import { creationConfigurationDefaults } from "@/features/dashboard/runtime-forms"
 
 import * as React from "react"
+import { parsePlanningCommand } from "@/features/planning/commands"
 import { Monitor, ChevronDown, ArrowUp, Loader2, Check } from "lucide-react"
 import { toast } from "sonner"
 
@@ -146,6 +148,8 @@ export function TaskComposer() {
     updateProject,
   } = useWorkspace()
   const t = useTranslations("dashboard.new")
+  const tPlanning = useTranslations("planning")
+  const errorText = useRuntimeErrorText()
   const tCommon = useTranslations("common")
   const tWorkspace = useTranslations("dashboard.workspacePicker")
   const typewriterTitles = React.useMemo(
@@ -280,6 +284,7 @@ export function TaskComposer() {
   const [recoveryTargetChanged, setRecoveryTargetChanged] = React.useState(false)
   const preserveRecoveredSelections = Boolean(creationEditorDraft && !recoveryTargetChanged)
   const creatingRef = React.useRef(false)
+  const [planningCreation, setPlanningCreation] = React.useState(false)
   const [createTick, setCreateTick] = React.useState(0)
   const [preferenceLoaded, setPreferenceLoaded] = React.useState(false)
   const [preference, setPreference] = React.useState<NewSessionPreference | null>(null)
@@ -771,10 +776,19 @@ export function TaskComposer() {
   const showCollapsedBrand = isMobile || sidebarState === "collapsed"
 
   const handleCreate = async () => {
+    const planIntent = parsePlanningCommand(prompt)
+    if (planIntent && planIntent.command !== "submit_task") {
+      if (attachments.length) { toast.error(tPlanning("attachmentTask")); return }
+      setPlanningCreation(planIntent.command === "enter_plan"); setPrompt(""); return
+    }
+    const usePlanning = planningCreation || planIntent?.command === "submit_task"
+
     if (!authSession?.accessToken || !selectedConnector || !selectedRuntime || !workspace?.path || creatingRef.current) return
     if (recoveryTargetUnavailable || workspace.connectorId !== selectedConnector.id) return
     if (!prompt.trim() && attachments.length === 0) return
     if (catalogsLoading || (needsPreparation && preparation.operation?.state.phase !== "ready")) return
+    // Prepared-workspace creation does not carry a planning intent yet; refuse instead of silently dropping it.
+    if (usePlanning && needsPreparation) { toast.error(tPlanning("workspaceUnsupported")); return }
     if (requiresModelSelection && !selectedModelSelection) return
     if (requiresPermissionSelection && !selectedPermissionSelection) return
     if (attachments.length > 0 && (!canUseAttachments || !attachmentsAllowed)) return
@@ -891,12 +905,18 @@ export function TaskComposer() {
       // Transfer File/preview ownership to the workspace before navigating away.
       clear({ revokePreviews: false })
       setPrompt("")
+      setPlanningCreation(false)
       startSessionCreation({
         localSessionId, clientMessageId, prompt,
         attachments: selectedAttachments,
         workspace: { ...workspace, projectId: project.id },
         modelId: selectedModel, reasoningId: selectedReasoning, permissionMode: selectedPermissionMode,
-        request: { ...createBody, content: messageText, selections, clientMessageId },
+        request: {
+          ...createBody,
+          content: planIntent ? planIntent.content ?? "" : usePlanning ? prompt : messageText,
+          ...(usePlanning ? { planningIntent: { mode: "plan" as const, operationId: clientMessageId } } : {}),
+          selections, clientMessageId,
+        },
         ...(needsPreparation && preparation.operation ? { preparedWorkspace: { preparationId: preparation.operation.id,
           expectedRevision: preparation.operation.state.revision, catalogRevision: preparation.operation.state.catalogRevision!, ...(preparation.operation.state.configuration ? { configuration: preparedConfiguration } : {}) } } : {}),
       }, optimisticMessage, (id) => toolSidebarStore.migrateSession(localSessionId, id))
@@ -1000,7 +1020,7 @@ export function TaskComposer() {
         {needsPreparation && preparationNeedsAttention ? (
           <div className="mb-4">
             {preparation.operation ? <RuntimeWorkflowPanel operation={preparation.operation} pending={preparation.pending} error={preparation.error} onRespond={preparation.respond} onCancel={preparation.cancel} />
-              : <div role="alert" className="flex items-center gap-2 text-sm"><span>{preparation.error}</span><Button variant="outline" size="sm" disabled={preparation.pending} onClick={preparation.retry}>{tCommon("retry")}</Button></div>}
+              : <div role="alert" className="flex items-center gap-2 text-sm"><span>{errorText(preparation.error, tCommon("loadFailed"))}</span><Button variant="outline" size="sm" disabled={preparation.pending} onClick={preparation.retry}>{tCommon("retry")}</Button></div>}
             {preparation.operation && (preparation.error || preparationStopped) ? <Button variant="outline" size="sm" disabled={preparation.pending} onClick={preparation.retry}>{tCommon("retry")}</Button> : null}
           </div>
         ) : null}
@@ -1021,6 +1041,7 @@ export function TaskComposer() {
               </div>
             ) : null}
             {recoveryTargetUnavailable ? <p role="alert" className="text-sm text-destructive">{t("restoredTargetUnavailable")}</p> : null}
+            {planningCreation && <Badge variant="outline">{tPlanning("creationIntent")}</Badge>}
             <AttachmentPreviewList attachments={attachments} onRemove={remove} />
             {attachmentError ? <p role="alert" className="text-xs text-destructive">{attachmentError}</p> : null}
             <Textarea

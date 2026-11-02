@@ -8,6 +8,22 @@
 
 - Pi 优先复用本机兼容安装的模型、认证和配置；已有受管模型网关配置保持隔离，用户也可明确选择受管环境。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 - Pi 接入需要 Server 执行 `v2_45` 数据库迁移，并配套更新 Connector 和使用此功能的客户端。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
+- 统一 Plan 需要 Server 执行 `v2_46` 数据库迁移，并配套更新 Connector、客户端和 DSH Bridge；DSH 还需组合原生 Plan 插件。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+
+### 统一 Plan
+
+- 补齐 Web、Desktop、Android 和 iOS 计划卡片、审阅、阅读器及规划入口提示的中英文翻译，随客户端语言切换。
+
+- 修复 Codex 规划模式调用旧写入路由接口导致首轮任务创建失败的问题，并避免异常日志展开运行时对象造成 Connector 卡顿和断连。
+- 在 Codex、Claude Code 和 DSH 会话中可统一使用 `/plan`、`/plan <任务>` 与 `/plan off`；新会话首条任务即可进入原生规划，裸 `/plan` 只设置创建意图，不消耗空模型回合。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- Web、Desktop、Android 和 iOS 新增流式计划卡片，在输入区直接「同意并执行／修改计划／暂不执行」，不再弹出审批窗口；计划卡片与确认面板沿用审批卡样式，长计划可展开全文，「打开计划」后可复制和导出完整计划，Web 和 Desktop 支持与聊天并排阅读。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- 计划按不可变版本保存，设备离线仍可查阅；旧版本批准、重复执行和结果未知后的自动重发会被阻止，批准计划继续使用用户当前权限设置。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- 提交修改意见后的新计划作为同一份计划的下一版本（版本 2、3…），旧版本在时间线中收为一行，可随时打开；计划卡片按产生时间排在时间线中，批准后紧贴在实施内容上方，Codex 不再额外显示一条重复的计划系统消息。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- 斜杠菜单在支持规划的会话中提供 `/plan`，并显示中英文说明；Codex 内置指令的说明随客户端语言显示。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- Runtime、工作区准备、会话创建和原生历史的错误改为按稳定错误码显示中英文文案，英文界面不再出现 Connector 或 Server 固定输出的中文；Android 新建会话的输入校验提示也随语言显示。错误码文案集中在 `contracts/runtime-errors/1.0/messages.json`，由脚本生成到四端。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- 修复英文界面打开斜杠菜单时 `/plan` 说明文案解析失败报错；日期按应用语言而不是浏览器语言显示；Codex 与 Claude 的审批卡标题在中英文界面下各自显示对应语言。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- 本机缺少 Pi 等启动前即可确定的工作区准备失败，改为明确的失败状态并显示对应原因，不再标记为「结果未知」后反复查询。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- 计划执行开始后不再在时间线末尾长期保留「计划执行已开始」，执行状态改由计划卡片显示；以冒号结尾的引导句作为计划标题时不再保留冒号。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
 
 ### 会话创建与消息交付
 

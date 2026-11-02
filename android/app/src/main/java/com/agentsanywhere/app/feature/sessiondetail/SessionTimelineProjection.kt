@@ -19,7 +19,7 @@ private fun JSONObject.toTimelineAttachmentOrNull(): TimelineAttachment? {
 }
 
 private fun RemoteTimelineItem.toTimelineMessages(): List<TimelineMessage> {
-    return when (type) {
+    val messages = when (type) {
         "message" -> listOfNotNull(toMessageOrNull())
         "tool" -> toToolMessages()
         "artifact" -> toArtifactMessages()
@@ -27,6 +27,7 @@ private fun RemoteTimelineItem.toTimelineMessages(): List<TimelineMessage> {
         "system" -> listOf(toSystemMessage())
         else -> listOf(toDiagnosticMessage())
     }
+    return messages.map { it.copy(createdAt = createdAt, sourceRole = role) }
 }
 
 internal fun mergeRemoteTimelineItems(

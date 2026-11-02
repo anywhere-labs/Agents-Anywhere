@@ -18,6 +18,9 @@ from agent_server.core.capabilities import (
     SESSION_EXECUTION_POSITION_SELECT,
     SESSION_INTERACTION_APPROVAL,
     SESSION_INTERRUPT,
+    SESSION_PLAN_DOCUMENT,
+    SESSION_PLAN_REVIEW,
+    SESSION_PLANNING,
     SESSION_RECOVER,
     SESSION_SEND_MESSAGE,
     SESSION_STEER,
@@ -41,6 +44,9 @@ _INHERITED_RUNTIME_CAPABILITY_IDS = (
     SESSION_STEER,
     SESSION_INTERACTION_APPROVAL,
     SESSION_COMMANDS,
+    SESSION_PLANNING,
+    SESSION_PLAN_DOCUMENT,
+    SESSION_PLAN_REVIEW,
     RUNTIME_ATTACHMENT,
     RUNTIME_CONFIG,
     CATALOG_MODEL,
@@ -82,6 +88,26 @@ class SessionCapabilityRepository(Protocol):
 
 class SessionCapabilityPublisher(Protocol):
     async def publish(self, session_id: str, payload: dict[str, Any]) -> None: ...
+
+
+async def read_runtime_capability_facts(
+    manager: ConnectorRpcManager,
+    connector_id: str,
+    *,
+    runtime: str,
+    runtime_id: str,
+) -> ProtocolCapabilitySet:
+    """Read current instance facts before admitting a new session."""
+    result = await manager.request(
+        connector_id, "runtime.capabilities",
+        {"runtime": runtime, "runtimeId": runtime_id}, timeout=10,
+    )
+    if not isinstance(result, dict) or not isinstance(result.get("capabilitySet"), dict):
+        raise TypeError("connector did not return a runtime capability set")
+    try:
+        return ProtocolCapabilitySet.model_validate(result["capabilitySet"])
+    except ValueError as exc:
+        raise ValueError("connector returned an invalid runtime capability set") from exc
 
 
 async def read_session_capability_facts(

@@ -262,6 +262,7 @@ class ConnectorIngestService:
                     {
                         "items": [],
                         "runtime_state": None,
+                        "planning_state": None,
                         "timeline_reset": False,
                         "session": False,
                         "capability_changed": False,
@@ -301,6 +302,8 @@ class ConnectorIngestService:
                                 bucket["items"].append(effect.item)
                             if effect.items:
                                 bucket["items"].extend(effect.items)
+                    if effect.planning_state is not None:
+                        bucket["planning_state"] = effect.planning_state
                     if effect.runtime_state is not None:
                         bucket["runtime_state"] = effect.runtime_state
                     bucket["session"] = bucket["session"] or effect.session_changed
@@ -339,6 +342,8 @@ class ConnectorIngestService:
                 envelope["items"] = bucket["items"]
             elif bucket["items"]:
                 envelope["items"] = bucket["items"]
+            if bucket["planning_state"] is not None:
+                envelope["planningState"] = bucket["planning_state"]
             runtime_state: SessionRuntimeState | None = None
             if bucket["runtime_state"]:
                 bound_session = await self._store.get_session(session_id)
@@ -439,6 +444,7 @@ class ConnectorIngestService:
                     "timelineReset",
                     "items",
                     "runtimeState",
+                    "planningState",
                     "session",
                     "capabilitySet",
                     "notices",
@@ -452,6 +458,7 @@ class ConnectorIngestService:
         for session_id, bucket in by_session.items():
             if not (
                 bucket["items"]
+                or bucket["planning_state"] is not None
                 or bucket["runtime_state"] is not None
                 or bucket["timeline_reset"]
                 or bucket["session"]

@@ -348,8 +348,10 @@ class SessionService:
         return self.preparation_view(key)
 
     async def _open_preparation(self, context: dict, preparation: Preparation):
+        launched = False
         try:
             launch = await self.launch_for_preparation() if self.launch_for_preparation else self.launch
+            launched = True
             await context["client"].start(launch, str(self.root))
             process = context["client"].process.process
             self._job(self._watch(context, process))
@@ -379,12 +381,16 @@ class SessionService:
             with self.store.transaction():
                 current = self.store.require("preparation", preparation.preparation_id)
                 if current["phase"] not in {"cancelled", "expired"}:
+                    # A local check that fails before any Agent process starts is a definite
+                    # failure; once the Agent runs, its effect stays unknown. The message
+                    # always matches the code it travels with.
+                    known = isinstance(error, AcpError)
                     current.update(
-                        phase="outcome_unknown",
+                        phase="failed" if known and not launched else "outcome_unknown",
                         revision=current["revision"] + 1,
                         failure={
-                            "code": getattr(error, "code", "agent_open_failed"),
-                            "message": "Agent 初始化未完成，请查询原操作。",
+                            "code": error.code if known else "agent_open_failed",
+                            "message": str(error) if known else "Agent 初始化未完成，请查询原操作。",
                         },
                     )
                     self.store.put("preparation", preparation.preparation_id, current)

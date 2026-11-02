@@ -19,6 +19,7 @@ import { RuntimeDiagnostics } from './diagnostics.js'
 import { RuntimeCatalogs } from './catalogs.js'
 import { RuntimeConfiguration } from './configuration.js'
 import { RuntimeCommands } from './commands.js'
+import { RuntimePlanning } from './planning.js'
 import type { Selections } from './selections.js'
 import { capabilities } from './capabilities.js'
 import { CreationIntents } from './creation-intents.js'
@@ -30,7 +31,7 @@ declare module '@deepseek-ai/cordis' {
 export type NativeChange = { type: 'stream', id: string, turn: number, step: number, chunk: StreamChunk, time: number, throughSeq: number }
   | { type: 'event', id: string, event: SessionEvent }
   | { type: 'session', id: string } | { type: 'status', id: string }
-  | { type: 'refresh', id: string }
+  | { type: 'refresh', id: string, interrupted?: boolean }
   | { type: 'question', id: string } | { type: 'approval', id: string } | { type: 'capabilities' }
   | { type: 'visibility' } | { type: 'catalogs', catalogType: 'model' | 'permission' } | { type: 'commands' }
 export interface NativeWorkspace { id: string, title: string, path: string, sessionIds: string[] }
@@ -58,6 +59,7 @@ export class NativeRuntime {
   readonly source: NativeSessionSource
   readonly catalogs: RuntimeCatalogs
   readonly configuration: RuntimeConfiguration
+  readonly planning: RuntimePlanning
   readonly commands: RuntimeCommands
   private writes = new Map<string, Promise<unknown>>()
   private closed = false
@@ -72,6 +74,7 @@ export class NativeRuntime {
     this.attachments = new RuntimeAttachments(join(dirname(creationDirectory), 'attachments'), legacyAttachmentStaging)
     this.catalogs = new RuntimeCatalogs(ctx, () => this.emit({ type: 'catalogs', catalogType: 'model' }))
     this.configuration = new RuntimeConfiguration(ctx)
+    this.planning = new RuntimePlanning(ctx, this.configuration)
     this.source = new NativeSessionSource(ctx, diagnostics)
     this.commands = new RuntimeCommands(ctx, this.configuration, this.source, () => this.emit({ type: 'commands' }))
     ctx.on('llm/adapters-updated', () => this.catalogs.invalidate(), { global: true })
@@ -113,7 +116,7 @@ export class NativeRuntime {
           turn: attempt.turn, step: attempt.step, chunk: frame.chunk, time: frame.time, throughSeq: Number(agent.session.seq) - 1 })
         else {
           attempts.delete(agent.id)
-          if (frame.outcome.kind === 'abandoned') this.emit({ type: 'refresh', id: agent.id })
+          if (frame.outcome.kind === 'abandoned') this.emit({ type: 'refresh', id: agent.id, interrupted: true })
         }
       }
     }, { global: true })
@@ -163,6 +166,12 @@ export class NativeRuntime {
       { model, effort, approval: this.approvals.available, attachments: Boolean(this.ctx.get('attachments')), files: Boolean(this.ctx.get('fileUploads')),
         permission: this.configuration.canSelectPermission && (!id || !this.ctx.get('agents')?.get(id) || Boolean(this.ctx.get('commands')!.find(this.ctx.get('agents')!.get(id)!, 'permission'))),
         commands: await this.commands.capability(id) })
+    // The Bridge reports native facts; only a Connector with the unified
+    // Planning application may advertise the end-to-end capability.
+    const planning = Boolean(this.planning.service())
+    Object.assign(result.capabilities.find(item => item.capabilityId === 'session.planning')!, { capabilityId: 'session.planning', scope: platformId ? 'session' : 'runtime',
+      ...(platformId ? { sessionId: platformId } : {}), runtime: 'dsh', version: '1', supported: false,
+      available: false, allowed: true, metadata: { nativePlanningAvailable: planning, contentStreaming: 'native_delta' } })
     return { ...result, metadata: { ...result.metadata,
       ...(catalog ? { modelCatalogFailures: catalog.metadata.failures } : {}) } }
   }
@@ -244,8 +253,8 @@ export class NativeRuntime {
 
   async send(id: SessionId, text: string, requestId: string, cwd?: string, create = false,
     selections: Selections = {}, agentPreset?: string, signal = new AbortController().signal,
-    images: readonly StagedAttachment[] = [], platformId?: string): Promise<void> {
-    if ((!text.trim() && !images.length) || text.length > 1_000_000 || !requestId || requestId.length > 512) {
+    images: readonly StagedAttachment[] = [], platformId?: string, planningIntent = false): Promise<void> {
+    if ((!text.trim() && !images.length && !planningIntent) || text.length > 1_000_000 || !requestId || requestId.length > 512) {
       throw new BridgeError('INVALID_PARAMS', 'A text message and stable client message ID are required.')
     }
     await this.write(id, signal, async () => {
@@ -271,7 +280,7 @@ export class NativeRuntime {
           path = await realpath(cwd)
           if (!(await stat(path)).isDirectory()) throw new Error('not a directory')
         } catch { throw new BridgeError('INVALID_PARAMS', 'The workspace must be an accessible directory on the DSH device.') }
-        fingerprint = digest(canonicalJson({ requestId, content: text, cwd: path, agentPreset: agentPreset ?? null,
+        fingerprint = digest(canonicalJson({ requestId, content: text, planningIntent, cwd: path, agentPreset: agentPreset ?? null,
           model: selections.model ?? null, permission: selections.permission ?? null,
           ...(images.length ? { attachments: attachmentReferences(images).map(image => ({ ...image })) } : {}) }))
         if (intent && (intent.requestId !== requestId || intent.fingerprint !== fingerprint)) {
@@ -306,6 +315,10 @@ export class NativeRuntime {
       }
       const agent = await this.configuration.agent(id)
       await this.configuration.apply(agent, selections, create, signal)
+      if (planningIntent) {
+        await this.planning.set(id, true)
+        if (!text.trim() && !images.length) return
+      }
       if (this.source.archived.has(id)) await this.source.requireAvailable(id)
       if (this.closed || (!create && !await this.visible(id))) throw new BridgeError('SESSION_NOT_FOUND', 'The session is no longer visible in DSH.')
       const imageParts = images.length ? await this.attachments.prepare(images, store!, signal,

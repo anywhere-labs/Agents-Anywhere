@@ -718,5 +718,26 @@
     <string name="native_history_check">查询恢复状态</string>
     <string name="native_history_releasing">正在结束执行…</string>
     <string name="session_image_input_unsupported">当前模型声明不支持图片输入，请移除图片或切换模型。</string>
+    <string name="session_command_title_compact">压缩上下文</string>
+    <string name="session_command_description_compact">压缩会话上下文。</string>
+    <string name="session_command_title_kill_chatgpt">退出 ChatGPT</string>
+    <string name="session_command_description_kill_chatgpt">退出 ChatGPT / Codex 桌面应用，让它的会话改由 Connector 自己的 app-server 运行。</string>
+    <string name="session_command_title_open_in_codex_app">在 Codex 应用中打开</string>
+    <string name="session_command_description_open_in_codex_app">在正在运行的 Codex 桌面应用中打开此会话，并从那里继续跟随。</string>
+    <string name="new_session_connector_required">请先选择设备。</string>
+    <string name="new_session_workspace_required">请先选择工作区。</string>
+    <string name="new_session_runtime_type_invalid">请先选择有效的运行时类型。</string>
+    <string name="new_session_runtime_instance_invalid">请先选择有效的运行时实例。</string>
+    <string name="new_session_content_required">请输入消息或添加附件。</string>
+    <string name="new_session_client_message_missing">缺少客户端消息 ID。</string>
+    <string name="new_session_attachment_name_missing">有附件缺少文件名。</string>
+    <string name="terminal_service_channel_name">进行中的会话</string>
+    <string name="terminal_service_channel_description">保持当前会话的连接。</string>
+    <string name="terminal_service_title">会话进行中</string>
+    <string name="terminal_service_text">正在保持当前会话的连接。</string>
+    <string name="session_approval_title_codex_command">Codex 请求执行命令</string>
+    <string name="session_approval_title_codex_file_change">Codex 请求修改文件</string>
+    <string name="session_approval_title_codex_permissions">Codex 请求额外权限</string>
+    <string name="session_approval_title_claude_tool">Claude 请求使用工具</string>
     <string name="session_workspace_image_tap_to_load">点击加载图片</string>
 </resources>

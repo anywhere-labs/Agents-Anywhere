@@ -31,6 +31,10 @@ class AgentRuntime(ABC):
     """Connector -> Runtime."""
 
     @property
+    def planning(self):
+        return getattr(self, "_planning", None)
+
+    @property
     def sync_mode(self) -> str:
         """Event runtimes own their acknowledged synchronization lifecycle."""
         return "polling"
