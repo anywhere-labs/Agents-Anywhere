@@ -39,9 +39,11 @@
   - 可以浏览本机原生历史，退出对应 CLI 会话后用「继续任务」恢复原会话；
   - 检测到外部历史变化时停止继续写入；
   - 附件卡片在历史同步和恢复后仍然保留，运行中追加的指示和扩展自动发送的消息各自单独显示，不会和你的消息混在一起；
-  - 所选模型不支持图片时，各端在发送或新建前就会提示，会话仍可继续使用，在执行前被拒绝的消息显示为失败。
+  - 所选模型不支持图片时，各端在发送或新建前就会提示，会话仍可继续使用，在执行前被拒绝的消息显示为失败；
+  - 本机 Pi 支持 1.2.0 及之后的 1.x 版本，不再只认 1.4.0；升级本机 Pi 后已有的 Pi 实例可以继续使用，遇到不兼容的版本会说明原因；
+  - 本机 Pi 尚未登录或没有可用模型时，新建会话会提示先运行 `pi` 完成登录或模型配置，不再只显示「Agent 初始化未完成」。
 
-  [#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)
+  [#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)、[#509](https://github.com/anywhere-labs/Agents-Anywhere/pull/509)
 
 - Desktop 刷新本机设备列表时不再反复返回 Connector 启动页。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 
