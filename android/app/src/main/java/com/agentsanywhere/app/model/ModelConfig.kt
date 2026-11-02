@@ -1,0 +1,110 @@
+package com.agentsanywhere.app.model
+
+/**
+ * Model connections: a gateway address, a write-only key and models, applied to
+ * runtimes that declare a [ModelConnectionCapability]. Wire values stay strings so
+ * a newer Server can add values without breaking older clients.
+ */
+data class ModelConnectionCapability(
+    val maturity: String?,
+    val configField: String,
+    val modelsField: String?,
+    val protocols: List<String>,
+    val modes: List<ModelConnectionMode>,
+    val modeField: String?,
+    val scope: String,
+    val catalogAuto: Boolean,
+    val catalogManual: Boolean,
+    val apply: String,
+)
+
+data class ModelConnectionMode(
+    val id: String,
+    val supported: Boolean,
+    val reason: String?,
+)
+
+data class ModelConnectionStatus(
+    val state: String,
+    val protocol: String?,
+    val scope: String?,
+    val mode: String?,
+    val reason: String?,
+    val externalOwner: String?,
+)
+
+/** A write-only config value: whether one is saved and a short hint to recognize it. */
+data class SecretFieldState(
+    val set: Boolean,
+    val hint: String?,
+)
+
+data class ModelSpec(
+    val id: String,
+    val name: String? = null,
+    val efforts: List<String> = emptyList(),
+    val input: List<String> = emptyList(),
+)
+
+data class ModelOffer(
+    val format: String,
+    val baseUrl: String,
+    val models: List<ModelSpec>,
+)
+
+data class ModelProfile(
+    val id: String,
+    val source: String,
+    val name: String,
+    val originHost: String,
+    val offers: List<ModelOffer>,
+    val keyHint: String?,
+    val strategyName: String?,
+    val state: String,
+    val etag: String,
+    val updatedAt: String?,
+) {
+    val isActive: Boolean get() = state == "active"
+    val isTokens: Boolean get() = source == "tokens"
+    val isManual: Boolean get() = source == "manual"
+}
+
+data class ModelAssignment(
+    val connectorId: String,
+    val runtimeId: String,
+    val profileId: String,
+    val offerFormat: String?,
+    val createdRuntime: Boolean,
+    val status: String,
+    val errorCode: String?,
+    val errorMessage: String?,
+    val appliedAt: String?,
+    val modelConnectionStatus: ModelConnectionStatus?,
+)
+
+data class TokensLink(
+    val status: String,
+    val issuer: String?,
+    val accountId: String,
+    val accountDisplayName: String?,
+    val accountEmail: String?,
+    val linkedAt: String?,
+    val relinkSoon: Boolean,
+) {
+    val linked: Boolean get() = status == "linked"
+    val accountLabel: String get() = accountDisplayName ?: accountEmail ?: accountId
+}
+
+data class TokensLinkStatus(
+    val available: Boolean,
+    val tokensUrl: String?,
+    val secretConfigured: Boolean,
+    val link: TokensLink?,
+)
+
+data class ModelConfigOverview(
+    val secretConfigured: Boolean,
+    val profiles: List<ModelProfile>,
+    val assignments: List<ModelAssignment>,
+    val tokens: TokensLinkStatus?,
+)

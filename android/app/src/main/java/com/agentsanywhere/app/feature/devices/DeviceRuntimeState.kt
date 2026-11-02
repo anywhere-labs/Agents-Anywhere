@@ -3,7 +3,10 @@ package com.agentsanywhere.app.feature.devices
 import com.agentsanywhere.app.api.RemoteDeviceRuntime
 import com.agentsanywhere.app.api.RemoteDeviceRuntimeList
 import com.agentsanywhere.app.api.RemoteDeviceRuntimeStatus
+import com.agentsanywhere.app.model.ModelConnectionCapability
+import com.agentsanywhere.app.model.ModelConnectionStatus
 import com.agentsanywhere.app.model.RuntimeInstanceLabels
+import com.agentsanywhere.app.model.SecretFieldState
 import com.agentsanywhere.app.model.runtimeInstanceLabels
 
 data class DeviceRuntimeList(
@@ -29,6 +32,11 @@ data class DeviceRuntime(
     val error: Map<String, Any?>?,
     val lastDiscoveredAt: String?,
     val updatedAt: String?,
+    val maturity: String? = null,
+    val modelConnection: ModelConnectionCapability? = null,
+    val modelConnectionStatus: ModelConnectionStatus? = null,
+    val secretFields: Map<String, SecretFieldState> = emptyMap(),
+    val managedBy: String? = null,
 ) {
     val name: String
         get() = displayName
@@ -176,7 +184,7 @@ data class DeviceRuntimeConfigDraft(
     }
 
     fun toConfig(): Map<String, Any?> {
-        val next = baseConfig.toMutableMap()
+        val next = withoutBlankSecrets(baseConfig).toMutableMap()
         if (supportsExecutablePath) {
             executablePath.trim().takeIf(String::isNotEmpty)?.let {
                 next["executablePath"] = it
@@ -190,6 +198,25 @@ data class DeviceRuntimeConfigDraft(
         return next
     }
 }
+
+/**
+ * Write-only values such as `modelGateway.apiKey` never come back from the Server.
+ * A save leaves them out so the Server keeps the stored value; a blank one would
+ * read as clearing it.
+ */
+internal fun withoutBlankSecrets(config: Map<String, Any?>): Map<String, Any?> {
+    return config.mapValues { (_, value) ->
+        val nested = value as? Map<*, *> ?: return@mapValues value
+        val secret = nested[WRITE_ONLY_KEY]
+        if (WRITE_ONLY_KEY in nested && (secret == null || (secret as? String)?.isBlank() == true)) {
+            nested.filterKeys { it != WRITE_ONLY_KEY }
+        } else {
+            value
+        }
+    }
+}
+
+private const val WRITE_ONLY_KEY = "apiKey"
 
 enum class RuntimeConfigValidationError {
     BlankName,
@@ -255,6 +282,11 @@ internal fun RemoteDeviceRuntime.toDeviceRuntime(): DeviceRuntime {
         error = error,
         lastDiscoveredAt = lastDiscoveredAt,
         updatedAt = updatedAt,
+        maturity = maturity,
+        modelConnection = modelConnection,
+        modelConnectionStatus = modelConnectionStatus,
+        secretFields = secretFields,
+        managedBy = managedBy,
     )
 }
 

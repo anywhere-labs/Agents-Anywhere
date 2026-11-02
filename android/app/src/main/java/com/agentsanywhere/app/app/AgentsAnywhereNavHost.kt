@@ -24,6 +24,8 @@ import com.agentsanywhere.app.feature.devices.DevicePairingStatus
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
 import com.agentsanywhere.app.feature.files.FilesController
+import com.agentsanywhere.app.feature.modelconfig.ModelConfigController
+import com.agentsanywhere.app.feature.modelconfig.ModelConfigState
 import com.agentsanywhere.app.feature.realtime.SessionRealtimeController
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessions.NewSessionCreateDraft
@@ -58,6 +60,7 @@ import com.agentsanywhere.app.ui.screens.home.ArchivedSessionsScreen
 import com.agentsanywhere.app.ui.screens.home.HomeScreen
 import com.agentsanywhere.app.ui.screens.home.HomeTab
 import com.agentsanywhere.app.ui.screens.home.NewSessionScreen
+import com.agentsanywhere.app.ui.screens.modelconfig.ModelConfigScreen
 import com.agentsanywhere.app.ui.screens.sessiondetail.SessionComposerDraftStore
 import com.agentsanywhere.app.ui.screens.sessiondetail.SessionDetailScreen
 import com.agentsanywhere.app.ui.screens.terminal.TerminalScreen
@@ -66,6 +69,8 @@ import com.agentsanywhere.app.ui.screens.terminal.TerminalScreen
 internal fun AgentsAnywhereNavHost(
     currentDestination: AppDestination,
     sessionsState: SessionsState,
+    modelConfigState: ModelConfigState,
+    modelConfigController: ModelConfigController,
     isRefreshingSessions: Boolean,
     selectedSessionId: String?,
     preparedSessionDraft: NewSessionDraft?,
@@ -220,6 +225,7 @@ internal fun AgentsAnywhereNavHost(
                     profileOpen = profileOpen,
                     onProfileOpenChange = { profileOpen = it },
                     onOpenArchivedSessions = { navigate(AppDestination.ArchivedSessions) },
+                    onOpenModelConfig = { navigate(AppDestination.ModelConfig) },
                     onLoadAccount = onLoadAccount,
                     onLoadAccountAuthConfig = onLoadAccountAuthConfig,
                     onUpdateDisplayName = onUpdateDisplayName,
@@ -348,6 +354,14 @@ internal fun AgentsAnywhereNavHost(
                         onLoadPage = onLoadArchivedPage,
                         onRestoreSession = { onSetSessionArchived(it, false) },
                         onRestoreProject = onRestoreProject,
+                        onBack = { navigate(AppDestination.Sessions) },
+                    )
+                }
+                AppDestination.ModelConfig -> androidx.compose.runtime.key(serverUrl, userId) {
+                    ModelConfigScreen(
+                        state = modelConfigState,
+                        devices = sessionsState.devices,
+                        controller = modelConfigController,
                         onBack = { navigate(AppDestination.Sessions) },
                     )
                 }

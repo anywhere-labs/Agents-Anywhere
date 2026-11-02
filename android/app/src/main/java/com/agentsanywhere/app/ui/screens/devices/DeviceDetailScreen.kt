@@ -52,6 +52,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.ui.screens.modelconfig.RuntimeMaturityBadge
 import com.agentsanywhere.app.feature.devices.DeviceDetailState
 import com.agentsanywhere.app.feature.devices.DeviceRuntime
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
@@ -650,14 +651,21 @@ private fun ConfiguredAgentRow(
     ) {
         RuntimeStatusIndicator(runtime = runtime, pending = pending)
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = runtime.labels.primary,
-                color = LocalAAColors.current.ink,
-                fontSize = 16.5.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = runtime.labels.primary,
+                    color = LocalAAColors.current.ink,
+                    fontSize = 16.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                RuntimeMaturityBadge(maturity = runtime.maturity)
+            }
             Text(
                 text = listOfNotNull(runtime.labels.secondary, runtimeStatusLabel(runtime)).joinToString(" · "),
                 color = if (runtime.status == DeviceRuntimeStatus.Error) {
