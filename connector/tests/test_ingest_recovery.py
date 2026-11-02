@@ -4,7 +4,10 @@ import asyncio
 
 import httpx
 import pytest
+
+from connector.server import ingest as ingest_module
 from connector.server.auth import ConnectorAuthenticationError
+from connector.server.errors import ConnectorNetworkError
 from connector.server.ingest import ConnectorIngestClient
 from connector.server.rpc import ConnectorRpcChannel
 
@@ -82,6 +85,52 @@ def test_cancelled_http_batch_survives_flush_worker_restart():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
             assert calls[0] == calls[1]
+
+    asyncio.run(run())
+
+
+def test_synchronous_batch_retries_transient_failures_then_surfaces_them(monkeypatch):
+    monkeypatch.setattr(ingest_module, "SYNC_BATCH_RETRY_BACKOFF_SECONDS", 0.001)
+
+    async def run():
+        async def token(force):
+            return "token"
+
+        def uplink(failures):
+            attempts = []
+
+            async def transport(request):
+                attempts.append(request.content)
+                if len(attempts) <= len(failures):
+                    failure = failures[len(attempts) - 1]
+                    if isinstance(failure, Exception):
+                        raise failure
+                    return httpx.Response(failure)
+                return httpx.Response(200, json={"accepted": 1, "rejected": []})
+
+            return attempts, httpx.MockTransport(transport)
+
+        # A dropped connection and a 502 no longer fail the caller (and the DSH feed with it).
+        attempts, transport = uplink([httpx.RemoteProtocolError("Server disconnected"), 502])
+        async with httpx.AsyncClient(transport=transport) as http:
+            ingest = ConnectorIngestClient("https://server.test", token, lambda: http, lambda timeout: http)
+            await ingest.ingest_notifications([{"method": "session.state.updated", "params": {"status": "idle"}}])
+            assert len(attempts) == 3 and attempts[0] == attempts[2]
+
+        attempts, transport = uplink([httpx.ConnectError("down")] * (ingest_module.SYNC_BATCH_RETRIES + 1))
+        async with httpx.AsyncClient(transport=transport) as http:
+            ingest = ConnectorIngestClient("https://server.test", token, lambda: http, lambda timeout: http)
+            with pytest.raises(ConnectorNetworkError):
+                await ingest.ingest_notifications([{"method": "session.state.updated", "params": {"status": "idle"}}])
+            assert len(attempts) == ingest_module.SYNC_BATCH_RETRIES + 1
+
+        # A permanent refusal is final.
+        attempts, transport = uplink([400])
+        async with httpx.AsyncClient(transport=transport) as http:
+            ingest = ConnectorIngestClient("https://server.test", token, lambda: http, lambda timeout: http)
+            with pytest.raises(httpx.HTTPStatusError):
+                await ingest.ingest_notifications([{"method": "session.state.updated", "params": {"status": "idle"}}])
+            assert len(attempts) == 1
 
     asyncio.run(run())
 

@@ -31,7 +31,8 @@ declare module '@deepseek-ai/cordis' {
 export type NativeChange = { type: 'stream', id: string, turn: number, step: number, chunk: StreamChunk, time: number, throughSeq: number }
   | { type: 'event', id: string, event: SessionEvent }
   | { type: 'session', id: string } | { type: 'status', id: string }
-  | { type: 'refresh', id: string, interrupted?: boolean }
+  // `resume` recalibrates from the session's committed checkpoint when it still matches.
+  | { type: 'refresh', id: string, interrupted?: boolean, resume?: boolean }
   | { type: 'question', id: string } | { type: 'approval', id: string } | { type: 'capabilities' }
   | { type: 'visibility' } | { type: 'catalogs', catalogType: 'model' | 'permission' } | { type: 'commands' }
 export interface NativeWorkspace { id: string, title: string, path: string, sessionIds: string[] }

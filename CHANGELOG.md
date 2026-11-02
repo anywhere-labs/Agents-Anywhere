@@ -49,6 +49,11 @@
 
 - Connector 上报的时间线条目序号超出范围时只拒绝这条上报，同批其他消息照常保存，不再让整个会话之后的消息都存不进数据库；升级前已经积压的条目会按原顺序排到时间线末尾保存，持续写入失败的会话也不再每秒重试刷屏日志。（[#464](https://github.com/anywhere-labs/Agents-Anywhere/pull/464)）
 
+### DSH 同步
+
+- 首次同步大量或很长的会话时，即使有 Agent 正在持续输出，也不再因事件积压反复从头同步、一直停在「正在同步 DSH 会话…」；积压过多时只重新校准占用最多的那个会话。（[#511](https://github.com/anywhere-labs/Agents-Anywhere/pull/511)）
+- 上传同步数据时连接偶尔中断或 Server 短暂返回 5xx，会先自动重试，不再立即中断并重新同步全部会话。（[#511](https://github.com/anywhere-labs/Agents-Anywhere/pull/511)）
+
 ### Android
 
 - 终端文件页可以预览工作区图片；对话里工具和命令输出提到的工作区截图，点一下即可加载缩略图，再点可打开大图。（[#493](https://github.com/anywhere-labs/Agents-Anywhere/pull/493)）
