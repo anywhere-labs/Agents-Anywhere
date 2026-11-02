@@ -7,9 +7,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from acp import RequestError
 
 from connector.runtimes.acp.domain.definitions import AcpError
+from connector.runtimes.acp.infrastructure.acp.client import AgentClient
 from connector.runtimes.acp.infrastructure.projection import Projection
+from connector.runtimes.acp.profiles.pi.client import PiClient
 from connector.runtimes.acp.profiles.pi.history import (
     read_history,
     scan_histories,
@@ -350,6 +353,81 @@ def test_local_cli_binds_its_own_exported_sdk(tmp_path, monkeypatch):
     cli.write_text('#!/bin/sh\nexec some-other-pi "$@"\n')
     with pytest.raises(AcpError, match="无法将此 pi 入口绑定"):
         resolve_local({})
+
+
+def test_preparation_failure_keeps_actionable_reason(tmp_path):
+    async def run():
+        async def publish(_runtime, notifications, **kwargs):
+            pass
+
+        host = SimpleNamespace(
+            session_namespace="fixture",
+            runtime_id="pi",
+            runtime_kv=SimpleNamespace(path=tmp_path / "state/runtime.json"),
+            publish_runtime_notifications=publish,
+        )
+        provider = PiProvider()
+        config = replace(
+            await provider.validate_config(
+                {"agentDir": str(tmp_path / "agent"), "cliPath": str(tmp_path / "missing-pi")}
+            ),
+            runtime_id="pi",
+        )
+        runtime = await provider.create_runtime(config, host)
+        await runtime.start()
+
+        async def prepared(preparation_id):
+            view = runtime.app.prepare({"preparationId": preparation_id, "cwd": str(tmp_path)})
+            for _ in range(100):
+                if view["phase"] != "opening":
+                    return view
+                await asyncio.sleep(0.02)
+                view = runtime.app.preparation_view(preparation_id)
+            raise AssertionError("preparation did not settle")
+
+        try:
+            view = await prepared("missing")
+            assert view["failure"]["code"] == "pi_cli_missing"
+            assert "未找到本机 pi" in view["failure"]["message"]
+
+            async def unexpected():
+                raise RuntimeError("/private/path secret detail")
+
+            runtime.app.launch_for_preparation = unexpected
+            view = await prepared("unexpected")
+            assert view["failure"] == {
+                "code": "agent_open_failed",
+                "message": "Agent 初始化未完成，请查询原操作。",
+            }
+        finally:
+            await runtime.stop()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        RequestError.auth_required({"authMethods": []}),
+        RequestError(
+            -32603,
+            "Internal error",
+            {"details": "pi_model_unavailable: 原会话模型不可用，已阻止静默切换模型。"},
+        ),
+    ],
+)
+def test_new_session_without_model_or_login_asks_to_configure_pi(tmp_path, monkeypatch, error):
+    async def refuse(self, cwd, **metadata):
+        raise error
+
+    async def ignore(*_args):
+        return {}
+
+    monkeypatch.setattr(AgentClient, "open_session", refuse)
+    client = PiClient(ignore, ignore, agent_dir=tmp_path)
+    with pytest.raises(AcpError, match="完成登录或模型配置") as raised:
+        asyncio.run(client.open_session(str(tmp_path)))
+    assert raised.value.code == "pi_authentication_required"
 
 
 def test_native_attachment_presentation_survives_scan_without_execution_paths(tmp_path):
