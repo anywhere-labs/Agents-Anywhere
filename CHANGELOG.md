@@ -9,6 +9,9 @@
 - Pi 优先复用本机兼容安装的模型、认证和配置；已有受管模型网关配置保持隔离，用户也可明确选择受管环境。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 - Pi 接入需要 Server 执行 `v2_45` 数据库迁移，并配套更新 Connector 和使用此功能的客户端。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 - 统一 Plan 需要 Server 执行 `v2_46` 数据库迁移，并配套更新 Connector、客户端和 DSH Bridge；DSH 还需组合原生 Plan 插件。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- 配置管理需要 Server 执行 `v2_47` 数据库迁移，并配套更新 Connector、各客户端和 DSH 插件；保存手动填写的 Key、链接 Tokens Anywhere 之前，部署者要把 `AGENT_SERVER_SECRET` 设为至少 32 个字符。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
+- 链接 Tokens Anywhere 需要设置 `AGENT_SERVER_TOKENS_URL`（或由管理员在实例设置中填写 Tokens Anywhere 地址），并用 `AGENT_SERVER_PUBLIC_ORIGIN` 指定实例对外的地址。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
+- Runtime 配置中的模型网关 Key 改为只写，接口和实时快照不再返回已保存的 Key；旧版客户端编辑这类配置时需要重新填写 Key。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
 
 ### 统一 Plan
 
@@ -24,6 +27,15 @@
 - 修复英文界面打开斜杠菜单时 `/plan` 说明文案解析失败报错；日期按应用语言而不是浏览器语言显示；Codex 与 Claude 的审批卡标题在中英文界面下各自显示对应语言。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
 - 本机缺少 Pi 等启动前即可确定的工作区准备失败，改为明确的失败状态并显示对应原因，不再标记为「结果未知」后反复查询。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
 - 计划执行开始后不再在时间线末尾长期保留「计划执行已开始」，执行状态改由计划卡片显示；以冒号结尾的引导句作为计划标题时不再保留冒号。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+
+### 配置管理
+
+- 「设置 → 配置管理」可以链接 Tokens Anywhere，或手动添加模型服务，再一键应用到各设备上的 Codex、Claude Code、Pi 和 DSH；在任一客户端修改后，其他客户端立即同步显示。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
+- 应用前会预览每台设备的结果和不能应用的原因；需要重启的 Runtime 有任务在运行时，要允许中断才会应用；DSH 会修改它自身的全局模型配置，需要单独确认。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
+- 可以随时把单个 Runtime 恢复为应用前的配置，之后做的其他修改会保留；断开 Tokens Anywhere 时会先恢复用它的 Runtime，再撤销授权；轮换 Tokens Anywhere 的 Key 后会自动写入所有用它的 Runtime。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
+- Runtime 的模型连接状态分为「未配置」「已保存，待应用」「已应用」「应用失败」「由外部客户端管理」；「已应用」表示 Runtime 已采用配置，不代表连接已验证。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
+- 模型网关的 Key 保存后不再显示，只保留开头和结尾几位用于辨认；不改 Key 时可以留空，更换地址时需要重新填写。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
+- 本机模式的 Pi 不能使用模型网关，应用时会另建一个受管 Pi 实例，本机 Pi 及其历史不受影响。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
 
 ### 会话创建与消息交付
 
@@ -57,7 +69,8 @@
 ### Web 与 Desktop 界面
 
 - Tokens Anywhere 可以用 Agents Anywhere 账号登录：Web 会先显示「登录 Tokens Anywhere」确认页，确认后才向 Tokens Anywhere 提供名称、邮箱和头像，选「取消」则不提供任何信息。部署者设置 `AGENT_SERVER_TOKENS_ANYWHERE_CLIENT_SECRET` 和 `AGENT_SERVER_TOKENS_ANYWHERE_REDIRECT_URI` 后开启。（[#470](https://github.com/anywhere-labs/Agents-Anywhere/pull/470)）
-- 侧边栏新增 Tokens Anywhere 入口，介绍页可以直接前往获取 API 密钥；不需要时可以在页面上或「设置 → 外观」里隐藏。构建 Web 和 Desktop 时设置 `NEXT_PUBLIC_TOKENS_ANYWHERE_URL` 才会出现这个入口。（[#470](https://github.com/anywhere-labs/Agents-Anywhere/pull/470)）
+- 侧边栏新增 Tokens Anywhere 入口，介绍页可以直接前往获取 API 密钥；不需要时可以在页面上或「设置 → 外观」里隐藏。实例设置了 Tokens Anywhere 地址后才会出现这个入口，自部署实例不需要重新构建。（[#470](https://github.com/anywhere-labs/Agents-Anywhere/pull/470)、[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
+- Beta 和实验性的 Runtime 会在状态旁显示「Beta」「实验性」标记，例如「Pi Beta · 运行中」。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
 
 ### Android
 

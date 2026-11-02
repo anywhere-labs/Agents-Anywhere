@@ -148,6 +148,11 @@ dashboard.snapshot
 
 on connect, and sends another full snapshot when a debounced `dashboard.changed` invalidation arrives.
 
+The snapshot also carries the owned runtime instances (`runtimes`) and the model
+configuration overview (`modelConfig`: profiles, where they are applied and the
+Tokens Anywhere link). Neither contains API keys or tokens; see
+[Model configuration API](./model-config.md).
+
 Each snapshot contains the complete owned project and session metadata inventories,
 including both active and archived sessions. `sessionPages` reports no more pages.
 Web and iOS group, filter and sort these sessions locally. Expanding a project,
