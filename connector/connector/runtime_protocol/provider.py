@@ -12,6 +12,7 @@ from connector.runtime_protocol.instance_models import (
     RuntimeSourceKey,
     RuntimeTypeDescriptor,
 )
+from connector.runtime_protocol.model_connection import ModelConnectionStatus
 from connector.runtime_protocol.models import (
     RuntimeConfig,
     RuntimeConfigSchema,
@@ -98,4 +99,15 @@ class RuntimeProvider(ABC):
         return ()
 
     def session_source_key(self, config: RuntimeConfig) -> RuntimeSourceKey | None:
+        return None
+
+    def model_connection_status(
+        self,
+        config: RuntimeConfig,
+    ) -> ModelConnectionStatus | None:
+        """What a running instance did with the config's model connection.
+
+        Providers that declare ``model_connection`` on their descriptor
+        override this; others report nothing.
+        """
         return None

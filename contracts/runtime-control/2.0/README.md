@@ -72,6 +72,32 @@ metadata. `available: false` requires a non-empty `reason`. Capability keys are
 extensible strings with boolean availability values. `recommendationRank` is a
 nullable non-negative safe integer; lower values are recommended first.
 
+## Maturity and model connections
+
+`RuntimeTypeDescriptor.maturity` is `experimental`, `beta` or `stable` and is
+absent for stable runtimes that predate it. Clients show it next to the
+lifecycle status, never instead of it, and must not infer it from whether a
+start succeeded.
+
+`RuntimeTypeDescriptor.modelConnection` declares how the runtime takes a model
+connection from the unified configuration: the config field holding
+`{baseUrl, apiKey}`, an optional model-list field, the API protocols it
+speaks, optional run modes with the reason a mode is unsupported, the scope a
+saved connection changes (`instance`, `session` or `native_global`), whether
+models can be discovered or entered, and when a change applies (`immediate`,
+`new_session` or `restart`). The capability has its own `maturity`. Absent or
+`null` means the runtime takes no model connection; the Server must not guess
+from the runtime type.
+
+An adapter rejects a connection it would not use during
+`runtime.validateConfig` with code `model_connection_unsupported` instead of
+saving and ignoring it. The `runtime.start` result (`runtime-start-result`)
+may carry `modelConnection` with `state` `applied`, `failed`,
+`managed_externally` or `not_configured`, plus the protocol, scope, mode,
+reason, and an external owner such as a desktop app that keeps its own
+settings for the sessions it owns. It never contains the API key. `applied`
+means the runtime took the configuration, not that the endpoint was probed.
+
 ## Independent failures
 
 An invalid request, unavailable provider, or failed discovery affects that

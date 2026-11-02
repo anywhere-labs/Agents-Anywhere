@@ -77,6 +77,13 @@ def runtime_type_descriptor_payload(
         ),
         "capabilities": dict(descriptor.capabilities),
         "metadata": dict(descriptor.metadata),
+        # Absent rather than null: older descriptors are stable by default.
+        **({"maturity": descriptor.maturity} if descriptor.maturity is not None else {}),
+        "modelConnection": (
+            descriptor.model_connection.payload()
+            if descriptor.model_connection is not None
+            else None
+        ),
         "instancePolicy": descriptor.instance_policy,
         "maxInstances": descriptor.effective_max_instances,
     }

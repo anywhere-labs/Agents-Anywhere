@@ -1,5 +1,4 @@
 from __future__ import annotations
-from connector.runtime_protocol.host import runtime_kv_store
 
 import sys
 from collections.abc import Callable, Mapping
@@ -20,7 +19,12 @@ from connector.runtime_protocol import (
     RuntimeUnavailableError,
 )
 from connector.runtime_protocol.filesystem import filesystem_resource_key
-from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtime_protocol.host import RuntimeHostClient, runtime_kv_store
+from connector.runtime_protocol.model_connection import (
+    ModelConnectionCapability,
+    ModelConnectionStatus,
+    applied_status,
+)
 from connector.runtimes.codex import provider_config
 from connector.runtimes.codex.runtime import CodexRuntime
 from connector.runtimes.codex.sdk.binary import (
@@ -32,6 +36,15 @@ from connector.runtimes.codex.sdk.client import sdk_client_from_config
 from connector.runtimes.codex.sdk.discovery import check_codex_sdk
 from connector.runtimes.custom_models import normalize_custom_models
 from connector.runtimes.model_gateway import model_gateway_from_config
+
+# Codex takes the connection as a Responses model provider for the threads its
+# own app-server runs. Threads a Codex App window owns keep the App's config.
+MODEL_CONNECTION = ModelConnectionCapability(
+    maturity="stable",
+    protocols=("openai_responses",),
+    scope="instance",
+    apply="restart",
+)
 
 SdkChecker = Callable[[], dict[str, Any]]
 SdkClientFactory = Callable[[RuntimeConfig], Any]
@@ -103,6 +116,8 @@ class CodexProvider(RuntimeProvider):
             config_schema=await self.get_config_schema(),
             instance_policy=self.instance_policy,
             max_instances=self.max_instances,
+            maturity="stable",
+            model_connection=MODEL_CONNECTION,
             metadata={
                 "configured": True,
                 "sdk": sdk,
@@ -272,6 +287,16 @@ class CodexProvider(RuntimeProvider):
                 key=filesystem_resource_key(codex_home),
                 label=f"Codex Home {codex_home!r}",
             ),
+        )
+
+    def model_connection_status(self, config: RuntimeConfig) -> ModelConnectionStatus:
+        # With IPC on, threads a Codex App window owns use the App's own
+        # model settings, so the report names that owner.
+        ipc = config.values.get("ipcEnabled", True) is not False
+        return applied_status(
+            MODEL_CONNECTION,
+            config.values,
+            external_owner="codex_app" if ipc else None,
         )
 
     def session_source_key(self, config: RuntimeConfig) -> RuntimeSourceKey:

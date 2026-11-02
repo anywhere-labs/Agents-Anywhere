@@ -19,10 +19,24 @@ from connector.runtime_protocol import (
     RuntimeUnavailableError,
 )
 from connector.runtime_protocol.host import RuntimeHostClient, runtime_kv_store
+from connector.runtime_protocol.model_connection import (
+    ModelConnectionCapability,
+    ModelConnectionStatus,
+    applied_status,
+)
 from connector.runtimes.claude import discovery, provider_config
 from connector.runtimes.claude.runtime import ClaudeRuntime
 from connector.runtimes.custom_models import normalize_custom_models
 from connector.runtimes.model_gateway import model_gateway_from_config
+
+# Claude Code takes the connection as Anthropic environment variables in a
+# settings file for every session process this instance starts.
+MODEL_CONNECTION = ModelConnectionCapability(
+    maturity="stable",
+    protocols=("anthropic",),
+    scope="instance",
+    apply="restart",
+)
 
 CLAUDE_CONFIG_SCHEMA_REVISION = 5
 
@@ -82,6 +96,8 @@ class ClaudeProvider(RuntimeProvider):
             config_schema=await self.get_config_schema(),
             instance_policy=self.instance_policy,
             max_instances=self.max_instances,
+            maturity="stable",
+            model_connection=MODEL_CONNECTION,
             metadata={
                 "configured": True,
                 "sdk": sdk,
@@ -175,6 +191,9 @@ class ClaudeProvider(RuntimeProvider):
                 "platform": sys.platform,
             },
         )
+
+    def model_connection_status(self, config: RuntimeConfig) -> ModelConnectionStatus:
+        return applied_status(MODEL_CONNECTION, config.values)
 
     async def create_runtime(
         self,
