@@ -5,6 +5,7 @@ import { receiptKey } from './attachments.js'
 import type { SnapshotPage, SnapshotRequest, SnapshotResult, SyncBatch as WireBatch } from '../generated/dsh-sync.js'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { SessionLogSnapshot } from '@deepseek-ai/dsh-session-query'
 import { createProjection, replayHistory, PROJECTION_VERSION, type SessionProjection } from './history.js'
 import { sessionId } from './identity.js'
@@ -29,7 +30,12 @@ function matchesCheckpoint(value: unknown, projection: SessionProjection): boole
     && projection.settled && checkpoint.throughSeq === projection.throughSeq && checkpoint.historyHash === projection.historyHash
 }
 const MAX_BUFFER = 10_000
+const MAX_QUEUED_BYTES = 16 * 1024 * 1024
 const MAX_BYTES = 6 * 1024 * 1024
+/** Per-session changes that only say "reread this fact"; one queued copy suffices. */
+const SESSION_INVALIDATIONS = new Set(['session', 'status', 'question', 'approval'])
+/** Events with notifications or side effects that a recalibrating baseline does not repeat. */
+const RETAINED_EVENTS = new Set(['turn/end', 'plan/mode', 'model/selection', 'agent-preset/selected'])
 export const MAX_RETAINED_PROJECTIONS = 8
 export const SYNC_FLUSH_MS = Math.ceil(1000 / 30)
 
@@ -42,6 +48,7 @@ export class SyncFeed {
   private queue: NativeChange[] = []
   private queuedInvalidations = new Set<string>()
   private queuedBytes = 0
+  private lastQueued = new Map<string, NativeChange>()
   private projections = new Map<string, SessionProjection>()
   private published = new Map<string, string>()
   private sourceAvailability = new Map<string, string>()
@@ -64,21 +71,94 @@ export class SyncFeed {
       if (this.closed) return
       // These events invalidate current facts; replaying every invalidation
       // cannot recover an intermediate value and can starve the initial scan.
-      if (!('id' in change)) {
-        const key = change.type === 'catalogs' ? `catalogs:${change.catalogType}` : change.type
-        if (this.queuedInvalidations.has(key)) return
-        this.queuedInvalidations.add(key)
+      const invalidation = !('id' in change) ? (change.type === 'catalogs' ? `catalogs:${change.catalogType}` : change.type)
+        : SESSION_INVALIDATIONS.has(change.type) ? `${change.type}:${change.id}` : undefined
+      if (invalidation !== undefined) {
+        if (this.queuedInvalidations.has(invalidation)) return
+        this.queuedInvalidations.add(invalidation)
       }
-      try { this.queuedBytes += jsonBytes(change) }
+      let bytes: number
+      try { bytes = jsonBytes(change) }
       catch (error) {
         this.native.diagnostics.log('error', 'sync.event_failed', { streamId: this.id, sessionId: 'id' in change ? change.id : undefined }, error)
         if (!('id' in change)) return
         change = { type: 'refresh', id: change.id }
+        bytes = jsonBytes(change)
       }
-      if (this.queue.length >= MAX_BUFFER || this.queuedBytes > 16 * 1024 * 1024) { this.fail(new Error('DSH event buffer full; resubscribe for a fresh baseline')); return }
-      this.queue.push(change)
+      this.queuedBytes += bytes
+      if (change.type === 'stream' && this.coalesceStream(change)) return
+      if (this.queue.length >= MAX_BUFFER || this.queuedBytes > MAX_QUEUED_BYTES) {
+        if (!this.compactQueue()) { this.fail(new Error('DSH event buffer full; resubscribe for a fresh baseline')); return }
+      }
+      // A queued stream change may absorb later chunks, so never share the emitted object.
+      const queued = change.type === 'stream' ? { ...change } : change
+      this.queue.push(queued)
+      if ('id' in queued) this.lastQueued.set(queued.id, queued)
       this.wake?.(); this.wake = undefined
     })
+  }
+  /**
+   * Merges a chunk into the session's last queued change when that is a delta of
+   * the same block. Projections and plan drafts concatenate these deltas, so one
+   * merged chunk yields the same result while a long reply stays one queue entry.
+   */
+  private coalesceStream(change: Extract<NativeChange, { type: 'stream' }>): boolean {
+    const previous = this.lastQueued.get(change.id)
+    if (previous?.type !== 'stream' || previous.turn !== change.turn || previous.step !== change.step
+      || previous.throughSeq !== change.throughSeq) return false
+    const merged = mergeChunks(previous.chunk, change.chunk)
+    if (!merged) return false
+    previous.chunk = merged; previous.time = change.time
+    return true
+  }
+  /**
+   * Keeps the feed alive when native changes outpace delivery (for example a
+   * running Agent while the startup scan uploads a long history). The sessions
+   * holding most of the queue give their changes up for one recalibration;
+   * events whose notifications a baseline does not repeat stay queued after it.
+   */
+  private compactQueue(): boolean {
+    const sessions = new Map<string, { count: number, bytes: number }>()
+    const kinds = new Map<string, number>()
+    let length = this.queue.length, bytes = 0
+    for (const change of this.queue) {
+      const size = jsonBytes(change)
+      bytes += size
+      kinds.set(change.type, (kinds.get(change.type) ?? 0) + 1)
+      if (!('id' in change)) continue
+      const session = sessions.get(change.id) ?? { count: 0, bytes: 0 }
+      session.count++; session.bytes += size
+      sessions.set(change.id, session)
+    }
+    // Merged chunks are counted at their full size, so recount before dropping anything.
+    if (length < MAX_BUFFER && bytes <= MAX_QUEUED_BYTES) { this.queuedBytes = bytes; return true }
+    const byCount = length >= MAX_BUFFER
+    const collapsed = new Set<string>()
+    for (const [id, session] of [...sessions].sort(([, a], [, b]) => byCount ? b.count - a.count : b.bytes - a.bytes)) {
+      if (length <= MAX_BUFFER / 2 && bytes <= MAX_QUEUED_BYTES / 2) break
+      collapsed.add(id); length -= session.count - 1; bytes -= session.bytes
+    }
+    if (!collapsed.size) return false
+    const kept: NativeChange[] = [], tails = new Map<string, NativeChange[]>()
+    const interrupted = new Set<string>()
+    for (const change of this.queue) {
+      if (!('id' in change) || !collapsed.has(change.id)) { kept.push(change); continue }
+      if (change.type === 'refresh' && change.interrupted) interrupted.add(change.id)
+      if (change.type === 'event' && RETAINED_EVENTS.has(change.event.type)) {
+        tails.set(change.id, [...tails.get(change.id) ?? [], change])
+      }
+    }
+    for (const id of collapsed) {
+      for (const type of SESSION_INVALIDATIONS) this.queuedInvalidations.delete(`${type}:${id}`)
+      const refresh: NativeChange = { type: 'refresh', id, resume: true, ...interrupted.has(id) ? { interrupted: true } : {} }
+      kept.push(refresh, ...tails.get(id) ?? [])
+      this.lastQueued.set(id, kept.at(-1)!)
+    }
+    this.native.diagnostics.log('warn', 'sync.queue_compacted', { streamId: this.id, queuedEvents: this.queue.length,
+      remainingEvents: kept.length, sessions: collapsed.size, kinds: [...kinds].map(([type, count]) => `${type}:${count}`).join(',') })
+    this.queue = kept
+    this.queuedBytes = kept.reduce((total, change) => total + jsonBytes(change), 0)
+    return this.queue.length < MAX_BUFFER && this.queuedBytes <= MAX_QUEUED_BYTES
   }
   start(): void {
     this.native.diagnostics.log('info', 'sync.started', { streamId: this.id })
@@ -96,7 +176,7 @@ export class SyncFeed {
     this.unwatch()
     this.wake?.(); this.wake = undefined
     this.queue = []; this.queuedBytes = 0; this.projections.clear()
-    this.queuedInvalidations.clear()
+    this.queuedInvalidations.clear(); this.lastQueued.clear()
     this.failedSessions.clear()
     this.bufferedOperations = undefined; this.bufferedBytes = 0
   }
@@ -361,7 +441,9 @@ export class SyncFeed {
             this.planDrafts.reset(id)
             await this.notification('planning.observed', { sessionId: sessionId(this.namespace, id), externalSessionId: id, kind: 'interrupted' })
           }
-          await this.baseline(id); return
+          // Notifications already sent from an unsettled projection may include drafts
+          // that a checkpoint delta cannot remove; only a full capture replaces them.
+          await this.baseline(id, change.resume === true && (this.projections.get(id)?.settled ?? true)); return
         }
         if (!this.published.has(id)) await this.baseline(id)
         if (!this.published.has(id)) return
@@ -504,10 +586,23 @@ export class SyncFeed {
     }
   }
   private takeChanges(): NativeChange[] {
-    this.queuedBytes = 0; this.queuedInvalidations.clear()
+    this.queuedBytes = 0; this.queuedInvalidations.clear(); this.lastQueued.clear()
     return this.queue.splice(0)
   }
 
+}
+
+/** One chunk with the effect of applying `a` then `b`, or undefined when they are not deltas of one block. */
+function mergeChunks(a: StreamChunk, b: StreamChunk): StreamChunk | undefined {
+  if (!('index' in a) || !('index' in b) || a.index !== b.index) return undefined
+  if ((a.type === 'text-delta' && b.type === 'text-delta') || (a.type === 'reasoning-delta' && b.type === 'reasoning-delta')) {
+    return { ...a, text: a.text + b.text }
+  }
+  if (a.type === 'tool-call-delta' && b.type === 'tool-call-delta' && a.id === b.id) {
+    const name = b.name ?? a.name
+    return { ...a, ...name === undefined ? {} : { name }, argumentsDelta: a.argumentsDelta + b.argumentsDelta }
+  }
+  return undefined
 }
 
 function contentItems(items: TimelineItem[]): TimelineItem[] {

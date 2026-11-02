@@ -13,7 +13,23 @@ from pathlib import Path
 from ...domain.definitions import AcpError, fingerprint
 
 PACKAGE = "@earendil-works/pi-coding-agent"
-SUPPORTED_SDK = "1.4.0"
+# Verified with the native handoff script; 1.1.0 installs cannot import their SDK.
+MINIMUM_SDK = (1, 2, 0)
+SUPPORTED_MAJOR = 1
+
+
+def sdk_version_supported(version: object) -> bool:
+    if not isinstance(version, str):
+        return False
+    try:
+        parts = tuple(int(part) for part in version.split("-")[0].split("."))
+    except ValueError:
+        return False
+    return len(parts) == 3 and parts[0] == SUPPORTED_MAJOR and parts >= MINIMUM_SDK
+
+
+def supported_sdk_range() -> str:
+    return f">={'.'.join(map(str, MINIMUM_SDK))} <{SUPPORTED_MAJOR + 1}"
 
 
 def agent_directory(values: dict) -> Path:
@@ -161,14 +177,78 @@ def resolve_local(values: dict) -> PiInstallation:
         )
     manifest = json.loads((root / "package.json").read_text(encoding="utf-8"))
     if (
-        manifest.get("version") != SUPPORTED_SDK
+        not sdk_version_supported(manifest.get("version"))
         or not (root / "dist/index.js").is_file()
     ):
         raise AcpError(
             "pi_sdk_incompatible",
-            f"当前支持本机 Pi SDK {SUPPORTED_SDK}，此安装的 SDK 不兼容；不会使用其他 SDK 替代。",
+            f"本机 Pi {manifest.get('version')} 不受支持，需要 {supported_sdk_range()} 的 npm 安装；不会使用其他 SDK 替代。",
         )
     return PiInstallation(cli.resolve(), node, root.resolve(), manifest["version"])
+
+
+SDK_PROBE = r"""
+import {createRequire} from 'node:module';
+import {readFileSync} from 'node:fs';
+import {dirname, join} from 'node:path';
+import {pathToFileURL} from 'node:url';
+const missing = [];
+const fn = (value, name) => { if (typeof value !== 'function') missing.push(name) };
+let version;
+try {
+  const sdk = await import(pathToFileURL(process.argv[1] + '/dist/index.js').href);
+  version = sdk.VERSION;
+  fn(sdk.createAgentSessionServices, 'createAgentSessionServices');
+  fn(sdk.createAgentSessionFromServices, 'createAgentSessionFromServices');
+  const manager = sdk.SessionManager;
+  for (const name of ['open', 'create', 'forkFrom']) fn(manager?.[name], 'SessionManager.' + name);
+  for (const name of ['_persist', '_rewriteFile', 'getSessionFile', 'getSessionId']) fn(manager?.prototype?.[name], 'SessionManager#' + name);
+  // The agent core is ESM-only; resolve its exported manifest, then its import entry.
+  const manifest = createRequire(process.argv[1] + '/package.json').resolve('@earendil-works/pi-agent-core/package.json');
+  const data = JSON.parse(readFileSync(manifest, 'utf8'));
+  const exported = data.exports?.['.'];
+  const entry = typeof exported === 'string' ? exported : exported?.import ?? exported?.default ?? data.main ?? 'index.js';
+  const core = await import(pathToFileURL(join(dirname(manifest), entry)).href);
+  for (const name of ['prompt', 'steer', 'followUp', 'normalizePromptInput']) fn(core.Agent?.prototype?.[name], 'Agent#' + name);
+} catch (error) {
+  console.log(JSON.stringify({error: String(error?.message ?? error).slice(0, 300)}));
+  process.exit(0);
+}
+console.log(JSON.stringify({version, missing}));
+"""
+
+
+def probe_sdk(installation: PiInstallation) -> None:
+    """Load the SDK once and check the entry points AA's bridge wraps."""
+    try:
+        output = subprocess.check_output(
+            [
+                str(installation.node),
+                "--input-type=module",
+                "-e",
+                SDK_PROBE,
+                str(installation.sdk),
+            ],
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+            stderr=subprocess.DEVNULL,
+        )
+        report = json.loads(output.strip().splitlines()[-1])
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError) as error:
+        raise AcpError(
+            "pi_sdk_incompatible", f"无法加载 Pi {installation.version} 的 SDK。"
+        ) from error
+    if report.get("error"):
+        raise AcpError(
+            "pi_sdk_incompatible",
+            f"无法加载 Pi {installation.version} 的 SDK：{report['error']}",
+        )
+    if report.get("missing"):
+        raise AcpError(
+            "pi_sdk_incompatible",
+            f"Pi {installation.version} 缺少 AA 需要的接口（{'、'.join(report['missing'])}），暂不支持此版本。",
+        )
 
 
 def tree_digest(root: Path) -> str:
