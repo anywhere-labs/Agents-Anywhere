@@ -12,6 +12,8 @@ import { RpcLogOutput } from './log-output.js'
 import { readBridgeLogs, readConnectorRuntimeLogs } from './log-reader.js'
 import type { ConnectorLogQuery, RuntimeLogPage, RuntimeLogQuery, StartupFailureDiagnostic } from '../../contracts/logs.js'
 import { RuntimeDiagnostics } from './diagnostics.js'
+import { DEFAULT_CONNECTOR_SETTINGS, type SessionSyncScope } from '../../contracts/connector.js'
+import type {} from '../rpc/service.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context { agentsAnywhereRuntime: DshRuntimeService }
@@ -71,8 +73,17 @@ export class DshRuntimeService extends Service {
   }
 
   async [Service.init](): Promise<void> {
+    // The onboarding service owns the persisted settings; adopt the scope before
+    // the first inventory so a saved value survives a plugin reload. When that
+    // service is not ready yet, it pushes the scope once it has loaded them.
+    this.applySessionSyncScope(this.ctx.get('agentsAnywhereOnboarding')?.currentConnectorSettings().sessionSyncScope
+      ?? DEFAULT_CONNECTOR_SETTINGS.sessionSyncScope)
     await this.restart()
   }
+
+  /** Adopt the session import scope the user saved. Only the plugin filters
+   * messages, so a new value takes effect without restarting the Connector. */
+  applySessionSyncScope(scope: SessionSyncScope): void { this.native.setSessionScope(scope) }
 
   hasLogConnection(): boolean { return Boolean(this.server.connectorInstance) }
   get logsPath(): string | null { return this.server.logsPath }

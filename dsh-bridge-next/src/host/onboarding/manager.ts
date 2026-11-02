@@ -723,6 +723,9 @@ export class OnboardingManager {
     this.flow?.update({ stage, message })
   }
 
+  /** Persisted settings as they stand now; the DSH runtime mirrors the session import scope. */
+  connectorSettingsSnapshot(): ConnectorSettings { return this.connectorSettings.get() }
+
   private snapshot(): OnboardingSnapshot {
     return {
       desktop: this.desktop, settings: { ...this.settings }, stage: this.stage, message: this.message,

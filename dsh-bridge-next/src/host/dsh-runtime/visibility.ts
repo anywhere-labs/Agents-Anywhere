@@ -1,15 +1,23 @@
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type { SessionSyncScope } from '../../contracts/connector.js'
 
 /** User-role context injections do not establish a user-created conversation. */
 export function isUserMessage(event: SessionEvent): boolean {
   return event.type === 'user/message' && event.data.source.kind === 'user'
 }
 
-/** AA imports conversations after the first human message, independent of UI selection. */
-export function sessionVisible(session: { id: string, origin?: string, hasUserMessage: boolean },
+/** Whether an event is conversation content under the configured import scope.
+ * `all` accepts every user/message event, including plugin and runtime context;
+ * `human` keeps the original rule and ignores those injections. */
+export function isSessionMessage(event: SessionEvent, scope: SessionSyncScope): boolean {
+  return scope === 'all' ? event.type === 'user/message' : isUserMessage(event)
+}
+
+/** AA imports conversations that carry a message in the configured scope, independent of UI selection. */
+export function sessionVisible(session: { id: string, origin?: string, hasMessage: boolean },
   archived: ReadonlySet<string>): boolean {
   return session.origin !== 'subagent' && !archived.has(session.id)
-    && session.hasUserMessage
+    && session.hasMessage
 }
 
 export class ClientPresence {

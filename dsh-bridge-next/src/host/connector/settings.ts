@@ -1,5 +1,5 @@
 import { isAbsolute, join } from 'node:path'
-import { DEFAULT_CONNECTOR_SETTINGS, PYPI_MIRRORS, PYTHON_MIRRORS, type ConnectorSettings } from '../../contracts/connector.js'
+import { DEFAULT_CONNECTOR_SETTINGS, PYPI_MIRRORS, PYTHON_MIRRORS, SESSION_SYNC_SCOPES, type ConnectorSettings } from '../../contracts/connector.js'
 import type { ResolvedConfig } from '../config.js'
 import { readJson, writeJson } from '../storage/files.js'
 import { systemLanguages } from './environment.js'
@@ -28,6 +28,7 @@ export function validateConnectorSettings(value: unknown): ConnectorSettings {
   if (!Number.isInteger(settings.syncIntervalSeconds) || settings.syncIntervalSeconds < 1 || settings.syncIntervalSeconds > 3600) {
     throw new Error('同步间隔必须是 1–3600 之间的整数。')
   }
+  if (!SESSION_SYNC_SCOPES.some(scope => scope.id === settings.sessionSyncScope)) throw new Error('请选择列表中的会话范围。')
   return settings
 }
 
