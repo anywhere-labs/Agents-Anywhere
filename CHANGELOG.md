@@ -43,7 +43,7 @@
   - 本机 Pi 支持 1.2.0 及之后的 1.x 版本，不再只认 1.4.0；升级本机 Pi 后已有的 Pi 实例可以继续使用，遇到不兼容的版本会说明原因；
   - 本机 Pi 尚未登录或没有可用模型时，新建会话会提示先运行 `pi` 完成登录或模型配置，不再只显示「Agent 初始化未完成」。
 
-  [#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)
+  [#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)、[#509](https://github.com/anywhere-labs/Agents-Anywhere/pull/509)
 
 - Desktop 刷新本机设备列表时不再反复返回 Connector 启动页。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 
