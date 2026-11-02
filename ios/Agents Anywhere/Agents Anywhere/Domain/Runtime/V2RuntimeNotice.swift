@@ -80,6 +80,21 @@ nonisolated struct V2RuntimeNotice: Decodable, Identifiable, Hashable {
         createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
         resolvedAt = try container.decodeIfPresent(String.self, forKey: .resolvedAt)
     }
+
+    /// Runtime approval titles arrive in English; translate the known ones by their structured kind.
+    var displayTitle: String {
+        guard interactionType == "approval" else { return title }
+        if case .object? = context["approvalSource"] {
+            switch context["kind"]?.stringValue {
+            case "command": return String(localized: "Codex 请求执行命令")
+            case "file_change": return String(localized: "Codex 请求修改文件")
+            case "permissions": return String(localized: "Codex 请求额外权限")
+            default: break
+            }
+        }
+        if noticeId.hasPrefix("notice_claude_approval_") { return String(localized: "Claude 请求使用工具") }
+        return title
+    }
 }
 
 nonisolated struct V2RuntimeNoticeBlocking: Decodable, Hashable {

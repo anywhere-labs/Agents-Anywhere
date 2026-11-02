@@ -77,6 +77,9 @@ test("RPC starts only after preparation commits its receipt, repeated acquisitio
   assert.equal(f.calls().length, 2); assert.deepEqual(f.calls()[1]?.args.slice(0, 2), ["run", "--no-sync"]);
   assert.equal(f.supervisor.environmentState().status, "ready"); assert.equal(f.ownership.at(-1)?.status, "owned");
   assert.equal(fs.existsSync(path.join(f.root, "data", ".connector-environment.json")), true);
+  const settled = f.ownership.length;
+  await f.supervisor.acquireOwnership();
+  assert.deepEqual(f.ownership.slice(settled).map(state => state.status), ["owned"]);
   f.conflict(true); await assert.rejects(f.supervisor.acquireOwnership());
   assert.equal(f.supervisor.environmentState().status, "ready"); assert.equal(f.ownership.at(-1)?.status, "conflict");
   f.conflict(false); await f.supervisor.acquireOwnership(); assert.equal(f.calls().length, 2);

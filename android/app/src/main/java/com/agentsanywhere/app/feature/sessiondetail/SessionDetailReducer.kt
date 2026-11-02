@@ -11,11 +11,18 @@ internal fun reduceRealtimeEvent(
     event: RemoteSessionEventEnvelope,
     devices: List<AgentDevice>,
 ): SessionDetailState {
-    if (event.protocolVersion != "1.0" || event.sessionId != current.session?.id) return current
+    if (event.protocolVersion !in setOf("1.0", "1.1") || event.sessionId != current.session?.id) return current
     if (event.eventId in current.realtime.processedEventIds) return current
 
     var next = current.copy(realtime = current.realtime.rememberEvent(event.eventId, event.cursor))
     when (event.type) {
+        "planning.state.updated" -> event.payload.planning?.let { observed ->
+            val previous = next.planning
+            if (previous == null || previous.epoch != observed.epoch || observed.revision >= previous.revision) {
+                val docs = (previous?.documents.orEmpty() + listOfNotNull(observed.proposal)).distinctBy { it.planId to it.revision }
+                next = next.copy(planning = observed.copy(documents = docs, actions = observed.actions ?: previous?.actions))
+            }
+        }
         "session.subscribed" -> Unit
         "session.meta.updated" -> event.payload.session?.let { session ->
             val observed = session.toAgentSession(devices.associateBy { it.id })
@@ -112,7 +119,7 @@ internal fun reduceRealtimeEvents(
         if (pendingTimeline.isEmpty()) return
         val seen = mutableSetOf<String>()
         val accepted = pendingTimeline.filter { event ->
-            event.protocolVersion == "1.0" &&
+            event.protocolVersion in setOf("1.0", "1.1") &&
                 event.sessionId == next.session?.id &&
                 event.eventId !in next.realtime.processedEventIds &&
                 seen.add(event.eventId)

@@ -399,7 +399,7 @@ export type WorkspaceState = ReturnType<typeof useSessionCreation> & {
   upsertSession: (session: RealSessionView) => void
   reportSessionStreamProgress: (sessionId: string, nextSeq: number | null) => void
   addOptimisticMessage: (message: OptimisticSessionMessage) => void
-  bindOptimisticSession: (localSessionId: string, session: RealSessionView, attachments?: AttachmentRef[]) => void
+  bindOptimisticSession: (localSessionId: string, session: RealSessionView, attachments?: AttachmentRef[], modeOnly?: boolean) => void
   clearResolvedOptimisticMessages: (sessionId: string, items: TimelineItem[]) => void
   getOptimisticItems: (sessionId: string) => TimelineItem[]
   getOptimisticSessionState: (sessionId: string) => SessionLocalTimelineState | null
@@ -1366,7 +1366,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     })
   }, [setOptimisticTopUntil, sortSessions])
 
-  const bindOptimisticSession = React.useCallback((localSessionId: string, session: RealSessionView, attachments: AttachmentRef[] = []) => {
+  const bindOptimisticSession = React.useCallback((localSessionId: string, session: RealSessionView, attachments: AttachmentRef[] = [], modeOnly = false) => {
     // Start the full stability window when the canonical row first becomes sortable.
     transferOptimisticTop(
       localSessionId,
@@ -1380,7 +1380,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       return next
     })
     setOptimisticMessages((prev) => {
-      const next = prev.map((message) =>
+      const next = prev.filter(message => !modeOnly || (message.sessionId !== localSessionId && message.sessionId !== session.id)).map((message) =>
         message.sessionId === localSessionId || message.sessionId === session.id
           ? {
               ...message,
@@ -1455,6 +1455,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     replaceRoute({ page: "home", projectId })
   }, [replaceRoute])
   const sessionCreation = useSessionCreation({
+    storageScope: `${authSession?.serverUrl ?? ""}:${authSession?.userId ?? ""}`,
     userId: authSession?.userId ?? null,
     token: authSession?.accessToken ?? null,
     addMessage: addOptimisticMessage,
@@ -1635,7 +1636,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     refreshData: fetchData,
   }
 
-  return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>
+  return <WorkspaceContext.Provider value={value}>{children}
+  </WorkspaceContext.Provider>
 }
 
 function sameStableValue(left: unknown, right: unknown): boolean {

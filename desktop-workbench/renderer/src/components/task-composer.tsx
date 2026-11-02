@@ -1,6 +1,13 @@
 "use client"
 
+import { useRuntimeErrorText } from "@/lib/runtime-error-text"
+import { RuntimeWorkflowPanel } from "@/components/session/runtime-workflow-panel"
+import { useWorkspacePreparation } from "@/components/session/use-workspace-preparation"
+import { RuntimeCreationStatus } from "@/components/session/runtime-creation-status"
+import { creationConfigurationDefaults } from "@/features/dashboard/runtime-forms"
+
 import * as React from "react"
+import { parsePlanningCommand } from "@/features/planning/commands"
 import { Monitor, ChevronDown, ArrowUp, Loader2, Check } from "lucide-react"
 import { toast } from "sonner"
 
@@ -141,6 +148,10 @@ export function TaskComposer() {
     updateProject,
   } = useWorkspace()
   const t = useTranslations("dashboard.new")
+  const tPlanning = useTranslations("planning")
+  const errorText = useRuntimeErrorText()
+  const tCommon = useTranslations("common")
+  const tWorkspace = useTranslations("dashboard.workspacePicker")
   const typewriterTitles = React.useMemo(
     () => {
       const keys = isMobile ? MOBILE_NEW_SESSION_TITLE_KEYS : NEW_SESSION_TITLE_KEYS
@@ -250,10 +261,30 @@ export function TaskComposer() {
   const [runtimeCapabilities, setRuntimeCapabilities] = React.useState<ProtocolCapabilitySet | null>(null)
   const [catalogsLoading, setCatalogsLoading] = React.useState(false)
   const [catalogRefreshKey, setCatalogRefreshKey] = React.useState(0)
+  const catalogScope = JSON.stringify([authSession?.accessToken, selectedConnectorId, selectedAgent])
+  const [loadedCatalogScope, setLoadedCatalogScope] = React.useState("")
+  const needsPreparation = loadedCatalogScope === catalogScope && Boolean(findCapability(runtimeCapabilities, "runtime.workspace.prepare", selectedRuntimeScope)?.supported)
+  const prepareRequest = React.useCallback(async () => {
+    if (!workspace?.path) throw new Error(tWorkspace("directoryRequired"))
+    const project = await resolveProject({ connectorId: selectedConnectorId, workspacePath: workspace.path })
+    return { connectorId: selectedConnectorId, runtimeId: selectedAgent, projectId: project.id }
+  }, [resolveProject, selectedConnectorId, selectedAgent, workspace?.path, tWorkspace])
+  const preparation = useWorkspacePreparation(
+    authSession?.accessToken,
+    JSON.stringify([selectedConnectorId, selectedAgent, workspace?.path ?? ""]),
+    needsPreparation && !catalogsLoading && workspace?.path && workspace.connectorId === selectedConnectorId ? prepareRequest : undefined,
+  )
+  const preparedConfiguration = preparation.operation?.state.configuration
+    ? creationConfigurationDefaults(preparation.operation.state.configuration) as Record<string, string | boolean>
+    : {}
+  React.useEffect(() => {
+    if (needsPreparation) setModelCatalog(preparation.operation?.state.phase === "ready" ? preparation.operation.state.catalog ?? null : null)
+  }, [needsPreparation, preparation.operation])
   const [creating, setCreating] = React.useState(false)
   const [recoveryTargetChanged, setRecoveryTargetChanged] = React.useState(false)
   const preserveRecoveredSelections = Boolean(creationEditorDraft && !recoveryTargetChanged)
   const creatingRef = React.useRef(false)
+  const [planningCreation, setPlanningCreation] = React.useState(false)
   const [createTick, setCreateTick] = React.useState(0)
   const [preferenceLoaded, setPreferenceLoaded] = React.useState(false)
   const [preference, setPreference] = React.useState<NewSessionPreference | null>(null)
@@ -406,7 +437,7 @@ export function TaskComposer() {
           selectedRuntimeScope,
         )
         const [modelCatalogResponse, permissionCatalogResponse] = await Promise.all([
-          canUseModelCatalog
+          canUseModelCatalog && !findCapability(capabilitySet, "runtime.workspace.prepare", selectedRuntimeScope)?.supported
             ? dashboardApi.getConnectorRuntimeModelCatalog(
                 authSession.accessToken,
                 selectedConnectorId,
@@ -425,6 +456,7 @@ export function TaskComposer() {
       })
       .then(({ capabilitySet, modelCatalogResponse, permissionCatalogResponse }) => {
         if (cancelled) return
+        setLoadedCatalogScope(catalogScope)
         setRuntimeCapabilities(capabilitySet)
         setModelCatalog(modelCatalogResponse?.catalog ?? null)
         setPermissionCatalog(permissionCatalogResponse?.catalog ?? null)
@@ -446,12 +478,12 @@ export function TaskComposer() {
   // A failed cold-start read is not an authoritative empty catalog. Recover in place.
   React.useEffect(() => {
     if (!authSession?.accessToken || !selectedConnectorId || !selectedAgent || catalogsLoading || modelCatalog) return
-    if (runtimeCapabilities && !findCapability(runtimeCapabilities, CAPABILITY.modelCatalog, selectedRuntimeScope)?.supported) return
+    if (needsPreparation || (runtimeCapabilities && !findCapability(runtimeCapabilities, CAPABILITY.modelCatalog, selectedRuntimeScope)?.supported)) return
     const refresh = () => setCatalogRefreshKey(value => value + 1)
     const timer = window.setTimeout(refresh, 5_000)
     window.addEventListener("focus", refresh)
     return () => { window.clearTimeout(timer); window.removeEventListener("focus", refresh) }
-  }, [authSession?.accessToken, selectedConnectorId, selectedAgent, catalogsLoading, modelCatalog, catalogRefreshKey, runtimeCapabilities, selectedRuntime?.runtimeType])
+  }, [authSession?.accessToken, selectedConnectorId, selectedAgent, catalogsLoading, modelCatalog, catalogRefreshKey, runtimeCapabilities, selectedRuntime?.runtimeType, needsPreparation])
 
   const canUsePermissionCatalog = capabilityIsUsable(
     runtimeCapabilities,
@@ -502,9 +534,12 @@ export function TaskComposer() {
     selectedRuntimeScope,
   )
   const allowedMimeTypes = React.useMemo(() => attachmentMimeTypes(runtimeCapabilities, selectedRuntimeScope), [runtimeCapabilities, selectedRuntimeScope])
+  const modelInputs = preparation.operation?.state.configuration?.options.find(option => option.category === "model")?._meta?.aa?.modelInputModalities
+  const selectedInputs = modelInputs && typeof modelInputs === "object" ? (modelInputs as Record<string, unknown>)[selectedModel] : undefined
+  const imagesAllowed = !Array.isArray(selectedInputs) || selectedInputs.includes("image")
   const [restoredAttachments] = React.useState(() => (creationEditorDraft?.attachments ?? []).map(file => ({ ...file, preview: undefined })))
   const { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop,
-    attachmentsAllowed, attachmentError } = useAttachments({ enabled: canUseAttachments, allowedMimeTypes, initialAttachments: restoredAttachments })
+    attachmentsAllowed, attachmentError } = useAttachments({ enabled: canUseAttachments, allowedMimeTypes, imagesAllowed, initialAttachments: restoredAttachments })
 
   const models = React.useMemo(
     () => modelCatalog?.models.map((item) => ({
@@ -724,6 +759,7 @@ export function TaskComposer() {
     workspace?.connectorId === selectedConnectorId &&
     !creating &&
     !catalogsLoading &&
+    (!needsPreparation || preparation.operation?.state.phase === "ready") &&
     (!requiresModelSelection || Boolean(selectedModelSelection)) &&
     (!requiresPermissionSelection || Boolean(selectedPermissionSelection)) &&
     (attachments.length === 0 || canUseAttachments) && attachmentsAllowed &&
@@ -732,13 +768,27 @@ export function TaskComposer() {
     runtimeInventoryLoading || (
       Boolean(authSession?.accessToken && hasOnlineDevice && selectedConnector && selectedAgent) && catalogsLoading
     )
+  const preparationPhase = preparation.operation?.state.phase
+  const preparationStopped = ["failed", "cancelled", "expired", "consumed"].includes(preparationPhase ?? "")
+  const preparationNeedsAttention = preparation.error || preparation.operation?.state.failure || preparationStopped
+    || preparation.operation?.state.interactions.some(request => request.status === "open")
+  const preparingWorkspace = needsPreparation && workspace?.path && !preparationNeedsAttention && preparationPhase !== "ready"
   const compactSelectors = composerWidth > 0 && composerWidth < 640
 
   const handleCreate = async () => {
+    const planIntent = parsePlanningCommand(prompt)
+    if (planIntent && planIntent.command !== "submit_task") {
+      if (attachments.length) { toast.error(tPlanning("attachmentTask")); return }
+      setPlanningCreation(planIntent.command === "enter_plan"); setPrompt(""); return
+    }
+    const usePlanning = planningCreation || planIntent?.command === "submit_task"
+
     if (!authSession?.accessToken || !selectedConnector || !selectedRuntime || !workspace?.path || creatingRef.current) return
     if (recoveryTargetUnavailable || workspace.connectorId !== selectedConnector.id) return
     if (!prompt.trim() && attachments.length === 0) return
-    if (catalogsLoading) return
+    if (catalogsLoading || (needsPreparation && preparation.operation?.state.phase !== "ready")) return
+    // Prepared-workspace creation does not carry a planning intent yet; refuse instead of silently dropping it.
+    if (usePlanning && needsPreparation) { toast.error(tPlanning("workspaceUnsupported")); return }
     if (requiresModelSelection && !selectedModelSelection) return
     if (requiresPermissionSelection && !selectedPermissionSelection) return
     if (attachments.length > 0 && (!canUseAttachments || !attachmentsAllowed)) return
@@ -855,12 +905,20 @@ export function TaskComposer() {
       // Transfer File/preview ownership to the workspace before navigating away.
       clear({ revokePreviews: false })
       setPrompt("")
+      setPlanningCreation(false)
       startSessionCreation({
         localSessionId, clientMessageId, prompt,
         attachments: selectedAttachments,
         workspace: { ...workspace, projectId: project.id },
         modelId: selectedModel, reasoningId: selectedReasoning, permissionMode: selectedPermissionMode,
-        request: { ...createBody, content: messageText, selections, clientMessageId },
+        request: {
+          ...createBody,
+          content: planIntent ? planIntent.content ?? "" : usePlanning ? prompt : messageText,
+          ...(usePlanning ? { planningIntent: { mode: "plan" as const, operationId: clientMessageId } } : {}),
+          selections, clientMessageId,
+        },
+        ...(needsPreparation && preparation.operation ? { preparedWorkspace: { preparationId: preparation.operation.id,
+          expectedRevision: preparation.operation.state.revision, catalogRevision: preparation.operation.state.catalogRevision!, ...(preparation.operation.state.configuration ? { configuration: preparedConfiguration } : {}) } } : {}),
       }, optimisticMessage, (id) => toolSidebarStore.migrateSession(localSessionId, id))
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t("createFailed"))
@@ -950,6 +1008,15 @@ export function TaskComposer() {
           <span className="ml-1 inline-block h-[0.9em] w-0.5 translate-y-[0.1em] rounded-full bg-muted-foreground motion-safe:animate-[composer-caret_1s_steps(1,end)_infinite]" aria-hidden="true" />
         </h1>
 
+        <RuntimeCreationStatus />
+        {needsPreparation && preparationNeedsAttention ? (
+          <div className="mb-4">
+            {preparation.operation ? <RuntimeWorkflowPanel operation={preparation.operation} pending={preparation.pending} error={preparation.error} onRespond={preparation.respond} onCancel={preparation.cancel} />
+              : <div role="alert" className="flex items-center gap-2 text-sm"><span>{errorText(preparation.error, tCommon("loadFailed"))}</span><Button variant="outline" size="sm" disabled={preparation.pending} onClick={preparation.retry}>{tCommon("retry")}</Button></div>}
+            {preparation.operation && (preparation.error || preparationStopped) ? <Button variant="outline" size="sm" disabled={preparation.pending} onClick={preparation.retry}>{tCommon("retry")}</Button> : null}
+          </div>
+        ) : null}
+        {preparingWorkspace ? <p role="status" className="mb-3 text-sm text-muted-foreground">{tCommon("loading")}</p> : null}
         <div
           ref={composerRef}
           className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20"
@@ -966,6 +1033,7 @@ export function TaskComposer() {
               </div>
             ) : null}
             {recoveryTargetUnavailable ? <p role="alert" className="text-sm text-destructive">{t("restoredTargetUnavailable")}</p> : null}
+            {planningCreation && <Badge variant="outline">{tPlanning("creationIntent")}</Badge>}
             <AttachmentPreviewList attachments={attachments} onRemove={remove} />
             {attachmentError ? <p role="alert" className="text-xs text-destructive">{attachmentError}</p> : null}
             <Textarea

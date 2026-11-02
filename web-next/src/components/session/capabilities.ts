@@ -3,11 +3,16 @@ import type { ProtocolCapability, ProtocolCapabilitySet } from "@/features/dashb
 export const CAPABILITY = {
   sendMessage: "session.send_message",
   commands: "session.commands",
+  planning: "session.planning",
+  planDocument: "session.plan_document",
+  planReview: "session.plan_review",
   interrupt: "session.interrupt",
   steer: "session.steer",
   approveInteraction: "session.interaction.approval",
   attachment: "runtime.attachment",
   runtimeConfig: "runtime.config",
+  configurationRead: "session.configuration.read",
+  configurationUpdate: "session.configuration.update",
   modelCatalog: "catalog.model",
   permissionCatalog: "catalog.permission",
   effortCatalog: "catalog.effort",
@@ -65,4 +70,44 @@ export function attachmentMimeTypes(
 
 export function attachmentMimeAllowed(mediaType: string, allowedMimeTypes: readonly string[] | undefined): boolean {
   return allowedMimeTypes === undefined || allowedMimeTypes.includes(mediaType.split(";", 1)[0]!.trim().toLowerCase())
+}
+
+/** Types the Connector submits as model image input; other image/* files travel as plain files. */
+const MODEL_IMAGE_TYPES: readonly string[] = ["image/png", "image/jpeg", "image/gif", "image/webp"]
+
+export function isImageMediaType(mediaType: string): boolean {
+  return MODEL_IMAGE_TYPES.includes(mediaType.split(";", 1)[0]!.trim().toLowerCase())
+}
+
+export type AttachmentLimits = { enabled: boolean; allowedMimeTypes?: readonly string[]; imagesAllowed: boolean }
+
+/** Why one file cannot be attached: the Agent transport and the selected model are separate reasons. */
+export function attachmentRejection(mediaType: string, limits: AttachmentLimits): { image: boolean; type: boolean } {
+  return {
+    image: !limits.imagesAllowed && isImageMediaType(mediaType),
+    type: !limits.enabled || !attachmentMimeAllowed(mediaType, limits.allowedMimeTypes),
+  }
+}
+
+/** Every reason that applies to the attached files or the last rejected drop, so none is hidden. */
+export function attachmentErrorReasons(
+  mediaTypes: readonly string[],
+  rejected: { image: boolean; type: boolean },
+  limits: AttachmentLimits,
+): ("image" | "type")[] {
+  const current = mediaTypes.map((mediaType) => attachmentRejection(mediaType, limits))
+  return [
+    ...(limits.imagesAllowed || !(rejected.image || current.some((item) => item.image)) ? [] : ["image" as const]),
+    ...(rejected.type || current.some((item) => item.type) ? ["type" as const] : []),
+  ]
+}
+
+/** The selected model narrows the Agent's general attachment transport. */
+export function attachmentImagesAllowed(
+  capabilitySet: ProtocolCapabilitySet | null | undefined,
+  runtime?: RuntimeCapabilityScope,
+): boolean {
+  const metadata = findCapability(capabilitySet, CAPABILITY.attachment, runtime)?.metadata
+  const inputs = metadata && typeof metadata === "object" && "inputModalities" in metadata ? metadata.inputModalities : undefined
+  return !Array.isArray(inputs) || inputs.includes("image")
 }

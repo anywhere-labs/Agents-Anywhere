@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, ClassVar
 
 from loguru import logger
@@ -90,6 +92,7 @@ class ConnectorNotificationService:
             ConnectorProtocolNotificationHandler(store),
             RuntimeCatalogNotificationHandler(store),
             SessionStateNotificationHandler(store),
+            PlanningNotificationHandler(store),
             SessionTurnEndedNotificationHandler(
                 store, timeline_write_buffer, usage_recorder=usage
             ),
@@ -421,8 +424,11 @@ class SessionSourceNotificationHandler:
             except KeyError:
                 pass
         if await self._store.refresh_unchanged_session_source(
-            session_id, connector_id=connector_id, runtime=runtime,
-            runtime_id=runtime_id, **observation,
+            session_id,
+            connector_id=connector_id,
+            runtime=runtime,
+            runtime_id=runtime_id,
+            **observation,
         ):
             return IngestEffect()
         try:
@@ -699,7 +705,29 @@ class SessionTurnEndedNotificationHandler:
                 "invalid_turn_outcome",
                 "session.turnEnded outcome must be completed, interrupted, cancelled, or failed",
             )
-        turn_id = params.get("turnId")
+        source_event_id = params.get("sourceEventId")
+        if source_event_id is not None and (
+            not isinstance(source_event_id, str)
+            or not source_event_id
+            or len(source_event_id) > 160
+        ):
+            raise NotificationValidationError(
+                "invalid_source_event_id",
+                "sourceEventId must be a non-empty bounded string",
+            )
+        source_event = (
+            {
+                "source_event_id": source_event_id,
+                "source_event_digest": hashlib.sha256(
+                    json.dumps(
+                        [outcome, params.get("sourceObservedAt")], sort_keys=True
+                    ).encode()
+                ).hexdigest(),
+            }
+            if source_event_id
+            else {}
+        )
+        turn_id = params.get("turnId") or source_event_id
         if turn_id is not None and (not isinstance(turn_id, str) or not turn_id):
             raise NotificationValidationError(
                 "invalid_turn_id",
@@ -751,6 +779,7 @@ class SessionTurnEndedNotificationHandler:
                 session_id=session_id,
                 source_observed_at=_string_or_none(params.get("sourceObservedAt")),
                 mark_read_on_change=False,
+                **source_event,
             )
         else:
             async with self._timeline_write_buffer.session_fence(session_id):
@@ -758,6 +787,7 @@ class SessionTurnEndedNotificationHandler:
                     session_id=session_id,
                     source_observed_at=_string_or_none(params.get("sourceObservedAt")),
                     mark_read_on_change=False,
+                    **source_event,
                 )
         if session.takeover:
             # Only platform-driven sessions count as usage; a turn started from
@@ -1655,3 +1685,22 @@ def _without_runtime_turn_ids(value: Any) -> Any:
     if isinstance(value, list):
         return [_without_runtime_turn_ids(item) for item in value]
     return value
+
+
+class PlanningNotificationHandler:
+    def __init__(self, store):
+        self._store = store
+
+    async def apply(self, *, connector_id, method, params):
+        if method != "session.planning.updated":
+            return None
+        from agent_server.core.planning.models import PlanningState
+        state = PlanningState.model_validate(params)
+        if not state.runtimeId or not await _session_matches_runtime(self._store, state.sessionId, state.runtime, state.runtimeId, connector_id=connector_id):
+            raise NotificationValidationError("planning_binding_invalid", "Plan session binding is invalid")
+        payload = state.model_dump(mode="json", exclude_unset=True)
+        if state.draft is not None:
+            return IngestEffect(session_id=state.sessionId, planning_state=payload)
+        if not await self._store.save_planning(state.sessionId, payload):
+            return IngestEffect()
+        return IngestEffect(session_id=state.sessionId, planning_state=payload)

@@ -22,13 +22,76 @@ import org.json.JSONObject
 
 private const val INITIAL_TIMELINE_LIMIT = 100
 private const val TIMELINE_PAGE_LIMIT = 100
+class NativeHistoryRejected(val code: String?, message: String) : IllegalStateException(message)
 
 class SessionDetailController(
     private val sessionsApi: SessionsApi,
     private val sessionStore: AuthSessionReader,
 ) {
+
+
     private val optimisticStore = SessionOptimisticMessageStore()
     private val attachmentTransfer = SessionAttachmentTransfer(sessionsApi)
+
+    suspend fun submitPlanning(sessionId: String, command: PlanningCommand, attachments: List<TimelineAttachment>) =
+        executePlanning(sessionId, JSONObject().put("command", command.command).put("content", command.content)
+            .put("operationId", java.util.UUID.randomUUID().toString()).put("attachments", org.json.JSONArray(attachments.map { JSONObject().put("fileId", it.fileId) })))
+
+    suspend fun respondPlanning(sessionId: String, target: com.agentsanywhere.app.api.RemotePlanningState, action: String, feedback: String) =
+        executePlanning(sessionId, JSONObject().put("command", action).put("operationId", java.util.UUID.randomUUID().toString())
+            .put("reviewId", target.review?.reviewId).put("planId", target.review?.planId).put("planRevision", target.review?.planRevision)
+            .put("contentHash", target.review?.contentHash).put("epoch", target.epoch).put("feedback", feedback))
+
+    fun clearPlanningEntry(sessionId: String) { optimisticStore.clear(sessionId) }
+
+    suspend fun loadPlanning(sessionId: String) = withContext(Dispatchers.IO) {
+        runCatching { val auth = authSession(); sessionsApi.planning(auth.serverUrl, auth.accessToken, sessionId) }
+    }
+
+    suspend fun executePlanning(sessionId: String, request: JSONObject) = withContext(Dispatchers.IO) {
+        runCatching {
+            val auth = authSession()
+            val response = sessionsApi.executePlanning(auth.serverUrl, auth.accessToken, sessionId, request)
+            if (!response.optBoolean("ok")) {
+                val message = response.optString("message").takeIf { it.isNotBlank() }
+                if (message != null) throw IllegalStateException(message)
+                throw PlanningFailure(PlanningFailure.Reason.OutcomeUnknown)
+            }
+            sessionsApi.planning(auth.serverUrl, auth.accessToken, sessionId)
+        }
+    }
+    suspend fun nativeHistoryAction(sessionId: String, body: JSONObject, close: Boolean): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val auth = authSession()
+                val workflow = com.agentsanywhere.app.api.RuntimeWorkflowApi()
+                if (close) {
+                    val result = workflow.closeSession(auth.serverUrl, auth.accessToken, sessionId, body)
+                    if (!result.optBoolean("closed")) throw com.agentsanywhere.app.feature.sessions.RuntimeOperationFailure("native_history_release_unconfirmed", "Execution release is unconfirmed.")
+                } else {
+                    sessionsApi.enableTakeover(auth.serverUrl, auth.accessToken, sessionId)
+                    var completed = false
+                    repeat(360) {
+                        if (!completed) {
+                            val result = workflow.recover(auth.serverUrl, auth.accessToken, sessionId, body)
+                            when (result.optString("phase")) {
+                                "completed" -> completed = true
+                                "running" -> kotlinx.coroutines.delay(1000)
+                                "rejected", "failed" -> {
+                                    val failure = result.optJSONObject("failure")
+                                    throw NativeHistoryRejected(
+                                        failure?.optString("code")?.takeIf(String::isNotBlank) ?: "native_history_recovery_failed",
+                                        failure?.optString("message")?.takeIf(String::isNotBlank) ?: "Recovery failed.",
+                                    )
+                                }
+                                else -> throw com.agentsanywhere.app.feature.sessions.RuntimeOperationFailure("native_history_recovery_unconfirmed", "Recovery is unconfirmed. Check the existing operation.")
+                            }
+                        }
+                    }
+                    if (!completed) throw com.agentsanywhere.app.feature.sessions.RuntimeOperationFailure("native_history_recovery_unconfirmed", "Recovery is unconfirmed. Check the existing operation.")
+                }
+            }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+        }
 
     suspend fun load(
         sessionId: String,
@@ -63,6 +126,7 @@ class SessionDetailController(
                     orderingItems = projection.orderingItems,
                 )
                 SessionDetailState(
+                    planning = runCatching { sessionsApi.planning(auth.serverUrl, auth.accessToken, sessionId) }.getOrNull() ?: currentState?.planning,
                     meta = SessionMeta(
                         session = snapshot.session.toAgentSession(devices.associateBy { it.id }),
                         serverTime = snapshot.serverTime,

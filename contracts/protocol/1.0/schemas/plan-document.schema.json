@@ -1,0 +1,76 @@
+{
+  "$id": "urn:agents-anywhere:protocol:1.0:plan-document",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "contentHash": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Contenthash",
+      "type": "string"
+    },
+    "contentState": {
+      "const": "ready",
+      "default": "ready",
+      "title": "Contentstate",
+      "type": "string"
+    },
+    "createdAt": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Createdat"
+    },
+    "markdown": {
+      "maxLength": 2097152,
+      "minLength": 1,
+      "title": "Markdown",
+      "type": "string"
+    },
+    "planId": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Planid",
+      "type": "string"
+    },
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "sourceTurnId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sourceturnid"
+    },
+    "title": {
+      "maxLength": 200,
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "planId",
+    "revision",
+    "contentHash",
+    "title",
+    "markdown"
+  ],
+  "title": "PlanDocument",
+  "type": "object",
+  "x-direction": "egress",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "serialization"
+}

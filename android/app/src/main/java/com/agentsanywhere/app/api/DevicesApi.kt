@@ -311,6 +311,7 @@ class DevicesApi(
             allowed = optBoolean("allowed", true),
             unavailableReason = optNullableString("unavailableReason"),
             parameters = optJSONObject("parameters").toMap(),
+            metadata = optJSONObject("metadata").toMap(),
             runtimeId = optNullableString("runtimeId"),
             runtimeType = optNullableString("runtimeType") ?: optNullableString("runtime"),
         )

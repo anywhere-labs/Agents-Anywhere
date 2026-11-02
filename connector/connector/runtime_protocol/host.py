@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Any
 
 from connector.core.json_kv import JsonKeyValueStore
@@ -22,6 +22,22 @@ UploadProgress = Callable[[int], Awaitable[None]]
 
 class RuntimeHostClient(ABC):
     """Runtime -> Connector."""
+
+    async def observe_planning(self, observation) -> None:
+        handler = getattr(self, "_planning_observer", None)
+        if handler is not None:
+            await handler(observation)
+
+    async def validate_planning_document(self, session_id: str, text: str) -> bool:
+        callback = getattr(self, "_planning_validate", None)
+        return callback(session_id, text) if callback else True
+
+    async def prepare_planning_turn(self, session_id: str, external_id: str | None) -> bool:
+        callback = getattr(self, "_planning_prepare", None)
+        return await callback(session_id, external_id) if callback else False
+
+    async def publish_planning(self, snapshot: dict, durable: bool = False) -> None:
+        raise NotImplementedError("Planning publication is unavailable")
 
     async def prepare_runtime_host(self, runtime_id: str) -> RuntimeHostClient:
         """Bind storage before a provider constructs its runtime; legacy hosts are unchanged."""
@@ -48,6 +64,11 @@ class RuntimeHostClient(ABC):
     @abstractmethod
     def connector_id(self) -> str:
         raise NotImplementedError
+
+    @property
+    def runtime_id(self) -> str | None:
+        """Immutable instance identity when this Host is instance-bound."""
+        return None
 
     @property
     def session_namespace(self) -> str:
@@ -170,7 +191,7 @@ class RuntimeHostClient(ABC):
         machine. Hosts that are not bound to an instance ignore it.
         """
 
-        return None
+        return
 
     async def attachment_download(
         self,

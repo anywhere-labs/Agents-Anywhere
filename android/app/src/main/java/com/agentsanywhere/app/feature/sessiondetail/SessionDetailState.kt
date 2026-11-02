@@ -3,6 +3,7 @@ package com.agentsanywhere.app.feature.sessiondetail
 import com.agentsanywhere.app.model.AgentSession
 
 data class SessionDetailState(
+    val planning: com.agentsanywhere.app.api.RemotePlanningState? = null,
     val meta: SessionMeta = SessionMeta(),
     val timeline: SessionTimelineState = SessionTimelineState(),
     val runtime: SessionRuntimeState = SessionRuntimeState(),

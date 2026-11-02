@@ -628,11 +628,13 @@ def test_session_runtime_catalog_reads_start_active_runtime_before_rpc(tmp_path)
         "runtime": "codex",
         "runtimeId": "codex",
         "limit": 200,
+        "sessionId": session_id,
     }
     assert rpc.requests[2][2] == {
         "runtime": "codex",
         "runtimeId": "codex",
         "limit": 200,
+        "sessionId": session_id,
     }
 
 

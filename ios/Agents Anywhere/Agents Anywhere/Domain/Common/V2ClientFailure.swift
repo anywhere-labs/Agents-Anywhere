@@ -17,6 +17,7 @@ nonisolated struct V2ClientFailure: Error, Hashable, LocalizedError {
         if let failure = error as? Self { self = failure; return }
         message = (error as? DecodingError)?.v2Description ?? error.localizedDescription
         code = (error as? HTTPError)?.serverCode ?? (error as? V2RuntimeError)?.code
+            ?? (error as? V2RuntimeWorkflowFailure)?.workflow.state.failure?.code
         if error is CancellationError || (error as? URLError)?.code == .cancelled {
             kind = .cancelled
         } else if let error = error as? URLError {
@@ -34,7 +35,8 @@ nonisolated struct V2ClientFailure: Error, Hashable, LocalizedError {
             case .streamOverflow: kind = .transient
             default: kind = .invalidResponse
             }
-        } else if error is DecodingError { kind = .invalidResponse }
+        } else if let error = error as? V2RuntimeWorkflowFailure { kind = error.definitelyNotAccepted ? .rejected : .transient }
+        else if error is DecodingError { kind = .invalidResponse }
         else if error is V2BusinessError { kind = .rejected }
         else { kind = .transient }
     }
@@ -45,6 +47,7 @@ nonisolated struct V2ClientFailure: Error, Hashable, LocalizedError {
     /// Once a write has started, only a definite local/HTTP rejection proves it was not accepted.
     /// RPC timeouts, 5xx, decoding failures and cancellation can all follow server execution.
     static func isDefiniteWriteRejection(_ error: Error) -> Bool {
+        if let failure = error as? V2RuntimeWorkflowFailure { return failure.definitelyNotAccepted }
         if error is V2BusinessError { return true }
         if let failure = error as? Self { return [.offline, .rejected, .authentication, .unavailable].contains(failure.kind) }
         guard let error = error as? HTTPError else { return false }

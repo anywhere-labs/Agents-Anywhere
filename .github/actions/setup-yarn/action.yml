@@ -1,0 +1,37 @@
+name: Install Yarn dependencies
+description: Install from current manifests, reusing downloaded archives without caching lockfiles or node_modules
+inputs:
+  project:
+    description: Repository-relative Yarn project directory
+    required: true
+  node-version:
+    description: Node.js version
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: ${{ inputs.node-version }}
+        # setup-node's built-in dependency cache requires a committed lockfile.
+        package-manager-cache: false
+    - name: Enable Corepack
+      shell: bash
+      run: corepack enable
+    - name: Restore Yarn downloads
+      uses: actions/cache@v5
+      with:
+        path: ${{ runner.temp }}/yarn-cache/${{ inputs.project }}
+        key: yarn-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.node-version }}-${{ inputs.project }}-${{ hashFiles(format('{0}/package.json', inputs.project), format('{0}/*/package.json', inputs.project), format('{0}/.yarnrc.yml', inputs.project)) }}
+        restore-keys: |
+          yarn-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.node-version }}-${{ inputs.project }}-
+    - name: Install dependencies from current manifests
+      shell: bash
+      working-directory: ${{ inputs.project }}
+      env:
+        YARN_ENABLE_GLOBAL_CACHE: "false"
+        YARN_CACHE_FOLDER: ${{ runner.temp }}/yarn-cache/${{ inputs.project }}
+        YARN_ENABLE_IMMUTABLE_INSTALLS: "false"
+      # Always resolve/install, even on a cache hit: there is no committed lockfile.
+      run: corepack yarn install

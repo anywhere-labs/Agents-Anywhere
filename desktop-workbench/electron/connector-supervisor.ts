@@ -99,6 +99,7 @@ type ConnectorLauncher = {
 export class ConnectorSupervisor {
   private readonly environment: ConnectorEnvironment;
   private acquisition: Promise<void> | null = null;
+  private claimedProcess: ChildProcessWithoutNullStreams | null = null;
   private maintenance: Promise<unknown> | null = null;
   private generation = 0;
   private rpcProcess: ChildProcessWithoutNullStreams | null = null;
@@ -297,10 +298,16 @@ export class ConnectorSupervisor {
 
   private async acquire(): Promise<void> {
     try {
-      this.options.onOwnership?.({ status: "checking" });
+      // Revalidating a live lease must not unmount the workspace. Device-list
+      // refreshes also validate ownership and would otherwise restart that loop.
+      if (!this.rpcProcess || this.claimedProcess !== this.rpcProcess) {
+        this.options.onOwnership?.({ status: "checking" });
+      }
       await this.request("connector.acquireOwnership", undefined, { requiresConfig: false, timeoutMs: CONTROL_CONNECT_TIMEOUT_MS });
+      this.claimedProcess = this.rpcProcess;
       this.options.onOwnership?.({ status: "owned" });
     } catch (error) {
+      this.claimedProcess = null;
       const conflict = error instanceof ConnectorRpcError && error.ownershipConflict;
       const message = errorMessage(error);
       this.log({ level: conflict ? "WARNING" : "ERROR", message: `Could not acquire Connector ownership: ${message}` });

@@ -368,7 +368,12 @@ class SyncRelay:
             raise ValueError("Invalid runtime notification")  # noqa: TRY004 - protocol validation error
         # Use the existing typed Host API, just like Codex and Claude. The Host
         # owns instance binding, coalescing, WebSocket delivery and HTTP fallback.
-        if method == "timeline.itemUpsert":
+        if method == "planning.observed":
+            from connector.runtime_protocol.planning import PlanningObservation
+            await self.host.observe_planning(PlanningObservation(session_id=params["sessionId"],
+                external_session_id=params.get("externalSessionId"), kind=params["kind"],
+                native_id=params.get("nativeId", ""), text=params.get("text", ""), mode=params.get("mode", "unknown")))
+        elif method == "timeline.itemUpsert":
             item = timeline_item(params["item"])
             if item.session_id != params.get("sessionId"):
                 raise ValueError("Incremental item belongs to a different session")
@@ -398,7 +403,9 @@ class SyncRelay:
                 turn_id=params.get("turnId"), outcome=params.get("outcome", "completed"), metadata=params.get("metadata"),
             )
         elif method == "notice.upsert":
-            await self.host.notice_upsert(session_notice(params))
+            from connector.runtimes.dsh.planning import observe_dsh_notice
+            if not await observe_dsh_notice(self.host, params):
+                await self.host.notice_upsert(session_notice(params))
         elif method == "runtime.capability.updated":
             await self.host.runtime_capabilities_update(capability_set(params, connector_id=self.host.connector_id))
         elif method == "session.capability.updated":

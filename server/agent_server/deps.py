@@ -195,3 +195,8 @@ def require_admin(user: UserView = Depends(current_user)) -> UserView:
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="admin role required")
     return user
+
+
+def get_runtime_workflow_service(conn: HTTPConnection):
+    from agent_server.services.runtime_workflows import RuntimeWorkflowService
+    return RuntimeWorkflowService(conn.app.state.store, conn.app.state.rpc, conn.app.state.device_runtime_service)

@@ -8,6 +8,12 @@ import java.util.Base64
 class SessionsApi(
     private val client: ApiClient = ApiClient(),
 ) {
+    fun planning(serverUrl: String, token: String, sessionId: String): RemotePlanningState =
+        client.getJson(serverUrl = serverUrl, path = "/sessions/${sessionId.urlEncode()}/planning", authorizationToken = token).toRemotePlanningState()
+
+    fun executePlanning(serverUrl: String, token: String, sessionId: String, request: JSONObject): JSONObject =
+        client.postJson(serverUrl = serverUrl, path = "/sessions/${sessionId.urlEncode()}/planning", body = request, authorizationToken = token)
+
     fun listProjects(
         serverUrl: String,
         authorizationToken: String,
@@ -152,6 +158,7 @@ class SessionsApi(
                 put("runtimeId", it)
             }
             put("content", request.content)
+            if (request.planningIntent) put("planningIntent", JSONObject().put("mode", "plan").put("operationId", request.clientMessageId))
             request.title?.takeIf(String::isNotBlank)?.let { put("title", it) }
             request.cwd?.takeIf(String::isNotBlank)?.let { put("cwd", it) }
             request.selections.filterValues(String::isNotBlank).takeIf { it.isNotEmpty() }?.let {
@@ -618,6 +625,10 @@ class SessionsApi(
         ).toRemoteRpcResponse()
     }
 
+    internal fun getWorkflowSession(server: String, token: String, id: String): RemoteSession = client.getJson(serverUrl = server, authorizationToken = token, path = "/sessions/${id.urlEncode()}/meta").getJSONObject("session").toRemoteSession()
+
+    internal fun parseScopedModelCatalog(value: JSONObject): RemoteRuntimeModelCatalogResponse = RemoteRuntimeModelCatalogResponse(catalog = value.toRemoteRuntimeModelCatalog(), serverTime = null)
+
     internal fun parseSession(value: JSONObject): RemoteSession = value.toRemoteSession()
 
     internal fun parseProject(value: JSONObject): RemoteProject = value.toRemoteProject()
@@ -638,7 +649,8 @@ class SessionsApi(
                 session = payload.optJSONObject("session")?.toRemoteSession(),
                 item = payload.optJSONObject("item")?.toRemoteTimelineItem(),
                 items = payload.optJSONArray("items").toObjectList { toRemoteTimelineItem() },
-                state = payload.optJSONObject("state")?.toRemoteSessionRuntimeState(),
+                state = payload.optJSONObject("state")?.takeIf { value.optString("type") != "planning.state.updated" }?.toRemoteSessionRuntimeState(),
+                planning = payload.optJSONObject("state")?.takeIf { value.optString("type") == "planning.state.updated" }?.toRemotePlanningState(),
                 notice = payload.optJSONObject("notice")?.toRemoteRuntimeNotice(),
                 notices = payload.optJSONArray("notices").toObjectList { toRemoteRuntimeNotice() },
                 capabilitySet = payload.optJSONObject("capabilitySet")?.toRemoteRuntimeCapabilitySet(),
@@ -842,6 +854,7 @@ class SessionsApi(
             allowed = optBoolean("allowed", true),
             unavailableReason = optNullableString("unavailableReason"),
             parameters = optJSONObject("parameters").toMap(),
+            metadata = optJSONObject("metadata").toMap(),
             runtimeId = optNullableString("runtimeId"),
             runtimeType = optNullableString("runtimeType") ?: optNullableString("runtime"),
         )

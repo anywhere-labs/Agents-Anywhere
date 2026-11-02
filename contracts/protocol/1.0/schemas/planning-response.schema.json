@@ -1,0 +1,478 @@
+{
+  "$defs": {
+    "PlanDocument": {
+      "additionalProperties": false,
+      "properties": {
+        "contentHash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Contenthash",
+          "type": "string"
+        },
+        "contentState": {
+          "const": "ready",
+          "default": "ready",
+          "title": "Contentstate",
+          "type": "string"
+        },
+        "createdAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Createdat"
+        },
+        "markdown": {
+          "maxLength": 2097152,
+          "minLength": 1,
+          "title": "Markdown",
+          "type": "string"
+        },
+        "planId": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Planid",
+          "type": "string"
+        },
+        "revision": {
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "sourceTurnId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sourceturnid"
+        },
+        "title": {
+          "maxLength": 200,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "planId",
+        "revision",
+        "contentHash",
+        "title",
+        "markdown"
+      ],
+      "title": "PlanDocument",
+      "type": "object"
+    },
+    "PlanDraft": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "contentState": {
+          "enum": [
+            "drafting",
+            "failed",
+            "interrupted"
+          ],
+          "title": "Contentstate",
+          "type": "string"
+        },
+        "draftId": {
+          "title": "Draftid",
+          "type": "string"
+        },
+        "planId": {
+          "title": "Planid",
+          "type": "string"
+        },
+        "revision": {
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "draftId",
+        "planId",
+        "revision",
+        "seq",
+        "content",
+        "contentState"
+      ],
+      "title": "PlanDraft",
+      "type": "object"
+    },
+    "PlanReview": {
+      "additionalProperties": false,
+      "properties": {
+        "actions": {
+          "items": {
+            "enum": [
+              "enter_plan",
+              "exit_plan",
+              "submit_task",
+              "approve_and_execute",
+              "request_revision",
+              "dismiss_review"
+            ],
+            "type": "string"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "contentHash": {
+          "title": "Contenthash",
+          "type": "string"
+        },
+        "planId": {
+          "title": "Planid",
+          "type": "string"
+        },
+        "planRevision": {
+          "minimum": 1,
+          "title": "Planrevision",
+          "type": "integer"
+        },
+        "reviewId": {
+          "title": "Reviewid",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "open",
+            "responding",
+            "approved",
+            "revision_requested",
+            "dismissed",
+            "withdrawn",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reviewId",
+        "planId",
+        "planRevision",
+        "contentHash",
+        "status"
+      ],
+      "title": "PlanReview",
+      "type": "object"
+    },
+    "PlanningCapabilities": {
+      "properties": {
+        "actions": {
+          "items": {
+            "enum": [
+              "enter_plan",
+              "exit_plan",
+              "submit_task",
+              "approve_and_execute",
+              "request_revision",
+              "dismiss_review"
+            ],
+            "type": "string"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "contentStreaming": {
+          "default": "final_only",
+          "enum": [
+            "native_delta",
+            "final_only"
+          ],
+          "title": "Contentstreaming",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "supported": {
+          "default": false,
+          "title": "Supported",
+          "type": "boolean"
+        }
+      },
+      "title": "PlanningCapabilities",
+      "type": "object"
+    },
+    "PlanningState": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "$ref": "#/$defs/PlanningCapabilities"
+        },
+        "draft": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanDraft"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "effectiveMode": {
+          "default": "unknown",
+          "enum": [
+            "plan",
+            "normal",
+            "unknown"
+          ],
+          "title": "Effectivemode",
+          "type": "string"
+        },
+        "epoch": {
+          "default": "",
+          "title": "Epoch",
+          "type": "string"
+        },
+        "execution": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Execution"
+        },
+        "executionProgress": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Executionprogress"
+        },
+        "freshness": {
+          "default": "unknown",
+          "enum": [
+            "fresh",
+            "stale",
+            "unknown"
+          ],
+          "title": "Freshness",
+          "type": "string"
+        },
+        "operation": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Operation"
+        },
+        "proposal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanDocument"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "proposals": {
+          "items": {
+            "$ref": "#/$defs/PlanDocument"
+          },
+          "title": "Proposals",
+          "type": "array"
+        },
+        "requestedMode": {
+          "anyOf": [
+            {
+              "enum": [
+                "plan",
+                "normal"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Requestedmode"
+        },
+        "review": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanReview"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "revision": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "runtime": {
+          "title": "Runtime",
+          "type": "string"
+        },
+        "runtimeId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtimeid"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "runtime"
+      ],
+      "title": "PlanningState",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:protocol:1.0:planning-response",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Code"
+    },
+    "details": {
+      "additionalProperties": true,
+      "title": "Details",
+      "type": "object"
+    },
+    "execution": {
+      "default": "not_requested",
+      "enum": [
+        "not_requested",
+        "accepted",
+        "started",
+        "rejected",
+        "unknown"
+      ],
+      "title": "Execution",
+      "type": "string"
+    },
+    "message": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Message"
+    },
+    "ok": {
+      "title": "Ok",
+      "type": "boolean"
+    },
+    "operationId": {
+      "title": "Operationid",
+      "type": "string"
+    },
+    "outcome": {
+      "enum": [
+        "applied",
+        "pending",
+        "rejected",
+        "unknown"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "retryable": {
+      "const": false,
+      "default": false,
+      "title": "Retryable",
+      "type": "boolean"
+    },
+    "state": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PlanningState"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "operationId",
+    "outcome",
+    "ok"
+  ],
+  "title": "PlanningResponse",
+  "type": "object",
+  "x-direction": "egress",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "serialization"
+}
