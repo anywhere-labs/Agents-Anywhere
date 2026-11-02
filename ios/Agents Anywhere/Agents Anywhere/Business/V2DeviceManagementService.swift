@@ -3,6 +3,14 @@ import Foundation
 struct V2DeviceManagementService {
     let connectorAPI: any V2ConnectorAPIProtocol
 
+    /// Configuration is persisted even when an Agent or its device is offline.
+    func hasConfiguredAgents(connectors: [V2Connector]) async throws -> Bool {
+        for connector in connectors {
+            if try await runtimes(connectorId: connector.id).contains(where: { $0.configured }) { return true }
+        }
+        return false
+    }
+
     func runtimes(connectorId: V2ConnectorID) async throws -> [V2DeviceRuntime] {
         try await connectorAPI.listRuntimes(connectorId: connectorId).runtimes
     }

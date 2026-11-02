@@ -9,6 +9,11 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.res.stringResource
+import com.agentsanywhere.app.R
+import com.agentsanywhere.app.ui.screens.devices.DeviceConfirmDialog
+import kotlinx.coroutines.CancellationException
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -20,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.agentsanywhere.app.feature.auth.WebLoginViewModel
 import com.agentsanywhere.app.feature.devices.DeviceRuntime
+import com.agentsanywhere.app.feature.devices.hasConfiguredDeviceAgents
 import com.agentsanywhere.app.feature.devices.DevicePairingStatus
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
@@ -155,6 +161,33 @@ internal fun AgentsAnywhereNavHost(
         refreshKey = deviceAgentPreviewRefreshKey,
         onListDeviceRuntimes = onListDeviceRuntimes,
     )
+    var agentReminderChecked by remember(serverUrl, userId) { mutableStateOf(false) }
+    var agentReminderOpen by remember(serverUrl, userId) { mutableStateOf(false) }
+    LaunchedEffect(currentDestination, sessionsState.hasLoaded, sessionsState.devices, isRefreshingSessions, serverUrl, userId) {
+        if (currentDestination == AppDestination.DeviceSetup) agentReminderChecked = false
+        if (currentDestination != AppDestination.Sessions || !sessionsState.hasLoaded ||
+            sessionsState.isLoading || isRefreshingSessions || sessionsState.errorMessage != null || agentReminderChecked) return@LaunchedEffect
+        try {
+            val configured = hasConfiguredDeviceAgents(sessionsState.devices, onListDeviceRuntimes)
+            agentReminderChecked = true
+            agentReminderOpen = !configured
+        } catch (error: CancellationException) { throw error }
+        catch (_: Exception) { /* Unknown inventory must not be treated as empty. */ }
+    }
+    if (agentReminderOpen && currentDestination == AppDestination.Sessions && !profileOpen) {
+        DeviceConfirmDialog(
+            title = stringResource(R.string.agent_reminder_title),
+            body = stringResource(R.string.agent_reminder_description),
+            confirmLabel = stringResource(R.string.agent_reminder_add),
+            dismissLabel = stringResource(R.string.agent_reminder_later),
+            onDismiss = { agentReminderOpen = false },
+            onConfirm = {
+                agentReminderOpen = false
+                val device = sessionsState.devices.firstOrNull { it.online } ?: sessionsState.devices.firstOrNull()
+                if (device != null) onOpenDevice(device) else navigate(AppDestination.DeviceSetup)
+            },
+        )
+    }
     val sessionComposerDraftStore = remember(context, userId) {
         SessionComposerDraftStore(context.applicationContext, userId)
     }
@@ -328,6 +361,12 @@ internal fun AgentsAnywhereNavHost(
                 )
                 AppDestination.DeviceSetup -> androidx.compose.runtime.key(serverUrl, userId) {
                     AddDeviceScreen(
+                        onCheckAgents = {
+                            runCatching {
+                                hasConfiguredDeviceAgents(sessionsState.devices, onListDeviceRuntimes)
+                            }
+                        },
+                        onConfigureAgents = onOpenDevice,
                         devices = sessionsState.devices,
                         pairingStates = devicePairingStates,
                         onBack = { navigate(deviceSetupReturnDestination) },

@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.config.AppConfig
+import com.agentsanywhere.app.feature.devices.DevicePairingCompletion
 import com.agentsanywhere.app.feature.devices.DevicePairingStatus
 import com.agentsanywhere.app.feature.devices.DevicePairingStep
 import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
@@ -42,6 +43,8 @@ import kotlinx.coroutines.launch
 fun AddDeviceScreen(
     devices: List<AgentDevice>,
     pairingStates: Map<String, DevicePairingStatus>,
+    onCheckAgents: suspend () -> Result<Boolean>,
+    onConfigureAgents: (AgentDevice) -> Unit,
     onBack: () -> Unit,
     onComplete: () -> Unit,
     onCreateCredential: suspend (String) -> Result<DeviceSetupCredential>,
@@ -64,8 +67,10 @@ fun AddDeviceScreen(
     var busy by remember { mutableStateOf(false) }
     var waitingOnline by remember { mutableStateOf(false) }
     var createdThisFlow by remember { mutableStateOf(false) }
+    var showAgentReminder by remember { mutableStateOf(false) }
     var showExitConfirmation by remember { mutableStateOf(false) }
     val connectorId = credential?.device?.id
+    val pairingCompletion = remember(connectorId) { DevicePairingCompletion() }
     val online = connectorId != null && (pairingStates[connectorId] == DevicePairingStatus.Online ||
         devices.any { it.id == connectorId && it.online })
     val scrollState = rememberScrollState()
@@ -142,6 +147,21 @@ fun AddDeviceScreen(
         }
     }
 
+    suspend fun checkAndComplete() {
+        if (onCheckAgents().getOrThrow()) onComplete() else showAgentReminder = true
+    }
+
+    fun completeSetup() {
+        if (busy) return
+        busy = true
+        scope.launch {
+            try { checkAndComplete() }
+            catch (error: CancellationException) { throw error }
+            catch (error: Exception) { showError(error.message ?: context.getString(R.string.device_runtime_load_failed)) }
+            finally { busy = false }
+        }
+    }
+
     fun claimPairCode() {
         val current = credential ?: return
         if (busy || pairCode.length != 6) return
@@ -149,13 +169,21 @@ fun AddDeviceScreen(
         unfocus()
         scope.launch {
             try {
-                onClaimPairCode(current, pairCode).getOrThrow()
-                onClearPairing(current.device.id)
-                onComplete()
+                val hasAgents = pairingCompletion.complete(
+                    claimPairing = {
+                        onClaimPairCode(current, pairCode).getOrThrow()
+                        onClearPairing(current.device.id)
+                    },
+                    checkAgents = { onCheckAgents().getOrThrow() },
+                )
+                if (hasAgents) onComplete() else showAgentReminder = true
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                showError(error.message ?: context.getString(R.string.device_pairing_errors_claim_failed))
+                showError(error.message ?: context.getString(
+                    if (pairingCompletion.claimed) R.string.device_runtime_load_failed
+                    else R.string.device_pairing_errors_claim_failed,
+                ))
             } finally {
                 busy = false
             }
@@ -167,7 +195,7 @@ fun AddDeviceScreen(
         if (waitingOnline && online && connectorId != null) {
             onClearPairing(connectorId)
             unfocus()
-            onBack()
+            completeSetup()
         }
     }
     BackHandler(onBack = ::goBack)
@@ -202,7 +230,7 @@ fun AddDeviceScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     DevicePairingStepActions(
                         step = step, name = name, code = pairCode, busy = busy, onStep = ::showStep,
-                        onCreate = ::createCredential, onClaim = ::claimPairCode, onComplete = onComplete,
+                        onCreate = ::createCredential, onClaim = ::claimPairCode, onComplete = ::completeSetup,
                         onDownload = {
                             runCatching { uriHandler.openUri(AppConfig.DESKTOP_DOWNLOAD_URL) }
                                 .onFailure { showError(context.getString(R.string.device_pairing_open_download_failed)) }
@@ -214,6 +242,20 @@ fun AddDeviceScreen(
         }
     }
 
+    if (showAgentReminder) {
+        DeviceConfirmDialog(
+            title = stringResource(R.string.agent_reminder_title),
+            body = stringResource(R.string.agent_reminder_description),
+            confirmLabel = stringResource(R.string.agent_reminder_add),
+            dismissLabel = stringResource(R.string.agent_reminder_skip),
+            onDismiss = { showAgentReminder = false; onComplete() },
+            onConfirm = {
+                showAgentReminder = false
+                val device = devices.firstOrNull { it.id == connectorId } ?: devices.firstOrNull { it.online }
+                if (device != null) onConfigureAgents(device) else onComplete()
+            },
+        )
+    }
     if (showExitConfirmation) {
         DeviceConfirmDialog(
             title = stringResource(R.string.device_pairing_exit_title),

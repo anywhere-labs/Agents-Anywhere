@@ -2164,5 +2164,33 @@
     "unsupported_operation": "Agent 尚未提供此操作。",
     "worker_capacity": "Agent 执行进程已达到上限。",
     "workflow_unsupported": "该 Runtime 不支持工作区准备。"
+  },
+  "agentReminder": {
+    "title": "添加 Agent 后开始使用",
+    "description": "你还没有添加任何 Agent，添加后才能开始会话。也可以稍后在设备页面配置。",
+    "skipTitle": "确认跳过引导？",
+    "skipDescription": "跳过后将略过设备与 Agent 的配置引导，你可以稍后在设备页面继续设置。",
+    "continueTutorial": "继续引导",
+    "skipAnyway": "暂不配置，继续",
+    "addAgent": "添加 Agent",
+    "later": "稍后添加",
+    "checking": "正在检查已添加的 Agent…",
+    "checkFailed": "无法检查已添加的 Agent，请重试。",
+    "retry": "重新检测",
+    "phoneTitle": "连接手机",
+    "phoneDescription": "打开手机端 Agents Anywhere，扫描二维码。",
+    "deviceConnected": "{name}\n已连接。",
+    "deviceDescription": "添加这台电脑上可用的 Agent，\n也可以稍后在设备页面配置。",
+    "configureAgent": "配置 Agent",
+    "next": "下一步",
+    "ready": "已就绪",
+    "starting": "正在启动",
+    "notReady": "未就绪",
+    "quickConfigure": "一键配置",
+    "available": "可添加",
+    "offline": "请连接设备后添加 Agent。",
+    "openDevice": "前往设备",
+    "chooseDevice": "选择设备",
+    "done": "完成"
   }
 }
