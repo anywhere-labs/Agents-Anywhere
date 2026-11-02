@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.config.AppConfig
+import com.agentsanywhere.app.feature.devices.DevicePairingCompletion
 import com.agentsanywhere.app.feature.devices.DevicePairingStatus
 import com.agentsanywhere.app.feature.devices.DevicePairingStep
 import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
@@ -69,6 +70,7 @@ fun AddDeviceScreen(
     var showAgentReminder by remember { mutableStateOf(false) }
     var showExitConfirmation by remember { mutableStateOf(false) }
     val connectorId = credential?.device?.id
+    val pairingCompletion = remember(connectorId) { DevicePairingCompletion() }
     val online = connectorId != null && (pairingStates[connectorId] == DevicePairingStatus.Online ||
         devices.any { it.id == connectorId && it.online })
     val scrollState = rememberScrollState()
@@ -167,13 +169,21 @@ fun AddDeviceScreen(
         unfocus()
         scope.launch {
             try {
-                onClaimPairCode(current, pairCode).getOrThrow()
-                onClearPairing(current.device.id)
-                checkAndComplete()
+                val hasAgents = pairingCompletion.complete(
+                    claimPairing = {
+                        onClaimPairCode(current, pairCode).getOrThrow()
+                        onClearPairing(current.device.id)
+                    },
+                    checkAgents = { onCheckAgents().getOrThrow() },
+                )
+                if (hasAgents) onComplete() else showAgentReminder = true
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                showError(error.message ?: context.getString(R.string.device_pairing_errors_claim_failed))
+                showError(error.message ?: context.getString(
+                    if (pairingCompletion.claimed) R.string.device_runtime_load_failed
+                    else R.string.device_pairing_errors_claim_failed,
+                ))
             } finally {
                 busy = false
             }

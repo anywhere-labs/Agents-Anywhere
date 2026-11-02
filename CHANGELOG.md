@@ -56,7 +56,7 @@
 
 ### Android
 
-- 连接设备后尚未添加 Agent 时会提醒配置，进入主界面也可从提醒弹窗前往现有设备页添加，已添加但离线的 Agent 不会误触发。（[#513](https://github.com/anywhere-labs/Agents-Anywhere/pull/513)）
+- 连接设备后尚未添加 Agent 时会提醒配置，进入主界面也可从提醒弹窗前往现有设备页添加，已添加但离线的 Agent 不会误触发，配对成功后检查 Agent 失败可重试而不会重复提交配对码。（[#513](https://github.com/anywhere-labs/Agents-Anywhere/pull/513)）
 
 - 终端文件页可以预览工作区图片；对话里工具和命令输出提到的工作区截图，点一下即可加载缩略图，再点可打开大图。（[#493](https://github.com/anywhere-labs/Agents-Anywhere/pull/493)）
 
@@ -140,7 +140,7 @@
 
 ### Web 与 Desktop 界面
 
-- 跳过教程或未添加 Agent 就继续时会提醒配置，进入主界面仍无 Agent 时可直接在弹窗中添加，已添加但离线的 Agent 不会触发空配置提醒。（[#513](https://github.com/anywhere-labs/Agents-Anywhere/pull/513)）
+- 跳过教程或未添加 Agent 就继续时会提醒配置，进入主界面仍无 Agent 时可直接在弹窗中添加，已添加但离线的 Agent 不会触发空配置提醒，添加期间设备离线也可关闭弹窗。（[#513](https://github.com/anywhere-labs/Agents-Anywhere/pull/513)）
 
 - 管理看板重做：
   - 新增概览、用户、使用量、设备与 Runtime、运行质量视图；
@@ -173,7 +173,7 @@
 
 ### iOS
 
-- 跳过 Agent 配置时会提醒确认，进入主界面尚无 Agent 时可从提醒弹窗打开现有配置面板，没有设备时引导连接设备。（[#513](https://github.com/anywhere-labs/Agents-Anywhere/pull/513)）
+- 跳过 Agent 配置或关闭连接引导时会提醒确认，进入主界面尚无 Agent 时可从提醒弹窗打开现有配置面板，没有设备时引导连接设备。（[#513](https://github.com/anywhere-labs/Agents-Anywhere/pull/513)）
 
 - 启动和回到前台时展示公告，已读记录按服务器分别保存。（[#248](https://github.com/anywhere-labs/Agents-Anywhere/pull/248)）
 - 模型选择器按供应商分组，与其他端一致。（[#449](https://github.com/anywhere-labs/Agents-Anywhere/pull/449)）

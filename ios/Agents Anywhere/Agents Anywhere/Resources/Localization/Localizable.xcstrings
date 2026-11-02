@@ -19042,6 +19042,38 @@
           }
         }
       }
+    },
+    "agentReminder.skipTitle": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skip Agent setup?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "跳过 Agent 配置？"
+          }
+        }
+      }
+    },
+    "agentReminder.checkFailed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not check your Agents. You can continue setup or leave and configure them later."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂时无法检查已添加的 Agent。你可以继续配置，也可以先离开，稍后再设置。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

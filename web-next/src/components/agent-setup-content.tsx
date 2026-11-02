@@ -111,7 +111,11 @@ export function AgentSetupContent({ connector, onContinue, onSkip, onChanged, co
   const buttonClassName = inline ? 'h-9 rounded-full px-4' : undefined
   React.useEffect(() => { onBusyChange?.(busy || loading) }, [busy, loading, onBusyChange])
 
-  React.useEffect(() => { onActionBusyChange?.(busy) }, [busy, onActionBusyChange])
+  React.useEffect(() => {
+    onActionBusyChange?.(busy)
+    // Device status changes can unmount this content before its request settles.
+    return () => { onActionBusyChange?.(false) }
+  }, [busy, onActionBusyChange])
 
   return <div className="flex flex-col gap-6">
     <div className={inline ? 'flex max-h-[55vh] flex-col overflow-y-auto' : 'flex max-h-[55vh] flex-col gap-3 overflow-y-auto'}>
