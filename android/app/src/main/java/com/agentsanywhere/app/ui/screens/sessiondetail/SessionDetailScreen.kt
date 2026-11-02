@@ -83,6 +83,7 @@ import com.agentsanywhere.app.api.AttachmentTransferFailure
 import com.agentsanywhere.app.api.UploadFilePart
 import com.agentsanywhere.app.feature.files.FilesController
 import com.agentsanywhere.app.feature.files.MAX_INLINE_WORKSPACE_IMAGE_BYTES
+import com.agentsanywhere.app.feature.files.resolvePathInWorkspace
 import com.agentsanywhere.app.feature.realtime.SessionRealtimeController
 import com.agentsanywhere.app.feature.sessiondetail.DownloadedAttachment
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
@@ -1706,15 +1707,17 @@ fun SessionDetailScreen(
                                 loadWorkspaceImage = { path, cacheOnly ->
                                     val session = state.session
                                     val root = session?.cwd.orEmpty()
-                                    if (session == null || root.isBlank() || !filesController.isWithinWorkspace(root, path)) {
+                                    val resolvedPath = root.takeIf { it.isNotBlank() }
+                                        ?.let { resolvePathInWorkspace(it, path) }
+                                    if (session == null || resolvedPath == null) {
                                         Result.failure(IllegalStateException("Image path is outside the workspace."))
                                     } else if (cacheOnly) {
-                                        Result.success(filesController.cachedWorkspaceFile(session.connectorId, root, path))
+                                        Result.success(filesController.cachedWorkspaceFile(session.connectorId, root, resolvedPath))
                                     } else {
                                         filesController.downloadWorkspaceFile(
                                             connectorId = session.connectorId,
                                             workspaceRoot = root,
-                                            path = path,
+                                            path = resolvedPath,
                                             cacheDir = context.cacheDir,
                                             preferCache = true,
                                             maxBytes = MAX_INLINE_WORKSPACE_IMAGE_BYTES,

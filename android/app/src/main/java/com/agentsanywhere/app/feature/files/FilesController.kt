@@ -229,15 +229,6 @@ class FilesController(
         }
     }
 
-    fun isWithinWorkspace(workspaceRoot: String, path: String): Boolean {
-        val root = normalizeRemotePath(workspaceRoot).trimEnd('/')
-        val target = normalizeRemotePath(path)
-        if (root.isBlank()) return false
-        if (root == "/") return target.startsWith("/")
-        return target.equals(root, ignoreCase = true) ||
-            target.startsWith("$root/", ignoreCase = true)
-    }
-
     private fun pruneCache(cacheRoot: java.io.File) {
         val entries = cacheRoot.listFiles() ?: return
         val now = System.currentTimeMillis()
