@@ -89,6 +89,9 @@ class RuntimeSyncRunner:
                 runtime = self.supervisor.resolve_runtime(runtime_id)
                 if runtime.sync_mode == "events":
                     await runtime.resynchronize()
+            except RuntimeUnavailableError:
+                # Not started or still connecting: its own start delivers a baseline.
+                logger.info("runtime event recovery skipped; runtime not running runtime={}", runtime_id)
             except Exception:
                 logger.exception("runtime event recovery deferred runtime={}", runtime_id)
 

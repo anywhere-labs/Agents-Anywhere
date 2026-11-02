@@ -63,10 +63,12 @@ API key 形如 `mk_<id>_<随机 hex>`，Router 按 id 查表并比对 SHA-256。
 | `deleteCheckpoint` | unary | `{subscriptionId, externalSessionId}` |
 | `ingestSnapshot` | 客户端流 | 请求 `{captureId, subscriptionId, sessionId, meta, throughSeq}` + 页流 `{captureId, items[]}` → `{accepted, quarantined, reason?}` |
 
-- 批次按 `batchSeq` 严格递增；乱序或 `subscriptionId` 未知是错误，由插件重新订阅。
+- 批次按 `batchSeq` 严格递增；乱序或 `subscriptionId` 未知是错误，由插件重新订阅。已结束订阅的批次返回 `subscription_unknown`，不会被确认。
 - 检查点只在覆盖的历史被 Server 接受之后保存；被隔离的会话不保存检查点。
 - 快照页流可取消（调用取消即中止）；`captureId` 让被取消的旧流无法污染下一次捕获。提交被永久拒绝时返回 `accepted:false` 并给出隔离原因 `history_too_large` / `history_rejected`。
-- 隔离、退避重捕（30 s 起，超大 5 min 起，上限 30 min）、健康上报（`starting/syncing → running`）、单会话失败隔离与 1.0 相同。
+- 隔离、退避重捕（30 s 起，超大 5 min 起，上限 30 min）、单会话失败隔离与 1.0 相同。
+- 健康上报：Bridge 连上后即为 `running`；全量清单建立期间和同步中断重试期间带 phase `syncing` / `sync_interrupted`，清单完成后清除 phase。只有 Bridge 不可达才回到 `starting`（`waiting_bridge`）或 `error`。
+- 清单扫描期间，已发布基线的会话的事件随扫描进度交付，不等清单完成；`session.inventory.complete` 仍在全部会话校准后发送。
 - 不再有上传进度续期：一次 ingest 调用就是一个慢请求，连接由 MeshCall keepalive 维持。
 
 ## 操作类型（`operations[]`）

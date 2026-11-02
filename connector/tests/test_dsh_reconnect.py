@@ -184,12 +184,11 @@ def test_initially_offline_runtime_recovers_through_supervisor(monkeypatch):
                     break
                 await asyncio.sleep(0.01)
             relay.start.assert_called_once()
-            assert supervisor.entry("dsh").status == "starting"
-            assert "running" not in statuses
-            # The real relay reports healthy only after inventory ingestion completes.
-            await bound.native_runtime.host.runtime_health_update("running")
+            # Once the Bridge answers, the runtime is usable while the event
+            # feed still builds its baseline; sync progress is only a phase (#504).
             await asyncio.wait_for(recovered.wait(), timeout=1)
             assert supervisor.entry("dsh").status == "running"
+            assert supervisor.entry("dsh").phase["code"] == "syncing"
             assert supervisor.entry("dsh").error is None
             assert supervisor.resolve_runtime("dsh") is bound
             assert hosts == [False, True]
