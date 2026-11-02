@@ -12,14 +12,21 @@ from acp import RequestError
 from connector.runtimes.acp.domain.definitions import AcpError
 from connector.runtimes.acp.infrastructure.acp.client import AgentClient
 from connector.runtimes.acp.infrastructure.projection import Projection
+from connector.runtimes.acp.profiles.pi import adapter
 from connector.runtimes.acp.profiles.pi.client import PiClient
 from connector.runtimes.acp.profiles.pi.history import (
     read_history,
     scan_histories,
     timeline,
 )
-from connector.runtimes.acp.profiles.pi.installation import PACKAGE, resolve_local
-from connector.runtimes.acp.profiles.pi.provider import PiProvider
+from connector.runtimes.acp.profiles.pi.installation import (
+    PACKAGE,
+    PiInstallation,
+    probe_sdk,
+    resolve_local,
+    sdk_version_supported,
+)
+from connector.runtimes.acp.profiles.pi.provider import PiProvider, source_changed
 
 
 def history_file(root, cwd, *, name="history", native_id="native-session", version=3):
@@ -428,6 +435,142 @@ def test_new_session_without_model_or_login_asks_to_configure_pi(tmp_path, monke
     with pytest.raises(AcpError, match="完成登录或模型配置") as raised:
         asyncio.run(client.open_session(str(tmp_path)))
     assert raised.value.code == "pi_authentication_required"
+
+
+@pytest.mark.parametrize(
+    ("version", "supported"),
+    [
+        ("1.1.0", False),
+        ("1.2.0", True),
+        ("1.4.0", True),
+        ("1.9.3", True),
+        ("1.5.0-beta.1", True),
+        ("2.0.0", False),
+        ("0.99.2", False),
+        ("latest", False),
+        (None, False),
+    ],
+)
+def test_local_sdk_accepts_verified_major_range(version, supported):
+    assert sdk_version_supported(version) is supported
+
+
+def test_local_sdk_outside_range_names_the_requirement(tmp_path, monkeypatch):
+    sdk = tmp_path / "lib/node_modules" / PACKAGE
+    (sdk / "dist/bundle").mkdir(parents=True)
+    (sdk / "package.json").write_text(json.dumps({"name": PACKAGE, "version": "1.1.0"}))
+    (sdk / "dist/index.js").write_text("")
+    (sdk / "dist/bundle/cli.js").write_text("// native CLI")
+    node = tmp_path / "node"
+    node.write_text("// node")
+    monkeypatch.setattr(
+        subprocess,
+        "check_output",
+        lambda *_args, **_kwargs: json.dumps({"path": str(node), "version": "22.23.2"}),
+    )
+    with pytest.raises(AcpError, match=r"1\.1\.0 不受支持.*>=1\.2\.0 <2") as raised:
+        resolve_local({"cliPath": str(sdk / "dist/bundle/cli.js")})
+    assert raised.value.code == "pi_sdk_incompatible"
+
+
+def fake_sdk(root, *, manager_methods="_persist(){} _rewriteFile(){} getSessionFile(){} getSessionId(){}"):
+    sdk = root / "sdk"
+    (sdk / "dist").mkdir(parents=True)
+    (sdk / "package.json").write_text(json.dumps({"name": PACKAGE, "version": "1.9.0", "type": "module"}))
+    (sdk / "dist/index.js").write_text(
+        "export const VERSION = '1.9.0';\n"
+        "export function createAgentSessionServices() {}\n"
+        "export function createAgentSessionFromServices() {}\n"
+        "export class SessionManager { static open(){} static create(){} static forkFrom(){} "
+        + manager_methods
+        + " }\n"
+    )
+    core = sdk / "node_modules/@earendil-works/pi-agent-core"
+    core.mkdir(parents=True)
+    (core / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "@earendil-works/pi-agent-core",
+                "type": "module",
+                "exports": {".": {"import": "./index.js"}, "./package.json": "./package.json"},
+            }
+        )
+    )
+    (core / "index.js").write_text(
+        "export class Agent { prompt(){} steer(){} followUp(){} normalizePromptInput(){} }\n"
+    )
+    return sdk
+
+
+def test_sdk_probe_names_missing_entry_points(tmp_path):
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node is not installed")
+    sdk = fake_sdk(tmp_path)
+    probe_sdk(PiInstallation(sdk, Path(node), sdk, "1.9.0"))
+    changed = fake_sdk(tmp_path / "changed", manager_methods="getSessionFile(){} getSessionId(){}")
+    with pytest.raises(AcpError, match=r"1\.9\.0 缺少.*SessionManager#_persist.*SessionManager#_rewriteFile") as raised:
+        probe_sdk(PiInstallation(changed, Path(node), changed, "1.9.0"))
+    assert raised.value.code == "pi_sdk_incompatible"
+    (changed / "dist/index.js").write_text("throw new Error('broken dependency')")
+    with pytest.raises(AcpError, match="无法加载 Pi 1.9.0 的 SDK：broken dependency"):
+        probe_sdk(PiInstallation(changed, Path(node), changed, "1.9.0"))
+
+
+def adapter_release(root, *, version="0.1.9", chunk="chunk-NEWBUILD.js", steer=True):
+    dist = root / "pi-acp/dist"
+    dist.mkdir(parents=True)
+    (root / "pi-acp/package.json").write_text(json.dumps({"version": version}))
+    source = (
+        'import {x} from "@earendil-works/pi-coding-agent";\n'
+        "async function findSession(sessionId, sessionDir) { return {}; }\n"
+        "await session.prompt(converted.text, converted.images)\n"
+        + ("await session.steer(converted.text, converted.images)\n" if steer else "")
+        + "return buildConfigOptions(this.session, {\n      booleanOptions: this.features.booleanConfigOptions\n    });\n"
+        "extensions: session.extensions(),\n"
+        + "await this.requireModel(session).catch((error) => {\n      throw error;\n    });\n" * 3
+    )
+    (dist / chunk).write_text(source)
+    (dist / "bin.js").write_text('import "./' + chunk + '";\n')
+    (root / "node_modules").mkdir()
+    return dist / "bin.js"
+
+
+def test_adapter_patch_follows_new_releases_by_anchor(tmp_path):
+    entry = adapter_release(tmp_path)
+    patched, metadata = adapter.prepare_adapter(entry, tmp_path / "sdk", tmp_path / "cache")
+    chunk = (patched.parent / "chunk-NEWBUILD.js").read_text()
+    assert chunk.startswith("import {aaFindSession")
+    assert "aaWithMessage(params, () => session.steer" in chunk
+    assert chunk.count("await this.requireModel(session);") == 3
+    assert '"@earendil-works/pi-coding-agent"' not in chunk
+    assert metadata["version"] == "0.1.9"
+    assert set(metadata["sourceFiles"]) == {"bin.js", "chunk-NEWBUILD.js"}
+
+
+@pytest.mark.parametrize(
+    ("release", "code"),
+    [
+        ({"steer": False}, "pi_adapter_patch_failed"),
+        ({"version": "0.2.0"}, "pi_adapter_incompatible"),
+    ],
+)
+def test_adapter_refuses_releases_without_verified_entry_points(tmp_path, release, code):
+    entry = adapter_release(tmp_path, **release)
+    with pytest.raises(AcpError) as raised:
+        adapter.prepare_adapter(entry, tmp_path / "sdk", tmp_path / "cache")
+    assert raised.value.code == code
+
+
+def test_pi_upgrade_keeps_instance_but_source_location_change_does_not():
+    local = {"mode": "local", "agentDir": "/home/pi", "installation": {"version": "1.4.0"}}
+    upgraded = {**local, "installation": {"version": "1.5.0"}, "adapter": {"version": "0.1.9"}}
+    assert not source_changed(None, local)
+    assert not source_changed(local, upgraded)
+    assert source_changed(local, {**upgraded, "agentDir": "/elsewhere"})
+    assert source_changed(local, {**upgraded, "mode": "managed"})
+    managed = {"mode": "managed", "agentDir": "/aa/rev1"}
+    assert not source_changed(managed, {**managed, "agentDir": "/aa/rev2"})
 
 
 def test_native_attachment_presentation_survives_scan_without_execution_paths(tmp_path):
