@@ -1256,6 +1256,7 @@ class UploadedAttachment(BaseModel):
     createdAt: str
     downloadUrl: str
     openUrl: str
+    thumbnailUrl: str = ""
 
 
 class UserUploadResponse(BaseModel):

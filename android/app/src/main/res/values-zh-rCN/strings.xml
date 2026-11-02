@@ -739,4 +739,5 @@
     <string name="session_approval_title_codex_file_change">Codex 请求修改文件</string>
     <string name="session_approval_title_codex_permissions">Codex 请求额外权限</string>
     <string name="session_approval_title_claude_tool">Claude 请求使用工具</string>
+    <string name="session_workspace_image_tap_to_load">点击加载图片</string>
 </resources>
