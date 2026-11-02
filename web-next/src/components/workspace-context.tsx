@@ -23,6 +23,7 @@ import type {
   ConnectorView as RealConnectorView,
   DashboardSnapshotMessage,
   DeviceRuntimeView,
+  ModelConfigOverview,
   ProjectCreateRequest,
   ProjectPatchRequest,
   ProjectView,
@@ -276,6 +277,8 @@ export type WorkspaceState = ReturnType<typeof useSessionCreation> & {
   projects: ProjectView[]
   /** Live runtime instances from the dashboard snapshot, for device pages. */
   runtimes: DeviceRuntimeView[]
+  /** Model profiles, assignments and the Tokens Anywhere link from the snapshot. */
+  modelConfig: ModelConfigOverview | null
   isLoading: boolean
   routeReady: boolean
 
@@ -448,6 +451,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [sessions, setSessions] = React.useState<SessionView[]>([])
   const [projects, setProjects] = React.useState<ProjectView[]>([])
   const [runtimes, setRuntimes] = React.useState<DeviceRuntimeView[]>([])
+  const [modelConfig, setModelConfig] = React.useState<ModelConfigOverview | null>(null)
   const [isLoading, setIsLoading] = React.useState(true)
   const sessionStreamSeqRef = React.useRef(new Map<string, number>())
   const pendingSessionIndicatorRef = React.useRef(new Map<string, SessionView>())
@@ -631,6 +635,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       projects: message.projects,
       sessions: message.sessions,
       runtimes: message.runtimes ?? [],
+      modelConfig: message.modelConfig ?? null,
     })
     if (lastDashboardSnapshotKeyRef.current === snapshotKey) return
     lastDashboardSnapshotKeyRef.current = snapshotKey
@@ -643,6 +648,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
     setProjects((current) => sameStableValue(current, nextProjects) ? current : nextProjects)
     setRuntimes((current) => sameStableValue(current, nextRuntimes) ? current : nextRuntimes)
+    const nextModelConfig = message.modelConfig ?? null
+    setModelConfig((current) => sameStableValue(current, nextModelConfig) ? current : nextModelConfig)
     setSessions((current) => {
       const currentById = new Map(current.map((session) => [session.id, session]))
       const next = sortSessions(message.sessions.map((session) => {
@@ -1417,6 +1424,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     sessions,
     projects,
     runtimes,
+    modelConfig,
     isLoading,
     routeReady,
     page,

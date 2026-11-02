@@ -46,7 +46,8 @@ import { useWorkspace, type WorkspaceSessionView } from "@/components/workspace-
 import { dashboardApi } from "@/features/dashboard/api"
 import { defaultFilter } from "@/lib/demo-api"
 import type { ProjectView } from "@/features/dashboard/types"
-import { tokensAnywhereAvailable, useTokensAnywhereSidebarVisibility } from "@/features/tokens-anywhere/sidebar-visibility"
+import { useTokensAnywhereUrl } from "@/features/tokens-anywhere/address"
+import { useTokensAnywhereSidebarVisibility } from "@/features/tokens-anywhere/sidebar-visibility"
 import { useMobileConnectionsSidebarVisibility } from "@/features/mobile-connections/sidebar-visibility"
 import { useTranslations } from "next-intl"
 
@@ -78,6 +79,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   } = useWorkspace()
   const { signOut, me, session: authSession } = useAuth()
   const [tokensAnywhereSidebarVisible] = useTokensAnywhereSidebarVisibility()
+  const tokensAnywhereUrl = useTokensAnywhereUrl()
   const [mobileConnectionsSidebarVisible] = useMobileConnectionsSidebarVisibility()
   const t = useTranslations("dashboard")
   const [pairOpen, setPairOpen] = React.useState(false)
@@ -259,7 +261,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
               </SidebarMenuButton>
             </SidebarMenuItem>
           ) : null}
-          {tokensAnywhereAvailable && tokensAnywhereSidebarVisible ? (
+          {tokensAnywhereUrl && tokensAnywhereSidebarVisible ? (
             <SidebarMenuItem>
               <SidebarMenuButton className="h-10 font-medium"
                 isActive={page === "tokens-anywhere"} onClick={() => navigate("tokens-anywhere")}>

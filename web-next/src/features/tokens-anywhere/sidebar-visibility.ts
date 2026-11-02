@@ -1,7 +1,5 @@
 "use client"
 
-import { PRODUCT_LINKS } from "@/lib/product-links"
-
 import { createSidebarVisibility } from "../sidebar/sidebar-visibility"
 
 const visibility = createSidebarVisibility(
@@ -10,6 +8,3 @@ const visibility = createSidebarVisibility(
 )
 
 export const useTokensAnywhereSidebarVisibility = visibility.useVisibility
-
-/** Builds without Tokens Anywhere's address show neither the entry nor its setting. */
-export const tokensAnywhereAvailable = Boolean(PRODUCT_LINKS.tokensAnywhereUrl)

@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Ajv2020 from "ajv/dist/2020"
-import { Eye, EyeOff, Plus, RotateCcw, Trash2, X } from "lucide-react"
+import { Plus, RotateCcw, Trash2, X } from "lucide-react"
 import { useTranslations } from "next-intl"
 
 import { Button } from "@/components/ui/button"
@@ -23,12 +23,6 @@ import {
   FieldLabel,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupButton,
-  InputGroupInput,
-} from "@/components/ui/input-group"
 import {
   Select,
   SelectContent,
@@ -62,6 +56,9 @@ type UiField = {
   [key: string]: unknown
 }
 
+/** What the Server says about a write-only value it keeps: never the value itself. */
+export type RuntimeSecretField = { set?: boolean; hint?: string | null }
+
 type RuntimeConfigDialogProps = {
   runtimeName: string
   schema: Record<string, unknown> | null
@@ -74,6 +71,8 @@ type RuntimeConfigDialogProps = {
   badgeLabel?: string
   defaults?: Record<string, unknown>
   requiredFields?: string[]
+  /** Saved write-only values by path, such as `modelGateway.apiKey`. */
+  secretFields?: Record<string, RuntimeSecretField>
   onOpenChange: (open: boolean) => void
   onSave: (config: Record<string, unknown>) => Promise<void>
 }
@@ -105,6 +104,7 @@ export function RuntimeConfigDialog({
   badgeLabel,
   defaults,
   requiredFields = [],
+  secretFields = {},
   onOpenChange,
   onSave,
 }: RuntimeConfigDialogProps) {
@@ -164,8 +164,21 @@ export function RuntimeConfigDialog({
 
   const submit = async () => {
     if (!typedSchema || submitDisabled) return
+    // A kept key is left out of the draft; a new address needs it entered again.
+    const secretErrors: Record<string, string> = {}
+    for (const field of storedSecretFields(secretFields)) {
+      const next = draft[field]
+      if (!isRecord(next) || typeof next.apiKey === "string") continue
+      if (urlOrigin(next.baseUrl) !== urlOrigin(isRecord(config?.[field]) ? config[field].baseUrl : undefined)) {
+        secretErrors[field] = t("runtimeConfigValidation.secretRequired")
+      }
+    }
+    if (Object.keys(secretErrors).length) {
+      setErrors(secretErrors)
+      return
+    }
     const ajv = new Ajv2020({ allErrors: true, strict: false })
-    const validate = ajv.compile(typedSchema)
+    const validate = ajv.compile(withoutStoredSecrets(typedSchema, secretFields, draft))
     if (!validate(draft)) {
       const next: Record<string, string> = {}
       for (const error of validate.errors ?? []) {
@@ -231,6 +244,7 @@ export function RuntimeConfigDialog({
                     ui={uiField}
                     value={draft[key]}
                     required={required.has(key)}
+                    storedSecret={secretFields[`${key}.apiKey`]}
                     error={errors[key]}
                     onChange={(value) => patch(key, value)}
                   />
@@ -266,6 +280,7 @@ function RuntimeConfigField({
   ui,
   value,
   required,
+  storedSecret,
   error,
   onChange,
 }: {
@@ -274,6 +289,7 @@ function RuntimeConfigField({
   ui: UiField
   value: unknown
   required: boolean
+  storedSecret?: RuntimeSecretField
   error?: string
   onChange: (value: unknown) => void
 }) {
@@ -324,6 +340,7 @@ function RuntimeConfigField({
           onChange={onChange}
           invalid={Boolean(error)}
           required={required}
+          storedSecret={storedSecret?.set ? storedSecret : undefined}
         />
         <FieldError>{error}</FieldError>
       </Field>
@@ -549,6 +566,7 @@ function ModelGatewayEditor({
   onChange,
   invalid,
   required,
+  storedSecret,
 }: {
   idPrefix: string
   schema: JsonSchema
@@ -556,10 +574,15 @@ function ModelGatewayEditor({
   onChange: (value: unknown) => void
   invalid: boolean
   required: boolean
+  storedSecret?: RuntimeSecretField
 }) {
   const t = useTranslations("dashboard.device")
   const tRoot = useTranslations()
-  const [showApiKey, setShowApiKey] = React.useState(false)
+  const protocolSchema = schema.properties?.protocol
+  const protocols = Array.isArray(protocolSchema?.enum)
+    ? protocolSchema.enum.filter((item): item is string => typeof item === "string")
+    : []
+  const protocol = typeof value.protocol === "string" ? value.protocol : ""
   const baseUrlSchema = schema.properties?.baseUrl ?? {}
   const apiKeySchema = schema.properties?.apiKey ?? {}
   const baseUrl = typeof value.baseUrl === "string" ? value.baseUrl : ""
@@ -577,18 +600,44 @@ function ModelGatewayEditor({
   const baseUrlId = `${idPrefix}-base-url`
   const apiKeyId = `${idPrefix}-api-key`
 
-  const update = (patch: { baseUrl?: string; apiKey?: string }) => {
+  const update = (patch: { baseUrl?: string; apiKey?: string; protocol?: string }) => {
     const nextBaseUrl = patch.baseUrl ?? baseUrl
     const nextApiKey = patch.apiKey ?? apiKey
-    if (!nextBaseUrl && !nextApiKey) {
+    const nextProtocol = patch.protocol ?? protocol
+    if (!nextBaseUrl && !nextApiKey && !storedSecret) {
       onChange(undefined)
       return
     }
-    onChange({ baseUrl: nextBaseUrl, apiKey: nextApiKey })
+    // An empty key field keeps the saved key, so it is left out.
+    onChange({
+      baseUrl: nextBaseUrl,
+      ...(nextApiKey ? { apiKey: nextApiKey } : {}),
+      ...(protocols.length ? { protocol: nextProtocol } : {}),
+    })
   }
+  const keyHelp = storedSecret
+    ? t("modelGatewayApiKeyKept", { hint: storedSecret.hint ?? "••••" })
+    : apiKeyDescription
 
   return (
     <div className="flex flex-col gap-4 rounded-md border border-border p-4">
+      {protocols.length ? (
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <label htmlFor={`${idPrefix}-protocol`} className="text-xs font-medium text-muted-foreground">
+            {t("modelGatewayProtocol")}{required ? " *" : ""}
+          </label>
+          <Select value={protocol || undefined} onValueChange={(next: string) => update({ protocol: next })}>
+            <SelectTrigger id={`${idPrefix}-protocol`} className="w-full" aria-invalid={invalid}>
+              <SelectValue placeholder={t("modelGatewayProtocol")} />
+            </SelectTrigger>
+            <SelectContent>
+              {protocols.map((item) => (
+                <SelectItem key={item} value={item}>{t(`modelProtocols.${item}`)}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      ) : null}
       <div className="flex min-w-0 flex-col gap-1.5">
         <label htmlFor={baseUrlId} className="text-xs font-medium text-muted-foreground">
           {baseUrlLabel}{required ? " *" : ""}
@@ -616,37 +665,28 @@ function ModelGatewayEditor({
       </div>
       <div className="flex min-w-0 flex-col gap-1.5">
         <label htmlFor={apiKeyId} className="text-xs font-medium text-muted-foreground">
-          {apiKeyLabel}{required ? " *" : ""}
+          {apiKeyLabel}{required && !storedSecret ? " *" : ""}
         </label>
-        <InputGroup>
-          <InputGroupInput
-            id={apiKeyId}
-            name={`${idPrefix}-secret`}
-            type={showApiKey ? "text" : "password"}
-            value={apiKey}
-            onChange={(event) => update({ apiKey: event.currentTarget.value })}
-            minLength={apiKeySchema.minLength}
-            maxLength={apiKeySchema.maxLength}
-            aria-invalid={invalid}
-            autoComplete="new-password"
-            spellCheck={false}
-            required={required}
-            data-1p-ignore
-            data-bwignore="true"
-            data-form-type="other"
-            data-lpignore="true"
-          />
-          <InputGroupAddon align="inline-end">
-            <InputGroupButton
-              onClick={() => setShowApiKey((current) => !current)}
-              aria-label={showApiKey ? t("hideModelGatewayApiKey") : t("showModelGatewayApiKey")}
-            >
-              {showApiKey ? <EyeOff /> : <Eye />}
-            </InputGroupButton>
-          </InputGroupAddon>
-        </InputGroup>
-        {apiKeyDescription ? (
-          <span className="text-xs text-muted-foreground">{apiKeyDescription}</span>
+        <Input
+          id={apiKeyId}
+          name={`${idPrefix}-secret`}
+          type="password"
+          value={apiKey}
+          placeholder={storedSecret ? storedSecret.hint ?? "••••" : undefined}
+          onChange={(event) => update({ apiKey: event.currentTarget.value })}
+          minLength={apiKeySchema.minLength}
+          maxLength={apiKeySchema.maxLength}
+          aria-invalid={invalid}
+          autoComplete="new-password"
+          spellCheck={false}
+          required={required && !storedSecret}
+          data-1p-ignore
+          data-bwignore="true"
+          data-form-type="other"
+          data-lpignore="true"
+        />
+        {keyHelp ? (
+          <span className="text-xs text-muted-foreground">{keyHelp}</span>
         ) : null}
       </div>
     </div>
@@ -936,6 +976,41 @@ function EnvironmentEditor({
       </Button>
     </div>
   )
+}
+
+function storedSecretFields(secretFields: Record<string, RuntimeSecretField>): string[] {
+  return Object.entries(secretFields)
+    .filter(([path, field]) => field.set && path.endsWith(".apiKey"))
+    .map(([path]) => path.slice(0, -".apiKey".length))
+}
+
+/** The schema a draft is checked against: a kept key is not required again. */
+function withoutStoredSecrets(
+  schema: JsonSchema,
+  secretFields: Record<string, RuntimeSecretField>,
+  draft: Record<string, unknown>,
+): JsonSchema {
+  const fields = storedSecretFields(secretFields).filter((field) => {
+    const value = draft[field]
+    return isRecord(value) && typeof value.apiKey !== "string"
+  })
+  if (!fields.length) return schema
+  const properties = { ...(schema.properties ?? {}) }
+  for (const field of fields) {
+    const property = properties[field]
+    if (!property) continue
+    properties[field] = { ...property, required: (property.required ?? []).filter((key) => key !== "apiKey") }
+  }
+  return { ...schema, properties }
+}
+
+function urlOrigin(value: unknown): string | null {
+  if (typeof value !== "string") return null
+  try {
+    return new URL(value.trim()).host.toLowerCase()
+  } catch {
+    return null
+  }
 }
 
 function enumValue(options: unknown[], value: string) {
