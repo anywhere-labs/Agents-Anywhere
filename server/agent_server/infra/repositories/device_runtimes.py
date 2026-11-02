@@ -702,6 +702,7 @@ def _runtime_row(row: Any) -> dict[str, Any]:
         "maturity": descriptor.get("maturity"),
         "modelConnection": descriptor.get("modelConnection"),
         "modelConnectionReport": report if isinstance(report, dict) else None,
+        "managedBy": row["managed_by"] if "managed_by" in row else None,
         "error": error,
         "phase": phase,
         "lastDiscoveredAt": str(row["type_last_discovered_at"]),

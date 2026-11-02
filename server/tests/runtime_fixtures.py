@@ -34,8 +34,8 @@ def describe_inventory(inventory: dict[str, Any]) -> RuntimeDiscoveryResponse:
                 },
                 "capabilities": item.get("capabilities", {}),
                 "metadata": item.get("metadata", {}),
-                "instancePolicy": "single",
-                "maxInstances": 1,
+                "instancePolicy": item.get("instancePolicy", "single"),
+                "maxInstances": item.get("maxInstances", 1),
                 **(
                     {key: item[key] for key in ("maturity", "modelConnection") if key in item}
                 ),

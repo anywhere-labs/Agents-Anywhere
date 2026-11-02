@@ -110,6 +110,8 @@ device_runtimes = Table(
     Column("phase_json", Text),
     # Last model connection report from the runtime adapter (v2_47).
     Column("model_connection_json", Text),
+    # "model-config" on instances the model configuration created (v2_47).
+    Column("managed_by", Text),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
     PrimaryKeyConstraint("connector_id", "runtime_id"),

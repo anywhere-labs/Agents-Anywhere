@@ -206,6 +206,8 @@ class DeviceRuntimeView(BaseModel):
     # the Server; clients get ``modelConnectionStatus`` instead.
     modelConnectionReport: dict[str, Any] | None = None
     modelConnectionStatus: dict[str, Any] | None = None
+    # "model-config" when the model configuration created this instance.
+    managedBy: str | None = None
     error: dict[str, Any] | None
     # Step inside a non-error status, e.g. {"code": "syncing", ...} while
     # starting. Informational only; status decides usability.

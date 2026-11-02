@@ -48,6 +48,7 @@ class ModelConnectionCapability(BaseModel):
     modelsField: str | None = Field(default=None, min_length=1, max_length=128)
     protocols: list[ModelProtocol] = Field(min_length=1, max_length=8)
     modes: list[ModelConnectionMode] = Field(default_factory=list, max_length=16)
+    modeField: str | None = Field(default=None, min_length=1, max_length=128)
     scope: ConnectionScope
     catalog: ModelConnectionCatalog
     apply: Literal["immediate", "new_session", "restart"]

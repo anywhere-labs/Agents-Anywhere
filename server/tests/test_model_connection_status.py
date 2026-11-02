@@ -3,7 +3,12 @@ from __future__ import annotations
 import asyncio
 
 from runtime_fixtures import describe_inventory
-from test_runtime_config import GATEWAY_KEY, _make_client, _runtime_url, _with_gateway_schema
+from test_runtime_config import (
+    GATEWAY_KEY,
+    _make_client,
+    _runtime_url,
+    _with_gateway_schema,
+)
 
 from agent_server.infra.connector_rpc import ConnectorRpcError
 
@@ -13,6 +18,7 @@ CAPABILITY = {
     "modelsField": None,
     "protocols": ["openai_responses"],
     "modes": [],
+    "modeField": None,
     "scope": "instance",
     "catalog": {"auto": False, "manual": True},
     "apply": "restart",

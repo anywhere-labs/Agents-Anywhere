@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import Depends, Header, HTTPException
 from starlette.requests import HTTPConnection
 
@@ -9,9 +11,9 @@ from agent_server.infra.connector_gateway import ConnectorGateway
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.repositories.facade import Store
+from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.attachments import AttachmentService
-from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.services.catalogs import CatalogService
 from agent_server.services.connector_files import ConnectorFileService
 from agent_server.services.connector_ingest import ConnectorIngestService
@@ -20,11 +22,13 @@ from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.connector_shell import ConnectorShellService
 from agent_server.services.device_runtimes import DeviceRuntimeService
 from agent_server.services.event_recovery import EventRecoveryService
+from agent_server.services.model_config import ModelConfigService
 from agent_server.services.session_run import SessionRunService
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.terminal import TerminalService
 from agent_server.services.terminal_relay import TerminalRelayService
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
+from agent_server.services.tokens_link import TokensLinkService
 from agent_server.services.usage_events import UsageRecorder
 
 
@@ -102,6 +106,27 @@ def get_session_run_service(conn: HTTPConnection) -> SessionRunService:
 
 def get_device_runtime_service(conn: HTTPConnection) -> DeviceRuntimeService:
     return conn.app.state.device_runtime_service
+
+
+def tokens_link_service_for(state: Any) -> TokensLinkService:
+    broker = getattr(state, "timeline_broker", None)
+    return TokensLinkService(
+        state.store,
+        ModelConfigService(state.store, state.device_runtime_service, broker=broker),
+        client_factory=state.tokens_client_factory,
+        access_cache=state.tokens_access_cache,
+        broker=broker,
+    )
+
+
+def get_tokens_link_service(conn: HTTPConnection) -> TokensLinkService:
+    # Built per request so it always uses the current runtime service.
+    return tokens_link_service_for(conn.app.state)
+
+
+def get_model_config_service(conn: HTTPConnection) -> ModelConfigService:
+    # Through the link service, so applying a Tokens profile can fetch its key.
+    return get_tokens_link_service(conn).model_config
 
 
 def get_terminal_service(conn: HTTPConnection) -> TerminalService:

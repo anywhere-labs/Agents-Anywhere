@@ -17,6 +17,9 @@ def upgrade() -> None:
     # What the runtime adapter last reported about the saved model connection,
     # with a digest of the connection it was started with.
     op.add_column("device_runtimes", sa.Column("model_connection_json", sa.Text()))
+    # Set on instances the model configuration created (e.g. a managed Pi),
+    # so it reuses them instead of creating another.
+    op.add_column("device_runtimes", sa.Column("managed_by", sa.Text()))
     op.create_table(
         "tokens_links",
         sa.Column(
@@ -134,4 +137,5 @@ def downgrade() -> None:
     op.drop_table("model_profiles")
     op.drop_table("tokens_link_states")
     op.drop_table("tokens_links")
+    op.drop_column("device_runtimes", "managed_by")
     op.drop_column("device_runtimes", "model_connection_json")

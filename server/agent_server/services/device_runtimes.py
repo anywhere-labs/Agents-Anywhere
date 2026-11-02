@@ -348,6 +348,9 @@ class DeviceRuntimeService:
                 )
             if runtime_type_row.schema_ is None:
                 raise DeviceRuntimeConflictError("runtime config schema is unavailable")
+            secrets = secret_values(
+                config, secret_paths(runtime_type_row.schema_, runtime_type_row.uiSchema)
+            )
             self._validate(
                 config,
                 _config_schema_for_instance(
@@ -355,6 +358,7 @@ class DeviceRuntimeService:
                     runtime_type_row.uiSchema,
                     named=True,
                 ),
+                secrets=secrets,
             )
             if not await self._manager.is_online(connector_id):
                 raise DeviceRuntimeOfflineError("connector is offline")
@@ -375,7 +379,7 @@ class DeviceRuntimeService:
                 raise DeviceRuntimeConflictError(str(exc)) from exc
 
             try:
-                await self._request_validate(runtime, config)
+                await self._request_validate(runtime, config, secrets=secrets)
             except DeviceRuntimeError as exc:
                 error = (
                     exc.detail
@@ -432,6 +436,16 @@ class DeviceRuntimeService:
         async with self._runtime_lock(connector_id, runtime_id):
             runtime = await self._get_owned(connector_id, runtime_id, user_id=user_id)
             return await self._put_config_locked(runtime, config)
+
+    async def is_connector_online(self, connector_id: str) -> bool:
+        return await self._manager.is_online(connector_id)
+
+    async def running_session_count(self, connector_id: str, runtime_id: str) -> int:
+        sessions = await self._store.list_running_sessions_for_connector_agent(
+            connector_id=connector_id,
+            runtime_id=runtime_id,
+        )
+        return len(sessions)
 
     @asynccontextmanager
     async def locked_runtime(

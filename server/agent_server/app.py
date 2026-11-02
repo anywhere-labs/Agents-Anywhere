@@ -25,26 +25,29 @@ from agent_server.api import (
     connector_files,
     connector_ingress,
     connector_runtimes,
-    runtime_workflows,
     connector_shell,
     connector_terminal,
     connectors,
     dashboard_stream,
     error_handlers,
+    model_config,
     oauth,
     pairing,
     projects,
+    runtime_workflows,
     service,
+    session_planning,
     sessions,
     sessions_fs,
-    session_planning,
     sessions_terminal,
     shares,
+    tokens_link,
 )
 from agent_server.core.api_namespace import API_V2_PREFIX
 from agent_server.core.process_settings import ProcessSettings
 from agent_server.core.setup_token import SetupToken
 from agent_server.core.utc import utc_now
+from agent_server.deps import tokens_link_service_for
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.db.migrations import (
     database_schema_version,
@@ -57,6 +60,8 @@ from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.terminal_stream_hub import TerminalStreamHub
 from agent_server.infra.timeline_broker import TimelineBroker
+from agent_server.infra.tokens_access_cache import TokensAccessCache
+from agent_server.infra.tokens_client import TokensClient
 from agent_server.infra.ws_tickets import ClientWsTicketManager
 from agent_server.services.connector_deletion import ConnectorDeletionRecovery
 from agent_server.services.connector_rpc import ConnectorServiceError
@@ -129,6 +134,7 @@ def create_app(
         presence_task: asyncio.Task[None] | None = None
         deletion_task: asyncio.Task[None] | None = None
         usage_task: asyncio.Task[None] | None = None
+        tokens_task: asyncio.Task[None] | None = None
         try:
             logger.info(
                 "server concurrency pid={} workers={} event_workers={}",
@@ -148,11 +154,15 @@ def create_app(
             presence_task = asyncio.create_task(_connector_presence_watchdog(app))
             deletion_task = asyncio.create_task(app.state.connector_deletion_recovery.run())
             usage_task = asyncio.create_task(app.state.usage_maintenance.run())
+            tokens_task = asyncio.create_task(tokens_link_service_for(app.state).run_keep_alive())
             # Generate the bootstrap token early so operators see it in logs.
             if await app.state.store.count_users() == 0:
                 await SetupTokenService(app.state.setup_token, app.state.redis).snapshot()
             yield
         finally:
+            if tokens_task is not None:
+                tokens_task.cancel()
+                await asyncio.gather(tokens_task, return_exceptions=True)
             if usage_task is not None:
                 usage_task.cancel()
                 await asyncio.gather(usage_task, return_exceptions=True)
@@ -237,6 +247,8 @@ def create_app(
         instance_id=app.state.rpc.instance_id,
     )
     app.state.terminal_stream_hub = TerminalStreamHub(app.state.redis)
+    app.state.tokens_access_cache = TokensAccessCache(app.state.redis)
+    app.state.tokens_client_factory = TokensClient
     app.state.timeline_broker = TimelineBroker(
         app.state.redis,
         event_workers=process_settings.event_workers,
@@ -372,6 +384,8 @@ def create_app(
     app.include_router(connectors.router, prefix=API_V2_PREFIX)
     app.include_router(connector_files.router, prefix=API_V2_PREFIX)
     app.include_router(connector_runtimes.router, prefix=API_V2_PREFIX)
+    app.include_router(model_config.router, prefix=API_V2_PREFIX)
+    app.include_router(tokens_link.router, prefix=API_V2_PREFIX)
     app.include_router(runtime_workflows.router, prefix=API_V2_PREFIX)
     app.include_router(connector_shell.router, prefix=API_V2_PREFIX)
     app.include_router(connector_terminal.router, prefix=API_V2_PREFIX)
