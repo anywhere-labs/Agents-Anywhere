@@ -47,6 +47,19 @@
         "maturity": {
           "$ref": "#/$defs/Maturity"
         },
+        "modeField": {
+          "description": "Configuration field that selects one of `modes`, when the runtime has modes.",
+          "oneOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "modelsField": {
           "oneOf": [
             {

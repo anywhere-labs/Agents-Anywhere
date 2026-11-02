@@ -59,6 +59,8 @@ class ModelConnectionCapability:
     catalog_auto: bool = False
     catalog_manual: bool = True
     modes: tuple[ModelConnectionMode, ...] = field(default_factory=tuple)
+    # Config field that selects one of ``modes``.
+    mode_field: str | None = None
 
     def __post_init__(self) -> None:
         if self.maturity not in _MATURITIES:
@@ -79,6 +81,7 @@ class ModelConnectionCapability:
             "modelsField": self.models_field,
             "protocols": list(self.protocols),
             "modes": [mode.payload() for mode in self.modes],
+            "modeField": self.mode_field,
             "scope": self.scope,
             "catalog": {"auto": self.catalog_auto, "manual": self.catalog_manual},
             "apply": self.apply,

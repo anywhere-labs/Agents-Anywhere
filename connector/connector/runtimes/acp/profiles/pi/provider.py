@@ -63,6 +63,7 @@ MODEL_CONNECTION = ModelConnectionCapability(
     apply="restart",
     catalog_auto=True,
     catalog_manual=True,
+    mode_field="executionMode",
     modes=(
         ModelConnectionMode("managed", True),
         ModelConnectionMode("local", False, LOCAL_MODE_REASON),

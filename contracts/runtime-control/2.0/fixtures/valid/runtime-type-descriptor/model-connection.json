@@ -51,6 +51,7 @@
       "auto": true,
       "manual": true
     },
-    "apply": "restart"
+    "apply": "restart",
+    "modeField": "executionMode"
   }
 }
