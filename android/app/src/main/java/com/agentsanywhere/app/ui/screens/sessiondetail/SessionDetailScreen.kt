@@ -82,6 +82,8 @@ import com.agentsanywhere.app.api.AttachmentTransferException
 import com.agentsanywhere.app.api.AttachmentTransferFailure
 import com.agentsanywhere.app.api.UploadFilePart
 import com.agentsanywhere.app.feature.files.FilesController
+import com.agentsanywhere.app.feature.files.MAX_INLINE_WORKSPACE_IMAGE_BYTES
+import com.agentsanywhere.app.feature.files.resolvePathInWorkspace
 import com.agentsanywhere.app.feature.realtime.SessionRealtimeController
 import com.agentsanywhere.app.feature.sessiondetail.DownloadedAttachment
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
@@ -1702,6 +1704,26 @@ fun SessionDetailScreen(
                                 sessionId = sessionId.orEmpty(),
                                 workspaceRoot = state.session?.cwd,
                                 controller = controller,
+                                loadWorkspaceImage = { path, cacheOnly ->
+                                    val session = state.session
+                                    val root = session?.cwd.orEmpty()
+                                    val resolvedPath = root.takeIf { it.isNotBlank() }
+                                        ?.let { resolvePathInWorkspace(it, path) }
+                                    if (session == null || resolvedPath == null) {
+                                        Result.failure(IllegalStateException("Image path is outside the workspace."))
+                                    } else if (cacheOnly) {
+                                        Result.success(filesController.cachedWorkspaceFile(session.connectorId, root, resolvedPath))
+                                    } else {
+                                        filesController.downloadWorkspaceFile(
+                                            connectorId = session.connectorId,
+                                            workspaceRoot = root,
+                                            path = resolvedPath,
+                                            cacheDir = context.cacheDir,
+                                            preferCache = true,
+                                            maxBytes = MAX_INLINE_WORKSPACE_IMAGE_BYTES,
+                                        ).map { it.file }
+                                    }
+                                },
                                 forceLatestRequest = forceLatestRequest,
                                 streamLatestRequest = streamLatestRequest,
                                 workingLabel = workingLabel,
