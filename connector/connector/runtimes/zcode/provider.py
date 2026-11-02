@@ -33,6 +33,9 @@ class ZCodeClient(AgentClient):
         # zcode-acp 0.9.1 declares these at initialize's top level. The ACP
         # SDK discards that location, although this pinned bridge implements them.
         self.capabilities["sessionCapabilities"] = {"list": {}, "resume": {}, "close": {}}
+        # AA 扩展能力：主车道附件由 bridge 落盘后以本机路径写进提示词。
+        aa = self.capabilities.setdefault("_meta", {}).setdefault("aa", {})
+        aa["capabilities"] = ["runtime.attachment"]
         return result
 
 
@@ -65,6 +68,8 @@ class ZCodeProvider(RuntimeProvider):
                 "startTurn": True,
                 "modelCatalog": True,
                 "permissionCatalog": True,
+                # server 端 create-and-start 按这份快照门控附件。
+                "attachments": True,
             },
             metadata={"nativeHistory": True, "localInstallation": True},
         )
@@ -112,6 +117,7 @@ class ZCodeProvider(RuntimeProvider):
                 "catalog.model",
                 "catalog.effort",
                 "catalog.permission",
+                "runtime.attachment",
             ),
             model_catalog_loader=load_zcode_model_catalog,
         )

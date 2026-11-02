@@ -42,6 +42,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
@@ -3516,6 +3517,93 @@ class ZCode:
 
 
 
+# ------------------------------------------------------ ACP prompt attachments
+
+def _prompt_attachment_dir(session_id):
+    safe = re.sub(r"[^\w.\-]+", "_", session_id)[:64] or "session"
+    return Path(tempfile.gettempdir()) / "zcode-aa-attachments" / safe
+
+
+def _attachment_meta(block):
+    meta = block.get("_meta") or {}
+    info = meta.get("aa", {}).get("attachment") if isinstance(meta, dict) else None
+    return info if isinstance(info, dict) else {}
+
+
+def _materialize_image_block(session_id, block):
+    """图片块（内联 base64）→ 落盘成文件，供 Agent 文件工具读取。"""
+    data = block.get("data")
+    if not data:
+        return None
+    media_type = block.get("mimeType") or "image/png"
+    name = _attachment_meta(block).get("name") or "image." + (media_type.split("/", 1)[-1] or "png")
+    try:
+        content = base64.b64decode(data)
+    except Exception:
+        return None
+    directory = _prompt_attachment_dir(session_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / (uuid.uuid4().hex[:8] + "-" + re.sub(r"[^\w.\-]+", "_", name)[:80])
+    try:
+        path.write_bytes(content)
+    except Exception:
+        return None
+    return {"path": path, "name": name, "media_type": media_type, "size": len(content)}
+
+
+def _resource_link_block(block):
+    """resource_link → connector 落盘的缓存文件（file:// 换本机路径）。"""
+    uri = str(block.get("uri") or "")
+    if not uri:
+        return None
+    info = _attachment_meta(block)
+    name = block.get("name") or info.get("name") or "file"
+    media_type = block.get("mimeType") or "application/octet-stream"
+    size = block.get("size")
+    path = None
+    parsed = urllib.parse.urlparse(uri)
+    if parsed.scheme == "file":
+        candidate = Path(urllib.parse.unquote(parsed.path))
+        if candidate.is_file():
+            path = candidate
+            if size is None:
+                size = candidate.stat().st_size
+    return {"path": path, "uri": uri, "name": name, "media_type": media_type, "size": size}
+
+
+def _prompt_with_attachments(session_id, blocks):
+    """ContentBlock[] → 引擎主车道文本。
+
+    引擎 promptCapabilities 不支持 image/embeddedContext（见 _steering_text），
+    附件按「落盘 + 路径引用」交付：图片写进临时目录、文件沿用 connector 缓存
+    路径，提示词里给出绝对路径，Agent 用文件工具读取。"""
+    text_parts, notes = [], []
+    for block in blocks or []:
+        if not isinstance(block, dict):
+            if isinstance(block, str):
+                text_parts.append(block)
+            continue
+        if block.get("text"):
+            text_parts.append(block["text"])
+        elif block.get("type") == "image":
+            note = _materialize_image_block(session_id, block)
+            if note:
+                notes.append(note)
+        elif block.get("type") in ("resource_link", "resource"):
+            note = _resource_link_block(block)
+            if note:
+                notes.append(note)
+    text = "\n".join(text_parts).strip()
+    if notes:
+        lines = ["[附件] 以下文件随本条消息附加，回答前请先读取（图片请直接查看）："]
+        for item in notes:
+            location = str(item["path"]) if item.get("path") else item.get("uri", "")
+            size = f"，{item['size']} 字节" if item.get("size") is not None else ""
+            lines.append(f"- {item['name']}（{item['media_type']}{size}）：{location}")
+        text = (text + "\n\n" if text else "") + "\n".join(lines)
+    return text or "Hello"
+
+
 # ---------------------------------------------------------------- ACP server
 
 class AcpServer:
@@ -3684,9 +3772,10 @@ class AcpServer:
                             {"code": -32000, "message": "no active session"}})
                 return
             self._refresh_entitlements_if_changed()
-            text = "".join(c.get("text", "") for c in msg.get("params", {}).get("prompt", [])
-                           if c.get("type") == "text")
             sid_acp = msg["params"]["sessionId"]
+            # 主车道附件：图片/文件块落盘成路径引用（引擎主 prompt 只吃文本，
+            # 见 _prompt_with_attachments；guide 车道依旧纯文本）。
+            text = _prompt_with_attachments(sid_acp, msg.get("params", {}).get("prompt", []))
             # 斜杠命令 → ZCode 原生方法（/compact /goal /plan /init；
             # 自定义命令透传给引擎）。原生命令不走模型，直接回结果。
             if text.startswith("/"):

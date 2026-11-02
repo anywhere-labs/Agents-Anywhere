@@ -190,3 +190,43 @@ def test_acp_runtime_create_and_start_session_lifecycle(tmp_path):
             await runtime.stop()
 
     asyncio.run(run())
+
+
+def test_zcode_bridge_prompt_materializes_attachments(tmp_path, monkeypatch):
+    """主车道附件：图片落盘、资源解析本机路径，提示词里给出引用。"""
+    import base64
+
+    from connector.runtimes.zcode import bridge
+
+    monkeypatch.setattr(
+        bridge, "_prompt_attachment_dir", lambda sid: tmp_path / "attachments" / sid
+    )
+    png = base64.b64encode(b"\x89PNG-fake").decode()
+    local_file = tmp_path / "cached" / "notes.md"
+    local_file.parent.mkdir(parents=True)
+    local_file.write_text("# notes", encoding="utf-8")
+    blocks = [
+        {"type": "text", "text": "请看附件"},
+        {"type": "image", "data": png, "mimeType": "image/png",
+         "_meta": {"aa": {"attachment": {"name": "shot.png"}}}},
+        {"type": "resource_link", "uri": local_file.as_uri(),
+         "name": "notes.md", "mimeType": "text/markdown", "size": 8},
+    ]
+
+    text = bridge._prompt_with_attachments("sess-z1", blocks)
+
+    assert "请看附件" in text
+    assert "shot.png" in text
+    assert "notes.md" in text
+    image_path = tmp_path / "attachments" / "sess-z1"
+    assert any(p.name.endswith("shot.png") for p in image_path.iterdir())
+    # 附件提示不污染斜杠命令判定：非附件文本不以 "/" 开头。
+    assert not text.startswith("/")
+
+
+def test_zcode_bridge_prompt_text_only_unchanged():
+    """纯文本 prompt 保持原语义（含斜杠命令判定）。"""
+    from connector.runtimes.zcode import bridge
+
+    assert bridge._prompt_with_attachments("s", [{"type": "text", "text": "/compact"}]) == "/compact"
+    assert bridge._prompt_with_attachments("s", []) == "Hello"
