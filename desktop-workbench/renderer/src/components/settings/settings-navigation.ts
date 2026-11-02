@@ -1,8 +1,9 @@
-import { Archive, Laptop, Logs, Rocket, Smartphone, Sun, User } from "lucide-react"
+import { Archive, Boxes, Laptop, Logs, Rocket, Smartphone, Sun, User } from "lucide-react"
 
 export const settingsNavigation = [
   { id: "account", labelKey: "account", icon: User },
   { id: "appearance", labelKey: "appearance", icon: Sun },
+  { id: "model-configs", labelKey: "modelConfigsTitle", icon: Boxes },
   { id: "mobile-connections", labelKey: "mobileConnections", icon: Smartphone },
   { id: "desktop", labelKey: "desktop", icon: Laptop },
   { id: "startup", labelKey: "startup", icon: Rocket },

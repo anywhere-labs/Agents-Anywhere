@@ -11,14 +11,14 @@ import { Button as SlideButton } from "@/components/onboarding/reference/compone
 import { Button } from "@/components/ui/button"
 import { TokensAnywhereArtwork } from "@/features/tokens-anywhere/artwork"
 import { useTokensAnywhereSidebarVisibility } from "@/features/tokens-anywhere/sidebar-visibility"
-import { PRODUCT_LINKS } from "@/lib/product-links"
+import { useTokensAnywhereUrl } from "@/features/tokens-anywhere/address"
 import "@/components/onboarding/reference/styles/onboarding.css"
 
 export function TokensAnywherePage() {
   const t = useTranslations("dashboard.tokensAnywhere")
   const [sidebarVisible, setSidebarVisible] = useTokensAnywhereSidebarVisibility()
   // Signed-out visitors sign in there first, then land on their keys.
-  const apiKeysUrl = tokensAnywherePage("/console/api-keys/")
+  const apiKeysUrl = tokensAnywherePage(useTokensAnywhereUrl(), "/console/api-keys/")
 
   const toggleSidebarVisibility = () => {
     const nextVisible = !sidebarVisible
@@ -61,9 +61,9 @@ export function TokensAnywherePage() {
   )
 }
 
-function tokensAnywherePage(path: string): string | null {
+function tokensAnywherePage(origin: string | null, path: string): string | null {
   try {
-    return new URL(path, PRODUCT_LINKS.tokensAnywhereUrl).href
+    return origin ? new URL(path, origin).href : null
   } catch {
     return null
   }

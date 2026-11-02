@@ -633,7 +633,8 @@
         "required": "请填写{field}。",
         "invalidFormat": "{field}格式不正确。",
         "invalidType": "{field}的内容类型不正确。",
-        "unsupportedField": "配置中包含不支持的字段。"
+        "unsupportedField": "配置中包含不支持的字段。",
+        "secretRequired": "更换了地址，请重新填写 API Key。"
       },
       "runtimeConfigFields": {
         "claudeExecutablePath": {
@@ -687,8 +688,6 @@
       },
       "modelGatewayBaseUrl": "Gateway 地址",
       "modelGatewayApiKey": "Gateway API Key",
-      "showModelGatewayApiKey": "显示 Gateway API Key",
-      "hideModelGatewayApiKey": "隐藏 Gateway API Key",
       "resetAllDefaults": "全部恢复默认值",
       "noEnvironmentOverrides": "没有环境变量覆盖。",
       "environmentName": "变量名",
@@ -751,7 +750,14 @@
       "unarchiveAllTitle": "取消归档会话？",
       "archiveAllDescription": "归档当前 {name} 视图中的全部会话。",
       "unarchiveAllDescription": "取消归档当前 {name} 视图中的全部会话。",
-      "bulkArchiveFailed": "无法更新会话。"
+      "bulkArchiveFailed": "无法更新会话。",
+      "modelGatewayApiKeyKept": "已保存 {hint}。留空保持不变；更换地址需要重新填写。",
+      "modelGatewayProtocol": "协议",
+      "modelProtocols": {
+        "openai_responses": "OpenAI Responses",
+        "openai_chat": "OpenAI Chat Completions",
+        "anthropic": "Anthropic Messages"
+      }
     },
     "panels": {
       "files": {
@@ -1791,7 +1797,139 @@
         "failed": "账号信息更新失败。"
       },
       "tokensAnywhereShow": "显示 Tokens Anywhere",
-      "tokensAnywhereShowDescription": "在侧边栏的手机连接下方显示 Tokens Anywhere 入口。"
+      "tokensAnywhereShowDescription": "在侧边栏的手机连接下方显示 Tokens Anywhere 入口。",
+      "modelConfigs": {
+        "secretMissing": "服务器还没有配置 AGENT_SERVER_SECRET（至少 32 个字符）。请管理员配置后再保存 Key 或链接 Tokens Anywhere。",
+        "tokensTitle": "Tokens Anywhere",
+        "tokensDescription": "链接后，可以一键把 Tokens Anywhere 的模型配置到各设备的 Runtime。",
+        "tokensLinked": "已链接：{account}",
+        "tokensReauth": "授权已失效，请重新链接。",
+        "tokensNotSynced": "模型还没有同步，请点「同步模型」。",
+        "link": "链接",
+        "relink": "重新链接",
+        "linkOpened": "已在浏览器中打开授权页，完成后这里会自动更新。",
+        "sync": "同步模型",
+        "synced": "模型已同步",
+        "unlink": "断开",
+        "relinkSoon": "授权即将满一年，请尽快重新链接。",
+        "unlinkTitle": "断开 Tokens Anywhere？",
+        "unlinkDescription": "会先把用这份配置的 {count} 个 Runtime 恢复为原来的配置，再撤销授权；撤销后 Key 立即失效。",
+        "unlinked": "已断开",
+        "unlinkedNotRevoked": "已断开，但撤销授权没有成功，请到 Tokens Anywhere 的「已连接的应用」里撤销。",
+        "unlinkedWithFailures": "已断开，{count} 个 Runtime 没能恢复，请稍后手动恢复。",
+        "allowInterrupt": "允许中断正在运行的任务",
+        "allowInterruptDescription": "应用需要重启 Runtime，会中断 {count} 个正在运行的任务。",
+        "profilesTitle": "模型配置",
+        "profilesDescription": "模型服务的地址、Key 和模型。Key 只能写入，不会再显示。",
+        "addProfile": "添加配置",
+        "addProfileDescription": "填写模型服务的 Key，以及它支持的协议、地址和模型。",
+        "noProfiles": "还没有模型配置。",
+        "profileName": "名称",
+        "apiKey": "API Key",
+        "apiKeyWriteOnly": "保存后不会再显示，只保留开头和结尾几位用于辨认。",
+        "baseUrl": "地址",
+        "baseUrlPlaceholder": "https://example.com/v1",
+        "models": "模型",
+        "modelsPlaceholder": "每行一个模型 ID，可留空",
+        "profileSaved": "配置已保存",
+        "deleteProfile": "删除配置",
+        "detached": "已断开",
+        "keyHint": "Key {hint}",
+        "modelCount": "{count} 个模型",
+        "usedBy": "{count} 个设备在用",
+        "source": {
+          "tokens": "Tokens Anywhere",
+          "manual": "手动"
+        },
+        "protocols": {
+          "openai_responses": "OpenAI Responses",
+          "openai_chat": "OpenAI Chat Completions",
+          "anthropic": "Anthropic Messages"
+        },
+        "apply": "应用到设备",
+        "rotate": "轮换 Key",
+        "rotateDescription": "在 Tokens Anywhere 生成新的 Key，并写入所有用它的 Runtime；旧 Key 立即失效。",
+        "applyTitle": "应用「{name}」",
+        "applyDescription": "选择要使用这份配置的 Runtime。默认只修改 AA 管理的实例；修改 Runtime 自身全局配置需要单独确认。",
+        "noTargets": "没有可以应用的 Runtime。",
+        "effect": {
+          "new_instance": "新建受管实例",
+          "immediate": "立即生效",
+          "new_session": "新会话生效",
+          "restart": "重启后生效"
+        },
+        "scopeNativeGlobal": "修改 Runtime 自身的全局配置",
+        "replaces": "替换 {host}",
+        "runningSessions": "{count} 个任务运行中",
+        "tooManyModels": "超过 {limit} 个模型",
+        "skip": {
+          "model_connection_unsupported": "不支持模型连接",
+          "not_installed": "设备上没有安装",
+          "format_unsupported": "没有共同支持的协议",
+          "mode_unsupported": "当前模式不能使用模型连接",
+          "busy_operation": "正在应用其他配置",
+          "device_offline": "设备离线",
+          "unknown": "暂时不能应用"
+        },
+        "confirmNativeGlobal": "我确认修改所选 Runtime 自身的全局配置（会影响不经过 AA 使用它的地方）。",
+        "applyCount": "应用到 {count} 个",
+        "appliedCount": "已应用到 {count} 个 Runtime",
+        "appliedPartially": "已应用 {applied} 个，{other} 个没有应用",
+        "devicesTitle": "设备",
+        "devicesDescription": "各设备上支持模型连接的 Runtime。「已应用」表示 Runtime 已采用配置，不代表连接已验证。",
+        "noDevices": "还没有支持模型连接的 Runtime。",
+        "assignedProfile": "使用「{name}」",
+        "notAssigned": "未使用配置管理",
+        "managedInstance": "配置管理创建",
+        "restore": "恢复",
+        "restored": "已恢复原配置",
+        "assignmentStatus": {
+          "applying": "应用中",
+          "failed": "应用失败",
+          "modified": "已手动修改",
+          "outdated": "有更新",
+          "applied": "已应用"
+        },
+        "connectionState": {
+          "not_configured": "未配置",
+          "saved_pending": "已保存，待应用",
+          "applied": "已应用",
+          "failed": "应用失败",
+          "managed_externally": "由外部客户端管理"
+        },
+        "cancel": "取消",
+        "save": "保存",
+        "errors": {
+          "generic": "操作没有完成，请稍后重试。",
+          "secret_unconfigured": "服务器还没有配置 AGENT_SERVER_SECRET（至少 32 个字符），暂时不能保存 Key 或链接账号。",
+          "secret_required": "更换了地址，请重新填写 API Key。",
+          "profile_changed": "这份配置已在其他地方修改，请刷新后再试。",
+          "profile_in_use": "还有设备在用这份配置，请先恢复这些设备。",
+          "profile_read_only": "这份配置由来源管理，不能在这里修改。",
+          "profile_detached": "这份配置已断开，不能再应用。",
+          "busy": "有任务正在运行，允许中断后才能应用。",
+          "operation_in_progress": "上一次操作还在进行中。",
+          "idempotency_key_reused": "请求重复，请重新打开对话框再试。",
+          "too_many_models": "模型太多，请减少导入的模型。",
+          "confirmation_required": "这会修改 Runtime 自身的全局配置，需要确认。",
+          "tokens_unconfigured": "这个实例还没有设置 Tokens Anywhere 地址。",
+          "tokens_not_linked": "请先链接 Tokens Anywhere。",
+          "reauth_required": "Tokens Anywhere 的授权已失效，请重新链接。",
+          "tokens_unavailable": "Tokens Anywhere 暂时不可用。",
+          "tokens_not_synced": "请先同步 Tokens Anywhere 的模型。",
+          "key_rejected": "Tokens Anywhere 拒绝了本实例的 Key。",
+          "catalog_empty": "这把 Key 还没有可用的模型。",
+          "link_expired": "链接已过期，请重新开始。",
+          "invalid_state": "链接不是在这个浏览器里开始的，请重新开始。",
+          "invalid_issuer": "回调不是来自配置的 Tokens Anywhere 地址。",
+          "access_denied": "已取消授权。",
+          "authorization_failed": "Tokens Anywhere 没有完成授权。",
+          "exchange_failed": "Tokens Anywhere 没有签发令牌，请重试。",
+          "model_connection_unsupported": "这个 Runtime 不支持模型连接。",
+          "device_offline": "设备离线。"
+        }
+      },
+      "modelConfigsTitle": "配置管理"
     },
     "team": {
       "title": "团队",
@@ -2381,5 +2519,11 @@
     "unsupported_operation": "Agent 尚未提供此操作。",
     "worker_capacity": "Agent 执行进程已达到上限。",
     "workflow_unsupported": "该 Runtime 不支持工作区准备。"
+  },
+  "runtimeMaturity": {
+    "beta": "Beta",
+    "experimental": "实验性",
+    "betaDescription": "功能基本可用，可能还有问题。",
+    "experimentalDescription": "早期功能，行为可能变化，请谨慎使用。"
   }
 }
