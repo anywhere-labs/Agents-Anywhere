@@ -1,5 +1,6 @@
 "use client"
 
+import { noticeTitleKey } from "@/components/session/notice-title"
 import { RuntimeInteractionForm } from "./runtime-workflow-panel"
 import type { WorkflowInteraction } from "@/features/dashboard/runtime-workflows"
 import * as React from "react"
@@ -39,6 +40,7 @@ export function InteractionCard({
   compact,
 }: InteractionCardProps) {
   const tSession = useTranslations("dashboard.session")
+  const noticeTitle = useNoticeTitle()
   const tCommon = useTranslations("common")
   const resolving = resolvingNoticeId === notice.noticeId
   const disabled = resolvingNoticeId !== null || notice.status === "response_accepted" || notice.status === "resolving"
@@ -58,7 +60,7 @@ export function InteractionCard({
   if ((runtimeDialog || notice.metadata?.kind === "form") && typeof owner === "string" && typeof revision === "number") {
     const ui = (runtimeDialog?.input?.uiSchema ?? { kind: "form" }) as Record<string, unknown>
     const request = { interactionId: notice.noticeId, ownerGeneration: owner, requestRevision: revision,
-      revision, kind: ui.kind, title: notice.title, message: notice.message ?? undefined, status: "open",
+      revision, kind: ui.kind, title: noticeTitle(notice), message: notice.message ?? undefined, status: "open",
       metadata: { ...notice.metadata, initialValue: ui.initialValue, options: ui.options }, actions: notice.actions } as WorkflowInteraction
     return <RuntimeInteractionForm key={notice.noticeId + owner} request={request} pending={disabled}
       onRespond={(actionId, response) => onRespondInteraction(notice.noticeId, actionId, {
@@ -122,7 +124,7 @@ export function InteractionCard({
                 notice.severity === "error" ? "text-destructive" : "text-muted-foreground",
               )} />
               <div className="min-w-0">
-                <div className="wrap-break-word text-sm font-medium">{notice.title}</div>
+                <div className="wrap-break-word text-sm font-medium">{noticeTitle(notice)}</div>
               </div>
             </div>
             {actionButtons}
@@ -401,6 +403,7 @@ export function InteractionHeaderNotice({
 }
 
 export function NotificationCard({ notice }: { notice: Notice }) {
+  const noticeTitle = useNoticeTitle()
   const Icon = notificationIcon(notice.severity)
   return (
     <div className={cn(
@@ -418,7 +421,7 @@ export function NotificationCard({ notice }: { notice: Notice }) {
           notice.severity === "info" && "text-muted-foreground",
         )} />
         <div className="min-w-0">
-          <div className="wrap-break-word text-sm font-medium">{notice.title}</div>
+          <div className="wrap-break-word text-sm font-medium">{noticeTitle(notice)}</div>
           {notice.message ? (
             <p className="mt-0.5 wrap-break-word text-sm text-muted-foreground">{notice.message}</p>
           ) : null}
@@ -449,4 +452,13 @@ function interactionErrorMessage(notice: Notice): string {
     return error.message
   }
   return "The response failed. Choose an action again."
+}
+
+/** Runtime approval titles arrive in English; translate the known ones by their structured kind. */
+function useNoticeTitle() {
+  const tSession = useTranslations("dashboard.session")
+  return (notice: Notice) => {
+    const key = noticeTitleKey(notice)
+    return key && tSession.has(key) ? tSession(key) : notice.title
+  }
 }

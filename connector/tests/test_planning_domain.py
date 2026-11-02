@@ -56,5 +56,6 @@ def test_plan_title_uses_any_heading_or_first_line_without_markdown() -> None:
     )
     assert plan_title("1. **新增** 文件") == "新增 文件"
     assert plan_title("内容精确为 `PLAN_V2`，__强调__ 与 snake_case") == "内容精确为 PLAN_V2，强调 与 snake_case"
+    assert plan_title("批准后，仅在当前目录执行：\n\n1. 创建文件") == "批准后，仅在当前目录执行"
     assert plan_title("x" * 80).endswith("…")
     assert len(plan_title("x" * 80)) == 60

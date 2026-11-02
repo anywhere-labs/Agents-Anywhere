@@ -21,8 +21,9 @@ struct SessionPlanningPanel: View {
     let chat: SessionChatModel
     var body: some View {
         if let state = chat.session.planning {
-            let status = [state.effectiveMode == "plan" ? String(localized: "规划模式") : nil, state.execution.map { execution in
-                execution.status == "started" ? String(localized: "计划执行已开始") : execution.status == "accepted" ? String(localized: "执行请求已接受，等待原生开始") : execution.status == "rejected" ? String(localized: "计划已同意，执行尚未启动") : String(localized: "执行结果待核对")
+            let status = [state.effectiveMode == "plan" ? String(localized: "规划模式") : nil, state.execution.flatMap { execution in
+                // A started execution is shown on its plan card; only states that still need attention get a line.
+                execution.status == "started" ? nil : execution.status == "accepted" ? String(localized: "执行请求已接受，等待原生开始") : execution.status == "rejected" ? String(localized: "计划已同意，执行尚未启动") : String(localized: "执行结果待核对")
             }].compactMap { $0 }
             if !status.isEmpty || state.draft != nil {
                 VStack(alignment: .leading, spacing: 12) {
@@ -84,7 +85,10 @@ private func planPreviewBody(markdown: String, title: String) -> String {
         .replacingOccurrences(of: #"^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)"#, with: "", options: .regularExpression)
         .replacingOccurrences(of: #"`+|\*+|(?<!\w)_+|_+(?!\w)"#, with: "", options: .regularExpression)
         .trimmingCharacters(in: .whitespaces)
-    guard !heading.isEmpty, heading == title.trimmingCharacters(in: .whitespaces) else { return text }
+    func bare(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: ":：")).trimmingCharacters(in: .whitespaces)
+    }
+    guard !heading.isEmpty, bare(heading) == bare(title) else { return text }
     return (lines.count > 1 ? String(lines[1]) : "").replacingOccurrences(of: #"^\s*\n"#, with: "", options: .regularExpression)
 }
 

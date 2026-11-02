@@ -41,7 +41,8 @@ export function useWorkspacePreparation(token: string | undefined, target: strin
   }, [request, prepare])
 
   React.useEffect(() => {
-    if (!token || stateScope !== scope || !operation || ["failed", "cancelled", "expired", "consumed"].includes(operation.state.phase)) return
+    // Terminal phases never change again; polling them only repeats the same answer.
+    if (!token || stateScope !== scope || !operation || ["failed", "rejected", "cancelled", "expired", "consumed", "outcome_unknown"].includes(operation.state.phase)) return
     let closed = false, querying = false
     const timer = window.setInterval(async () => {
       if (querying || busy.current) return

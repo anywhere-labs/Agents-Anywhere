@@ -1130,7 +1130,11 @@
       },
       "commandDescription_compact": "Compact the session context.",
       "commandDescription_kill-chatgpt": "Stop the ChatGPT / Codex desktop app so its threads can run in the connector's own app-server.",
-      "commandDescription_open-in-codex-app": "Open this thread in the running Codex desktop app and follow it from there."
+      "commandDescription_open-in-codex-app": "Open this thread in the running Codex desktop app and follow it from there.",
+      "approvalTitle_codex_command": "Codex wants to run a command",
+      "approvalTitle_codex_file_change": "Codex wants to edit files",
+      "approvalTitle_codex_permissions": "Codex requests additional permissions",
+      "approvalTitle_claude_tool": "Claude wants to use a tool"
     },
     "sessionStatus": {
       "idle": "Idle",
@@ -1891,7 +1895,7 @@
         "enabled": "Require email verification codes",
         "enabledDescription": "When enabled, registration (including admin-created users) and binding or changing email require a code. When disabled, email is marked verified directly.",
         "fromAddress": "Sender address",
-        "fromDescription": "Use a domain verified in Resend. Name <email> format is supported.",
+        "fromDescription": "Use a domain verified in Resend. Name '<email>' format is supported.",
         "apiKey": "Resend API key",
         "apiKeyDescription": "Leave blank to keep the saved key. The server never returns the key.",
         "configured": "API key configured",
@@ -2045,7 +2049,7 @@
     "statusWithdrawn": "Withdrawn",
     "statusUnknown": "Needs verification",
     "superseded": "Revised as version {revision}",
-    "commandDescription": "Enter native planning: /plan <task> drafts a plan to confirm before executing; /plan off exits",
+    "commandDescription": "Enter native planning: /plan '<task>' drafts a plan to confirm before executing; /plan off exits",
     "commandHint": "[task | off]"
   },
   "runtimeErrors": {

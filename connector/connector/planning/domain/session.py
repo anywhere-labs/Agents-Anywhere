@@ -37,7 +37,8 @@ def plan_title(text: str) -> str:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     heading = next((line for line in lines if re.match(r"^#{1,6}\s+", line)), None)
     source = heading or (lines[0] if lines else "")
-    title = _MARKDOWN_INLINE.sub("", _MARKDOWN_PREFIX.sub("", source)).strip()
+    # A lead-in such as "After approval, run:" reads as a title without its colon.
+    title = _MARKDOWN_INLINE.sub("", _MARKDOWN_PREFIX.sub("", source)).strip().rstrip(":：").strip()
     if not title:
         return "计划"
     return title if len(title) <= 60 else title[:59] + "…"

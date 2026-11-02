@@ -383,7 +383,7 @@ internal fun RuntimeNoticeCard(
                         stringResource(R.string.session_notice_pending_response)
                     } else {
                         inputRequestForm?.questions?.firstOrNull()?.header?.takeIf(String::isNotBlank)
-                            ?: notice.title
+                            ?: localizedNoticeTitle(notice)
                     },
                     modifier = Modifier.weight(1f),
                     color = colors.muted,
@@ -431,7 +431,7 @@ internal fun RuntimeNoticeCard(
                 )
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(
-                        text = notice.title,
+                        text = localizedNoticeTitle(notice),
                         color = colors.ink,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -665,6 +665,20 @@ private fun RuntimeNoticeActionButton(
             overflow = TextOverflow.Ellipsis,
         )
     }
+}
+
+/** Runtime approval titles arrive in English; translate the known ones by their structured kind. */
+@Composable
+internal fun localizedNoticeTitle(notice: RuntimeNotice): String {
+    if (notice.interactionType == "approval") {
+        if (notice.context["approvalSource"] is Map<*, *>) when (notice.context["kind"]) {
+            "command" -> return stringResource(R.string.session_approval_title_codex_command)
+            "file_change" -> return stringResource(R.string.session_approval_title_codex_file_change)
+            "permissions" -> return stringResource(R.string.session_approval_title_codex_permissions)
+        }
+        if (notice.noticeId.startsWith("notice_claude_approval_")) return stringResource(R.string.session_approval_title_claude_tool)
+    }
+    return notice.title
 }
 
 /** AA's own commands carry translated text; native commands keep the runtime's text. */

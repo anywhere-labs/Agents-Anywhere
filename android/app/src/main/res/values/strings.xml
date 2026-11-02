@@ -737,4 +737,8 @@
     <string name="terminal_service_channel_description">Keeps the active session connected.</string>
     <string name="terminal_service_title">Session active</string>
     <string name="terminal_service_text">Keeping the active session connected.</string>
+    <string name="session_approval_title_codex_command">Codex wants to run a command</string>
+    <string name="session_approval_title_codex_file_change">Codex wants to edit files</string>
+    <string name="session_approval_title_codex_permissions">Codex requests additional permissions</string>
+    <string name="session_approval_title_claude_tool">Claude wants to use a tool</string>
 </resources>

@@ -21,6 +21,9 @@
 - 提交修改意见后的新计划作为同一份计划的下一版本（版本 2、3…），旧版本在时间线中收为一行，可随时打开；计划卡片按产生时间排在时间线中，批准后紧贴在实施内容上方，Codex 不再额外显示一条重复的计划系统消息。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
 - 斜杠菜单在支持规划的会话中提供 `/plan`，并显示中英文说明；Codex 内置指令的说明随客户端语言显示。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
 - Runtime、工作区准备、会话创建和原生历史的错误改为按稳定错误码显示中英文文案，英文界面不再出现 Connector 或 Server 固定输出的中文；Android 新建会话的输入校验提示也随语言显示。错误码文案集中在 `contracts/runtime-errors/1.0/messages.json`，由脚本生成到四端。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- 修复英文界面打开斜杠菜单时 `/plan` 说明文案解析失败报错；日期按应用语言而不是浏览器语言显示；Codex 与 Claude 的审批卡标题在中英文界面下各自显示对应语言。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- 本机缺少 Pi 等启动前即可确定的工作区准备失败，改为明确的失败状态并显示对应原因，不再标记为「结果未知」后反复查询。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- 计划执行开始后不再在时间线末尾长期保留「计划执行已开始」，执行状态改由计划卡片显示；以冒号结尾的引导句作为计划标题时不再保留冒号。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
 
 ### 会话创建与消息交付
 

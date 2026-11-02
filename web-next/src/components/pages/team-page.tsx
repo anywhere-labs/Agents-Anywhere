@@ -15,7 +15,7 @@ import {
   UserRound,
   Users,
 } from "lucide-react"
-import { useTranslations } from "next-intl"
+import { useLocale, useTranslations } from "next-intl"
 import { toast } from "sonner"
 
 import {
@@ -108,6 +108,7 @@ function initialDraft(): UserDraft {
 export function TeamPage() {
   const { session, me } = useAuth()
   const t = useTranslations("pages.team")
+  const locale = useLocale()
   const [users, setUsers] = React.useState<AdminUser[]>([])
   const [filterTab, setFilterTab] = React.useState<FilterTab>("all")
   const [search, setSearch] = React.useState("")
@@ -345,10 +346,10 @@ export function TeamPage() {
                         <StatusBadge disabled={user.disabled} />
                       </TableCell>
                       <TableCell className="code-mono text-xs text-muted-foreground">
-                        {formatDate(user.createdAt, t)}
+                        {formatDate(user.createdAt, t, locale)}
                       </TableCell>
                       <TableCell className="code-mono text-xs text-muted-foreground">
-                        {formatDate(user.updatedAt, t)}
+                        {formatDate(user.updatedAt, t, locale)}
                       </TableCell>
                       <TableCell>
                         <UserContextMenu
@@ -948,7 +949,7 @@ function validatePasswordPair(password: string, confirmPassword: string): string
   return null
 }
 
-function formatDate(iso: string, t: ReturnType<typeof useTranslations<"pages.team">>) {
+function formatDate(iso: string, t: ReturnType<typeof useTranslations<"pages.team">>, locale: string) {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return iso
   const diff = Date.now() - date.getTime()
@@ -957,5 +958,5 @@ function formatDate(iso: string, t: ReturnType<typeof useTranslations<"pages.tea
   if (days === 1) return t("oneDayAgo")
   if (days < 7) return t("daysAgo", { count: days })
   if (days < 30) return t("weeksAgo", { count: Math.floor(days / 7) })
-  return date.toLocaleDateString()
+  return date.toLocaleDateString(locale)
 }

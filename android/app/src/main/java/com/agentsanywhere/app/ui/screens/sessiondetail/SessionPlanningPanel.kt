@@ -60,7 +60,8 @@ internal fun SessionPlanningPanel(state: RemotePlanningState?, darkMode: Boolean
     if (state == null || (state.effectiveMode != "plan" && state.draft == null && state.proposal == null && state.documents.isEmpty())) return
     val colors = LocalAAColors.current
     val mode = if (state.effectiveMode == "plan") stringResource(R.string.planning_mode) else null
-    val execution = state.executionStatus?.let { when (it) { "started" -> stringResource(R.string.planning_execution_started); "accepted" -> stringResource(R.string.planning_execution_accepted); "rejected" -> stringResource(R.string.planning_execution_rejected); else -> stringResource(R.string.planning_execution_uncertain) } }
+    // A started execution is shown on its plan card; only states that still need attention get a line.
+    val execution = state.executionStatus?.takeIf { it != "started" }?.let { when (it) { "accepted" -> stringResource(R.string.planning_execution_accepted); "rejected" -> stringResource(R.string.planning_execution_rejected); else -> stringResource(R.string.planning_execution_uncertain) } }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (mode != null || execution != null) Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Lucide.ListChecks, contentDescription = null, tint = colors.muted, modifier = Modifier.size(14.dp))
@@ -153,7 +154,8 @@ private fun planBody(document: PlanDocument): String {
     val markdown = document.markdown.replace(Regex("^\\s*\\n"), "")
     // Same cleanup the Connector applies when it derives the title.
     val heading = markdown.substringBefore('\n').replace(Regex("^\\s*(?:#{1,6}\\s+|[-*+]\\s+|\\d+[.)]\\s+|>\\s*)"), "").replace(Regex("`+|\\*+|(?<!\\w)_+|_+(?!\\w)"), "").trim()
-    return if (heading.isNotEmpty() && heading == document.title.trim()) markdown.substringAfter('\n', "").replace(Regex("^\\s*\\n"), "") else markdown
+    fun bare(value: String) = value.trim().trimEnd(':', '：').trim()
+    return if (heading.isNotEmpty() && bare(heading) == bare(document.title)) markdown.substringAfter('\n', "").replace(Regex("^\\s*\\n"), "") else markdown
 }
 
 @Composable

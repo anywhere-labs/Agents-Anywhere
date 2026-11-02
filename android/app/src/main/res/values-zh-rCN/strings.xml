@@ -735,4 +735,8 @@
     <string name="terminal_service_channel_description">保持当前会话的连接。</string>
     <string name="terminal_service_title">会话进行中</string>
     <string name="terminal_service_text">正在保持当前会话的连接。</string>
+    <string name="session_approval_title_codex_command">Codex 请求执行命令</string>
+    <string name="session_approval_title_codex_file_change">Codex 请求修改文件</string>
+    <string name="session_approval_title_codex_permissions">Codex 请求额外权限</string>
+    <string name="session_approval_title_claude_tool">Claude 请求使用工具</string>
 </resources>

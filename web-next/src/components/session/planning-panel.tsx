@@ -53,7 +53,8 @@ export function PlanningPanel({ planning, canReview = true }: { planning: Planni
   if (!documents.length && !state?.draft && state?.effectiveMode !== "plan" && !state?.requestedMode && !error) return null
   const uncertain = !!state && (state.effectiveMode === 'unknown' || state.freshness !== 'fresh')
   const mode = state?.requestedMode ? t('modePending') : state?.effectiveMode === 'plan' ? t('mode') : uncertain ? t('stateUncertain') : null
-  const execution = state?.execution && (state.execution.status === 'started' ? t('executionStarted') : state.execution.status === 'accepted' ? t('executionAccepted') : state.execution.status === 'rejected' ? t('executionRejected') : t('executionUncertain'))
+  // A started execution is shown on its plan card ("Executed"); only states that still need attention get a line.
+  const execution = state?.execution && state.execution.status !== 'started' && (state.execution.status === 'accepted' ? t('executionAccepted') : state.execution.status === 'rejected' ? t('executionRejected') : t('executionUncertain'))
   return <section className="flex flex-col gap-3" aria-label={t('title')}>
     {(mode || execution) && <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground" role="status">
       <ListChecks className="size-3.5" aria-hidden="true" />
@@ -185,7 +186,8 @@ function planBody(document: PlanDocument) {
   const [first = '', ...rest] = markdown.split('\n')
   // Same cleanup the Connector applies when it derives the title.
   const heading = first.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)/, '').replace(/`+|\*+|(?<!\w)_+|_+(?!\w)/g, '').trim()
-  return heading && heading === document.title.trim() ? rest.join('\n').replace(/^\s*\n/, '') : markdown
+  const bare = (value: string) => value.trim().replace(/[:：]+$/, '').trim()
+  return heading && bare(heading) === bare(document.title) ? rest.join('\n').replace(/^\s*\n/, '') : markdown
 }
 
 function PlanCard({ document, draft, status = null, onRead }: {
