@@ -79,6 +79,9 @@ class AntigravityProvider(RuntimeProvider):
                 "startTurn": True,
                 "modelCatalog": True,
                 "permissionCatalog": True,
+                # server 端 create-and-start 按这份快照门控附件；
+                # 与 profile.runtime_capabilities 缺一不可。
+                "attachments": True,
             },
             metadata={"nativeHistory": True, "localInstallation": True},
         )

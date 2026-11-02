@@ -36,6 +36,8 @@ def test_antigravity_provider_discovery(monkeypatch, tmp_path):
         assert desc.display_name == "Antigravity"
         assert desc.capabilities.get("createAndStartSession") is True
         assert desc.capabilities.get("startTurn") is True
+        # server 端 create-and-start 按这份快照门控附件，缺了会 409。
+        assert desc.capabilities.get("attachments") is True
 
     asyncio.run(run())
 
