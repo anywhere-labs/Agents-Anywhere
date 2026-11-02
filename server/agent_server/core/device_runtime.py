@@ -19,6 +19,12 @@ from agent_server.core.runtime_identity import (
     validate_implementation_category,
     validate_runtime_type,
 )
+from agent_server.core.secret_fields import (
+    redact_config,
+    scrub,
+    secret_paths,
+    secret_values,
+)
 
 RuntimeStatus = Literal[
     "stopped",
@@ -179,6 +185,9 @@ class DeviceRuntimeView(BaseModel):
     defaults: dict[str, Any]
     capabilities: dict[str, bool]
     config: dict[str, Any] | None
+    # Write-only fields left out of ``config``, e.g.
+    # {"modelGateway.apiKey": {"set": true, "hint": "sk-a1b2…wxyz"}}.
+    secretFields: dict[str, dict[str, Any]] = Field(default_factory=dict)
     error: dict[str, Any] | None
     # Step inside a non-error status, e.g. {"code": "syncing", ...} while
     # starting. Informational only; status decides usability.
@@ -188,6 +197,32 @@ class DeviceRuntimeView(BaseModel):
     updatedAt: str
 
     model_config = ConfigDict(populate_by_name=True)
+
+
+def public_runtime_view(view: DeviceRuntimeView) -> DeviceRuntimeView:
+    """The runtime as a client may see it: no secret values anywhere."""
+    paths = secret_paths(view.schema_, view.uiSchema)
+    if not paths:
+        return view
+    config, described = redact_config(view.config, paths)
+    secrets = secret_values(view.config, paths)
+    return view.model_copy(
+        update={
+            "config": config,
+            "secretFields": described,
+            "error": _scrub_value(view.error, secrets) if view.error else view.error,
+        }
+    )
+
+
+def _scrub_value(value: Any, secrets: list[str]) -> Any:
+    if isinstance(value, str):
+        return scrub(value, secrets)
+    if isinstance(value, dict):
+        return {key: _scrub_value(item, secrets) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_scrub_value(item, secrets) for item in value]
+    return value
 
 
 class DeviceRuntimeListResponse(BaseModel):
@@ -272,7 +307,12 @@ def validate_config_schema(raw: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
-def validate_config(config: dict[str, Any], schema: dict[str, Any]) -> None:
+def validate_config(
+    config: dict[str, Any],
+    schema: dict[str, Any],
+    *,
+    secrets: list[str] | None = None,
+) -> None:
     validator = Draft202012Validator(schema)
     errors = sorted(validator.iter_errors(config), key=lambda error: list(error.absolute_path))
     if not errors:
@@ -280,7 +320,8 @@ def validate_config(config: dict[str, Any], schema: dict[str, Any]) -> None:
     issues = [
         RuntimeConfigIssue(
             path=_json_pointer(error.absolute_path),
-            message=error.message,
+            # jsonschema quotes the offending value, which may be a secret.
+            message=scrub(error.message, secrets or []),
             validator=str(error.validator) if error.validator is not None else None,
         )
         for error in errors

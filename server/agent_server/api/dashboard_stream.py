@@ -10,7 +10,7 @@ from starlette.requests import HTTPConnection
 from agent_server.api.server_push_websocket import (
     run_server_push_until_disconnect,
 )
-from agent_server.core.device_runtime import DeviceRuntimeView
+from agent_server.core.device_runtime import DeviceRuntimeView, public_runtime_view
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
     get_rpc,
@@ -70,7 +70,7 @@ async def _dashboard_snapshot(
         # Device pages render runtime lifecycle from this list, so a status
         # change reaches them without a manual refresh.
         "runtimes": [
-            DeviceRuntimeView.model_validate(row).model_dump(
+            public_runtime_view(DeviceRuntimeView.model_validate(row)).model_dump(
                 mode="json",
                 by_alias=True,
             )
