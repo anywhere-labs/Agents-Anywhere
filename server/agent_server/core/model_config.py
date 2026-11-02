@@ -24,6 +24,7 @@ from agent_server.core.model_connection import ModelProtocol
 MAX_RUNTIME_MODELS = 64
 GATEWAY_KEY = "apiKey"
 GATEWAY_URL = "baseUrl"
+GATEWAY_PROTOCOL = "protocol"
 MANAGED_BY = "model-config"
 
 ProfileSource = Literal["tokens", "manual"]
@@ -202,7 +203,11 @@ def apply_patch(
     chosen. Models the user added stay, and win on an ID clash.
     """
     patched = copy.deepcopy(config)
-    patched[capability["configField"]] = {GATEWAY_URL: offer.baseUrl, GATEWAY_KEY: api_key}
+    gateway = {GATEWAY_URL: offer.baseUrl, GATEWAY_KEY: api_key}
+    if len(capability.get("protocols") or []) > 1:
+        # A runtime that speaks several protocols needs to know which one this is.
+        gateway[GATEWAY_PROTOCOL] = offer.format
+    patched[capability["configField"]] = gateway
     if mode.field and mode.target:
         patched[mode.field] = mode.target
     imported: list[str] = []

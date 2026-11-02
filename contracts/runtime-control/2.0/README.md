@@ -87,7 +87,10 @@ saved connection changes (`instance`, `session` or `native_global`), whether
 models can be discovered or entered, and when a change applies (`immediate`,
 `new_session` or `restart`). The capability has its own `maturity`. Absent or
 `null` means the runtime takes no model connection; the Server must not guess
-from the runtime type.
+from the runtime type. A runtime that speaks more than one protocol also
+receives `protocol` in the connection object, naming the protocol of
+`baseUrl`. When the runtime has modes, `modeField` names the config field
+that selects one.
 
 An adapter rejects a connection it would not use during
 `runtime.validateConfig` with code `model_connection_unsupported` instead of

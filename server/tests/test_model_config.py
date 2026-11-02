@@ -51,6 +51,7 @@ def _client(tmp_path, capability: dict[str, Any], **type_fields: Any):
         "properties": {
             "baseUrl": {"type": "string", "minLength": 1},
             "apiKey": {"type": "string", "minLength": 1},
+            "protocol": {"type": "string"},
         },
         "additionalProperties": False,
     }
@@ -417,3 +418,23 @@ def test_dashboard_snapshot_carries_model_config(tmp_path, server_secret):
     runtime = next(item for item in snapshot["runtimes"] if item["runtimeId"] == "codex")
     assert runtime["maturity"] == "stable"
     assert PROFILE_KEY not in json.dumps(snapshot)
+
+
+def test_a_runtime_with_several_protocols_is_told_which_one(tmp_path, server_secret):
+    capability = {
+        **CODEX_LIKE,
+        "maturity": "experimental",
+        "protocols": ["openai_chat", "anthropic"],
+        "modelsField": "customModels",
+        "scope": "native_global",
+        "apply": "immediate",
+    }
+    client, _rpc, connector_id, headers = _client(tmp_path, capability)
+    profile = _profile(client, headers, formats=("anthropic",))
+
+    applied = _applied(client, headers, profile["id"], [_target(connector_id)], confirmNativeGlobal=True)
+
+    assert applied["results"][0]["result"] == "applied"
+    config = _runtimes(client, connector_id, headers)["codex"]["config"]
+    assert config["modelGateway"] == {"baseUrl": RELAY, "protocol": "anthropic"}
+    assert [model["modelId"] for model in config["customModels"]] == ["m0", "m1"]

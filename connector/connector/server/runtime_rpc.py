@@ -399,7 +399,9 @@ def _model_connection_result(entry: Any) -> dict[str, Any]:
     """Report what the adapter did with the model connection, never the key."""
     if entry.config is None:
         return {}
-    status = entry.provider.model_connection_status(entry.config)
+    status = entry.runtime.model_connection_status() if entry.runtime is not None else None
+    if status is None:
+        status = entry.provider.model_connection_status(entry.config)
     if status is None:
         return {}
     payload = status.payload()

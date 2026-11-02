@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from connector.runtime_protocol.errors import RuntimeUnsupportedError
+from connector.runtime_protocol.model_connection import ModelConnectionStatus
 from connector.runtime_protocol.models import (
     PreparedSessionTimelineSync,
     RuntimeAttachment,
@@ -50,6 +51,15 @@ class AgentRuntime(ABC):
 
     async def start(self) -> None:
         pass
+
+    def model_connection_status(self) -> ModelConnectionStatus | None:
+        """What this instance did with its model connection, when only it knows.
+
+        Adapters that hand the connection to another process while starting
+        report the outcome here; otherwise the provider's report from the
+        config is used.
+        """
+        return None
 
     async def execute_workflow(self, request: RuntimeWorkflowRequest) -> RuntimeWorkflowResult:
         """Control-plane operation: never queue behind an engine/UI continuation."""

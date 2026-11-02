@@ -7,11 +7,29 @@ from typing import Any
 from connector.core import runtime_owner
 from connector.runtime_protocol import RuntimeInvalidRequestError
 from connector.runtime_protocol.filesystem import canonical_path
+from connector.runtime_protocol.model_connection import (
+    ModelConnectionCapability,
+    ModelConnectionUnsupportedError,
+)
+from connector.runtimes.custom_models import custom_models_schema, normalize_custom_models
+from connector.runtimes.model_gateway import model_gateway_from_config, model_gateway_schema
 
 DEFAULT_STARTUP_TIMEOUT_MS = 30_000
 DEFAULT_REQUEST_TIMEOUT_MS = 60_000
 DEFAULT_MAX_RESTART_ATTEMPTS = 3
 DEFAULT_RESTART_BACKOFF_MS = 1_000
+MODEL_PROTOCOLS = ("openai_chat", "anthropic", "openai_responses")
+
+# The plugin writes the connection into DSH's own provider settings, which
+# every DSH session reads on its next request.
+MODEL_CONNECTION = ModelConnectionCapability(
+    maturity="experimental",
+    protocols=MODEL_PROTOCOLS,
+    scope="native_global",
+    apply="immediate",
+    catalog_auto=False,
+    catalog_manual=True,
+)
 
 
 def dsh_config_schema() -> dict[str, Any]:
@@ -50,6 +68,8 @@ def dsh_config_schema() -> dict[str, Any]:
                 **positive_timeout,
                 "default": DEFAULT_RESTART_BACKOFF_MS,
             },
+            "modelGateway": model_gateway_schema(MODEL_PROTOCOLS),
+            "customModels": custom_models_schema(),
         },
         "additionalProperties": False,
     }
@@ -89,6 +109,16 @@ def normalized_config_values(raw: dict[str, Any]) -> dict[str, Any]:
             raise RuntimeInvalidRequestError(
                 f"{key} must be an integer between 100 and 600000"
             )
+    gateway = model_gateway_from_config(values.get("modelGateway"), protocols=MODEL_PROTOCOLS)
+    if gateway is None:
+        values.pop("modelGateway", None)
+    else:
+        values["modelGateway"] = gateway.to_config_values()
+    if "customModels" in values:
+        values["customModels"] = normalize_custom_models(values["customModels"])
+    if gateway is not None and not values.get("customModels"):
+        # DSH only serves a declared gateway route with its models listed.
+        raise ModelConnectionUnsupportedError("DSH needs at least one model for a model gateway")
     attempts = values.get("maxRestartAttempts")
     if (
         not isinstance(attempts, int)
