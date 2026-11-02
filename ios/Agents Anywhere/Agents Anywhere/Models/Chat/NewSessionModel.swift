@@ -562,4 +562,10 @@ extension V2DeviceRuntime {
         return available ? nil : String(localized: "当前不可用")
     }
     var sessionDisplayName: String { name.isEmpty ? displayName : name }
+    /// Maturity beside the readiness reason: "Beta · Not ready".
+    var pickerDetail: String? {
+        let maturity = ModelConfigPresentation.maturityBadge(self.maturity).map(ModelConfigPresentation.maturityLabel)
+        let parts = [maturity, sessionUnavailableReason].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
 }

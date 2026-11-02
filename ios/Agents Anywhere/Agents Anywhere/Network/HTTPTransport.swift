@@ -178,6 +178,7 @@ nonisolated struct URLSessionHTTPTransport: HTTPTransport {
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = request.method.rawValue
         urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+        for (name, value) in request.headers { urlRequest.setValue(value, forHTTPHeaderField: name) }
         if request.requiresAuth {
             guard let token = try await tokenProvider.accessToken(), !token.isEmpty else {
                 throw HTTPError.unauthorized
