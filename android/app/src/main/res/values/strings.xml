@@ -742,4 +742,10 @@
     <string name="session_approval_title_codex_permissions">Codex requests additional permissions</string>
     <string name="session_approval_title_claude_tool">Claude wants to use a tool</string>
     <string name="session_workspace_image_tap_to_load">Tap to load image</string>
+
+    <string name="agent_reminder_title">Add an Agent to get started</string>
+    <string name="agent_reminder_description">You have not added any Agents yet. Add an Agent before starting a session. You can also configure one later on the device page.</string>
+    <string name="agent_reminder_add">Add Agent</string>
+    <string name="agent_reminder_later">Later</string>
+    <string name="agent_reminder_skip">Continue without setup</string>
 </resources>

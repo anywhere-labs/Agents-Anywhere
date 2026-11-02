@@ -56,6 +56,8 @@
 
 ### Android
 
+- 连接设备后尚未添加 Agent 时会提醒配置，进入主界面也可从提醒弹窗前往现有设备页添加，已添加但离线的 Agent 不会误触发。（[#513](https://github.com/anywhere-labs/Agents-Anywhere/pull/513)）
+
 - 终端文件页可以预览工作区图片；对话里工具和命令输出提到的工作区截图，点一下即可加载缩略图，再点可打开大图。（[#493](https://github.com/anywhere-labs/Agents-Anywhere/pull/493)）
 
 ## 2.1.0（2026-10-27）
@@ -170,6 +172,8 @@
 - 「立即更新」会从官网 www.agents-anywhere.com 下载最新 APK。（[#458](https://github.com/anywhere-labs/Agents-Anywhere/pull/458)）
 
 ### iOS
+
+- 跳过 Agent 配置时会提醒确认，进入主界面尚无 Agent 时可从提醒弹窗打开现有配置面板，没有设备时引导连接设备。（[#513](https://github.com/anywhere-labs/Agents-Anywhere/pull/513)）
 
 - 启动和回到前台时展示公告，已读记录按服务器分别保存。（[#248](https://github.com/anywhere-labs/Agents-Anywhere/pull/248)）
 - 模型选择器按供应商分组，与其他端一致。（[#449](https://github.com/anywhere-labs/Agents-Anywhere/pull/449)）

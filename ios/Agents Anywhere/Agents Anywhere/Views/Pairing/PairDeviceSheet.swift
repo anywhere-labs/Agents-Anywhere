@@ -12,6 +12,7 @@ struct PairDeviceSheet: View {
     @State private var isWorking = false
     @State private var creationUncertain = false
     @State private var error: String?
+    @State private var showsSkipReminder = false
     @State private var copied = false
     private enum Step: Hashable { case connectionMethod, desktop, cliConfirm, name, cliMethod, pairCode, token }
 
@@ -23,6 +24,15 @@ struct PairDeviceSheet: View {
         .appSheetPresentation(.compact)
         .disabled(isWorking)
         .interactiveDismissDisabled(isWorking)
+        .alert(String(localized: "agentReminder.title"), isPresented: $showsSkipReminder) {
+            Button(String(localized: "agentReminder.add"), role: .cancel) {
+                if let credential { appState.nativeChatServices?.agentSetup.configure(credential.connector.id); dismiss() }
+            }
+            Button(String(localized: "agentReminder.skip")) {
+                if let credential { appState.nativeChatServices?.agentSetup.finish(credential.connector.id) }
+                dismiss()
+            }
+        } message: { Text(String(localized: "agentReminder.description")) }
         .onChange(of: path) { _, _ in error = nil; copied = false }
     }
 
@@ -213,7 +223,18 @@ struct PairDeviceSheet: View {
                 Text(String(localized: "\(credential.connector.name) is online. You can now choose which agents to configure and start on this device, or finish without adding any."))
                     .font(.footnote).foregroundStyle(.secondary)
                 AppGlassButton(String(localized: "配置 Agent"), style: .prominent) { setup.configure(request.id); dismiss() }
-                AppGlassButton(String(localized: "稍后配置")) { setup.finish(request.id); dismiss() }
+                AppGlassButton(String(localized: "稍后配置")) {
+                    guard let services = appState.nativeChatServices else { return }
+                    isWorking = true
+                    Task {
+                        defer { isWorking = false }
+                        do {
+                            if try await services.deviceManagement.hasConfiguredAgents(connectors: appState.connectors) {
+                                setup.finish(request.id); dismiss()
+                            } else { showsSkipReminder = true }
+                        } catch { self.error = error.localizedDescription }
+                    }
+                }
             } else {
                 HStack {
                     if request.error == nil { ProgressView() }

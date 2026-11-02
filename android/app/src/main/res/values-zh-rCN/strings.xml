@@ -740,4 +740,10 @@
     <string name="session_approval_title_codex_permissions">Codex 请求额外权限</string>
     <string name="session_approval_title_claude_tool">Claude 请求使用工具</string>
     <string name="session_workspace_image_tap_to_load">点击加载图片</string>
+
+    <string name="agent_reminder_title">添加 Agent 后开始使用</string>
+    <string name="agent_reminder_description">你还没有添加任何 Agent，添加后才能开始会话。也可以稍后在设备页面配置。</string>
+    <string name="agent_reminder_add">添加 Agent</string>
+    <string name="agent_reminder_later">稍后添加</string>
+    <string name="agent_reminder_skip">暂不配置，继续</string>
 </resources>
