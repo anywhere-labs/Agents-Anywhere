@@ -138,7 +138,7 @@
 
 ### Web 与 Desktop 界面
 
-- 跳过教程或未添加 Agent 就继续时会提醒配置，进入主界面仍无 Agent 时可直接在弹窗中添加，已添加但离线的 Agent 不会触发空配置提醒。
+- 跳过教程或未添加 Agent 就继续时会提醒配置，进入主界面仍无 Agent 时可直接在弹窗中添加，已添加但离线的 Agent 不会触发空配置提醒。（[#513](https://github.com/anywhere-labs/Agents-Anywhere/pull/513)）
 
 - 管理看板重做：
   - 新增概览、用户、使用量、设备与 Runtime、运行质量视图；
