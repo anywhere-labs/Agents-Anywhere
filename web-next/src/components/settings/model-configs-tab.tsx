@@ -439,6 +439,9 @@ function ApplyDialog({
   const [confirmGlobal, setConfirmGlobal] = React.useState(false)
   const [applying, setApplying] = React.useState(false)
   const idempotencyKey = React.useRef(newIdempotencyKey())
+  // The preview runs once per dialog; snapshot updates re-render the parent with new callbacks.
+  const latest = React.useRef({ onClose, errorText })
+  React.useEffect(() => { latest.current = { onClose, errorText } }, [onClose, errorText])
   const deviceName = (connectorId: string) => connectors.find((item) => item.id === connectorId)?.name ?? connectorId
   const keyOf = (target: { connectorId: string; runtimeId: string }) => `${target.connectorId}/${target.runtimeId}`
 
@@ -453,12 +456,12 @@ function ApplyDialog({
         .map(keyOf)))
     }).catch((error) => {
       if (!cancelled) {
-        toast.error(errorText(error))
-        onClose()
+        toast.error(latest.current.errorText(error))
+        latest.current.onClose()
       }
     })
     return () => { cancelled = true }
-  }, [errorText, onClose, profile.id, token])
+  }, [profile.id, token])
 
   const chosen = (targets ?? []).filter((item) => selected.has(keyOf(item)))
   const needsGlobal = chosen.some((item) => item.requiresConfirmation)
