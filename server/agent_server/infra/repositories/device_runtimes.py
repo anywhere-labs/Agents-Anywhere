@@ -475,6 +475,18 @@ class DeviceRuntimeRepositoryMixin:
             phase_json=_json_dumps(phase) if phase is not None else None,
         )
 
+    async def set_device_runtime_model_connection(
+        self,
+        connector_id: str,
+        runtime_id: str,
+        report: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        return await self._update_device_runtime(
+            connector_id,
+            runtime_id,
+            model_connection_json=_json_dumps(report) if report is not None else None,
+        )
+
     async def delete_runtime_session_files(self, session_ids: list[str]) -> None:
         for session_id in session_ids:
             await self.files.delete_session(session_id)
@@ -637,6 +649,8 @@ def _runtime_type_row(row: Any) -> dict[str, Any]:
         "metadata": _json_loads(row["metadata_json"]) or {},
         "instancePolicy": str(row["instance_policy"]),
         "maxInstances": row["max_instances"],
+        "maturity": descriptor.get("maturity") if descriptor is not None else None,
+        "modelConnection": descriptor.get("modelConnection") if descriptor is not None else None,
         "lastDiscoveredAt": str(row["last_discovered_at"]),
         "createdAt": str(row["created_at"]),
         "updatedAt": str(row["updated_at"]),
@@ -649,6 +663,10 @@ def _runtime_row(row: Any) -> dict[str, Any]:
     configured = row["config_json"] is not None
     status = str(row["status"])
     error = _json_loads(row["error_json"])
+    descriptor = _stored_v2_descriptor(discovery) or {}
+    report = (
+        _json_loads(row["model_connection_json"]) if "model_connection_json" in row else None
+    )
     phase = _json_loads(row["phase_json"]) if "phase_json" in row else None
     if not isinstance(phase, dict):
         phase = None
@@ -681,6 +699,9 @@ def _runtime_row(row: Any) -> dict[str, Any]:
         "defaults": _json_loads(row["type_defaults_json"]) or {},
         "capabilities": _json_loads(row["type_capabilities_json"]) or {},
         "config": _json_loads(row["config_json"]),
+        "maturity": descriptor.get("maturity"),
+        "modelConnection": descriptor.get("modelConnection"),
+        "modelConnectionReport": report if isinstance(report, dict) else None,
         "error": error,
         "phase": phase,
         "lastDiscoveredAt": str(row["type_last_discovered_at"]),

@@ -18,6 +18,11 @@ from agent_server.core.device_runtime import (
     RuntimeTypeView,
     validate_config,
 )
+from agent_server.core.model_connection import (
+    connection_digest,
+    failed_report,
+    stored_report,
+)
 from agent_server.core.secret_fields import (
     SecretOriginChangedError,
     merge_secrets,
@@ -849,6 +854,13 @@ class DeviceRuntimeService:
             )
             raise DeviceRuntimeOfflineError(str(exc)) from exc
         except ConnectorRpcError as exc:
+            digest = connection_digest(runtime.config, runtime.modelConnection)
+            if digest is not None:
+                await self._store.set_device_runtime_model_connection(
+                    runtime.connectorId,
+                    runtime.runtimeId,
+                    failed_report(exc.message or exc.code, digest=digest),
+                )
             row = await self._store.set_device_runtime_status(
                 runtime.connectorId,
                 runtime.runtimeId,
@@ -868,6 +880,15 @@ class DeviceRuntimeService:
             status = "running"
         error = result.get("error")
         phase = result.get("phase")
+        # What the adapter did with the model connection, against the
+        # connection it was started with; older Connectors report nothing.
+        report = stored_report(
+            result.get("modelConnection"),
+            digest=connection_digest(runtime.config, runtime.modelConnection),
+        )
+        await self._store.set_device_runtime_model_connection(
+            runtime.connectorId, runtime.runtimeId, report
+        )
         return DeviceRuntimeView.model_validate(
             await self._store.set_device_runtime_status(
                 runtime.connectorId,
@@ -1011,7 +1032,10 @@ class DeviceRuntimeService:
             raise DeviceRuntimeOfflineError(str(exc)) from exc
         except ConnectorRpcError as exc:
             status_code = (
-                422 if exc.code in {"invalid_config", "runtime_config_invalid"} else 502
+                422
+                if exc.code
+                in {"invalid_config", "runtime_config_invalid", "model_connection_unsupported"}
+                else 502
             )
             error_cls = (
                 DeviceRuntimeInvalidConfigError

@@ -21,8 +21,8 @@ from sqlalchemy.pool import NullPool
 from agent_server.infra.db.engine import resolve_db_url
 
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_46"
-CURRENT_SCHEMA_VERSION = "2.46"
+CURRENT_SCHEMA_REVISION = "v2_47"
+CURRENT_SCHEMA_VERSION = "2.47"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -473,6 +473,11 @@ def _classify_sync(connection) -> UnversionedDatabase:
                 if revision != "v2_45":
                     return UnversionedDatabase("unknown")
                 revision = "v2_46"
+            # v2_47 adds model configuration on top of the planning layout.
+            if {"model_profiles", "tokens_links"} & tables:
+                if revision != "v2_46":
+                    return UnversionedDatabase("unknown")
+                revision = "v2_47"
             return UnversionedDatabase("v2", revision)
         if "approvals" in tables:
             if {"presence_instance_id", "presence_connection_id"}.issubset(

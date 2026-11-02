@@ -108,6 +108,8 @@ device_runtimes = Table(
     Column("error_json", Text),
     # Optional step inside a non-error status (e.g. syncing while starting).
     Column("phase_json", Text),
+    # Last model connection report from the runtime adapter (v2_47).
+    Column("model_connection_json", Text),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
     PrimaryKeyConstraint("connector_id", "runtime_id"),
@@ -622,3 +624,49 @@ planning_creations = Table("planning_creations", metadata,
     Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), primary_key=True),
     Column("runtime_id", Text, primary_key=True), Column("operation_id", Text, primary_key=True),
     Column("fingerprint", Text, nullable=False), Column("payload", Text, nullable=False))
+
+
+tokens_links = Table("tokens_links", metadata,
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column("issuer", Text, nullable=False), Column("account_json", Text, nullable=False),
+    Column("status", Text, nullable=False), Column("refresh_token_ciphertext", Text),
+    Column("linked_at", Text, nullable=False), Column("refreshed_at", Text),
+    Column("issued_at", Text, nullable=False))
+tokens_link_states = Table("tokens_link_states", metadata,
+    Column("state_hash", Text, primary_key=True),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("ticket_hash", Text, nullable=False, unique=True), Column("browser_hash", Text),
+    Column("code_verifier_ciphertext", Text, nullable=False), Column("issuer", Text, nullable=False),
+    Column("redirect_uri", Text, nullable=False), Column("created_at", Text, nullable=False),
+    Column("expires_at", Text, nullable=False), Column("consumed_at", Text))
+model_profiles = Table("model_profiles", metadata,
+    Column("id", Text, primary_key=True),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("source", Text, nullable=False), Column("name", Text, nullable=False),
+    Column("origin_host", Text, nullable=False), Column("offers_json", Text, nullable=False),
+    Column("catalog_digest", Text, nullable=False), Column("key_ref_json", Text, nullable=False),
+    Column("secret_ciphertext", Text), Column("state", Text, nullable=False),
+    Column("etag", Integer, nullable=False), Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    Index("idx_model_profiles_user_id", "user_id"))
+runtime_model_assignments = Table("runtime_model_assignments", metadata,
+    Column("connector_id", Text, nullable=False), Column("runtime_id", Text, nullable=False),
+    Column("profile_id", Text, ForeignKey("model_profiles.id", ondelete="RESTRICT"), nullable=False),
+    Column("offer_format", Text, nullable=False),
+    Column("created_runtime", Integer, nullable=False, server_default="0"),
+    Column("applied_digest", Text, nullable=False), Column("applied_catalog_digest", Text, nullable=False),
+    Column("imported_model_ids_json", Text, nullable=False), Column("previous_gateway_ciphertext", Text),
+    Column("status", Text, nullable=False), Column("error_json", Text), Column("applied_at", Text),
+    Column("updated_at", Text, nullable=False),
+    PrimaryKeyConstraint("connector_id", "runtime_id"),
+    ForeignKeyConstraint(["connector_id", "runtime_id"],
+        ["device_runtimes.connector_id", "device_runtimes.runtime_id"], ondelete="CASCADE"),
+    Index("idx_runtime_model_assignments_profile_id", "profile_id"))
+model_config_operations = Table("model_config_operations", metadata,
+    Column("id", Text, primary_key=True),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("kind", Text, nullable=False), Column("idempotency_key", Text, nullable=False),
+    Column("request_digest", Text, nullable=False), Column("targets_json", Text, nullable=False),
+    Column("lease_until", Text, nullable=False), Column("result_json", Text),
+    Column("created_at", Text, nullable=False), Column("finished_at", Text),
+    UniqueConstraint("user_id", "idempotency_key"))

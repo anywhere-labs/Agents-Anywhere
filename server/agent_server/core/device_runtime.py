@@ -13,6 +13,11 @@ from pydantic import (
     model_validator,
 )
 
+from agent_server.core.model_connection import (
+    Maturity,
+    ModelConnectionCapability,
+    connection_status,
+)
 from agent_server.core.runtime_identity import (
     RuntimeIdentityError,
     normalize_runtime_instance_name,
@@ -81,6 +86,10 @@ class RuntimeTypeDescriptor(BaseModel):
         ge=1,
         le=MAX_JAVASCRIPT_SAFE_INTEGER,
     )
+    # Absent from older Connectors; a runtime without it is stable.
+    maturity: Maturity | None = None
+    # Absent when the runtime takes no model connection.
+    modelConnection: ModelConnectionCapability | None = None
 
     @field_validator("runtimeType")
     @classmethod
@@ -151,6 +160,8 @@ class RuntimeTypeView(BaseModel):
     metadata: dict[str, Any]
     instancePolicy: Literal["single", "multiple"]
     maxInstances: int | None
+    maturity: str | None = None
+    modelConnection: dict[str, Any] | None = None
     lastDiscoveredAt: str
     createdAt: str
     updatedAt: str
@@ -188,6 +199,13 @@ class DeviceRuntimeView(BaseModel):
     # Write-only fields left out of ``config``, e.g.
     # {"modelGateway.apiKey": {"set": true, "hint": "sk-a1b2…wxyz"}}.
     secretFields: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    # The runtime type's maturity and model connection capability.
+    maturity: str | None = None
+    modelConnection: dict[str, Any] | None = None
+    # The adapter's last report, with the digest it was started with. Kept by
+    # the Server; clients get ``modelConnectionStatus`` instead.
+    modelConnectionReport: dict[str, Any] | None = None
+    modelConnectionStatus: dict[str, Any] | None = None
     error: dict[str, Any] | None
     # Step inside a non-error status, e.g. {"code": "syncing", ...} while
     # starting. Informational only; status decides usability.
@@ -201,18 +219,25 @@ class DeviceRuntimeView(BaseModel):
 
 def public_runtime_view(view: DeviceRuntimeView) -> DeviceRuntimeView:
     """The runtime as a client may see it: no secret values anywhere."""
-    paths = secret_paths(view.schema_, view.uiSchema)
-    if not paths:
-        return view
-    config, described = redact_config(view.config, paths)
-    secrets = secret_values(view.config, paths)
-    return view.model_copy(
-        update={
-            "config": config,
-            "secretFields": described,
-            "error": _scrub_value(view.error, secrets) if view.error else view.error,
-        }
+    status = connection_status(
+        capability=view.modelConnection,
+        config=view.config,
+        report=view.modelConnectionReport,
     )
+    update: dict[str, Any] = {
+        "modelConnectionReport": None,
+        "modelConnectionStatus": status,
+    }
+    paths = secret_paths(view.schema_, view.uiSchema)
+    if paths:
+        config, described = redact_config(view.config, paths)
+        secrets = secret_values(view.config, paths)
+        update.update(
+            config=config,
+            secretFields=described,
+            error=_scrub_value(view.error, secrets) if view.error else view.error,
+        )
+    return view.model_copy(update=update)
 
 
 def _scrub_value(value: Any, secrets: list[str]) -> Any:

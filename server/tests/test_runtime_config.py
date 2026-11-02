@@ -24,6 +24,7 @@ class FakeRpc:
         self.online = True
         self.requests: list[tuple[str, str, dict[str, Any]]] = []
         self.errors: dict[str, ConnectorRpcError] = {}
+        self.responses: dict[str, dict[str, Any]] = {}
 
     async def is_online(self, _connector_id: str) -> bool:
         return self.online
@@ -99,6 +100,8 @@ class FakeRpc:
                     }
                 ]
             }
+        if method in self.responses:
+            return self.responses[method]
         return {"ok": True}
 
     async def request_bound(

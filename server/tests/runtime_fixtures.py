@@ -36,6 +36,9 @@ def describe_inventory(inventory: dict[str, Any]) -> RuntimeDiscoveryResponse:
                 "metadata": item.get("metadata", {}),
                 "instancePolicy": "single",
                 "maxInstances": 1,
+                **(
+                    {key: item[key] for key in ("maturity", "modelConnection") if key in item}
+                ),
             }
         )
     return RuntimeDiscoveryResponse.model_validate({"runtimeTypes": descriptors})
