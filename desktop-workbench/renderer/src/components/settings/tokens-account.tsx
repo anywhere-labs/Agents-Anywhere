@@ -83,13 +83,8 @@ export function TokensAccount({
   // Back from topping up in another tab, the balance should already show it.
   React.useEffect(() => {
     loadInfo()
-    const onFocus = () => { if (document.visibilityState === "visible") loadInfo() }
-    window.addEventListener("focus", onFocus)
-    document.addEventListener("visibilitychange", onFocus)
-    return () => {
-      window.removeEventListener("focus", onFocus)
-      document.removeEventListener("visibilitychange", onFocus)
-    }
+    window.addEventListener("focus", loadInfo)
+    return () => window.removeEventListener("focus", loadInfo)
   }, [loadInfo])
 
   const account = info?.account ?? fallbackAccount
