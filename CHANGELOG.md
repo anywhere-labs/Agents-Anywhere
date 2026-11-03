@@ -61,7 +61,13 @@
 
 ### Android
 
-- 连接设备后尚未添加 Agent 时会提醒配置，进入主界面也可从提醒弹窗前往现有设备页添加，已添加但离线的 Agent 不会误触发，配对成功后检查 Agent 失败可重试而不会重复提交配对码。（[#513](https://github.com/anywhere-labs/Agents-Anywhere/pull/513)）
+- Android 可以直接添加和管理 Agent，不必再去桌面端操作：
+  - 设备页可以快速添加、配置、重命名、启停和删除 Agent，配置项按 Agent 类型自动生成，包括路径、模型 Gateway、环境变量和自定义模型等；
+  - 连接设备后直接打开「为这台设备选择 Agent」，可一键配置；离开配对页后设备才上线时，也会提示添加 Agent；
+  - 进入主界面仍没有 Agent 时会弹窗提醒，「添加 Agent」直接打开这个面板；已添加但离线的 Agent 不会误触发提醒；
+  - 删除 Agent 配置前会说明关联的会话、消息记录和附件将被永久删除。
+
+  [#513](https://github.com/anywhere-labs/Agents-Anywhere/pull/513)
 
 - 终端文件页可以预览工作区图片；对话里工具和命令输出提到的工作区截图，点一下即可加载缩略图，再点可打开大图。（[#493](https://github.com/anywhere-labs/Agents-Anywhere/pull/493)）
 

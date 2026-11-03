@@ -50,6 +50,6 @@
     <string name="device_pairing_errors_claim_failed">无法认领配对。</string>
     <string name="device_pairing_errors_copy_failed">复制失败，请选中命令后手动复制。</string>
     <string name="device_pairing_download">前往官网下载</string>
-    <string name="device_pairing_exit_waiting_description">离开页面后仍会等待 %1$s 上线，并更新设备列表。如果不再需要这台设备，请在设备列表中删除。连接设备后还需添加 Agent，才能开始会话。</string>
+    <string name="device_pairing_exit_waiting_description">离开页面后仍会等待 %1$s 上线，上线后会提示你添加 Agent。如果不再需要这台设备，请在设备列表中删除。</string>
     <string name="device_pairing_open_download_failed">无法打开下载页面，请稍后重试。</string>
 </resources>

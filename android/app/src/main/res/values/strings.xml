@@ -157,32 +157,11 @@
         <item quantity="other">%d agents online</item>
     </plurals>
     <string name="common_retry">Retry</string>
-    <string name="configure_agent_title">Configure agent</string>
-    <string name="configure_agent_action">Configure</string>
-    <string name="configure_agent_description">Configure %1$s</string>
-    <string name="configure_agent_configure_and_start">Configure and start</string>
-    <string name="configure_agent_configuring">Configuring...</string>
-    <string name="configure_agent_save_failed">Could not configure this agent. Please try again.</string>
-    <string name="configure_agent_start_failed">Agent configured, but it could not be started. You can retry from the switch.</string>
-    <string name="configure_agent_no_fields">This agent needs no additional configuration. Continue to configure and start it.</string>
-    <string name="runtime_config_executable_path">Executable path</string>
-    <string name="runtime_config_executable_path_description">Optional path to the runtime executable. Leave blank to use discovery.</string>
-    <string name="runtime_config_executable_path_placeholder">/path/to/executable</string>
-    <string name="runtime_config_environment">Environment variables</string>
-    <string name="runtime_config_environment_description">Override inherited values with strings, or explicitly remove an inherited value.</string>
-    <string name="runtime_config_environment_name">VARIABLE_NAME</string>
-    <string name="runtime_config_environment_value">Value</string>
-    <string name="runtime_config_environment_unset">Remove inherited value</string>
-    <string name="runtime_config_add_variable">Add environment variable</string>
-    <string name="runtime_config_environment_blank_name">Environment variable names cannot be empty.</string>
-    <string name="runtime_config_environment_invalid_name">Environment variable names cannot contain “=” or null characters.</string>
-    <string name="runtime_config_environment_duplicate_name">Environment variable names must be unique.</string>
     <string name="device_runtime_load_failed">Could not load runtimes.</string>
     <string name="device_runtime_update_failed">Could not update runtime state.</string>
     <string name="device_runtime_delete_failed">Could not delete runtime configuration.</string>
     <string name="device_runtime_loading">Loading runtimes...</string>
     <string name="device_runtime_no_configured">No configured agents</string>
-    <string name="device_runtime_desktop_configuration_hint">To configure or add other agents, use the desktop app.</string>
     <string name="device_runtime_not_present">Not present on this connector</string>
     <string name="device_runtime_not_configured">Configuration required</string>
     <string name="device_runtime_stopped">Stopped</string>
@@ -206,7 +185,6 @@
     <string name="device_detail_device_actions">Device actions</string>
     <string name="device_detail_agents_section">AGENTS</string>
     <string name="device_detail_sessions_section">SESSIONS</string>
-    <string name="device_detail_remove_agent">Delete runtime configuration</string>
     <string name="device_detail_archive_all">Archive all</string>
     <string name="device_detail_unarchive_all">Unarchive all</string>
     <string name="device_detail_no_active_sessions">No active sessions on this device.</string>
@@ -259,8 +237,8 @@
     <string name="device_confirm_revoke_body">The current connector token for %1$s will stop working and the device will be disconnected until you reconnect it on that device.</string>
     <string name="device_confirm_revoking">Revoking...</string>
     <string name="device_confirm_delete_runtime_config_title">Delete %1$s configuration?</string>
-    <string name="device_confirm_delete_runtime_config_body">This removes the saved %1$s configuration from the server. The local runtime installation and existing sessions are not deleted.</string>
-    <string name="device_confirm_delete_active_runtime_config_body">%1$s is running. The server will stop it before deleting its saved configuration. The local installation and existing sessions are not deleted.</string>
+    <string name="device_confirm_delete_runtime_config_body">%1$s will be removed from the configured list. All its sessions, message history, and attachments will be permanently deleted. You can configure it again later; the local installation is kept.</string>
+    <string name="device_confirm_delete_active_runtime_config_body">%1$s is running and will be stopped first. All its sessions, message history, and attachments will be permanently deleted. You can configure it again later; the local installation is kept.</string>
     <string name="device_confirm_delete_runtime_config">Delete configuration</string>
     <string name="device_confirm_archive_all_title">Archive %1$s on this device?</string>
     <string name="device_confirm_unarchive_all_title">Unarchive %1$s on this device?</string>
