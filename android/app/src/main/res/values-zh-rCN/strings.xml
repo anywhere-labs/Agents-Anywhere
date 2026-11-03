@@ -158,32 +158,11 @@
         <item quantity="other">%d 个 Agent 在线</item>
     </plurals>
     <string name="common_retry">重试</string>
-    <string name="configure_agent_title">配置 Agent</string>
-    <string name="configure_agent_action">配置</string>
-    <string name="configure_agent_description">配置 %1$s</string>
-    <string name="configure_agent_configure_and_start">配置并启动</string>
-    <string name="configure_agent_configuring">配置中...</string>
-    <string name="configure_agent_save_failed">无法配置此 Agent，请稍后重试。</string>
-    <string name="configure_agent_start_failed">Agent 已配置，但启动失败。可稍后通过开关重试。</string>
-    <string name="configure_agent_no_fields">此 Agent 无需额外配置，可直接配置并启动。</string>
-    <string name="runtime_config_executable_path">可执行文件路径</string>
-    <string name="runtime_config_executable_path_description">可选的运行时可执行文件路径。留空时使用自动发现结果。</string>
-    <string name="runtime_config_executable_path_placeholder">/运行时/可执行文件/路径</string>
-    <string name="runtime_config_environment">环境变量</string>
-    <string name="runtime_config_environment_description">使用字符串覆盖继承值，或明确移除继承的环境变量。</string>
-    <string name="runtime_config_environment_name">变量名称</string>
-    <string name="runtime_config_environment_value">变量值</string>
-    <string name="runtime_config_environment_unset">移除继承值</string>
-    <string name="runtime_config_add_variable">添加环境变量</string>
-    <string name="runtime_config_environment_blank_name">环境变量名称不能为空。</string>
-    <string name="runtime_config_environment_invalid_name">环境变量名称不能包含“=”或空字符。</string>
-    <string name="runtime_config_environment_duplicate_name">环境变量名称不能重复。</string>
     <string name="device_runtime_load_failed">无法加载运行时。</string>
     <string name="device_runtime_update_failed">无法更新运行时状态。</string>
     <string name="device_runtime_delete_failed">无法删除运行时配置。</string>
     <string name="device_runtime_loading">正在加载运行时...</string>
     <string name="device_runtime_no_configured">没有已配置的 Agent</string>
-    <string name="device_runtime_desktop_configuration_hint">如需配置或添加其他 Agent，请前往桌面端操作。</string>
     <string name="device_runtime_not_present">连接器上不存在此运行时</string>
     <string name="device_runtime_not_configured">需要配置</string>
     <string name="device_runtime_stopped">已停止</string>
@@ -207,7 +186,6 @@
     <string name="device_detail_device_actions">设备操作</string>
     <string name="device_detail_agents_section">AGENT</string>
     <string name="device_detail_sessions_section">会话</string>
-    <string name="device_detail_remove_agent">删除运行时配置</string>
     <string name="device_detail_archive_all">全部归档</string>
     <string name="device_detail_unarchive_all">全部取消归档</string>
     <string name="device_detail_no_active_sessions">这台设备没有活跃会话。</string>
@@ -260,8 +238,8 @@
     <string name="device_confirm_revoke_body">%1$s 当前的连接器令牌将停止工作，设备会断开连接，直到你在该设备上重新连接。</string>
     <string name="device_confirm_revoking">撤销中...</string>
     <string name="device_confirm_delete_runtime_config_title">删除 %1$s 配置？</string>
-    <string name="device_confirm_delete_runtime_config_body">这会删除服务端保存的 %1$s 配置，不会删除本地运行时安装或已有会话。</string>
-    <string name="device_confirm_delete_active_runtime_config_body">%1$s 正在运行。服务端会先停止运行时，再删除保存的配置；不会删除本地安装或已有会话。</string>
+    <string name="device_confirm_delete_runtime_config_body">%1$s 会从已配置列表移除，其关联的所有会话、消息记录和附件将被永久删除。之后仍可重新配置，本机安装会保留。</string>
+    <string name="device_confirm_delete_active_runtime_config_body">%1$s 正在运行，会先停止。其关联的所有会话、消息记录和附件将被永久删除。之后仍可重新配置，本机安装会保留。</string>
     <string name="device_confirm_delete_runtime_config">删除配置</string>
     <string name="device_confirm_archive_all_title">归档这台设备上的%1$s？</string>
     <string name="device_confirm_unarchive_all_title">取消归档这台设备上的%1$s？</string>
@@ -730,4 +708,32 @@
     <string name="notification_check_channel">会话动态</string>
     <string name="notification_check_description">至少每隔 15 分钟检查，可能受省电影响延迟。</string>
     <string name="notification_permission_denied">请在安卓设置中允许通知，再开启提醒。</string>
+    <string name="session_command_title_compact">压缩上下文</string>
+    <string name="session_command_description_compact">压缩会话上下文。</string>
+    <string name="session_command_title_kill_chatgpt">退出 ChatGPT</string>
+    <string name="session_command_description_kill_chatgpt">退出 ChatGPT / Codex 桌面应用，让它的会话改由 Connector 自己的 app-server 运行。</string>
+    <string name="session_command_title_open_in_codex_app">在 Codex 应用中打开</string>
+    <string name="session_command_description_open_in_codex_app">在正在运行的 Codex 桌面应用中打开此会话，并从那里继续跟随。</string>
+    <string name="new_session_connector_required">请先选择设备。</string>
+    <string name="new_session_workspace_required">请先选择工作区。</string>
+    <string name="new_session_runtime_type_invalid">请先选择有效的运行时类型。</string>
+    <string name="new_session_runtime_instance_invalid">请先选择有效的运行时实例。</string>
+    <string name="new_session_content_required">请输入消息或添加附件。</string>
+    <string name="new_session_client_message_missing">缺少客户端消息 ID。</string>
+    <string name="new_session_attachment_name_missing">有附件缺少文件名。</string>
+    <string name="terminal_service_channel_name">进行中的会话</string>
+    <string name="terminal_service_channel_description">保持当前会话的连接。</string>
+    <string name="terminal_service_title">会话进行中</string>
+    <string name="terminal_service_text">正在保持当前会话的连接。</string>
+    <string name="session_approval_title_codex_command">Codex 请求执行命令</string>
+    <string name="session_approval_title_codex_file_change">Codex 请求修改文件</string>
+    <string name="session_approval_title_codex_permissions">Codex 请求额外权限</string>
+    <string name="session_approval_title_claude_tool">Claude 请求使用工具</string>
+    <string name="session_workspace_image_tap_to_load">点击加载图片</string>
+
+    <string name="agent_reminder_title">添加 Agent 后开始使用</string>
+    <string name="agent_reminder_description">你还没有添加任何 Agent，添加后才能开始会话。也可以稍后在设备页面配置。</string>
+    <string name="agent_reminder_add">添加 Agent</string>
+    <string name="agent_reminder_later">稍后添加</string>
+    <string name="agent_reminder_skip">暂不配置，继续</string>
 </resources>

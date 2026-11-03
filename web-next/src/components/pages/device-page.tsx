@@ -55,7 +55,7 @@ import { dashboardApi } from "@/features/dashboard/api"
 import { PairDeviceDialog } from "@/components/pair-device-dialog"
 import type { ConnectorRevokeResponse } from "@/features/dashboard/types"
 import { useIsMobile } from "@/hooks/use-mobile"
-import { useTranslations } from "next-intl"
+import { useLocale, useTranslations } from "next-intl"
 import { toast } from "sonner"
 import { RuntimeAddDialog } from "@/components/runtime-add-dialog"
 import { RuntimeConfigDialog } from "@/components/runtime-config-dialog"
@@ -179,6 +179,7 @@ function SessionRow({
   onSelectChange: (checked: boolean) => void
 }) {
   const t = useTranslations("dashboard.device")
+  const locale = useLocale()
   return (
     <div className="flex w-full items-center gap-3 rounded-md px-2 py-2.5 transition-colors hover:bg-accent/40">
       {selectMode ? (
@@ -209,7 +210,7 @@ function SessionRow({
       >
         {session.title ?? t("untitled")}
       </button>
-      <span className="shrink-0 text-xs text-muted-foreground">{formatSessionTime(session)}</span>
+      <span className="shrink-0 text-xs text-muted-foreground">{formatSessionTime(session, locale)}</span>
     </div>
   )
 }
@@ -223,11 +224,12 @@ function sessionActivityAt(session: DeviceSession) {
   return session.sortAt ?? session.lastActivityAt ?? session.lastItemAt ?? session.updatedAt ?? null
 }
 
-function formatSessionTime(session: DeviceSession) {
+// Dates follow the app language, not the browser's.
+function formatSessionTime(session: DeviceSession, locale: string) {
   const value = sessionActivityAt(session)
   if (!value) return ""
   try {
-    return new Intl.DateTimeFormat(undefined, {
+    return new Intl.DateTimeFormat(locale, {
       month: "short",
       day: "numeric",
       hour: "2-digit",

@@ -1,4 +1,4 @@
-"""Small, integrity-bound compatibility patch of the third-party release."""
+"""Small, anchor-verified compatibility patch of the third-party release."""
 
 from __future__ import annotations
 
@@ -13,37 +13,129 @@ from pathlib import Path
 from ...domain.definitions import AcpError, fingerprint
 from ...infrastructure.npm import installation_lock
 
-PATCH_REVISION = 5
+PATCH_REVISION = 6
+# Every 0.1.x release so far keeps the patched entry points unchanged; each
+# anchor below is still required to match before the adapter is used.
+SUPPORTED_ADAPTER = (0, 1)
+ANCHORS = (
+    (
+        "async function findSession(sessionId, sessionDir) {",
+        "async function findSession(sessionId, sessionDir) {\n  if(process.env.AA_PI_SESSION_FILE) return aaFindSession(sessionId);",
+    ),
+    (
+        "await session.prompt(converted.text, converted.images)",
+        "await aaWithMessage(params, () => session.prompt(converted.text, converted.images))",
+    ),
+    (
+        "await session.steer(converted.text, converted.images)",
+        "await aaWithMessage(params, () => session.steer(converted.text, converted.images))",
+    ),
+    (
+        "return buildConfigOptions(this.session, {\n      booleanOptions: this.features.booleanConfigOptions\n    });",
+        "return aaConfigOptions(this.session, buildConfigOptions(this.session, {\n      booleanOptions: this.features.booleanConfigOptions\n    }));",
+    ),
+    (
+        "extensions: session.extensions(),",
+        "extensions: session.extensions(), aaLoadingReport: aaLoadingReport(),",
+    ),
+)
+REQUIRE_MODEL = re.compile(
+    r"await this\.requireModel\(session\)\.catch\(\(error\) => \{\n.*?\n    \}\);"
+)
 
-RELEASE_FILES = {
-    "bin.js": "066e83d7f9b4ccbd475691af05a5be365aec0927574769dcacd21e22abe49382",
-    "index.js": "7a176beaea6265d0f72e383794cdd9def31a76fd540445b8bbf4301194e7a6b8",
-    "chunk-5IXHVFXW.js": "f4c2b485e9a9cac894149366c362b6c7625aaeaa5fe04e5fb9c6b761afee4f79",
-}
+
+def adapter_version(package: Path) -> str:
+    version = json.loads((package / "package.json").read_text(encoding="utf-8")).get(
+        "version"
+    )
+    try:
+        parts = tuple(int(part) for part in str(version).split("-")[0].split("."))
+    except ValueError:
+        parts = ()
+    if parts[:2] != SUPPORTED_ADAPTER:
+        raise AcpError(
+            "pi_adapter_incompatible",
+            f"Pi ACP 适配器 {version} 不受支持，需要 0.1.x。",
+        )
+    return version
+
+
+def _patch(sources: dict[str, str]) -> dict[str, str]:
+    patched = {
+        name: source.replace('"@earendil-works/pi-coding-agent"', '"../sdk-bridge.mjs"')
+        for name, source in sources.items()
+    }
+    touched = set()
+    for old, new in ANCHORS:
+        owners = [name for name, source in patched.items() if old in source]
+        if not owners:
+            raise AcpError(
+                "pi_adapter_patch_failed", "Pi ACP 兼容入口已变化，已停止准备。"
+            )
+        for name in owners:
+            patched[name] = patched[name].replace(old, new)
+        touched.update(owners)
+    matches = 0
+    for name in list(patched):
+        patched[name], count = REQUIRE_MODEL.subn(
+            "await this.requireModel(session);", patched[name]
+        )
+        matches += count
+        touched.update([name] if count else [])
+    if matches != 3:
+        raise AcpError("pi_adapter_patch_failed", "Pi ACP 模型就绪校验入口已变化。")
+    for name in touched:
+        patched[name] = (
+            'import {aaFindSession, aaWithMessage, aaConfigOptions, aaLoadingReport} from "../sdk-bridge.mjs";\n'
+            + patched[name].replace(
+                "if (pi.model === void 0 && available.length > 0) {",
+                "if (pi.model === void 0 && available.length > 0 && !process.env.AA_PI_SESSION_FILE) {",
+            )
+        )
+    return patched
 
 
 def prepare_adapter(entry: Path, sdk: Path, root: Path) -> tuple[Path, dict]:
     package = entry.parent.parent
-    if (
-        json.loads((package / "package.json").read_text(encoding="utf-8")).get(
-            "version"
-        )
-        != "0.1.8"
-    ):
-        raise AcpError("pi_adapter_incompatible", "Pi ACP 适配器版本不匹配。")
-    for name, expected in RELEASE_FILES.items():
-        if hashlib.sha256((entry.parent / name).read_bytes()).hexdigest() != expected:
-            raise AcpError(
-                "pi_adapter_integrity_failed",
-                "Pi ACP 发布包摘要不匹配，未应用兼容补丁。",
-            )
+    version = adapter_version(package)
+    sources = {
+        path.name: path.read_text(encoding="utf-8")
+        for path in sorted(entry.parent.glob("*.js"))
+    }
+    if entry.name not in sources:
+        raise AcpError("pi_adapter_incompatible", "Pi ACP 适配器入口不存在。")
+    release_files = {
+        name: hashlib.sha256(source.encode("utf-8")).hexdigest()
+        for name, source in sources.items()
+    }
+    patched_sources = _patch(sources)
     bridge = (
         Path(__file__)
         .with_name("sdk-bridge.mjs")
         .read_text(encoding="utf-8")
         .replace("__AA_PI_SDK_URL__", (sdk / "dist/index.js").as_uri())
     )
-    patch = fingerprint({"bridge": bridge, "source": RELEASE_FILES, "revision": PATCH_REVISION})
+    # Dependency resolution is part of the executable cache identity. Desktop
+    # may move an unchanged npm release from an instance cache to its shared
+    # cache; keep the old adapter intact for processes still using it.
+    modules = next(
+        (
+            parent / "node_modules"
+            for parent in (package, *package.parents)
+            if (parent / "node_modules").is_dir()
+        ),
+        None,
+    )
+    if modules is None:
+        raise AcpError("pi_adapter_dependencies_missing", "Pi ACP 依赖目录不存在。")
+    patch = fingerprint(
+        {
+            "bridge": bridge,
+            "source": release_files,
+            "revision": PATCH_REVISION,
+            "dependencyRoot": str(modules.resolve()),
+        }
+    )
     destination = root / patch
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     with installation_lock(root / ".patch.lock"):  # noqa: SIM117 -- staging is scoped inside the installation lease
@@ -56,71 +148,11 @@ def prepare_adapter(entry: Path, sdk: Path, root: Path) -> tuple[Path, dict]:
             (staging / "sdk-bridge.mjs").write_text(
                 bridge, encoding="utf-8", newline="\n"
             )
-            for name in RELEASE_FILES:
-                path = staging / "dist" / name
-                source = path.read_text(encoding="utf-8").replace(
-                    '"@earendil-works/pi-coding-agent"', '"../sdk-bridge.mjs"'
+            for name, source in patched_sources.items():
+                (staging / "dist" / name).write_text(
+                    source, encoding="utf-8", newline="\n"
                 )
-                if name.startswith("chunk-"):
-                    source = (
-                        'import {aaFindSession, aaWithMessage, aaConfigOptions, aaLoadingReport} from "../sdk-bridge.mjs";\n'
-                        + source
-                    )
-                    for old, new in (
-                        (
-                            "async function findSession(sessionId, sessionDir) {",
-                            "async function findSession(sessionId, sessionDir) {\n  if(process.env.AA_PI_SESSION_FILE) return aaFindSession(sessionId);",
-                        ),
-                        (
-                            "await session.prompt(converted.text, converted.images)",
-                            "await aaWithMessage(params, () => session.prompt(converted.text, converted.images))",
-                        ),
-                        (
-                            "await session.steer(converted.text, converted.images)",
-                            "await aaWithMessage(params, () => session.steer(converted.text, converted.images))",
-                        ),
-                        (
-                            "return buildConfigOptions(this.session, {\n      booleanOptions: this.features.booleanConfigOptions\n    });",
-                            "return aaConfigOptions(this.session, buildConfigOptions(this.session, {\n      booleanOptions: this.features.booleanConfigOptions\n    }));",
-                        ),
-                        (
-                            "extensions: session.extensions(),",
-                            "extensions: session.extensions(), aaLoadingReport: aaLoadingReport(),",
-                        ),
-                    ):
-                        if old not in source:
-                            raise AcpError(
-                                "pi_adapter_patch_failed",
-                                "Pi ACP 兼容入口已变化，已停止准备。",
-                            )
-                        source = source.replace(old, new)
-                    source, matches = re.subn(
-                        r"await this\.requireModel\(session\)\.catch\(\(error\) => \{\n.*?\n    \}\);",
-                        "await this.requireModel(session);",
-                        source,
-                    )
-                    if matches != 3:
-                        raise AcpError(
-                            "pi_adapter_patch_failed", "Pi ACP 模型就绪校验入口已变化。"
-                        )
-                    source = source.replace(
-                        "if (pi.model === void 0 && available.length > 0) {",
-                        "if (pi.model === void 0 && available.length > 0 && !process.env.AA_PI_SESSION_FILE) {",
-                    )
-                path.write_text(source, encoding="utf-8", newline="\n")
             # Keep third-party dependency resolution attached to its original install.
-            modules = next(
-                (
-                    parent / "node_modules"
-                    for parent in (package, *package.parents)
-                    if (parent / "node_modules").is_dir()
-                ),
-                None,
-            )
-            if modules is None:
-                raise AcpError(
-                    "pi_adapter_dependencies_missing", "Pi ACP 依赖目录不存在。"
-                )
             try:
                 (staging / "node_modules").symlink_to(modules, target_is_directory=True)
             except OSError:
@@ -132,7 +164,7 @@ def prepare_adapter(entry: Path, sdk: Path, root: Path) -> tuple[Path, dict]:
             if destination.exists():
                 for path in [
                     staging / "sdk-bridge.mjs",
-                    *(staging / "dist" / name for name in RELEASE_FILES),
+                    *(staging / "dist" / name for name in release_files),
                 ]:
                     cached = destination / path.relative_to(staging)
                     if not cached.is_file() or cached.read_bytes() != path.read_bytes():
@@ -148,10 +180,9 @@ def prepare_adapter(entry: Path, sdk: Path, root: Path) -> tuple[Path, dict]:
                 staging.rename(destination)
     metadata = {
         "package": "@openma/pi-acp",
-        "version": "0.1.8",
-        "sourceFiles": RELEASE_FILES,
+        "version": version,
+        "sourceFiles": release_files,
         "patchDigest": patch,
         "sdkEntry": str(sdk / "dist/index.js"),
     }
-    return destination / "dist/bin.js", metadata
-
+    return destination / "dist" / entry.name, metadata

@@ -60,6 +60,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -84,6 +85,7 @@ import com.agentsanywhere.app.feature.files.displayRemotePath
 import com.agentsanywhere.app.feature.files.FileEntry
 import com.agentsanywhere.app.feature.files.fileNameFromRemotePath
 import com.agentsanywhere.app.feature.files.FilesController
+import com.agentsanywhere.app.feature.files.isImageFileName
 import com.agentsanywhere.app.feature.files.FilesDirectory
 import com.agentsanywhere.app.feature.files.initialRemoteFilePath
 import com.agentsanywhere.app.feature.files.isWindowsDeviceOs
@@ -124,10 +126,12 @@ import com.composables.icons.lucide.Trash2
 import com.termux.terminal.TextStyle as TermuxTextStyle
 import com.termux.view.RemoteTerminalView
 import com.termux.view.RemoteTerminalViewClient
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import me.saket.telephoto.zoomable.coil3.ZoomableAsyncImage
 import kotlin.math.roundToInt
 
 @Composable
@@ -143,6 +147,7 @@ internal fun SessionAgentFilesScreen(
     onBack: () -> Unit,
 ) {
     val colors = LocalAAColors.current
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var directory by remember(session?.id) { mutableStateOf(FilesDirectory(path = ".")) }
     var loading by remember(session?.id) { mutableStateOf(false) }
@@ -150,6 +155,7 @@ internal fun SessionAgentFilesScreen(
     var openActionPath by remember(session?.id) { mutableStateOf<String?>(null) }
     var selectedFile by remember(session?.id) { mutableStateOf<FileEntry?>(null) }
     var preview by remember(session?.id) { mutableStateOf<TextFile?>(null) }
+    var imageFile by remember(session?.id) { mutableStateOf<File?>(null) }
     var previewLoading by remember(session?.id) { mutableStateOf(false) }
     var previewError by remember(session?.id) { mutableStateOf<String?>(null) }
     var searchOpen by remember(session?.id) { mutableStateOf(false) }
@@ -195,6 +201,7 @@ internal fun SessionAgentFilesScreen(
     LaunchedEffect(session?.id, session?.cwd, deviceOs) {
         selectedFile = null
         preview = null
+        imageFile = null
         previewError = null
         searchOpen = false
         searchQuery = ""
@@ -217,6 +224,7 @@ internal fun SessionAgentFilesScreen(
             size = null,
         )
         preview = null
+        imageFile = null
         previewError = null
         searchOpen = false
         searchQuery = ""
@@ -232,27 +240,41 @@ internal fun SessionAgentFilesScreen(
         val root = current?.cwd?.takeIf { it.isNotBlank() }
         if (current == null || root == null) {
             preview = null
+            imageFile = null
             previewLoading = false
             previewError = noWorkspaceMessage
             return@LaunchedEffect
         }
         preview = null
+        imageFile = null
         previewLoading = true
         previewError = null
         searchQuery = ""
         searchResult = SoraFileSearchResult()
         val filePath = normalizeRemotePath(file.path)
-        filesController.readTextFile(
-            connectorId = current.connectorId,
-            root = remoteRootForPath(
+        if (isImageFileName(file.name)) {
+            filesController.downloadWorkspaceFile(
+                connectorId = current.connectorId,
+                workspaceRoot = root,
+                path = filePath,
+                cacheDir = context.cacheDir,
+            )
+                .onSuccess { imageFile = it.file }
+                .onFailure { failure -> previewError = failure.message ?: openFileFailedMessage }
+        } else {
+            val requestRoot = remoteRootForPath(
                 targetPath = filePath,
                 deviceOs = deviceOs,
                 fallbackRoot = root,
-            ),
-            path = filePath,
-        )
-            .onSuccess { preview = it }
-            .onFailure { failure -> previewError = failure.message ?: openFileFailedMessage }
+            )
+            filesController.readTextFile(
+                connectorId = current.connectorId,
+                root = requestRoot,
+                path = filePath,
+            )
+                .onSuccess { preview = it }
+                .onFailure { failure -> previewError = failure.message ?: openFileFailedMessage }
+        }
         previewLoading = false
     }
 
@@ -355,6 +377,7 @@ internal fun SessionAgentFilesScreen(
                     deviceOs = deviceOs,
                     file = file,
                     preview = preview,
+                    imageFile = imageFile,
                     loading = previewLoading,
                     error = previewError,
                     darkMode = darkMode,
@@ -365,6 +388,7 @@ internal fun SessionAgentFilesScreen(
                     onBackToFiles = {
                         selectedFile = null
                         preview = null
+                        imageFile = null
                         previewError = null
                         searchOpen = false
                         searchQuery = ""
@@ -396,6 +420,7 @@ internal fun DeviceFilesContent(
     var openActionPath by remember(device?.id) { mutableStateOf<String?>(null) }
     var selectedFile by remember(device?.id) { mutableStateOf<FileEntry?>(null) }
     var preview by remember(device?.id) { mutableStateOf<TextFile?>(null) }
+    var imageFile by remember(device?.id) { mutableStateOf<File?>(null) }
     var previewLoading by remember(device?.id) { mutableStateOf(false) }
     var previewError by remember(device?.id) { mutableStateOf<String?>(null) }
     var searchOpen by remember(device?.id) { mutableStateOf(false) }
@@ -447,6 +472,7 @@ internal fun DeviceFilesContent(
     LaunchedEffect(device?.id, device?.online, device?.deviceOs) {
         selectedFile = null
         preview = null
+        imageFile = null
         previewError = null
         searchOpen = false
         searchQuery = ""
@@ -466,28 +492,41 @@ internal fun DeviceFilesContent(
         val current = device ?: return@LaunchedEffect
         if (!current.online) {
             preview = null
+            imageFile = null
             previewLoading = false
             previewError = deviceOfflineMessage
             return@LaunchedEffect
         }
         preview = null
+        imageFile = null
         previewLoading = true
         previewError = null
         searchQuery = ""
         searchResult = SoraFileSearchResult()
         val filePath = normalizeRemotePath(file.path)
-        val root = remoteRootForPath(
-            targetPath = filePath,
-            deviceOs = deviceOs,
-            fallbackRoot = resolvedRoot?.takeIf { it.isNotBlank() } ?: "~",
-        )
-        controller.readTextFile(
-            connectorId = current.id,
-            root = root,
-            path = filePath,
-        )
-            .onSuccess { preview = it }
-            .onFailure { failure -> previewError = failure.message ?: openFileFailedMessage }
+        if (isImageFileName(file.name)) {
+            controller.downloadWorkspaceFile(
+                connectorId = current.id,
+                workspaceRoot = resolvedRoot?.takeIf { it.isNotBlank() } ?: "~",
+                path = filePath,
+                cacheDir = context.cacheDir,
+            )
+                .onSuccess { imageFile = it.file }
+                .onFailure { failure -> previewError = failure.message ?: openFileFailedMessage }
+        } else {
+            val requestRoot = remoteRootForPath(
+                targetPath = filePath,
+                deviceOs = deviceOs,
+                fallbackRoot = resolvedRoot?.takeIf { it.isNotBlank() } ?: "~",
+            )
+            controller.readTextFile(
+                connectorId = current.id,
+                root = requestRoot,
+                path = filePath,
+            )
+                .onSuccess { preview = it }
+                .onFailure { failure -> previewError = failure.message ?: openFileFailedMessage }
+        }
         previewLoading = false
     }
 
@@ -561,6 +600,7 @@ internal fun DeviceFilesContent(
                 deviceOs = deviceOs,
                 file = file,
                 preview = preview,
+                imageFile = imageFile,
                 loading = previewLoading,
                 error = previewError,
                 darkMode = darkMode,
@@ -571,6 +611,7 @@ internal fun DeviceFilesContent(
                 onBackToFiles = {
                     selectedFile = null
                     preview = null
+                    imageFile = null
                     previewError = null
                     searchOpen = false
                     searchQuery = ""
@@ -589,6 +630,7 @@ private enum class PushView {
     Files,
     Terminal,
 }
+
 
 @Composable
 internal fun TerminalContent(
@@ -1083,6 +1125,7 @@ private fun FilePreviewContent(
     deviceOs: String?,
     file: FileEntry,
     preview: TextFile?,
+    imageFile: File?,
     loading: Boolean,
     error: String?,
     darkMode: Boolean,
@@ -1116,6 +1159,7 @@ private fun FilePreviewContent(
         PreviewCard(
             file = file,
             preview = preview,
+            imageFile = imageFile,
             loading = loading,
             error = error,
             darkMode = darkMode,
@@ -1180,6 +1224,7 @@ private fun PreviewBreadcrumb(
 private fun PreviewCard(
     file: FileEntry,
     preview: TextFile?,
+    imageFile: File?,
     loading: Boolean,
     error: String?,
     darkMode: Boolean,
@@ -1242,7 +1287,16 @@ private fun PreviewCard(
             when {
                 loading -> PreviewMessage(stringResource(R.string.files_loading_file), darkMode)
                 error != null -> PreviewMessage(error, darkMode)
-                preview?.binary == true -> {
+                imageFile != null -> ZoomableAsyncImage(
+                    model = Uri.fromFile(imageFile),
+                    contentDescription = file.name,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(8.dp),
+                    contentScale = ContentScale.Fit,
+                )
+                
+preview?.binary == true -> {
                     Column(
                         modifier = Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),

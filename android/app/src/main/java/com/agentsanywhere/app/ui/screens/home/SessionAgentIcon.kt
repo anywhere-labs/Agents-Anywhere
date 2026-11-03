@@ -23,6 +23,7 @@ internal fun SessionAgentIcon(
         .lowercase().filterNot { it.isWhitespace() || it == '_' || it == '-' }
     // 各 Agent 官方 logo（全彩不着色），便于一眼区分。
     val drawable = when (type) {
+        "pi" -> R.drawable.ic_session_agent_pi
         "codex" -> R.drawable.ic_agent_logo_codex
         "claude", "claudecode" -> R.drawable.ic_agent_logo_claude
         "dsh", "deepseek", "deepseekharness" -> R.drawable.ic_agent_logo_dsh
@@ -31,6 +32,7 @@ internal fun SessionAgentIcon(
         else -> null
     }
     val label = when (drawable) {
+        R.drawable.ic_session_agent_pi -> "Pi"
         R.drawable.ic_agent_logo_codex -> "Codex"
         R.drawable.ic_agent_logo_claude -> "Claude Code"
         R.drawable.ic_agent_logo_dsh -> "DeepSeek Harness"

@@ -15,6 +15,8 @@ class ClaudeApprovalDecision:
     action_id: str
     message: str | None = None
     updated_input: Mapping[str, Any] | None = None
+    updated_permissions: tuple[Mapping[str, Any], ...] = ()
+    interrupt: bool = False
 
 
 def approval_notice(
@@ -92,18 +94,22 @@ def permission_result_from_decision(
         allow_cls = getattr(sdk, "PermissionResultAllow", None)
         if allow_cls is None:
             return {"behavior": "allow", "updatedInput": dict(updated_input or {})}
-        try:
-            return allow_cls(behavior="allow", updated_input=dict(updated_input or {}))
-        except TypeError:
-            return allow_cls(updated_input=dict(updated_input or {}))
+        permissions = []
+        for item in decision.updated_permissions:
+            update_cls = getattr(sdk, "PermissionUpdate", None)
+            permissions.append(update_cls(**item) if update_cls else dict(item))
+        options = {"updated_input": dict(updated_input or {})}
+        if permissions:
+            options["updated_permissions"] = permissions
+        return allow_cls(**options)
     deny_cls = getattr(sdk, "PermissionResultDeny", None)
     message = decision.message or "Denied by user"
     if deny_cls is None:
         return {"behavior": "deny", "message": message}
     try:
-        return deny_cls(behavior="deny", message=message)
+        return deny_cls(behavior="deny", message=message, **({"interrupt": True} if decision.interrupt else {}))
     except TypeError:
-        return deny_cls(message=message)
+        return deny_cls(message=message, **({"interrupt": True} if decision.interrupt else {}))
 
 
 def notice_transition(

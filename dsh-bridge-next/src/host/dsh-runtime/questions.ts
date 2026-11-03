@@ -6,7 +6,7 @@ import { InteractionStream, type InteractionOutcome } from './interaction-stream
 import type { RuntimeDiagnostics } from './diagnostics.js'
 
 interface Question {
-  eventId: string, agentId: string, form: QuestionForm,
+  eventId: string, agentId: string, form: QuestionForm, planCallId?: string,
   status: 'open' | 'responding' | 'resolved' | 'closed' | 'cancelled' | 'expired',
   withdrawn: boolean, revision: number,
 }
@@ -36,7 +36,9 @@ export class UserQuestions {
       }
     } catch { /* Unknown future intents stay with official clients. */ }
     if (!form) { await this.stream.reply(frame.eventId, { kind: 'next' }); return }
-    const entry: Question = { eventId: frame.eventId, agentId: frame.agentId as string, form,
+    const rawQuestions = (frame.request as { questions?: { intent?: { kind?: string, callId?: string } }[] } | undefined)?.questions
+    const planCallId = rawQuestions?.find(q => q.intent?.kind === 'plan-review')?.intent?.callId
+    const entry: Question = { ...(planCallId ? { planCallId } : {}), eventId: frame.eventId, agentId: frame.agentId as string, form,
       status: 'open', withdrawn: false, revision: 1 }
     this.entries.set(entry.eventId, entry)
     this.changed(entry.agentId)
@@ -62,7 +64,12 @@ export class UserQuestions {
         status: e.status, revision: e.revision, responseRequired: pending,
         blocking: pending ? { scope: 'session', targetId: platformId } : null,
         source: { runtime: 'dsh', component: e.form.hasPlanReview ? 'dsh.plan_review' : 'dsh.ask_user_question' },
-        context: {}, metadata: { eventId: e.eventId },
+        context: {}, metadata: { eventId: e.eventId,
+          ...(e.form.hasPlanReview ? { planningReview: (() => {
+            const q = e.form.questions.find(q => q.intent?.kind === 'plan-review')!
+            return { markdown: q.detail, questionId: q.id, ...(e.planCallId ? { callId: e.planCallId } : {}),
+              approveOptionId: `o_${q.options!.findIndex(o => o.label === q.intent!.approve)}` }
+          })() } : {}) },
         actions: pending ? [
           { actionId: 'submit', label: '提交回答', style: 'primary', input: e.form.input() },
           { actionId: 'cancel', label: '取消', style: 'secondary' },

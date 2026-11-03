@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import json
 import os
 import runpy
@@ -86,7 +85,7 @@ def windows_text_locale(monkeypatch):
 
 
 def test_adapter_cache_preserves_utf8_under_windows_locale(
-    tmp_path, monkeypatch, windows_text_locale
+    tmp_path, windows_text_locale
 ):
     package = tmp_path / "node_modules/@openma/pi-acp"
     dist = package / "dist"
@@ -120,14 +119,6 @@ class Session {
     files = {"bin.js": 'export const title = "中文入口";\n', "chunk-fixture.js": source}
     for name, content in files.items():
         (dist / name).write_text(content, encoding="utf-8", newline="\n")
-    monkeypatch.setattr(
-        adapter,
-        "RELEASE_FILES",
-        {
-            name: hashlib.sha256(content.encode("utf-8")).hexdigest()
-            for name, content in files.items()
-        },
-    )
     sdk = tmp_path / "中文 SDK"
     entry, metadata = adapter.prepare_adapter(dist / "bin.js", sdk, tmp_path / "cache")
     bridge = (entry.parent.parent / "sdk-bridge.mjs").read_bytes()

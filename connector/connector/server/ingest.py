@@ -27,6 +27,12 @@ UPLOAD_CHUNK_BYTES = 64 * 1024
 # this often; the pages before it are never resent.
 SNAPSHOT_PAGE_RETRIES = 3
 SNAPSHOT_PAGE_RETRY_BACKOFF_SECONDS = 0.5
+# A synchronous batch (for example one DSH sync batch the plugin waits on) that
+# fails for a transient reason is retried this often before the caller sees the
+# error. Delivery is at least once, as in the background flush loop; without a
+# retry one dropped connection fails the whole DSH feed and forces a resync.
+SYNC_BATCH_RETRIES = 3
+SYNC_BATCH_RETRY_BACKOFF_SECONDS = 1.0
 
 AccessTokenProvider = Callable[[bool], Awaitable[str]]
 HttpClientGetter = Callable[[], httpx.AsyncClient | None]
@@ -220,7 +226,7 @@ class ConnectorIngestClient:
             self._posting = True
             try:
                 await self._drain_pending(on_progress)
-                await self._post_batch(notifications, on_progress=on_progress)
+                await self._post_batch_retrying(notifications, on_progress=on_progress)
             finally:
                 self._posting = False
                 if not self.has_pending:
@@ -231,9 +237,22 @@ class ConnectorIngestClient:
         remaining = len(self._inflight) + self._notify_queue.qsize()
         while remaining:
             self._collect_pending()
-            await self._post_batch(self._inflight, on_progress=on_progress)
+            await self._post_batch_retrying(self._inflight, on_progress=on_progress)
             remaining = max(0, remaining - len(self._inflight))
             self._inflight = []
+
+    async def _post_batch_retrying(self, notifications: list[dict[str, Any]], *, on_progress: UploadProgress | None = None) -> None:
+        attempt = 0
+        while True:
+            try:
+                await self._post_batch(notifications, on_progress=on_progress)
+                return
+            except ConnectorNetworkError as exc:
+                attempt += 1
+                if attempt > SYNC_BATCH_RETRIES or self._closed is not None:
+                    raise
+                logger.warning("connector ingest batch failed notifications={} attempt={} ({}); retrying", len(notifications), attempt, exc)
+                await asyncio.sleep(SYNC_BATCH_RETRY_BACKOFF_SECONDS * 2 ** (attempt - 1))
 
     async def _post_batch(self, notifications: list[dict[str, Any]], *, on_progress: UploadProgress | None = None) -> None:
         if not notifications:

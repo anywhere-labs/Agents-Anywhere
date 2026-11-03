@@ -31,6 +31,7 @@ async function accountSwitch(action, fail) {
     '@/features/dashboard/runtime-workflows': { workflowApi: { cancel: defer, respond: defer, get: defer } },
     '@/lib/api': { apiClient: {} }, '@/lib/api/errors': {}, './creation-configuration': {}, '@/features/dashboard/api': {},
     './session-creation': { releaseCreationAttachments() {} },
+    '@/lib/runtime-error-text': { runtimeFailureOf: error => ({ message: error?.message }) },
   })
   let api
   function Probe({ options }) { api = hook.useSessionCreation(options); return null }

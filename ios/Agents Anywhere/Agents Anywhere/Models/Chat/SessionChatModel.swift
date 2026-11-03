@@ -14,6 +14,26 @@ final class SessionChatModel {
         set { session.isPerformingAction = newValue }
     }
     private(set) var isLoadingSettings = false
+    // The composer derives its pending confirmation from current Runtime state.
+    var planReviewTarget: V2PlanningReviewTarget? {
+        guard session.runtime.allows("session.plan_review"), let state = session.planning,
+              let review = state.review, let plan = state.proposal,
+              state.capabilities?.actions.contains(where: { ["approve_and_execute", "request_revision", "dismiss_review"].contains($0) }) == true,
+              review.status == "open" || (review.status == "approved" && state.execution?.status == "rejected" && state.execution?.retryable == true),
+              review.planId == plan.planId, review.planRevision == plan.revision, review.contentHash == plan.contentHash else { return nil }
+        return .init(state: state)
+    }
+    func respondPlan(_ target: V2PlanningState, action: String, feedback: String) async {
+        guard !isWorking, let review = target.review else { return }
+        isWorking = true; error = nil
+        defer { isWorking = false }
+        do {
+            let request = V2PlanningRequest(command: action, feedback: feedback, reviewId: review.reviewId,
+                planId: review.planId, planRevision: review.planRevision, contentHash: review.contentHash,
+                epoch: target.epoch)
+            _ = try await repository.executePlanning(sessionId: session.id, request: request)
+        } catch { self.error = error.localizedDescription }
+    }
     var error: String?
     var settingsError: String?
     private(set) var nativeHistoryBusy = false
@@ -103,6 +123,16 @@ final class SessionChatModel {
     /// The runtime advertises commands at all, even when they cannot run now.
     var offersCommands: Bool { session.isValid && session.runtime.capabilities?.capability(id: "session.commands") != nil }
     var canUseCommands: Bool { session.runtime.allows("session.commands") && connectorOnline }
+    /// `/plan` is parsed by AA, not run by the runtime; offer it wherever planning is usable.
+    var planningUsable: Bool { session.runtime.allows("session.planning") && connectorOnline }
+    var offeredCommands: [V2RuntimeCommand] {
+        planningUsable && !commands.contains(where: { $0.id == "plan" }) ? [Self.planCommand] + commands : commands
+    }
+    static var planCommand: V2RuntimeCommand {
+        V2RuntimeCommand(id: "plan", title: "plan", description: String(localized: "进入原生规划：/plan <任务> 先出计划、确认后执行；/plan off 退出"),
+            aliases: [], category: nil, scope: "session", enabled: true, disabledReason: nil, acceptsArgs: true, argsSchema: nil,
+            metadata: .object(["ui": .object(["kind": .string("execute"), "argumentHint": .string(String(localized: "[任务 | off]"))])]))
+    }
     var commandsUnavailableReason: String? {
         guard let capability = session.runtime.capabilities?.capability(id: "session.commands"), !canUseCommands else { return nil }
         if !connectorOnline { return String(localized: "设备离线") }
@@ -126,6 +156,8 @@ final class SessionChatModel {
     }
 
     func commandBlock(_ command: V2RuntimeCommand) -> RuntimeCommandBlock? {
+        // AA's own /plan is not a runtime command; the planning capability already gated it.
+        if command.id == "plan", !commands.contains(where: { $0.id == "plan" }) { return nil }
         if isRunningCommand || isWorking { return .busy }
         return command.block(status: session.runtime.state?.status, capability: canUseCommands,
             writable: session.metadata?.takeover == true, online: connectorOnline)
@@ -152,7 +184,7 @@ final class SessionChatModel {
     /// is not a command-like slash (e.g. a path or prose).
     func commandSuggestions(for text: String) -> [V2RuntimeCommand]? {
         guard let intent = SlashIntent(text), intent.isCommandLike, intent.suffix.isEmpty, !intent.multiline else { return nil }
-        return commands.filter { $0.matches(intent.command) }
+        return offeredCommands.filter { $0.matches(intent.command) }
     }
 
     /// Only drafts naming a catalog command run as commands; the catalog is read
@@ -227,6 +259,7 @@ final class SessionChatModel {
         if let data = repository.cached(sessionId: session.id) {
             timeline.presentOpening(data.items, pendingMessages: session.pendingMessages)
         }
+        await repository.refreshPlanning(sessionId: session.id)
         isOpeningPrepared = true
     }
 
@@ -269,9 +302,9 @@ final class SessionChatModel {
                 case "running": try await Task.sleep(for: .seconds(1))
                 case "rejected", "failed":
                     nativeRecovery = nil
-                    throw NSError(domain: "NativeHistory", code: 1, userInfo: [NSLocalizedDescriptionKey:
-                        result["failure"]?["message"]?.stringValue ?? String(localized: "恢复失败，历史仍可查看。")])
-                default: throw NSError(domain: "NativeHistory", code: 2, userInfo: [NSLocalizedDescriptionKey: String(localized: "恢复结果尚未确认，请查询原操作状态。")])
+                    throw V2RuntimeError(code: result["failure"]?["code"]?.stringValue ?? "native_history_recovery_failed",
+                        message: result["failure"]?["message"]?.stringValue ?? String(localized: "恢复失败，历史仍可查看。"))
+                default: throw V2RuntimeError(code: "native_history_recovery_unconfirmed", message: String(localized: "恢复结果尚未确认，请查询原操作状态。"))
                 }
             }
             nativeHistoryError = String(localized: "恢复结果尚未确认，请查询原操作状态。")
@@ -342,6 +375,22 @@ final class SessionChatModel {
     }
 
     func send(_ text: String) async {
+        if let intent = V2PlanningCommand.parse(text) {
+            guard !isWorking else { return }
+            let selected = session.composer.attachments
+            guard intent.command == "submit_task" || selected.isEmpty else { error = String(localized: "请填写附件对应的规划任务。"); return }
+            isWorking = true; error = nil
+            defer { isWorking = false }
+            do {
+                var request = V2PlanningRequest(command: intent.command, content: intent.content)
+                if !selected.isEmpty {
+                    let files = try await attachments.upload(sessionId: session.id, attachments: selected.map(\.local))
+                    request.attachments = files.map { V2AttachmentSendReference(fileId: $0.fileId) }
+                }
+                if try await repository.executePlanning(sessionId: session.id, request: request), session.composer.text == text, session.composer.attachments.map(\.id) == selected.map(\.id) { session.composer.clear() }
+            } catch { self.error = error.localizedDescription }
+            return
+        }
         if let command = await catalogCommand(for: text) {
             session.composer.text = text
             await runCommand(command, raw: text)

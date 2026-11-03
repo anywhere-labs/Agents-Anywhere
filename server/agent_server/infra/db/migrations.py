@@ -21,8 +21,8 @@ from sqlalchemy.pool import NullPool
 from agent_server.infra.db.engine import resolve_db_url
 
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_45"
-CURRENT_SCHEMA_VERSION = "2.45"
+CURRENT_SCHEMA_REVISION = "v2_46"
+CURRENT_SCHEMA_VERSION = "2.46"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -267,6 +267,18 @@ def _classify_sync(connection) -> UnversionedDatabase:
                 and "runtime_id" in runtime_catalog_columns
                 and "name_key" in runtime_columns
             )
+            # v2_46 adds planning tables on top of the v2_45 workflow layout.
+            planning_tables = {"session_planning", "plan_documents", "planning_operations", "planning_creations"}
+            planning_layout = bool(planning_tables & tables)
+            if planning_layout:
+                columns = {
+                    "session_planning": {"session_id", "payload"},
+                    "plan_documents": {"session_id", "plan_id", "revision", "content_hash", "payload", "created_at"},
+                    "planning_operations": {"session_id", "operation_id", "fingerprint", "payload"},
+                    "planning_creations": {"connector_id", "runtime_id", "operation_id", "fingerprint", "payload"},
+                }
+                if not (planning_tables.issubset(tables) and all(required.issubset(_column_names(inspector, table)) for table, required in columns.items())):
+                    return UnversionedDatabase("unknown")
             if runtime_instance_layout:
                 if (
                     "app_releases" in tables
@@ -457,6 +469,10 @@ def _classify_sync(connection) -> UnversionedDatabase:
                 revision = "v2_12"
             else:
                 revision = "v2_13"
+            if planning_layout:
+                if revision != "v2_45":
+                    return UnversionedDatabase("unknown")
+                revision = "v2_46"
             return UnversionedDatabase("v2", revision)
         if "approvals" in tables:
             if {"presence_instance_id", "presence_connection_id"}.issubset(

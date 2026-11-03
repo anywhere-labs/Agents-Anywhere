@@ -1,10 +1,19 @@
 package com.agentsanywhere.app.api
 
 import org.json.JSONObject
+import java.io.File
+import java.net.URI
+import java.security.MessageDigest
+import java.util.UUID
 
 class FilesApi(
     private val client: ApiClient = ApiClient(),
 ) {
+    companion object {
+        const val MAX_DOWNLOAD_BYTES = 64L * 1024 * 1024
+        private const val DOWNLOAD_BUFFER_BYTES = 64 * 1024
+    }
+
     fun listFiles(
         serverUrl: String,
         authorizationToken: String,
@@ -51,26 +60,128 @@ class FilesApi(
         ).toRemoteTextFile()
     }
 
-    fun downloadFile(serverUrl: String, authorizationToken: String, deviceId: String, root: String, path: String): ByteArray {
-        val result = client.postJson(
-            serverUrl, "/connectors/${deviceId.urlEncode()}/fs/read?root=${root.urlEncode()}",
-            JSONObject().put("path", path), authorizationToken,
-        ).getJSONObject("result")
-        val bytes = client.getFileBytes(serverUrl, result.getString("downloadUrl"), authorizationToken)
-        require(result.optLong("size", -1L) == bytes.size.toLong()) { "Downloaded file size does not match." }
-        val expected = result.optString("sha256").lowercase()
-        val actual = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
-            .joinToString("") { "%02x".format(it) }
-        require(expected.length == 64 && expected == actual) { "Downloaded file checksum does not match." }
-        return bytes
+    fun prepareFile(
+        serverUrl: String,
+        authorizationToken: String,
+        deviceId: String,
+        root: String,
+        path: String,
+    ): RemoteFileTransfer {
+        val body = JSONObject().apply { put("path", path) }
+        val response = client.postJson(
+            serverUrl = serverUrl,
+            path = "/connectors/${deviceId.urlEncode()}/fs/read?root=${root.urlEncode()}",
+            body = body,
+            authorizationToken = authorizationToken,
+        )
+        val result = response.optJSONObject("result") ?: JSONObject()
+        return RemoteFileTransfer(
+            path = result.optString("path", path),
+            name = result.optString("name", path.substringAfterLast('/')).ifBlank { "download" },
+            size = result.optLong("size", 0L),
+            sha256 = result.optString("sha256", ""),
+            mediaType = result.optString("mediaType", "application/octet-stream"),
+            transferId = result.optString("transferId", ""),
+            downloadUrl = result.optString("downloadUrl", ""),
+        )
     }
 
-    fun createPreviewToken(serverUrl: String, authorizationToken: String, deviceId: String, root: String, path: String): String {
-        val result = client.postJson(
-            serverUrl, "/connectors/${deviceId.urlEncode()}/fs/preview-token?root=${root.urlEncode()}",
-            JSONObject().put("path", path), authorizationToken,
+    fun downloadFile(
+        serverUrl: String,
+        authorizationToken: String,
+        transfer: RemoteFileTransfer,
+        destination: File,
+        maxBytes: Long = MAX_DOWNLOAD_BYTES,
+    ): File {
+        val limit = minOf(maxBytes, MAX_DOWNLOAD_BYTES)
+        if (transfer.size > limit) {
+            throw ApiException("The file is too large to preview.", 413)
+        }
+        val url = absoluteDownloadUrl(serverUrl, transfer.downloadUrl)
+        destination.parentFile?.mkdirs()
+        val temporary = File(
+            destination.parentFile,
+            ".${destination.name}.${UUID.randomUUID()}.part",
         )
-        return result.getString("previewToken")
+        try {
+            // Only send the account token back to the API origin; a 401 there
+            // refreshes it through ApiClient like every other request.
+            val actualSha = client.downloadStream(
+                serverUrl = serverUrl,
+                url = url,
+                authorizationToken = authorizationToken.takeIf { isSameOrigin(url, serverUrl) },
+            ) { input ->
+                val digest = MessageDigest.getInstance("SHA-256")
+                var total = 0L
+                temporary.outputStream().use { output ->
+                    val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        total += read
+                        if (total > limit) {
+                            throw ApiException("The file is too large to preview.", 413)
+                        }
+                        digest.update(buffer, 0, read)
+                        output.write(buffer, 0, read)
+                    }
+                }
+                if (transfer.size > 0 && total != transfer.size) {
+                    throw ApiException("The file download was incomplete.", 502)
+                }
+                digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+            }
+            if (transfer.sha256.isNotBlank() && !actualSha.equals(transfer.sha256, ignoreCase = true)) {
+                throw ApiException("The downloaded file failed its integrity check.", 502)
+            }
+            if (!temporary.renameTo(destination)) {
+                temporary.copyTo(destination, overwrite = true)
+            }
+            return destination
+        } finally {
+            temporary.delete()
+        }
+    }
+
+    private fun isSameOrigin(first: String, second: String): Boolean {
+        return runCatching {
+            val a = URI(first)
+            val b = URI(second)
+            a.scheme.equals(b.scheme, ignoreCase = true) &&
+                a.host.equals(b.host, ignoreCase = true) &&
+                effectivePort(a) == effectivePort(b)
+        }.getOrDefault(false)
+    }
+
+    private fun effectivePort(uri: URI): Int = when {
+        uri.port >= 0 -> uri.port
+        uri.scheme.equals("https", ignoreCase = true) -> 443
+        else -> 80
+    }
+
+    private fun absoluteDownloadUrl(serverUrl: String, downloadUrl: String): String {
+        if (downloadUrl.startsWith("http://") || downloadUrl.startsWith("https://")) return downloadUrl
+        val base = serverUrl.trimEnd('/')
+        if (base.endsWith("/api/v2") && downloadUrl.startsWith("/api/v2")) {
+            return base.removeSuffix("/api/v2") + downloadUrl
+        }
+        return base + "/" + downloadUrl.trimStart('/')
+
+    fun createPreviewToken(
+        serverUrl: String,
+        authorizationToken: String,
+        deviceId: String,
+        root: String,
+        path: String,
+    ): String {
+        val body = JSONObject().apply { put("path", path) }
+        val response = client.postJson(
+            serverUrl = serverUrl,
+            path = "/connectors/${deviceId.urlEncode()}/fs/preview-token?root=${root.urlEncode()}",
+            body = body,
+            authorizationToken = authorizationToken,
+        )
+        return response.optJSONObject("result")?.optString("previewToken").orEmpty()
     }
 
     private fun JSONObject.toRemoteDirectoryEntry(): RemoteDirectoryEntry {

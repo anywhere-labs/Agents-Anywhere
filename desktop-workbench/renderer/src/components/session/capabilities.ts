@@ -3,6 +3,9 @@ import type { ProtocolCapability, ProtocolCapabilitySet } from "@/features/dashb
 export const CAPABILITY = {
   sendMessage: "session.send_message",
   commands: "session.commands",
+  planning: "session.planning",
+  planDocument: "session.plan_document",
+  planReview: "session.plan_review",
   interrupt: "session.interrupt",
   steer: "session.steer",
   approveInteraction: "session.interaction.approval",

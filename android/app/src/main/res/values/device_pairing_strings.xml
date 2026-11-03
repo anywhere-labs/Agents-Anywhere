@@ -42,7 +42,7 @@
     <string name="device_pairing_confirming">Confirming pairing, waiting for device...</string>
     <string name="device_pairing_claim">Claim</string>
     <string name="device_pairing_exit_title">Device already created</string>
-    <string name="device_pairing_exit_description">The device %1$s has been created but is not yet paired. If you no longer need it, please delete it manually from the Devices list.</string>
+    <string name="device_pairing_exit_description">The device %1$s has been created but is not yet paired. If you no longer need it, please delete it manually from the Devices list. Add an Agent after connecting the device before starting a session.</string>
     <string name="device_pairing_continue_pairing">Continue pairing</string>
     <string name="device_pairing_close_anyway">Close anyway</string>
     <string name="device_pairing_copy_command">Copy command</string>
@@ -50,6 +50,6 @@
     <string name="device_pairing_errors_claim_failed">Failed to claim pairing.</string>
     <string name="device_pairing_errors_copy_failed">Copy failed. Please select the command and copy it manually.</string>
     <string name="device_pairing_download">Open download page</string>
-    <string name="device_pairing_exit_waiting_description">Pairing will keep waiting for %1$s to come online after you leave this page and update the Devices list. If you no longer need this device, delete it from the Devices list.</string>
+    <string name="device_pairing_exit_waiting_description">Pairing keeps waiting for %1$s after you leave this page and prompts you to add agents when it comes online. If you no longer need this device, delete it from the Devices list.</string>
     <string name="device_pairing_open_download_failed">Could not open the download page. Please try again.</string>
 </resources>

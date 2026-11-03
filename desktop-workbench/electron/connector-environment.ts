@@ -93,6 +93,14 @@ export class ConnectorEnvironment {
           signal.throwIfAborted();
           persistJson(this.receiptPath, { schema: 1, fingerprint: resolved } satisfies Receipt);
         }
+        // Check the npm cache even when the Python receipt is still current.
+        // Both the preflight and all Pi instances use this same Desktop cache.
+        const npmRoot = context.env.AA_PI_NPM_ROOT ?? path.join(this.options.dataPath, "pi-npm-runtimes");
+        this.publish({ status: "preparing", phase: "pi", event: "environment.pi",
+          message: "Preparing Pi ACP adapter and dependencies.", progress: undefined, stderr: undefined, exitCode: undefined });
+        await this.sync(context, signal, ["run", "--no-sync", "--project", context.project,
+          ...(context.python ? ["--python", context.python] : []),
+          "anywhere-cli", "prepare-pi", "--root", npmRoot], "pi");
       }
       signal.throwIfAborted();
       this.publish({ status: "ready", phase: "ready", event: "environment.ready", message: "Connector environment is ready.", stalled: false });
@@ -139,16 +147,16 @@ export class ConnectorEnvironment {
     for (const key of Object.keys(context.env).filter(key => /^(UV_|PIP_|PYTHON|HTTPS?_PROXY|ALL_PROXY|NO_PROXY|SSL_CERT|REQUESTS_CA)/i.test(key)).sort()) add(key, context.env[key] ?? "");
     return hash.digest("hex");
   }
-  private async sync(context: EnvironmentContext, signal: AbortSignal): Promise<void> {
-    const child = spawn(context.uv, ["sync", "--project", context.project, ...(context.python ? ["--python", context.python] : [])], {
+  private async sync(context: EnvironmentContext, signal: AbortSignal, args?: string[], phase?: "pi"): Promise<void> {
+    const child = spawn(context.uv, args ?? ["sync", "--project", context.project, ...(context.python ? ["--python", context.python] : [])], {
       cwd: context.project, env: context.env, detached: process.platform !== "win32", windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
     });
     this.child = child;
     this.writeOwner(child.pid);
     let lastActivity = this.now();
-    let fileActivity = activityStamp(context.environment, context.env.UV_CACHE_DIR);
+    let fileActivity = activityStamp(context.environment, phase ? context.env.AA_PI_NPM_ROOT : context.env.UV_CACHE_DIR);
     const watchdog = setInterval(() => {
-      const next = activityStamp(context.environment, context.env.UV_CACHE_DIR);
+      const next = activityStamp(context.environment, phase ? context.env.AA_PI_NPM_ROOT : context.env.UV_CACHE_DIR);
       if (next !== fileActivity) { fileActivity = next; lastActivity = this.now(); }
       const stalled = this.now() - lastActivity >= (this.options.watchdogMs ?? 120_000);
       if (stalled !== this.state.stalled) this.publish({ stalled, lastActivityAt: new Date(lastActivity).toISOString() });
@@ -162,7 +170,7 @@ export class ConnectorEnvironment {
       lastActivity = this.now();
       recent.push(line); if (recent.length > 12) recent.shift();
       this.options.log(line);
-      const parsed = parseEnvironmentOutput(line, this.state.progress);
+      const parsed = phase ? { phase, event: "environment.pi" } : parseEnvironmentOutput(line, this.state.progress);
       // Keep snapshots bounded during uv's carriage-return download updates.
       if (this.now() - lastPublish >= 100 || parsed.phase !== this.state.phase) {
         lastPublish = this.now();

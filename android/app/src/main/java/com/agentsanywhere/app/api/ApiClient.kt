@@ -9,6 +9,7 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.TimeUnit
@@ -65,31 +66,6 @@ class ApiClient(
             authorizationToken = authorizationToken,
         )
     }
-
-    internal fun getFileBytes(serverUrl: String, path: String, authorizationToken: String): ByteArray =
-        withTokenRefresh(serverUrl, authorizationToken) { token ->
-            require(path.startsWith("/api/v2/connectors/") && !path.startsWith("//")) { "Invalid download path" }
-            val request = Request.Builder().url(apiUrl(serverUrl, path))
-                .header("Authorization", "Bearer $token").get().build()
-            val client = JSON_HTTP_CLIENT.newBuilder().followRedirects(false).followSslRedirects(false)
-                .readTimeout(120, TimeUnit.SECONDS).build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) throw ApiException("Could not download file.", response.code)
-                val body = response.body ?: throw ApiException("Empty download response.")
-                val limit = 50L * 1024 * 1024
-                if (body.contentLength() > limit) throw ApiException("File is larger than 50 MB.")
-                val source = body.source()
-                val output = java.io.ByteArrayOutputStream()
-                val buffer = ByteArray(8192)
-                while (true) {
-                    val count = source.read(buffer)
-                    if (count < 0) break
-                    if (output.size().toLong() + count > limit) throw ApiException("File is larger than 50 MB.")
-                    output.write(buffer, 0, count)
-                }
-                output.toByteArray()
-            }
-        }
 
     fun postJson(
         serverUrl: String,
@@ -189,7 +165,6 @@ class ApiClient(
         serverUrl: String,
         path: String,
         authorizationToken: String? = null,
-        readTimeoutSeconds: Long? = null,
     ): JSONObject {
         return requestJson(
             serverUrl = serverUrl,
@@ -197,7 +172,6 @@ class ApiClient(
             method = "DELETE",
             bodyText = null,
             authorizationToken = authorizationToken,
-            readTimeoutSeconds = readTimeoutSeconds,
         )
     }
 
@@ -348,6 +322,59 @@ class ApiClient(
         }
     }
 
+    /**
+     * Streams a GET response to [consume]. A 401 refreshes the access token and
+     * calls [consume] again from the start, so it must not keep partial state
+     * between attempts.
+     */
+    fun <T> downloadStream(
+        serverUrl: String,
+        url: String,
+        authorizationToken: String? = null,
+        consume: (InputStream) -> T,
+    ): T {
+        return withTokenRefresh(serverUrl, authorizationToken) { token ->
+            downloadStreamOnce(url, token, consume)
+        }
+    }
+
+    private fun <T> downloadStreamOnce(
+        url: String,
+        authorizationToken: String?,
+        consume: (InputStream) -> T,
+    ): T {
+        return try {
+            val request = Request.Builder()
+                .url(url)
+                .header("ngrok-skip-browser-warning", "true")
+                .get()
+                .apply {
+                    if (!authorizationToken.isNullOrBlank()) {
+                        header("Authorization", "Bearer $authorizationToken")
+                    }
+                }
+                .build()
+            DOWNLOAD_HTTP_CLIENT.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val responseText = response.body?.string().orEmpty()
+                    throw ApiException(
+                        message = parseErrorMessage(responseText) ?: defaultErrorMessage(response.code),
+                        statusCode = response.code,
+                        errorCode = parseErrorCode(responseText),
+                    )
+                }
+                val body = response.body ?: throw ApiException("The server returned an empty file.", response.code)
+                body.byteStream().use(consume)
+            }
+        } catch (exc: ApiException) {
+            throw exc
+        } catch (exc: IllegalArgumentException) {
+            throw ApiException("The server URL is invalid.", cause = exc)
+        } catch (exc: IOException) {
+            throw ApiException("Could not reach the server. Check the URL and network.", cause = exc)
+        }
+    }
+
     private fun <T> withTokenRefresh(
         serverUrl: String,
         authorizationToken: String?,
@@ -382,6 +409,9 @@ class ApiClient(
         val JSON_HTTP_CLIENT: OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
+            .build()
+        val DOWNLOAD_HTTP_CLIENT: OkHttpClient = JSON_HTTP_CLIENT.newBuilder()
+            .readTimeout(60, TimeUnit.SECONDS)
             .build()
     }
 

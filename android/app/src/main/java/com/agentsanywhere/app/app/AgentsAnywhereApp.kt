@@ -711,20 +711,7 @@ fun AgentsAnywhereApp(
                 devicesController.listDeviceRuntimes(connectorId)
             }
         },
-        onSetDeviceRuntimeActive = { connectorId, runtime, active ->
-            if (!hasAuthSession) {
-                Result.failure(IllegalStateException("Sign in again to update this runtime."))
-            } else {
-                devicesController.setDeviceRuntimeActive(connectorId, runtime, active)
-            }
-        },
-        onDeleteDeviceRuntimeConfig = { connectorId, runtime ->
-            if (!hasAuthSession) {
-                Result.failure(IllegalStateException("Sign in again to delete runtime configuration."))
-            } else {
-                devicesController.deleteDeviceRuntimeConfig(connectorId, runtime)
-            }
-        },
+        deviceAgents = devicesController,
         onBulkSetSessionsArchived = { ids, archived ->
             if (!hasAuthSession) {
                 Result.failure(IllegalStateException("Sign in again to update sessions."))

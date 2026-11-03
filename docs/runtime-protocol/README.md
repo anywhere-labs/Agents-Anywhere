@@ -14,6 +14,7 @@
 | 工作区准备与异步创建 | [工作流类型](../../connector/connector/runtime_protocol/workflows.py)、[公共契约](../../contracts/runtime-workflows/1.2/manifest.json) |
 | API、有效能力与实时同步 | [API 索引](../api/README.md)、[能力](../api/capabilities.md)、[实时 API](../api/realtime.md) |
 | Timeline 工具身份与多来源同步 | [身份说明](timeline-identity.md) |
+| 统一原生 Plan：`/plan` 命令、计划卡片、输入区确认、能力与迁移 | [统一 Plan](../api/planning.md)、[设计与实施记录](unified-plan-implementation-plan.md) |
 
 默认 Runtime 为 Codex、Claude、DSH、Pi。Pi 的 Provider 身份为 `pi`，通过通用 ACP 适配启动托管安装的 `@openma/pi-acp`。运行环境使用 npm 安装器管理。
 

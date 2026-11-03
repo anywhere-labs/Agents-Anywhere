@@ -76,6 +76,17 @@ final class V2PendingMessage: Identifiable {
 final class V2SessionModel: Identifiable {
     let id: V2SessionID
     let scope: V2ClientScope
+    private(set) var planning: V2PlanningState?
+    func observePlanning(_ observed: V2PlanningState) {
+        guard observed.sessionId == id else { return }
+        if let previous = planning, previous.epoch == observed.epoch, previous.revision > observed.revision { return }
+        var next = observed
+        next.capabilities = observed.capabilities ?? planning?.capabilities
+        let docs = (planning?.proposals ?? []) + (observed.proposals ?? []) + [observed.proposal].compactMap { $0 }
+        var seen = Set<String>()
+        next.proposals = docs.filter { seen.insert($0.id).inserted }
+        planning = next
+    }
     let runtime = V2SessionRuntimeModel()
     let notices = SessionNoticeStore()
     private(set) var metadata: V2SessionMeta?

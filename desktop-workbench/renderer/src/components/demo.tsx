@@ -1,5 +1,7 @@
 "use client"
 
+import { EmptyAgentPrompt } from '@/components/empty-agent-prompt'
+
 import * as React from "react"
 import type { PanelImperativeHandle } from "react-resizable-panels"
 
@@ -59,6 +61,7 @@ export function Demo() {
           <DesktopSessionNotifications />
           <SidebarProvider>
             <DashboardShell />
+            <EmptyAgentPrompt />
           </SidebarProvider>
         </DesktopConnectorProvider>
       </DevicePairingProvider>

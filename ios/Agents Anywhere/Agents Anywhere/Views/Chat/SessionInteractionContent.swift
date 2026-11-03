@@ -10,7 +10,7 @@ struct SessionInteractionContent: View {
     var body: some View {
         TimelineView(NoticeExpiryClock(expiresAt: item.expiresAt)) { timeline in
             VStack(alignment: .leading, spacing: 14) {
-                Label(item.notice.title, appSymbol: icon).font(.subheadline.weight(.semibold))
+                Label(item.notice.displayTitle, appSymbol: icon).font(.subheadline.weight(.semibold))
                     .foregroundStyle(item.notice.severity == "error" ? Color.red : Color.primary)
                 if let message = item.notice.message { Text(message).font(.subheadline).foregroundStyle(.secondary) }
                 if showsContext {
@@ -28,7 +28,7 @@ struct SessionInteractionContent: View {
                    item.notice.metadata["kind"] == .string("form") || item.notice.actions.contains(where: { $0.input.uiSchema?["component"] == .string("runtimeDialog") }) {
                     let dialog = item.notice.actions.first(where: { $0.input.uiSchema?["component"] == .string("runtimeDialog") })
                     RuntimeWorkflowInput(request: V2WorkflowInteraction(interactionId: item.id, ownerGeneration: owner, requestRevision: revision,
-                        kind: item.notice.metadata["kind"] == .string("form") ? "form" : dialog?.input.uiSchema?["kind"]?.stringValue ?? "", title: item.notice.title, message: nil, status: "open",
+                        kind: item.notice.metadata["kind"] == .string("form") ? "form" : dialog?.input.uiSchema?["kind"]?.stringValue ?? "", title: item.notice.displayTitle, message: nil, status: "open",
                         metadata: item.notice.metadata["kind"] == .string("form") ? item.notice.metadata : dialog?.input.uiSchema ?? .object([:]), actions: item.notice.actions), pending: chat.isWorking) { action, value in
                             Task { await chat.respondRuntimeDialog(notice: item, actionID: action, value: value) }
                         }
