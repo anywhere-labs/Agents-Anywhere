@@ -67,7 +67,7 @@
 | GET | `/model-config/channel` | 返回渠道状态（见下） |
 | PUT | `/model-config/channel` | `{channel}`；应用当前渠道并立即切换，允许中断运行中的任务；立即返回渠道状态，不等切换完成 |
 | PUT | `/model-config/channel/runtimes/{connectorId}/{runtimeId}` | `{channel: string \| null, confirmNativeGlobal?: boolean}`；`null` 表示跟随当前渠道；`scope=native_global` 的 Runtime 指定 AA 渠道时必须带 `confirmNativeGlobal: true` |
-| POST | `/model-config/channel/retry` | 重新尝试所有 `restored` 和 `failed` 的 Runtime；也可带 `{connectorId, runtimeId}` 只重试一个 |
+| POST | `/model-config/channel/retry` | 重新尝试所有 `restored` 和 `failed` 的 Runtime；上次恢复失败时会先完成恢复，再继续应用最新目标；也可带 `{connectorId, runtimeId}` 只重试一个 |
 
 错误：渠道不存在 404 `channel_not_found`；配置已断开 409 `profile_detached`；`tokens` 但未链接 409 `tokens_not_linked`；Runtime 不存在 404。
 

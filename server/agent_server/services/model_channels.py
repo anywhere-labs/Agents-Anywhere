@@ -813,6 +813,8 @@ class ModelChannelService:
                     return
                 if report["running"] == target.active and (not target.active or connection_digest(
                     report["values"], target.modelConnection or {}) == sync["actual_config_digest"]):
+                    observed_status = "running" if report["running"] else "stopped"
+                    status_changed = target.status != observed_status
                     async with self._store.channel_transaction(user_id):
                         latest = await self._store.get_channel_sync(connector_id, runtime_id)
                         if latest["desired_generation"] != sync["desired_generation"]:
@@ -820,7 +822,9 @@ class ModelChannelService:
                         await self._store.record_channel_observation(connector_id, runtime_id,
                             generation=sync["desired_generation"], channel=context.desired,
                             digest=sync["actual_config_digest"], instance_id=report.get("instanceId") or sync["observed_instance_id"])
-                        if switch["state"] != APPLIED:
+                        if status_changed:
+                            await self._runtimes._store.set_device_runtime_status(connector_id, target.runtimeId, observed_status)
+                        if switch["state"] != APPLIED or status_changed:
                             await self._settle(connector_id, runtime_id, user_id, APPLIED)
                     return
             if context.desired == context.actual and not (
@@ -1141,6 +1145,8 @@ class ModelChannelService:
             actual = await self._runtimes.read_connector_config(target.connectorId, target.runtimeId, target.runtimeType)
             if actual and actual["running"] and connection_digest(actual["values"], capability) == expected and status != "failed":
                 plan["instanceId"] = plan.get("instanceId") or actual.get("instanceId")
+                if row.status != "running":
+                    await self._runtimes._store.set_device_runtime_status(target.connectorId, target.runtimeId, "running")
                 return True, None, None
             if row.status == "error":
                 message = (row.error or {}).get("message") if isinstance(row.error, dict) else None
@@ -1207,7 +1213,7 @@ class ModelChannelService:
 
     async def _rollback(
         self, connector_id: str, runtime_id: str, user_id: str, snapshot: dict[str, Any], *,
-        reason: str | None, message: str | None,
+        reason: str | None, message: str | None, resume_target: bool = False,
     ) -> None:
         """Put the snapshot back; ``restored`` when the runtime is as it was, else ``failed``."""
         await self._store.save_channel_switch(connector_id, runtime_id, {
@@ -1232,7 +1238,8 @@ class ModelChannelService:
                 await self._settle(connector_id, runtime_id, user_id, FAILED, reason="rollback_failed", keep_target=True)
                 return
         if before is None or target_id is None:
-            await self._settle(connector_id, runtime_id, user_id, RESTORED, reason=reason, message=message, keep_target=True)
+            await self._settle(connector_id, runtime_id, user_id, PENDING if resume_target else RESTORED,
+                reason=None if resume_target else reason, message=None if resume_target else message, keep_target=True)
             return
         try:
             async with self._runtimes.locked_runtime(connector_id, target_id, user_id=user_id) as handle:
@@ -1263,8 +1270,10 @@ class ModelChannelService:
                 await self._store.record_channel_observation(connector_id, runtime_id,
                     generation=snapshot.get("previousGeneration"), channel=snapshot["previousChannel"],
                     digest=connection_digest(before["config"], current.modelConnection or {}))
-            await self._settle(connector_id, runtime_id, user_id, RESTORED if ok else FAILED,
-                reason=reason if ok else "rollback_failed", message=message, keep_target=True, publish=False)
+            outcome = PENDING if ok and resume_target else RESTORED if ok else FAILED
+            await self._settle(connector_id, runtime_id, user_id, outcome,
+                reason=None if outcome == PENDING else reason if ok else "rollback_failed",
+                message=None if outcome == PENDING else message, keep_target=True, publish=False)
         await self._publish(user_id)
 
     async def _recover(self, switch: dict[str, Any], *, user_id: str) -> None:
@@ -1281,8 +1290,10 @@ class ModelChannelService:
             })
             return
         if switch["state"] == RESTORING:
+            sync = await self._store.get_channel_sync(connector_id, runtime_id)
+            resume_target = bool(sync and sync["next_retry_at"] and sync["next_retry_at"] <= utc_now())
             await self._rollback(connector_id, runtime_id, user_id, snapshot,
-                                 reason=switch["reason"], message=switch["message"])
+                                 reason=switch["reason"], message=switch["message"], resume_target=resume_target)
             return
         target_id = snapshot.get("runtimeId")
         after = snapshot.get("after")

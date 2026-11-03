@@ -58,7 +58,7 @@
 - 修复 Web 和 Desktop 模型渠道页在浏览器授权 Tokens Anywhere 后进度不更新、同步失败仍持续转圈的问题。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 本地启动器退出时保留共用的 PostgreSQL 和 Redis，并在关闭超时后结束残留应用进程，避免重启期间数据库断连或新旧进程重叠。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 本地启动时自动生成并保存配置管理所需的密钥，后续启动继续复用，无需手动填写即可测试模型 Key 保存。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
-- 「设置 → 模型渠道」也可以手动添加模型服务，作为渠道给各设备上的 Codex、Claude Code 和 Pi 使用；在任一客户端修改后，其他客户端立即同步显示，连接说明精简为模型服务的地址、Key 和模型；离线期间多次切换会在上线后直接追到最终渠道，相同有效配置不再重复重启。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 「设置 → 模型渠道」也可以手动添加模型服务，作为渠道给各设备上的 Codex、Claude Code 和 Pi 使用；在任一客户端修改后，其他客户端立即同步显示，连接说明精简为模型服务的地址、Key 和模型；离线期间多次切换会在上线后直接追到最终渠道，相同有效配置不再重复重启，恢复失败后的重试会继续完成恢复和目标应用。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - Web 和 Desktop 的 Anywhere 账户用「退出」代替「切换账号」：使用 Anywhere 的 Runtime 先重启并改用默认渠道（Anywhere 原本就是默认渠道时改用设备自带配置），全部切换完成后自动退出账户并撤销授权；轮换 Key 前需二次确认，确认后新 Key 按切换流程写入所有使用 Anywhere 渠道的 Runtime，回包丢失时会自动核实轮换结果，离线设备上线后补齐新 Key。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - Runtime 的模型连接状态分为「未配置」「已保存，待应用」「已应用」「应用失败」「由外部客户端管理」；「已应用」表示 Runtime 已采用配置，不代表连接已验证。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 模型网关的 Key 保存后不再显示，只保留开头和结尾几位用于辨认；不改 Key 时可以留空，更换地址时需要重新填写。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
