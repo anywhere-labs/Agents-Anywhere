@@ -377,7 +377,6 @@ private struct TokensUsageTab: View {
             }
         } footer: {
             VStack(alignment: .leading, spacing: 6) {
-                Text(String(localized: "Covers the whole Tokens Anywhere account, other apps included; settled requests by Beijing date."))
                 if let address = account.info?.links.usage, let url = URL(string: address),
                    ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
                     Button {

@@ -27,7 +27,6 @@ from connector.runtime_protocol import (
     SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtime_protocol.model_connection import ModelConnectionStatus
 from connector.runtimes.dsh import provider_config
 from connector.runtimes.dsh.attachments import staged_attachments
 from connector.runtimes.dsh.bridge import models
@@ -66,7 +65,6 @@ class DshRuntime(AgentRuntime):
         self._sync: SyncRelay | None = None
         self._relay_restart_task: asyncio.Task[None] | None = None
         self._sync_mode = "events"
-        self._model_connection: ModelConnectionStatus | None = None
 
     @property
     def sync_mode(self) -> str:
@@ -127,77 +125,6 @@ class DshRuntime(AgentRuntime):
 
     async def get_config(self) -> RuntimeConfig:
         return self.config
-
-    def model_connection_status(self) -> ModelConnectionStatus | None:
-        if self._model_connection is not None:
-            return self._model_connection
-        # Until the plugin answers, a saved connection is not applied yet; the
-        # outcome follows in a later status change.
-        if isinstance(self.config.values.get("modelGateway"), Mapping):
-            return ModelConnectionStatus("not_configured")
-        return None
-
-    async def _apply_model_connection(self, client: BridgeClient, values: Mapping[str, Any]) -> None:
-        """Hand the saved connection to the plugin, which owns DSH's settings."""
-        gateway = values.get("modelGateway")
-        connection = None
-        if isinstance(gateway, Mapping):
-            connection = {
-                "protocol": gateway["protocol"],
-                "baseUrl": gateway["baseUrl"],
-                "apiKey": gateway["apiKey"],
-                "models": [
-                    {"id": model["modelId"], "name": model.get("displayName") or model["modelId"]}
-                    for model in values.get("customModels") or []
-                ],
-            }
-        if connection is not None and isinstance(gateway, Mapping):
-            all_models = connection["models"]
-            if "modelIds" in gateway:
-                connection["models"] = [m for m in all_models if m["id"] in gateway["modelIds"]]
-            if "routes" in gateway:
-                connection["routes"] = [
-                    {"protocol": route["protocol"], "baseUrl": route["baseUrl"],
-                     "models": [m for m in all_models if m["id"] in route["modelIds"]]}
-                    for route in gateway["routes"]
-                ]
-        try:
-            method = "applyModelConnections" if isinstance(gateway, Mapping) and ("routes" in gateway or "modelIds" in gateway) else "applyModelConnection"
-            await client.request(method, {"connection": connection})
-        except (OSError, TimeoutError, ValueError) as exc:
-            # The rest of the start decides whether the Bridge is usable.
-            logger.warning("DSH model connection request failed error_type={}", type(exc).__name__)
-            self._model_connection = (
-                ModelConnectionStatus("failed", scope="native_global", reason="DSH did not answer")
-                if connection is not None
-                else None
-            )
-            return
-        except BridgeRpcError as exc:
-            if connection is None:
-                # Nothing to remove, or a plugin that predates model connections.
-                self._model_connection = None
-                return
-            unsupported = exc.bridge_code in {"UNSUPPORTED_OPERATION", "METHOD_NOT_FOUND"}
-            reason = (
-                "this DSH plugin cannot take a model connection; update the plugin"
-                if exc.bridge_code == "METHOD_NOT_FOUND"
-                else str(exc)
-            )
-            logger.warning("DSH model connection not applied code={}", exc.bridge_code)
-            self._model_connection = ModelConnectionStatus(
-                "failed",
-                protocol=None if unsupported else gateway["protocol"],
-                scope="native_global",
-                reason=reason,
-            )
-            return
-        if connection is None:
-            self._model_connection = ModelConnectionStatus("not_configured")
-            return
-        self._model_connection = ModelConnectionStatus(
-            "applied", protocol=gateway["protocol"], scope="native_global"
-        )
 
     async def get_runtime_capabilities(self) -> RuntimeCapabilitySet:
         return models.capability_set(
@@ -544,8 +471,6 @@ class DshRuntime(AgentRuntime):
                 display_name="DeepSeek Harness",
                 protocol_version=identity["protocolVersion"],
             )
-            # Before the catalogs: the connection adds the models they list.
-            await self._apply_model_connection(client, values)
             # Bootstrap only declared capabilities; read-only startup needs no model catalog.
             capabilities = models.capability_set(
                 await client.request("getRuntimeCapabilities"),

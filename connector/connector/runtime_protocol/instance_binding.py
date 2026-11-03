@@ -543,6 +543,9 @@ class RuntimeInstance(AgentRuntime):
             await self.planning.close()
         await self.native_runtime.stop()
 
+    async def apply_model_setting(self, config: RuntimeConfig) -> bool:
+        return await self.native_runtime.apply_model_setting(config)
+
     async def get_config(self) -> RuntimeConfig:
         return runtime_config_for_instance(
             await self.native_runtime.get_config(),

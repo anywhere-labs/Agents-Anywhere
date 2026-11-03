@@ -74,6 +74,15 @@ class AgentRuntime(ABC):
     async def stop(self) -> None:
         pass
 
+    async def apply_model_setting(self, config: RuntimeConfig) -> bool:
+        """Take a config whose only change is the ``model`` setting, without restarting.
+
+        The setting only decides what new sessions use, so a runtime that can
+        swap it in place returns True and republishes its model catalog.
+        Returning False lets the supervisor restart the runtime as usual.
+        """
+        return False
+
     async def get_config(self) -> RuntimeConfig:
         raise RuntimeUnsupportedError("get_config")
 

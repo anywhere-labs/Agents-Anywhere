@@ -66,6 +66,7 @@ import { AccountProfileCard } from "@/components/pages/account-profile-card"
 import { MobileConnectionDialog } from "@/components/pages/mobile-signin-panel"
 import { ArchivedSessionsTab } from "@/components/settings/archived-sessions-tab"
 import { ModelConfigsTab } from "@/components/settings/model-configs-tab"
+import { ServiceModelsTab } from "@/components/settings/service-models-tab"
 import { parseSettingsTab, settingsNavigation } from "@/components/settings/settings-navigation"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { useAuth } from "@/components/auth/auth-context"
@@ -1665,6 +1666,9 @@ export function SettingsPage() {
           )}
           {tab === "model-configs" && (
             <ModelConfigsTab token={session?.accessToken ?? ""} connectors={connectors} />
+          )}
+          {tab === "service-models" && (
+            <ServiceModelsTab token={session?.accessToken ?? ""} connectors={connectors} />
           )}
           {tab === "mobile-connections" && (
             <MobileConnectionsTab

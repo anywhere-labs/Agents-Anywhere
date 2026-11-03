@@ -34,6 +34,10 @@ from connector.runtimes.model_gateway import (
     model_gateway_from_config,
     model_gateway_schema,
 )
+from connector.runtimes.runtime_model import (
+    runtime_model_from_config,
+    runtime_model_schema,
+)
 
 from ...domain.definitions import AcpError, LaunchDefinition
 from ...infrastructure.npm import install_npm_runtime
@@ -65,6 +69,8 @@ MODEL_CONNECTION = ModelConnectionCapability(
     catalog_auto=True,
     catalog_manual=True,
     mode_field="executionMode",
+    # Local Pi has no runtime-level catalog to choose from; only managed takes it.
+    model_field="model",
     modes=(
         ModelConnectionMode("managed", True),
         ModelConnectionMode("local", False, LOCAL_MODE_REASON),
@@ -127,6 +133,7 @@ class PiProvider(RuntimeProvider):
                     },
                     "modelGateway": model_gateway_schema(),
                     "customModels": custom_models_schema(),
+                    "model": runtime_model_schema(),
                 },
             },
             ui_schema={
@@ -197,6 +204,10 @@ class PiProvider(RuntimeProvider):
         normalized["customModels"] = normalize_custom_models(
             normalized.get("customModels")
         )
+        if normalized.get("model") is not None and normalized["executionMode"] != "managed":
+            raise ModelConnectionUnsupportedError(LOCAL_MODE_REASON)
+        if (model := runtime_model_from_config(normalized)) is not None:
+            normalized["model"] = model.to_config_values()
         return RuntimeConfig(
             runtime="pi",
             revision=1,
@@ -344,7 +355,7 @@ class PiProvider(RuntimeProvider):
             **(
                 {"history_roots": history_directories(dict(config.values), agent_dir)}
                 if not managed
-                else {}
+                else {"settings_dir": agent_dir}
             ),
         )
         if managed:

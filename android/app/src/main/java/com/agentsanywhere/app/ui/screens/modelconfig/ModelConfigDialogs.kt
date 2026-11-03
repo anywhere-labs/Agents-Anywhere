@@ -329,6 +329,29 @@ internal fun UnlinkTokensDialog(
     }
 }
 
+@Composable
+internal fun RotateKeyConfirmDialog(
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    ProfileDialog(title = stringResource(R.string.model_config_rotate), onDismiss = onDismiss) {
+        MutedText(stringResource(R.string.model_config_rotate_description))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            ProfileDialogButton(
+                label = stringResource(R.string.common_cancel),
+                modifier = Modifier.weight(1f),
+                onClick = onDismiss,
+            )
+            ProfileDialogButton(
+                label = stringResource(R.string.model_config_rotate),
+                primary = true,
+                modifier = Modifier.weight(1f),
+                onClick = onConfirm,
+            )
+        }
+    }
+}
+
 /** Asked only after the Server answered `busy`: continuing interrupts running tasks. */
 @Composable
 internal fun InterruptConfirmDialog(

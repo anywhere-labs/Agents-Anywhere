@@ -23,7 +23,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import type { DeviceRuntimeView, ModelConfigOverview, QuickSetupProgress } from "@/features/dashboard/types"
 import { modelConfigApi, type ModelPreviewTarget } from "@/features/model-config/api"
-import { openTokensLinkStart } from "@/features/model-config/open-link"
+import { createTokensLinkWindow, openTokensLinkStart } from "@/features/model-config/open-link"
 import {
   defaultQuickSelection,
   newQuickCandidates,
@@ -62,6 +62,7 @@ export function TokensQuickSetup({
   const [candidates, setCandidates] = React.useState<ModelPreviewTarget[] | null>(null)
   const [selected, setSelected] = React.useState<Set<string> | null>(null)
   const [authorizing, setAuthorizing] = React.useState(false)
+  const authorizationWindow = React.useRef<Window | null>(null)
   const [busy, setBusy] = React.useState(false)
   const [choosing, setChoosing] = React.useState(false)
   const [confirmUnlink, setConfirmUnlink] = React.useState(false)
@@ -73,8 +74,25 @@ export function TokensQuickSetup({
 
   // Opening the authorization page ends once the link shows up in the snapshot.
   React.useEffect(() => {
-    if (linked) setAuthorizing(false)
+    if (linked) {
+      authorizationWindow.current?.close()
+      authorizationWindow.current = null
+      setAuthorizing(false)
+    }
   }, [linked])
+
+  React.useEffect(() => () => authorizationWindow.current?.close(), [])
+
+  React.useEffect(() => {
+    if (!authorizing) return
+    const timer = window.setInterval(() => {
+      if (authorizationWindow.current?.closed) {
+        authorizationWindow.current = null
+        setAuthorizing(false)
+      }
+    }, 500)
+    return () => window.clearInterval(timer)
+  }, [authorizing])
 
   React.useEffect(() => {
     if (!tokens?.available || !token) return
@@ -107,16 +125,25 @@ export function TokensQuickSetup({
       confirmNativeGlobal: chosen.some((item) => item.requiresConfirmation),
     }
     if (!payload.targets.length) return
+    authorizationWindow.current?.close()
+    const popup = linked ? null : createTokensLinkWindow()
+    authorizationWindow.current = popup
     setBusy(true)
     try {
       const response = await modelConfigApi.startQuickSetup(token, payload)
       setChoosing(false)
       if (response.startUrl) {
-        setAuthorizing(true)
-        await openTokensLinkStart(response.startUrl)
+        setAuthorizing(!popup?.closed)
+        openTokensLinkStart(response.startUrl, popup)
+      } else {
+        popup?.close()
+        authorizationWindow.current = null
       }
       onChanged()
     } catch (error) {
+      popup?.close()
+      authorizationWindow.current = null
+      setAuthorizing(false)
       toast.error(errorText(error))
     } finally {
       setBusy(false)
@@ -231,7 +258,11 @@ export function TokensQuickSetup({
           authorizing={authorizing}
           busy={busy}
           onRetry={() => void start(tokens.quickSetup?.request)}
-          onCancel={() => setAuthorizing(false)}
+          onCancel={() => {
+            authorizationWindow.current?.close()
+            authorizationWindow.current = null
+            setAuthorizing(false)
+          }}
         />
       ) : (
         <TokensAccount

@@ -693,7 +693,6 @@ private fun UsageTab(controller: ModelConfigController, detailsUrl: String?, onO
             }
         }
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            MutedText(stringResource(R.string.model_config_account_usage_note))
             if (detailsUrl != null) {
                 LinkText(stringResource(R.string.model_config_account_usage_details)) { onOpen(detailsUrl) }
             }

@@ -25,15 +25,18 @@ from agent_server.core.model_config import (
     AssignmentTarget,
     ManualProfileRequest,
     ModelPreferences,
+    ModelUnavailableError,
     Offer,
     PreviewRequest,
     ProfilePatchRequest,
+    RuntimeModelChoice,
     TooManyModelsError,
     apply_patch,
     assignment_status,
     catalog_digest,
     effective_offers,
     match_offer,
+    offers_model,
     origin_host,
     plan_mode,
     revert_patch,
@@ -350,7 +353,9 @@ class ModelConfigService:
         offers = _profile_offers(profile)
         return {
             "profileId": profile["id"],
-            "targets": await self._preview_offers(offers, user_id=user_id, targets=request.targets),
+            "targets": await self._preview_offers(
+                offers, user_id=user_id, targets=request.targets, model=request.model
+            ),
         }
 
     async def preview_offers(self, offers: list[Offer], *, user_id: str) -> list[dict[str, Any]]:
@@ -358,7 +363,12 @@ class ModelConfigService:
         return await self._preview_offers(offers, user_id=user_id, targets=None)
 
     async def _preview_offers(
-        self, offers: list[Offer], *, user_id: str, targets: list[AssignmentTarget] | None
+        self,
+        offers: list[Offer],
+        *,
+        user_id: str,
+        targets: list[AssignmentTarget] | None,
+        model: RuntimeModelChoice | None = None,
     ) -> list[dict[str, Any]]:
         if targets is None:
             rows = await self._store.list_user_device_runtimes(user_id=user_id)
@@ -371,7 +381,7 @@ class ModelConfigService:
             if runtime.managedBy == MANAGED_BY and targets is None:
                 # A managed instance is reached through the runtime it serves.
                 continue
-            decisions.append(await self._preview_target(runtime, offers, running))
+            decisions.append(await self._preview_target(runtime, offers, running, model))
         return decisions
 
     async def resume_deferred(self) -> None:
@@ -547,6 +557,7 @@ class ModelConfigService:
         runtime: DeviceRuntimeView,
         offers: list[Offer],
         running: set[tuple[str, str]],
+        model: RuntimeModelChoice | None = None,
     ) -> dict[str, Any]:
         base = {
             "connectorId": runtime.connectorId,
@@ -566,6 +577,8 @@ class ModelConfigService:
         mode = plan_mode(capability, runtime.config if runtime.configured else None, runtime.defaults)
         if mode.field and mode.target is None:
             return {**base, "decision": "skip", "reason": "mode_unsupported"}
+        if model is not None and capability.get("modelField") and not offers_model(match.offer, model):
+            return {**base, "decision": "skip", "reason": "model_unavailable"}
         if (runtime.connectorId, runtime.runtimeId) in running:
             return {**base, "decision": "skip", "reason": "busy_operation"}
         if not await self._runtimes.is_connector_online(runtime.connectorId):
@@ -688,13 +701,17 @@ class ModelConfigService:
                     config=base,
                     capability=capability,
                     offer=match.offer,
-                    offers=match.offers,
                     api_key=api_key,
                     previous_imported=previous_imported,
                     model_ids=request.modelIds,
                     mode=plan,
                     trim=request.trimModels,
+                    model=request.model,
                 )
+            except ModelUnavailableError as exc:
+                raise ModelConfigConflictError(
+                    "model_unavailable", "the chosen model is not among this runtime's models"
+                ) from exc
             except TooManyModelsError as exc:
                 raise ModelConfigInvalidError(
                     "too_many_models",
@@ -753,16 +770,22 @@ class ModelConfigService:
         user_id: str,
     ) -> dict[str, Any]:
         """Create the managed instance a runtime in an unsupported mode needs."""
-        config, imported = apply_patch(
-            config=dict(runtime.defaults),
-            capability=capability,
-            offer=offer,
-            api_key=api_key,
-            previous_imported=[],
-            model_ids=request.modelIds,
-            mode=mode,
-            trim=request.trimModels,
-        )
+        try:
+            config, imported = apply_patch(
+                config=dict(runtime.defaults),
+                capability=capability,
+                offer=offer,
+                api_key=api_key,
+                previous_imported=[],
+                model_ids=request.modelIds,
+                mode=mode,
+                trim=request.trimModels,
+                model=request.model,
+            )
+        except ModelUnavailableError as exc:
+            raise ModelConfigConflictError(
+                "model_unavailable", "the chosen model is not among this runtime's models"
+            ) from exc
         _check_models(capability, config)
         created = await self._runtimes.create_runtime(
             runtime.connectorId,

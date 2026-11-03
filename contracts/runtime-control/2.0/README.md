@@ -150,6 +150,13 @@ The validator checks every schema as Draft 2020-12, resolves contract-local
 references, verifies valid and invalid fixtures, and confirms the SHA-256
 digests recorded in `manifest.json`.
 
-### Simultaneous model protocols
+### Runtime model setting
 
-The optional `modelConnection.multiProtocol` flag defaults to false. When true, configuration applies all matching offers. The gateway retains its primary `protocol`, `baseUrl`, and write-only `apiKey`, plus optional primary `modelIds` and additional `routes: [{protocol, baseUrl, modelIds}]`. Routes share the primary key and refer to the models in `modelsField`; protocol IDs must be supported and unique. A missing route list retains legacy single-protocol behavior. The connection digest and restore cover the complete gateway object.
+The optional `modelConnection.modelField` names a top-level configuration
+field holding `{modelId, effortId?}`: the model a new session uses when the
+client does not choose one. The adapter writes it into that session's
+selections when the session is created, so existing sessions keep their own
+model. With a connection, `modelId` must be one of the models in
+`modelsField`; without one it names a model from the runtime's own catalog.
+A change to this field alone applies without restarting the runtime, and the
+runtime publishes a model catalog whose matching item carries `default: true`.

@@ -1651,7 +1651,7 @@
         "allowInterrupt": "允许中断正在运行的任务",
         "allowInterruptDescription": "应用需要重启 Runtime，会中断 {count} 个正在运行的任务。",
         "profilesTitle": "模型配置",
-        "profilesDescription": "模型服务的地址、Key 和模型。Key 只能写入，不会再显示。",
+        "profilesDescription": "模型服务的地址、Key 和模型。",
         "addProfile": "添加配置",
         "addProfileDescription": "填写模型服务的 Key，以及它支持的协议、地址和模型。",
         "noProfiles": "还没有模型配置。",
@@ -1700,7 +1700,8 @@
           "busy_operation": "正在应用其他配置",
           "device_offline": "设备离线",
           "unknown": "暂时不能应用",
-          "models_required": "需要至少导入一个模型"
+          "models_required": "需要至少导入一个模型",
+          "model_unavailable": "所选模型不在这个渠道里"
         },
         "confirmNativeGlobal": "我确认修改所选 Runtime 自身的全局配置（会影响不经过 AA 使用它的地方）。",
         "applyCount": "应用到 {count} 个",
@@ -1845,13 +1846,45 @@
           "model": "模型",
           "unknownModel": "未知模型",
           "noUsage": "这段时间没有用量。",
-          "usageNote": "统计整个 Tokens Anywhere 账户，包括其他应用；按北京时间、已结算的请求计算。",
           "usageDetails": "在 Tokens Anywhere 查看明细",
           "usageFailed": "暂时读不到用量。",
           "applying": "正在把改动应用到 Runtime…"
+        },
+        "runtimeModels": {
+          "description": "为每台设备上的 Codex、Claude Code、Pi 等 Runtime 选择渠道和模型。",
+          "empty": "还没有可以设置模型的 Runtime。",
+          "online": "在线",
+          "offline": "离线",
+          "channel": "渠道",
+          "model": "模型",
+          "localChannel": "本机配置",
+          "chooseChannel": "选择渠道",
+          "chooseModel": "选择模型",
+          "followRuntime": "跟随 Runtime",
+          "noModels": "这个渠道没有可用的模型",
+          "newSessionsOnly": "之后新建的会话使用这里的模型",
+          "readOnly": "设备离线或 Runtime 未运行，暂时不能修改",
+          "saved": "已保存，之后新建的会话使用 {model}",
+          "cleared": "已保存，之后新建的会话跟随 Runtime 自己的模型",
+          "switchTitle": "切换到「{name}」",
+          "switchDescription": "切换渠道会重启这个 Runtime，之后新建的会话使用所选模型。",
+          "busyDescription": "这个 Runtime 有 {count} 个任务在运行，切换渠道需要重启。可以等它空闲后再生效，或者现在中断。",
+          "applyWhenIdle": "空闲后生效",
+          "interruptNow": "中断并切换",
+          "switch": "切换"
+        },
+        "channels": {
+          "title": "模型渠道",
+          "enabled": "已启用",
+          "available": "可用",
+          "anywhere": "Anywhere",
+          "manual": "模型服务",
+          "detached": "已断开",
+          "connection": "连接"
         }
       },
-      "modelConfigsTitle": "配置管理"
+      "modelConfigsTitle": "模型渠道",
+      "serviceModelsTitle": "服务模型"
     },
     "team": {
       "title": "团队",

@@ -301,6 +301,43 @@ private fun ProfileItem(
             },
         )
     }
+    var confirmRotation by remember(profile.id) { mutableStateOf(false) }
+    fun rotateKey() {
+        busy = true
+        // One key for both attempts: a `busy` answer comes before anything rotates.
+        val key = newIdempotencyKey()
+        suspend fun rotate(allowInterrupt: Boolean) {
+            controller.rotateTokensKey(profile.id, allowInterrupt = allowInterrupt, idempotencyKey = key)
+                .onSuccess { operation ->
+                    val summary = operation.summary()
+                    if (summary.other == 0) {
+                        onNotice(context.resources.getQuantityString(R.plurals.model_config_applied_count, summary.applied, summary.applied), false)
+                    } else {
+                        onNotice(context.getString(R.string.model_config_applied_partially, summary.applied, summary.other), true)
+                    }
+                }
+                .onFailure { error ->
+                    if (!allowInterrupt && modelConfigErrorCode(error) == "busy") {
+                        confirmInterrupt = { rotate(allowInterrupt = true) }
+                    } else {
+                        onError(error)
+                    }
+                }
+        }
+        scope.launch {
+            rotate(allowInterrupt = false)
+            busy = false
+        }
+    }
+    if (confirmRotation) {
+        RotateKeyConfirmDialog(
+            onDismiss = { confirmRotation = false },
+            onConfirm = {
+                confirmRotation = false
+                rotateKey()
+            },
+        )
+    }
     val source = stringResource(if (profile.isTokens) R.string.model_config_source_tokens else R.string.model_config_source_manual)
 
     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -315,46 +352,22 @@ private fun ProfileItem(
         )
         ProfileDetails(profile, usedBy)
         ActionRow {
-            SmallButton(
-                label = stringResource(R.string.model_config_apply),
-                icon = Lucide.Upload,
-                primary = true,
-                enabled = !busy && profile.isActive,
-                onClick = onApply,
-            )
+            if (!profile.isTokens) {
+                SmallButton(
+                    label = stringResource(R.string.model_config_apply),
+                    icon = Lucide.Upload,
+                    primary = true,
+                    enabled = !busy && profile.isActive,
+                    onClick = onApply,
+                )
+            }
             if (profile.isTokens && profile.isActive) {
                 SmallButton(
                     label = stringResource(R.string.model_config_rotate),
                     icon = Lucide.RefreshCw,
                     loading = busy,
                     enabled = !busy,
-                    onClick = {
-                        busy = true
-                        // One key for both attempts: a `busy` answer comes before anything rotates.
-                        val key = newIdempotencyKey()
-                        suspend fun rotate(allowInterrupt: Boolean) {
-                            controller.rotateTokensKey(profile.id, allowInterrupt = allowInterrupt, idempotencyKey = key)
-                                .onSuccess { operation ->
-                                    val summary = operation.summary()
-                                    if (summary.other == 0) {
-                                        onNotice(context.resources.getQuantityString(R.plurals.model_config_applied_count, summary.applied, summary.applied), false)
-                                    } else {
-                                        onNotice(context.getString(R.string.model_config_applied_partially, summary.applied, summary.other), true)
-                                    }
-                                }
-                                .onFailure { error ->
-                                    if (!allowInterrupt && modelConfigErrorCode(error) == "busy") {
-                                        confirmInterrupt = { rotate(allowInterrupt = true) }
-                                    } else {
-                                        onError(error)
-                                    }
-                                }
-                        }
-                        scope.launch {
-                            rotate(allowInterrupt = false)
-                            busy = false
-                        }
-                    },
+                    onClick = { confirmRotation = true },
                 )
             }
             if (profile.isManual || !profile.isActive) {

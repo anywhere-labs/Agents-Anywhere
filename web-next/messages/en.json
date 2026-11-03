@@ -1651,7 +1651,7 @@
         "allowInterrupt": "Allow interrupting running tasks",
         "allowInterruptDescription": "Applying restarts the runtime and interrupts {count} running tasks.",
         "profilesTitle": "Model profiles",
-        "profilesDescription": "A model service's address, key and models. Keys are write-only and never shown again.",
+        "profilesDescription": "A model service's address, key and models.",
         "addProfile": "Add profile",
         "addProfileDescription": "Enter the service's key and the protocols, addresses and models it offers.",
         "noProfiles": "No model profiles yet.",
@@ -1700,7 +1700,8 @@
           "busy_operation": "Another change is being applied",
           "device_offline": "Device offline",
           "unknown": "Cannot apply right now",
-          "models_required": "Needs at least one model"
+          "models_required": "Needs at least one model",
+          "model_unavailable": "The chosen model is not offered on this channel"
         },
         "confirmNativeGlobal": "I confirm changing the selected runtimes' own global settings, which also affects using them outside AA.",
         "applyCount": "Apply to {count}",
@@ -1845,13 +1846,45 @@
           "model": "Model",
           "unknownModel": "Unknown model",
           "noUsage": "No usage in this period.",
-          "usageNote": "Covers the whole Tokens Anywhere account, other apps included; settled requests by Beijing date.",
           "usageDetails": "See details in Tokens Anywhere",
           "usageFailed": "Couldn't read usage right now.",
           "applying": "Applying changes to runtimes…"
+        },
+        "runtimeModels": {
+          "description": "Choose a channel and model for each runtime on your devices, such as Codex, Claude Code and Pi.",
+          "empty": "No runtime here takes a model setting yet.",
+          "online": "Online",
+          "offline": "Offline",
+          "channel": "Channel",
+          "model": "Model",
+          "localChannel": "Local configuration",
+          "chooseChannel": "Choose a channel",
+          "chooseModel": "Choose a model",
+          "followRuntime": "Follow the runtime",
+          "noModels": "No models on this channel",
+          "newSessionsOnly": "New sessions use the model chosen here",
+          "readOnly": "The device is offline or the runtime is not running, so this cannot change now",
+          "saved": "Saved. New sessions use {model}",
+          "cleared": "Saved. New sessions follow the runtime's own model",
+          "switchTitle": "Switch to “{name}”",
+          "switchDescription": "Switching channels restarts this runtime; new sessions then use the chosen model.",
+          "busyDescription": "This runtime has {count} tasks running, and switching channels restarts it. Apply once it is idle, or interrupt now.",
+          "applyWhenIdle": "Apply when idle",
+          "interruptNow": "Interrupt and switch",
+          "switch": "Switch"
+        },
+        "channels": {
+          "title": "Model channels",
+          "enabled": "Enabled",
+          "available": "Available",
+          "anywhere": "Anywhere",
+          "manual": "Model services",
+          "detached": "Disconnected",
+          "connection": "Connection"
         }
       },
-      "modelConfigsTitle": "Model configuration"
+      "modelConfigsTitle": "Model channels",
+      "serviceModelsTitle": "Service models"
     },
     "team": {
       "title": "Team",

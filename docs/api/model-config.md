@@ -10,7 +10,7 @@
 - **按能力渲染**：Runtime 是否接受模型连接、支持哪些协议、改动的范围和生效时机，都来自它声明的 `modelConnection`，客户端不按 Runtime 名称判断。
 - **先拒绝、不忽略**：Runtime 不支持的组合在保存前就被拒绝（`model_connection_unsupported`），不会保存后静默不用。
 - **已应用不等于已验证**：`applied` 表示 Runtime 已采用配置，不代表网关连通。
-- **默认只改 AA 管理的实例**：`scope=native_global` 的 Runtime（如 DSH）会修改其自身全局配置，应用时必须带 `confirmNativeGlobal: true`。
+- **默认只改 AA 管理的实例**：`scope=native_global` 的 Runtime 会修改其自身全局配置，应用时必须带 `confirmNativeGlobal: true`。
 
 服务器需要设置至少 32 个字符的 `AGENT_SERVER_SECRET` 才能保存手动 Key 和链接 Tokens Anywhere；没有设置时相关写接口返回 409 `secret_unconfigured`，快照中 `secretConfigured` 为 `false`。
 
@@ -21,7 +21,7 @@
 | 字段 | 说明 |
 | --- | --- |
 | `maturity` | `experimental`、`beta`、`stable` 或 `null`；客户端显示在状态旁边，例如「Pi Beta · 运行中」，`stable` 不显示 |
-| `modelConnection` | Runtime 声明的能力：`maturity`、`configField`、`modelsField`、`protocols`、`modes`、`modeField`、`scope`、`catalog`（`auto`、`manual`，以及表示必须导入模型的 `required`）、`apply`；不接受模型连接时为 `null` |
+| `modelConnection` | Runtime 声明的能力：`maturity`、`configField`、`modelsField`、`protocols`、`modes`、`modeField`、`scope`、`catalog`（`auto`、`manual`，以及表示必须导入模型的 `required`）、`apply`，以及可选的 `modelField`（见「Runtime 模型」）；不接受模型连接时为 `null` |
 | `modelConnectionStatus` | `{state, protocol, scope, mode, reason, externalOwner}`，`state` 为 `not_configured`、`saved_pending`、`applied`、`failed`、`managed_externally` |
 | `secretFields` | 已保存的只写字段，例如 `{"modelGateway.apiKey": {"set": true, "hint": "sk-gate…1234"}}` |
 | `managedBy` | 由其他功能创建的实例的标记；配置管理创建的实例为 `model-config` |
@@ -32,7 +32,7 @@
 - 地址换了 host 却没有提供 Key，返回 422 `secret_required`；
 - 校验和 Connector 的错误信息不会包含 Key。
 
-声明多个协议的 Runtime（如 DSH）在 `modelGateway` 中还需要 `protocol`。
+声明多个协议的 Runtime 在 `modelGateway` 中还需要 `protocol`。
 
 ## 模型配置
 
@@ -49,8 +49,8 @@
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| POST | `/model-config/assignments/preview` | `{profileId, targets?}`；省略 `targets` 时列出用户所有 Runtime |
-| POST | `/model-config/assignments` | 需要 `Idempotency-Key`；`{profileId, targets, allowInterrupt, confirmNativeGlobal, modelIds?}` |
+| POST | `/model-config/assignments/preview` | `{profileId, targets?, model?}`；省略 `targets` 时列出用户所有 Runtime |
+| POST | `/model-config/assignments` | 需要 `Idempotency-Key`；`{profileId, targets, allowInterrupt, confirmNativeGlobal, modelIds?, model?}`；`model` 见下文「Runtime 模型」 |
 | GET | `/model-config/assignments` | 当前的应用记录 |
 | DELETE | `/model-config/assignments/{connectorId}/{runtimeId}?allow_interrupt=` | 恢复应用前的配置 |
 | GET | `/model-config/operations/{id}` | 操作结果 |
@@ -72,13 +72,31 @@
 
 应用记录的 `status` 按优先级为 `applying`、`failed`、`deferred`（已保存，空闲后生效）、`modified`（应用后手动改过）、`outdated`（配置的模型或 Key 已变化）、`applied`。
 
-### 多协议模型连接
+## Runtime 模型
 
-声明 `modelConnection.multiProtocol: true` 的 Runtime（当前为 DSH）会同时应用模型服务中所有兼容协议。预览和 64 个模型限制按去重后的模型 ID 计算；同一模型可以出现在多个协议下，选择时以 Provider 和模型 ID 区分。
+声明了 `modelConnection.modelField` 的 Runtime（目前为 Codex、Claude Code 和受管环境的 Pi，字段名都是 `model`）可以在配置里记录新会话使用的模型：`model: {modelId, effortId?}`，与 `modelGateway` 并列。没有声明的 Runtime 不显示这项设置。
 
-`modelGateway` 保留主协议的 `protocol`、`baseUrl` 和只写的 `apiKey`，可附带主协议的 `modelIds` 和额外的 `routes: [{protocol, baseUrl, modelIds}]`。所有路由共用该 Key，模型名称来自 `customModels`；没有这些附加字段的旧单协议配置仍可使用。恢复、重新应用和 Key 轮换以整个网关对象为单位处理。
+- **只影响新会话**：新建会话时客户端没有选模型，Connector 就把这个模型写进该会话自己的选择；之后改设置，已有会话的模型不变。会话里仍然可以手动切换模型。
+- **必须是已配置的模型**：接入了模型连接时，`modelId` 必须是 `customModels` 里的模型，否则 Runtime 拒绝保存；没有接入时取 Runtime 自己的模型目录。
+- **不重启**：只改 `model` 时 Runtime 不会重启，也不会打断任务。Codex 和 Claude Code 刷新模型目录；Pi 改写 AA 私有配置里的 `defaultModel`，下一个会话起生效。
+- **目录标记**：模型目录里对应的那一项 `default` 为 `true`，各端新建会话时会预先选中它。
 
-DSH Bridge 在一次设置更新中写入各协议 Provider，仅删除本次配置已不再包含的 AA 路由，保留用户自己的 Provider；模型目录随设置更新失效并重新读取。已有单协议配置需要重新应用模型服务，才能补齐其余协议。Server、Connector 和 DSH Bridge 需配套更新；多协议下发使用 `applyModelConnections`，旧插件会明确拒绝，避免只应用主协议却报告成功。
+「设置 → 服务模型」页用两栏选择：第一栏是渠道（模型服务或「本机配置」），第二栏是这个渠道里的模型。
+
+| 选择 | 调用 |
+| --- | --- |
+| 当前渠道里的另一个模型 | `PUT /connectors/{id}/runtimes/{rid}/config`，只改 `model` |
+| 另一个模型服务里的模型 | `POST /model-config/assignments`，带 `model`；按应用规则预览、确认中断或空闲后生效 |
+| 本机配置的模型 | 先 `DELETE /model-config/assignments/{connectorId}/{runtimeId}` 恢复，再 `PUT` 写入 `model` |
+
+应用时：
+
+- 带了 `model` 但匹配的 offer 里没有这个模型（或被关闭、被裁剪掉），该目标以 `model_unavailable` 跳过。
+- 没带 `model` 时，Runtime 原有的设置如果仍在新的模型列表里就保留，否则删除，回到 Runtime 自己的选择；关闭 Tokens Anywhere 模型后的重新应用也按这条处理。
+- 恢复时，指向导入模型的设置随导入的模型一起删除；指向 Runtime 自带模型的设置保留。
+- `model` 不计入应用记录的「已修改」判断，在服务模型页换模型不会改变应用状态。
+
+已有会话在换渠道之后：Codex 接入网关后恢复线程时，如果会话没有显式选择，会带上线程最近一次使用的模型（不带的话 Codex 会改用 `config.toml` 里的模型）；Claude Code 没有显式选择的会话仍使用 Claude Code 当前的默认模型；Pi 沿用会话里保存的模型。会话里的模型在新渠道不存在时，请求会失败，需要在会话里重新选择。
 
 ## Tokens Anywhere 链接
 
@@ -107,6 +125,8 @@ Tokens 配置的 `offers` 始终是 Tokens 给出的完整模型目录，模型�
 
 ### 一键配置
 
+Tokens Anywhere 在账户区域统一提供设备配置入口，连接卡片展示连接信息并提供 Key 轮换，不再重复提供「应用到设备」；手动添加的模型连接继续通过「应用到设备」选择 Runtime。
+
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/integrations/tokens/quick-setup` | 一键配置会处理哪些 Runtime：每项带 `decision`、跳过原因、`effect`、`requiresConfirmation`、`runningSessions`。还没链接时按三种协议都可用来判断，真正应用时以 Tokens 的模型目录为准 |
@@ -114,7 +134,7 @@ Tokens 配置的 `offers` 始终是 Tokens 给出的完整模型目录，模型�
 
 授权完成后，Server 在后台同步模型，再按 `deferBusy: true`、`trimModels: true` 应用到所选 Runtime，不打断正在运行的任务。进度在快照的 `tokens.quickSetup`：`state` 依次为 `syncing`、`applying`、`done`，失败时为 `failed` 并带 `step`（`sync` 或 `apply`）和 `code`；完成时 `results` 列出每个 Runtime 的结果（`applied`、`deferred`、`skipped`、`failed`）。
 
-客户端在完成授权的浏览器里打开 `startUrl`：Web 用新标签页，Desktop 用系统浏览器，Android 用 Custom Tabs，iOS 用 `ASWebAuthenticationSession`。客户端不接收回调，链接结果通过实时快照得知；iOS 在快照显示已链接后主动结束授权会话。
+客户端在完成授权的浏览器里打开 `startUrl`：Web 在用户点击时先创建浏览器小弹窗，获取地址后在弹窗中导航，弹窗被拦截时回退到当前页；Desktop 用系统浏览器，Android 用 Custom Tabs，iOS 用 `ASWebAuthenticationSession`。客户端不接收回调，链接结果通过实时快照得知；Web 在快照显示已链接后关闭授权弹窗，用户取消或请求失败时也会关闭弹窗；iOS 在快照显示已链接后主动结束授权会话。
 
 Server 保存加密的 refresh token，access token 放在 Redis（没有 Redis 时在内存）；刷新在数据库行锁下串行进行，结果不明时在持锁期间重试一次。刷新得到 `invalid_grant` 时链接变为 `reauth_required`。每天的后台任务会刷新 30 天没用过的链接，避免闲置过期。
 
@@ -133,4 +153,4 @@ Server 保存加密的 refresh token，access token 放在 Redis（没有 Redis 
 
 配置、应用、恢复、链接状态的变化都会触发 `dashboard.changed`，所有在线客户端随下一份快照更新。
 
-启动后才应用连接的 Runtime（如 DSH 在连上 Bridge 后）通过 `runtime.statusChanged` 的 `modelConnection` 回报结果；Server 只在已存的报告对应当前保存的连接时采用它，避免还在用旧配置的实例被误报为「已应用」。
+启动后才应用连接的 Runtime 通过 `runtime.statusChanged` 的 `modelConnection` 回报结果；Server 只在已存的报告对应当前保存的连接时采用它，避免还在用旧配置的实例被误报为「已应用」。

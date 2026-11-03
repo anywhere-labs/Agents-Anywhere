@@ -25,6 +25,27 @@ def private_json(path: Path, value: dict) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _default_model(models: list[dict], values: dict) -> str:
+    """The configured model when Pi has it, else the first one; Pi starts new sessions with it."""
+    configured = (values.get("model") or {}).get("modelId")
+    ids = [model["modelId"] for model in models]
+    return configured if configured in ids else ids[0]
+
+
+def update_default_model(agent_dir: Path, values: dict) -> None:
+    """Point new sessions at another configured model without restarting Pi.
+
+    Each session starts its own Pi process, which reads settings.json then;
+    existing sessions keep the model saved in their session file.
+    """
+    settings_path = agent_dir / "settings.json"
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    provider = json.loads((agent_dir / "models.json").read_text(encoding="utf-8"))["providers"]["aa"]
+    models = [{"modelId": model["id"]} for model in provider["models"]]
+    settings["defaultModel"] = _default_model(models, values)
+    private_json(settings_path, settings)
+
+
 def prepare_settings(root: Path, values: dict) -> Path:
     agent_dir = root / "pi"
     gateway = values.get("modelGateway")
@@ -48,7 +69,7 @@ def prepare_settings(root: Path, values: dict) -> Path:
                         "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}}
                        for model in models],
         }}})
-    settings = {"defaultProvider": "aa", "defaultModel": models[0]["modelId"]} if gateway else {}
+    settings = {"defaultProvider": "aa", "defaultModel": _default_model(models, values)} if gateway else {}
     settings["extensions"] = [str(Path(__file__).with_name("permissions.mjs").resolve())]
     # This is AA's isolated home, never the user's global Pi settings.
     private_json(agent_dir / "settings.json", settings)

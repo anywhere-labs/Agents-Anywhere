@@ -133,9 +133,11 @@
           ],
           "type": "string"
         },
-        "multiProtocol": {
-          "type": "boolean",
-          "description": "Apply all compatible protocol offers together; absent means false. The gateway may carry primary modelIds and additional routes with protocol, baseUrl and modelIds, sharing its write-only apiKey."
+        "modelField": {
+          "description": "Top-level configuration field holding the model new sessions use, {modelId, effortId?}. With a connection, modelId must be one of the models in `modelsField`. A change applies without restarting the runtime and never changes existing sessions; absent means the runtime takes no model setting.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
         }
       },
       "required": [

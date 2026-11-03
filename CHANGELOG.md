@@ -9,7 +9,7 @@
 - Pi 优先复用本机兼容安装的模型、认证和配置；已有受管模型网关配置保持隔离，用户也可明确选择受管环境。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 - Pi 接入需要 Server 执行 `v2_45` 数据库迁移，并配套更新 Connector 和使用此功能的客户端。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 - 统一 Plan 需要 Server 执行 `v2_46` 数据库迁移，并配套更新 Connector、客户端和 DSH Bridge；DSH 还需组合原生 Plan 插件。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
-- 配置管理需要 Server 执行 `v2_47` 数据库迁移，并配套更新 Connector、各客户端和 DSH 插件；保存手动填写的 Key、链接 Tokens Anywhere 之前，部署者要把 `AGENT_SERVER_SECRET` 设为至少 32 个字符。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 配置管理需要 Server 执行 `v2_47` 数据库迁移，并配套更新 Connector 和各客户端；保存手动填写的 Key、链接 Tokens Anywhere 之前，部署者要把 `AGENT_SERVER_SECRET` 设为至少 32 个字符。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 链接 Tokens Anywhere 需要设置 `AGENT_SERVER_TOKENS_URL`（或由管理员在实例设置中填写 Tokens Anywhere 地址），并用 `AGENT_SERVER_PUBLIC_ORIGIN` 指定实例对外的地址；Tokens Anywhere 一侧要设置 `TOKENS_SECRETS_KEY`，否则 AA 拿不回托管 Key。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - Runtime 配置中的模型网关 Key 改为只写，接口和实时快照不再返回已保存的 Key；旧版客户端编辑这类配置时需要重新填写 Key。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 
@@ -32,24 +32,26 @@
 
 ### 配置管理
 
-- 「设置 → 配置管理」顶部新增「Tokens Anywhere 快速配置」：勾选要配置的 Runtime，点「一键配置」并在浏览器里确认一次，就会自动同步模型并应用到各设备，每一步的进度都显示在卡片上；之后有新 Runtime 接入时会提示可以配置。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 移除 Web、Desktop、Android 和 iOS 用量页底部的账户统计说明。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 「设置 → 模型渠道」顶部新增「Tokens Anywhere 快速配置」：勾选要配置的 Runtime，点「一键配置」并在浏览器里确认一次（Web 使用独立小弹窗，授权成功后自动关闭），就会自动同步模型并应用到各设备，每一步的进度都显示在卡片上；之后有新 Runtime 接入时会提示可以配置。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 链接后这里变成「Anywhere 账户」页，可以看到账户和余额、跳转充值，并分三个页签管理：
-  - 「模型」按厂商分组列出 Tokens Anywhere 的模型，可以关闭单个模型或整组、给模型改名（只影响 Agents Anywhere），保存后应用到所有使用 Tokens Anywhere 的 Runtime，有任务的 Runtime 空闲后生效；「恢复默认」撤销全部改动。
+  - 「模型」按厂商分组列出 Tokens Anywhere 的模型，可以关闭单个模型或整组、给模型改名（只影响 Agents Anywhere），保存后应用到所有使用 Tokens Anywhere 的 Runtime，有任务的 Runtime 空闲后生效。Web 和 Desktop 不再显示「恢复默认」按钮。
   - 「用量」显示整个 Tokens Anywhere 账户近 7 天或 30 天的花费、请求数和 Tokens，按天和按模型统计，可以只看某个模型。
-  - 「设备」列出已经用上 Tokens Anywhere 的 Runtime，还没有时直接在这里一键配置。
+  - 「设备」列出已经用上 Tokens Anywhere 的 Runtime，还没有时直接在这里一键配置；Tokens Anywhere 统一通过账户区域配置设备，连接卡片不再重复显示「应用到设备」，手动添加的连接保留该入口。
 
   （[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 管理员可以在「管理 → 常规」里填写或清空 Tokens Anywhere 地址；已有账户链接时地址会锁定，全部断开后才能修改。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
-- 修复 Web 和 Desktop 配置管理页在浏览器授权 Tokens Anywhere 后进度不更新、同步失败仍持续转圈的问题。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
-- DSH 应用模型服务时同时导入 OpenAI Chat、OpenAI Responses 和 Anthropic 协议的可用模型，模型选择时可区分同名模型所属的协议。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 修复 Web 和 Desktop 模型渠道页在浏览器授权 Tokens Anywhere 后进度不更新、同步失败仍持续转圈的问题。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 本地启动器退出时保留共用的 PostgreSQL 和 Redis，并在关闭超时后结束残留应用进程，避免重启期间数据库断连或新旧进程重叠。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 本地启动时自动生成并保存配置管理所需的密钥，后续启动继续复用，无需手动填写即可测试模型 Key 保存。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
-- 「设置 → 配置管理」也可以手动添加模型服务，再应用到各设备上的 Codex、Claude Code、Pi 和 DSH；在任一客户端修改后，其他客户端立即同步显示。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
-- 应用前会预览每台设备的结果和不能应用的原因；需要重启的 Runtime 有任务在运行时，要允许中断才会应用，一键配置则不打断任务，先保存配置，等任务结束后自动生效；DSH 会修改它自身的全局模型配置，需要单独确认；模型超过 64 个时，一键配置只导入前 64 个并提示。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
-- 可以随时把单个 Runtime 恢复为应用前的配置，之后做的其他修改会保留；断开 Tokens Anywhere 时会先恢复用它的 Runtime，再撤销授权；轮换 Tokens Anywhere 的 Key 后会自动写入所有用它的 Runtime。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 「设置 → 模型渠道」也可以手动添加模型服务，再应用到各设备上的 Codex、Claude Code 和 Pi；在任一客户端修改后，其他客户端立即同步显示，连接说明精简为模型服务的地址、Key 和模型。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 应用前会预览每台设备的结果和不能应用的原因；需要重启的 Runtime 有任务在运行时，要允许中断才会应用，一键配置则不打断任务，先保存配置，等任务结束后自动生效；模型超过 64 个时，一键配置只导入前 64 个并提示。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 可以随时把单个 Runtime 恢复为应用前的配置，之后做的其他修改会保留；断开 Tokens Anywhere 时会先恢复用它的 Runtime，再撤销授权；轮换 Tokens Anywhere 的 Key 前需二次确认，确认后自动写入所有用它的 Runtime。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - Runtime 的模型连接状态分为「未配置」「已保存，待应用」「已应用」「应用失败」「由外部客户端管理」；「已应用」表示 Runtime 已采用配置，不代表连接已验证。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 模型网关的 Key 保存后不再显示，只保留开头和结尾几位用于辨认；不改 Key 时可以留空，更换地址时需要重新填写。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 本机模式的 Pi 不能使用模型网关，应用时会另建一个受管 Pi 实例，本机 Pi 及其历史不受影响。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 新增「设置 → 服务模型」：按设备为 Codex、Claude Code 和 Pi 选择渠道和模型，之后新建的会话使用该模型，已有会话保持原来的模型；只换模型不会重启 Runtime 或打断任务。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 接入模型网关后恢复 Codex 已有会话时，继续使用会话原来的模型，不再被切换成本机 Codex 配置里的模型。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 
 ### 会话创建与消息交付
 

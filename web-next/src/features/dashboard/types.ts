@@ -97,9 +97,10 @@ export type ModelConnectionCapability = {
   configField: string;
   modelsField: string | null;
   protocols: ModelProtocol[];
-  multiProtocol?: boolean;
   modes: { id: string; supported: boolean; reason: string | null }[];
   modeField?: string | null;
+  /** Config field holding the model new sessions use, `{modelId, effortId?}`; absent when the runtime takes none. */
+  modelField?: string | null;
   scope: ModelConnectionScope;
   catalog: { auto: boolean; manual: boolean };
   apply: "immediate" | "new_session" | "restart";

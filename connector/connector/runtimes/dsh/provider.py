@@ -21,7 +21,7 @@ from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.dsh import discovery, provider_config
 from connector.runtimes.dsh.runtime import DshRuntime
 
-DSH_CONFIG_SCHEMA_REVISION = 4
+DSH_CONFIG_SCHEMA_REVISION = 3
 LEGACY_CONFIG_KEYS = frozenset(
     {
         "environment",
@@ -114,7 +114,6 @@ class DshProvider(RuntimeProvider):
             max_instances=self.max_instances,
             recommended=False,
             metadata=metadata,
-            model_connection=provider_config.MODEL_CONNECTION,
         )
 
     async def get_config_schema(self) -> RuntimeConfigSchema:
@@ -152,12 +151,8 @@ class DshProvider(RuntimeProvider):
                     "requestTimeoutMs",
                     "maxRestartAttempts",
                     "restartBackoffMs",
-                    "modelGateway",
-                    "customModels",
                 ],
                 "dshHome": {"component": "path"},
-                "modelGateway": {"component": "modelGateway"},
-                "customModels": {"component": "customModels"},
                 "defaultAgentPreset": self._preset_catalog.get("uiField", {"component": "select", "options": []}),
             },
             defaults=defaults,
@@ -178,9 +173,9 @@ class DshProvider(RuntimeProvider):
         )
         if errors:
             path = "/" + "/".join(str(part) for part in errors[0].absolute_path)
-            # A message about the connection could quote its key.
-            message = "the value is not valid" if path.startswith("/modelGateway") else errors[0].message
-            raise RuntimeInvalidRequestError(f"dsh config is invalid at {path or '/'}: {message}")
+            raise RuntimeInvalidRequestError(
+                f"dsh config is invalid at {path or '/'}: {errors[0].message}"
+            )
         normalized = provider_config.normalized_config_values(raw)
         result = await self._prober(normalized)
         self._remember(result)

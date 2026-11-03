@@ -581,20 +581,20 @@
         }
       }
     },
-    "A model service's address, key and models. Keys are write-only and never shown again.": {
+    "A model service's address, key and models.": {
       "comment": "Shared with Web: pages.settings.modelConfigs.profilesDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "A model service's address, key and models. Keys are write-only and never shown again."
+            "value": "A model service's address, key and models."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "模型服务的地址、Key 和模型。Key 只能写入，不会再显示。"
+            "value": "模型服务的地址、Key 和模型。"
           }
         }
       }
@@ -2787,24 +2787,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "暂时读不到用量。"
-          }
-        }
-      }
-    },
-    "Covers the whole Tokens Anywhere account, other apps included; settled requests by Beijing date.": {
-      "comment": "Shared with Web: pages.settings.modelConfigs.account.usageNote. Sync with ios/scripts/web_copy.py.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Covers the whole Tokens Anywhere account, other apps included; settled requests by Beijing date."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "统计整个 Tokens Anywhere 账户，包括其他应用；按北京时间、已结算的请求计算。"
           }
         }
       }

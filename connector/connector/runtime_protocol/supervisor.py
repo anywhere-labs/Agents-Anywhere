@@ -34,6 +34,7 @@ from connector.runtime_protocol.supervisor_models import (
     RuntimeStatusSink,
     RuntimeSupervisorEntry,
     error_payload,
+    only_model_setting_changed,
     same_effective_config,
 )
 
@@ -287,6 +288,22 @@ class RuntimeSupervisor:
             current_runtime = self._entry(instance.runtime_id).runtime
             assert current_runtime is not None
             return current_runtime
+
+        if (
+            was_running
+            and entry.runtime is not None
+            and only_model_setting_changed(entry.config, config)
+            and await entry.runtime.apply_model_setting(config)
+        ):
+            await self._set_entry(
+                instance.runtime_id,
+                config=config,
+                requested_values=requested_values,
+                resource_claims=claims,
+                status="running",
+                error=None,
+            )
+            return entry.runtime
 
         if entry.runtime is not None:
             await self._stop_locked(instance.runtime_id)

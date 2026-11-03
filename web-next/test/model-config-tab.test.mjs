@@ -45,23 +45,43 @@ test('a model profile labels each detail and shows it in full', async (t) => {
   await act(async () => root.render(h(NextIntlClientProvider, { locale: 'zh-CN', messages, timeZone: 'Asia/Shanghai' }, h(ModelConfigsTab, { token: 'fixture', connectors: [] }))))
   t.after(async () => { await act(async () => root.unmount()); container.remove() })
 
-  const labels = [...container.querySelectorAll('dt')].map((item) => item.textContent)
+  // The selected channel's summary comes first; its offers are listed open below it.
+  const summary = container.querySelector('dl')
+  const labels = [...summary.querySelectorAll(':scope > dt')].map((item) => item.textContent)
   assert.deepEqual(labels, ['地址', 'API Key', '使用情况', '协议'])
-  const values = [...container.querySelectorAll('dd')]
+  const values = [...summary.querySelectorAll(':scope > dd')]
   assert.equal(values[0].textContent, longHost)
   // Nothing in the details is cut off with an ellipsis.
   assert.equal(container.querySelector('dl .truncate'), null)
   assert.match(values[3].textContent, /Responses21 个模型/)
   assert.match(values[3].textContent, /Anthropic自动获取模型/)
 
-  const toggle = [...container.querySelectorAll('button')].find((button) => button.textContent === '查看模型和地址')
+  const toggle = [...container.querySelectorAll('button')].find((button) => button.textContent === '收起')
   assert.ok(toggle)
-  await act(async () => toggle.click())
   assert.equal(toggle.getAttribute('aria-expanded'), 'true')
   assert.match(container.textContent, /GPT-5 gpt-5/)
   assert.match(container.textContent, /model-19/)
   assert.match(container.textContent, new RegExp(`https://${longHost.replace(/[.]/g, '\\.')}/v1`))
   assert.match(container.textContent, /没有指定模型/)
+})
+
+test('channels are listed on the left and the chosen one opens on the right', async (t) => {
+  t.mock.method(modelConfigApi, 'quickSetupCandidates', async () => ({ targets: [] }))
+  const second = { ...profile, id: 'mpr_2', name: '公司网关' }
+  const container = await renderTab(t, { secretConfigured: true, profiles: [profile, second], assignments: [], tokens: unlinked })
+
+  const nav = container.querySelector('nav')
+  const names = [...nav.querySelectorAll('button[type="button"]')].map((button) => button.textContent)
+  assert.deepEqual(names, ['AAnywhere', '通通用模型网关（演示）', '公公司网关'])
+  // Anywhere comes first and opens with its one-click setup.
+  assert.equal(nav.querySelector('[aria-current="true"]').textContent, 'AAnywhere')
+  assert.equal(container.querySelector('section dl'), null)
+
+  const company = [...nav.querySelectorAll('button')].find((button) => button.textContent === '公公司网关')
+  await act(async () => company.click())
+  assert.equal(nav.querySelector('[aria-current="true"]').textContent, '公公司网关')
+  assert.match(container.querySelector('section').textContent, /公司网关/)
+  assert.ok(container.querySelector('section dl'))
 })
 
 async function renderTab(t, modelConfig) {

@@ -611,7 +611,6 @@ function ModelGatewayEditor({
     }
     // An empty key field keeps the saved key, so it is left out.
     onChange({
-      ...Object.fromEntries(Object.entries(value).filter(([key]) => key !== "apiKey")),
       baseUrl: nextBaseUrl,
       ...(nextApiKey ? { apiKey: nextApiKey } : {}),
       ...(protocols.length ? { protocol: nextProtocol } : {}),

@@ -7,7 +7,6 @@ import type { SessionQueryEngine, SessionRecord } from '@deepseek-ai/dsh-session
 import { capabilities } from './capabilities.js'
 import { BridgeError, CreationNotStartedError, publicError } from './errors.js'
 import { parseSelections } from './selections.js'
-import { applyConnection, hostFromContext, parseConnection } from './model-connection.js'
 import { projectHistoryAsync } from './history.js'
 import { sessionId, nativeSessionId } from './identity.js'
 import type { NativeRuntime } from './native.js'
@@ -193,14 +192,6 @@ export class RuntimeRouter {
         const id = await this.resolve(params, signal)
         await this.reader.native.interrupt(id)
         return { accepted: true, sessionId: sessionId(this.namespace, id), externalSessionId: id }
-      }
-      case 'applyModelConnections':
-      case 'applyModelConnection': {
-        const native = this.reader.native
-        if (!native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Model connections are unavailable.')
-        const result = await applyConnection(hostFromContext(native.ctx), parseConnection(params.connection))
-        native.catalogs.invalidate()
-        return result
       }
       case 'ping': return { ok: true }
       case 'getRuntimeConfig': return { runtime: 'dsh', revision: 2, values: {}, metadata: { readOnly: !this.reader.native?.ctx.get('agents'), storageMode: 'dsh-native' } }

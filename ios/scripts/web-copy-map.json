@@ -64,7 +64,7 @@
       },
       "plural": "count"
     },
-    "A model service's address, key and models. Keys are write-only and never shown again.": "pages.settings.modelConfigs.profilesDescription",
+    "A model service's address, key and models.": "pages.settings.modelConfigs.profilesDescription",
     "A setup is already running.": "pages.settings.modelConfigs.errors.quick_setup_running",
     "API key": "pages.settings.modelConfigs.apiKey",
     "Account": "pages.settings.account",
@@ -189,7 +189,6 @@
     "Copy session ID": "dashboard.actions.copySessionId",
     "Couldn't read the Tokens Anywhere account right now.": "pages.settings.modelConfigs.account.loadFailed",
     "Couldn't read usage right now.": "pages.settings.modelConfigs.account.usageFailed",
-    "Covers the whole Tokens Anywhere account, other apps included; settled requests by Beijing date.": "pages.settings.modelConfigs.account.usageNote",
     "Create": "common.create",
     "Create project": "dashboard.projects.create",
     "Created here": "pages.settings.modelConfigs.managedInstance",

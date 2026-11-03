@@ -36,6 +36,7 @@ from connector.runtimes.codex.sdk.client import sdk_client_from_config
 from connector.runtimes.codex.sdk.discovery import check_codex_sdk
 from connector.runtimes.custom_models import normalize_custom_models
 from connector.runtimes.model_gateway import model_gateway_from_config
+from connector.runtimes.runtime_model import runtime_model_from_config
 
 # Codex takes the connection as a Responses model provider for the threads its
 # own app-server runs. Threads a Codex App window owns keep the App's config.
@@ -44,6 +45,7 @@ MODEL_CONNECTION = ModelConnectionCapability(
     protocols=("openai_responses",),
     scope="instance",
     apply="restart",
+    model_field="model",
 )
 
 SdkChecker = Callable[[], dict[str, Any]]
@@ -236,6 +238,8 @@ class CodexProvider(RuntimeProvider):
         }
         if model_gateway is not None:
             normalized_values["modelGateway"] = model_gateway.to_config_values()
+        if (model := runtime_model_from_config(normalized_values | {"model": raw_values.get("model")})) is not None:
+            normalized_values["model"] = model.to_config_values()
         if codex_executable_path is not None:
             normalized_values["codexExecutablePath"] = codex_executable_path
 

@@ -132,6 +132,18 @@ class ProfilePatchRequest(BaseModel):
     offers: list[Offer] | None = Field(default=None, min_length=1, max_length=3)
 
 
+class RuntimeModelChoice(BaseModel):
+    """The model a runtime gives new sessions, written to its ``modelField``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    modelId: str = Field(min_length=1, max_length=256, pattern=r"^[^\u0000\r\n]+$")
+    effortId: str | None = Field(default=None, min_length=1, max_length=128, pattern=r"^[^\u0000\r\n]+$")
+
+    def config_value(self) -> dict[str, Any]:
+        return self.model_dump(exclude_none=True)
+
+
 class AssignmentTarget(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -154,6 +166,8 @@ class ApplyRequest(BaseModel):
     deferBusy: bool = False
     # Import as many models as fit instead of skipping the runtime.
     trimModels: bool = False
+    # The model new sessions use, for runtimes that declare a ``modelField``.
+    model: RuntimeModelChoice | None = None
 
 
 class QuickSetupRequest(BaseModel):
@@ -171,6 +185,7 @@ class PreviewRequest(BaseModel):
 
     profileId: str = Field(min_length=1)
     targets: list[AssignmentTarget] | None = Field(default=None, max_length=64)
+    model: RuntimeModelChoice | None = None
 
 
 def origin_host(offers: list[Offer]) -> str:
@@ -195,23 +210,16 @@ def _digest(value: Any) -> str:
 class Match:
     offer: Offer | None
     reason: str | None = None
-    offers: tuple[Offer, ...] = ()
 
 
 def match_offer(capability: dict[str, Any] | None, offers: list[Offer]) -> Match:
-    """Match one protocol, or all compatible offers for a multi-protocol adapter."""
+    """The first protocol the runtime speaks that the profile offers."""
     if not isinstance(capability, dict):
         return Match(None, "model_connection_unsupported")
     by_format = {offer.format: offer for offer in offers}
-    matching = [by_format[p] for p in capability.get("protocols") or [] if p in by_format]
-    if matching:
-        if not capability.get("multiProtocol"):
-            return Match(matching[0])
-        models = {}
-        for offer in matching:
-            for spec in offer.models:
-                models.setdefault(spec.id, spec)
-        return Match(matching[0].model_copy(update={"models": list(models.values())}), offers=tuple(matching))
+    for protocol in capability.get("protocols") or []:
+        if protocol in by_format:
+            return Match(by_format[protocol])
     return Match(None, "format_unsupported")
 
 
@@ -248,6 +256,18 @@ def _custom_model(spec: ModelSpec) -> dict[str, Any]:
     return entry
 
 
+class ModelUnavailableError(ValueError):
+    """The chosen model is not among the models the runtime ends up with."""
+
+
+def offers_model(offer: Offer, model: RuntimeModelChoice) -> bool:
+    """Whether the offer has the model, with the effort when one is named."""
+    for spec in offer.models:
+        if spec.id == model.modelId:
+            return model.effortId is None or not spec.efforts or model.effortId in spec.efforts
+    return False
+
+
 class TooManyModelsError(ValueError):
     def __init__(self, importing: int, existing: int) -> None:
         super().__init__("too many models for this runtime")
@@ -265,13 +285,17 @@ def apply_patch(
     model_ids: list[str] | None,
     mode: ModePlan,
     trim: bool = False,
-    offers: tuple[Offer, ...] = (),
+    model: RuntimeModelChoice | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """Write the offer into the runtime's connection fields.
 
     Only the fields this module owns change: the connection object, the
     models it imported before, and the mode field when a mode had to be
     chosen. Models the user added stay, and win on an ID clash.
+
+    For a runtime with a ``modelField``, a chosen model is written there; it
+    must be one of the models the runtime ends up with. Without a choice, the
+    runtime's current model stays only while it is still one of them.
     """
     patched = copy.deepcopy(config)
     gateway = {GATEWAY_URL: offer.baseUrl, GATEWAY_KEY: api_key}
@@ -301,19 +325,37 @@ def apply_patch(
             chosen = chosen[: max(MAX_RUNTIME_MODELS - len(current), 0)]
         patched[models_field] = current + [_custom_model(spec) for spec in chosen]
         imported = [spec.id for spec in chosen]
-    if capability.get("multiProtocol") and offers and isinstance(models_field, str):
-        available = {item["modelId"] for item in patched[models_field]}
-        gateway["modelIds"] = [m.id for m in offers[0].models if m.id in available]
-        # Keep user-added models on the primary route. Shared IDs may occur on
-        # several routes; the model selector identifies them by provider + ID.
-        offered = {m.id for item in offers for m in item.models}
-        gateway["modelIds"] += [item["modelId"] for item in patched[models_field] if item["modelId"] not in offered]
-        gateway["routes"] = [
-            {"protocol": item.format, "baseUrl": item.baseUrl,
-             "modelIds": [m.id for m in item.models if m.id in available]}
-            for item in offers[1:] if any(m.id in available for m in item.models)
-        ]
+    model_field = capability.get("modelField")
+    if isinstance(model_field, str):
+        available = _available_models(patched, models_field, offer)
+        if model is not None:
+            if not _has_model(available, model):
+                raise ModelUnavailableError(model.modelId)
+            patched[model_field] = model.config_value()
+        else:
+            existing = patched.get(model_field)
+            if isinstance(existing, dict) and existing.get("modelId") not in available:
+                # Back to the runtime's own choice rather than a model it no longer has.
+                patched.pop(model_field, None)
     return patched, imported
+
+
+def _available_models(patched: dict[str, Any], models_field: Any, offer: Offer) -> dict[str, list[str]]:
+    """Model IDs the runtime can use after the patch, with their efforts."""
+    if isinstance(models_field, str):
+        return {
+            entry["modelId"]: [effort.get("effortId") for effort in entry.get("efforts") or [] if isinstance(effort, dict)]
+            for entry in patched.get(models_field) or []
+            if isinstance(entry, dict) and isinstance(entry.get("modelId"), str)
+        }
+    return {spec.id: list(spec.efforts) for spec in offer.models}
+
+
+def _has_model(available: dict[str, list[str]], model: RuntimeModelChoice) -> bool:
+    if model.modelId not in available:
+        return False
+    efforts = available[model.modelId]
+    return model.effortId is None or not efforts or model.effortId in efforts
 
 
 def revert_patch(
@@ -337,6 +379,12 @@ def revert_patch(
             for entry in reverted[models_field]
             if not (isinstance(entry, dict) and entry.get("modelId") in set(imported))
         ]
+    model_field = capability.get("modelField")
+    if isinstance(model_field, str):
+        model = reverted.get(model_field)
+        if isinstance(model, dict) and model.get("modelId") in set(imported):
+            # The model left with the connection; a runtime-own model stays.
+            reverted.pop(model_field, None)
     return reverted
 
 

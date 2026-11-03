@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Check, ChevronRight, ExternalLink, Pencil, RefreshCw, RotateCcw, X } from "lucide-react"
+import { Check, ChevronRight, ExternalLink, Pencil, RefreshCw, X } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts"
 import { toast } from "sonner"
@@ -27,7 +27,6 @@ import {
   cleanPreferences,
   formatTokenWindow,
   formatYuan,
-  samePreferences,
   summarizeUsage,
   tokensModels,
   vendorGroups,
@@ -254,14 +253,6 @@ function ModelsTab({
           <span className="text-xs text-muted-foreground">{t("account.modelsHint")}</span>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={saving || applying || samePreferences(cleanPreferences(saved, models), EMPTY)}
-            onClick={() => void save(EMPTY)}
-          >
-            <RotateCcw data-icon="inline-start" />{t("account.restoreDefaults")}
-          </Button>
           <Button size="sm" variant="outline" onClick={onSync} disabled={syncing}>
             {syncing ? <Spinner /> : <RefreshCw data-icon="inline-start" />}{t("account.refresh")}
           </Button>
@@ -515,7 +506,6 @@ function UsageTab({ token, detailsUrl }: { token: string; detailsUrl: string | n
         </>
       )}
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span>{t("account.usageNote")}</span>
         {detailsUrl ? (
           <button
             type="button"

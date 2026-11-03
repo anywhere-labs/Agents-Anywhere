@@ -522,3 +522,22 @@ def test_turned_off_and_renamed_models_reach_runtimes(tmp_path, server_secret):
     assert _tokens_profile(client, headers)["preferences"] == {"disabled": ["deepseek-v3"], "names": {"gpt-5": "GPT Five"}}
     [assignment] = _overview(client, headers)["assignments"]
     assert assignment["status"] == "applied"
+
+
+def test_turning_off_the_chosen_model_leaves_runtimes_to_their_own_choice(tmp_path, server_secret):
+    from test_model_config import PI_WITH_MODEL, _save_config
+
+    client, _rpc, connector_id, headers = _client(tmp_path, PI_WITH_MODEL)
+    fake = FakeTokens()
+    client.app.state.tokens_client_factory = lambda base: TokensClient(base, transport=httpx.MockTransport(fake.handle))
+    client.put("/admin/integrations/tokens", headers=headers, json={"tokensUrl": ISSUER})
+    _save_config(client, connector_id, headers, {"executionMode": "managed"})
+    _link(client, headers, fake)
+    profile = _tokens_profile(client, headers)
+    _applied(client, headers, profile["id"], [_target(connector_id)], model={"modelId": "deepseek-v3"})
+    assert _runtimes(client, connector_id, headers)["codex"]["config"]["model"] == {"modelId": "deepseek-v3"}
+
+    saved = client.put("/integrations/tokens/models", headers=headers, json={"disabled": ["deepseek-v3"], "names": {}})
+
+    assert saved.status_code == 200, saved.text
+    assert "model" not in _runtimes(client, connector_id, headers)["codex"]["config"]

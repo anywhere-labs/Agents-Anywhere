@@ -194,7 +194,7 @@ private struct ModelConfigPage: View {
         } header: {
             Text(String(localized: "Model profiles"))
         } footer: {
-            Text(String(localized: "A model service's address, key and models. Keys are write-only and never shown again."))
+            Text(String(localized: "A model service's address, key and models."))
         }
     }
 
@@ -215,8 +215,10 @@ private struct ModelConfigPage: View {
             Spacer(minLength: 0)
             if busy { ProgressView() }
             Menu {
-                Button(String(localized: "Apply to devices"), systemImage: "arrow.up.circle") { applying = profile }
-                    .disabled(!profile.isActive || !model.canWrite)
+                if !profile.isTokens {
+                    Button(String(localized: "Apply to devices"), systemImage: "arrow.up.circle") { applying = profile }
+                        .disabled(!profile.isActive || !model.canWrite)
+                }
                 if profile.isTokens && profile.isActive {
                     Button(String(localized: "Rotate key"), systemImage: "key") { rotating = profile }
                         .disabled(!model.canWrite)

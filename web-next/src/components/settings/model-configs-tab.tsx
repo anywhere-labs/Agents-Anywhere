@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { ChevronRight, Plus, RefreshCw, RotateCcw, Trash2, Upload } from "lucide-react"
+import { ChevronRight, Plus, RefreshCw, Trash2, Upload } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
@@ -9,6 +9,17 @@ import { RuntimeMaturityBadge } from "@/components/runtime-maturity-badge"
 import { SettingsSection } from "@/components/settings/settings-section"
 import { TokensQuickSetup } from "@/components/settings/tokens-quick-setup"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -26,18 +37,9 @@ import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { useWorkspace } from "@/components/workspace-context"
-import type {
-  DeviceRuntimeView,
-  ModelAssignment,
-  ModelConfigOverview,
-  ModelProfile,
-  ModelProtocol,
-} from "@/features/dashboard/types"
+import type { ModelProfile, ModelProtocol } from "@/features/dashboard/types"
 import { modelConfigApi, type ModelOperation, type ModelPreviewTarget } from "@/features/model-config/api"
 import {
-  assignmentStatusTone,
-  connectionStateTone,
-  modelConfigurableRuntimes,
   newIdempotencyKey,
   parseModelIds,
   type ModelStatusTone,
@@ -50,7 +52,7 @@ type ConnectorView = { id: string; name: string }
 
 const PROTOCOLS: ModelProtocol[] = ["openai_responses", "openai_chat", "anthropic"]
 
-const TONE_CLASS: Record<ModelStatusTone, string> = {
+export const TONE_CLASS: Record<ModelStatusTone, string> = {
   ok: "border-emerald-500/40 text-emerald-700 dark:text-emerald-400",
   progress: "border-sky-500/40 text-sky-700 dark:text-sky-400",
   warning: "border-amber-500/40 text-amber-700 dark:text-amber-400",
@@ -62,7 +64,7 @@ const TONE_CLASS: Record<ModelStatusTone, string> = {
  * Run an action that may restart runtimes: first without interrupting
  * anything; if the Server answers `busy`, ask, then run it again allowing it.
  */
-function useInterruptConfirm() {
+export function useInterruptConfirm() {
   const t = useTranslations("pages.settings.modelConfigs")
   const [pending, setPending] = React.useState<{ resume: () => void; cancel: () => void } | null>(null)
   const run = React.useCallback(async <T,>(action: (allowInterrupt: boolean) => Promise<T>): Promise<T | null> => {
@@ -95,12 +97,12 @@ function useInterruptConfirm() {
 }
 
 /** Re-read the overview after an action; the push that follows is a second chance. */
-function useModelConfigChanged() {
+export function useModelConfigChanged() {
   const { refreshModelConfig } = useWorkspace()
   return React.useCallback(() => { void refreshModelConfig().catch(() => undefined) }, [refreshModelConfig])
 }
 
-function useErrorText() {
+export function useErrorText() {
   const t = useTranslations("pages.settings.modelConfigs")
   return React.useCallback((error: unknown) => {
     const code = isApiError(error) ? error.code : null
@@ -109,6 +111,8 @@ function useErrorText() {
   }, [t])
 }
 
+const TOKENS_CHANNEL = "tokens"
+
 export function ModelConfigsTab({ token, connectors }: { token: string; connectors: ConnectorView[] }) {
   const t = useTranslations("pages.settings.modelConfigs")
   const { modelConfig, runtimes, refreshModelConfig } = useWorkspace()
@@ -116,6 +120,7 @@ export function ModelConfigsTab({ token, connectors }: { token: string; connecto
   const [loadFailed, setLoadFailed] = React.useState(false)
   const [applyProfile, setApplyProfile] = React.useState<ModelProfile | null>(null)
   const [creating, setCreating] = React.useState(false)
+  const [selected, setSelected] = React.useState<string | null>(null)
   const errorText = useErrorText()
 
   React.useEffect(() => {
@@ -147,53 +152,120 @@ export function ModelConfigsTab({ token, connectors }: { token: string; connecto
     ) : <div className="flex justify-center py-10"><Spinner /></div>
   }
 
-  const profiles = modelConfig.profiles
+  const tokensAvailable = Boolean(modelConfig.tokens?.available)
+  const tokensProfile = modelConfig.profiles.find((profile) => profile.source === "tokens" && profile.state === "active")
+  // The active Tokens profile belongs to the Anywhere channel; everything else is listed on its own.
+  const listed = modelConfig.profiles.filter((profile) => profile !== tokensProfile)
+  const enabled = listed.filter((profile) => profile.state === "active")
+  const detached = listed.filter((profile) => profile.state !== "active")
+  const channels = [...(tokensAvailable ? [TOKENS_CHANNEL] : []), ...enabled.map((item) => item.id), ...detached.map((item) => item.id)]
+  const current = selected && channels.includes(selected) ? selected : channels[0] ?? null
+  const currentProfile = current === TOKENS_CHANNEL ? tokensProfile : listed.find((profile) => profile.id === current)
+  const usedBy = (profile: ModelProfile) => modelConfig.assignments.filter((item) => item.profileId === profile.id).length
+  const linked = modelConfig.tokens?.link?.status === "linked"
+
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4">
       {!modelConfig.secretConfigured ? (
         <Alert><AlertDescription>{t("secretMissing")}</AlertDescription></Alert>
       ) : null}
-      <TokensQuickSetup
-        token={token}
-        overview={modelConfig}
-        connectors={connectors}
-        runtimes={runtimes}
-        errorText={errorText}
-        onChanged={changed}
-      />
-      <SettingsSection
-        title={t("profilesTitle")}
-        description={t("profilesDescription")}
-        action={(
-          <Button size="sm" variant="outline" onClick={() => setCreating(true)} disabled={!modelConfig.secretConfigured}>
+      <div className="grid items-start gap-4 md:grid-cols-[15rem_minmax(0,1fr)]">
+        <nav aria-label={t("channels.title")} className="flex flex-col gap-1 rounded-lg border border-border bg-card p-2 md:sticky md:top-0">
+          {tokensAvailable ? (
+            <ChannelGroup title={linked ? t("channels.enabled") : t("channels.available")}>
+              <ChannelButton
+                selected={current === TOKENS_CHANNEL}
+                onSelect={() => setSelected(TOKENS_CHANNEL)}
+                mark={<span className="flex size-6 items-center justify-center rounded-md bg-gradient-to-br from-violet-500 to-teal-400 text-xs font-semibold text-white">A</span>}
+                name={t("channels.anywhere")}
+                active={linked}
+              />
+            </ChannelGroup>
+          ) : null}
+          {enabled.length ? (
+            <ChannelGroup title={t("channels.manual")}>
+              {enabled.map((profile) => (
+                <ChannelButton
+                  key={profile.id}
+                  selected={current === profile.id}
+                  onSelect={() => setSelected(profile.id)}
+                  mark={<ProfileMark name={profile.name} />}
+                  name={profile.name}
+                  active
+                />
+              ))}
+            </ChannelGroup>
+          ) : null}
+          {detached.length ? (
+            <ChannelGroup title={t("channels.detached")}>
+              {detached.map((profile) => (
+                <ChannelButton
+                  key={profile.id}
+                  selected={current === profile.id}
+                  onSelect={() => setSelected(profile.id)}
+                  mark={<ProfileMark name={profile.name} />}
+                  name={profile.name}
+                  active={false}
+                />
+              ))}
+            </ChannelGroup>
+          ) : null}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="mt-1 justify-start text-muted-foreground"
+            onClick={() => setCreating(true)}
+            disabled={!modelConfig.secretConfigured}
+          >
             <Plus data-icon="inline-start" />{t("addProfile")}
           </Button>
-        )}
-      >
-        {profiles.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t("noProfiles")}</p>
-        ) : (
-          <div className="flex flex-col divide-y divide-border">
-            {profiles.map((profile) => (
-              <ProfileRow
-                key={profile.id}
+        </nav>
+
+        <section className="flex min-w-0 flex-col gap-4">
+          {current === TOKENS_CHANNEL ? (
+            <>
+              <TokensQuickSetup
                 token={token}
-                profile={profile}
-                usedBy={modelConfig.assignments.filter((item) => item.profileId === profile.id).length}
-                onApply={() => setApplyProfile(profile)}
+                overview={modelConfig}
+                connectors={connectors}
+                runtimes={runtimes}
                 errorText={errorText}
+                onChanged={changed}
               />
-            ))}
-          </div>
-        )}
-      </SettingsSection>
-      <DevicesSection
-        token={token}
-        connectors={connectors}
-        runtimes={modelConfigurableRuntimes(runtimes)}
-        overview={modelConfig}
-        errorText={errorText}
-      />
+              {tokensProfile ? (
+                <SettingsSection title={t("channels.connection")} description={t("profilesDescription")}>
+                  <ProfileRow
+                    token={token}
+                    profile={tokensProfile}
+                    usedBy={usedBy(tokensProfile)}
+                    onApply={() => setApplyProfile(tokensProfile)}
+                    errorText={errorText}
+                  />
+                </SettingsSection>
+              ) : null}
+            </>
+          ) : currentProfile ? (
+            <SettingsSection title={currentProfile.name} description={t("profilesDescription")}>
+              <ProfileRow
+                key={currentProfile.id}
+                token={token}
+                profile={currentProfile}
+                usedBy={usedBy(currentProfile)}
+                onApply={() => setApplyProfile(currentProfile)}
+                errorText={errorText}
+                defaultExpanded
+              />
+            </SettingsSection>
+          ) : (
+            <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border px-6 py-12 text-center text-sm text-muted-foreground">
+              <span>{t("noProfiles")}</span>
+              <Button size="sm" variant="outline" onClick={() => setCreating(true)} disabled={!modelConfig.secretConfigured}>
+                <Plus data-icon="inline-start" />{t("addProfile")}
+              </Button>
+            </div>
+          )}
+        </section>
+      </div>
       {creating ? <ProfileDialog token={token} onClose={() => setCreating(false)} errorText={errorText} /> : null}
       {applyProfile ? (
         <ApplyDialog
@@ -208,24 +280,73 @@ export function ModelConfigsTab({ token, connectors }: { token: string; connecto
   )
 }
 
+function ChannelGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="px-2 pb-1 pt-2 text-xs text-muted-foreground">{title}</span>
+      {children}
+    </div>
+  )
+}
+
+function ChannelButton({
+  selected,
+  onSelect,
+  mark,
+  name,
+  active,
+}: {
+  selected: boolean
+  onSelect: () => void
+  mark: React.ReactNode
+  name: string
+  active: boolean
+}) {
+  return (
+    <button
+      type="button"
+      aria-current={selected ? "true" : undefined}
+      onClick={onSelect}
+      className={cn(
+        "flex min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent",
+        selected && "bg-accent font-medium",
+      )}
+    >
+      {mark}
+      <span className="min-w-0 flex-1 truncate">{name}</span>
+      {active ? <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-emerald-500" /> : null}
+    </button>
+  )
+}
+
+function ProfileMark({ name }: { name: string }) {
+  return (
+    <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-medium text-muted-foreground">
+      {name.trim().slice(0, 1).toUpperCase() || "?"}
+    </span>
+  )
+}
+
 function ProfileRow({
   token,
   profile,
   usedBy,
   onApply,
   errorText,
+  defaultExpanded = false,
 }: {
   token: string
   profile: ModelProfile
   usedBy: number
   onApply: () => void
   errorText: (error: unknown) => string
+  defaultExpanded?: boolean
 }) {
   const t = useTranslations("pages.settings.modelConfigs")
   const [busy, setBusy] = React.useState(false)
   const interrupt = useInterruptConfirm()
   const changed = useModelConfigChanged()
-  const [expanded, setExpanded] = React.useState(false)
+  const [expanded, setExpanded] = React.useState(defaultExpanded)
   const detailsId = React.useId()
 
   const remove = async () => {
@@ -270,13 +391,31 @@ function ProfileRow({
           {profile.state === "detached" ? <Badge variant="outline">{t("detached")}</Badge> : null}
         </div>
         <div className="flex shrink-0 gap-2">
-          <Button size="sm" onClick={onApply} disabled={busy || profile.state !== "active"}>
-            <Upload data-icon="inline-start" />{t("apply")}
-          </Button>
-          {profile.source === "tokens" && profile.state === "active" ? (
-            <Button size="sm" variant="ghost" onClick={() => void rotate()} disabled={busy} title={t("rotateDescription")}>
-              <RefreshCw data-icon="inline-start" />{t("rotate")}
+          {profile.source === "manual" ? (
+            <Button size="sm" onClick={onApply} disabled={busy || profile.state !== "active"}>
+              <Upload data-icon="inline-start" />{t("apply")}
             </Button>
+          ) : null}
+          {profile.source === "tokens" && profile.state === "active" ? (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button size="sm" variant="ghost" disabled={busy}>
+                  <RefreshCw data-icon="inline-start" />{t("rotate")}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{t("rotate")}</AlertDialogTitle>
+                  <AlertDialogDescription>{t("rotateDescription")}</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
+                  <AlertDialogAction variant="destructive" onClick={() => void rotate()} disabled={busy}>
+                    {t("rotate")}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           ) : null}
           {profile.source === "manual" || profile.state === "detached" ? (
             <Button size="icon-sm" variant="ghost" onClick={() => void remove()} disabled={busy || usedBy > 0} aria-label={t("deleteProfile")}>
@@ -609,102 +748,7 @@ function ApplyDialog({
   )
 }
 
-function DevicesSection({
-  token,
-  connectors,
-  runtimes,
-  overview,
-  errorText,
-}: {
-  token: string
-  connectors: ConnectorView[]
-  runtimes: DeviceRuntimeView[]
-  overview: ModelConfigOverview
-  errorText: (error: unknown) => string
-}) {
-  const t = useTranslations("pages.settings.modelConfigs")
-  const tStatus = useTranslations("pages.settings.modelConfigs.connectionState")
-  const [restoring, setRestoring] = React.useState<string | null>(null)
-  const interrupt = useInterruptConfirm()
-  const changed = useModelConfigChanged()
-  const byTarget = new Map(overview.assignments.map((item) => [`${item.connectorId}/${item.runtimeId}`, item]))
-  const profileName = (id: string) => overview.profiles.find((profile) => profile.id === id)?.name ?? id
-
-  const restore = async (assignment: ModelAssignment) => {
-    const key = `${assignment.connectorId}/${assignment.runtimeId}`
-    setRestoring(key)
-    try {
-      const result = await interrupt.run((allow) => modelConfigApi.restore(token, assignment, allow))
-      if (result) {
-        toast.success(t("restored"))
-        changed()
-      }
-    } catch (error) {
-      toast.error(errorText(error))
-    } finally {
-      setRestoring(null)
-    }
-  }
-
-  const rows = runtimes.map((runtime) => ({
-    runtime,
-    assignment: byTarget.get(`${runtime.connectorId}/${runtime.runtimeId}`),
-  }))
-
-  return (
-    <SettingsSection title={t("devicesTitle")} description={t("devicesDescription")}>
-      {interrupt.dialog}
-      {rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{t("noDevices")}</p>
-      ) : (
-        <div className="flex flex-col divide-y divide-border">
-          {rows.map(({ runtime, assignment }) => {
-            const status = assignment?.modelConnectionStatus ?? runtime.modelConnectionStatus
-            const key = `${runtime.connectorId}/${runtime.runtimeId}`
-            return (
-              <div key={key} className="flex flex-wrap items-center gap-3 py-3">
-                <div className="flex min-w-0 flex-1 basis-60 flex-col gap-1">
-                  <div className="flex flex-wrap items-center gap-2 text-sm">
-                    <span className="font-medium">{runtime.name ?? runtime.displayName}</span>
-                    <span className="text-muted-foreground">{connectors.find((item) => item.id === runtime.connectorId)?.name}</span>
-                    <RuntimeMaturityBadge maturity={runtime.modelConnection?.maturity ?? runtime.maturity} />
-                    {runtime.managedBy === "model-config" ? <Badge variant="secondary">{t("managedInstance")}</Badge> : null}
-                  </div>
-                  <span className="text-xs text-muted-foreground">
-                    {assignment
-                      ? t("assignedProfile", { name: profileName(assignment.profileId) })
-                      : t("notAssigned")}
-                    {status?.reason ? ` · ${status.reason}` : ""}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  {assignment && assignment.status !== "applied" ? (
-                    <Badge variant="outline" className={TONE_CLASS[assignmentStatusTone(assignment.status)]}>
-                      {t(`assignmentStatus.${assignment.status}`)}
-                    </Badge>
-                  ) : null}
-                  {status ? (
-                    <Badge variant="outline" className={TONE_CLASS[connectionStateTone(status.state)]}>
-                      {tStatus(status.state)}
-                    </Badge>
-                  ) : null}
-                  {assignment ? (
-                    <Button size="sm" variant="ghost" disabled={restoring !== null} onClick={() => void restore(assignment)}>
-                      {restoring === `${assignment.connectorId}/${assignment.runtimeId}` ? <Spinner /> : <RotateCcw data-icon="inline-start" />}
-                      {t("restore")}
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
-    </SettingsSection>
-  )
-}
-
-function reportOperation(
+export function reportOperation(
   operation: ModelOperation,
   t: ReturnType<typeof useTranslations<"pages.settings.modelConfigs">>,
 ) {

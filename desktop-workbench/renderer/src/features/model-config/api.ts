@@ -9,6 +9,7 @@ import type {
   RuntimeMaturity,
   TokensLinkStatus,
 } from "@/features/dashboard/types";
+import type { RuntimeModelSetting } from "@/features/model-config/runtime-model";
 
 export type ModelTarget = { connectorId: string; runtimeId: string };
 
@@ -102,8 +103,17 @@ export class ModelConfigApi {
     return this.client.delete<void>(`/model-profiles/${encodeURIComponent(profileId)}`, { token });
   }
 
-  preview(token: string, profileId: string, targets?: ModelTarget[]): Promise<{ profileId: string; targets: ModelPreviewTarget[] }> {
-    return this.client.post("/model-config/assignments/preview", { profileId, ...(targets ? { targets } : {}) }, { token });
+  preview(
+    token: string,
+    profileId: string,
+    targets?: ModelTarget[],
+    model?: RuntimeModelSetting,
+  ): Promise<{ profileId: string; targets: ModelPreviewTarget[] }> {
+    return this.client.post(
+      "/model-config/assignments/preview",
+      { profileId, ...(targets ? { targets } : {}), ...(model ? { model } : {}) },
+      { token },
+    );
   }
 
   apply(
@@ -114,6 +124,10 @@ export class ModelConfigApi {
       allowInterrupt: boolean;
       confirmNativeGlobal: boolean;
       modelIds?: string[];
+      /** The model new sessions on the targets use; existing sessions keep theirs. */
+      model?: RuntimeModelSetting;
+      /** Save now and restart once the runtime is idle instead of refusing a busy one. */
+      deferBusy?: boolean;
     },
     idempotencyKey: string,
   ): Promise<ModelOperation> {

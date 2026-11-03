@@ -60,10 +60,11 @@ class ModelConnectionCapability:
     catalog_manual: bool = True
     # The connection is only used with the models listed in ``models_field``.
     catalog_required: bool = False
-    multi_protocol: bool = False
     modes: tuple[ModelConnectionMode, ...] = field(default_factory=tuple)
     # Config field that selects one of ``modes``.
     mode_field: str | None = None
+    # Config field holding the model new sessions use, {modelId, effortId?}.
+    model_field: str | None = None
 
     def __post_init__(self) -> None:
         if self.maturity not in _MATURITIES:
@@ -83,9 +84,9 @@ class ModelConnectionCapability:
             "configField": self.config_field,
             "modelsField": self.models_field,
             "protocols": list(self.protocols),
-            **({"multiProtocol": True} if self.multi_protocol else {}),
             "modes": [mode.payload() for mode in self.modes],
             "modeField": self.mode_field,
+            **({"modelField": self.model_field} if self.model_field else {}),
             "scope": self.scope,
             "catalog": {
                 "auto": self.catalog_auto,

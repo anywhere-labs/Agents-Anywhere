@@ -95,6 +95,8 @@ class RuntimeReasoningItem:
     enabled: bool = True
     disabled_reason: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    # Preselected for a new session, e.g. the runtime's configured model.
+    default: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +120,8 @@ class RuntimeModelItem:
     disabled_reason: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
     group: RuntimeModelGroup | None = None
+    # Preselected for a new session, e.g. the runtime's configured model.
+    default: bool = False
 
 
 @dataclass(frozen=True, slots=True)

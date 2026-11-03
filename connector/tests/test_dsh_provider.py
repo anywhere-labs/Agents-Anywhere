@@ -504,8 +504,6 @@ def test_initial_catalog_error_does_not_close_other_runtime_requests(monkeypatch
                 return {"runtime": "dsh", "revision": 1, "models": []}
             if method == "ping":
                 return {"ok": True}
-            if method == "applyModelConnection":
-                return {"provider": None}
             raise AssertionError(method)
 
         client = SimpleNamespace(connected=True, request=request, close=AsyncMock(), start=AsyncMock(return_value={

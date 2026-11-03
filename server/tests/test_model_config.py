@@ -36,6 +36,8 @@ PI_LIKE = {
     "catalog": {"auto": True, "manual": True},
     "apply": "restart",
 }
+PI_WITH_MODEL = {**PI_LIKE, "modelField": "model"}
+CODEX_WITH_MODEL = {**CODEX_LIKE, "modelField": "model"}
 
 
 def _client(tmp_path, capability: dict[str, Any], **type_fields: Any):
@@ -56,6 +58,7 @@ def _client(tmp_path, capability: dict[str, Any], **type_fields: Any):
         "additionalProperties": False,
     }
     properties["customModels"] = {"type": "array", "items": {"type": "object"}}
+    properties["model"] = {"type": "object"}
     properties["executionMode"] = {"type": "string", "enum": ["local", "managed"]}
     item["defaults"] = {"environment": {}, "executionMode": "local"}
     asyncio.run(
@@ -517,3 +520,102 @@ def test_too_many_models_can_be_trimmed_to_what_fits(tmp_path, server_secret):
     assert result["modelsTrimmed"] == 6
     models = _runtimes(client, connector_id, headers)["codex"]["config"]["customModels"]
     assert len(models) == 64
+
+
+def _restore(client, connector_id, headers) -> None:
+    restored = client.delete(
+        f"/model-config/assignments/{connector_id}/codex",
+        headers=headers,
+        params={"allow_interrupt": "true"},
+    )
+    assert restored.status_code == 200, restored.text
+
+
+def test_a_capability_names_its_model_field_only_when_it_has_one():
+    from agent_server.core.model_connection import ModelConnectionCapability
+
+    assert ModelConnectionCapability.model_validate(PI_WITH_MODEL).model_dump()["modelField"] == "model"
+    assert "modelField" not in ModelConnectionCapability.model_validate(PI_LIKE).model_dump()
+
+
+def test_the_chosen_model_is_written_and_kept_while_the_runtime_has_it(tmp_path, server_secret):
+    client, _rpc, connector_id, headers = _client(tmp_path, PI_WITH_MODEL)
+    _save_config(client, connector_id, headers, {"executionMode": "managed"})
+    profile = _profile(client, headers, formats=("openai_chat",), models=3)
+
+    _applied(client, headers, profile["id"], [_target(connector_id)], model={"modelId": "m1"})
+    assert _runtimes(client, connector_id, headers)["codex"]["config"]["model"] == {"modelId": "m1"}
+
+    # Applying again without a choice keeps the model while it is still imported…
+    _applied(client, headers, profile["id"], [_target(connector_id)], key="op-2", modelIds=["m0", "m1"])
+    assert _runtimes(client, connector_id, headers)["codex"]["config"]["model"] == {"modelId": "m1"}
+
+    # …and leaves the runtime to its own choice once it is not.
+    _applied(client, headers, profile["id"], [_target(connector_id)], key="op-3", modelIds=["m0"])
+    assert "model" not in _runtimes(client, connector_id, headers)["codex"]["config"]
+
+
+def test_a_model_the_service_does_not_offer_is_skipped(tmp_path, server_secret):
+    client, _rpc, connector_id, headers = _client(tmp_path, PI_WITH_MODEL)
+    _save_config(client, connector_id, headers, {"executionMode": "managed"})
+    profile = _profile(client, headers, formats=("openai_chat",))
+
+    preview = client.post(
+        "/model-config/assignments/preview",
+        headers=headers,
+        json={"profileId": profile["id"], "model": {"modelId": "elsewhere"}},
+    ).json()
+    assert preview["targets"][0]["decision"] == "skip"
+    assert preview["targets"][0]["reason"] == "model_unavailable"
+
+    applied = _applied(client, headers, profile["id"], [_target(connector_id)], model={"modelId": "elsewhere"})
+    assert applied["results"][0]["result"] == "skipped"
+    assert applied["results"][0]["reason"] == "model_unavailable"
+    config = _runtimes(client, connector_id, headers)["codex"]["config"]
+    assert "modelGateway" not in config and "model" not in config
+
+
+def test_a_runtime_without_a_model_field_ignores_the_choice(tmp_path, server_secret):
+    client, _rpc, connector_id, headers = _client(tmp_path, CODEX_LIKE)
+    profile = _profile(client, headers)
+
+    _applied(client, headers, profile["id"], [_target(connector_id)], model={"modelId": "m0"})
+    assert "model" not in _runtimes(client, connector_id, headers)["codex"]["config"]
+
+
+def test_without_a_model_list_the_offer_decides_what_can_be_chosen(tmp_path, server_secret):
+    client, _rpc, connector_id, headers = _client(tmp_path, CODEX_WITH_MODEL)
+    profile = _profile(client, headers)
+
+    _applied(client, headers, profile["id"], [_target(connector_id)], model={"modelId": "m1", "effortId": "high"})
+    assert _runtimes(client, connector_id, headers)["codex"]["config"]["model"] == {"modelId": "m1", "effortId": "high"}
+
+
+def test_changing_the_model_later_does_not_mark_the_assignment_modified(tmp_path, server_secret):
+    client, _rpc, connector_id, headers = _client(tmp_path, PI_WITH_MODEL)
+    _save_config(client, connector_id, headers, {"executionMode": "managed"})
+    profile = _profile(client, headers, formats=("openai_chat",))
+    _applied(client, headers, profile["id"], [_target(connector_id)], model={"modelId": "m0"})
+
+    config = _runtimes(client, connector_id, headers)["codex"]["config"]
+    _save_config(client, connector_id, headers, {**config, "model": {"modelId": "m1"}})
+
+    [assignment] = _overview(client, headers)["assignments"]
+    assert assignment["status"] == "applied"
+
+
+def test_restore_drops_an_imported_model_and_keeps_the_runtimes_own(tmp_path, server_secret):
+    client, _rpc, connector_id, headers = _client(tmp_path, PI_WITH_MODEL)
+    own = [{"modelId": "mine", "displayName": "Mine"}]
+    _save_config(client, connector_id, headers, {"executionMode": "managed", "customModels": own})
+    profile = _profile(client, headers, formats=("openai_chat",))
+
+    _applied(client, headers, profile["id"], [_target(connector_id)], model={"modelId": "m0"})
+    _restore(client, connector_id, headers)
+    assert "model" not in _runtimes(client, connector_id, headers)["codex"]["config"]
+
+    _applied(client, headers, profile["id"], [_target(connector_id)], key="op-2")
+    config = _runtimes(client, connector_id, headers)["codex"]["config"]
+    _save_config(client, connector_id, headers, {**config, "model": {"modelId": "mine"}})
+    _restore(client, connector_id, headers)
+    assert _runtimes(client, connector_id, headers)["codex"]["config"]["model"] == {"modelId": "mine"}

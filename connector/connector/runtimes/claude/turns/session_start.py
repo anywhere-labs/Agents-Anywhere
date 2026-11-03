@@ -4,9 +4,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from connector.runtime_protocol import RuntimeAttachment, RuntimeOperationResult
-from connector.runtimes.claude.notifications.projector import ClaudeNotificationProjector
+from connector.runtimes.claude.notifications.projector import (
+    ClaudeNotificationProjector,
+)
 from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
 from connector.runtimes.claude.turns.actions import ClaudeTurnActionHandler
+from connector.runtimes.runtime_model import selections_with_runtime_model
 
 
 @dataclass(slots=True)
@@ -25,6 +28,10 @@ class ClaudeSessionStartHandler:
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
     ) -> RuntimeOperationResult:
+        selections = await selections_with_runtime_model(
+            selections,
+            lambda: self.actions.selections.catalogs.list_model_catalog(limit=200),
+        )
         session = self.session_store.ensure(session_id=session_id, cwd=cwd)
         self.session_store.update_meta(session, title=title, cwd=cwd)
         await self.notifications.session_state.session_meta_upsert(

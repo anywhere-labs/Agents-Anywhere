@@ -147,6 +147,13 @@ class ClaudeRuntime(AgentRuntime):
     async def stop(self) -> None:
         await self._turns.stop()
 
+    async def apply_model_setting(self, config: RuntimeConfig) -> bool:
+        # Only the catalog reads ``model``; new sessions take it from there.
+        self.config = config
+        self._catalogs.config = config
+        await self.host.model_catalog_update(await self.list_model_catalog(limit=200))
+        return True
+
     async def get_config(self) -> RuntimeConfig:
         return self.config
 

@@ -28,6 +28,7 @@ from connector.runtimes.claude import discovery, provider_config
 from connector.runtimes.claude.runtime import ClaudeRuntime
 from connector.runtimes.custom_models import normalize_custom_models
 from connector.runtimes.model_gateway import model_gateway_from_config
+from connector.runtimes.runtime_model import runtime_model_from_config
 
 # Claude Code takes the connection as Anthropic environment variables in a
 # settings file for every session process this instance starts.
@@ -36,6 +37,7 @@ MODEL_CONNECTION = ModelConnectionCapability(
     protocols=("anthropic",),
     scope="instance",
     apply="restart",
+    model_field="model",
 )
 
 CLAUDE_CONFIG_SCHEMA_REVISION = 5
@@ -175,6 +177,8 @@ class ClaudeProvider(RuntimeProvider):
         }
         if model_gateway is not None:
             normalized_values["modelGateway"] = model_gateway.to_config_values()
+        if (model := runtime_model_from_config(normalized_values | {"model": raw_values.get("model")})) is not None:
+            normalized_values["model"] = model.to_config_values()
         if isinstance(executable_path, str) and executable_path:
             normalized_values["executablePath"] = executable_path
 

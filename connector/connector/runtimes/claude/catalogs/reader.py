@@ -18,6 +18,10 @@ from connector.runtimes.claude.domain.models import (
 )
 from connector.runtimes.claude.domain.permissions import claude_permission_catalog
 from connector.runtimes.claude.sdk.client import SdkLoader
+from connector.runtimes.runtime_model import (
+    mark_runtime_model,
+    runtime_model_from_config,
+)
 
 CLAUDE_MODEL_CATALOG_STATIC_REVISION = 4
 CLAUDE_PERMISSION_CATALOG_STATIC_REVISION = 1
@@ -41,7 +45,7 @@ class ClaudeCatalogReader:
         limit: int = 100,
     ) -> RuntimeModelCatalog:
         cli_models = await self.discovery.models() or ()
-        return claude_model_catalog(
+        catalog = claude_model_catalog(
             revision=runtime_catalog_revision(
                 self.config.revision,
                 CLAUDE_MODEL_CATALOG_STATIC_REVISION,
@@ -51,6 +55,7 @@ class ClaudeCatalogReader:
             custom_models=self.config.values.get("customModels"),
             cli_models=cli_models,
         )
+        return mark_runtime_model(catalog, runtime_model_from_config(self.config.values))
 
     async def resolve_model_selection(
         self,
