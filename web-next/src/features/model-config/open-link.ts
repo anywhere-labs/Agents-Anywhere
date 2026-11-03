@@ -8,3 +8,9 @@ export async function openTokensLinkStart(startUrl: string): Promise<void> {
   if (opened) opened.opener = null
   else window.location.assign(startUrl)
 }
+
+/** A Tokens Anywhere console page, in a new browser tab. */
+export async function openExternal(url: string): Promise<void> {
+  const opened = window.open(url, "_blank")
+  if (opened) opened.opener = null
+}

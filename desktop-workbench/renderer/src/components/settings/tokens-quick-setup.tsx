@@ -7,7 +7,7 @@ import { toast } from "sonner"
 
 import { RuntimeMaturityBadge } from "@/components/runtime-maturity-badge"
 import { SettingsSection } from "@/components/settings/settings-section"
-import { Badge } from "@/components/ui/badge"
+import { TokensAccount } from "@/components/settings/tokens-account"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -28,6 +28,7 @@ import {
   defaultQuickSelection,
   newQuickCandidates,
   quickSetupPhase,
+  quickSetupRunning,
   quickSetupSteps,
   quickTargetKey,
   type QuickStepStatus,
@@ -96,7 +97,7 @@ export function TokensQuickSetup({
     runtimeType: runtimes.find((runtime) => quickTargetKey(runtime) === quickTargetKey(item))?.runtimeType,
   }))
   const fresh = candidates ? newQuickCandidates(candidates, assigned) : []
-  const phase = choosing ? "setup" : quickSetupPhase(tokens, tokenAssignments.length > 0, authorizing)
+  const phase = quickSetupPhase(tokens, tokenAssignments.length > 0, authorizing)
   const selection = selected ?? (candidates ? defaultQuickSelection(candidates) : new Set<string>())
 
   const start = async (request?: QuickSetupProgress["request"]) => {
@@ -156,6 +157,57 @@ export function TokensQuickSetup({
     }
   }
 
+  const startButtons = (
+    <>
+      <Button
+        onClick={() => void start()}
+        disabled={busy || !tokens.secretConfigured || !candidates?.some((item) => item.decision === "apply" && selection.has(quickTargetKey(item)))}
+      >
+        {busy ? <Spinner /> : <Link2 data-icon="inline-start" />}{t("quick.start")}
+      </Button>
+      {choosing ? <Button variant="ghost" onClick={() => setChoosing(false)}>{t("cancel")}</Button> : null}
+    </>
+  )
+  const choices = (
+    <>
+      <p className="pb-2 text-xs text-muted-foreground">{t("quick.willConfigure")}</p>
+      {candidates === null ? (
+        <div className="flex justify-center py-4"><Spinner /></div>
+      ) : candidates.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t("noDevices")}</p>
+      ) : (
+        <div className="flex flex-col divide-y divide-border">
+          {candidates.map((item) => {
+            const key = quickTargetKey(item)
+            const enabled = item.decision === "apply"
+            return (
+              <label key={key} className={cn("flex items-start gap-3 py-2.5", !enabled && "opacity-60")}>
+                <Checkbox
+                  className="mt-0.5"
+                  checked={enabled && selection.has(key)}
+                  disabled={!enabled}
+                  onCheckedChange={(checked) => setSelected(() => {
+                    const next = new Set(selection)
+                    if (checked === true) next.add(key)
+                    else next.delete(key)
+                    return next
+                  })}
+                />
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    <span className="font-medium">{deviceName(item.connectorId)} · {item.name ?? item.runtimeId}</span>
+                    <RuntimeMaturityBadge maturity={item.capabilityMaturity ?? item.maturity} />
+                  </div>
+                  <span className="text-xs text-muted-foreground">{candidateNote(item, t)}</span>
+                </div>
+              </label>
+            )
+          })}
+        </div>
+      )}
+    </>
+  )
+
   const unlinkButton = tokens.link ? (
     <Button size="sm" variant="ghost" onClick={() => setConfirmUnlink(true)} disabled={busy}>
       <Unlink data-icon="inline-start" />{t("unlink")}
@@ -169,53 +221,9 @@ export function TokensQuickSetup({
           title={t("quick.title")}
           description={tokens.link?.status === "reauth_required" ? t("tokensReauth") : t("quick.description")}
           action={unlinkButton}
-          footer={(
-            <>
-              <Button
-                onClick={() => void start()}
-                disabled={busy || !tokens.secretConfigured || !candidates?.some((item) => item.decision === "apply" && selection.has(quickTargetKey(item)))}
-              >
-                {busy ? <Spinner /> : <Link2 data-icon="inline-start" />}{t("quick.start")}
-              </Button>
-              {choosing ? <Button variant="ghost" onClick={() => setChoosing(false)}>{t("cancel")}</Button> : null}
-            </>
-          )}
+          footer={startButtons}
         >
-          <p className="pb-2 text-xs text-muted-foreground">{t("quick.willConfigure")}</p>
-          {candidates === null ? (
-            <div className="flex justify-center py-4"><Spinner /></div>
-          ) : candidates.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t("noDevices")}</p>
-          ) : (
-            <div className="flex flex-col divide-y divide-border">
-              {candidates.map((item) => {
-                const key = quickTargetKey(item)
-                const enabled = item.decision === "apply"
-                return (
-                  <label key={key} className={cn("flex items-start gap-3 py-2.5", !enabled && "opacity-60")}>
-                    <Checkbox
-                      className="mt-0.5"
-                      checked={enabled && selection.has(key)}
-                      disabled={!enabled}
-                      onCheckedChange={(checked) => setSelected(() => {
-                        const next = new Set(selection)
-                        if (checked === true) next.add(key)
-                        else next.delete(key)
-                        return next
-                      })}
-                    />
-                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                      <div className="flex flex-wrap items-center gap-2 text-sm">
-                        <span className="font-medium">{deviceName(item.connectorId)} · {item.name ?? item.runtimeId}</span>
-                        <RuntimeMaturityBadge maturity={item.capabilityMaturity ?? item.maturity} />
-                      </div>
-                      <span className="text-xs text-muted-foreground">{candidateNote(item, t)}</span>
-                    </div>
-                  </label>
-                )
-              })}
-            </div>
-          )}
+          {choices}
         </SettingsSection>
       ) : phase === "progress" ? (
         <QuickSetupProgressCard
@@ -226,54 +234,53 @@ export function TokensQuickSetup({
           onCancel={() => setAuthorizing(false)}
         />
       ) : (
-        <SettingsSection
-          title={(
-            <span className="flex items-center gap-2">
-              Tokens Anywhere
-              <Badge variant="outline" className="border-emerald-500/40 font-normal text-emerald-700 dark:text-emerald-400">
-                <Check data-icon="inline-start" />{t("quick.configured")}
-              </Badge>
-            </span>
-          )}
-          description={t("tokensLinked", { account: tokens.link?.account.displayName ?? tokens.link?.account.email ?? tokens.link?.account.id ?? "" })}
-          action={(
-            <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" onClick={() => void sync()} disabled={busy}>
-                {busy ? <Spinner /> : <RefreshCw data-icon="inline-start" />}{t("quick.updateModels")}
-              </Button>
-              {unlinkButton}
+        <TokensAccount
+          token={token}
+          profile={tokensProfile}
+          fallbackAccount={tokens.link?.account}
+          action={unlinkButton}
+          syncing={busy}
+          applying={quickSetupRunning(tokens)}
+          initialTab={tokenAssignments.length === 0 ? "devices" : "models"}
+          onSync={() => void sync()}
+          onChanged={onChanged}
+          errorText={errorText}
+          devices={choosing || tokenAssignments.length === 0 ? (
+            <div className="flex flex-col gap-3">
+              {choices}
+              <div className="flex flex-wrap gap-2">{startButtons}</div>
             </div>
-          )}
-        >
-          <div className="flex flex-col gap-3">
-            {fresh.length ? (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-sm">
-                <span>{t("quick.newRuntimes", { count: fresh.length })}</span>
-                <Button size="sm" variant="outline" onClick={chooseNew}>{t("quick.configureNew")}</Button>
-              </div>
-            ) : null}
-            {tokens.link?.relinkSoon ? <p className="text-sm text-amber-700 dark:text-amber-400">{t("relinkSoon")}</p> : null}
-            <div className="flex flex-col divide-y divide-border">
-              {tokenAssignments.map((item) => (
-                <div key={quickTargetKey(item)} className="flex flex-wrap items-baseline justify-between gap-2 py-2 text-sm">
-                  <span>{deviceName(item.connectorId)} · {runtimeName(item)}</span>
-                  <span className="text-xs text-muted-foreground">{assignmentNote(item.status, item.createdRuntime, t)}</span>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {fresh.length ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-sm">
+                  <span>{t("quick.newRuntimes", { count: fresh.length })}</span>
+                  <Button size="sm" variant="outline" onClick={chooseNew}>{t("quick.configureNew")}</Button>
                 </div>
-              ))}
-              {(tokens.quickSetup?.results ?? [])
-                .filter((item) => item.result === "skipped" || item.result === "failed")
-                .map((item) => (
-                  <div key={`skip:${quickTargetKey(item)}`} className="flex flex-wrap items-baseline justify-between gap-2 py-2 text-sm">
+              ) : null}
+              {tokens.link?.relinkSoon ? <p className="text-sm text-amber-700 dark:text-amber-400">{t("relinkSoon")}</p> : null}
+              <div className="flex flex-col divide-y divide-border">
+                {tokenAssignments.map((item) => (
+                  <div key={quickTargetKey(item)} className="flex flex-wrap items-baseline justify-between gap-2 py-2 text-sm">
                     <span>{deviceName(item.connectorId)} · {runtimeName(item)}</span>
-                    <span className="text-xs text-amber-700 dark:text-amber-400">{reasonText(item.reason, t)}</span>
+                    <span className="text-xs text-muted-foreground">{assignmentNote(item.status, item.createdRuntime, t)}</span>
                   </div>
                 ))}
+                {(tokens.quickSetup?.results ?? [])
+                  .filter((item) => item.result === "skipped" || item.result === "failed")
+                  .map((item) => (
+                    <div key={`skip:${quickTargetKey(item)}`} className="flex flex-wrap items-baseline justify-between gap-2 py-2 text-sm">
+                      <span>{deviceName(item.connectorId)} · {runtimeName(item)}</span>
+                      <span className="text-xs text-amber-700 dark:text-amber-400">{reasonText(item.reason, t)}</span>
+                    </div>
+                  ))}
+              </div>
+              {(tokens.quickSetup?.results ?? []).some((item) => item.modelsTrimmed) ? (
+                <p className="text-xs text-muted-foreground">{t("quick.modelsTrimmed")}</p>
+              ) : null}
             </div>
-            {(tokens.quickSetup?.results ?? []).some((item) => item.modelsTrimmed) ? (
-              <p className="text-xs text-muted-foreground">{t("quick.modelsTrimmed")}</p>
-            ) : null}
-          </div>
-        </SettingsSection>
+          )}
+        />
       )}
       <Dialog open={confirmUnlink} onOpenChange={setConfirmUnlink}>
         <DialogContent>

@@ -61,6 +61,9 @@ test("quick setup: the card shows choosing, progress or done", () => {
   assert.equal(presentation.quickSetupPhase({ link: linked, quickSetup: { state: "failed", step: "apply" } }, true, false), "progress")
   assert.equal(presentation.quickSetupPhase({ link: linked, quickSetup: { state: "done" } }, false, false), "done")
   assert.equal(presentation.quickSetupPhase({ link: linked }, true, false), "done")
+  assert.equal(presentation.quickSetupPhase({ link: linked }, false, false), "done")
+  // Changing models on a configured account keeps the account page in view.
+  assert.equal(presentation.quickSetupPhase({ link: linked, quickSetup: { state: "applying" } }, true, false), "done")
   assert.equal(presentation.quickSetupPhase({ link: { status: "reauth_required" } }, true, false), "setup")
 })
 

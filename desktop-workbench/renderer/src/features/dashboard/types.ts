@@ -121,7 +121,17 @@ export type ModelConnectionStatus = {
   externalOwner?: string | null;
 };
 
-export type ModelSpec = { id: string; name?: string | null; efforts?: string[]; input?: ("text" | "image")[] };
+export type ModelSpec = {
+  id: string;
+  name?: string | null;
+  efforts?: string[];
+  input?: ("text" | "image")[];
+  vendor?: string | null;
+  contextWindow?: number | null;
+  maxOutputTokens?: number | null;
+};
+/** Models turned off, and names shown in place of the model's own; Agents Anywhere only. */
+export type ModelPreferences = { disabled: string[]; names: Record<string, string> };
 export type ModelOffer = { format: ModelProtocol; baseUrl: string; models: ModelSpec[] };
 
 export type ModelProfile = {
@@ -130,6 +140,7 @@ export type ModelProfile = {
   name: string;
   originHost: string;
   offers: ModelOffer[];
+  preferences?: ModelPreferences;
   keyHint: string | null;
   strategyName: string | null;
   state: "active" | "detached";

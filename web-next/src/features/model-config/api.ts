@@ -3,6 +3,7 @@ import type {
   ModelAssignment,
   ModelConfigOverview,
   ModelOffer,
+  ModelPreferences,
   ModelProfile,
   ModelProtocol,
   RuntimeMaturity,
@@ -42,6 +43,27 @@ export type ModelOperation = {
   finished: boolean;
   results: ModelOperationResult[];
 };
+
+/** Amounts are decimal yuan strings with four places, as Tokens Anywhere sends them. */
+export type TokensAccount = {
+  account: { id: string; displayName: string | null; email: string | null };
+  balance: { balance: string | null; available: string | null; held: string | null; bonus: string | null };
+  links: { console: string; billing: string; usage: string };
+};
+
+export type TokensUsageItem = {
+  date: string;
+  model: string | null;
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWrite5mTokens: number;
+  cacheWrite1hTokens: number;
+  amountCharged: string;
+};
+
+export type TokensUsage = { from: string; to: string; items: TokensUsageItem[] };
 
 export type ManualProfileInput = { name: string; apiKey: string; offers: ModelOffer[] };
 
@@ -128,6 +150,21 @@ export class ModelConfigApi {
     request: { targets: ModelTarget[]; confirmNativeGlobal: boolean },
   ): Promise<{ started: boolean; startUrl: string | null }> {
     return this.client.post("/integrations/tokens/quick-setup", request, { token });
+  }
+
+  /** The linked account, its balance and its console pages. */
+  tokensAccount(token: string): Promise<TokensAccount> {
+    return this.client.get<TokensAccount>("/integrations/tokens/account", { token });
+  }
+
+  /** The whole Tokens account's settled usage over the last `days` Beijing days. */
+  tokensUsage(token: string, days: number): Promise<TokensUsage> {
+    return this.client.get<TokensUsage>("/integrations/tokens/usage", { token, query: { days } });
+  }
+
+  /** Turns models off and renames them; runtimes using Tokens get the change in the background. */
+  saveTokensModels(token: string, preferences: ModelPreferences): Promise<{ applying: boolean }> {
+    return this.client.put<{ applying: boolean }>("/integrations/tokens/models", preferences, { token });
   }
 
   rotateTokensKey(token: string, profileId: string, allowInterrupt: boolean, idempotencyKey: string): Promise<ModelOperation> {
