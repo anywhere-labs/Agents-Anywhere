@@ -4,12 +4,20 @@ import os
 from typing import Annotated, Any
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+)
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent_server.core.api_namespace import api_v2_path
-from agent_server.core.model_config import QuickSetupRequest
+from agent_server.core.model_config import ModelPreferences, QuickSetupRequest
 from agent_server.core.models import UserView
 from agent_server.deps import current_user_id, get_tokens_link_service, require_admin
 from agent_server.infra.tokens_client import TokensError
@@ -135,6 +143,43 @@ async def start_quick_setup(
         return {"started": True, "startUrl": None}
     start = f"{origin}{api_v2_path('/integrations/tokens/start')}?{urlencode({'ticket': ticket})}"
     return {"started": False, "startUrl": start}
+
+
+@router.get("/integrations/tokens/account")
+async def get_tokens_account(service: Service, user_id: UserId) -> dict[str, Any]:
+    try:
+        return await service.account(user_id=user_id)
+    except TokensLinkError as exc:
+        _raise(exc)
+
+
+@router.get("/integrations/tokens/usage")
+async def get_tokens_usage(
+    service: Service,
+    user_id: UserId,
+    days: Annotated[int, Query(ge=1, le=92)] = 30,
+) -> dict[str, Any]:
+    try:
+        return await service.usage(user_id=user_id, days=days)
+    except TokensLinkError as exc:
+        _raise(exc)
+
+
+@router.put("/integrations/tokens/models")
+async def put_tokens_models(
+    payload: ModelPreferences,
+    background: BackgroundTasks,
+    service: Service,
+    user_id: UserId,
+) -> dict[str, Any]:
+    """Choose and rename the Tokens models; runtimes using them are updated in the background."""
+    try:
+        applying = await service.save_model_preferences(payload, user_id=user_id)
+    except (TokensLinkError, ModelConfigError) as exc:
+        _raise(exc)
+    if applying:
+        background.add_task(service.run_quick_setup, user_id=user_id)
+    return {"applying": applying}
 
 
 @router.get("/integrations/tokens/callback")

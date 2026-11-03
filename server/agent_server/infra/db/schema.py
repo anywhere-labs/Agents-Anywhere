@@ -648,7 +648,7 @@ model_profiles = Table("model_profiles", metadata,
     Column("source", Text, nullable=False), Column("name", Text, nullable=False),
     Column("origin_host", Text, nullable=False), Column("offers_json", Text, nullable=False),
     Column("catalog_digest", Text, nullable=False), Column("key_ref_json", Text, nullable=False),
-    Column("secret_ciphertext", Text), Column("state", Text, nullable=False),
+    Column("secret_ciphertext", Text), Column("preferences_json", Text), Column("state", Text, nullable=False),
     Column("etag", Integer, nullable=False), Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
     Index("idx_model_profiles_user_id", "user_id"))

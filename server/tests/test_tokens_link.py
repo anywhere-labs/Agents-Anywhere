@@ -37,6 +37,7 @@ class FakeTokens:
         self.refresh_error: str | None = None
         self.api_base_url: str | None = None
         self.key_kept = True
+        self.usage_query: dict[str, str] | None = None
         self.model_hosts: list[str] = []
 
     def _pair(self) -> httpx.Response:
@@ -73,9 +74,13 @@ class FakeTokens:
             self.revoked.append(parse_qs(request.content.decode())["token"][0])
             return httpx.Response(200, json={})
         if path == "/api/v1/pricing":
-            return httpx.Response(
-                200, json={"groups": [], "profiles": {"gpt-5": {"displayName": "GPT-5", "capabilities": ["vision"]}}}
-            )
+            return httpx.Response(200, json={
+                "groups": [{"name": "default", "models": [
+                    {"model": "gpt-5", "provider": "openai", "maxOutputTokens": 128000},
+                    {"model": "deepseek-v3", "provider": "deepseek", "maxOutputTokens": 8000},
+                ]}],
+                "profiles": {"gpt-5": {"displayName": "GPT-5", "capabilities": ["vision"], "contextWindow": 400000}},
+            })
         if path == "/api/v1/status":
             return httpx.Response(200, json={"siteName": "Tokens", "apiBaseUrl": self.api_base_url or ISSUER})
         if path == "/v1/models":
@@ -97,6 +102,15 @@ class FakeTokens:
             return httpx.Response(401, json={"code": "unauthenticated"})
         if path == "/api/v1/me":
             return httpx.Response(200, json={"id": "42", "displayName": "Ada", "email": "ada@example.com"})
+        if path == "/api/v1/balance":
+            return httpx.Response(200, json={"balance": "19.9800", "held": "0.0000", "available": "19.9800", "bonus": "0.0000"})
+        if path == "/api/v1/usage/daily":
+            self.usage_query = dict(request.url.params)
+            return httpx.Response(200, json={"items": [
+                {"date": "2026-11-03", "model": "gpt-5", "requests": 1, "inputTokens": 11000, "outputTokens": 89,
+                 "cacheReadTokens": 0, "cacheWrite5mTokens": 0, "cacheWrite1hTokens": 0, "amountCharged": "0.0200",
+                 "keyId": None, "keyName": None},
+            ]})
         key = {"id": "7", "prefix": self.secret[:8], "strategy": {"id": "1", "name": "Default"}}
         if path == "/api/v1/keys/managed":
             if not self.key_kept:
@@ -174,7 +188,12 @@ def test_link_apply_rotate_and_unlink(tokens):
         "name": "GPT-5",
         "efforts": [],
         "input": ["text", "image"],
+        "vendor": "openai",
+        "contextWindow": 400000,
+        "maxOutputTokens": 128000,
     }
+    assert offers["openai_chat"]["models"][1]["vendor"] == "deepseek"
+    assert offers["anthropic"]["models"][0]["vendor"] == "anthropic"
     assert profile["keyHint"] == "sk-aa-se…"
 
     _applied(client, headers, profile["id"], [_target(connector_id)])
@@ -457,3 +476,49 @@ def test_one_click_setup_cannot_start_twice(tokens):
 
     assert again.status_code == 409, again.text
     assert again.json()["detail"]["code"] == "quick_setup_running"
+
+
+def test_account_shows_balance_and_console_pages(tokens):
+    client, fake, _connector_id, headers = tokens
+    _link(client, headers, fake)
+
+    account = client.get("/integrations/tokens/account", headers=headers)
+    usage = client.get("/integrations/tokens/usage", headers=headers, params={"days": 7})
+
+    assert account.status_code == 200, account.text
+    assert account.json()["account"]["displayName"] == "Ada"
+    assert account.json()["balance"]["available"] == "19.9800"
+    assert account.json()["links"]["billing"] == f"{ISSUER}/console/settings/billing/"
+    assert usage.status_code == 200, usage.text
+    body = usage.json()
+    assert fake.usage_query == {"from": body["from"], "to": body["to"], "groupBy": "model"}
+    assert body["items"][0]["amountCharged"] == "0.0200"
+    assert "keyId" not in body["items"][0]
+
+
+def test_turned_off_and_renamed_models_reach_runtimes(tmp_path, server_secret):
+    from test_model_config import PI_LIKE, _save_config
+
+    client, _rpc, connector_id, headers = _client(tmp_path, PI_LIKE)
+    fake = FakeTokens()
+    client.app.state.tokens_client_factory = lambda base: TokensClient(base, transport=httpx.MockTransport(fake.handle))
+    client.put("/admin/integrations/tokens", headers=headers, json={"tokensUrl": ISSUER})
+    _save_config(client, connector_id, headers, {"executionMode": "managed"})
+    _link(client, headers, fake)
+    profile = _tokens_profile(client, headers)
+    _applied(client, headers, profile["id"], [_target(connector_id)])
+
+    saved = client.put(
+        "/integrations/tokens/models",
+        headers=headers,
+        json={"disabled": ["deepseek-v3"], "names": {"gpt-5": "GPT Five"}},
+    )
+
+    assert saved.status_code == 200, saved.text
+    assert saved.json() == {"applying": True}
+    assert client.get("/integrations/tokens", headers=headers).json()["quickSetup"]["state"] == "done"
+    models = _runtimes(client, connector_id, headers)["codex"]["config"]["customModels"]
+    assert models == [{"modelId": "gpt-5", "displayName": "GPT Five"}]
+    assert _tokens_profile(client, headers)["preferences"] == {"disabled": ["deepseek-v3"], "names": {"gpt-5": "GPT Five"}}
+    [assignment] = _overview(client, headers)["assignments"]
+    assert assignment["status"] == "applied"

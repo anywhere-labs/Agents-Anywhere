@@ -24,6 +24,7 @@ from agent_server.core.model_config import (
     ApplyRequest,
     AssignmentTarget,
     ManualProfileRequest,
+    ModelPreferences,
     Offer,
     PreviewRequest,
     ProfilePatchRequest,
@@ -31,6 +32,7 @@ from agent_server.core.model_config import (
     apply_patch,
     assignment_status,
     catalog_digest,
+    effective_offers,
     match_offer,
     origin_host,
     plan_mode,
@@ -226,15 +228,17 @@ class ModelConfigService:
         key_ref: dict[str, Any],
     ) -> dict[str, Any]:
         """Create or refresh the profile a Tokens Anywhere link provides."""
+        existing = await self._store.find_model_profile_by_source(user_id=user_id, source="tokens")
+        preferences = _preferences(existing) if existing else None
         values = {
             "name": name,
             "origin_host": origin_host(offers),
             "offers_json": json.dumps([offer.model_dump(mode="json") for offer in offers]),
-            "catalog_digest": catalog_digest(offers, key_ref),
+            # What runtimes get changes with the user's model choices too.
+            "catalog_digest": catalog_digest(effective_offers(offers, preferences), key_ref),
             "key_ref_json": json.dumps(key_ref),
             "state": "active",
         }
-        existing = await self._store.find_model_profile_by_source(user_id=user_id, source="tokens")
         if existing is None:
             now = utc_now()
             row = await self._store.create_model_profile(
@@ -253,6 +257,23 @@ class ModelConfigService:
             row = existing
         else:
             row = await self._store.update_model_profile(existing["id"], user_id=user_id, values=values)
+        await self._publish(user_id)
+        return self._public_profile(row)
+
+    async def set_tokens_preferences(self, preferences: ModelPreferences, *, user_id: str) -> dict[str, Any]:
+        """Choose which Tokens models runtimes get and rename them; applied by the caller."""
+        profile = await self._store.find_model_profile_by_source(user_id=user_id, source="tokens")
+        if profile is None or profile["state"] != "active":
+            raise ModelConfigNotFoundError("tokens_not_synced", "sync Tokens Anywhere first")
+        offers = [Offer.model_validate(offer) for offer in profile["offers"]]
+        row = await self._store.update_model_profile(
+            profile["id"],
+            user_id=user_id,
+            values={
+                "preferences_json": json.dumps(preferences.model_dump(mode="json")),
+                "catalog_digest": catalog_digest(effective_offers(offers, preferences), profile["keyRef"]),
+            },
+        )
         await self._publish(user_id)
         return self._public_profile(row)
 
@@ -326,7 +347,7 @@ class ModelConfigService:
 
     async def preview(self, request: PreviewRequest, *, user_id: str) -> dict[str, Any]:
         profile = await self._get_profile(request.profileId, user_id=user_id)
-        offers = [Offer.model_validate(offer) for offer in profile["offers"]]
+        offers = _profile_offers(profile)
         return {
             "profileId": profile["id"],
             "targets": await self._preview_offers(offers, user_id=user_id, targets=request.targets),
@@ -410,7 +431,7 @@ class ModelConfigService:
                 for target in request.targets
             ]
             return await self._finish_operation(operation["id"], failed, user_id=user_id)
-        offers = [Offer.model_validate(offer) for offer in profile["offers"]]
+        offers = _profile_offers(profile)
         results = []
         for target in request.targets:
             try:
@@ -837,6 +858,7 @@ class ModelConfigService:
             "originHost": profile["originHost"],
             "offers": profile["offers"],
             # A Tokens key is known by its prefix; the ellipsis says the rest is hidden.
+            "preferences": profile.get("preferences") or {"disabled": [], "names": {}},
             "keyHint": key_ref.get("hint") or (f"{key_ref['prefix']}…" if key_ref.get("prefix") else None),
             "strategyName": key_ref.get("strategy"),
             "state": profile["state"],
@@ -881,6 +903,16 @@ class ModelConfigService:
             )
         except Exception:  # noqa: BLE001 - a missed push is recovered by the next one
             logger.exception("model config dashboard publish failed user_id={}", user_id)
+
+
+def _preferences(profile: dict[str, Any]) -> ModelPreferences | None:
+    raw = profile.get("preferences")
+    return ModelPreferences.model_validate(raw) if isinstance(raw, dict) else None
+
+
+def _profile_offers(profile: dict[str, Any]) -> list[Offer]:
+    """The offers runtimes get from a profile, after the user's model choices."""
+    return effective_offers([Offer.model_validate(offer) for offer in profile["offers"]], _preferences(profile))
 
 
 def _trimmed(

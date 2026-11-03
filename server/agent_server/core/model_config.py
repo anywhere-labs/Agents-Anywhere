@@ -38,6 +38,10 @@ class ModelSpec(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     efforts: list[str] = Field(default_factory=list, max_length=16)
     input: list[Literal["text", "image"]] = Field(default_factory=list, max_length=2)
+    # Who makes the model (openai, anthropic, deepseek, gemini…), for grouping.
+    vendor: str | None = Field(default=None, min_length=1, max_length=32)
+    contextWindow: int | None = Field(default=None, ge=1)
+    maxOutputTokens: int | None = Field(default=None, ge=1)
 
 
 class Offer(BaseModel):
@@ -59,6 +63,48 @@ class Offer(BaseModel):
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError("baseUrl must not carry credentials, a query or a fragment")
         return value
+
+
+class ModelPreferences(BaseModel):
+    """Which of a profile's models runtimes get, and under which names."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    disabled: list[str] = Field(default_factory=list, max_length=1024)
+    names: dict[str, str] = Field(default_factory=dict, max_length=1024)
+
+    @field_validator("names")
+    @classmethod
+    def _names(cls, value: dict[str, str]) -> dict[str, str]:
+        cleaned = {}
+        for model_id, name in value.items():
+            name = name.strip()
+            if not model_id or len(model_id) > 256 or not 1 <= len(name) <= 128 or "\n" in name:
+                raise ValueError("a model name must be 1 to 128 characters on one line")
+            cleaned[model_id] = name
+        return cleaned
+
+
+def effective_offers(offers: list[Offer], preferences: ModelPreferences | None) -> list[Offer]:
+    """The offers runtimes get: disabled models left out, renamed ones renamed.
+
+    An offer whose models were all turned off is left out, so runtimes that
+    only speak its protocol are not set up with it.
+    """
+    if preferences is None or (not preferences.disabled and not preferences.names):
+        return offers
+    disabled = set(preferences.disabled)
+    result = []
+    for offer in offers:
+        models = [
+            spec.model_copy(update={"name": preferences.names.get(spec.id, spec.name)})
+            for spec in offer.models
+            if spec.id not in disabled
+        ]
+        if offer.models and not models:
+            continue
+        result.append(offer.model_copy(update={"models": models}))
+    return result
 
 
 class ManualProfileRequest(BaseModel):

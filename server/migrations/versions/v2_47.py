@@ -74,6 +74,8 @@ def upgrade() -> None:
         sa.Column("catalog_digest", sa.Text(), nullable=False),
         sa.Column("key_ref_json", sa.Text(), nullable=False),
         sa.Column("secret_ciphertext", sa.Text()),
+        # Which models runtimes get and under which names (Tokens profile).
+        sa.Column("preferences_json", sa.Text()),
         sa.Column("state", sa.Text(), nullable=False),
         sa.Column("etag", sa.Integer(), nullable=False),
         sa.Column("created_at", sa.Text(), nullable=False),

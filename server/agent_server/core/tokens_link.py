@@ -95,15 +95,32 @@ def key_ref(key: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _spec(model_id: str, profiles: dict[str, Any]) -> ModelSpec:
+def _spec(model_id: str, profiles: dict[str, Any], prices: dict[str, Any], vendor: str | None) -> ModelSpec:
     profile = profiles.get(model_id) if isinstance(profiles.get(model_id), dict) else {}
+    price = prices.get(model_id) if isinstance(prices.get(model_id), dict) else {}
     capabilities = profile.get("capabilities") or []
     name = profile.get("displayName")
+    context = profile.get("contextWindow")
+    output = price.get("maxOutputTokens")
+    maker = price.get("provider") or vendor
     return ModelSpec(
         id=model_id,
         name=name[:128] if isinstance(name, str) and name else None,
         input=["text", "image"] if "vision" in capabilities else ["text"],
+        vendor=str(maker)[:32] if maker else None,
+        contextWindow=context if isinstance(context, int) and context > 0 else None,
+        maxOutputTokens=output if isinstance(output, int) and output > 0 else None,
     )
+
+
+def price_index(pricing: dict[str, Any]) -> dict[str, Any]:
+    """Each model's provider and output cap from ``/api/v1/pricing`` groups."""
+    index: dict[str, Any] = {}
+    for group in pricing.get("groups") or []:
+        for model in (group.get("models") or []) if isinstance(group, dict) else []:
+            if isinstance(model, dict) and isinstance(model.get("model"), str):
+                index.setdefault(model["model"], model)
+    return index
 
 
 def _ids(models: list[dict[str, Any]], *, owner: str | None = None) -> list[str]:
@@ -124,19 +141,29 @@ def catalog_offers(
     openai_models: list[dict[str, Any]],
     anthropic_models: list[dict[str, Any]],
     profiles: dict[str, Any],
+    prices: dict[str, Any] | None = None,
 ) -> list[Offer]:
     """Offers per protocol from what the key's ``/v1/models`` lists.
 
     Until Tokens Anywhere confirms other vendors work over the Responses API,
     ``openai_responses`` only carries OpenAI's own models (§3.5).
     """
+    prices = prices or {}
+    owners = {model.get("id"): model.get("owned_by") for model in openai_models if isinstance(model, dict)}
     groups = [
         ("openai_responses", f"{issuer}/v1", _ids(openai_models, owner="openai")),
         ("openai_chat", f"{issuer}/v1", _ids(openai_models)),
         ("anthropic", issuer, _ids(anthropic_models)),
     ]
     return [
-        Offer(format=protocol, baseUrl=base, models=[_spec(model_id, profiles) for model_id in ids[:256]])
+        Offer(
+            format=protocol,
+            baseUrl=base,
+            models=[
+                _spec(model_id, profiles, prices, owners.get(model_id) or ("anthropic" if protocol == "anthropic" else None))
+                for model_id in ids[:256]
+            ],
+        )
         for protocol, base, ids in groups
         if ids
     ]

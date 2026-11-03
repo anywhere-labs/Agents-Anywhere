@@ -149,9 +149,23 @@ class TokensClient:
         return value if isinstance(value, str) and value else None
 
     async def pricing(self) -> dict[str, Any]:
+        """The public price list: ``groups`` with each model's provider, and ``profiles``."""
         body = _checked(await self._send("GET", "/api/v1/pricing"))
-        profiles = body.get("profiles")
-        return profiles if isinstance(profiles, dict) else {}
+        return {
+            "groups": body.get("groups") if isinstance(body.get("groups"), list) else [],
+            "profiles": body.get("profiles") if isinstance(body.get("profiles"), dict) else {},
+        }
+
+    async def balance(self, access_token: str) -> dict[str, Any]:
+        return await self._api("GET", "/api/v1/balance", access_token)
+
+    async def usage_daily(self, access_token: str, *, start: str, end: str) -> list[dict[str, Any]]:
+        """Settled usage per Beijing date and model, both ends included."""
+        body = await self._api(
+            "GET", "/api/v1/usage/daily", access_token, params={"from": start, "to": end, "groupBy": "model"}
+        )
+        items = body.get("items")
+        return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
 
 
 def _json(response: httpx.Response) -> dict[str, Any]:

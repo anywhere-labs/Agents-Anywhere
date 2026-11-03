@@ -11,7 +11,7 @@ import asyncio
 import json
 import os
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, Protocol
 
 from loguru import logger
@@ -19,6 +19,7 @@ from loguru import logger
 from agent_server.core.model_config import (
     ApplyRequest,
     AssignmentTarget,
+    ModelPreferences,
     ModelSpec,
     Offer,
     QuickSetupRequest,
@@ -37,6 +38,7 @@ from agent_server.core.tokens_link import (
     new_code_verifier,
     new_secret,
     normalize_tokens_url,
+    price_index,
     public_account,
     secret_hash,
 )
@@ -63,6 +65,8 @@ SETTING_TOKENS_URL = "tokens_anywhere_url"
 # it sealed, which needs its TOKENS_SECRETS_KEY.
 KEY_NOT_KEPT = {"key_secret_not_kept", "secrets_key_missing"}
 KEEP_ALIVE_INTERVAL = timedelta(days=1)
+# Tokens Anywhere counts usage by Beijing date.
+BEIJING = timezone(timedelta(hours=8))
 # A quick setup that has not reported back within this is assumed lost.
 QUICK_SETUP_LEASE = timedelta(minutes=5)
 QUICK_SETUP_PROTOCOLS = ("openai_responses", "openai_chat", "anthropic")
@@ -458,11 +462,15 @@ class TokensLinkService:
         except TokensUnauthorizedError as exc:
             raise TokensLinkError("key_rejected", "Tokens Anywhere refused this instance's key") from exc
         try:
-            profiles = await client.pricing()
+            pricing = await client.pricing()
         except TokensError:
-            profiles = {}
+            pricing = {"groups": [], "profiles": {}}
         offers = catalog_offers(
-            gateway, openai_models=openai_models, anthropic_models=anthropic_models, profiles=profiles
+            gateway,
+            openai_models=openai_models,
+            anthropic_models=anthropic_models,
+            profiles=pricing["profiles"],
+            prices=price_index(pricing),
         )
         if not offers:
             raise TokensLinkError("catalog_empty", "this key reaches no models yet")
@@ -572,16 +580,23 @@ class TokensLinkService:
         """Sync the catalog and apply it to the ticked runtimes; never raises."""
         link = await self._store.get_tokens_link(user_id)
         progress = (link or {}).get("quickSetup") or {}
-        if progress.get("state") != "syncing":
+        if progress.get("state") not in {"syncing", "applying"}:
             return
         request = progress["request"]
-        try:
-            profile = await self.sync(user_id=user_id)
-        except (TokensLinkError, TokensError, ModelConfigError) as exc:
-            await self._quick_failed(user_id, request, "sync", exc)
-            return
-        await self._store.set_tokens_link_quick_setup(user_id, _quick_progress("applying", request))
-        await self._publish(user_id)
+        if progress["state"] == "syncing":
+            try:
+                profile = await self.sync(user_id=user_id)
+            except (TokensLinkError, TokensError, ModelConfigError) as exc:
+                await self._quick_failed(user_id, request, "sync", exc)
+                return
+            await self._store.set_tokens_link_quick_setup(user_id, _quick_progress("applying", request))
+            await self._publish(user_id)
+        else:
+            # Applying again after a change of models: the catalog stands.
+            profile = await self._store.find_model_profile_by_source(user_id=user_id, source="tokens")
+            if profile is None:
+                await self._quick_failed(user_id, request, "apply", TokensLinkError("tokens_not_synced", ""))
+                return
         try:
             operation = await self.model_config.apply(
                 ApplyRequest(
@@ -606,6 +621,61 @@ class TokensLinkService:
         done["results"] = operation["results"]
         await self._store.set_tokens_link_quick_setup(user_id, done)
         await self._publish(user_id)
+
+    async def save_model_preferences(self, preferences: ModelPreferences, *, user_id: str) -> bool:
+        """Save which models runtimes get; True when runtimes need it applied now."""
+        link = await self._store.get_tokens_link(user_id)
+        running = (link or {}).get("quickSetup") or {}
+        started = _parse(running.get("startedAt"))
+        if running.get("state") in {"syncing", "applying"} and started and _now() - started < QUICK_SETUP_LEASE:
+            raise TokensLinkError("quick_setup_running", "a setup is already running")
+        profile = await self.model_config.set_tokens_preferences(preferences, user_id=user_id)
+        targets = [
+            {"connectorId": item["connectorId"], "runtimeId": item["runtimeId"]}
+            for item in await self._store.list_runtime_assignments(user_id=user_id)
+            if item["profileId"] == profile["id"]
+        ]
+        if not targets or link is None:
+            return False
+        request = {"targets": targets, "confirmNativeGlobal": True}
+        await self._store.set_tokens_link_quick_setup(user_id, _quick_progress("applying", request))
+        await self._publish(user_id)
+        return True
+
+    # Account.
+
+    async def account(self, *, user_id: str) -> dict[str, Any]:
+        """The Tokens account, its balance, and where its console pages are."""
+        issuer = await self._link_issuer(user_id)
+        try:
+            me = await self._call(user_id, lambda client, token: client.me(token))
+            balance = await self._call(user_id, lambda client, token: client.balance(token))
+        except TokensError as exc:
+            raise TokensLinkError("tokens_unavailable", "Tokens Anywhere is unavailable", status_code=502) from exc
+        return {
+            "account": public_account(me),
+            "balance": {key: balance.get(key) for key in ("balance", "available", "held", "bonus")},
+            "links": {
+                "console": f"{issuer}/console/",
+                "billing": f"{issuer}/console/settings/billing/",
+                "usage": f"{issuer}/console/usage/",
+            },
+        }
+
+    async def usage(self, *, user_id: str, days: int) -> dict[str, Any]:
+        """Settled usage of the whole Tokens account per day and model."""
+        end = datetime.now(BEIJING).date()
+        start = end - timedelta(days=days - 1)
+        try:
+            items = await self._call(
+                user_id,
+                lambda client, token: client.usage_daily(token, start=start.isoformat(), end=end.isoformat()),
+            )
+        except TokensError as exc:
+            raise TokensLinkError("tokens_unavailable", "Tokens Anywhere is unavailable", status_code=502) from exc
+        keep = ("date", "model", "requests", "inputTokens", "outputTokens", "cacheReadTokens",
+                "cacheWrite5mTokens", "cacheWrite1hTokens", "amountCharged")
+        return {"from": start.isoformat(), "to": end.isoformat(), "items": [{k: item.get(k) for k in keep} for item in items]}
 
     async def _quick_failed(self, user_id: str, request: dict[str, Any], step: str, exc: Exception) -> None:
         failed = _quick_progress("failed", request)

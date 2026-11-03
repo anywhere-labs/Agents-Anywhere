@@ -373,6 +373,7 @@ def _profile_row(row: Any) -> dict[str, Any]:
         "catalogDigest": row["catalog_digest"],
         "keyRef": _json_loads(row["key_ref_json"]) or {},
         "secretCiphertext": row["secret_ciphertext"],
+        "preferences": _json_loads(row["preferences_json"]),
         "state": row["state"],
         "etag": row["etag"],
         "createdAt": row["created_at"],
