@@ -195,7 +195,17 @@ class ConnectorIngestClient:
                 await asyncio.sleep(min(30.0, self._retry_delay * 2 ** min(attempt - 1, 5)))
                 continue
             except (ConnectorIngestRejectedError, httpx.HTTPStatusError) as exc:
-                logger.warning("connector ingest permanently rejected notifications={} error={}", len(self._inflight), exc)
+                methods = [n.get("method") for n in self._inflight]
+                body = ""
+                if isinstance(exc, httpx.HTTPStatusError):
+                    try:
+                        body = exc.response.text[:400]
+                    except Exception:
+                        body = "<unreadable>"
+                logger.warning(
+                    "connector ingest permanently rejected notifications={} methods={} body={} error={}",
+                    len(self._inflight), methods, body, exc,
+                )
             self._inflight = []
             attempt = 0
 
