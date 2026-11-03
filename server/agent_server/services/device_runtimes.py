@@ -44,6 +44,9 @@ from agent_server.services.repository_ports import DeviceRuntimeRepository
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
+# The Connector gives the model endpoint 30 seconds to answer.
+MODEL_PROBE_RPC_TIMEOUT_SECONDS = 45.0
+
 
 def _runtime_rpc_timeout_seconds() -> float:
     """Runtime RPCs can be slow on a large corpus; tests shorten this to fail fast."""
@@ -168,6 +171,8 @@ class DeviceRuntimeService:
         self._terminal_broker = terminal_broker
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._locks_guard = asyncio.Lock()
+        # What each connected Connector declared it supports (e.g. switchFence).
+        self._features: dict[str, frozenset[str]] = {}
 
     async def list_runtimes(
         self, connector_id: str, *, user_id: str
@@ -314,6 +319,7 @@ class DeviceRuntimeService:
         try:
             response = RuntimeDiscoveryResponse.model_validate(result)
             await self.ingest_runtime_types(connector_id, response, publish=False)
+            await self._remember_features(connector_id, response.features)
             return "runtime.types"
         except (ValidationError, ValueError) as exc:
             raise DeviceRuntimeUpstreamError(
@@ -470,6 +476,8 @@ class DeviceRuntimeService:
         config: dict[str, Any],
         *,
         restart: bool = True,
+        fence: dict[str, Any] | None = None,
+        started: dict[str, Any] | None = None,
     ) -> DeviceRuntimeView:
         connector_id, runtime_id = runtime.connectorId, runtime.runtimeId
         base_schema = self._schema(runtime)
@@ -497,7 +505,7 @@ class DeviceRuntimeService:
         if not await self._manager.is_online(connector_id):
             raise DeviceRuntimeOfflineError("connector is offline")
         try:
-            await self._request_validate(runtime, config, secrets=secrets)
+            await self._request_validate(runtime, config, secrets=secrets, fence=fence)
         except DeviceRuntimeError as exc:
             error = (
                 exc.detail
@@ -521,7 +529,7 @@ class DeviceRuntimeService:
             # Saved for the next start; the running instance keeps going.
             pass
         elif runtime.active:
-            runtime = await self._restart_locked(runtime)
+            runtime = await self._restart_locked(runtime, fence=fence, started=started)
         elif runtime.status != "stopped":
             # A successful configuration without activation settles on the
             # configured-but-not-started state instead of leaving a stale
@@ -875,6 +883,8 @@ class DeviceRuntimeService:
         runtime: DeviceRuntimeView,
         *,
         connection: ConnectorConnection | None = None,
+        fence: dict[str, Any] | None = None,
+        started: dict[str, Any] | None = None,
     ) -> DeviceRuntimeView:
         assert runtime.config is not None
         await self._store.set_device_runtime_status(
@@ -886,6 +896,7 @@ class DeviceRuntimeService:
             "name": runtime.name,
             "config": runtime.config,
             "configRevision": _config_revision(runtime),
+            **(await self._fence_params(runtime.connectorId, fence)),
         }
         try:
             if connection is None:
@@ -930,6 +941,8 @@ class DeviceRuntimeService:
                 else DeviceRuntimeUpstreamError
             )
             raise error_cls(exc.message, detail=row["error"]) from exc
+        if started is not None and isinstance(result, dict):
+            started.update(result)
         # A local service may be waiting for its Bridge while the switch stays on.
         # Older connectors omit status on successful starts.
         status = result.get("status", "running")
@@ -1038,10 +1051,16 @@ class DeviceRuntimeService:
             )
         )
 
-    async def _restart_locked(self, runtime: DeviceRuntimeView) -> DeviceRuntimeView:
+    async def _restart_locked(
+        self,
+        runtime: DeviceRuntimeView,
+        *,
+        fence: dict[str, Any] | None = None,
+        started: dict[str, Any] | None = None,
+    ) -> DeviceRuntimeView:
         if runtime.status in {"starting", "running", "stopping", "unknown"}:
             runtime = await self._stop_locked(runtime, allow_offline=False)
-        return await self._start_locked(runtime)
+        return await self._start_locked(runtime, fence=fence, started=started)
 
     async def _settle_runtime_sessions(self, runtime: DeviceRuntimeView) -> None:
         sessions = await self._store.list_running_sessions_for_connector_agent(
@@ -1070,6 +1089,7 @@ class DeviceRuntimeService:
         config: dict[str, Any],
         *,
         secrets: list[str] | None = None,
+        fence: dict[str, Any] | None = None,
     ) -> None:
         params = {
             "runtime": runtime.runtimeType,
@@ -1077,6 +1097,7 @@ class DeviceRuntimeService:
             "name": runtime.name,
             "config": config,
             "configRevision": _config_revision(runtime),
+            **(await self._fence_params(runtime.connectorId, fence)),
         }
         try:
             await self._manager.request(
@@ -1105,6 +1126,69 @@ class DeviceRuntimeService:
                 message,
                 detail={"code": exc.code, "message": message},
             ) from exc
+
+    async def _remember_features(self, connector_id: str, features: list[str]) -> None:
+        self._features[connector_id] = frozenset(features)
+        if self._coordinator is not None and self._coordinator.distributed:
+            # The Connector's socket lives on one worker; the others read it here.
+            await self._coordinator.client.set(
+                self._coordinator.key("connector-features", connector_id), ",".join(sorted(features)),
+            )
+
+    async def connector_supports(self, connector_id: str, feature: str) -> bool:
+        """Whether the Connector declared ``feature`` when it was last discovered."""
+        if self._coordinator is not None and self._coordinator.distributed:
+            stored = await self._coordinator.client.get(self._coordinator.key("connector-features", connector_id))
+            return feature in (stored or "").split(",")
+        return feature in self._features.get(connector_id, frozenset())
+
+    async def _fence_params(self, connector_id: str, fence: dict[str, Any] | None) -> dict[str, Any]:
+        # Older Connectors refuse unknown fields, so only send what they declared.
+        if not fence or not await self.connector_supports(connector_id, "switchFence"):
+            return {}
+        return {key: fence[key] for key in ("operationId", "switchRevision") if fence.get(key) is not None}
+
+    async def probe_model_connection(
+        self, connector_id: str, runtime_id: str, runtime_type: str,
+    ) -> dict[str, Any] | None:
+        """Have the running instance's model connection answer one minimal request.
+
+        Returns the Connector's ``{probe, configDigest, instanceId}``, or None
+        when the Connector cannot probe (it did not declare ``modelProbe``).
+        """
+        if not await self.connector_supports(connector_id, "modelProbe"):
+            return None
+        try:
+            result = await self._manager.request(
+                connector_id,
+                "runtime.probeModelConnection",
+                {"runtime": runtime_type, "runtimeId": runtime_id},
+                timeout=MODEL_PROBE_RPC_TIMEOUT_SECONDS,
+            )
+        except ConnectorOfflineError as exc:
+            raise DeviceRuntimeOfflineError(str(exc)) from exc
+        except ConnectorRpcError as exc:
+            raise DeviceRuntimeUpstreamError(
+                exc.message or exc.code, detail={"code": exc.code, "message": exc.message},
+            ) from exc
+        return result if isinstance(result, dict) else {}
+
+    async def read_connector_config(self, connector_id: str, runtime_id: str, runtime_type: str) -> dict[str, Any] | None:
+        """The configuration the Connector is actually running, or None if it cannot say."""
+        try:
+            result = await self._manager.request(
+                connector_id,
+                "runtime.config",
+                {"runtime": runtime_type, "runtimeId": runtime_id},
+                timeout=_runtime_rpc_timeout_seconds(),
+            )
+        except (ConnectorOfflineError, ConnectorRpcError):
+            return None
+        if not isinstance(result, dict):
+            return None
+        config = result.get("config")
+        values = config.get("values") if isinstance(config, dict) else None
+        return {"running": bool(result.get("running")), "values": values if isinstance(values, dict) else None}
 
     async def _get_owned(
         self,
@@ -1188,6 +1272,15 @@ class LockedRuntime:
     def __init__(self, service: DeviceRuntimeService, runtime: DeviceRuntimeView) -> None:
         self._service = service
         self.runtime = runtime
+        # The Connector's reply to the last start through this handle.
+        self.last_start: dict[str, Any] = {}
+
+    async def refresh(self) -> DeviceRuntimeView:
+        """Re-read the row: status reports may have arrived since the last write."""
+        self.runtime = DeviceRuntimeView.model_validate(
+            await self._service._store.get_device_runtime(self.runtime.connectorId, self.runtime.runtimeId)
+        )
+        return self.runtime
 
     async def running_session_count(self) -> int:
         sessions = await self._service._store.list_running_sessions_for_connector_agent(
@@ -1196,8 +1289,13 @@ class LockedRuntime:
         )
         return len(sessions)
 
-    async def put_config(self, config: dict[str, Any], *, restart: bool = True) -> DeviceRuntimeView:
-        self.runtime = await self._service._put_config_locked(self.runtime, config, restart=restart)
+    async def put_config(
+        self, config: dict[str, Any], *, restart: bool = True, fence: dict[str, Any] | None = None,
+    ) -> DeviceRuntimeView:
+        self.last_start = {}
+        self.runtime = await self._service._put_config_locked(
+            self.runtime, config, restart=restart, fence=fence, started=self.last_start,
+        )
         return self.runtime
 
     async def restart(self) -> DeviceRuntimeView:
@@ -1206,7 +1304,7 @@ class LockedRuntime:
             self.runtime = await self._service._restart_locked(self.runtime)
         return self.runtime
 
-    async def set_active(self, active: bool) -> DeviceRuntimeView:
+    async def set_active(self, active: bool, *, fence: dict[str, Any] | None = None) -> DeviceRuntimeView:
         service, runtime = self._service, self.runtime
         if active:
             if not runtime.configured or runtime.config is None:
@@ -1218,7 +1316,8 @@ class LockedRuntime:
             await service._store.set_device_runtime_active(
                 runtime.connectorId, runtime.runtimeId, True
             )
-            runtime = await service._start_locked(runtime)
+            self.last_start = {}
+            runtime = await service._start_locked(runtime, fence=fence, started=self.last_start)
         else:
             await service._store.set_device_runtime_active(
                 runtime.connectorId, runtime.runtimeId, False

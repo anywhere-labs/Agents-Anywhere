@@ -93,6 +93,7 @@ import {
   type NewSessionSelectionPreference,
 } from "@/features/dashboard/new-session-preferences"
 import { watchNewSessionRuntimeInventory } from "@/features/dashboard/new-session-runtime-inventory"
+import { channelRowFor, runtimeChannelKey } from "@/features/model-config/channel"
 
 const NEW_SESSION_PREFERENCE_KEY = "aa-new-session-preference-v1"
 const TITLE_WRITE_MS = 58
@@ -135,6 +136,8 @@ export function TaskComposer() {
   const { session: authSession } = useAuth()
   const isMobile = useIsMobile()
   const {
+    modelConfig,
+    runtimes: workspaceRuntimes,
     startSessionCreation,
     creationEditorDraft,
     discardCreationEditor,
@@ -269,9 +272,16 @@ export function TaskComposer() {
     const project = await resolveProject({ connectorId: selectedConnectorId, workspacePath: workspace.path })
     return { connectorId: selectedConnectorId, runtimeId: selectedAgent, projectId: project.id }
   }, [resolveProject, selectedConnectorId, selectedAgent, workspace?.path, tWorkspace])
+  // A runtime that switched channels offers other models; prepare and read its catalog again.
+  const runtimeChannel = runtimeChannelKey(channelRowFor(
+    modelConfig?.channel,
+    workspaceRuntimes,
+    modelConfig?.assignments ?? [],
+    { connectorId: selectedConnectorId, runtimeId: selectedAgent },
+  ))
   const preparation = useWorkspacePreparation(
     authSession?.accessToken,
-    JSON.stringify([selectedConnectorId, selectedAgent, workspace?.path ?? ""]),
+    JSON.stringify([selectedConnectorId, selectedAgent, workspace?.path ?? "", runtimeChannel]),
     needsPreparation && !catalogsLoading && workspace?.path && workspace.connectorId === selectedConnectorId ? prepareRequest : undefined,
   )
   const preparedConfiguration = preparation.operation?.state.configuration
@@ -473,7 +483,7 @@ export function TaskComposer() {
     return () => {
       cancelled = true
     }
-  }, [authSession?.accessToken, selectedAgent, selectedConnectorId, selectedRuntime?.runtimeType, selectedRuntime?.status, catalogRefreshKey])
+  }, [authSession?.accessToken, selectedAgent, selectedConnectorId, selectedRuntime?.runtimeType, selectedRuntime?.status, catalogRefreshKey, runtimeChannel, modelConfig?.profiles])
 
   // A failed cold-start read is not an authoritative empty catalog. Recover in place.
   React.useEffect(() => {

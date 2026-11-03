@@ -208,37 +208,43 @@ nonisolated private final class InterceptingURLProtocol: URLProtocol, @unchecked
     @Test func modelConfigRoutesHeadersAndBodiesMatchTheBackend() async throws {
         let session = session(); defer { session.invalidateAndCancel() }
         let api = V2APIClient(serverURL: URL(string: "https://example.test")!, tokenProvider: StaticAuthTokenProvider(token: "test-token"), urlSession: session)
+        let channel = try fixtureData("modelChannel")
         let replies: [InterceptedRequests.Reply] = try [
-            .response(201, fixtureData("modelProfile")), .response(204, Data()), .response(200, fixtureData("modelPreview")),
-            .response(200, fixtureData("modelOperation")), .response(200, Data(#"{"connectorId":"device","runtimeId":"rti_gateway","result":"restored"}"#.utf8)),
+            .response(201, fixtureData("modelProfile")), .response(204, Data()),
+            .response(200, channel), .response(200, channel), .response(200, channel), .response(200, channel),
+            .response(200, channel), .response(200, channel), .response(200, channel),
             .response(200, fixtureData("tokensLinkStart")), .response(200, fixtureData("modelProfile")),
-            .response(200, fixtureData("tokensUnlink")), .response(200, fixtureData("modelOperation")),
+            .response(200, fixtureData("tokensUnlink")), .response(200, channel),
             .response(409, fixtureData("modelConfigError")),
         ]
         InterceptingURLProtocol.state.reset(replies)
         let model = api.modelConfig
+        let target = V2ModelTarget(connectorId: "device", runtimeId: "rti_gateway")
         _ = try await model.createProfile(.init(name: "Gateway", apiKey: "sk-test",
             offers: [.init(format: "openai_chat", baseUrl: "https://gateway.example/v1", models: [.init(id: "gpt-test")])]))
         try await model.deleteProfile(id: "mpr_test")
-        let preview = try await model.preview(profileId: "mpr_test")
-        #expect(preview.targets.count == 3)
-        let operation = try await model.apply(.init(profileId: "mpr_test", targets: [.init(connectorId: "device", runtimeId: "rti_gateway")],
-            allowInterrupt: true, confirmNativeGlobal: false), idempotencyKey: "apply-key")
-        #expect(operation.operationId == "mco_test")
-        let restored = try await model.restore(.init(connectorId: "device", runtimeId: "rti_gateway"), allowInterrupt: true)
-        #expect(restored.result == "restored")
+        let state = try await model.channel()
+        #expect(state.channel == "mpr_test" && state.runtimes.count == 3)
+        _ = try await model.setChannel("tokens")
+        _ = try await model.setRuntimeChannel(target, channel: nil, confirmNativeGlobal: false)
+        _ = try await model.setRuntimeChannel(target, channel: "tokens", confirmNativeGlobal: true)
+        _ = try await model.switchNow(target)
+        _ = try await model.retryChannel()
+        _ = try await model.retryChannel(target)
         #expect(try await model.beginTokensLink().startUrl.hasPrefix("https://example.test/"))
         _ = try await model.syncTokens()
-        let unlink = try await model.unlinkTokens(allowInterrupt: false)
-        #expect(unlink.revoked && unlink.unrestoredCount == 0)
-        _ = try await model.rotateTokensKey(profileId: "mpr_tokens", allowInterrupt: false, idempotencyKey: "rotate-key")
+        #expect(try await model.unlinkTokens().revoked)
+        #expect(try await model.rotateTokensKey(profileId: "mpr_tokens", allowInterrupt: false).revision == 3)
         do { try await model.deleteProfile(id: "mpr_test"); Issue.record("Expected a conflict") }
-        catch { #expect(ModelConfigErrorText.text(error) == String(localized: "Devices still use this profile. Restore them first.")) }
+        catch { #expect(ModelConfigErrorText.text(error) == String(localized: "This profile is a channel in use. Switch to another channel first.")) }
 
         let requests = InterceptingURLProtocol.state.requests
         let expected = [
-            ("POST", "/model-profiles"), ("DELETE", "/model-profiles/mpr_test"), ("POST", "/model-config/assignments/preview"),
-            ("POST", "/model-config/assignments"), ("DELETE", "/model-config/assignments/device/rti_gateway"),
+            ("POST", "/model-profiles"), ("DELETE", "/model-profiles/mpr_test"),
+            ("GET", "/model-config/channel"), ("PUT", "/model-config/channel"),
+            ("PUT", "/model-config/channel/runtimes/device/rti_gateway"), ("PUT", "/model-config/channel/runtimes/device/rti_gateway"),
+            ("POST", "/model-config/channel/runtimes/device/rti_gateway/switch-now"),
+            ("POST", "/model-config/channel/retry"), ("POST", "/model-config/channel/retry"),
             ("POST", "/integrations/tokens/link"), ("POST", "/integrations/tokens/sync"), ("DELETE", "/integrations/tokens/link"),
             ("POST", "/model-profiles/mpr_tokens/rotate-key"), ("DELETE", "/model-profiles/mpr_test"),
         ]
@@ -248,47 +254,25 @@ nonisolated private final class InterceptingURLProtocol: URLProtocol, @unchecked
             #expect(request.httpMethod == expected.0)
             #expect(request.url?.path == "/api/v2" + expected.1)
             #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer test-token")
+            #expect(request.value(forHTTPHeaderField: "Idempotency-Key") == nil)
+            #expect(request.url?.query == nil, "\(expected.1) takes no query")
             #expect(routes.contains { route in
                 guard route["method"] == request.httpMethod else { return false }
                 let pattern = "^" + route["path"]!.replacingOccurrences(of: #"\{[^}]+\}"#, with: "[^/]+", options: .regularExpression) + "$"
                 return request.url!.path.range(of: pattern, options: .regularExpression) != nil
             }, "\(expected.0) \(expected.1) is not a backend route")
         }
-        #expect(requests[3].value(forHTTPHeaderField: "Idempotency-Key") == "apply-key")
-        #expect(requests[8].value(forHTTPHeaderField: "Idempotency-Key") == "rotate-key")
-        #expect(requests[0].value(forHTTPHeaderField: "Idempotency-Key") == nil)
-        #expect(query(requests[4]) == ["allow_interrupt": "true"])
-        #expect(query(requests[7]) == ["allow_interrupt": "false"])
         let bodies = try fixtureObject("requests")
-        for (index, key) in [(3, "applyModelProfile")] {
+        for (index, key) in [(3, "setChannel"), (4, "followChannel"), (5, "confirmRuntimeChannel"), (7, "retryAll"), (8, "retryRuntime")] {
             let body = try JSONDecoder().decode(JSONValue.self, from: #require(requests[index].httpBody))
             let backend = try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: bodies[key]!))
             #expect(body == backend, "Request \(key) differs from the backend model")
         }
         let created = try JSONDecoder().decode(JSONValue.self, from: #require(requests[0].httpBody))
         #expect(created["apiKey"]?.stringValue == "sk-test" && created["offers"]?.configArray?.count == 1)
-        let rotate = try JSONDecoder().decode(JSONValue.self, from: #require(requests[8].httpBody))
+        let rotate = try JSONDecoder().decode(JSONValue.self, from: #require(requests[12].httpBody))
         #expect(rotate == .object(["allowInterrupt": .bool(false)]))
-        #expect(requests[5].httpBody == nil && requests[6].httpBody == nil)
-    }
-
-    @Test func quickSetupRoutesAndBodyMatchTheBackend() async throws {
-        let session = session(); defer { session.invalidateAndCancel() }
-        let api = V2APIClient(serverURL: URL(string: "https://example.test")!, tokenProvider: StaticAuthTokenProvider(token: "test-token"), urlSession: session)
-        InterceptingURLProtocol.state.reset([.response(200, try fixtureData("quickSetupCandidates")), .response(200, try fixtureData("quickSetupStart"))])
-        let candidates = try await api.modelConfig.quickSetupCandidates()
-        #expect(candidates.targets.map(\.decision) == ["apply", "apply", "skip"])
-        let start = try await api.modelConfig.startQuickSetup(.init(targets: [.init(connectorId: "device", runtimeId: "rti_gateway")], confirmNativeGlobal: true))
-        #expect(!start.started && start.startUrl != nil)
-        let requests = InterceptingURLProtocol.state.requests
-        #expect(requests.map(\.httpMethod) == ["GET", "POST"])
-        #expect(requests.allSatisfy { $0.url?.path == "/api/v2/integrations/tokens/quick-setup" })
-        let routes: [[String: String]] = try JSONDecoder().decode([[String: String]].self, from: fixtureData("routes"))
-        #expect(routes.contains(["method": "GET", "path": "/api/v2/integrations/tokens/quick-setup"]))
-        #expect(routes.contains(["method": "POST", "path": "/api/v2/integrations/tokens/quick-setup"]))
-        let body = try JSONDecoder().decode(JSONValue.self, from: #require(requests[1].httpBody))
-        let backend = try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: (try fixtureObject("requests"))["quickSetup"]!))
-        #expect(body == backend)
+        #expect(requests[2].httpBody == nil && requests[6].httpBody == nil && requests[9].httpBody == nil && requests[10].httpBody == nil)
     }
 
     private func query(_ request: URLRequest) -> [String: String] {

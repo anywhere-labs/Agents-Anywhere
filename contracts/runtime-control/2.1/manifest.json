@@ -1,0 +1,107 @@
+{
+  "artifacts": [
+    {
+      "direction": "ingress",
+      "model": "RuntimeDiscoverRequest",
+      "path": "schemas/runtime-discover-request.schema.json",
+      "rpcMethod": "runtime.discover",
+      "rpcPart": "params",
+      "sha256": "3c7f22c391f4a1ac96a1d856f4e6175b8d60dbc929061a99e6191bf871a5332f",
+      "slug": "runtime-discover-request"
+    },
+    {
+      "direction": "egress",
+      "model": "RuntimeDiscoverResponse",
+      "path": "schemas/runtime-discover-response.schema.json",
+      "rpcMethod": "runtime.discover",
+      "rpcPart": "result",
+      "sha256": "1960494d071e68f97b33a82917e2297e9fdf83c41e5ce19bd1cd50f84d5e8e54",
+      "slug": "runtime-discover-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "RuntimeInstanceSpec",
+      "path": "schemas/runtime-instance-spec.schema.json",
+      "sha256": "2e31befd7efba9ba56d0d67af8d75fda4885c055b484474bea8fdc702c703e78",
+      "slug": "runtime-instance-spec"
+    },
+    {
+      "direction": "egress",
+      "model": "RuntimeInstanceStatus",
+      "path": "schemas/runtime-instance-status.schema.json",
+      "sha256": "78327ebe122436ce0fa6dd6432414386e4e590b262904831012ec79187470297",
+      "slug": "runtime-instance-status"
+    },
+    {
+      "direction": "ingress",
+      "model": "RuntimeProbeModelConnectionParams",
+      "path": "schemas/runtime-probe-model-connection-params.schema.json",
+      "rpcMethod": "runtime.probeModelConnection",
+      "rpcPart": "params",
+      "sha256": "adeb9f6405a36ef6942a9cd07bf95fceb71700cf2cfd36ddb6b9ea91a9e69ebe",
+      "slug": "runtime-probe-model-connection-params"
+    },
+    {
+      "direction": "egress",
+      "model": "RuntimeProbeModelConnectionResult",
+      "path": "schemas/runtime-probe-model-connection-result.schema.json",
+      "rpcMethod": "runtime.probeModelConnection",
+      "rpcPart": "result",
+      "sha256": "ecb447108b71154214e542b3cd7aa21391c220bb24c8c08b205dc603822fb5f3",
+      "slug": "runtime-probe-model-connection-result"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "RuntimeScope",
+      "path": "schemas/runtime-scope.schema.json",
+      "sha256": "77a32e2386980ba7c2f1b489f37697c524805f68eb114e99dda594cc97bcfaec",
+      "slug": "runtime-scope"
+    },
+    {
+      "direction": "ingress",
+      "model": "RuntimeStartParams",
+      "path": "schemas/runtime-start-params.schema.json",
+      "rpcMethod": "runtime.start",
+      "rpcPart": "params",
+      "sha256": "2f7bf1588fc91b9230947aa572fb577c4b3e022118c83d3214d9136d3192c3bd",
+      "slug": "runtime-start-params"
+    },
+    {
+      "direction": "egress",
+      "model": "RuntimeStartResult",
+      "path": "schemas/runtime-start-result.schema.json",
+      "rpcMethod": "runtime.start",
+      "rpcPart": "result",
+      "sha256": "0028cef6426ad5a041870a0eb3b2898b73fedeb57b8baf78484a1c5b424ab63f",
+      "slug": "runtime-start-result"
+    },
+    {
+      "direction": "ingress",
+      "model": "RuntimeStopParams",
+      "path": "schemas/runtime-stop-params.schema.json",
+      "rpcMethod": "runtime.stop",
+      "rpcPart": "params",
+      "sha256": "bf070a694ff8a2cdbffe89ce94215edbbb0c3da1cbc59d95a14298e306e055da",
+      "slug": "runtime-stop-params"
+    },
+    {
+      "direction": "egress",
+      "model": "RuntimeTypeDescriptor",
+      "path": "schemas/runtime-type-descriptor.schema.json",
+      "sha256": "6d178fdd3ce1ee17f343700662831fb8924a37b350831d4b9bfc74d0c1fe7dea",
+      "slug": "runtime-type-descriptor"
+    },
+    {
+      "direction": "ingress",
+      "model": "RuntimeValidateConfigParams",
+      "path": "schemas/runtime-validate-config-params.schema.json",
+      "rpcMethod": "runtime.validateConfig",
+      "rpcPart": "params",
+      "sha256": "ce40d0f8511441ea4a2d67e3deb8acf4bcdfcc857949cea223f6552f5a36e5ac",
+      "slug": "runtime-validate-config-params"
+    }
+  ],
+  "jsonSchemaDraft": "https://json-schema.org/draft/2020-12/schema",
+  "runtimeControlVersion": "2.1",
+  "source": "contracts/runtime-control/2.1"
+}

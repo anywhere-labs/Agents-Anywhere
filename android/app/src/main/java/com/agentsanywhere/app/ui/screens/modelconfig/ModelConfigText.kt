@@ -94,54 +94,48 @@ internal fun protocolShortLabel(protocol: String): String = when (protocol) {
     else -> protocol
 }
 
+/** What a runtime's channel state is called; null for a state this client does not know. */
 @StringRes
-internal fun effectLabelRes(effect: String?): Int? = when (effect) {
-    "new_instance" -> R.string.model_config_effect_new_instance
-    "immediate" -> R.string.model_config_effect_immediate
-    "new_session" -> R.string.model_config_effect_new_session
-    "restart" -> R.string.model_config_effect_restart
+internal fun channelStateRes(state: String): Int? = when (state) {
+    "applied" -> R.string.model_config_channel_state_applied
+    "pending" -> R.string.model_config_channel_state_pending
+    "waiting_online" -> R.string.model_config_channel_state_waiting_online
+    "switching" -> R.string.model_config_channel_state_switching
+    "restoring" -> R.string.model_config_channel_state_restoring
+    "restored" -> R.string.model_config_channel_state_restored
+    "failed" -> R.string.model_config_channel_state_failed
+    "unsupported" -> R.string.model_config_channel_state_unsupported
     else -> null
 }
 
 @StringRes
-internal fun skipReasonRes(reason: String?): Int = knownSkipReasonRes(reason) ?: R.string.model_config_skip_unknown
-
-@StringRes
-private fun knownSkipReasonRes(reason: String?): Int? = when (reason) {
-    "model_connection_unsupported" -> R.string.model_config_skip_model_connection_unsupported
-    "not_installed" -> R.string.model_config_skip_not_installed
-    "format_unsupported" -> R.string.model_config_skip_format_unsupported
-    "mode_unsupported" -> R.string.model_config_skip_mode_unsupported
-    "busy_operation" -> R.string.model_config_skip_busy_operation
-    "device_offline" -> R.string.model_config_skip_device_offline
-    "models_required" -> R.string.model_config_skip_models_required
+internal fun channelStepRes(step: String?): Int? = when (step) {
+    "preparing" -> R.string.model_config_channel_step_preparing
+    "activating" -> R.string.model_config_channel_step_activating
+    "verifying" -> R.string.model_config_channel_step_verifying
     else -> null
 }
 
-/** A skip or failure reason: a skip text when there is one, else an error text, else "cannot apply". */
+/** Why a runtime cannot use, or did not switch to, the channel it should use. */
 @StringRes
-internal fun reasonRes(reason: String?): Int =
-    knownSkipReasonRes(reason) ?: knownErrorRes(reason) ?: R.string.model_config_skip_unknown
-
-@StringRes
-internal fun assignmentStatusRes(status: String): Int? = when (status) {
-    "applying" -> R.string.model_config_assignment_applying
-    "deferred" -> R.string.model_config_assignment_deferred
-    "failed" -> R.string.model_config_assignment_failed
-    "modified" -> R.string.model_config_assignment_modified
-    "outdated" -> R.string.model_config_assignment_outdated
-    "applied" -> R.string.model_config_assignment_applied
-    else -> null
-}
-
-@StringRes
-internal fun connectionStateRes(state: String): Int? = when (state) {
-    "not_configured" -> R.string.model_config_state_not_configured
-    "saved_pending" -> R.string.model_config_state_saved_pending
-    "applied" -> R.string.model_config_state_applied
-    "failed" -> R.string.model_config_state_failed
-    "managed_externally" -> R.string.model_config_state_managed_externally
-    else -> null
+internal fun channelReasonRes(reason: String): Int = when (reason) {
+    "model_connection_unsupported" -> R.string.model_config_reason_model_connection_unsupported
+    "not_installed" -> R.string.model_config_reason_not_installed
+    "format_unsupported" -> R.string.model_config_reason_format_unsupported
+    "mode_unsupported" -> R.string.model_config_reason_mode_unsupported
+    "models_required" -> R.string.model_config_reason_models_required
+    "model_unavailable" -> R.string.model_config_reason_model_unavailable
+    "confirmation_required" -> R.string.model_config_reason_confirmation_required
+    "profile_unavailable" -> R.string.model_config_reason_profile_unavailable
+    "validate_failed" -> R.string.model_config_reason_validate_failed
+    "start_failed" -> R.string.model_config_reason_start_failed
+    "verify_failed" -> R.string.model_config_reason_verify_failed
+    "probe_failed" -> R.string.model_config_reason_probe_failed
+    "verify_timeout" -> R.string.model_config_reason_verify_timeout
+    "device_offline" -> R.string.model_config_reason_device_offline
+    "rollback_failed" -> R.string.model_config_reason_rollback_failed
+    "superseded" -> R.string.model_config_reason_superseded
+    else -> R.string.model_config_reason_unknown
 }
 
 /** Localized text for a model configuration error code; generic text for anything else. */
@@ -157,9 +151,10 @@ private fun knownErrorRes(code: String?): Int? = when (code) {
     "profile_read_only" -> R.string.model_config_error_profile_read_only
     "profile_detached" -> R.string.model_config_error_profile_detached
     "busy" -> R.string.model_config_error_busy
-    "operation_in_progress" -> R.string.model_config_error_operation_in_progress
-    "idempotency_key_reused" -> R.string.model_config_error_idempotency_key_reused
     "too_many_models" -> R.string.model_config_error_too_many_models
+    "channel_not_found" -> R.string.model_config_error_channel_not_found
+    "channel_in_use" -> R.string.model_config_error_channel_in_use
+    "runtime_switching" -> R.string.model_config_error_runtime_switching
     "confirmation_required" -> R.string.model_config_error_confirmation_required
     "tokens_unconfigured" -> R.string.model_config_error_tokens_unconfigured
     "tokens_not_linked" -> R.string.model_config_error_tokens_not_linked
@@ -177,8 +172,6 @@ private fun knownErrorRes(code: String?): Int? = when (code) {
     "model_connection_unsupported" -> R.string.model_config_error_model_connection_unsupported
     "device_offline" -> R.string.model_config_error_device_offline
     "models_required" -> R.string.model_config_error_models_required
-    "key_rotated" -> R.string.model_config_error_key_rotated
-    "quick_setup_running" -> R.string.model_config_error_quick_setup_running
     "key_not_kept" -> R.string.model_config_error_key_not_kept
     else -> null
 }

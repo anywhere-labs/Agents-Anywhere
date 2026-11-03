@@ -32,48 +32,6 @@ nonisolated enum ModelConfigPresentation {
         }
     }
 
-    static func connectionTone(_ state: String?) -> ModelStatusTone {
-        switch state {
-        case "applied": .ok
-        case "saved_pending": .progress
-        case "failed": .error
-        case "managed_externally": .warning
-        default: .neutral
-        }
-    }
-
-    static func assignmentTone(_ status: String) -> ModelStatusTone {
-        switch status {
-        case "applied": .ok
-        case "applying": .progress
-        case "failed": .error
-        default: .warning
-        }
-    }
-
-    static func connectionStateLabel(_ state: String) -> String {
-        switch state {
-        case "not_configured": String(localized: "Not configured")
-        case "saved_pending": String(localized: "Saved, not applied")
-        case "applied": String(localized: "Applied")
-        case "failed": String(localized: "Failed")
-        case "managed_externally": String(localized: "Managed by another app")
-        default: state
-        }
-    }
-
-    static func assignmentStatusLabel(_ status: String) -> String {
-        switch status {
-        case "applying": String(localized: "Applying")
-        case "failed": String(localized: "Failed")
-        case "modified": String(localized: "Changed by hand")
-        case "outdated": String(localized: "Update available")
-        case "applied": String(localized: "Applied")
-        case "deferred": String(localized: "Applies when idle")
-        default: status
-        }
-    }
-
     static func protocolLabel(_ value: String) -> String {
         switch V2ModelProtocol(rawValue: value) {
         case .openaiResponses: String(localized: "OpenAI Responses")
@@ -83,45 +41,8 @@ nonisolated enum ModelConfigPresentation {
         }
     }
 
-    static func effectLabel(_ effect: String) -> String? {
-        switch effect {
-        case "new_instance": String(localized: "New managed instance")
-        case "immediate": String(localized: "Applies now")
-        case "new_session": String(localized: "Applies to new sessions")
-        case "restart": String(localized: "Applies after a restart")
-        default: nil
-        }
-    }
-
-    static func skipReason(_ reason: String?) -> String {
-        reason.flatMap(knownSkipReason) ?? String(localized: "Cannot apply right now")
-    }
-
-    static func knownSkipReason(_ reason: String) -> String? {
-        switch reason {
-        case "model_connection_unsupported": String(localized: "Takes no model connection")
-        case "not_installed": String(localized: "Not installed on the device")
-        case "format_unsupported": String(localized: "No protocol in common")
-        case "mode_unsupported": String(localized: "No mode that takes a model connection")
-        case "busy_operation": String(localized: "Another change is being applied")
-        case "device_offline": String(localized: "Device offline")
-        case "models_required": String(localized: "Needs at least one model")
-        default: nil
-        }
-    }
-
     static func sourceLabel(_ source: String) -> String {
         source == "tokens" ? String(localized: "Tokens Anywhere") : String(localized: "Manual")
-    }
-
-    /// Runtimes the page lists: every instance that declares a model connection.
-    static func configurableRuntimes(_ runtimes: [V2DeviceRuntime]) -> [V2DeviceRuntime] {
-        runtimes.filter { $0.modelConnection != nil }
-    }
-
-    /// The connection state a row shows: the assignment's report when there is one.
-    static func connectionStatus(runtime: V2DeviceRuntime, assignment: V2ModelAssignment?) -> V2ModelConnectionStatus? {
-        assignment?.modelConnectionStatus ?? runtime.modelConnectionStatus
     }
 
     /// Model IDs from a free-form list: one per line or separated by commas.
@@ -134,12 +55,6 @@ nonisolated enum ModelConfigPresentation {
             if !id.isEmpty, seen.insert(id).inserted { result.append(id) }
         }
         return result
-    }
-
-    /// Changing a runtime's own global settings, or importing more models than
-    /// it can keep, is never preselected.
-    static func initialSelection(_ targets: [V2ModelPreviewTarget]) -> Set<String> {
-        Set(targets.filter { $0.canApply && !$0.requiresConfirmation }.map(\.id))
     }
 
     /// Short enough for a tag; the full protocol name shows in the expanded details.
@@ -157,23 +72,6 @@ nonisolated enum ModelConfigPresentation {
             ? String(localized: "Models discovered")
             : String(localized: "\(offer.models.count) models")
         return "\(protocolShortLabel(offer.format))  \(models)"
-    }
-
-    static func previewDetail(_ target: V2ModelPreviewTarget) -> String {
-        guard target.decision == "apply" else { return skipReason(target.reason) }
-        var parts: [String] = []
-        if let format = target.offerFormat { parts.append(protocolLabel(format)) }
-        if let effect = target.effect, let label = effectLabel(effect) { parts.append(label) }
-        if target.scope == "native_global" { parts.append(String(localized: "Changes the runtime's own global settings")) }
-        if let host = target.replaces?.host { parts.append(String(localized: "Replaces \(host)")) }
-        if target.interruptedSessions > 0 { parts.append(String(localized: "\(target.interruptedSessions) tasks running")) }
-        if target.tooManyModels { parts.append(String(localized: "More than \(target.models?.limit ?? 64) models")) }
-        return parts.joined(separator: " · ")
-    }
-
-    static func operationMessage(_ operation: V2ModelOperation) -> ModelConfigFeedback {
-        if operation.otherCount == 0 { return .success(String(localized: "Applied to \(operation.appliedCount) runtimes")) }
-        return .warning(String(localized: "Applied to \(operation.appliedCount); \(operation.otherCount) not applied"))
     }
 }
 
@@ -200,14 +98,15 @@ nonisolated enum ModelConfigErrorText {
         case "secret_unconfigured": String(localized: "The server has no AGENT_SERVER_SECRET (at least 32 characters) yet, so it cannot keep keys or link accounts.")
         case "secret_required": String(localized: "The address changed. Enter the API key again.")
         case "profile_changed": String(localized: "This profile was changed elsewhere. Refresh and try again.")
-        case "profile_in_use": String(localized: "Devices still use this profile. Restore them first.")
+        case "profile_in_use": String(localized: "This profile is a channel in use. Switch to another channel first.")
         case "profile_read_only": String(localized: "This profile is managed by its source and cannot be edited here.")
-        case "profile_detached": String(localized: "This profile is unlinked and can no longer be applied.")
-        case "busy": String(localized: "Tasks are running. Allow interrupting them to apply.")
-        case "operation_in_progress": String(localized: "The previous operation is still running.")
-        case "idempotency_key_reused": String(localized: "Duplicate request. Reopen the dialog and try again.")
+        case "profile_detached": String(localized: "This profile is unlinked and can no longer be used.")
+        case "busy": String(localized: "Tasks are running. Allow interrupting them to continue.")
         case "too_many_models": String(localized: "Too many models. Import fewer.")
         case "confirmation_required": String(localized: "This changes the runtime's own global settings and needs confirmation.")
+        case "channel_not_found": String(localized: "That channel no longer exists.")
+        case "channel_in_use": String(localized: "Runtimes still use the Anywhere channel. Switch them to another channel first.")
+        case "runtime_switching": String(localized: "The runtime is switching channels. Try again shortly.")
         case "tokens_unconfigured": String(localized: "This instance has no Tokens Anywhere address yet.")
         case "tokens_not_linked": String(localized: "Link Tokens Anywhere first.")
         case "reauth_required": String(localized: "The Tokens Anywhere authorization expired. Link again.")
@@ -223,10 +122,8 @@ nonisolated enum ModelConfigErrorText {
         case "exchange_failed": String(localized: "Tokens Anywhere did not issue a token. Try again.")
         case "model_connection_unsupported": String(localized: "This runtime takes no model connection.")
         case "device_offline": String(localized: "The device is offline.")
-        case "quick_setup_running": String(localized: "A setup is already running.")
         case "key_not_kept": String(localized: "Tokens Anywhere did not keep this instance's key, so it cannot be fetched again. Ask its operator to set TOKENS_SECRETS_KEY, then unlink and link again.")
         case "models_required": String(localized: "This runtime needs at least one imported model.")
-        case "key_rotated": String(localized: "The key was rotated. Apply this profile again.")
         default: nil
         }
     }

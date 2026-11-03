@@ -10,11 +10,13 @@ import httpx
 import pytest
 from test_model_config import (
     CODEX_LIKE,
-    _applied,
+    _activate,
     _client,
     _overview,
+    _runtime_state,
     _runtimes,
-    _target,
+    _save_config,
+    _set_channel,
 )
 
 from agent_server.infra.tokens_client import TokensClient
@@ -196,7 +198,8 @@ def test_link_apply_rotate_and_unlink(tokens):
     assert offers["anthropic"]["models"][0]["vendor"] == "anthropic"
     assert profile["keyHint"] == "sk-aa-se…"
 
-    _applied(client, headers, profile["id"], [_target(connector_id)])
+    _save_config(client, connector_id, headers, {})
+    assert _runtime_state(_set_channel(client, headers, "tokens"))["actual"] == "tokens"
     runtime = _runtimes(client, connector_id, headers)["codex"]
     assert runtime["config"]["modelGateway"] == {"baseUrl": f"{ISSUER}/v1"}
     assert runtime["secretFields"]["modelGateway.apiKey"]["hint"] == "sk-aa-s…0001"
@@ -204,22 +207,22 @@ def test_link_apply_rotate_and_unlink(tokens):
     # Without a cached access token the next call refreshes, rotating the refresh token.
     client.app.state.tokens_access_cache._memory.clear()
     rotated = client.post(
-        f"/model-profiles/{profile['id']}/rotate-key",
-        headers={**headers, "Idempotency-Key": "rotate-1"},
-        json={"allowInterrupt": True},
+        f"/model-profiles/{profile['id']}/rotate-key", headers=headers, json={"allowInterrupt": True},
     )
     assert rotated.status_code == 200, rotated.text
-    assert rotated.json()["results"][0]["result"] == "applied"
+    assert _runtime_state(rotated.json())["state"] == "applied"
     assert fake.refresh == "rt-2"
     runtime = _runtimes(client, connector_id, headers)["codex"]
     assert runtime["secretFields"]["modelGateway.apiKey"]["hint"] == "sk-aa-s…0002"
 
-    unlinked = client.delete("/integrations/tokens/link", headers=headers, params={"allow_interrupt": "true"})
+    # Revoking would kill the key under the runtime: switch it away first.
+    in_use = client.delete("/integrations/tokens/link", headers=headers)
+    assert in_use.status_code == 409, in_use.text
+    assert in_use.json()["detail"]["code"] == "channel_in_use"
+    _set_channel(client, headers, "native")
+    unlinked = client.delete("/integrations/tokens/link", headers=headers)
     assert unlinked.status_code == 200, unlinked.text
-    assert unlinked.json() == {
-        "revoked": True,
-        "results": [{"connectorId": connector_id, "runtimeId": "codex", "result": "restored"}],
-    }
+    assert unlinked.json() == {"revoked": True}
     assert fake.revoked == ["rt-2"]
     assert "modelGateway" not in _runtimes(client, connector_id, headers)["codex"]["config"]
     overview = _overview(client, headers)
@@ -265,13 +268,14 @@ def test_revoked_refresh_token_asks_to_link_again(tokens):
     client.app.state.tokens_access_cache._memory.clear()
     fake.refresh_error = "invalid_grant"
 
-    applied = _applied(client, headers, profile["id"], [_target(connector_id)])
+    _save_config(client, connector_id, headers, {})
+    item = _runtime_state(_set_channel(client, headers, "tokens"))
 
-    assert applied["results"][0]["reason"] == "reauth_required"
-    preview = client.post(
-        "/model-config/assignments/preview", headers=headers, json={"profileId": profile["id"]}
-    ).json()
-    assert preview["targets"][0]["decision"] == "apply"
+    # Nothing was written; the runtime keeps its own configuration until a retry.
+    assert item["state"] == "restored"
+    assert item["reason"] == "reauth_required"
+    assert "modelGateway" not in _runtimes(client, connector_id, headers)["codex"]["config"]
+    assert profile["source"] == "tokens"
     status = client.get("/integrations/tokens", headers=headers).json()
     assert status["link"]["status"] == "reauth_required"
     assert "rt-" not in json.dumps(status)
@@ -322,16 +326,16 @@ def test_rotation_with_running_tasks_needs_permission_first(tokens):
     client, fake, connector_id, headers = tokens
     _link(client, headers, fake)
     profile = _tokens_profile(client, headers)
-    _applied(client, headers, profile["id"], [_target(connector_id)])
+    _save_config(client, connector_id, headers, {})
+    _activate(client, connector_id, headers)
+    _set_channel(client, headers, "tokens")
 
     async def one_running_session(**_kwargs):
         return [{"id": "ses_running"}]
 
     client.app.state.store.list_running_sessions_for_connector_agent = one_running_session
     refused = client.post(
-        f"/model-profiles/{profile['id']}/rotate-key",
-        headers={**headers, "Idempotency-Key": "rotate-busy"},
-        json={"allowInterrupt": False},
+        f"/model-profiles/{profile['id']}/rotate-key", headers=headers, json={"allowInterrupt": False},
     )
 
     assert refused.status_code == 409, refused.text
@@ -340,24 +344,32 @@ def test_rotation_with_running_tasks_needs_permission_first(tokens):
     assert fake.secret == "sk-aa-secret-0001"
 
 
-def test_runtimes_left_on_the_old_key_are_marked_failed(tokens):
+def test_runtimes_offline_during_rotation_get_the_new_key_when_back(tokens):
     client, fake, connector_id, headers = tokens
     _link(client, headers, fake)
     profile = _tokens_profile(client, headers)
-    _applied(client, headers, profile["id"], [_target(connector_id)])
+    _save_config(client, connector_id, headers, {})
+    _set_channel(client, headers, "tokens")
     client.app.state.rpc.online = False
 
     rotated = client.post(
-        f"/model-profiles/{profile['id']}/rotate-key",
-        headers={**headers, "Idempotency-Key": "rotate-offline"},
-        json={"allowInterrupt": True},
+        f"/model-profiles/{profile['id']}/rotate-key", headers=headers, json={"allowInterrupt": True},
     )
 
     assert rotated.status_code == 200, rotated.text
-    assert rotated.json()["results"][0]["result"] != "applied"
-    [assignment] = _overview(client, headers)["assignments"]
-    assert assignment["status"] == "failed"
-    assert assignment["error"]["code"] == "key_rotated"
+    assert _runtime_state(rotated.json())["state"] == "waiting_online"
+    assert _runtimes(client, connector_id, headers)["codex"]["secretFields"]["modelGateway.apiKey"]["hint"] == "sk-aa-s…0001"
+
+    # The device coming back is the event that finishes it.
+    from agent_server.deps import model_channel_service_for
+
+    client.app.state.rpc.online = True
+    import asyncio
+
+    asyncio.run(model_channel_service_for(client.app.state).connector_event(connector_id))
+    runtime = _runtimes(client, connector_id, headers)["codex"]
+    assert runtime["secretFields"]["modelGateway.apiKey"]["hint"] == "sk-aa-s…0002"
+    assert _overview(client, headers)["assignments"][0]["status"] == "applied"
 
 
 def test_models_come_from_the_gateway_address_tokens_reports(tokens):
@@ -382,100 +394,6 @@ def test_a_key_tokens_did_not_keep_asks_for_its_secrets_key(tokens):
 
     assert synced.status_code == 409, synced.text
     assert synced.json()["detail"]["code"] == "key_not_kept"
-
-
-def _quick_setup(client, headers, connector_id, **extra):
-    return client.post(
-        "/integrations/tokens/quick-setup",
-        headers=headers,
-        json={"targets": [_target(connector_id)], **extra},
-    )
-
-
-def test_one_click_setup_links_syncs_and_applies(tokens):
-    client, fake, connector_id, headers = tokens
-
-    candidates = client.get("/integrations/tokens/quick-setup", headers=headers)
-    assert candidates.status_code == 200, candidates.text
-    [candidate] = candidates.json()["targets"]
-    assert candidate["decision"] == "apply"
-    assert candidate["requiresConfirmation"] is False
-
-    started = _quick_setup(client, headers, connector_id)
-    assert started.status_code == 200, started.text
-    assert started.json()["started"] is False
-    start_url = urlsplit(started.json()["startUrl"])
-    opened = client.get(f"{start_url.path}?{start_url.query}", follow_redirects=False)
-    query = {key: values[0] for key, values in parse_qs(urlsplit(opened.headers["location"]).query).items()}
-    fake.challenge, fake.redirect_uri = query["code_challenge"], query["redirect_uri"]
-
-    done = _callback(client, code="good-code", state=query["state"], iss=ISSUER)
-
-    assert done.headers["location"] == f"{ISSUER}/oauth/done/"
-    progress = client.get("/integrations/tokens", headers=headers).json()["quickSetup"]
-    assert progress["state"] == "done"
-    assert progress["results"][0]["result"] == "applied"
-    [assignment] = _overview(client, headers)["assignments"]
-    assert assignment["profileId"] == _tokens_profile(client, headers)["id"]
-    assert _runtimes(client, connector_id, headers)["codex"]["config"]["modelGateway"] == {"baseUrl": f"{ISSUER}/v1"}
-
-
-def test_one_click_setup_when_linked_waits_for_busy_runtimes(tokens):
-    client, fake, connector_id, headers = tokens
-    _link(client, headers, fake)
-    profile = _tokens_profile(client, headers)
-    _applied(client, headers, profile["id"], [_target(connector_id)])
-    fake.secret = "sk-aa-secret-0002"
-
-    async def one_running_session(**_kwargs):
-        return [{"id": "ses_running"}]
-
-    store = client.app.state.store
-    store.list_running_sessions_for_connector_agent = one_running_session
-    starts = len([call for call in client.app.state.rpc.requests if call[1] == "runtime.start"])
-
-    started = _quick_setup(client, headers, connector_id)
-
-    assert started.json()["started"] is True
-    progress = client.get("/integrations/tokens", headers=headers).json()["quickSetup"]
-    assert progress["state"] == "done"
-    assert progress["results"][0]["result"] == "deferred"
-    [assignment] = _overview(client, headers)["assignments"]
-    assert assignment["status"] == "deferred"
-    runtime = _runtimes(client, connector_id, headers)["codex"]
-    assert runtime["secretFields"]["modelGateway.apiKey"]["hint"] == "sk-aa-s…0002"
-    # Saved, not restarted: the running task goes on.
-    assert len([call for call in client.app.state.rpc.requests if call[1] == "runtime.start"]) == starts
-
-    # Once the task is done the runtime restarts with the saved configuration.
-    del store.list_running_sessions_for_connector_agent
-    import asyncio
-
-    from agent_server.deps import tokens_link_service_for
-
-    asyncio.run(tokens_link_service_for(client.app.state).model_config.resume_deferred())
-    [assignment] = _overview(client, headers)["assignments"]
-    assert assignment["status"] == "applied"
-    assert len([call for call in client.app.state.rpc.requests if call[1] == "runtime.start"]) == starts + 1
-
-
-def test_one_click_setup_cannot_start_twice(tokens):
-    client, fake, connector_id, headers = tokens
-    _link(client, headers, fake)
-    import asyncio
-
-    from agent_server.deps import tokens_link_service_for
-
-    service = tokens_link_service_for(client.app.state)
-    asyncio.run(service._store.set_tokens_link_quick_setup(
-        client.get("/auth/me", headers=headers).json()["userId"],
-        {"state": "applying", "request": {"targets": []}, "startedAt": "2999-01-01T00:00:00Z"},
-    ))
-
-    again = _quick_setup(client, headers, connector_id)
-
-    assert again.status_code == 409, again.text
-    assert again.json()["detail"]["code"] == "quick_setup_running"
 
 
 def test_account_shows_balance_and_console_pages(tokens):
@@ -505,8 +423,7 @@ def test_turned_off_and_renamed_models_reach_runtimes(tmp_path, server_secret):
     client.put("/admin/integrations/tokens", headers=headers, json={"tokensUrl": ISSUER})
     _save_config(client, connector_id, headers, {"executionMode": "managed"})
     _link(client, headers, fake)
-    profile = _tokens_profile(client, headers)
-    _applied(client, headers, profile["id"], [_target(connector_id)])
+    _set_channel(client, headers, "tokens")
 
     saved = client.put(
         "/integrations/tokens/models",
@@ -516,7 +433,6 @@ def test_turned_off_and_renamed_models_reach_runtimes(tmp_path, server_secret):
 
     assert saved.status_code == 200, saved.text
     assert saved.json() == {"applying": True}
-    assert client.get("/integrations/tokens", headers=headers).json()["quickSetup"]["state"] == "done"
     models = _runtimes(client, connector_id, headers)["codex"]["config"]["customModels"]
     assert models == [{"modelId": "gpt-5", "displayName": "GPT Five"}]
     assert _tokens_profile(client, headers)["preferences"] == {"disabled": ["deepseek-v3"], "names": {"gpt-5": "GPT Five"}}
@@ -533,8 +449,9 @@ def test_turning_off_the_chosen_model_leaves_runtimes_to_their_own_choice(tmp_pa
     client.put("/admin/integrations/tokens", headers=headers, json={"tokensUrl": ISSUER})
     _save_config(client, connector_id, headers, {"executionMode": "managed"})
     _link(client, headers, fake)
-    profile = _tokens_profile(client, headers)
-    _applied(client, headers, profile["id"], [_target(connector_id)], model={"modelId": "deepseek-v3"})
+    _set_channel(client, headers, "tokens")
+    config = _runtimes(client, connector_id, headers)["codex"]["config"]
+    _save_config(client, connector_id, headers, {**config, "model": {"modelId": "deepseek-v3"}})
     assert _runtimes(client, connector_id, headers)["codex"]["config"]["model"] == {"modelId": "deepseek-v3"}
 
     saved = client.put("/integrations/tokens/models", headers=headers, json={"disabled": ["deepseek-v3"], "names": {}})

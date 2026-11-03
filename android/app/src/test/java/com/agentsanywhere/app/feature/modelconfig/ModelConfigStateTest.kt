@@ -1,16 +1,19 @@
 package com.agentsanywhere.app.feature.modelconfig
 
-import com.agentsanywhere.app.api.RemoteModelOperation
-import com.agentsanywhere.app.api.RemoteModelOperationResult
-import com.agentsanywhere.app.api.RemoteModelPreviewTarget
 import com.agentsanywhere.app.feature.devices.DeviceRuntime
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeStatus
-import com.agentsanywhere.app.model.ModelAssignment
+import com.agentsanywhere.app.model.AgentDevice
+import com.agentsanywhere.app.model.ChannelRuntime
+import com.agentsanywhere.app.model.ChannelSwitch
+import com.agentsanywhere.app.model.ModelChannelState
+import com.agentsanywhere.app.model.ModelConfigOverview
 import com.agentsanywhere.app.model.ModelConnectionCapability
 import com.agentsanywhere.app.model.ModelConnectionStatus
 import com.agentsanywhere.app.model.ModelOffer
 import com.agentsanywhere.app.model.ModelProfile
 import com.agentsanywhere.app.model.ModelSpec
+import com.agentsanywhere.app.model.TokensLink
+import com.agentsanywhere.app.model.TokensLinkStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -34,11 +37,12 @@ class ModelConfigStateTest {
     private fun runtime(
         id: String,
         type: String = id,
+        connectorId: String = "dev",
         connection: ModelConnectionCapability? = capability,
         maturity: String? = null,
         status: ModelConnectionStatus? = null,
     ) = DeviceRuntime(
-        connectorId = "dev",
+        connectorId = connectorId,
         id = id,
         type = type,
         displayName = id,
@@ -58,34 +62,38 @@ class ModelConfigStateTest {
         modelConnectionStatus = status,
     )
 
-    private fun target(
+    private fun item(
         id: String,
-        decision: String = "apply",
-        requiresConfirmation: Boolean = false,
-        tooManyModels: Boolean = false,
-        effect: String? = "immediate",
+        state: String,
+        connectorId: String = "dev",
+        override: String? = null,
+        desired: String? = "tokens",
+        actual: String? = "native",
         runningSessions: Int = 0,
-    ) = RemoteModelPreviewTarget(
-        connectorId = "dev",
+    ) = ChannelRuntime(
+        connectorId = connectorId,
         runtimeId = id,
-        runtimeType = id,
-        name = id,
-        maturity = null,
-        decision = decision,
-        reason = if (decision == "skip") "not_installed" else null,
-        offerFormat = "openai_chat",
-        effect = effect,
-        scope = if (requiresConfirmation) "native_global" else "instance",
-        requiresConfirmation = requiresConfirmation,
+        override = override,
+        desired = desired,
+        actual = actual,
+        state = state,
+        step = null,
+        reason = null,
+        message = null,
         runningSessions = runningSessions,
-        replacesHost = null,
-        modelLimit = 64,
-        tooManyModels = tooManyModels,
-        capabilityMaturity = null,
+        updatedAt = null,
     )
 
-    private fun profile(source: String = "manual", state: String = "active") = ModelProfile(
-        id = "p",
+    private fun channel(vararg runtimes: ChannelRuntime, switch: String? = null, current: String = "tokens") =
+        ModelChannelState(
+            channel = current,
+            revision = 3,
+            switch = switch?.let { ChannelSwitch(3, it, null, null) },
+            runtimes = runtimes.toList(),
+        )
+
+    private fun profile(source: String = "manual", state: String = "active", id: String = "p") = ModelProfile(
+        id = id,
         source = source,
         name = "P",
         originHost = "gate.example",
@@ -110,80 +118,142 @@ class ModelConfigStateTest {
     }
 
     @Test
-    fun statusTonesFollowTheWebClient() {
-        assertEquals(ModelStatusTone.Ok, connectionStateTone("applied"))
-        assertEquals(ModelStatusTone.Progress, connectionStateTone("saved_pending"))
-        assertEquals(ModelStatusTone.Error, connectionStateTone("failed"))
-        assertEquals(ModelStatusTone.Warning, connectionStateTone("managed_externally"))
-        assertEquals(ModelStatusTone.Neutral, connectionStateTone("not_configured"))
-        assertEquals(ModelStatusTone.Progress, assignmentStatusTone("applying"))
-        assertEquals(ModelStatusTone.Warning, assignmentStatusTone("outdated"))
+    fun channelStateTones() {
+        assertEquals(ModelStatusTone.Ok, channelStateTone("applied"))
+        listOf("pending", "waiting_idle", "waiting_online", "switching", "restoring").forEach {
+            assertEquals(ModelStatusTone.Progress, channelStateTone(it))
+        }
+        assertEquals(ModelStatusTone.Warning, channelStateTone("restored"))
+        assertEquals(ModelStatusTone.Error, channelStateTone("failed"))
+        assertEquals(ModelStatusTone.Neutral, channelStateTone("unsupported"))
+        assertEquals(ModelStatusTone.Neutral, channelStateTone("future"))
     }
 
     @Test
-    fun deviceRowsListOnlyRuntimesThatDeclareAModelConnection() {
-        val assignment = ModelAssignment(
-            connectorId = "dev",
-            runtimeId = "pi",
-            profileId = "p",
-            offerFormat = "openai_chat",
-            createdRuntime = false,
-            status = "applied",
-            errorCode = null,
-            errorMessage = null,
-            appliedAt = null,
-            modelConnectionStatus = ModelConnectionStatus("applied", null, null, null, null, null),
+    fun channelOptionsOfferAnywhereOnlyOnceLinked() {
+        val manual = profile(id = "mpr_1")
+        val detached = profile(id = "mpr_2", state = "detached")
+        val tokensProfile = profile(source = "tokens", id = "mpr_t")
+        fun overview(linked: Boolean, available: Boolean = true) = ModelConfigOverview(
+            secretConfigured = true,
+            profiles = listOf(tokensProfile, manual, detached),
+            assignments = emptyList(),
+            tokens = TokensLinkStatus(
+                available = available,
+                tokensUrl = null,
+                secretConfigured = true,
+                link = TokensLink(if (linked) "linked" else "reauth_required", null, "a", null, null, null, false),
+            ),
         )
-        val rows = modelConfigDeviceRows(
+
+        assertEquals(listOf("native", "mpr_1"), overview(linked = false).channelOptions().map { it.id })
+        assertEquals(listOf("native", "mpr_1"), overview(linked = true, available = false).channelOptions().map { it.id })
+        val options = overview(linked = true).channelOptions()
+        assertEquals(listOf("native", "tokens", "mpr_1"), options.map { it.id })
+        assertEquals(listOf(ChannelKind.Native, ChannelKind.Tokens, ChannelKind.Manual), options.map { it.kind })
+        assertEquals("mpr_t", options[1].profile?.id)
+        assertEquals(ChannelKind.Manual, channelKind("mpr_9"))
+    }
+
+    @Test
+    fun runningProgressCountsFinishedRuntimesAndWaitingReasons() {
+        val progress = channel(
+            item("a", "applied", actual = "tokens"),
+            item("b", "waiting_idle", runningSessions = 2),
+            item("c", "waiting_online"),
+            item("d", "switching"),
+            item("e", "restored"),
+            item("f", "unsupported"),
+            switch = "running",
+        ).progress()
+
+        assertEquals(ChannelPhase.Running, progress.phase)
+        assertEquals(5, progress.total)
+        assertEquals(2, progress.finished)
+        assertEquals(1, progress.applied)
+        assertEquals(1, progress.restored)
+        assertEquals(1, progress.waitingIdle)
+        assertEquals(1, progress.waitingOnline)
+    }
+
+    @Test
+    fun progressPhaseFollowsTheServerThenTheRuntimes() {
+        assertEquals(ChannelPhase.Done, channel(item("a", "applied"), switch = "done").progress().phase)
+        val attention = channel(item("a", "applied"), item("b", "restored"), item("c", "failed"), switch = "attention").progress()
+        assertEquals(ChannelPhase.Attention, attention.phase)
+        assertEquals(1, attention.restored)
+        assertEquals(1, attention.failed)
+        // Never switched, or a switch state this client does not know.
+        assertEquals(ChannelPhase.Done, channel(item("a", "applied")).progress().phase)
+        assertEquals(ChannelPhase.Running, channel(item("a", "pending"), switch = "later").progress().phase)
+        assertEquals(ChannelPhase.Attention, channel(item("a", "failed")).progress().phase)
+        assertEquals(ChannelPhase.Idle, channel(item("a", "unsupported")).progress().phase)
+        assertEquals(0, channel().progress().total)
+    }
+
+    @Test
+    fun channelUseCoversCurrentOverridesDesiredAndActual() {
+        val state = channel(
+            item("a", "applied", override = "mpr_1", desired = "mpr_1", actual = "mpr_1"),
+            item("b", "switching", desired = "tokens", actual = "mpr_2"),
+            current = "tokens",
+        )
+        assertTrue(state.uses("tokens"))
+        assertTrue(state.uses("mpr_1"))
+        assertTrue(state.uses("mpr_2"))
+        assertFalse(state.uses("mpr_3"))
+        assertFalse((null as ModelChannelState?).uses("tokens"))
+        assertTrue(state.updating("tokens"))
+        assertFalse(state.updating("mpr_1"))
+    }
+
+    @Test
+    fun channelRowsGroupByDeviceWithUnsupportedLast() {
+        val global = capability.copy(scope = "native_global")
+        val state = channel(
+            item("pi", "applied", connectorId = "laptop"),
+            item("codex", "unsupported", connectorId = "desk"),
+            item("claude", "waiting_idle", connectorId = "desk", runningSessions = 1),
+            item("dsh", "failed", connectorId = "laptop"),
+            item("gone", "pending", connectorId = "unknown"),
+            item("own", "unsupported", connectorId = "laptop"),
+        )
+        val groups = channelGroups(
+            state = state,
             runtimes = listOf(
-                runtime("pi", status = ModelConnectionStatus("saved_pending", null, null, null, null, null)),
-                runtime("codex", connection = null),
-                runtime("custom", maturity = "beta"),
+                runtime("pi", connectorId = "laptop", maturity = "beta"),
+                runtime("codex", connectorId = "desk", connection = null),
+                runtime("claude", connectorId = "desk", connection = global),
+                runtime("dsh", connectorId = "laptop"),
+                runtime("own", connectorId = "laptop", connection = global),
             ),
-            assignments = listOf(assignment),
+            devices = listOf(AgentDevice("desk", "Desk", online = true), AgentDevice("laptop", "Laptop", online = false)),
         )
 
-        assertEquals(listOf("pi", "custom"), rows.map { it.runtime.id })
-        assertEquals("applied", rows[0].status?.state)
-        assertNull(rows[1].assignment)
-        assertEquals("experimental", rows[1].maturity)
-    }
+        assertEquals(listOf("desk", "laptop", "unknown"), groups.devices.map { it.connectorId })
+        assertEquals(listOf("Desk", "Laptop", "unknown"), groups.devices.map { it.deviceName })
+        assertEquals(listOf("pi", "dsh"), groups.devices[1].rows.map { it.item.runtimeId })
+        assertEquals(listOf("codex", "own"), groups.unsupported.map { it.item.runtimeId })
 
-    @Test
-    fun applySelectionNeverPreselectsGlobalChangesOrTooManyModels() {
-        val selection = ApplySelection.initial(
-            listOf(
-                target("pi"),
-                target("claude", requiresConfirmation = true),
-                target("dsh", tooManyModels = true),
-                target("codex", decision = "skip"),
-            ),
-        )
+        val claude = groups.devices[0].rows.single()
+        assertTrue(claude.canSwitchNow)
+        assertFalse(claude.canRetry)
+        assertTrue(claude.canOverride)
+        assertTrue(claude.needsNativeGlobalConfirmation("tokens"))
+        assertTrue(claude.needsNativeGlobalConfirmation("mpr_1"))
+        assertFalse(claude.needsNativeGlobalConfirmation("native"))
+        assertFalse(claude.needsNativeGlobalConfirmation(null))
 
-        assertEquals(setOf("dev/pi"), selection.selected)
-        assertFalse(selection.needsNativeGlobalConfirmation)
-        assertTrue(selection.canSubmit(confirmedNativeGlobal = false))
-    }
-
-    @Test
-    fun choosingAGlobalChangeRequiresConfirmation() {
-        val claude = target("claude", requiresConfirmation = true, effect = "restart", runningSessions = 3)
-        val selection = ApplySelection.initial(listOf(target("pi"), claude)).toggle(claude, true)
-
-        assertTrue(selection.needsNativeGlobalConfirmation)
-        assertFalse(selection.canSubmit(confirmedNativeGlobal = false))
-        assertTrue(selection.canSubmit(confirmedNativeGlobal = true))
-        assertEquals(3, selection.runningSessions)
-    }
-
-    @Test
-    fun skippedAndOversizedTargetsCannotBeChosen() {
-        val dsh = target("dsh", tooManyModels = true)
-        val codex = target("codex", decision = "skip")
-        val selection = ApplySelection.initial(listOf(dsh, codex)).toggle(dsh, true).toggle(codex, true)
-
-        assertTrue(selection.selected.isEmpty())
-        assertFalse(selection.canSubmit(confirmedNativeGlobal = true))
+        val (pi, dsh) = groups.devices[1].rows
+        assertEquals("experimental", pi.maturity)
+        assertFalse(pi.needsNativeGlobalConfirmation("tokens"))
+        assertTrue(dsh.canRetry)
+        assertFalse(groups.unsupported[0].canOverride)
+        assertTrue(groups.unsupported[1].canOverride)
+        // A runtime the snapshot does not list still shows, by its ID, without channel choices.
+        val gone = groups.devices[2].rows.single()
+        assertEquals("gone", gone.name)
+        assertFalse(gone.canOverride)
     }
 
     @Test
@@ -213,27 +283,8 @@ class ModelConfigStateTest {
         assertEquals(2, profile().modelCount())
         assertTrue(profile().canDelete(usedBy = 0))
         assertFalse(profile().canDelete(usedBy = 1))
+        assertFalse(profile().canDelete(usedBy = 0, inChannel = true))
         assertFalse(profile(source = "tokens").canDelete(usedBy = 0))
         assertTrue(profile(source = "tokens", state = "detached").canDelete(usedBy = 0))
-    }
-
-    @Test
-    fun operationSummaryCountsAppliedResults() {
-        val operation = RemoteModelOperation(
-            operationId = "op",
-            kind = "apply",
-            finished = true,
-            results = listOf(
-                RemoteModelOperationResult("dev", "pi", "applied", null),
-                RemoteModelOperationResult("dev", "dsh", "failed", "busy"),
-                RemoteModelOperationResult("dev", "codex", "skipped", null),
-            ),
-        )
-        assertEquals(OperationSummary(applied = 1, other = 2), operation.summary())
-    }
-
-    @Test
-    fun idempotencyKeysAreUnique() {
-        assertFalse(newIdempotencyKey() == newIdempotencyKey())
     }
 }

@@ -131,6 +131,8 @@ class RuntimeDiscoveryResponse(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     runtimeTypes: list[RuntimeTypeDescriptor] = Field(max_length=64)
+    # Protocol features beyond Runtime Control 2.0, e.g. ``switchFence``.
+    features: list[str] = Field(default_factory=list, max_length=32)
 
     @model_validator(mode="after")
     def _validate_unique_runtime_types(self) -> RuntimeDiscoveryResponse:

@@ -29,7 +29,10 @@ from connector.runtime_protocol import (
 from connector.server.runtime_rpc import RuntimeRpcHandler
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-CONTRACT_DIR = REPOSITORY_ROOT / "contracts" / "runtime-control" / "2.0"
+CONTRACTS_DIR = REPOSITORY_ROOT / "contracts" / "runtime-control"
+# The Connector implements the latest revision; 2.0 fixtures stay valid under it.
+CONTRACT_VERSIONS = ("2.0", "2.1")
+CONTRACT_DIR = CONTRACTS_DIR / CONTRACT_VERSIONS[-1]
 SCHEMA_DIR = CONTRACT_DIR / "schemas"
 FIXTURE_DIR = CONTRACT_DIR / "fixtures"
 
@@ -40,10 +43,13 @@ def _load_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def _contract_validator(slug: str) -> Draft202012Validator:
+def _contract_validator(
+    slug: str,
+    schema_dir: Path = SCHEMA_DIR,
+) -> Draft202012Validator:
     registry: Registry[Any] = Registry()
     schemas = {
-        path.name: _load_json(path) for path in sorted(SCHEMA_DIR.glob("*.schema.json"))
+        path.name: _load_json(path) for path in sorted(schema_dir.glob("*.schema.json"))
     }
     for schema in schemas.values():
         registry = registry.with_resource(
@@ -58,8 +64,10 @@ def _contract_validator(slug: str) -> Draft202012Validator:
 
 
 FIXTURE_CASES = [
-    *((path, True) for path in sorted((FIXTURE_DIR / "valid").glob("*/*.json"))),
-    *((path, False) for path in sorted((FIXTURE_DIR / "invalid").glob("*/*.json"))),
+    (path, expected)
+    for version in CONTRACT_VERSIONS
+    for kind, expected in (("valid", True), ("invalid", False))
+    for path in sorted((CONTRACTS_DIR / version / "fixtures" / kind).glob("*/*.json"))
 ]
 
 
@@ -67,7 +75,7 @@ FIXTURE_CASES = [
     ("fixture_path", "expected_valid"),
     FIXTURE_CASES,
     ids=[
-        f"{path.parents[1].name}/{path.parent.name}/{path.stem}"
+        f"{path.parents[3].name}/{path.parents[1].name}/{path.parent.name}/{path.stem}"
         for path, _expected in FIXTURE_CASES
     ],
 )
@@ -75,7 +83,10 @@ def test_connector_uses_runtime_control_v2_contract_fixtures(
     fixture_path: Path,
     expected_valid: bool,
 ) -> None:
-    validator = _contract_validator(fixture_path.parent.name)
+    validator = _contract_validator(
+        fixture_path.parent.name,
+        fixture_path.parents[3] / "schemas",
+    )
 
     assert validator.is_valid(_load_json(fixture_path)) is expected_valid
 
@@ -225,10 +236,13 @@ async def _test_runtime_control_v2_lifecycle_and_scoped_rpc_use_type_and_instanc
         "runtimeId": "rti_codex_work_01",
         "valid": True,
     }
+    _contract_validator("runtime-start-result").validate(started)
     assert started == {
         "runtime": "codex",
         "runtimeId": "rti_codex_work_01",
         "status": "running",
+        "configDigest": None,
+        "instanceId": supervisor.instance_id,
     }
     entry = supervisor.entry("rti_codex_work_01")
     assert entry.config is not None
@@ -334,7 +348,8 @@ def test_failed_discovery_does_not_block_named_runtime_requests(monkeypatch) -> 
         monkeypatch.setattr(supervisor, "discover", original_discover)
         discovered = await handler.dispatch("runtime.discover", {})
         _contract_validator("runtime-discover-response").validate(discovered)
-        assert set(discovered) == {"runtimeTypes"}
+        assert set(discovered) == {"runtimeTypes", "features"}
+        assert discovered["features"] == ["switchFence", "modelProbe"]
 
     asyncio.run(run())
 

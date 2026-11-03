@@ -130,11 +130,17 @@ No persisted record is an automatic write outbox.
 
 The dashboard snapshot carries every runtime instance (with its maturity, model
 connection capability and status, and write-only `secretFields`) and the
-`modelConfig` overview. `V2DashboardRepository` keeps the latest pushed values;
-`ModelConfigModel` and `ModelApplyModel` issue single requests through
-`V2ModelConfigAPI` and learn the outcome from the next push. Rows render from
-declared capabilities only. Keys are write-only: the runtime configuration
-sheet never shows a saved gateway key, an empty key keeps it on the same origin,
+`modelConfig` overview, including the channel state (`modelConfig.channel`):
+the current channel, each runtime's override, desired and actual channel, and
+its switch progress. `V2DashboardRepository` keeps the latest pushed values;
+`ModelConfigModel` issues single requests through `V2ModelConfigAPI`. Channel
+writes (current channel, per-runtime override, switch now, retry) answer with
+the channel state, which the page shows until the next push replaces it; an
+answer older than the latest push is dropped. `ChannelPresentation` groups
+runtimes by device, sets apart runtimes without a model connection, and counts
+the switch summary. Rows render from the channel state and declared
+capabilities only. Keys are write-only: the runtime configuration sheet never
+shows a saved gateway key, an empty key keeps it on the same origin,
 and a new address needs it again. `TokensLinkCoordinator` opens the Tokens
 Anywhere link in `ASWebAuthenticationSession` and closes it once a snapshot
 shows the new link, because the flow never calls back into the app.

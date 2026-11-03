@@ -172,9 +172,7 @@ import Testing
         // The same push keeps the edits; new saved choices replace them.
         account.reconcile(profile: tokens)
         #expect(account.changes == 2)
-        await account.saveDraft(applying: true)
-        #expect(transport.calls.isEmpty, "Nothing saves while a setup is running")
-        await account.saveDraft(applying: false)
+        await account.saveDraft()
         let call = try #require(transport.calls.last)
         #expect(call.method == .put && call.path == "/integrations/tokens/models")
         #expect(call.body == .object(["disabled": .array([]), "names": .object(["a": .string("My Alpha")])]))
@@ -183,16 +181,16 @@ import Testing
 
         account.setEnabled(["a", "b"], false)
         #expect(account.enabledCount == 0)
-        await account.saveDraft(applying: false)
+        await account.saveDraft()
         #expect(transport.calls.count == 1)
         #expect(reports.last == .error(String(localized: "Keep at least one model.")))
         account.discard()
         #expect(account.enabledCount == 2)
 
-        transport.respond = { _ in throw HTTPError.server(statusCode: 409, message: "running", detail: .object(["code": .string("quick_setup_running")])) }
-        await account.restoreDefaults(applying: false)
+        transport.respond = { _ in throw HTTPError.server(statusCode: 503, message: "down", detail: .object(["code": .string("tokens_unavailable")])) }
+        await account.restoreDefaults()
         #expect(transport.calls.last?.body == .object(["disabled": .array([]), "names": .object([:])]))
-        #expect(reports.last == .error(String(localized: "A setup is already running.")))
+        #expect(reports.last == .error(String(localized: "Tokens Anywhere is unavailable right now.")))
     }
 
     @Test func usageReadsTheChosenDays() async throws {

@@ -14,11 +14,7 @@ import kotlin.math.abs
 
 // The linked Tokens Anywhere account: its models, the names runtimes see and what it has spent.
 
-enum class TokensAccountTab { Models, Usage, Devices }
-
-/** Runtimes that already use Tokens start on the models; otherwise on setting one up. */
-fun initialTokensAccountTab(configured: Boolean): TokensAccountTab =
-    if (configured) TokensAccountTab.Models else TokensAccountTab.Devices
+enum class TokensAccountTab { Models, Usage }
 
 data class TokensModel(
     val id: String,

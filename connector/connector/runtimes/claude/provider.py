@@ -196,6 +196,10 @@ class ClaudeProvider(RuntimeProvider):
             },
         )
 
+    @property
+    def model_connection(self) -> ModelConnectionCapability:
+        return MODEL_CONNECTION
+
     def model_connection_status(self, config: RuntimeConfig) -> ModelConnectionStatus:
         return applied_status(MODEL_CONNECTION, config.values)
 

@@ -177,10 +177,4 @@ class TokensAccountTest {
         assertEquals(listOf("gpt-5"), one.models.map { it.model })
         assertEquals(listOf("claude", "gpt-5"), usageModelIds(usage))
     }
-
-    @Test
-    fun accountOpensOnModelsOnceConfigured() {
-        assertEquals(TokensAccountTab.Models, initialTokensAccountTab(configured = true))
-        assertEquals(TokensAccountTab.Devices, initialTokensAccountTab(configured = false))
-    }
 }

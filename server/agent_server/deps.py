@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import Depends, Header, HTTPException
@@ -20,15 +22,23 @@ from agent_server.services.connector_ingest import ConnectorIngestService
 from agent_server.services.connector_notifications import ConnectorNotificationService
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.connector_shell import ConnectorShellService
-from agent_server.services.device_runtimes import DeviceRuntimeService
+from agent_server.services.device_runtimes import (
+    DeviceRuntimeError,
+    DeviceRuntimeService,
+)
 from agent_server.services.event_recovery import EventRecoveryService
-from agent_server.services.model_config import ModelConfigService
-from agent_server.services.session_run import SessionRunService
+from agent_server.services.model_channels import (
+    ChannelDriver,
+    ChannelWakeIndex,
+    ModelChannelService,
+)
+from agent_server.services.model_config import ModelConfigError, ModelConfigService
+from agent_server.services.session_run import SessionRunConflictError, SessionRunService
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.terminal import TerminalService
 from agent_server.services.terminal_relay import TerminalRelayService
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
-from agent_server.services.tokens_link import TokensLinkService
+from agent_server.services.tokens_link import TokensLinkError, TokensLinkService
 from agent_server.services.usage_events import UsageRecorder
 
 
@@ -67,6 +77,7 @@ def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService
         conn.app.state.rpc,
         conn.app.state.session_runtime_state_cache,
         conn.app.state.capability_refresh,
+        runtime_event=model_channel_service_for(conn.app.state).runtime_event,
     )
 
 
@@ -97,11 +108,29 @@ def get_connector_file_service(conn: HTTPConnection) -> ConnectorFileService:
 
 
 def get_session_run_service(conn: HTTPConnection) -> SessionRunService:
+    channels = model_channel_service_for(conn.app.state)
+
+    async def prepare_channel(connector_id: str, runtime_id: str, *, user_id: str) -> str:
+        try:
+            return await channels.prepare_runtime(connector_id, runtime_id, user_id=user_id)
+        except (TokensLinkError, ModelConfigError, DeviceRuntimeError) as exc:
+            raise SessionRunConflictError(exc.detail) from exc
+
+    @asynccontextmanager
+    async def admit(connector_id: str, runtime_id: str, *, user_id: str | None) -> AsyncIterator[None]:
+        try:
+            async with channels.admit(connector_id, runtime_id, user_id=user_id):
+                yield
+        except ModelConfigError as exc:
+            raise SessionRunConflictError(exc.detail) from exc
+
     return SessionRunService(
         conn.app.state.store,
         conn.app.state.rpc,
         conn.app.state.device_runtime_service,
         usage_recorder=get_usage_recorder(conn),
+        prepare_model_channel=prepare_channel,
+        admit_runtime=admit,
     )
 
 
@@ -109,15 +138,42 @@ def get_device_runtime_service(conn: HTTPConnection) -> DeviceRuntimeService:
     return conn.app.state.device_runtime_service
 
 
+def _channel_runtime(state: Any) -> tuple[ChannelWakeIndex, ChannelDriver]:
+    """The process-wide wait index and switch tasks, made once per app."""
+    wake = getattr(state, "channel_wake", None)
+    driver = getattr(state, "channel_driver", None)
+    if wake is None or driver is None:
+        coordinator = getattr(state, "redis", None)
+        wake, driver = ChannelWakeIndex(coordinator), ChannelDriver(coordinator)
+        state.channel_wake, state.channel_driver = wake, driver
+    return wake, driver
+
+
 def tokens_link_service_for(state: Any) -> TokensLinkService:
     broker = getattr(state, "timeline_broker", None)
-    return TokensLinkService(
+    model_config = ModelConfigService(state.store, state.device_runtime_service, broker=broker)
+    tokens = TokensLinkService(
         state.store,
-        ModelConfigService(state.store, state.device_runtime_service, broker=broker),
+        model_config,
         client_factory=state.tokens_client_factory,
         access_cache=state.tokens_access_cache,
         broker=broker,
     )
+    wake, driver = _channel_runtime(state)
+    tokens.channels = ModelChannelService(
+        state.store, model_config, state.device_runtime_service, wake=wake, driver=driver, broker=broker,
+    )
+    return tokens
+
+
+def model_channel_service_for(state: Any) -> ModelChannelService:
+    channels = tokens_link_service_for(state).channels
+    assert channels is not None
+    return channels
+
+
+def get_model_channel_service(conn: HTTPConnection) -> ModelChannelService:
+    return model_channel_service_for(conn.app.state)
 
 
 def get_tokens_link_service(conn: HTTPConnection) -> TokensLinkService:
@@ -224,5 +280,17 @@ def require_admin(user: UserView = Depends(current_user)) -> UserView:
 
 
 def get_runtime_workflow_service(conn: HTTPConnection):
-    from agent_server.services.runtime_workflows import RuntimeWorkflowService
-    return RuntimeWorkflowService(conn.app.state.store, conn.app.state.rpc, conn.app.state.device_runtime_service)
+    from agent_server.services.runtime_workflows import (
+        RuntimeWorkflowService,
+        WorkflowError,
+    )
+    channels = model_channel_service_for(conn.app.state)
+
+    async def prepare_channel(connector_id: str, runtime_id: str, *, user_id: str) -> str:
+        try:
+            return await channels.prepare_runtime(connector_id, runtime_id, user_id=user_id)
+        except (TokensLinkError, ModelConfigError, DeviceRuntimeError) as exc:
+            raise WorkflowError(exc.code, str(exc), exc.status_code) from exc
+
+    return RuntimeWorkflowService(conn.app.state.store, conn.app.state.rpc, conn.app.state.device_runtime_service,
+        prepare_model_channel=prepare_channel, model_channel_catalog=channels.channel_catalog)

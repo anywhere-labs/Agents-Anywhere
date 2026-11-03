@@ -121,8 +121,8 @@ internal class PendingModelsBarSlot {
 
 /**
  * The linked Tokens Anywhere account: who it is, its balance, which of its
- * models runtimes get and under which names, what it has spent, and the
- * runtimes it is set up on.
+ * models runtimes get and under which names, and what it has spent. Which
+ * runtimes use it shows under the current channel.
  */
 @Composable
 internal fun TokensAccountPage(
@@ -130,18 +130,17 @@ internal fun TokensAccountPage(
     profile: ModelProfile?,
     controller: ModelConfigController,
     applying: Boolean,
-    initialTab: TokensAccountTab,
     syncing: Boolean,
     onSync: () -> Unit,
     pendingBar: PendingModelsBarSlot,
     onNotice: (String) -> Unit,
     onError: (Throwable) -> Unit,
     action: @Composable () -> Unit,
-    devices: @Composable () -> Unit,
+    header: @Composable () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var tab by remember { mutableStateOf(initialTab) }
+    var tab by remember { mutableStateOf(TokensAccountTab.Models) }
     var info by remember { mutableStateOf<RemoteTokensAccount?>(null) }
     var infoFailed by remember { mutableStateOf(false) }
     var infoVersion by remember { mutableIntStateOf(0) }
@@ -153,8 +152,8 @@ internal fun TokensAccountPage(
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer) }
     }
-    LaunchedEffect(infoVersion) {
-        if (infoVersion == 0) return@LaunchedEffect
+    LaunchedEffect(infoVersion, tokens.link?.accountId) {
+        info = null
         infoFailed = false
         controller.tokensAccount()
             .onSuccess { info = it }
@@ -218,6 +217,7 @@ internal fun TokensAccountPage(
         action = action,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            header()
             AccountCard(
                 name = info?.label ?: tokens.link?.accountLabel.orEmpty(),
                 email = info?.email ?: tokens.link?.accountEmail,
@@ -235,7 +235,6 @@ internal fun TokensAccountPage(
                 options = listOf(
                     TokensAccountTab.Models to stringResource(R.string.model_config_account_tab_models),
                     TokensAccountTab.Usage to stringResource(R.string.model_config_account_tab_usage),
-                    TokensAccountTab.Devices to stringResource(R.string.model_config_account_tab_devices),
                 ),
                 selected = tab,
                 onSelect = { tab = it },
@@ -256,9 +255,6 @@ internal fun TokensAccountPage(
                     onDraft = { draft = it(draft) },
                 )
                 TokensAccountTab.Usage -> UsageTab(controller = controller, detailsUrl = info?.usageUrl, onOpen = ::open)
-                TokensAccountTab.Devices -> ProfileCard {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { devices() }
-                }
             }
         }
     }

@@ -1,25 +1,19 @@
 package com.agentsanywhere.app.feature.modelconfig
 
 import com.agentsanywhere.app.api.ModelConfigApi
-import com.agentsanywhere.app.api.RemoteModelOperation
-import com.agentsanywhere.app.api.RemoteModelOperationResult
-import com.agentsanywhere.app.api.RemoteModelPreviewTarget
-import com.agentsanywhere.app.api.RemoteModelTarget
-import com.agentsanywhere.app.api.RemoteTokensUnlinkResult
-import com.agentsanywhere.app.feature.auth.AuthSessionReader
-import com.agentsanywhere.app.api.RemoteQuickSetupStart
 import com.agentsanywhere.app.api.RemoteTokensAccount
 import com.agentsanywhere.app.api.RemoteTokensUsage
+import com.agentsanywhere.app.feature.auth.AuthSessionReader
+import com.agentsanywhere.app.model.ModelChannelState
 import com.agentsanywhere.app.model.ModelPreferences
 import com.agentsanywhere.app.model.ModelProfile
-import com.agentsanywhere.app.model.QuickSetupRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
  * Writes to the model configuration. Results show up in the next dashboard
- * snapshot, so callers only report success or failure.
+ * snapshot; channel writes also return the channel state to show until then.
  */
 class ModelConfigController(
     private val api: ModelConfigApi,
@@ -33,43 +27,32 @@ class ModelConfigController(
         api.deleteProfile(server, token, profileId)
     }
 
-    suspend fun preview(profileId: String): Result<List<RemoteModelPreviewTarget>> = call { server, token ->
-        api.preview(server, token, profileId)
+    suspend fun channel(): Result<ModelChannelState> = call { server, token -> api.getChannel(server, token) }
+
+    /** Makes [channel] the current channel: "native", "tokens" or a manual profile ID. */
+    suspend fun setChannel(channel: String): Result<ModelChannelState> =
+        call { server, token -> api.setChannel(server, token, channel) }
+
+    /** Gives a runtime its own channel, or null to follow the current one. */
+    suspend fun setRuntimeChannel(
+        connectorId: String,
+        runtimeId: String,
+        channel: String?,
+        confirmNativeGlobal: Boolean = false,
+    ): Result<ModelChannelState> = call { server, token ->
+        api.setRuntimeChannel(server, token, connectorId, runtimeId, channel, confirmNativeGlobal)
     }
 
-    suspend fun apply(
-        profileId: String,
-        targets: List<RemoteModelPreviewTarget>,
-        allowInterrupt: Boolean,
-        confirmNativeGlobal: Boolean,
-        idempotencyKey: String,
-    ): Result<RemoteModelOperation> = call { server, token ->
-        api.apply(
-            serverUrl = server,
-            authorizationToken = token,
-            profileId = profileId,
-            targets = targets.map { RemoteModelTarget(it.connectorId, it.runtimeId) },
-            allowInterrupt = allowInterrupt,
-            confirmNativeGlobal = confirmNativeGlobal,
-            idempotencyKey = idempotencyKey,
-        )
-    }
-
-    suspend fun restore(connectorId: String, runtimeId: String, allowInterrupt: Boolean): Result<RemoteModelOperationResult> =
-        call { server, token -> api.restore(server, token, connectorId, runtimeId, allowInterrupt) }
+    /** Retries one runtime, or every restored and failed one when none is given. */
+    suspend fun retryChannel(connectorId: String? = null, runtimeId: String? = null): Result<ModelChannelState> =
+        call { server, token -> api.retryChannel(server, token, connectorId, runtimeId) }
 
     suspend fun beginTokensLink(): Result<String> = call { server, token -> api.beginTokensLink(server, token) }
 
-    suspend fun quickSetupCandidates(): Result<List<RemoteModelPreviewTarget>> =
-        call { server, token -> api.quickSetupCandidates(server, token) }
-
-    suspend fun startQuickSetup(request: QuickSetupRequest): Result<RemoteQuickSetupStart> =
-        call { server, token -> api.startQuickSetup(server, token, request) }
-
     suspend fun syncTokens(): Result<ModelProfile> = call { server, token -> api.syncTokens(server, token) }
 
-    suspend fun unlinkTokens(allowInterrupt: Boolean): Result<RemoteTokensUnlinkResult> =
-        call { server, token -> api.unlinkTokens(server, token, allowInterrupt) }
+    /** True when the authorization was revoked as well. */
+    suspend fun unlinkTokens(): Result<Boolean> = call { server, token -> api.unlinkTokens(server, token) }
 
     suspend fun tokensAccount(): Result<RemoteTokensAccount> = call { server, token -> api.tokensAccount(server, token) }
 
@@ -79,8 +62,8 @@ class ModelConfigController(
     suspend fun saveTokensModels(preferences: ModelPreferences): Result<Boolean> =
         call { server, token -> api.saveTokensModels(server, token, preferences) }
 
-    suspend fun rotateTokensKey(profileId: String, allowInterrupt: Boolean, idempotencyKey: String): Result<RemoteModelOperation> =
-        call { server, token -> api.rotateTokensKey(server, token, profileId, allowInterrupt, idempotencyKey) }
+    suspend fun rotateTokensKey(profileId: String, allowInterrupt: Boolean): Result<Unit> =
+        call { server, token -> api.rotateTokensKey(server, token, profileId, allowInterrupt) }
 
     private suspend fun <T> call(block: (String, String) -> T): Result<T> {
         val serverUrl = sessionStore.readServerUrl()

@@ -47,7 +47,7 @@ from agent_server.core.api_namespace import API_V2_PREFIX
 from agent_server.core.process_settings import ProcessSettings
 from agent_server.core.setup_token import SetupToken
 from agent_server.core.utc import utc_now
-from agent_server.deps import tokens_link_service_for
+from agent_server.deps import model_channel_service_for, tokens_link_service_for
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.db.migrations import (
     database_schema_version,
@@ -130,7 +130,6 @@ def create_app(
         deletion_task: asyncio.Task[None] | None = None
         usage_task: asyncio.Task[None] | None = None
         tokens_task: asyncio.Task[None] | None = None
-        deferred_task: asyncio.Task[None] | None = None
         try:
             logger.info(
                 "server concurrency pid={} workers={} event_workers={}",
@@ -151,17 +150,19 @@ def create_app(
             deletion_task = asyncio.create_task(app.state.connector_deletion_recovery.run())
             usage_task = asyncio.create_task(app.state.usage_maintenance.run())
             tokens_task = asyncio.create_task(tokens_link_service_for(app.state).run_keep_alive())
-            # Runtimes that took a model configuration while busy restart once idle.
-            deferred_task = asyncio.create_task(tokens_link_service_for(app.state).model_config.run_deferred())
+            # Switches a stopped worker left behind; waiting ones resume on events.
+            await model_channel_service_for(app.state).resume()
             # Generate the bootstrap token early so operators see it in logs.
             if await app.state.store.count_users() == 0:
                 await SetupTokenService(app.state.setup_token, app.state.redis).snapshot()
             yield
         finally:
-            for task in (tokens_task, deferred_task):
-                if task is not None:
-                    task.cancel()
-                    await asyncio.gather(task, return_exceptions=True)
+            if tokens_task is not None:
+                tokens_task.cancel()
+                await asyncio.gather(tokens_task, return_exceptions=True)
+            driver = getattr(app.state, "channel_driver", None)
+            if driver is not None:
+                await driver.close()
             if usage_task is not None:
                 usage_task.cancel()
                 await asyncio.gather(usage_task, return_exceptions=True)

@@ -1,6 +1,7 @@
 import Foundation
 
-/// Model profiles, their assignments to runtimes, and the Tokens Anywhere link.
+/// Model profiles, the current channel and its per-runtime switch, and the
+/// Tokens Anywhere link.
 /// Keys go in and never come back.
 struct V2ModelConfigAPI {
     let transport: any HTTPTransport
@@ -15,42 +16,38 @@ struct V2ModelConfigAPI {
             method: .delete, path: "/model-profiles/\(id.v2URLPathComponentEncoded)"))
     }
 
-    func preview(profileId: String) async throws -> V2ModelPreviewResponse {
-        try await transport.send(HTTPRequest<V2ModelPreviewRequest, V2ModelPreviewResponse>(
-            method: .post, path: "/model-config/assignments/preview", body: .init(profileId: profileId)))
+    // MARK: Current channel
+
+    func channel() async throws -> V2ModelChannelState {
+        try await transport.send(HTTPRequest<EmptyRequestBody, V2ModelChannelState>(
+            method: .get, path: "/model-config/channel"))
     }
 
-    /// One key per apply sheet: a retried request with the same key returns the
-    /// first result instead of writing the connection again.
-    func apply(_ request: V2ModelApplyRequest, idempotencyKey: String) async throws -> V2ModelOperation {
-        try await transport.send(HTTPRequest<V2ModelApplyRequest, V2ModelOperation>(
-            method: .post, path: "/model-config/assignments", body: request,
-            headers: ["Idempotency-Key": idempotencyKey]))
+    /// Sets the current channel; answers at once while runtimes switch in the background.
+    func setChannel(_ channel: String) async throws -> V2ModelChannelState {
+        try await transport.send(HTTPRequest<V2ChannelRequest, V2ModelChannelState>(
+            method: .put, path: "/model-config/channel", body: .init(channel: channel)))
     }
 
-    func restore(_ target: V2ModelTarget, allowInterrupt: Bool) async throws -> V2ModelOperationResult {
-        try await transport.send(HTTPRequest<EmptyRequestBody, V2ModelOperationResult>(
-            method: .delete,
-            path: "/model-config/assignments/\(target.connectorId.v2URLPathComponentEncoded)/\(target.runtimeId.v2URLPathComponentEncoded)",
-            queryItems: [URLQueryItem(name: "allow_interrupt", value: allowInterrupt ? "true" : "false")]))
+    /// Chooses a channel for one runtime; nil follows the current channel again.
+    func setRuntimeChannel(_ target: V2ModelTarget, channel: String?, confirmNativeGlobal: Bool) async throws -> V2ModelChannelState {
+        try await transport.send(HTTPRequest<V2RuntimeChannelRequest, V2ModelChannelState>(
+            method: .put, path: "/model-config/channel/runtimes/\(target.pathComponents)",
+            body: .init(channel: channel, confirmNativeGlobal: confirmNativeGlobal)))
     }
+
+    /// Retries every restored or failed runtime, or only `target`.
+    func retryChannel(_ target: V2ModelTarget? = nil) async throws -> V2ModelChannelState {
+        try await transport.send(HTTPRequest<V2ChannelRetryRequest, V2ModelChannelState>(
+            method: .post, path: "/model-config/channel/retry", body: .init(target)))
+    }
+
+    // MARK: Tokens Anywhere
 
     /// A one-time address to open in a browser that authorizes the link.
     func beginTokensLink() async throws -> V2TokensLinkStart {
         try await transport.send(HTTPRequest<EmptyRequestBody, V2TokensLinkStart>(
             method: .post, path: "/integrations/tokens/link"))
-    }
-
-    /// Runtimes a one-click Tokens Anywhere setup would configure, with reasons for the rest.
-    func quickSetupCandidates() async throws -> V2QuickSetupCandidatesResponse {
-        try await transport.send(HTTPRequest<EmptyRequestBody, V2QuickSetupCandidatesResponse>(
-            method: .get, path: "/integrations/tokens/quick-setup"))
-    }
-
-    /// Starts the setup; when the account must link first, returns the address to open.
-    func startQuickSetup(_ request: V2QuickSetupRequest) async throws -> V2QuickSetupStartResponse {
-        try await transport.send(HTTPRequest<V2QuickSetupRequest, V2QuickSetupStartResponse>(
-            method: .post, path: "/integrations/tokens/quick-setup", body: request))
     }
 
     /// The linked account, its balance and its console pages.
@@ -77,15 +74,23 @@ struct V2ModelConfigAPI {
             method: .post, path: "/integrations/tokens/sync"))
     }
 
-    func unlinkTokens(allowInterrupt: Bool) async throws -> V2TokensUnlinkResponse {
+    /// Refused with `channel_in_use` while a runtime wants or uses the Anywhere channel.
+    func unlinkTokens() async throws -> V2TokensUnlinkResponse {
         try await transport.send(HTTPRequest<EmptyRequestBody, V2TokensUnlinkResponse>(
-            method: .delete, path: "/integrations/tokens/link",
-            queryItems: [URLQueryItem(name: "allow_interrupt", value: allowInterrupt ? "true" : "false")]))
+            method: .delete, path: "/integrations/tokens/link"))
     }
 
-    func rotateTokensKey(profileId: String, allowInterrupt: Bool, idempotencyKey: String) async throws -> V2ModelOperation {
-        try await transport.send(HTTPRequest<V2AllowInterruptRequest, V2ModelOperation>(
+    /// Without `allowInterrupt`, running tasks refuse it as `busy` before anything rotates.
+    /// Answers with the channel state the new key's rewrite shows up in.
+    func rotateTokensKey(profileId: String, allowInterrupt: Bool) async throws -> V2ModelChannelState {
+        try await transport.send(HTTPRequest<V2AllowInterruptRequest, V2ModelChannelState>(
             method: .post, path: "/model-profiles/\(profileId.v2URLPathComponentEncoded)/rotate-key",
-            body: .init(allowInterrupt: allowInterrupt), headers: ["Idempotency-Key": idempotencyKey]))
+            body: .init(allowInterrupt: allowInterrupt)))
+    }
+}
+
+private extension V2ModelTarget {
+    var pathComponents: String {
+        "\(connectorId.v2URLPathComponentEncoded)/\(runtimeId.v2URLPathComponentEncoded)"
     }
 }

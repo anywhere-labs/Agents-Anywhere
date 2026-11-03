@@ -12,7 +12,14 @@ from connector.runtime_protocol.instance_models import (
     RuntimeSourceKey,
     RuntimeTypeDescriptor,
 )
-from connector.runtime_protocol.model_connection import ModelConnectionStatus
+from connector.runtime_protocol.model_connection import (
+    ModelConnectionCapability,
+    ModelConnectionStatus,
+)
+from connector.runtime_protocol.model_probe import (
+    ModelProbeResult,
+    probe_model_connection,
+)
 from connector.runtime_protocol.models import (
     RuntimeConfig,
     RuntimeConfigSchema,
@@ -101,6 +108,15 @@ class RuntimeProvider(ABC):
     def session_source_key(self, config: RuntimeConfig) -> RuntimeSourceKey | None:
         return None
 
+    @property
+    def model_connection(self) -> ModelConnectionCapability | None:
+        """The model connection capability the descriptor declares, if any.
+
+        Lets the supervisor digest a requested connection without running
+        discovery first; it must equal ``discover().model_connection``.
+        """
+        return None
+
     def model_connection_status(
         self,
         config: RuntimeConfig,
@@ -111,3 +127,15 @@ class RuntimeProvider(ABC):
         override this; others report nothing.
         """
         return None
+
+    async def probe_model_connection(
+        self,
+        config: RuntimeConfig,
+        capability: ModelConnectionCapability | None,
+    ) -> ModelProbeResult:
+        """Send one minimal model request with the connection ``config`` holds.
+
+        ``config`` is what the running instance was created with. Providers
+        whose runtime reaches the model differently can override this.
+        """
+        return await probe_model_connection(config.values, capability)

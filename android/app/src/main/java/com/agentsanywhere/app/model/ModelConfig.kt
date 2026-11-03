@@ -1,7 +1,7 @@
 package com.agentsanywhere.app.model
 
 /**
- * Model connections: a gateway address, a write-only key and models, applied to
+ * Model connections: a gateway address, a write-only key and models, written to
  * runtimes that declare a [ModelConnectionCapability]. Wire values stay strings so
  * a newer Server can add values without breaking older clients.
  */
@@ -84,12 +84,14 @@ data class ModelProfile(
     val isManual: Boolean get() = source == "manual"
 }
 
+/** A runtime that really uses an AA channel; switch progress lives in [ModelChannelState]. */
 data class ModelAssignment(
     val connectorId: String,
     val runtimeId: String,
     val profileId: String,
     val offerFormat: String?,
     val createdRuntime: Boolean,
+    /** "applied", "modified" (changed by hand since) or "outdated" (waiting to be written again). */
     val status: String,
     val errorCode: String?,
     val errorMessage: String?,
@@ -115,45 +117,51 @@ data class TokensLinkStatus(
     val tokensUrl: String?,
     val secretConfigured: Boolean,
     val link: TokensLink?,
-    /** The last one-click setup: what was ticked and how far it got. */
-    val quickSetup: QuickSetupProgress? = null,
 ) {
     val linked: Boolean get() = link?.linked == true
 }
 
-data class ModelTarget(
-    val connectorId: String,
-    val runtimeId: String,
-) {
-    val key: String get() = "$connectorId/$runtimeId"
-}
+/** The channel every runtime follows unless it has its own: AA writes no model connection. */
+const val CHANNEL_NATIVE = "native"
 
-data class QuickSetupRequest(
-    val targets: List<ModelTarget>,
-    val confirmNativeGlobal: Boolean,
+/** The linked Tokens Anywhere account; manual services use their profile ID as the channel. */
+const val CHANNEL_TOKENS = "tokens"
+
+/** The latest change of the current channel or an override, and how far it got. */
+data class ChannelSwitch(
+    val revision: Long,
+    /** "running", "done" or "attention". */
+    val state: String,
+    val startedAt: String?,
+    val finishedAt: String?,
 )
 
-data class QuickSetupResult(
+/** One runtime's channel: what it should use, what it really uses, and the switch between them. */
+data class ChannelRuntime(
     val connectorId: String,
     val runtimeId: String,
-    /** "applied", "deferred", "skipped" or "failed". */
-    val result: String,
+    /** Its own channel; null follows the current channel. */
+    val override: String?,
+    val desired: String?,
+    val actual: String?,
+    /** "applied", "pending", "waiting_online", "switching", "restoring", "restored", "failed" or "unsupported". */
+    val state: String,
+    /** While switching: "preparing", "activating" or "verifying". */
+    val step: String?,
     val reason: String?,
-    val modelsTrimmed: Int,
-    val servesRuntimeId: String?,
+    val message: String?,
+    val updatedAt: String?,
 ) {
     val key: String get() = "$connectorId/$runtimeId"
 }
 
-data class QuickSetupProgress(
-    /** "syncing", "applying", "done" or "failed". */
-    val state: String,
-    val request: QuickSetupRequest,
-    val startedAt: String?,
-    /** Where a failure happened: "sync" or "apply". */
-    val step: String?,
-    val code: String?,
-    val results: List<QuickSetupResult>,
+/** The current channel and every runtime's progress towards it. */
+data class ModelChannelState(
+    val channel: String,
+    val revision: Long,
+    /** Null until the channel was changed for the first time. */
+    val switch: ChannelSwitch?,
+    val runtimes: List<ChannelRuntime>,
 )
 
 data class ModelConfigOverview(
@@ -161,4 +169,6 @@ data class ModelConfigOverview(
     val profiles: List<ModelProfile>,
     val assignments: List<ModelAssignment>,
     val tokens: TokensLinkStatus?,
+    /** Missing from older Servers. */
+    val channel: ModelChannelState? = null,
 )

@@ -2,14 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import and_, delete, func, insert, select, update
+from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from agent_server.core.utc import utc_now
 from agent_server.infra.db.schema import (
     connectors,
     device_runtimes,
-    model_config_operations,
     model_profiles,
     runtime_model_assignments,
 )
@@ -150,29 +149,6 @@ class ModelConfigRepositoryMixin:
             ).mappings().all()
         return [_assignment_row(row) for row in rows]
 
-    async def list_deferred_runtime_assignments(self) -> list[dict[str, Any]]:
-        """Assignments saved while tasks ran, waiting for the runtime to be idle."""
-        async with self._engine.connect() as conn:
-            rows = (
-                await conn.execute(
-                    select(runtime_model_assignments, connectors.c.user_id)
-                    .join(connectors, connectors.c.id == runtime_model_assignments.c.connector_id)
-                    .where(runtime_model_assignments.c.status == "deferred")
-                )
-            ).mappings().all()
-        return [{**_assignment_row(row), "userId": row["user_id"]} for row in rows]
-
-    async def set_runtime_assignment_status(self, connector_id: str, runtime_id: str, status: str) -> None:
-        async with self._engine.begin() as conn:
-            await conn.execute(
-                update(runtime_model_assignments)
-                .where(
-                    runtime_model_assignments.c.connector_id == connector_id,
-                    runtime_model_assignments.c.runtime_id == runtime_id,
-                )
-                .values(status=status, error_json=None, updated_at=utc_now())
-            )
-
     async def save_runtime_assignment(self, row: dict[str, Any]) -> None:
         values = {
             key: value for key, value in row.items() if key not in {"imported_model_ids", "error"}
@@ -191,19 +167,6 @@ class ModelConfigRepositoryMixin:
                         if key not in {"connector_id", "runtime_id"}
                     },
                 )
-            )
-
-    async def set_runtime_assignment_failed(
-        self, connector_id: str, runtime_id: str, error: dict[str, Any]
-    ) -> None:
-        async with self._engine.begin() as conn:
-            await conn.execute(
-                update(runtime_model_assignments)
-                .where(
-                    runtime_model_assignments.c.connector_id == connector_id,
-                    runtime_model_assignments.c.runtime_id == runtime_id,
-                )
-                .values(status="failed", error_json=_json_dumps(error), updated_at=utc_now())
             )
 
     async def delete_runtime_assignment(
@@ -270,97 +233,6 @@ class ModelConfigRepositoryMixin:
                 )
             ).scalar_one_or_none()
 
-    # Operations.
-
-    async def start_model_config_operation(self, row: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-        """Insert an operation, or return the one with the same idempotency key.
-
-        The second value is True when this call created it.
-        """
-        values = {key: value for key, value in row.items() if key != "targets"}
-        values["targets_json"] = _json_dumps(row["targets"])
-        async with self._engine.begin() as conn:
-            inserted = (
-                await conn.execute(
-                    pg_insert(model_config_operations)
-                    .values(**values)
-                    .on_conflict_do_nothing(index_elements=["user_id", "idempotency_key"])
-                    .returning(model_config_operations.c.id)
-                )
-            ).scalar_one_or_none()
-            existing = (
-                await conn.execute(
-                    select(model_config_operations).where(
-                        model_config_operations.c.user_id == values["user_id"],
-                        model_config_operations.c.idempotency_key == values["idempotency_key"],
-                    )
-                )
-            ).mappings().first()
-        assert existing is not None
-        return _operation_row(existing), inserted is not None
-
-    async def get_model_config_operation(self, operation_id: str, *, user_id: str) -> dict[str, Any]:
-        async with self._engine.connect() as conn:
-            row = (
-                await conn.execute(
-                    select(model_config_operations).where(
-                        model_config_operations.c.id == operation_id,
-                        model_config_operations.c.user_id == user_id,
-                    )
-                )
-            ).mappings().first()
-        if row is None:
-            raise KeyError(operation_id)
-        return _operation_row(row)
-
-    async def update_model_config_operation(
-        self,
-        operation_id: str,
-        *,
-        targets: list[dict[str, Any]] | None = None,
-        result: dict[str, Any] | None = None,
-        finished: bool = False,
-    ) -> None:
-        values: dict[str, Any] = {}
-        if targets is not None:
-            values["targets_json"] = _json_dumps(targets)
-        if result is not None:
-            values["result_json"] = _json_dumps(result)
-        if finished:
-            values["finished_at"] = utc_now()
-        if not values:
-            return
-        async with self._engine.begin() as conn:
-            await conn.execute(
-                update(model_config_operations)
-                .where(model_config_operations.c.id == operation_id)
-                .values(**values)
-            )
-
-    async def list_running_model_config_operations(self, *, user_id: str, now: str) -> list[dict[str, Any]]:
-        async with self._engine.connect() as conn:
-            rows = (
-                await conn.execute(
-                    select(model_config_operations).where(
-                        and_(
-                            model_config_operations.c.user_id == user_id,
-                            model_config_operations.c.finished_at.is_(None),
-                            model_config_operations.c.lease_until > now,
-                        )
-                    )
-                )
-            ).mappings().all()
-        return [_operation_row(row) for row in rows]
-
-    async def prune_model_config_operations(self, *, before: str) -> None:
-        async with self._engine.begin() as conn:
-            await conn.execute(
-                delete(model_config_operations).where(
-                    model_config_operations.c.finished_at.is_not(None),
-                    model_config_operations.c.finished_at < before,
-                )
-            )
-
 
 def _profile_row(row: Any) -> dict[str, Any]:
     return {
@@ -396,19 +268,4 @@ def _assignment_row(row: Any) -> dict[str, Any]:
         "error": _json_loads(row["error_json"]),
         "appliedAt": row["applied_at"],
         "updatedAt": row["updated_at"],
-    }
-
-
-def _operation_row(row: Any) -> dict[str, Any]:
-    return {
-        "id": row["id"],
-        "userId": row["user_id"],
-        "kind": row["kind"],
-        "idempotencyKey": row["idempotency_key"],
-        "requestDigest": row["request_digest"],
-        "targets": _json_loads(row["targets_json"]) or [],
-        "leaseUntil": row["lease_until"],
-        "result": _json_loads(row["result_json"]),
-        "createdAt": row["created_at"],
-        "finishedAt": row["finished_at"],
     }

@@ -1,6 +1,10 @@
 package com.agentsanywhere.app.api
 
+import com.agentsanywhere.app.model.CHANNEL_NATIVE
+import com.agentsanywhere.app.model.ChannelRuntime
+import com.agentsanywhere.app.model.ChannelSwitch
 import com.agentsanywhere.app.model.ModelAssignment
+import com.agentsanywhere.app.model.ModelChannelState
 import com.agentsanywhere.app.model.ModelConfigOverview
 import com.agentsanywhere.app.model.ModelConnectionCapability
 import com.agentsanywhere.app.model.ModelConnectionMode
@@ -9,67 +13,11 @@ import com.agentsanywhere.app.model.ModelOffer
 import com.agentsanywhere.app.model.ModelPreferences
 import com.agentsanywhere.app.model.ModelProfile
 import com.agentsanywhere.app.model.ModelSpec
-import com.agentsanywhere.app.model.ModelTarget
-import com.agentsanywhere.app.model.QuickSetupProgress
-import com.agentsanywhere.app.model.QuickSetupRequest
-import com.agentsanywhere.app.model.QuickSetupResult
 import com.agentsanywhere.app.model.SecretFieldState
 import com.agentsanywhere.app.model.TokensLink
 import com.agentsanywhere.app.model.TokensLinkStatus
 import org.json.JSONArray
 import org.json.JSONObject
-
-data class RemoteModelTarget(
-    val connectorId: String,
-    val runtimeId: String,
-)
-
-data class RemoteModelPreviewTarget(
-    val connectorId: String,
-    val runtimeId: String,
-    val runtimeType: String,
-    val name: String?,
-    val maturity: String?,
-    val decision: String,
-    val reason: String?,
-    val offerFormat: String?,
-    val effect: String?,
-    val scope: String?,
-    val requiresConfirmation: Boolean,
-    val runningSessions: Int,
-    val replacesHost: String?,
-    val modelLimit: Int?,
-    val tooManyModels: Boolean,
-    val capabilityMaturity: String?,
-) {
-    val key: String get() = "$connectorId/$runtimeId"
-    val canApply: Boolean get() = decision == "apply"
-}
-
-data class RemoteModelOperationResult(
-    val connectorId: String,
-    val runtimeId: String,
-    val result: String,
-    val reason: String?,
-)
-
-data class RemoteModelOperation(
-    val operationId: String?,
-    val kind: String,
-    val finished: Boolean,
-    val results: List<RemoteModelOperationResult>,
-)
-
-data class RemoteQuickSetupStart(
-    val started: Boolean,
-    /** Set when the browser must authorize the link first. */
-    val startUrl: String?,
-)
-
-data class RemoteTokensUnlinkResult(
-    val revoked: Boolean,
-    val results: List<RemoteModelOperationResult>,
-)
 
 /** Amounts are decimal yuan strings with four places, as Tokens Anywhere sends them. */
 data class RemoteTokensBalance(
@@ -118,6 +66,38 @@ internal fun JSONObject.toModelConfigOverview(): ModelConfigOverview {
         assignments = optJSONArray("assignments").toObjectList { toModelAssignment() }
             .filter { it.connectorId.isNotBlank() && it.runtimeId.isNotBlank() },
         tokens = optJSONObject("tokens")?.toTokensLinkStatus(),
+        channel = optJSONObject("channel")?.toModelChannelState(),
+    )
+}
+
+/** Wire values stay strings; a missing state reads as "pending" so the row still shows. */
+internal fun JSONObject.toModelChannelState(): ModelChannelState {
+    val switch = optJSONObject("switch")
+    return ModelChannelState(
+        channel = optNullableString("channel") ?: CHANNEL_NATIVE,
+        revision = optLong("revision", 0),
+        switch = switch?.let {
+            ChannelSwitch(
+                revision = it.optLong("revision", 0),
+                state = it.optNullableString("state") ?: "running",
+                startedAt = it.optNullableString("startedAt"),
+                finishedAt = it.optNullableString("finishedAt"),
+            )
+        },
+        runtimes = optJSONArray("runtimes").toObjectList {
+            ChannelRuntime(
+                connectorId = optString("connectorId"),
+                runtimeId = optString("runtimeId"),
+                override = optNullableString("override"),
+                desired = optNullableString("desired"),
+                actual = optNullableString("actual"),
+                state = optNullableString("state") ?: "pending",
+                step = optNullableString("step"),
+                reason = optNullableString("reason"),
+                message = optNullableString("message"),
+                updatedAt = optNullableString("updatedAt"),
+            )
+        }.filter { it.connectorId.isNotBlank() && it.runtimeId.isNotBlank() },
     )
 }
 
@@ -226,7 +206,7 @@ private fun JSONObject.toModelAssignment(): ModelAssignment {
     )
 }
 
-private fun JSONObject.toTokensLinkStatus(): TokensLinkStatus {
+internal fun JSONObject.toTokensLinkStatus(): TokensLinkStatus {
     val link = optJSONObject("link")
     return TokensLinkStatus(
         available = optBoolean("available", false),
@@ -242,34 +222,6 @@ private fun JSONObject.toTokensLinkStatus(): TokensLinkStatus {
                 accountEmail = account?.optNullableString("email"),
                 linkedAt = value.optNullableString("linkedAt"),
                 relinkSoon = value.optBoolean("relinkSoon", false),
-            )
-        },
-        quickSetup = optJSONObject("quickSetup")?.toQuickSetupProgress(),
-    )
-}
-
-internal fun JSONObject.toQuickSetupProgress(): QuickSetupProgress? {
-    val state = optNullableString("state") ?: return null
-    val request = optJSONObject("request")
-    return QuickSetupProgress(
-        state = state,
-        request = QuickSetupRequest(
-            targets = request?.optJSONArray("targets").toObjectList {
-                ModelTarget(optString("connectorId"), optString("runtimeId"))
-            }.filter { it.connectorId.isNotBlank() && it.runtimeId.isNotBlank() },
-            confirmNativeGlobal = request?.optBoolean("confirmNativeGlobal", false) ?: false,
-        ),
-        startedAt = optNullableString("startedAt"),
-        step = optNullableString("step"),
-        code = optNullableString("code"),
-        results = optJSONArray("results").toObjectList {
-            QuickSetupResult(
-                connectorId = optString("connectorId"),
-                runtimeId = optString("runtimeId"),
-                result = optString("result"),
-                reason = optNullableString("reason"),
-                modelsTrimmed = optInt("modelsTrimmed", 0),
-                servesRuntimeId = optNullableString("servesRuntimeId"),
             )
         },
     )
@@ -319,46 +271,6 @@ internal fun JSONObject?.toSecretFields(): Map<String, SecretFieldState> {
             hint = field.optNullableString("hint"),
         )
     }.toMap()
-}
-
-internal fun JSONObject.toModelPreviewTarget(): RemoteModelPreviewTarget {
-    val models = optJSONObject("models")
-    return RemoteModelPreviewTarget(
-        connectorId = optString("connectorId"),
-        runtimeId = optString("runtimeId"),
-        runtimeType = optString("runtimeType"),
-        name = optNullableString("name"),
-        maturity = optNullableString("maturity"),
-        decision = optString("decision", "skip").ifBlank { "skip" },
-        reason = optNullableString("reason"),
-        offerFormat = optNullableString("offerFormat"),
-        effect = optNullableString("effect"),
-        scope = optNullableString("scope"),
-        requiresConfirmation = optBoolean("requiresConfirmation", false),
-        runningSessions = optInt("runningSessions", 0),
-        replacesHost = optJSONObject("replaces")?.optNullableString("host"),
-        modelLimit = models?.optNullableInt("limit"),
-        tooManyModels = optBoolean("tooManyModels", false),
-        capabilityMaturity = optNullableString("capabilityMaturity"),
-    )
-}
-
-internal fun JSONObject.toModelOperationResult(): RemoteModelOperationResult {
-    return RemoteModelOperationResult(
-        connectorId = optString("connectorId"),
-        runtimeId = optString("runtimeId"),
-        result = optString("result"),
-        reason = optNullableString("reason"),
-    )
-}
-
-internal fun JSONObject.toModelOperation(): RemoteModelOperation {
-    return RemoteModelOperation(
-        operationId = optNullableString("operationId"),
-        kind = optString("kind"),
-        finished = optBoolean("finished", true),
-        results = optJSONArray("results").toObjectList { toModelOperationResult() },
-    )
 }
 
 internal fun ModelOffer.toJson(): JSONObject {

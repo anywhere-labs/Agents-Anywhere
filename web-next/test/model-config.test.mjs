@@ -5,6 +5,7 @@ import { registerSource } from "./helpers/onboarding-source.mjs"
 
 const hooks = registerSource()
 const presentation = await import("../src/features/model-config/presentation.ts")
+const channel = await import("../src/features/model-config/channel.ts")
 hooks.deregister()
 
 const messages = (locale) => JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url), "utf8"))
@@ -26,7 +27,6 @@ test("model config: saved and applied read differently", () => {
   assert.equal(presentation.connectionStateTone("saved_pending"), "progress")
   assert.equal(presentation.connectionStateTone("failed"), "error")
   assert.equal(presentation.connectionStateTone("managed_externally"), "warning")
-  assert.equal(presentation.assignmentStatusTone("outdated"), "warning")
 })
 
 test("model config: only runtimes that declare a connection are listed", () => {
@@ -53,46 +53,61 @@ test("model config: both languages carry the same strings", () => {
   assert.equal(zh.dashboard.device.showModelGatewayApiKey, undefined)
 })
 
-test("quick setup: the card shows choosing, progress or done", () => {
-  const linked = { status: "linked" }
-  assert.equal(presentation.quickSetupPhase({ link: null }, false, false), "setup")
-  assert.equal(presentation.quickSetupPhase({ link: null }, false, true), "progress")
-  assert.equal(presentation.quickSetupPhase({ link: linked, quickSetup: { state: "syncing" } }, false, false), "progress")
-  assert.equal(presentation.quickSetupPhase({ link: linked, quickSetup: { state: "failed", step: "apply" } }, true, false), "progress")
-  assert.equal(presentation.quickSetupPhase({ link: linked, quickSetup: { state: "done" } }, false, false), "done")
-  assert.equal(presentation.quickSetupPhase({ link: linked }, true, false), "done")
-  assert.equal(presentation.quickSetupPhase({ link: linked }, false, false), "done")
-  // Changing models on a configured account keeps the account page in view.
-  assert.equal(presentation.quickSetupPhase({ link: linked, quickSetup: { state: "applying" } }, true, false), "done")
-  assert.equal(presentation.quickSetupPhase({ link: { status: "reauth_required" } }, true, false), "setup")
+const row = (runtimeId, state, extra = {}) => ({
+  connectorId: "c", runtimeId, override: null, desired: "tokens", actual: state === "applied" ? "tokens" : "native", state, ...extra,
 })
 
-test("quick setup: each step reads from the link and its progress", () => {
-  const linked = { status: "linked" }
-  assert.deepEqual(presentation.quickSetupSteps({ link: null }, true), { authorize: "active", sync: "pending", apply: "pending" })
-  assert.deepEqual(presentation.quickSetupSteps({ link: linked, quickSetup: { state: "syncing" } }, false), { authorize: "done", sync: "active", apply: "pending" })
-  assert.deepEqual(presentation.quickSetupSteps({ link: linked, quickSetup: { state: "failed", step: "sync" } }, false), { authorize: "done", sync: "failed", apply: "pending" })
-  assert.deepEqual(presentation.quickSetupSteps({ link: linked, quickSetup: { state: "applying" } }, false), { authorize: "done", sync: "done", apply: "active" })
+test("channel: progress counts only runtimes taking part", () => {
+  const state = { channel: "tokens", revision: 3, switch: null, runtimes: [
+    row("codex", "applied"),
+    row("claude", "waiting_idle", { runningSessions: 2 }),
+    row("pi", "waiting_online", { connectorId: "d" }),
+    row("dsh", "unsupported", { reason: "confirmation_required" }),
+  ] }
+  const progress = channel.channelProgress(state)
+  assert.equal(progress.phase, "running")
+  assert.deepEqual([progress.total, progress.applied, progress.waitingIdle, progress.offlineDevices, progress.unsupported], [3, 1, 1, 1, 1])
+  assert.equal(channel.channelProgress({ ...state, runtimes: [row("codex", "applied"), row("x", "restored")] }).phase, "attention")
+  assert.equal(channel.channelProgress({ ...state, runtimes: [row("codex", "applied")] }).phase, "done")
+  assert.equal(channel.channelProgress(null).phase, "none")
 })
 
-test("quick setup: runtimes changing their own settings are not ticked by default", () => {
-  const candidates = [
-    { connectorId: "c", runtimeId: "codex", decision: "apply" },
-    { connectorId: "c", runtimeId: "dsh", decision: "apply", requiresConfirmation: true },
-    { connectorId: "d", runtimeId: "codex", decision: "skip", reason: "device_offline" },
-  ]
-  assert.deepEqual([...presentation.defaultQuickSelection(candidates)], ["c/codex"])
+test("channel: runtimes belong to the channel they should use", () => {
+  const state = { channel: "tokens", revision: 2, switch: null, runtimes: [
+    row("codex", "applied"),
+    row("claude", "switching", { override: "native", desired: "native", actual: "tokens" }),
+  ] }
+  assert.deepEqual(channel.channelRows(state, "tokens").map((item) => item.runtimeId), ["codex"])
+  assert.deepEqual(channel.channelRows(state, "native").map((item) => item.runtimeId), ["claude"])
+  assert.deepEqual(channel.channelRows(null, "tokens"), [])
 })
 
-test("quick setup: a runtime served by a managed instance is not new", () => {
-  const candidates = [
-    { connectorId: "c", runtimeId: "codex", runtimeType: "codex", decision: "apply", effect: "restart" },
-    { connectorId: "c", runtimeId: "pi", runtimeType: "pi", decision: "apply", effect: "new_instance" },
-    { connectorId: "c", runtimeId: "claude", runtimeType: "claude", decision: "apply", effect: "restart" },
+test("channel: Anywhere is wanted while it is the default, chosen or still in use", () => {
+  const state = (current, runtimes) => ({ channel: current, revision: 1, switch: null, runtimes })
+  assert.equal(channel.tokensWanted(state("tokens", [])), true)
+  assert.equal(channel.tokensWanted(state("native", [row("codex", "applied", { desired: "native", actual: "tokens" })])), true)
+  assert.equal(channel.tokensWanted(state("native", [row("codex", "pending", { override: "tokens" })])), true)
+  assert.equal(channel.tokensWanted(state("native", [row("codex", "applied", { desired: "native", actual: "native" })])), false)
+  assert.equal(channel.tokensWanted(null), false)
+})
+
+test("channel: a managed instance reads the row of the runtime it serves", () => {
+  const state = { channel: "tokens", revision: 1, switch: null, runtimes: [row("pi", "applied")] }
+  const runtimes = [
+    { connectorId: "c", runtimeId: "pi", runtimeType: "pi" },
+    { connectorId: "c", runtimeId: "pi-aa", runtimeType: "pi", managedBy: "model-config" },
+    { connectorId: "c", runtimeId: "other", runtimeType: "other" },
   ]
-  const assigned = [
-    { connectorId: "c", runtimeId: "codex" },
-    { connectorId: "c", runtimeId: "pi-managed", runtimeType: "pi", createdRuntime: true },
-  ]
-  assert.deepEqual(presentation.newQuickCandidates(candidates, assigned).map((item) => item.runtimeId), ["claude"])
+  assert.equal(channel.channelRowFor(state, runtimes, [], { connectorId: "c", runtimeId: "pi-aa" })?.runtimeId, "pi")
+  assert.equal(channel.channelRowFor(state, runtimes, [], { connectorId: "c", runtimeId: "other" }), null)
+  assert.equal(channel.usesAnywhere(channel.channelRowFor(state, runtimes, [], { connectorId: "c", runtimeId: "pi" })), true)
+  assert.equal(channel.usesAnywhere(row("codex", "waiting_idle")), false)
+})
+
+test("channel: a profile is referenced while current, chosen or in use", () => {
+  const state = { channel: "native", revision: 1, switch: null, runtimes: [row("codex", "applied", { override: "mpr_1", desired: "mpr_1", actual: "mpr_1" })] }
+  assert.equal(channel.channelReferenced(state, "mpr_1"), true)
+  assert.equal(channel.channelReferenced(state, "mpr_2"), false)
+  assert.equal(channel.channelReferenced({ ...state, channel: "mpr_2" }, "mpr_2"), true)
+  assert.equal(channel.channelUsers(state, "mpr_1"), 1)
 })

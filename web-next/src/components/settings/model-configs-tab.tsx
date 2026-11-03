@@ -1,13 +1,14 @@
 "use client"
 
 import * as React from "react"
-import { ChevronRight, Plus, RefreshCw, Trash2, Upload } from "lucide-react"
+import { ChevronRight, LogOut, RefreshCw, Trash2 } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
-import { RuntimeMaturityBadge } from "@/components/runtime-maturity-badge"
+import { ChannelMark, ChannelRuntimes, channelLabel, useChannelState } from "@/components/settings/channel-runtimes"
 import { SettingsSection } from "@/components/settings/settings-section"
-import { TokensQuickSetup } from "@/components/settings/tokens-quick-setup"
+import { AccountBlock, CopyButton } from "@/components/settings/tokens-account"
+import { TokensChannel } from "@/components/settings/tokens-channel"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -34,31 +35,19 @@ import {
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
-import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { useWorkspace } from "@/components/workspace-context"
-import type { ModelProfile, ModelProtocol } from "@/features/dashboard/types"
-import { modelConfigApi, type ModelOperation, type ModelPreviewTarget } from "@/features/model-config/api"
-import {
-  newIdempotencyKey,
-  parseModelIds,
-  type ModelStatusTone,
-} from "@/features/model-config/presentation"
+import type { DeviceRuntimeView, ModelChannel, ModelChannelState, ModelConfigOverview, ModelProfile, ModelProtocol } from "@/features/dashboard/types"
+import { modelConfigApi } from "@/features/model-config/api"
+import { NATIVE_CHANNEL, TOKENS_CHANNEL, channelReferenced, channelUsers, tokensWanted } from "@/features/model-config/channel"
+import { parseModelIds } from "@/features/model-config/presentation"
 import { isApiError } from "@/lib/api/errors"
 import { cn } from "@/lib/utils"
 
 /** Only what the page shows of a device. */
-type ConnectorView = { id: string; name: string }
+type ConnectorView = { id: string; name: string; status?: "online" | "offline" }
 
 const PROTOCOLS: ModelProtocol[] = ["openai_responses", "openai_chat", "anthropic"]
-
-export const TONE_CLASS: Record<ModelStatusTone, string> = {
-  ok: "border-emerald-500/40 text-emerald-700 dark:text-emerald-400",
-  progress: "border-sky-500/40 text-sky-700 dark:text-sky-400",
-  warning: "border-amber-500/40 text-amber-700 dark:text-amber-400",
-  error: "border-destructive/40 text-destructive",
-  neutral: "text-muted-foreground",
-}
 
 /**
  * Run an action that may restart runtimes: first without interrupting
@@ -111,14 +100,11 @@ export function useErrorText() {
   }, [t])
 }
 
-const TOKENS_CHANNEL = "tokens"
-
 export function ModelConfigsTab({ token, connectors }: { token: string; connectors: ConnectorView[] }) {
   const t = useTranslations("pages.settings.modelConfigs")
   const { modelConfig, runtimes, refreshModelConfig } = useWorkspace()
   const changed = useModelConfigChanged()
   const [loadFailed, setLoadFailed] = React.useState(false)
-  const [applyProfile, setApplyProfile] = React.useState<ModelProfile | null>(null)
   const [creating, setCreating] = React.useState(false)
   const [selected, setSelected] = React.useState<string | null>(null)
   const errorText = useErrorText()
@@ -152,138 +138,209 @@ export function ModelConfigsTab({ token, connectors }: { token: string; connecto
     ) : <div className="flex justify-center py-10"><Spinner /></div>
   }
 
+  return (
+    <ModelChannels
+      token={token}
+      connectors={connectors}
+      selected={selected}
+      onSelect={setSelected}
+      onCreate={() => setCreating(true)}
+      creating={creating}
+      onCloseCreate={() => setCreating(false)}
+      errorText={errorText}
+      changed={changed}
+      modelConfig={modelConfig}
+      runtimes={runtimes}
+    />
+  )
+}
+
+function ModelChannels({
+  token,
+  modelConfig,
+  connectors,
+  runtimes,
+  selected,
+  onSelect,
+  onCreate,
+  creating,
+  onCloseCreate,
+  errorText,
+  changed,
+}: {
+  token: string
+  modelConfig: ModelConfigOverview
+  connectors: ConnectorView[]
+  runtimes: DeviceRuntimeView[]
+  selected: string | null
+  onSelect: (id: string) => void
+  onCreate: () => void
+  creating: boolean
+  onCloseCreate: () => void
+  errorText: (error: unknown) => string
+  changed: () => void
+}) {
+  const t = useTranslations("pages.settings.modelConfigs")
+  const { channel, accept } = useChannelState(modelConfig)
+  const [making, setMaking] = React.useState(false)
+
   const tokensAvailable = Boolean(modelConfig.tokens?.available)
   const tokensProfile = modelConfig.profiles.find((profile) => profile.source === "tokens" && profile.state === "active")
   // The active Tokens profile belongs to the Anywhere channel; everything else is listed on its own.
   const listed = modelConfig.profiles.filter((profile) => profile !== tokensProfile)
   const enabled = listed.filter((profile) => profile.state === "active")
   const detached = listed.filter((profile) => profile.state !== "active")
-  const channels = [...(tokensAvailable ? [TOKENS_CHANNEL] : []), ...enabled.map((item) => item.id), ...detached.map((item) => item.id)]
-  const current = selected && channels.includes(selected) ? selected : channels[0] ?? null
+  const channels = [NATIVE_CHANNEL, ...(tokensAvailable ? [TOKENS_CHANNEL] : []), ...enabled.map((item) => item.id), ...detached.map((item) => item.id)]
+  const inUse = channel?.channel ?? null
+  // The page opens on the default channel, where most runtimes are.
+  const current = selected && channels.includes(selected) ? selected : inUse && channels.includes(inUse) ? inUse : NATIVE_CHANNEL
   const currentProfile = current === TOKENS_CHANNEL ? tokensProfile : listed.find((profile) => profile.id === current)
-  const usedBy = (profile: ModelProfile) => modelConfig.assignments.filter((item) => item.profileId === profile.id).length
-  const linked = modelConfig.tokens?.link?.status === "linked"
+  // Runtimes actually on a channel; before the Server reports channels, the recorded assignments.
+  const signOut = useTokensSignOut({ token, channel, runtimes, errorText, onAccepted: accept, onChanged: changed })
+  // Changing the default does not move the page off the channel being looked at.
+  React.useEffect(() => {
+    if (selected === null && (channel || current !== NATIVE_CHANNEL)) onSelect(current)
+  }, [channel, current, onSelect, selected])
+  const usedBy = (id: ModelChannel, profile?: ModelProfile) => channel
+    ? channelUsers(channel, id)
+    : modelConfig.assignments.filter((item) => item.profileId === profile?.id).length
+
+  const makeCurrent = async (id: ModelChannel) => {
+    setMaking(true)
+    try {
+      accept(await modelConfigApi.setChannel(token, id))
+      toast.success(t("current.switched"))
+    } catch (error) {
+      toast.error(errorText(error))
+    } finally {
+      setMaking(false)
+      changed()
+    }
+  }
+  const currentAction = (id: ModelChannel) => inUse === id ? null : (
+    <Button
+      size="sm"
+      variant="outline"
+      title={t("current.description")}
+      disabled={making || !modelConfig.secretConfigured}
+      onClick={() => void makeCurrent(id)}
+    >
+      {making ? <Spinner /> : null}{t("current.makeCurrent")}
+    </Button>
+  )
+  const channelButton = (id: ModelChannel, name: string) => (
+    <ChannelButton
+      key={id}
+      selected={current === id}
+      onSelect={() => onSelect(id)}
+      name={name}
+      badge={inUse === id ? <Badge variant="secondary" className="shrink-0 font-normal">{t("current.inUse")}</Badge> : null}
+      meta={<ChannelMark channel={channel} channelId={id} />}
+    />
+  )
+  const runtimesOf = (id: ModelChannel) => (
+    <ChannelRuntimes
+      token={token}
+      overview={modelConfig}
+      channel={channel}
+      channelId={id}
+      connectors={connectors}
+      runtimes={runtimes}
+      errorText={errorText}
+      onAccepted={accept}
+      onChanged={changed}
+    />
+  )
 
   return (
     <div className="flex flex-col gap-4">
       {!modelConfig.secretConfigured ? (
         <Alert><AlertDescription>{t("secretMissing")}</AlertDescription></Alert>
       ) : null}
-      <div className="grid items-start gap-4 md:grid-cols-[15rem_minmax(0,1fr)]">
-        <nav aria-label={t("channels.title")} className="flex flex-col gap-1 rounded-lg border border-border bg-card p-2 md:sticky md:top-0">
-          {tokensAvailable ? (
-            <ChannelGroup title={linked ? t("channels.enabled") : t("channels.available")}>
-              <ChannelButton
-                selected={current === TOKENS_CHANNEL}
-                onSelect={() => setSelected(TOKENS_CHANNEL)}
-                mark={<span className="flex size-6 items-center justify-center rounded-md bg-gradient-to-br from-violet-500 to-teal-400 text-xs font-semibold text-white">A</span>}
-                name={t("channels.anywhere")}
-                active={linked}
-              />
-            </ChannelGroup>
-          ) : null}
+      <div className="grid items-start gap-8 md:grid-cols-[16rem_minmax(0,1fr)] md:gap-10 lg:gap-12">
+        <nav aria-label={t("channels.title")} className="flex flex-col gap-1 md:sticky md:top-0">
+          <ChannelGroup>
+            {channelButton(NATIVE_CHANNEL, t("current.native"))}
+            {tokensAvailable ? channelButton(TOKENS_CHANNEL, t("channels.anywhere")) : null}
+          </ChannelGroup>
           {enabled.length ? (
             <ChannelGroup title={t("channels.manual")}>
-              {enabled.map((profile) => (
-                <ChannelButton
-                  key={profile.id}
-                  selected={current === profile.id}
-                  onSelect={() => setSelected(profile.id)}
-                  mark={<ProfileMark name={profile.name} />}
-                  name={profile.name}
-                  active
-                />
-              ))}
+              {enabled.map((profile) => channelButton(profile.id, profile.name))}
             </ChannelGroup>
           ) : null}
           {detached.length ? (
             <ChannelGroup title={t("channels.detached")}>
-              {detached.map((profile) => (
-                <ChannelButton
-                  key={profile.id}
-                  selected={current === profile.id}
-                  onSelect={() => setSelected(profile.id)}
-                  mark={<ProfileMark name={profile.name} />}
-                  name={profile.name}
-                  active={false}
-                />
-              ))}
+              {detached.map((profile) => channelButton(profile.id, profile.name))}
             </ChannelGroup>
           ) : null}
           <Button
             size="sm"
             variant="ghost"
-            className="mt-1 justify-start text-muted-foreground"
-            onClick={() => setCreating(true)}
+            className="mt-1 justify-start px-2 text-muted-foreground"
+            onClick={onCreate}
             disabled={!modelConfig.secretConfigured}
           >
-            <Plus data-icon="inline-start" />{t("addProfile")}
+            {t("addProfile")}
           </Button>
         </nav>
 
-        <section className="flex min-w-0 flex-col gap-4">
-          {current === TOKENS_CHANNEL ? (
-            <>
-              <TokensQuickSetup
-                token={token}
-                overview={modelConfig}
-                connectors={connectors}
-                runtimes={runtimes}
-                errorText={errorText}
-                onChanged={changed}
-              />
-              {tokensProfile ? (
-                <SettingsSection title={t("channels.connection")} description={t("profilesDescription")}>
-                  <ProfileRow
-                    token={token}
-                    profile={tokensProfile}
-                    usedBy={usedBy(tokensProfile)}
-                    onApply={() => setApplyProfile(tokensProfile)}
-                    errorText={errorText}
-                  />
-                </SettingsSection>
+        <section className="flex min-w-0 flex-col gap-8">
+          {current === NATIVE_CHANNEL ? (
+            <SettingsSection
+              variant="plain"
+              title={t("current.native")}
+              description={t("native.description")}
+              action={currentAction(NATIVE_CHANNEL)}
+            />
+          ) : current === TOKENS_CHANNEL ? (
+            <TokensChannel
+              token={token}
+              overview={modelConfig}
+              currentAction={currentAction(TOKENS_CHANNEL)}
+              signOut={(
+                <TokensSignOut
+                  fallback={channelLabel(modelConfig, inUse && inUse !== TOKENS_CHANNEL ? inUse : NATIVE_CHANNEL, t)}
+                  busy={signOut.busy}
+                  onSignOut={() => void signOut.start()}
+                />
+              )}
+              connection={tokensProfile ? (
+                <TokensConnection token={token} profile={tokensProfile} usedBy={usedBy(TOKENS_CHANNEL, tokensProfile)} errorText={errorText} />
               ) : null}
-            </>
+              runtimes={channel ? runtimesOf(TOKENS_CHANNEL) : null}
+              errorText={errorText}
+              onChanged={changed}
+            />
           ) : currentProfile ? (
-            <SettingsSection title={currentProfile.name} description={t("profilesDescription")}>
+            <SettingsSection
+              variant="plain"
+              title={currentProfile.name}
+              description={t("profilesDescription")}
+              action={currentProfile.source === "manual" && currentProfile.state === "active" ? currentAction(currentProfile.id) : null}
+            >
               <ProfileRow
                 key={currentProfile.id}
                 token={token}
                 profile={currentProfile}
-                usedBy={usedBy(currentProfile)}
-                onApply={() => setApplyProfile(currentProfile)}
+                usedBy={usedBy(currentProfile.id, currentProfile)}
+                referenced={channelReferenced(channel, currentProfile.id)}
                 errorText={errorText}
                 defaultExpanded
               />
             </SettingsSection>
-          ) : (
-            <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border px-6 py-12 text-center text-sm text-muted-foreground">
-              <span>{t("noProfiles")}</span>
-              <Button size="sm" variant="outline" onClick={() => setCreating(true)} disabled={!modelConfig.secretConfigured}>
-                <Plus data-icon="inline-start" />{t("addProfile")}
-              </Button>
-            </div>
-          )}
+          ) : null}
+          {channel && !(current === TOKENS_CHANNEL && modelConfig.tokens?.link?.status === "linked") ? runtimesOf(current) : null}
         </section>
       </div>
-      {creating ? <ProfileDialog token={token} onClose={() => setCreating(false)} errorText={errorText} /> : null}
-      {applyProfile ? (
-        <ApplyDialog
-          token={token}
-          profile={applyProfile}
-          connectors={connectors}
-          onClose={() => setApplyProfile(null)}
-          errorText={errorText}
-        />
-      ) : null}
+      {creating ? <ProfileDialog token={token} onClose={onCloseCreate} errorText={errorText} /> : null}
     </div>
   )
 }
 
-function ChannelGroup({ title, children }: { title: string; children: React.ReactNode }) {
+function ChannelGroup({ title, children }: { title?: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="px-2 pb-1 pt-2 text-xs text-muted-foreground">{title}</span>
+      {title ? <span className="px-2 pb-1 pt-2 text-xs text-muted-foreground">{title}</span> : null}
       {children}
     </div>
   )
@@ -292,15 +349,17 @@ function ChannelGroup({ title, children }: { title: string; children: React.Reac
 function ChannelButton({
   selected,
   onSelect,
-  mark,
   name,
-  active,
+  badge,
+  meta,
 }: {
   selected: boolean
   onSelect: () => void
-  mark: React.ReactNode
   name: string
-  active: boolean
+  /** Marks the current channel. */
+  badge: React.ReactNode
+  /** How many runtimes should use it, and whether they got there. */
+  meta: React.ReactNode
 }) {
   return (
     <button
@@ -312,18 +371,198 @@ function ChannelButton({
         selected && "bg-accent font-medium",
       )}
     >
-      {mark}
       <span className="min-w-0 flex-1 truncate">{name}</span>
-      {active ? <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-emerald-500" /> : null}
+      {badge}
+      {meta}
     </button>
   )
 }
 
-function ProfileMark({ name }: { name: string }) {
+
+/**
+ * Leave the Anywhere account. Unlinking kills its key, so every runtime on it
+ * moves first: to the default channel, or to the device's own configuration
+ * when Anywhere was the default. The account is unlinked once none uses it.
+ * Kept by the page, so looking at another channel meanwhile does not stop it.
+ */
+function useTokensSignOut({
+  token,
+  channel,
+  runtimes,
+  errorText,
+  onAccepted,
+  onChanged,
+}: {
+  token: string
+  channel: ModelChannelState | null
+  runtimes: DeviceRuntimeView[]
+  errorText: (error: unknown) => string
+  onAccepted: (state: unknown) => void
+  onChanged: () => void
+}) {
+  const t = useTranslations("pages.settings.modelConfigs")
+  // "waiting": the runtimes are still switching away; unlink when they are done.
+  const [phase, setPhase] = React.useState<"idle" | "working" | "waiting">("idle")
+  const unlinking = React.useRef(false)
+
+  const unlink = React.useCallback(async () => {
+    if (unlinking.current) return
+    unlinking.current = true
+    setPhase("working")
+    try {
+      const { revoked } = await modelConfigApi.unlinkTokens(token)
+      toast.success(t(revoked ? "signedOut" : "unlinkedNotRevoked"))
+      setPhase("idle")
+      onChanged()
+    } catch (error) {
+      if (isApiError(error) && error.code === "channel_in_use") {
+        setPhase("waiting")
+      } else {
+        toast.error(errorText(error))
+        setPhase("idle")
+      }
+    } finally {
+      unlinking.current = false
+    }
+  }, [errorText, onChanged, t, token])
+
+  React.useEffect(() => {
+    if (phase === "waiting" && channel && !tokensWanted(channel)) void unlink()
+  }, [channel, phase, unlink])
+
+  const start = async () => {
+    setPhase("working")
+    try {
+      let state = channel
+      if (!state || state.channel === TOKENS_CHANNEL) {
+        state = await modelConfigApi.setChannel(token, NATIVE_CHANNEL)
+        onAccepted(state)
+      }
+      for (const row of state.runtimes.filter((item) => item.override === TOKENS_CHANNEL)) {
+        // Following a default other than its own configuration would rewrite its global settings again.
+        const scope = runtimes.find((item) => item.connectorId === row.connectorId && item.runtimeId === row.runtimeId)?.modelConnection?.scope
+        const value = scope === "native_global" && state.channel !== NATIVE_CHANNEL ? NATIVE_CHANNEL : null
+        state = await modelConfigApi.setRuntimeChannel(token, row, value)
+        onAccepted(state)
+      }
+    } catch (error) {
+      toast.error(errorText(error))
+      setPhase("idle")
+      onChanged()
+      return
+    }
+    onChanged()
+    await unlink()
+  }
+
+  return { busy: phase !== "idle", start }
+}
+
+function TokensSignOut({ fallback, busy, onSignOut }: { fallback: string; busy: boolean; onSignOut: () => void }) {
+  const t = useTranslations("pages.settings.modelConfigs")
+  if (busy) {
+    return (
+      <span role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Spinner />{t("signingOut")}
+      </span>
+    )
+  }
   return (
-    <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-medium text-muted-foreground">
-      {name.trim().slice(0, 1).toUpperCase() || "?"}
-    </span>
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button size="sm" variant="ghost"><LogOut data-icon="inline-start" />{t("signOut")}</Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t("signOutTitle")}</AlertDialogTitle>
+          <AlertDialogDescription>{t("signOutDescription", { channel: fallback })}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" onClick={onSignOut}>{t("signOut")}</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
+/** Where runtimes reach the Anywhere channel and with which key. */
+function TokensConnection({
+  token,
+  profile,
+  usedBy,
+  errorText,
+}: {
+  token: string
+  profile: ModelProfile
+  usedBy: number
+  errorText: (error: unknown) => string
+}) {
+  const t = useTranslations("pages.settings.modelConfigs")
+  const [busy, setBusy] = React.useState(false)
+  const interrupt = useInterruptConfirm()
+  const changed = useModelConfigChanged()
+
+  const rotate = async () => {
+    setBusy(true)
+    try {
+      const rotated = await interrupt.run((allow) => modelConfigApi.rotateTokensKey(token, profile.id, allow))
+      if (rotated !== null) {
+        toast.success(t("rotated"))
+        changed()
+      }
+    } catch (error) {
+      toast.error(errorText(error))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <AccountBlock
+      title={t("channels.connection")}
+      action={(
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button size="sm" variant="ghost" disabled={busy}>
+              {busy ? <Spinner /> : <RefreshCw data-icon="inline-start" />}{t("rotate")}
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t("rotate")}</AlertDialogTitle>
+              <AlertDialogDescription>{t("rotateDescription")}</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
+              <AlertDialogAction variant="destructive" onClick={() => void rotate()} disabled={busy}>
+                {t("rotate")}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
+    >
+      {interrupt.dialog}
+      <dl className="flex flex-col divide-y divide-border rounded-lg border border-border text-sm">
+        <div className="flex min-h-11 flex-wrap items-center gap-x-4 gap-y-1 px-3 py-1.5">
+          <dt className="w-20 shrink-0 text-muted-foreground">{t("address")}</dt>
+          <dd className="min-w-0 flex-1 break-all">{profile.originHost}</dd>
+          <CopyButton value={profile.originHost} />
+        </div>
+        {profile.keyHint ? (
+          <div className="flex min-h-11 flex-wrap items-center gap-x-4 gap-y-1 px-3 py-1.5">
+            <dt className="w-20 shrink-0 text-muted-foreground">{t("apiKey")}</dt>
+            {/* Only the ends of the key are kept, so there is nothing to copy. */}
+            <dd className="min-w-0 flex-1 break-all font-mono" title={t("apiKeyWriteOnly")}>{profile.keyHint}</dd>
+          </div>
+        ) : null}
+        <div className="flex min-h-11 flex-wrap items-center gap-x-4 gap-y-1 px-3 py-1.5">
+          <dt className="w-20 shrink-0 text-muted-foreground">{t("usage")}</dt>
+          <dd className="min-w-0 flex-1">{usedBy ? t("usedBy", { count: usedBy }) : t("unused")}</dd>
+        </div>
+      </dl>
+    </AccountBlock>
   )
 }
 
@@ -331,20 +570,20 @@ function ProfileRow({
   token,
   profile,
   usedBy,
-  onApply,
+  referenced,
   errorText,
   defaultExpanded = false,
 }: {
   token: string
   profile: ModelProfile
   usedBy: number
-  onApply: () => void
+  /** Current, chosen for a runtime, or in use: the Server refuses to delete it. */
+  referenced: boolean
   errorText: (error: unknown) => string
   defaultExpanded?: boolean
 }) {
   const t = useTranslations("pages.settings.modelConfigs")
   const [busy, setBusy] = React.useState(false)
-  const interrupt = useInterruptConfirm()
   const changed = useModelConfigChanged()
   const [expanded, setExpanded] = React.useState(defaultExpanded)
   const detailsId = React.useId()
@@ -361,26 +600,8 @@ function ProfileRow({
     }
   }
 
-  const rotate = async () => {
-    setBusy(true)
-    try {
-      // One key for both attempts: the first is refused before anything rotates.
-      const key = newIdempotencyKey()
-      const operation = await interrupt.run((allow) => modelConfigApi.rotateTokensKey(token, profile.id, allow, key))
-      if (operation) {
-        reportOperation(operation, t)
-        changed()
-      }
-    } catch (error) {
-      toast.error(errorText(error))
-    } finally {
-      setBusy(false)
-    }
-  }
-
   return (
     <div className="flex flex-col gap-3 py-4">
-      {interrupt.dialog}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 flex-1 basis-48 flex-wrap items-center gap-2">
           <span className="break-words font-medium">{profile.name}</span>
@@ -391,34 +612,15 @@ function ProfileRow({
           {profile.state === "detached" ? <Badge variant="outline">{t("detached")}</Badge> : null}
         </div>
         <div className="flex shrink-0 gap-2">
-          {profile.source === "manual" ? (
-            <Button size="sm" onClick={onApply} disabled={busy || profile.state !== "active"}>
-              <Upload data-icon="inline-start" />{t("apply")}
-            </Button>
-          ) : null}
-          {profile.source === "tokens" && profile.state === "active" ? (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button size="sm" variant="ghost" disabled={busy}>
-                  <RefreshCw data-icon="inline-start" />{t("rotate")}
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>{t("rotate")}</AlertDialogTitle>
-                  <AlertDialogDescription>{t("rotateDescription")}</AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
-                  <AlertDialogAction variant="destructive" onClick={() => void rotate()} disabled={busy}>
-                    {t("rotate")}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          ) : null}
           {profile.source === "manual" || profile.state === "detached" ? (
-            <Button size="icon-sm" variant="ghost" onClick={() => void remove()} disabled={busy || usedBy > 0} aria-label={t("deleteProfile")}>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              onClick={() => void remove()}
+              disabled={busy || referenced || usedBy > 0}
+              title={referenced || usedBy > 0 ? t("deleteInUse") : undefined}
+              aria-label={t("deleteProfile")}
+            >
               <Trash2 />
             </Button>
           ) : null}
@@ -599,161 +801,4 @@ function ProfileDialog({ token, onClose, errorText }: { token: string; onClose: 
       </DialogContent>
     </Dialog>
   )
-}
-
-function ApplyDialog({
-  token,
-  profile,
-  connectors,
-  onClose,
-  errorText,
-}: {
-  token: string
-  profile: ModelProfile
-  connectors: ConnectorView[]
-  onClose: () => void
-  errorText: (error: unknown) => string
-}) {
-  const t = useTranslations("pages.settings.modelConfigs")
-  const [targets, setTargets] = React.useState<ModelPreviewTarget[] | null>(null)
-  const [selected, setSelected] = React.useState<Set<string>>(new Set())
-  const [allowInterrupt, setAllowInterrupt] = React.useState(false)
-  const [confirmGlobal, setConfirmGlobal] = React.useState(false)
-  const [applying, setApplying] = React.useState(false)
-  const changed = useModelConfigChanged()
-  const idempotencyKey = React.useRef(newIdempotencyKey())
-  // The preview runs once per dialog; snapshot updates re-render the parent with new callbacks.
-  const latest = React.useRef({ onClose, errorText })
-  React.useEffect(() => { latest.current = { onClose, errorText } }, [onClose, errorText])
-  const deviceName = (connectorId: string) => connectors.find((item) => item.id === connectorId)?.name ?? connectorId
-  const keyOf = (target: { connectorId: string; runtimeId: string }) => `${target.connectorId}/${target.runtimeId}`
-
-  React.useEffect(() => {
-    let cancelled = false
-    modelConfigApi.preview(token, profile.id).then((preview) => {
-      if (cancelled) return
-      setTargets(preview.targets)
-      // Changing a runtime's own global settings is never preselected.
-      setSelected(new Set(preview.targets
-        .filter((item) => item.decision === "apply" && !item.requiresConfirmation && !item.tooManyModels)
-        .map(keyOf)))
-    }).catch((error) => {
-      if (!cancelled) {
-        toast.error(latest.current.errorText(error))
-        latest.current.onClose()
-      }
-    })
-    return () => { cancelled = true }
-  }, [profile.id, token])
-
-  const chosen = (targets ?? []).filter((item) => selected.has(keyOf(item)))
-  const needsGlobal = chosen.some((item) => item.requiresConfirmation)
-  const running = chosen.reduce((sum, item) => sum + (item.effect === "restart" ? item.runningSessions ?? 0 : 0), 0)
-
-  const apply = async () => {
-    setApplying(true)
-    try {
-      const operation = await modelConfigApi.apply(token, {
-        profileId: profile.id,
-        targets: chosen.map(({ connectorId, runtimeId }) => ({ connectorId, runtimeId })),
-        allowInterrupt,
-        confirmNativeGlobal: confirmGlobal,
-      }, idempotencyKey.current)
-      reportOperation(operation, t)
-      changed()
-      onClose()
-    } catch (error) {
-      toast.error(errorText(error))
-    } finally {
-      setApplying(false)
-    }
-  }
-
-  return (
-    <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{t("applyTitle", { name: profile.name })}</DialogTitle>
-          <DialogDescription>{t("applyDescription")}</DialogDescription>
-        </DialogHeader>
-        {!targets ? (
-          <div className="flex justify-center py-8"><Spinner /></div>
-        ) : targets.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t("noTargets")}</p>
-        ) : (
-          <div className="flex max-h-[50vh] flex-col divide-y divide-border overflow-y-auto">
-            {targets.map((item) => {
-              const key = keyOf(item)
-              const disabled = item.decision !== "apply" || Boolean(item.tooManyModels)
-              return (
-                <label key={key} className="flex items-start gap-3 py-3">
-                  <Checkbox
-                    className="mt-0.5"
-                    checked={selected.has(key)}
-                    disabled={disabled}
-                    onCheckedChange={(checked) => setSelected((current) => {
-                      const next = new Set(current)
-                      if (checked === true) next.add(key)
-                      else next.delete(key)
-                      return next
-                    })}
-                  />
-                  <div className="flex min-w-0 flex-1 flex-col gap-1">
-                    <div className="flex flex-wrap items-center gap-2 text-sm">
-                      <span className="font-medium">{item.name ?? item.runtimeId}</span>
-                      <span className="text-muted-foreground">{deviceName(item.connectorId)}</span>
-                      <RuntimeMaturityBadge maturity={item.capabilityMaturity ?? item.maturity} />
-                    </div>
-                    <span className="text-xs text-muted-foreground">
-                      {item.decision === "apply"
-                        ? [
-                          item.offerFormat ? t(`protocols.${item.offerFormat}`) : null,
-                          item.effect ? t(`effect.${item.effect}`) : null,
-                          item.scope === "native_global" ? t("scopeNativeGlobal") : null,
-                          item.replaces ? t("replaces", { host: item.replaces.host }) : null,
-                          item.runningSessions && item.effect === "restart" ? t("runningSessions", { count: item.runningSessions }) : null,
-                          item.tooManyModels ? t("tooManyModels", { limit: item.models?.limit ?? 64 }) : null,
-                        ].filter(Boolean).join(" · ")
-                        : t(`skip.${item.reason ?? "unknown"}`)}
-                    </span>
-                  </div>
-                </label>
-              )
-            })}
-          </div>
-        )}
-        {running > 0 ? (
-          <Field orientation="horizontal">
-            <div className="flex-1">
-              <FieldLabel htmlFor="model-apply-interrupt">{t("allowInterrupt")}</FieldLabel>
-              <FieldDescription>{t("allowInterruptDescription", { count: running })}</FieldDescription>
-            </div>
-            <Switch id="model-apply-interrupt" checked={allowInterrupt} onCheckedChange={setAllowInterrupt} />
-          </Field>
-        ) : null}
-        {needsGlobal ? (
-          <label className="flex items-start gap-2 text-sm">
-            <Checkbox className="mt-0.5" checked={confirmGlobal} onCheckedChange={(checked) => setConfirmGlobal(checked === true)} />
-            <span>{t("confirmNativeGlobal")}</span>
-          </label>
-        ) : null}
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>{t("cancel")}</Button>
-          <Button onClick={() => void apply()} disabled={applying || chosen.length === 0 || (needsGlobal && !confirmGlobal)}>
-            {applying ? <Spinner /> : null}{t("applyCount", { count: chosen.length })}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-export function reportOperation(
-  operation: ModelOperation,
-  t: ReturnType<typeof useTranslations<"pages.settings.modelConfigs">>,
-) {
-  const applied = operation.results.filter((item) => item.result === "applied").length
-  const other = operation.results.length - applied
-  if (other === 0) toast.success(t("appliedCount", { count: applied }))
-  else toast.warning(t("appliedPartially", { applied, other }))
 }

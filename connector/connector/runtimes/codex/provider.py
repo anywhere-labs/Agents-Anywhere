@@ -293,6 +293,10 @@ class CodexProvider(RuntimeProvider):
             ),
         )
 
+    @property
+    def model_connection(self) -> ModelConnectionCapability:
+        return MODEL_CONNECTION
+
     def model_connection_status(self, config: RuntimeConfig) -> ModelConnectionStatus:
         # With IPC on, threads a Codex App window owns use the App's own
         # model settings, so the report names that owner.

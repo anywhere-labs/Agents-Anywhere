@@ -79,7 +79,7 @@ class ModelConfigDtosTest {
                   "models":[{"id":"m1","name":"M1","efforts":["low"],"input":["text"]},{"id":"m2"}]}],
                 "keyHint":"sk-…abcd","strategyName":null,"state":"active","etag":"3","updatedAt":"t"}],
               "assignments":[{"connectorId":"dev1","runtimeId":"pi","profileId":"p1","offerFormat":"openai_chat",
-                "createdRuntime":false,"status":"failed","error":{"code":"busy","message":"running"},"appliedAt":null,
+                "createdRuntime":false,"status":"outdated","error":{"code":"busy","message":"running"},"appliedAt":null,
                 "modelConnectionStatus":{"state":"failed","reason":"gateway refused"}}],
               "tokens":{"available":true,"tokensUrl":"https://tokens.example","secretConfigured":true,
                 "link":{"status":"reauth_required","issuer":"https://tokens.example",
@@ -93,7 +93,7 @@ class ModelConfigDtosTest {
         assertEquals("3", profile.etag)
         assertEquals(listOf("m1", "m2"), profile.offers.single().models.map { it.id })
         val assignment = overview.assignments.single()
-        assertEquals("failed", assignment.status)
+        assertEquals("outdated", assignment.status)
         assertEquals("busy", assignment.errorCode)
         assertEquals("gateway refused", assignment.modelConnectionStatus?.reason)
         val link = overview.tokens!!.link!!
@@ -103,21 +103,63 @@ class ModelConfigDtosTest {
     }
 
     @Test
-    fun previewTargetsKeepConfirmationAndModelLimits() {
-        val target = JSONObject(
-            """{"connectorId":"dev1","runtimeId":"claude","runtimeType":"claude","name":"Claude","maturity":"stable",
-                "decision":"apply","offerFormat":"anthropic","effect":"restart","scope":"native_global",
-                "requiresConfirmation":true,"runningSessions":2,"replaces":{"kind":"manual","profileId":null,"host":"old.example"},
-                "models":{"importing":70,"existing":0,"limit":64},"tooManyModels":true,"capabilityMaturity":"beta"}""",
-        ).toModelPreviewTarget()
+    fun snapshotCarriesChannelState() {
+        val modelConfig = """
+            ,"modelConfig":{"secretConfigured":true,"profiles":[],"assignments":[],
+              "channel":{"channel":"tokens","revision":7,
+                "switch":{"revision":7,"state":"running","startedAt":"t1","finishedAt":null},
+                "runtimes":[
+                  {"connectorId":"dev1","runtimeId":"codex","override":null,"desired":"tokens","actual":"native",
+                   "state":"waiting_idle","step":null,"reason":null,"message":null,"runningSessions":2,"updatedAt":"t2"},
+                  {"connectorId":"dev1","runtimeId":"claude","override":"mpr_1","desired":"mpr_1","actual":"native",
+                   "state":"switching","step":"verifying","reason":null,"message":"checking","runningSessions":0,"updatedAt":"t3",
+                   "later":true},
+                  {"connectorId":"","runtimeId":"ghost","state":"applied"}]}}
+        """.trimIndent()
+        val channel = api.parseDashboardMessage(snapshot(modelConfig))!!.modelConfig!!.channel!!
 
-        assertEquals("dev1/claude", target.key)
-        assertTrue(target.canApply)
-        assertTrue(target.requiresConfirmation)
-        assertEquals(2, target.runningSessions)
-        assertEquals("old.example", target.replacesHost)
-        assertEquals(64, target.modelLimit)
-        assertTrue(target.tooManyModels)
+        assertEquals("tokens", channel.channel)
+        assertEquals(7L, channel.revision)
+        assertEquals("running", channel.switch?.state)
+        assertNull(channel.switch?.finishedAt)
+        assertEquals(listOf("dev1/codex", "dev1/claude"), channel.runtimes.map { it.key })
+        val codex = channel.runtimes[0]
+        assertNull(codex.override)
+        assertEquals("tokens", codex.desired)
+        assertEquals("native", codex.actual)
+        assertEquals(2, codex.runningSessions)
+        val claude = channel.runtimes[1]
+        assertEquals("mpr_1", claude.override)
+        assertEquals("verifying", claude.step)
+        assertEquals("checking", claude.message)
+    }
+
+    @Test
+    fun channelStateToleratesMissingAndUnknownValues() {
+        val channel = JSONObject(
+            """{"switch":{"state":"paused"},"runtimes":[{"connectorId":"d","runtimeId":"r","state":"hibernating"},
+                {"connectorId":"d","runtimeId":"s"}]}""",
+        ).toModelChannelState()
+
+        assertEquals("native", channel.channel)
+        assertEquals(0L, channel.revision)
+        assertEquals("paused", channel.switch?.state)
+        assertEquals("hibernating", channel.runtimes[0].state)
+        assertEquals("pending", channel.runtimes[1].state)
+        assertNull(channel.runtimes[1].desired)
+        assertEquals(0, channel.runtimes[1].runningSessions)
+
+        val fresh = JSONObject("""{"channel":"native","revision":0,"switch":null,"runtimes":[]}""").toModelChannelState()
+        assertNull(fresh.switch)
+        assertTrue(fresh.runtimes.isEmpty())
+    }
+
+    @Test
+    fun overviewFromOlderServersHasNoChannel() {
+        val overview = JSONObject("""{"secretConfigured":true,"profiles":[],"assignments":[],
+            "tokens":{"available":true,"channelEnabled":true,"quickSetup":{"state":"done"}}}""").toModelConfigOverview()
+        assertNull(overview.channel)
+        assertTrue(overview.tokens!!.available)
     }
 
     @Test

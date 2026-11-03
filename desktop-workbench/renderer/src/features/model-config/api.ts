@@ -1,49 +1,15 @@
 import { ApiClient, apiClient } from "@/lib/api";
 import type {
-  ModelAssignment,
+  ModelChannel,
+  ModelChannelState,
   ModelConfigOverview,
   ModelOffer,
   ModelPreferences,
   ModelProfile,
-  ModelProtocol,
-  RuntimeMaturity,
   TokensLinkStatus,
 } from "@/features/dashboard/types";
-import type { RuntimeModelSetting } from "@/features/model-config/runtime-model";
 
 export type ModelTarget = { connectorId: string; runtimeId: string };
-
-export type ModelPreviewTarget = ModelTarget & {
-  runtimeType: string;
-  name: string | null;
-  maturity: RuntimeMaturity | null;
-  decision: "apply" | "skip";
-  reason?: string;
-  offerFormat?: ModelProtocol;
-  effect?: "new_instance" | "immediate" | "new_session" | "restart";
-  scope?: "instance" | "session" | "native_global";
-  requiresConfirmation?: boolean;
-  runningSessions?: number;
-  replaces?: { kind: "profile" | "manual"; profileId: string | null; host: string } | null;
-  models?: { importing: number; existing: number; limit: number };
-  tooManyModels?: boolean;
-  capabilityMaturity?: RuntimeMaturity | null;
-};
-
-export type ModelOperationResult = ModelTarget & {
-  result: "applied" | "skipped" | "failed" | "restored";
-  reason?: string;
-  message?: string;
-  createdRuntime?: boolean;
-  servesRuntimeId?: string;
-};
-
-export type ModelOperation = {
-  operationId: string | null;
-  kind: string;
-  finished: boolean;
-  results: ModelOperationResult[];
-};
 
 /** Amounts are decimal yuan strings with four places, as Tokens Anywhere sends them. */
 export type TokensAccount = {
@@ -103,47 +69,6 @@ export class ModelConfigApi {
     return this.client.delete<void>(`/model-profiles/${encodeURIComponent(profileId)}`, { token });
   }
 
-  preview(
-    token: string,
-    profileId: string,
-    targets?: ModelTarget[],
-    model?: RuntimeModelSetting,
-  ): Promise<{ profileId: string; targets: ModelPreviewTarget[] }> {
-    return this.client.post(
-      "/model-config/assignments/preview",
-      { profileId, ...(targets ? { targets } : {}), ...(model ? { model } : {}) },
-      { token },
-    );
-  }
-
-  apply(
-    token: string,
-    request: {
-      profileId: string;
-      targets: ModelTarget[];
-      allowInterrupt: boolean;
-      confirmNativeGlobal: boolean;
-      modelIds?: string[];
-      /** The model new sessions on the targets use; existing sessions keep theirs. */
-      model?: RuntimeModelSetting;
-      /** Save now and restart once the runtime is idle instead of refusing a busy one. */
-      deferBusy?: boolean;
-    },
-    idempotencyKey: string,
-  ): Promise<ModelOperation> {
-    return this.client.post<ModelOperation>("/model-config/assignments", request, {
-      token,
-      headers: { "Idempotency-Key": idempotencyKey },
-    });
-  }
-
-  restore(token: string, assignment: Pick<ModelAssignment, "connectorId" | "runtimeId">, allowInterrupt: boolean): Promise<ModelOperationResult> {
-    return this.client.delete<ModelOperationResult>(
-      `/model-config/assignments/${encodeURIComponent(assignment.connectorId)}/${encodeURIComponent(assignment.runtimeId)}`,
-      { token, query: { allow_interrupt: allowInterrupt } },
-    );
-  }
-
   tokensStatus(token: string): Promise<TokensLinkStatus> {
     return this.client.get<TokensLinkStatus>("/integrations/tokens", { token });
   }
@@ -157,21 +82,42 @@ export class ModelConfigApi {
     return this.client.post<ModelProfile>("/integrations/tokens/sync", undefined, { token });
   }
 
-  unlinkTokens(token: string, allowInterrupt: boolean): Promise<{ revoked: boolean; results: ModelOperationResult[] }> {
-    return this.client.delete("/integrations/tokens/link", { token, query: { allow_interrupt: allowInterrupt } });
+  /** Refused with `channel_in_use` while a runtime wants or uses the Anywhere channel. */
+  unlinkTokens(token: string): Promise<{ revoked: boolean }> {
+    return this.client.delete("/integrations/tokens/link", { token });
   }
 
-  /** Runtimes a one-click Tokens Anywhere setup would configure, with reasons for the rest. */
-  quickSetupCandidates(token: string): Promise<{ targets: ModelPreviewTarget[] }> {
-    return this.client.get("/integrations/tokens/quick-setup", { token });
+  /** The current channel and every runtime's progress switching to the channel it should use. */
+  channel(token: string): Promise<ModelChannelState> {
+    return this.client.get<ModelChannelState>("/model-config/channel", { token });
   }
 
-  /** Starts the setup; when the account must link first, returns the address to open. */
-  startQuickSetup(
+  /** Sets the current channel; runtimes switch in the background. */
+  setChannel(token: string, channel: ModelChannel): Promise<ModelChannelState> {
+    return this.client.put<ModelChannelState>("/model-config/channel", { channel }, { token });
+  }
+
+  /** One runtime's own channel; `null` follows the current channel. */
+  setRuntimeChannel(
     token: string,
-    request: { targets: ModelTarget[]; confirmNativeGlobal: boolean },
-  ): Promise<{ started: boolean; startUrl: string | null }> {
-    return this.client.post("/integrations/tokens/quick-setup", request, { token });
+    target: ModelTarget,
+    channel: ModelChannel | null,
+    confirmNativeGlobal = false,
+  ): Promise<ModelChannelState> {
+    return this.client.put<ModelChannelState>(
+      `/model-config/channel/runtimes/${encodeURIComponent(target.connectorId)}/${encodeURIComponent(target.runtimeId)}`,
+      confirmNativeGlobal ? { channel, confirmNativeGlobal: true } : { channel },
+      { token },
+    );
+  }
+
+  /** Tries the runtimes that failed to switch again: all of them, or just one. */
+  retryChannel(token: string, target?: ModelTarget): Promise<ModelChannelState> {
+    return this.client.post<ModelChannelState>(
+      "/model-config/channel/retry",
+      target ? { connectorId: target.connectorId, runtimeId: target.runtimeId } : {},
+      { token },
+    );
   }
 
   /** The linked account, its balance and its console pages. */
@@ -198,12 +144,9 @@ export class ModelConfigApi {
     return this.client.put<TokensAdminSettings>("/admin/integrations/tokens", { tokensUrl: tokensUrl || null }, { token });
   }
 
-  rotateTokensKey(token: string, profileId: string, allowInterrupt: boolean, idempotencyKey: string): Promise<ModelOperation> {
-    return this.client.post<ModelOperation>(
-      `/model-profiles/${encodeURIComponent(profileId)}/rotate-key`,
-      { allowInterrupt },
-      { token, headers: { "Idempotency-Key": idempotencyKey } },
-    );
+  /** The old key stops working at once, so a busy runtime refuses it unless interrupting is allowed. */
+  rotateTokensKey(token: string, profileId: string, allowInterrupt: boolean): Promise<unknown> {
+    return this.client.post(`/model-profiles/${encodeURIComponent(profileId)}/rotate-key`, { allowInterrupt }, { token });
   }
 }
 

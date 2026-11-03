@@ -8,7 +8,11 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from agent_server.infra.db.schema import tokens_link_states, tokens_links
+from agent_server.infra.db.schema import (
+    model_profiles,
+    tokens_link_states,
+    tokens_links,
+)
 from agent_server.infra.repositories.store_support import _json_dumps, _json_loads
 
 
@@ -103,6 +107,30 @@ class TokensLinkRepositoryMixin:
                     set_={key: statement.excluded[key] for key in values if key != "user_id"},
                 )
             )
+
+    async def switch_tokens_account(
+        self, row: dict[str, Any], *, expected_linked_at: str,
+        profile_id: str, key_ref: dict[str, Any], catalog_digest: str,
+    ) -> bool:
+        """Replace the link and the profile's key identity atomically.
+
+        The new key identity changes the catalog digest, which marks every
+        runtime on the Anywhere channel for a rewrite with the new key.
+        """
+        values = {key: value for key, value in row.items() if key not in {"user_id", "account", "quick_setup"}}
+        values.update(account_json=_json_dumps(row["account"]), quick_setup_json=None)
+        async with self._engine.begin() as conn:
+            current = (await conn.execute(
+                select(tokens_links.c.linked_at).where(tokens_links.c.user_id == row["user_id"]).with_for_update()
+            )).scalar_one_or_none()
+            if current != expected_linked_at:
+                return False
+            await conn.execute(update(tokens_links).where(tokens_links.c.user_id == row["user_id"]).values(**values))
+            await conn.execute(update(model_profiles).where(
+                model_profiles.c.id == profile_id, model_profiles.c.user_id == row["user_id"],
+            ).values(key_ref_json=_json_dumps(key_ref), catalog_digest=catalog_digest,
+                     etag=model_profiles.c.etag + 1, updated_at=row["linked_at"]))
+        return True
 
     async def get_tokens_link(self, user_id: str) -> dict[str, Any] | None:
         async with self._engine.connect() as conn:

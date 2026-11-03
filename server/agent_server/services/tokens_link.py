@@ -16,13 +16,12 @@ from typing import Any, Protocol
 
 from loguru import logger
 
+from agent_server.core.model_channel import TOKENS
 from agent_server.core.model_config import (
-    ApplyRequest,
-    AssignmentTarget,
     ModelPreferences,
-    ModelSpec,
     Offer,
-    QuickSetupRequest,
+    catalog_digest,
+    effective_offers,
 )
 from agent_server.core.tokens_link import (
     ACCESS_TOKEN_MARGIN,
@@ -53,7 +52,7 @@ from agent_server.infra.tokens_client import (
     TokensUnauthorizedError,
     TokensUnavailableError,
 )
-from agent_server.services.device_runtimes import DeviceRuntimeError
+from agent_server.services.model_channels import ModelChannelService
 from agent_server.services.model_config import (
     ModelConfigConflictError,
     ModelConfigError,
@@ -67,9 +66,6 @@ KEY_NOT_KEPT = {"key_secret_not_kept", "secrets_key_missing"}
 KEEP_ALIVE_INTERVAL = timedelta(days=1)
 # Tokens Anywhere counts usage by Beijing date.
 BEIJING = timezone(timedelta(hours=8))
-# A quick setup that has not reported back within this is assumed lost.
-QUICK_SETUP_LEASE = timedelta(minutes=5)
-QUICK_SETUP_PROTOCOLS = ("openai_responses", "openai_chat", "anthropic")
 
 
 class TokensLinkError(Exception):
@@ -93,17 +89,19 @@ class TokensLinkRepository(Protocol):
     ) -> dict[str, Any] | None: ...
     async def prune_tokens_link_states(self, *, before: str) -> None: ...
     async def save_tokens_link(self, row: dict[str, Any]) -> None: ...
+    async def switch_tokens_account(
+        self, row: dict[str, Any], *, expected_linked_at: str, profile_id: str,
+        key_ref: dict[str, Any], catalog_digest: str,
+    ) -> bool: ...
     async def get_tokens_link(self, user_id: str) -> dict[str, Any] | None: ...
     async def delete_tokens_link(self, user_id: str) -> None: ...
     async def count_tokens_links(self) -> int: ...
     async def list_tokens_links_to_refresh(self, *, refreshed_before: str) -> list[str]: ...
     def locked_tokens_link(self, user_id: str) -> Any: ...
     async def find_model_profile_by_source(self, *, user_id: str, source: str) -> dict[str, Any] | None: ...
-    async def list_runtime_assignments(self, *, user_id: str) -> list[dict[str, Any]]: ...
     async def set_runtime_assignment_failed(
         self, connector_id: str, runtime_id: str, error: dict[str, Any]
     ) -> None: ...
-    async def set_tokens_link_quick_setup(self, user_id: str, value: dict[str, Any] | None) -> None: ...
 
 
 TokensClientFactory = Callable[[str], TokensClient]
@@ -115,10 +113,6 @@ def _now() -> datetime:
 
 def _iso(value: datetime) -> str:
     return value.isoformat().replace("+00:00", "Z")
-
-
-def _quick_progress(state: str, request: dict[str, Any]) -> dict[str, Any]:
-    return {"state": state, "request": request, "startedAt": _iso(_now())}
 
 
 def _parse(value: str | None) -> datetime | None:
@@ -147,6 +141,8 @@ class TokensLinkService:
         self._cache = access_cache or TokensAccessCache()
         self._broker = broker
         self._secret_box = secret_box
+        # Set by the caller: which runtimes use Anywhere, and rewriting them.
+        self.channels: ModelChannelService | None = None
         model_config.set_tokens_key_provider(self.key_for_profile)
 
     # Instance setting.
@@ -208,7 +204,6 @@ class TokensLinkService:
             "tokensUrl": issuer,
             "secretConfigured": self._box_available(),
             "link": public_link,
-            "quickSetup": link["quickSetup"] if link is not None else None,
         }
 
     async def overview(
@@ -217,24 +212,21 @@ class TokensLinkService:
         user_id: str,
         runtime_rows: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """The snapshot's ``modelConfig``: profiles, assignments and the link."""
+        """The snapshot's ``modelConfig``: profiles, assignments, channels and the link."""
         overview, tokens = await asyncio.gather(
             self.model_config.overview(user_id=user_id, runtime_rows=runtime_rows),
             self.status(user_id=user_id),
         )
-        return {**overview, "tokens": tokens}
+        channels = self._channels()
+        await channels.recover_missing(user_id=user_id)
+        channel = await channels.state(user_id=user_id, runtime_rows=runtime_rows)
+        return {**overview, "channel": channel, "tokens": tokens}
 
-    # Linking.
-
-    async def begin_link(
-        self, *, user_id: str, redirect_uri: str, quick_setup: dict[str, Any] | None = None
-    ) -> str:
-        """Prepare a link; returns a one-time start ticket for the browser.
-
-        ``quick_setup`` names the runtimes to set up once the link completes.
-        """
+    async def begin_link(self, *, user_id: str, redirect_uri: str) -> str:
+        """Prepare a link; returns a one-time start ticket for the browser."""
         issuer = await self._require_issuer()
         box = self._box()
+        current_link = await self._store.get_tokens_link(user_id)
         state, ticket, verifier = new_secret(), new_secret(), new_code_verifier()
         state_hash = secret_hash(state)
         now = _now()
@@ -246,14 +238,14 @@ class TokensLinkService:
                 "ticket_hash": secret_hash(ticket),
                 "browser_hash": None,
                 "code_verifier_ciphertext": box.seal(
-                    json.dumps({"verifier": verifier, "state": state}),
+                    json.dumps({"verifier": verifier, "state": state, "linkedAt": current_link["linkedAt"] if current_link else None}),
                     context=f"tokens-link:{state_hash}",
                 ),
                 "issuer": issuer,
                 "redirect_uri": redirect_uri,
                 "created_at": _iso(now),
                 "expires_at": _iso(now + TICKET_TTL),
-                "quick_setup_json": json.dumps(quick_setup) if quick_setup else None,
+                "quick_setup_json": None,
             }
         )
         return ticket
@@ -291,12 +283,8 @@ class TokensLinkService:
         issuer: str | None,
         error: str | None,
         browser: str | None,
-    ) -> tuple[str, str | None]:
-        """Finish a link from the callback.
-
-        Returns the issuer to send the browser to, and the user whose quick
-        setup should now run in the background, if one came with the link.
-        """
+    ) -> str:
+        """Finish a link from the callback; returns the issuer to send the browser to."""
         if not state or not browser:
             raise TokensLinkError("invalid_state", "this link was not started in this browser", status_code=400)
         box = self._box()
@@ -323,39 +311,61 @@ class TokensLinkService:
         except TokensError as exc:
             raise TokensLinkError("exchange_failed", "Tokens Anywhere did not issue a token", status_code=502) from exc
         user_id = row["userId"]
+        previous = await self._store.get_tokens_link(user_id)
+        if (previous["linkedAt"] if previous else None) != json.loads(sealed).get("linkedAt"):
+            raise TokensLinkError("link_expired", "the account changed; start authorization again", status_code=409)
+        profile = await self._store.find_model_profile_by_source(user_id=user_id, source="tokens")
+        replacement = None
+        if previous is not None:
+            # Preflight before changing the link: a cancelled authorization or
+            # unavailable managed key leaves the existing account usable.
+            try:
+                replacement = await client.managed_key(pair.access_token)
+            except TokensError as exc:
+                raise TokensLinkError(exc.code, "could not obtain the new account key", status_code=502) from exc
         account: dict[str, Any] = {}
         try:
             account = public_account(await client.me(pair.access_token))
-        except TokensError:
+        except TokensError as exc:
+            if previous is not None:
+                raise TokensLinkError(exc.code, "could not read the new account", status_code=502) from exc
             logger.warning("tokens account lookup failed after linking user_id={}", user_id)
         now = _iso(_now())
-        quick = row.get("quickSetup")
-        await self._store.save_tokens_link(
-            {
-                "user_id": user_id,
-                "issuer": row["issuer"],
-                "account": account,
-                "status": "linked",
-                "refresh_token_ciphertext": box.seal(pair.refresh_token, context=f"tokens-refresh:{user_id}"),
-                "linked_at": now,
-                "refreshed_at": now,
-                "issued_at": now,
-                "quick_setup": _quick_progress("syncing", quick) if quick else None,
-            }
-        )
+        link_values = {
+            "user_id": user_id, "issuer": row["issuer"], "account": account, "status": "linked",
+            "refresh_token_ciphertext": box.seal(pair.refresh_token, context=f"tokens-refresh:{user_id}"),
+            "linked_at": now, "refreshed_at": now, "issued_at": now,
+            "quick_setup": None,
+        }
+        if replacement is not None and profile is not None:
+            reference = key_ref(replacement["key"])
+            preferences = ModelPreferences.model_validate(profile.get("preferences") or {})
+            digest = catalog_digest(effective_offers(
+                [Offer.model_validate(offer) for offer in profile["offers"]], preferences,
+            ), reference)
+            changed = await self._store.switch_tokens_account(
+                link_values, expected_linked_at=previous["linkedAt"], profile_id=profile["id"],
+                key_ref=reference, catalog_digest=digest,
+            )
+            if not changed:
+                raise TokensLinkError("link_expired", "the account changed; start authorization again")
+        else:
+            await self._store.save_tokens_link(link_values)
+        await self._cache.delete(user_id)
         await self._cache_access(user_id, pair, box)
-        if quick:
-            # Syncing and applying take a while; the browser goes on to the
-            # done page and every client follows the progress in the snapshot.
+        if replacement is not None and profile is not None:
+            # The new key identity outdates every runtime on Anywhere; they are
+            # rewritten through the switch, waiting for running tasks.
+            await self._channels().refresh(user_id=user_id, rewrite=TOKENS)
             await self._publish(user_id)
-            return row["issuer"], user_id
+            return row["issuer"]
         try:
             await self.sync(user_id=user_id)
         except (TokensLinkError, TokensError, ModelConfigError):
             # The link stands; the page offers to sync again.
             logger.warning("tokens catalog sync failed after linking user_id={}", user_id)
         await self._publish(user_id)
-        return row["issuer"], None
+        return row["issuer"]
 
     # Tokens.
 
@@ -429,6 +439,13 @@ class TokensLinkService:
         """The managed key's secret, as ModelConfigService applies it."""
         try:
             body = await self._managed_key(user_id)
+            if key_ref(body["key"]) != profile["keyRef"]:
+                # A switch may have committed before cache invalidation reached
+                # this worker. Never acknowledge delivery of the previous key.
+                await self.access_token(user_id=user_id, force=True)
+                body = await self._managed_key(user_id)
+                if key_ref(body["key"]) != profile["keyRef"]:
+                    raise ModelConfigConflictError("tokens_not_synced", "the account key changed; retry the update")
         except TokensError as exc:
             raise ModelConfigConflictError("tokens_unavailable", "Tokens Anywhere did not return the key") from exc
         except TokensLinkError as exc:
@@ -490,9 +507,7 @@ class TokensLinkService:
             logger.warning("Tokens Anywhere reported an unusable apiBaseUrl; using its own origin")
             return issuer
 
-    async def rotate_key(
-        self, profile_id: str, *, user_id: str, allow_interrupt: bool, idempotency_key: str
-    ) -> dict[str, Any]:
+    async def rotate_key(self, profile_id: str, *, user_id: str, allow_interrupt: bool) -> dict[str, Any]:
         """Rotate the managed key, then write the new secret everywhere it is used."""
         profile = await self._tokens_profile(user_id)
         if profile["id"] != profile_id:
@@ -500,147 +515,24 @@ class TokensLinkService:
         key_id = str(profile["keyRef"].get("id") or "")
         if not key_id:
             raise TokensLinkError("tokens_not_synced", "sync Tokens Anywhere first")
-        targets = [
-            AssignmentTarget(connectorId=item["connectorId"], runtimeId=item["runtimeId"])
-            for item in await self._store.list_runtime_assignments(user_id=user_id)
-            if item["profileId"] == profile_id
-        ]
+        channels = self._channels()
+        targets = await channels.runtimes_on(TOKENS, user_id=user_id)
         # The old key stops working at once, so refuse before rotating rather
         # than leave runtimes with running tasks on a dead key.
-        if not allow_interrupt and await self.model_config.interrupting(targets, user_id=user_id):
+        if not allow_interrupt and await channels.would_interrupt(targets, user_id=user_id):
             raise TokensLinkError("busy", "tasks are running; allow interrupting them to rotate the key")
         try:
             await self._call(user_id, lambda client, token: client.rotate_key(token, key_id))
         except TokensError as exc:
             raise TokensLinkError("tokens_unavailable", "Tokens Anywhere did not rotate the key", status_code=502) from exc
         await self.sync(user_id=user_id)
-        if not targets:
-            return {"operationId": None, "kind": "apply", "finished": True, "results": []}
-        operation = await self.model_config.apply(
-            ApplyRequest(profileId=profile_id, targets=targets, allowInterrupt=allow_interrupt),
-            user_id=user_id,
-            idempotency_key=idempotency_key,
-        )
-        for result in operation["results"]:
-            if result.get("result") != "applied":
-                # Offline or refused: the runtime still holds the revoked key.
-                await self._store.set_runtime_assignment_failed(
-                    result["connectorId"],
-                    result["runtimeId"],
-                    {"code": "key_rotated", "message": "the key was rotated; apply this profile again"},
-                )
-        return operation
-
-    # One-click setup.
-
-    async def quick_setup_candidates(self, *, user_id: str) -> list[dict[str, Any]]:
-        """Which runtimes a one-click setup would configure, and why not the others.
-
-        Before a link there is no catalog yet, so every protocol counts as
-        offered; the real catalog decides again when the setup runs.
-        """
-        issuer = await self._require_issuer()
-        profile = await self._store.find_model_profile_by_source(user_id=user_id, source="tokens")
-        if profile is not None and profile["state"] == "active" and profile["offers"]:
-            offers = [Offer.model_validate(offer) for offer in profile["offers"]]
-        else:
-            offers = [
-                Offer(format=protocol, baseUrl=f"{issuer}/v1", models=[ModelSpec(id="tokens-anywhere")])
-                for protocol in QUICK_SETUP_PROTOCOLS
-            ]
-        targets = await self.model_config.preview_offers(offers, user_id=user_id)
-        keep = ("connectorId", "runtimeId", "runtimeType", "name", "maturity", "decision", "reason",
-                "effect", "scope", "requiresConfirmation", "runningSessions", "capabilityMaturity")
-        return [{key: target.get(key) for key in keep if key in target} for target in targets]
-
-    async def start_quick_setup(
-        self, request: QuickSetupRequest, *, user_id: str, redirect_uri: str
-    ) -> str | None:
-        """Start a one-click setup.
-
-        Returns a start ticket when the account has to link first; ``None``
-        when it is linked already and the setup should run now.
-        """
-        payload = {
-            "targets": [target.model_dump() for target in request.targets],
-            "confirmNativeGlobal": request.confirmNativeGlobal,
-        }
-        link = await self._store.get_tokens_link(user_id)
-        if link is None or link["status"] != "linked":
-            return await self.begin_link(user_id=user_id, redirect_uri=redirect_uri, quick_setup=payload)
-        running = link.get("quickSetup") or {}
-        started = _parse(running.get("startedAt"))
-        if running.get("state") in {"syncing", "applying"} and started and _now() - started < QUICK_SETUP_LEASE:
-            raise TokensLinkError("quick_setup_running", "a setup is already running")
-        await self._store.set_tokens_link_quick_setup(user_id, _quick_progress("syncing", payload))
-        await self._publish(user_id)
-        return None
-
-    async def run_quick_setup(self, *, user_id: str) -> None:
-        """Sync the catalog and apply it to the ticked runtimes; never raises."""
-        link = await self._store.get_tokens_link(user_id)
-        progress = (link or {}).get("quickSetup") or {}
-        if progress.get("state") not in {"syncing", "applying"}:
-            return
-        request = progress["request"]
-        if progress["state"] == "syncing":
-            try:
-                profile = await self.sync(user_id=user_id)
-            except (TokensLinkError, TokensError, ModelConfigError) as exc:
-                await self._quick_failed(user_id, request, "sync", exc)
-                return
-            await self._store.set_tokens_link_quick_setup(user_id, _quick_progress("applying", request))
-            await self._publish(user_id)
-        else:
-            # Applying again after a change of models: the catalog stands.
-            profile = await self._store.find_model_profile_by_source(user_id=user_id, source="tokens")
-            if profile is None:
-                await self._quick_failed(user_id, request, "apply", TokensLinkError("tokens_not_synced", ""))
-                return
-        try:
-            operation = await self.model_config.apply(
-                ApplyRequest(
-                    profileId=profile["id"],
-                    targets=[AssignmentTarget.model_validate(target) for target in request["targets"]],
-                    allowInterrupt=False,
-                    confirmNativeGlobal=bool(request.get("confirmNativeGlobal")),
-                    deferBusy=True,
-                    trimModels=True,
-                ),
-                user_id=user_id,
-                idempotency_key=f"quick-setup:{new_secret()}",
-            )
-        except (ModelConfigError, DeviceRuntimeError, TokensLinkError) as exc:
-            await self._quick_failed(user_id, request, "apply", exc)
-            return
-        except Exception as exc:  # noqa: BLE001 - the page must not wait forever
-            logger.exception("quick setup failed user_id={}", user_id)
-            await self._quick_failed(user_id, request, "apply", exc)
-            return
-        done = _quick_progress("done", request)
-        done["results"] = operation["results"]
-        await self._store.set_tokens_link_quick_setup(user_id, done)
-        await self._publish(user_id)
+        await channels.refresh(user_id=user_id, rewrite=TOKENS)
+        return await channels.state(user_id=user_id)
 
     async def save_model_preferences(self, preferences: ModelPreferences, *, user_id: str) -> bool:
-        """Save which models runtimes get; True when runtimes need it applied now."""
-        link = await self._store.get_tokens_link(user_id)
-        running = (link or {}).get("quickSetup") or {}
-        started = _parse(running.get("startedAt"))
-        if running.get("state") in {"syncing", "applying"} and started and _now() - started < QUICK_SETUP_LEASE:
-            raise TokensLinkError("quick_setup_running", "a setup is already running")
-        profile = await self.model_config.set_tokens_preferences(preferences, user_id=user_id)
-        targets = [
-            {"connectorId": item["connectorId"], "runtimeId": item["runtimeId"]}
-            for item in await self._store.list_runtime_assignments(user_id=user_id)
-            if item["profileId"] == profile["id"]
-        ]
-        if not targets or link is None:
-            return False
-        request = {"targets": targets, "confirmNativeGlobal": True}
-        await self._store.set_tokens_link_quick_setup(user_id, _quick_progress("applying", request))
-        await self._publish(user_id)
-        return True
+        """Save which models runtimes get; True when runtimes on Anywhere are rewritten."""
+        await self.model_config.set_tokens_preferences(preferences, user_id=user_id)
+        return await self._channels().refresh(user_id=user_id)
 
     # Account.
 
@@ -677,37 +569,16 @@ class TokensLinkService:
                 "cacheWrite5mTokens", "cacheWrite1hTokens", "amountCharged")
         return {"from": start.isoformat(), "to": end.isoformat(), "items": [{k: item.get(k) for k in keep} for item in items]}
 
-    async def _quick_failed(self, user_id: str, request: dict[str, Any], step: str, exc: Exception) -> None:
-        failed = _quick_progress("failed", request)
-        failed["step"] = step
-        failed["code"] = getattr(exc, "code", None) or "quick_setup_failed"
-        await self._store.set_tokens_link_quick_setup(user_id, failed)
-        await self._publish(user_id)
-
     # Unlinking.
 
-    async def unlink(self, *, user_id: str, allow_interrupt: bool) -> dict[str, Any]:
-        """Restore runtimes first, then revoke: the key stops working at once."""
+    async def unlink(self, *, user_id: str) -> dict[str, Any]:
+        """Revoke and forget the link once no runtime uses or wants Anywhere."""
         link = await self._store.get_tokens_link(user_id)
         if link is None:
             raise TokensLinkError("tokens_not_linked", "Tokens Anywhere is not linked", status_code=404)
-        profile = await self._store.find_model_profile_by_source(user_id=user_id, source="tokens")
-        results = []
-        if profile is not None:
-            for item in await self._store.list_runtime_assignments(user_id=user_id):
-                if item["profileId"] != profile["id"]:
-                    continue
-                target = {"connectorId": item["connectorId"], "runtimeId": item["runtimeId"]}
-                try:
-                    await self.model_config.restore(
-                        item["connectorId"], item["runtimeId"], user_id=user_id, allow_interrupt=allow_interrupt
-                    )
-                    results.append({**target, "result": "restored"})
-                except (ModelConfigError, DeviceRuntimeError) as exc:
-                    await self._store.set_runtime_assignment_failed(
-                        item["connectorId"], item["runtimeId"], {"code": exc.code, "message": exc.message}
-                    )
-                    results.append({**target, "result": "failed", "reason": exc.code})
+        # Revoking kills the key at once: switch the runtimes away first.
+        if await self._channels().tokens_in_use(user_id=user_id):
+            raise TokensLinkError("channel_in_use", "switch the runtimes on Anywhere to another channel first")
         revoked = False
         if link["refreshTokenCiphertext"]:
             refresh = self._box().open(link["refreshTokenCiphertext"], context=f"tokens-refresh:{user_id}")
@@ -721,7 +592,7 @@ class TokensLinkService:
         await self._cache.delete(user_id)
         await self.model_config.detach_tokens_profile(user_id=user_id)
         await self._publish(user_id)
-        return {"revoked": revoked, "results": results}
+        return {"revoked": revoked}
 
     # Background.
 
@@ -766,6 +637,11 @@ class TokensLinkService:
         if profile is None:
             raise TokensLinkError("tokens_not_synced", "sync Tokens Anywhere first", status_code=404)
         return profile
+
+    def _channels(self) -> ModelChannelService:
+        if self.channels is None:
+            raise RuntimeError("model channels are not wired to the Tokens link service")
+        return self.channels
 
     def _box_available(self) -> bool:
         try:

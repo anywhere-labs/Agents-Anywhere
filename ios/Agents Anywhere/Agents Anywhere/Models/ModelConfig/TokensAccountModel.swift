@@ -153,9 +153,10 @@ final class TokensAccountModel {
 
     func discard() { draft = saved }
 
-    /// Saves the draft, or the defaults; `applying` is the pushed setup state.
-    func save(_ preferences: V2ModelPreferences, applying: Bool) async {
-        guard !isSaving, !applying else { return }
+    /// Saves the draft, or the defaults. Runtimes using Anywhere switch to the
+    /// new models in the background; their progress is in the channel state.
+    func save(_ preferences: V2ModelPreferences) async {
+        guard !isSaving else { return }
         if !models.isEmpty && !models.contains(where: { !preferences.disabled.contains($0.id) }) {
             report(.error(String(localized: "Keep at least one model.")))
             return
@@ -174,7 +175,7 @@ final class TokensAccountModel {
         }
     }
 
-    func saveDraft(applying: Bool) async { await save(next, applying: applying) }
+    func saveDraft() async { await save(next) }
 
-    func restoreDefaults(applying: Bool) async { await save(.empty, applying: applying) }
+    func restoreDefaults() async { await save(.empty) }
 }

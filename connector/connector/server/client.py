@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import Callable, Mapping
 from contextlib import suppress
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -24,6 +25,10 @@ from connector.runtime_protocol import (
     RuntimeSupervisor as AgentRuntimeSupervisor,
 )
 from connector.runtime_protocol.host import UploadProgress
+from connector.runtime_protocol.switch_fence import (
+    RuntimeSwitchFenceStore,
+    safe_file_stem,
+)
 from connector.runtimes import default_runtime_providers
 from connector.server.auth import ConnectorAuthenticationError, ConnectorAuthenticator
 from connector.server.capabilities import protocol_capabilities_from_runtime_types
@@ -93,6 +98,9 @@ class BackendRpcClient:
             providers=agent_runtime_providers,
             host=self.agent_runtime_host,
             status_sink=self._publish_agent_runtime_status,
+            switch_fence=RuntimeSwitchFenceStore(
+                lambda: runtime_switch_directory(config)
+            ),
         )
         self._preferences_reader = preferences_reader or read_local_preferences
         self.local_ops = create_local_ops(notify=self.send_backend_notification)
@@ -418,6 +426,7 @@ class BackendRpcClient:
         error: Mapping[str, Any] | None,
         phase: Mapping[str, Any] | None = None,
         model_connection: Mapping[str, Any] | None = None,
+        config_digest: str | None = None,
     ) -> None:
         payload: dict[str, Any] = {
             "runtime": runtime_type,
@@ -431,6 +440,9 @@ class BackendRpcClient:
         if model_connection is not None:
             # Adapters that apply the connection after start (DSH) report it here.
             payload["modelConnection"] = model_connection
+        if config_digest is not None:
+            # Matches the switch the Server verifies against the loaded config.
+            payload["configDigest"] = config_digest
         await self.send_notification("runtime.statusChanged", payload)
 
     async def _publish_agent_runtime_status(
@@ -448,6 +460,7 @@ class BackendRpcClient:
             error,
             phase,
             model_connection_result(entry).get("modelConnection"),
+            self.agent_runtime_supervisor.config_digest(runtime_id),
         )
 
     async def ingest_snapshot(self, *args, **kwargs) -> None:
@@ -566,3 +579,14 @@ def _close_reason(exc: ConnectionClosed) -> str:
 
 def main() -> None:
     asyncio.run(BackendRpcClient(ConnectorConfig.load()).run_forever())
+
+
+def runtime_switch_directory(config: ConnectorConfig) -> Path:
+    """Where the last accepted runtime switch per instance is kept."""
+
+    state_path = Path(config.state_path or JsonSyncStateStore.default_path())
+    return (
+        state_path.expanduser().parent
+        / "runtime-switch"
+        / safe_file_stem(config.connector_id or "default")
+    )

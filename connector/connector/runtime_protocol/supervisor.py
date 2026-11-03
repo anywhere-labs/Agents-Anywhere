@@ -25,6 +25,8 @@ from connector.runtime_protocol.instance_models import (
     RuntimeTypeDescriptor,
     legacy_runtime_scope,
 )
+from connector.runtime_protocol.model_connection import ModelConnectionCapability
+from connector.runtime_protocol.model_probe import ModelProbeResult
 from connector.runtime_protocol.models import RuntimeConfig, RuntimeInventoryItem
 from connector.runtime_protocol.protocol import AgentRuntime
 from connector.runtime_protocol.provider import RuntimeProvider
@@ -37,6 +39,12 @@ from connector.runtime_protocol.supervisor_models import (
     only_model_setting_changed,
     same_effective_config,
 )
+from connector.runtime_protocol.switch_fence import (
+    CONNECTOR_PROCESS_INSTANCE_ID,
+    RuntimeSwitchFenceStore,
+    RuntimeSwitchRequest,
+    model_connection_digest,
+)
 
 
 class RuntimeSupervisor:
@@ -47,11 +55,16 @@ class RuntimeSupervisor:
         providers: tuple[RuntimeProvider, ...],
         host: RuntimeHostClient,
         status_sink: RuntimeStatusSink | None = None,
+        switch_fence: RuntimeSwitchFenceStore | None = None,
+        instance_id: str | None = None,
     ) -> None:
         self._providers = provider_registry(providers)
         self._entries: dict[str, RuntimeSupervisorEntry] = {}
         self._host = host
         self._status_sink = status_sink
+        self._switch_fence = switch_fence or RuntimeSwitchFenceStore()
+        self._instance_id = instance_id or CONNECTOR_PROCESS_INSTANCE_ID
+        self._model_connections: dict[str, ModelConnectionCapability | None] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._entries_guard = asyncio.Lock()
         self._resource_lock = asyncio.Lock()
@@ -75,6 +88,35 @@ class RuntimeSupervisor:
 
     def entry_or_none(self, runtime_id: str) -> RuntimeSupervisorEntry | None:
         return self._entries.get(runtime_id)
+
+    @property
+    def instance_id(self) -> str:
+        """Identity of this Connector process, reported in start results."""
+        return self._instance_id
+
+    @property
+    def switch_fence(self) -> RuntimeSwitchFenceStore:
+        return self._switch_fence
+
+    def model_connection_capability(
+        self,
+        runtime_type: str,
+    ) -> ModelConnectionCapability | None:
+        provider = self._providers.get(runtime_type)
+        declared = getattr(provider, "model_connection", None) if provider else None
+        if isinstance(declared, ModelConnectionCapability):
+            return declared
+        return self._model_connections.get(runtime_type)
+
+    def config_digest(self, runtime_id: str) -> str | None:
+        """Digest of the model connection the instance actually loaded."""
+        entry = self._entries.get(runtime_id)
+        if entry is None or entry.requested_values is None:
+            return None
+        return model_connection_digest(
+            entry.requested_values,
+            self.model_connection_capability(entry.runtime_type),
+        )
 
     async def discover(self) -> tuple[RuntimeTypeDescriptor, ...]:
         discovered = await asyncio.gather(
@@ -104,6 +146,7 @@ class RuntimeSupervisor:
                     f"provider {provider.runtime_type!r} returned descriptor for "
                     f"{descriptor.runtime_type!r}"
                 )
+            self._model_connections[runtime_type] = descriptor.model_connection
             return descriptor
         except Exception as exc:  # noqa: BLE001
             error = error_payload(exc)
@@ -169,10 +212,16 @@ class RuntimeSupervisor:
         instance: RuntimeInstanceSpec | str,
         values: Mapping[str, Any],
         revision: int | None = None,
+        switch: RuntimeSwitchRequest | None = None,
     ) -> RuntimeConfig:
         resolved = await self._resolve_instance(instance)
         lock = self._locks[resolved.runtime_id]
         async with lock:
+            if switch is not None:
+                # Validation only checks the fence; it never advances it.
+                await asyncio.to_thread(
+                    self._switch_fence.check, resolved.runtime_id, switch
+                )
             entry = self._entry(resolved.runtime_id)
             was_running = entry.status == "running" and entry.runtime is not None
             previous_error = entry.error
@@ -220,22 +269,50 @@ class RuntimeSupervisor:
         instance: RuntimeInstanceSpec | str,
         values: Mapping[str, Any],
         revision: int | None = None,
+        switch: RuntimeSwitchRequest | None = None,
     ) -> AgentRuntime:
         resolved = await self._resolve_instance(instance)
         lock = self._locks[resolved.runtime_id]
         async with lock, self._resource_lock:
-            return await self._start_locked(resolved, values, revision)
+            if switch is None:
+                return await self._start_locked(resolved, values, revision)
+            runtime_id = resolved.runtime_id
+            await asyncio.to_thread(self._switch_fence.check, runtime_id, switch)
+            # A switch always replaces the instance: stop it, then create a new
+            # one from the full target config. Only a retry of the accepted
+            # switch may find that instance already running and keep it.
+            retry = await asyncio.to_thread(self._switch_fence.is_retry, runtime_id, switch)
+            try:
+                return await self._start_locked(
+                    resolved, values, revision, rebuild=not retry
+                )
+            finally:
+                # Any outcome consumes the revision, so a replay of an earlier
+                # attempt cannot undo it.
+                await asyncio.to_thread(
+                    self._switch_fence.accept,
+                    runtime_id,
+                    switch,
+                    config_digest=model_connection_digest(
+                        values,
+                        self.model_connection_capability(resolved.runtime_type),
+                    ),
+                    status=self._entry(runtime_id).status,
+                )
 
     async def _start_locked(
         self,
         instance: RuntimeInstanceSpec,
         values: Mapping[str, Any],
         revision: int | None,
+        *,
+        rebuild: bool = False,
     ) -> AgentRuntime:
         entry = self._entry(instance.runtime_id)
         requested_values = dict(values)
         if (
-            entry.status == "running"
+            not rebuild
+            and entry.status == "running"
             and entry.runtime is not None
             and dict(entry.requested_values or {}) == requested_values
         ):
@@ -273,7 +350,8 @@ class RuntimeSupervisor:
 
         entry = self._entry(instance.runtime_id)
         if (
-            was_running
+            not rebuild
+            and was_running
             and entry.runtime is not None
             and same_effective_config(entry.config, config)
         ):
@@ -290,7 +368,8 @@ class RuntimeSupervisor:
             return current_runtime
 
         if (
-            was_running
+            not rebuild
+            and was_running
             and entry.runtime is not None
             and only_model_setting_changed(entry.config, config)
             and await entry.runtime.apply_model_setting(config)
@@ -381,6 +460,36 @@ class RuntimeSupervisor:
             phase=startup_phase,
         )
         return bound_runtime
+
+    async def probe_model_connection(
+        self,
+        runtime_id: str,
+        runtime_type: str | None = None,
+    ) -> tuple[ModelProbeResult, str | None]:
+        """Probe the model connection the running instance loaded.
+
+        Returns the result and the digest of the configuration that was
+        probed, so the caller can tell it apart from an older instance.
+        """
+
+        entry = self._entry(runtime_id)
+        if runtime_type is not None and entry.runtime_type != runtime_type:
+            raise RuntimeInvalidRequestError(
+                f"runtime instance {runtime_id!r} belongs to type "
+                f"{entry.runtime_type!r}, not {runtime_type!r}"
+            )
+        async with self._locks[runtime_id]:
+            entry = self._entry(runtime_id)
+            if entry.status != "running" or entry.runtime is None or entry.config is None:
+                raise RuntimeUnavailableError(
+                    f"runtime instance {runtime_id!r} is not running "
+                    f"(status={entry.status!r})"
+                )
+            result = await entry.provider.probe_model_connection(
+                entry.config,
+                self.model_connection_capability(entry.runtime_type),
+            )
+            return result, self.config_digest(runtime_id)
 
     async def stop(self, runtime_id: str) -> None:
         self._entry(runtime_id)

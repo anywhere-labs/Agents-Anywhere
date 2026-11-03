@@ -216,6 +216,10 @@ class PiProvider(RuntimeProvider):
             ui_schema=schema.ui_schema,
         )
 
+    @property
+    def model_connection(self) -> ModelConnectionCapability:
+        return MODEL_CONNECTION
+
     def model_connection_status(self, config) -> ModelConnectionStatus:
         mode = config.values.get("executionMode")
         return applied_status(MODEL_CONNECTION, config.values, mode=mode)

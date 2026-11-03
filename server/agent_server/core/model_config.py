@@ -28,7 +28,7 @@ GATEWAY_PROTOCOL = "protocol"
 MANAGED_BY = "model-config"
 
 ProfileSource = Literal["tokens", "manual"]
-AssignmentStatus = Literal["applying", "failed", "deferred", "modified", "outdated", "applied"]
+AssignmentStatus = Literal["modified", "outdated", "applied"]
 
 
 class ModelSpec(BaseModel):
@@ -142,50 +142,6 @@ class RuntimeModelChoice(BaseModel):
 
     def config_value(self) -> dict[str, Any]:
         return self.model_dump(exclude_none=True)
-
-
-class AssignmentTarget(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    connectorId: str = Field(min_length=1)
-    runtimeId: str = Field(min_length=1)
-
-
-class ApplyRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    profileId: str = Field(min_length=1)
-    targets: list[AssignmentTarget] = Field(min_length=1, max_length=64)
-    allowInterrupt: bool = False
-    # Required to change a runtime's own global configuration (scope native_global).
-    confirmNativeGlobal: bool = False
-    # Limits which of the profile's models are written when there are too many.
-    modelIds: list[str] | None = Field(default=None, max_length=MAX_RUNTIME_MODELS)
-    # With tasks running and no permission to interrupt: save now and let the
-    # runtime take it once idle, instead of skipping it.
-    deferBusy: bool = False
-    # Import as many models as fit instead of skipping the runtime.
-    trimModels: bool = False
-    # The model new sessions use, for runtimes that declare a ``modelField``.
-    model: RuntimeModelChoice | None = None
-
-
-class QuickSetupRequest(BaseModel):
-    """One-click Tokens Anywhere setup: the runtimes the user ticked."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    targets: list[AssignmentTarget] = Field(min_length=1, max_length=64)
-    # Required for runtimes whose own global configuration changes (scope native_global).
-    confirmNativeGlobal: bool = False
-
-
-class PreviewRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    profileId: str = Field(min_length=1)
-    targets: list[AssignmentTarget] | None = Field(default=None, max_length=64)
-    model: RuntimeModelChoice | None = None
 
 
 def origin_host(offers: list[Offer]) -> str:
@@ -402,20 +358,12 @@ def written_digest(config: dict[str, Any] | None, capability: dict[str, Any], im
 
 def assignment_status(
     *,
-    stored: str,
-    applying: bool,
     current_written_digest: str,
     applied_digest: str,
     profile_catalog_digest: str,
     applied_catalog_digest: str,
 ) -> AssignmentStatus:
-    """Stored and computed states, in the order clients show them."""
-    if applying:
-        return "applying"
-    if stored == "failed":
-        return "failed"
-    if stored == "deferred":
-        return "deferred"
+    """Whether a runtime still has what was written: edited by hand, or the channel moved on."""
     if current_written_digest != applied_digest:
         return "modified"
     if profile_catalog_digest != applied_catalog_digest:

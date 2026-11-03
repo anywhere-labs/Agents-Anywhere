@@ -1,9 +1,9 @@
 "use client"
 
 import * as React from "react"
-import { Check, ChevronRight, ExternalLink, Pencil, RefreshCw, X } from "lucide-react"
+import { Check, ChevronRight, Copy, ExternalLink, Pencil, RefreshCw, X } from "lucide-react"
 import { useTranslations } from "next-intl"
-import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts"
+import { Area, AreaChart } from "recharts"
 import { toast } from "sonner"
 
 import { SettingsSection } from "@/components/settings/settings-section"
@@ -13,11 +13,10 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Input } from "@/components/ui/input"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
+import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { formatCompactNumber, formatShortDate } from "@/features/admin-usage/report-helpers"
 import type { ModelPreferences, ModelProfile } from "@/features/dashboard/types"
 import { modelConfigApi, type TokensAccount as TokensAccountInfo, type TokensUsage } from "@/features/model-config/api"
@@ -32,37 +31,38 @@ import {
   vendorGroups,
   type TokensModel,
 } from "@/features/model-config/presentation"
+import { copyText } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 
 type Translate = ReturnType<typeof useTranslations<"pages.settings.modelConfigs">>
-export type Tab = "models" | "usage" | "devices"
+export type Tab = "account" | "models" | "runtimes"
 const EMPTY: ModelPreferences = { disabled: [], names: {} }
 
 /**
- * The linked Tokens Anywhere account: who it is, its balance, which of its
- * models runtimes get and under which names, what it has spent, and the
- * runtimes it is set up on.
+ * The linked Tokens Anywhere account: account and usage, models and connection,
+ * and the runtimes using the channel with their switching progress.
  */
 export function TokensAccount({
   token,
   profile,
   fallbackAccount,
   action,
-  devices,
+  connection,
+  runtimes,
   syncing,
-  applying,
-  initialTab = "models",
+  initialTab = "account",
   onSync,
   onChanged,
   errorText,
 }: {
   token: string
   profile: ModelProfile | undefined
-  applying: boolean
   initialTab?: Tab
   fallbackAccount: { id: string; displayName: string | null; email: string | null } | undefined
   action: React.ReactNode
-  devices: React.ReactNode
+  /** The address and key runtimes use, with its own actions. */
+  connection: React.ReactNode
+  runtimes?: React.ReactNode
   syncing: boolean
   onSync: () => void
   onChanged: () => void
@@ -89,93 +89,177 @@ export function TokensAccount({
   const account = info?.account ?? fallbackAccount
   const name = account?.displayName ?? account?.email ?? account?.id ?? ""
   return (
-    <SettingsSection
-      title={(
-        <span className="flex items-center gap-2">
-          {t("account.title")}
-          <Badge variant="outline" className="font-normal">Beta</Badge>
-        </span>
-      )}
-      description={applying ? (
-        <span className="flex items-center gap-1.5"><Spinner className="size-3" />{t("account.applying")}</span>
-      ) : undefined}
-      action={action}
-    >
-      <div className="flex flex-col gap-4">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="flex min-w-0 items-center gap-3 rounded-lg border border-border p-4">
-            <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium uppercase">
-              {name.slice(0, 1) || "?"}
-            </span>
-            <div className="flex min-w-0 flex-col gap-0.5">
-              <span className="truncate text-sm font-medium" title={name}>{name}</span>
-              {account?.email && account.email !== name ? (
-                <span className="truncate text-xs text-muted-foreground" title={account.email}>{account.email}</span>
-              ) : null}
-              {info ? (
-                <button
-                  type="button"
-                  className="flex w-fit items-center gap-1 text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                  onClick={() => void openExternal(info.links.console)}
-                >
-                  {t("account.moreInfo")}<ExternalLink className="size-3" />
-                </button>
-              ) : null}
+    <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)} className="gap-0">
+      <SettingsSection
+        variant="plain"
+        contentClassName="flex flex-col gap-6"
+        title={(
+          <span className="flex items-center gap-2">
+            {t("account.title")}
+            <Badge variant="outline" className="font-normal">Beta</Badge>
+          </span>
+        )}
+        action={action}
+      >
+        <div className="flex min-w-0 flex-col gap-1">
+          <TabsList variant="line">
+            <TabsTrigger value="account">{t("account.tabAccount")}</TabsTrigger>
+            <TabsTrigger value="models">{t("account.tabModelsConnection")}</TabsTrigger>
+            {runtimes ? <TabsTrigger value="runtimes">{t("runtimes.title")}</TabsTrigger> : null}
+          </TabsList>
+          <Separator />
+        </div>
+        <TabsContent value="account" className="flex flex-col gap-8">
+          <div className="grid gap-6 sm:grid-cols-2 sm:gap-10">
+            <div className="flex min-w-0 items-start gap-3 py-2">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium uppercase">
+                {name.slice(0, 1) || "?"}
+              </span>
+              <div className="flex min-w-0 flex-col gap-0.5">
+                <span className="truncate text-sm font-medium" title={name}>{name}</span>
+                {account?.email && account.email !== name ? (
+                  <span className="truncate text-xs text-muted-foreground" title={account.email}>{account.email}</span>
+                ) : null}
+                {info ? <ExternalTextLink onClick={() => void openExternal(info.links.console)}>{t("account.moreInfo")}</ExternalTextLink> : null}
+              </div>
             </div>
-          </div>
-          <div className="flex min-w-0 flex-col justify-between gap-3 rounded-lg border border-border p-4">
-            <div className="flex flex-col gap-0.5">
-              <span className="text-xs text-muted-foreground">{t("account.balance")}</span>
-              {info ? (
-                <>
-                  <span className="text-2xl font-semibold tabular-nums">{formatYuan(amountUnits(info.balance.balance))}</span>
-                  <span className="text-xs text-muted-foreground tabular-nums">
-                    {t("account.balanceDetail", {
-                      available: formatYuan(amountUnits(info.balance.available)),
-                      bonus: formatYuan(amountUnits(info.balance.bonus)),
-                    })}
+            <div className="flex min-w-0 flex-col gap-4 py-2">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-xs text-muted-foreground">{t("account.balance")}</span>
+                {info ? (
+                  <>
+                    <span className="text-3xl font-semibold tracking-tight tabular-nums">{formatYuan(amountUnits(info.balance.balance))}</span>
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      {t("account.balanceDetail", {
+                        available: formatYuan(amountUnits(info.balance.available)),
+                        bonus: formatYuan(amountUnits(info.balance.bonus)),
+                      })}
+                    </span>
+                  </>
+                ) : infoFailed ? (
+                  <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                    {t("account.loadFailed")}
+                    <Button size="sm" variant="ghost" onClick={loadInfo}><RefreshCw data-icon="inline-start" />{t("retry")}</Button>
                   </span>
-                </>
-              ) : infoFailed ? (
-                <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                  {t("account.loadFailed")}
-                  <Button size="sm" variant="ghost" onClick={loadInfo}><RefreshCw data-icon="inline-start" />{t("retry")}</Button>
-                </span>
-              ) : <Spinner className="my-2" />}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" onClick={() => setTab("usage")}>{t("account.viewUsage")}</Button>
-              <Button size="sm" disabled={!info} onClick={() => info && void openExternal(info.links.billing)}>
+                ) : <Spinner className="my-2" />}
+              </div>
+              <Button size="sm" className="w-fit" disabled={!info} onClick={() => info && void openExternal(info.links.billing)}>
                 {t("account.topUp")}<ExternalLink data-icon="inline-end" />
               </Button>
             </div>
           </div>
-        </div>
-        <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
-          <TabsList>
-            <TabsTrigger value="models">{t("account.tabModels")}</TabsTrigger>
-            <TabsTrigger value="usage">{t("account.tabUsage")}</TabsTrigger>
-            <TabsTrigger value="devices">{t("account.tabDevices")}</TabsTrigger>
-          </TabsList>
-          {/* Kept mounted so unsaved model changes survive a look at another tab. */}
-          <TabsContent value="models" forceMount className="pt-2 data-[state=inactive]:hidden">
-            <ModelsTab token={token} profile={profile} syncing={syncing} applying={applying} onSync={onSync} onChanged={onChanged} errorText={errorText} />
+          <Separator />
+          {tab === "account" ? <UsageBlock token={token} detailsUrl={info?.links.usage ?? null} /> : null}
+        </TabsContent>
+        {/* Kept mounted so unsaved model changes survive a look at the account page. */}
+        <TabsContent value="models" forceMount className="flex flex-col gap-6 data-[state=inactive]:hidden">
+          {connection}
+          <ModelsBlock token={token} profile={profile} syncing={syncing} onSync={onSync} onChanged={onChanged} errorText={errorText} />
+          {profile ? <ProtocolAddresses profile={profile} /> : null}
+        </TabsContent>
+        {runtimes ? (
+          <TabsContent value="runtimes" forceMount className="data-[state=inactive]:hidden">
+            {runtimes}
           </TabsContent>
-          <TabsContent value="usage" className="pt-2">
-            {tab === "usage" ? <UsageTab token={token} detailsUrl={info?.links.usage ?? null} /> : null}
-          </TabsContent>
-          <TabsContent value="devices" className="pt-2">{devices}</TabsContent>
-        </Tabs>
-      </div>
-    </SettingsSection>
+        ) : null}
+      </SettingsSection>
+    </Tabs>
   )
 }
 
-function ModelsTab({
+/** A titled part of a page: a heading line with a note and actions, then its body. */
+export function AccountBlock({
+  title,
+  meta,
+  action,
+  description,
+  children,
+}: {
+  title: React.ReactNode
+  meta?: React.ReactNode
+  action?: React.ReactNode
+  description?: React.ReactNode
+  children: React.ReactNode
+}) {
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="flex min-h-8 flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <h3 className="text-sm font-medium">{title}</h3>
+          {meta ? <span className="text-xs text-muted-foreground tabular-nums">{meta}</span> : null}
+        </div>
+        {action ? <div className="flex flex-wrap items-center gap-2">{action}</div> : null}
+      </div>
+      {description ? <p className="-mt-1 text-xs text-muted-foreground">{description}</p> : null}
+      {children}
+    </section>
+  )
+}
+
+function ExternalTextLink({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      className="flex w-fit items-center gap-1 text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+      onClick={onClick}
+    >
+      {children}<ExternalLink className="size-3" />
+    </button>
+  )
+}
+
+function ProtocolAddresses({ profile }: { profile: ModelProfile }) {
+  const t = useTranslations("pages.settings.modelConfigs")
+  const [open, setOpen] = React.useState(false)
+  if (!profile.offers.length) return null
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="flex flex-col gap-2">
+      <CollapsibleTrigger asChild>
+        <button type="button" className="flex w-fit items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+          <ChevronRight className={cn("size-4 transition-transform", open && "rotate-90")} />
+          {t("account.protocolAddresses")}
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="flex flex-col divide-y divide-border">
+          {profile.offers.map((offer) => (
+            <div key={offer.format} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2.5 text-sm">
+              <span className="w-44 shrink-0 text-muted-foreground">{t(`protocols.${offer.format}`)}</span>
+              <span className="min-w-0 flex-1 break-all font-mono text-xs">{offer.baseUrl}</span>
+              <CopyButton value={offer.baseUrl} />
+            </div>
+          ))}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+export function CopyButton({ value }: { value: string }) {
+  const t = useTranslations("pages.settings.modelConfigs")
+  const [copied, setCopied] = React.useState(false)
+  React.useEffect(() => {
+    if (!copied) return
+    const timer = window.setTimeout(() => setCopied(false), 1500)
+    return () => window.clearTimeout(timer)
+  }, [copied])
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      className="text-muted-foreground"
+      onClick={() => copyText(value).then(() => setCopied(true), () => toast.error(t("account.copyFailed")))}
+    >
+      {copied ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
+      {t(copied ? "account.copied" : "account.copy")}
+    </Button>
+  )
+}
+
+function ModelsBlock({
   token,
   profile,
   syncing,
-  applying,
   onSync,
   onChanged,
   errorText,
@@ -183,7 +267,6 @@ function ModelsTab({
   token: string
   profile: ModelProfile | undefined
   syncing: boolean
-  applying: boolean
   onSync: () => void
   onChanged: () => void
   errorText: (error: unknown) => string
@@ -191,6 +274,11 @@ function ModelsTab({
   const t = useTranslations("pages.settings.modelConfigs")
   const models = React.useMemo(() => (profile ? tokensModels(profile) : []), [profile])
   const groups = React.useMemo(() => vendorGroups(models), [models])
+  // Which protocols reach each model, so a group can say how runtimes call it.
+  const protocolsOf = React.useCallback((group: TokensModel[]) => {
+    const ids = new Set(group.map((model) => model.id))
+    return (profile?.offers ?? []).filter((offer) => offer.models.some((model) => ids.has(model.id))).map((offer) => offer.format)
+  }, [profile])
   const saved = profile?.preferences ?? EMPTY
   const [draft, setDraft] = React.useState<ModelPreferences>(saved)
   const [saving, setSaving] = React.useState(false)
@@ -234,35 +322,33 @@ function ModelsTab({
     }
   }
 
+  const refresh = (
+    <Button size="sm" variant="ghost" onClick={onSync} disabled={syncing}>
+      {syncing ? <Spinner /> : <RefreshCw data-icon="inline-start" />}{t("account.refresh")}
+    </Button>
+  )
+
   if (!models.length) {
     return (
-      <div className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm text-muted-foreground">
-        <span>{t("account.noModels")}</span>
-        <Button size="sm" variant="outline" onClick={onSync} disabled={syncing}>
-          {syncing ? <Spinner /> : <RefreshCw data-icon="inline-start" />}{t("account.refresh")}
-        </Button>
-      </div>
+      <AccountBlock title={t("account.tabModels")} action={refresh}>
+        <p className="py-4 text-sm text-muted-foreground">{t("account.noModels")}</p>
+      </AccountBlock>
     )
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <span className="text-sm">{t("account.modelsSummary", { total: models.length, enabled: enabledCount })}</span>
-          <span className="text-xs text-muted-foreground">{t("account.modelsHint")}</span>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="outline" onClick={onSync} disabled={syncing}>
-            {syncing ? <Spinner /> : <RefreshCw data-icon="inline-start" />}{t("account.refresh")}
-          </Button>
-        </div>
-      </div>
-      <div className="flex flex-col divide-y divide-border rounded-lg border border-border">
+    <AccountBlock
+      title={t("account.tabModels")}
+      meta={t("account.enabledCount", { enabled: enabledCount, total: models.length })}
+      action={refresh}
+      description={t("account.modelsHint")}
+    >
+      <div className="flex flex-col divide-y divide-border">
         {groups.map((group) => {
           const label = group.label ?? t("account.otherVendor")
           const on = group.models.filter((model) => !disabled.has(model.id)).length
           const isOpen = expanded.has(group.key)
+          const formats = protocolsOf(group.models)
           return (
             <Collapsible
               key={group.key}
@@ -278,8 +364,15 @@ function ModelsTab({
                 <CollapsibleTrigger asChild>
                   <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm font-medium">
                     <ChevronRight className={cn("size-4 shrink-0 text-muted-foreground transition-transform", isOpen && "rotate-90")} />
-                    <span className="truncate">{label}</span>
-                    <span className="text-xs font-normal text-muted-foreground tabular-nums">{on}/{group.models.length}</span>
+                    <span className="truncate sm:w-28 sm:flex-none">{label}</span>
+                    <span className="text-xs font-normal text-muted-foreground tabular-nums sm:w-12">{on}/{group.models.length}</span>
+                    {formats.length ? (
+                      <span className="hidden truncate text-xs font-normal text-muted-foreground sm:inline">
+                        {formats.length === 1 && formats[0] === "anthropic"
+                          ? t("account.anthropicProtocol")
+                          : formats.map((format) => t(`protocolsShort.${format}`)).join(" · ")}
+                      </span>
+                    ) : null}
                   </button>
                 </CollapsibleTrigger>
                 <Switch
@@ -314,13 +407,13 @@ function ModelsTab({
           </span>
           <div className="flex gap-2">
             <Button size="sm" variant="ghost" disabled={saving} onClick={() => setDraft(saved)}>{t("account.discard")}</Button>
-            <Button size="sm" disabled={saving || applying || enabledCount === 0} onClick={() => void save(next)}>
+            <Button size="sm" disabled={saving || enabledCount === 0} onClick={() => void save(next)}>
               {saving ? <Spinner /> : null}{t("account.saveApply")}
             </Button>
           </div>
         </div>
       ) : null}
-    </div>
+    </AccountBlock>
   )
 }
 
@@ -406,10 +499,9 @@ function ModelRow({
   )
 }
 
-function UsageTab({ token, detailsUrl }: { token: string; detailsUrl: string | null }) {
+function UsageBlock({ token, detailsUrl }: { token: string; detailsUrl: string | null }) {
   const t = useTranslations("pages.settings.modelConfigs")
   const [days, setDays] = React.useState(7)
-  const [model, setModel] = React.useState<string | null>(null)
   const [usage, setUsage] = React.useState<TokensUsage | null>(null)
   const [failed, setFailed] = React.useState(false)
 
@@ -420,111 +512,66 @@ function UsageTab({ token, detailsUrl }: { token: string; detailsUrl: string | n
   }, [token, days])
   React.useEffect(load, [load])
 
-  const summary = usage ? summarizeUsage(usage, model) : null
-  const modelIds = usage ? [...new Set(usage.items.map((item) => item.model).filter((id): id is string => Boolean(id)))].sort() : []
+  const summary = usage ? summarizeUsage(usage, null) : null
   const chartConfig: ChartConfig = { cost: { label: t("account.cost"), color: "var(--chart-1)" } }
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <ToggleGroup
-          type="single"
-          variant="outline"
-          size="sm"
-          value={String(days)}
-          onValueChange={(value) => { if (value) setDays(Number(value)) }}
-        >
-          <ToggleGroupItem value="7">{t("account.days7")}</ToggleGroupItem>
-          <ToggleGroupItem value="30">{t("account.days30")}</ToggleGroupItem>
-        </ToggleGroup>
-        <NativeSelect
-          size="sm"
-          aria-label={t("account.model")}
-          value={model ?? ""}
-          onChange={(event) => setModel(event.target.value || null)}
-        >
-          <NativeSelectOption value="">{t("account.allModels")}</NativeSelectOption>
-          {modelIds.map((id) => <NativeSelectOption key={id} value={id}>{id}</NativeSelectOption>)}
-          {model && !modelIds.includes(model) ? <NativeSelectOption value={model}>{model}</NativeSelectOption> : null}
-        </NativeSelect>
-      </div>
-      {failed ? (
-        <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-          {t("account.usageFailed")}
-          <Button size="sm" variant="ghost" onClick={load}><RefreshCw data-icon="inline-start" />{t("retry")}</Button>
-        </div>
-      ) : !summary ? (
-        <div className="flex justify-center py-10"><Spinner /></div>
-      ) : (
+    <AccountBlock
+      title={t("account.tabUsage")}
+      action={(
         <>
-          <div className="grid grid-cols-3 gap-3">
-            <Stat label={t("account.cost")} value={formatYuan(summary.cost)} />
-            <Stat label={t("account.requests")} value={summary.requests.toLocaleString()} />
-            <Stat label={t("account.tokens")} value={formatCompactNumber(summary.tokens)} />
-          </div>
-          <div className="flex flex-col gap-2">
-            <span className="text-xs text-muted-foreground">{t("account.dailyCost")}</span>
-            {summary.cost === 0 ? (
-              <p className="flex h-40 items-center justify-center rounded-lg border border-dashed border-border text-sm text-muted-foreground">{t("account.noUsage")}</p>
-            ) : (
-              <ChartContainer config={chartConfig} className="aspect-auto h-48 w-full">
-                <BarChart data={summary.daily.map((row) => ({ date: row.date, cost: row.cost / 10_000 }))} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-                  <CartesianGrid vertical={false} stroke="var(--border)" strokeOpacity={0.6} />
-                  <XAxis dataKey="date" tickLine={false} axisLine={false} minTickGap={16} tickFormatter={formatShortDate} />
-                  <YAxis tickLine={false} axisLine={false} width={48} tickFormatter={(value: number) => `¥${formatCompactNumber(value)}`} />
-                  <ChartTooltip
-                    cursor={{ fill: "var(--muted)" }}
-                    content={<ChartTooltipContent formatter={(value) => formatYuan(Math.round(Number(value) * 10_000))} />}
-                  />
-                  <Bar dataKey="cost" fill="var(--color-cost)" radius={[3, 3, 0, 0]} maxBarSize={28} />
-                </BarChart>
-              </ChartContainer>
-            )}
-          </div>
-          {summary.models.length ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t("account.model")}</TableHead>
-                  <TableHead className="text-right">{t("account.requests")}</TableHead>
-                  <TableHead className="text-right">{t("account.tokens")}</TableHead>
-                  <TableHead className="text-right">{t("account.cost")}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {summary.models.map((row) => (
-                  <TableRow key={row.model}>
-                    <TableCell className="max-w-56 truncate" title={row.model}>{row.model || t("account.unknownModel")}</TableCell>
-                    <TableCell className="text-right tabular-nums">{row.requests.toLocaleString()}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatCompactNumber(row.tokens)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatYuan(row.cost)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+          <NativeSelect size="sm" aria-label={t("account.period")} value={String(days)} onChange={(event) => setDays(Number(event.target.value))}>
+            <NativeSelectOption value="7">{t("account.days7")}</NativeSelectOption>
+            <NativeSelectOption value="30">{t("account.days30")}</NativeSelectOption>
+          </NativeSelect>
+          {detailsUrl ? (
+            <Button size="sm" variant="ghost" onClick={() => void openExternal(detailsUrl)}>
+              {t("account.usageDetails")}<ExternalLink data-icon="inline-end" />
+            </Button>
           ) : null}
         </>
       )}
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-        {detailsUrl ? (
-          <button
-            type="button"
-            className="flex items-center gap-1 underline-offset-4 hover:text-foreground hover:underline"
-            onClick={() => void openExternal(detailsUrl)}
-          >
-            {t("account.usageDetails")}<ExternalLink className="size-3" />
-          </button>
-        ) : null}
+    >
+      <div className="flex flex-col gap-5 py-2">
+        {failed ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            {t("account.usageFailed")}
+            <Button size="sm" variant="ghost" onClick={load}><RefreshCw data-icon="inline-start" />{t("retry")}</Button>
+          </div>
+        ) : !summary ? (
+          <div className="flex justify-center py-6"><Spinner /></div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 gap-5 min-[400px]:grid-cols-3 sm:gap-8">
+              <Stat label={t("account.cost")} value={formatYuan(summary.cost)} />
+              <Stat label={t("account.requests")} value={t("account.requestCount", { count: summary.requests })} />
+              <Stat label={t("account.tokens")} value={formatCompactNumber(summary.tokens)} />
+            </div>
+            {summary.cost === 0 ? (
+              <p className="text-xs text-muted-foreground">{t("account.noUsage")}</p>
+            ) : (
+              <ChartContainer config={chartConfig} className="aspect-auto h-16 w-full">
+                <AreaChart data={summary.daily.map((row) => ({ date: row.date, cost: row.cost / 10_000 }))} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
+                  <ChartTooltip
+                    cursor={false}
+                    content={<ChartTooltipContent labelFormatter={(_, items) => formatShortDate(String(items[0]?.payload?.date ?? ""))} formatter={(value) => formatYuan(Math.round(Number(value) * 10_000))} />}
+                  />
+                  <Area dataKey="cost" type="monotone" stroke="var(--color-cost)" fill="var(--color-cost)" fillOpacity={0.15} strokeWidth={1.5} />
+                </AreaChart>
+              </ChartContainer>
+            )}
+          </>
+        )}
       </div>
-    </div>
+    </AccountBlock>
   )
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex min-w-0 flex-col gap-0.5 rounded-lg border border-border px-3 py-2.5">
+    <div className="flex min-w-0 flex-col gap-1.5">
       <span className="text-xs text-muted-foreground">{label}</span>
-      <span className="truncate text-lg font-semibold tabular-nums" title={value}>{value}</span>
+      <span className="truncate text-xl font-semibold tracking-tight tabular-nums" title={value}>{value}</span>
     </div>
   )
 }

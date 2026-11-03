@@ -51,23 +51,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.modelconfig.ModelConfigController
-import com.agentsanywhere.app.feature.modelconfig.ModelConfigDeviceRow
 import com.agentsanywhere.app.feature.modelconfig.ModelConfigState
 import com.agentsanywhere.app.feature.modelconfig.ModelStatusTone
-import com.agentsanywhere.app.feature.modelconfig.activeTokensProfile
-import com.agentsanywhere.app.feature.modelconfig.assignmentStatusTone
 import com.agentsanywhere.app.feature.modelconfig.canDelete
-import com.agentsanywhere.app.feature.modelconfig.connectionStateTone
-import com.agentsanywhere.app.feature.modelconfig.modelConfigDeviceRows
 import com.agentsanywhere.app.feature.modelconfig.modelConfigErrorCode
 import com.agentsanywhere.app.feature.modelconfig.modelCount
-import com.agentsanywhere.app.feature.modelconfig.newIdempotencyKey
-import com.agentsanywhere.app.feature.modelconfig.summary
+import com.agentsanywhere.app.feature.modelconfig.uses
 import com.agentsanywhere.app.feature.modelconfig.usedBy
 import com.agentsanywhere.app.model.AgentDevice
+import com.agentsanywhere.app.model.CHANNEL_TOKENS
+import com.agentsanywhere.app.model.ModelChannelState
 import com.agentsanywhere.app.model.ModelConfigOverview
 import com.agentsanywhere.app.model.ModelProfile
-import com.agentsanywhere.app.model.TokensLinkStatus
 import com.agentsanywhere.app.ui.designsystem.AAToastHost
 import com.agentsanywhere.app.ui.designsystem.AAToastVisuals
 import com.agentsanywhere.app.ui.designsystem.BackIconButton
@@ -75,17 +70,14 @@ import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.agentsanywhere.app.ui.screens.profile.ProfileCard
 import com.agentsanywhere.app.ui.screens.profile.profilePageBackground
-import com.composables.icons.lucide.Link2
+import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.RefreshCw
-import com.composables.icons.lucide.RotateCcw
 import com.composables.icons.lucide.Trash2
-import com.composables.icons.lucide.Unlink
-import com.composables.icons.lucide.Upload
 import kotlinx.coroutines.launch
 
-/** 「配置管理」: Tokens Anywhere, model profiles and the runtimes that take a model connection. */
+/** 「配置管理」: the current channel and each runtime's progress, Tokens Anywhere and manual model services. */
 @Composable
 fun ModelConfigScreen(
     state: ModelConfigState,
@@ -98,8 +90,10 @@ fun ModelConfigScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var creating by remember { mutableStateOf(false) }
-    var applyProfile by remember { mutableStateOf<ModelProfile?>(null) }
     val pendingBar = remember { PendingModelsBarSlot() }
+    // A channel write answers with the new channel state; show it until the next snapshot.
+    var localChannel by remember(state.overview?.channel) { mutableStateOf<ModelChannelState?>(null) }
+    var settingChannel by remember { mutableStateOf<String?>(null) }
     BackHandler(onBack = onBack)
 
     fun notify(message: String, error: Boolean = false) {
@@ -107,6 +101,14 @@ fun ModelConfigScreen(
     }
     val notifyError: (Throwable) -> Unit = { error ->
         notify(context.getString(modelConfigErrorRes(modelConfigErrorCode(error))), error = true)
+    }
+    fun setChannel(channel: String) {
+        if (settingChannel != null) return
+        settingChannel = channel
+        scope.launch {
+            controller.setChannel(channel).onSuccess { localChannel = it }.onFailure(notifyError)
+            settingChannel = null
+        }
     }
 
     Scaffold(
@@ -121,7 +123,7 @@ fun ModelConfigScreen(
                     CircularProgressIndicator(color = colors.muted, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
                 }
             } else {
-                val rows = modelConfigDeviceRows(state.runtimes, overview.assignments)
+                val channel = localChannel ?: overview.channel
                 // A plain column keeps the Tokens card (its tab, edits and loaded
                 // usage) alive while the rest of the page scrolls past it.
                 Column(
@@ -136,32 +138,40 @@ fun ModelConfigScreen(
                     if (!overview.secretConfigured) {
                         NoticeText(stringResource(R.string.model_config_secret_missing))
                     }
-                    overview.tokens?.takeIf { it.available }?.let { tokens ->
-                        TokensQuickSetupCard(
-                            tokens = tokens,
+                    if (channel != null) {
+                        ChannelSection(
                             overview = overview,
+                            channel = channel,
                             runtimes = state.runtimes,
                             devices = devices,
                             controller = controller,
+                            settingChannel = settingChannel != null,
+                            onSetChannel = ::setChannel,
+                            onChannelState = { localChannel = it },
+                            onError = notifyError,
+                        )
+                    }
+                    overview.tokens?.takeIf { it.available }?.let { tokens ->
+                        TokensChannelCard(
+                            tokens = tokens,
+                            overview = overview,
+                            channel = channel,
+                            controller = controller,
                             pendingBar = pendingBar,
+                            settingCurrent = settingChannel == CHANNEL_TOKENS,
+                            onSetCurrent = { setChannel(CHANNEL_TOKENS) },
                             onNotice = { notify(it) },
                             onError = notifyError,
                         )
                     }
                     ProfilesSection(
                         overview = overview,
+                        channel = channel,
                         controller = controller,
+                        settingChannel = settingChannel,
                         onAdd = { creating = true },
-                        onApply = { applyProfile = it },
+                        onSetCurrent = ::setChannel,
                         onNotice = { message, error -> notify(message, error) },
-                        onError = notifyError,
-                    )
-                    DevicesSection(
-                        rows = rows,
-                        devices = devices,
-                        overview = overview,
-                        controller = controller,
-                        onNotice = { notify(it) },
                         onError = notifyError,
                     )
                     PendingBarSpacer(pendingBar)
@@ -194,26 +204,6 @@ fun ModelConfigScreen(
             },
         )
     }
-    applyProfile?.let { profile ->
-        ApplyProfileDialog(
-            profile = profile,
-            devices = devices,
-            controller = controller,
-            onDismiss = { applyProfile = null },
-            onApplied = { operation ->
-                applyProfile = null
-                val summary = operation.summary()
-                if (summary.other == 0) {
-                    notify(context.resources.getQuantityString(R.plurals.model_config_applied_count, summary.applied, summary.applied))
-                } else {
-                    notify(context.getString(R.string.model_config_applied_partially, summary.applied, summary.other), error = true)
-                }
-            },
-            onError = { error ->
-                notifyError(error)
-            },
-        )
-    }
 }
 
 @Composable
@@ -242,9 +232,11 @@ private fun ModelConfigHeader(onBack: () -> Unit) {
 @Composable
 private fun ProfilesSection(
     overview: ModelConfigOverview,
+    channel: ModelChannelState?,
     controller: ModelConfigController,
+    settingChannel: String?,
     onAdd: () -> Unit,
-    onApply: (ModelProfile) -> Unit,
+    onSetCurrent: (String) -> Unit,
     onNotice: (String, Boolean) -> Unit,
     onError: (Throwable) -> Unit,
 ) {
@@ -269,8 +261,13 @@ private fun ProfilesSection(
                 ProfileItem(
                     profile = profile,
                     usedBy = overview.usedBy(profile.id),
+                    // The Tokens profile is used through the "tokens" channel.
+                    current = channel?.channel == (if (profile.isTokens) CHANNEL_TOKENS else profile.id),
+                    inChannel = channel.uses(if (profile.isTokens) CHANNEL_TOKENS else profile.id),
+                    canSetCurrent = channel != null && profile.isManual && profile.isActive,
+                    settingCurrent = settingChannel == profile.id,
                     controller = controller,
-                    onApply = { onApply(profile) },
+                    onSetCurrent = { onSetCurrent(profile.id) },
                     onNotice = onNotice,
                     onError = onError,
                 )
@@ -283,8 +280,12 @@ private fun ProfilesSection(
 private fun ProfileItem(
     profile: ModelProfile,
     usedBy: Int,
+    current: Boolean,
+    inChannel: Boolean,
+    canSetCurrent: Boolean,
+    settingCurrent: Boolean,
     controller: ModelConfigController,
-    onApply: () -> Unit,
+    onSetCurrent: () -> Unit,
     onNotice: (String, Boolean) -> Unit,
     onError: (Throwable) -> Unit,
 ) {
@@ -304,18 +305,10 @@ private fun ProfileItem(
     var confirmRotation by remember(profile.id) { mutableStateOf(false) }
     fun rotateKey() {
         busy = true
-        // One key for both attempts: a `busy` answer comes before anything rotates.
-        val key = newIdempotencyKey()
+        // A `busy` answer comes before anything rotates, so asking again is safe.
         suspend fun rotate(allowInterrupt: Boolean) {
-            controller.rotateTokensKey(profile.id, allowInterrupt = allowInterrupt, idempotencyKey = key)
-                .onSuccess { operation ->
-                    val summary = operation.summary()
-                    if (summary.other == 0) {
-                        onNotice(context.resources.getQuantityString(R.plurals.model_config_applied_count, summary.applied, summary.applied), false)
-                    } else {
-                        onNotice(context.getString(R.string.model_config_applied_partially, summary.applied, summary.other), true)
-                    }
-                }
+            controller.rotateTokensKey(profile.id, allowInterrupt = allowInterrupt)
+                .onSuccess { onNotice(context.getString(R.string.model_config_rotated), false) }
                 .onFailure { error ->
                     if (!allowInterrupt && modelConfigErrorCode(error) == "busy") {
                         confirmInterrupt = { rotate(allowInterrupt = true) }
@@ -348,17 +341,19 @@ private fun ProfileItem(
                 source.takeIf { it != profile.name },
                 stringResource(R.string.model_config_detached).takeIf { !profile.isActive },
             ),
+            currentTag = stringResource(R.string.model_config_channel_current).takeIf { current },
             wrapTitle = true,
         )
         ProfileDetails(profile, usedBy)
         ActionRow {
-            if (!profile.isTokens) {
+            if (canSetCurrent && !current) {
                 SmallButton(
-                    label = stringResource(R.string.model_config_apply),
-                    icon = Lucide.Upload,
+                    label = stringResource(R.string.model_config_channel_set_current),
+                    icon = Lucide.Check,
                     primary = true,
-                    enabled = !busy && profile.isActive,
-                    onClick = onApply,
+                    loading = settingCurrent,
+                    enabled = !busy && !settingCurrent,
+                    onClick = onSetCurrent,
                 )
             }
             if (profile.isTokens && profile.isActive) {
@@ -375,7 +370,7 @@ private fun ProfileItem(
                     label = stringResource(R.string.model_config_delete_profile),
                     icon = Lucide.Trash2,
                     danger = true,
-                    enabled = !busy && profile.canDelete(usedBy),
+                    enabled = !busy && profile.canDelete(usedBy, inChannel),
                     onClick = {
                         busy = true
                         scope.launch {
@@ -384,110 +379,6 @@ private fun ProfileItem(
                         }
                     },
                 )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun DevicesSection(
-    rows: List<ModelConfigDeviceRow>,
-    devices: List<AgentDevice>,
-    overview: ModelConfigOverview,
-    controller: ModelConfigController,
-    onNotice: (String) -> Unit,
-    onError: (Throwable) -> Unit,
-) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var restoring by remember { mutableStateOf<String?>(null) }
-    var confirmInterrupt by remember { mutableStateOf<(suspend () -> Unit)?>(null) }
-    confirmInterrupt?.let { retry ->
-        InterruptConfirmDialog(
-            onDismiss = { confirmInterrupt = null },
-            onConfirm = {
-                retry()
-                confirmInterrupt = null
-            },
-        )
-    }
-    Section(
-        title = stringResource(R.string.model_config_devices_title),
-        description = stringResource(R.string.model_config_devices_description),
-    ) {
-        ProfileCard {
-            if (rows.isEmpty()) {
-                MutedText(stringResource(R.string.model_config_no_devices), Modifier.padding(14.dp))
-            }
-            rows.forEachIndexed { index, row ->
-                if (index > 0) RowDivider()
-                val assignment = row.assignment
-                val status = row.status
-                val profileName = assignment?.let { item ->
-                    overview.profiles.firstOrNull { it.id == item.profileId }?.name ?: item.profileId
-                }
-                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    TitleLine(
-                        title = row.runtime.labels.primary,
-                        subtitle = devices.firstOrNull { it.id == row.runtime.connectorId }?.name,
-                        maturity = row.maturity,
-                        tags = listOfNotNull(stringResource(R.string.model_config_managed_instance).takeIf { row.managedHere }),
-                    )
-                    MutedText(
-                        listOfNotNull(
-                            if (profileName != null) {
-                                stringResource(R.string.model_config_assigned_profile, profileName)
-                            } else {
-                                stringResource(R.string.model_config_not_assigned)
-                            },
-                            status?.reason,
-                        ).joinToString(" · "),
-                    )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        if (assignment != null && assignment.status != "applied") {
-                            assignmentStatusRes(assignment.status)?.let {
-                                StatusPill(stringResource(it), assignmentStatusTone(assignment.status), Modifier.align(Alignment.CenterVertically))
-                            }
-                        }
-                        if (status != null) {
-                            connectionStateRes(status.state)?.let {
-                                StatusPill(stringResource(it), connectionStateTone(status.state), Modifier.align(Alignment.CenterVertically))
-                            }
-                        }
-                        Spacer(Modifier.weight(1f))
-                        if (assignment != null) {
-                            SmallButton(
-                                label = stringResource(R.string.model_config_restore),
-                                icon = Lucide.RotateCcw,
-                                loading = restoring == row.key,
-                                enabled = restoring == null,
-                                onClick = {
-                                    restoring = row.key
-                                    suspend fun restore(allowInterrupt: Boolean) {
-                                        controller.restore(assignment.connectorId, assignment.runtimeId, allowInterrupt = allowInterrupt)
-                                            .onSuccess { onNotice(context.getString(R.string.model_config_restored)) }
-                                            .onFailure { error ->
-                                                if (!allowInterrupt && modelConfigErrorCode(error) == "busy") {
-                                                    confirmInterrupt = { restore(allowInterrupt = true) }
-                                                } else {
-                                                    onError(error)
-                                                }
-                                            }
-                                    }
-                                    scope.launch {
-                                        restore(allowInterrupt = false)
-                                        restoring = null
-                                    }
-                                },
-                            )
-                        }
-                    }
-                }
             }
         }
     }
@@ -532,6 +423,8 @@ internal fun TitleLine(
     subtitle: String? = null,
     maturity: String? = null,
     tags: List<String> = emptyList(),
+    /** 「使用中」: shown in the OK tone so the current channel stands out. */
+    currentTag: String? = null,
     wrapTitle: Boolean = false,
 ) {
     val colors = LocalAAColors.current
@@ -552,6 +445,7 @@ internal fun TitleLine(
             Text(it, color = colors.muted, fontSize = 13.sp, maxLines = 1, modifier = Modifier.align(Alignment.CenterVertically))
         }
         RuntimeMaturityBadge(maturity, Modifier.align(Alignment.CenterVertically))
+        currentTag?.let { StatusPill(it, ModelStatusTone.Ok, Modifier.align(Alignment.CenterVertically)) }
         tags.forEach { StatusPill(it, ModelStatusTone.Neutral, Modifier.align(Alignment.CenterVertically)) }
     }
 }

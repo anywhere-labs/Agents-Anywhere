@@ -507,6 +507,11 @@ export function useWorkspace() {
   return ctx
 }
 
+/** The workspace when rendered inside its provider; `null` elsewhere, such as in isolated previews. */
+export function useOptionalWorkspace(): WorkspaceState | null {
+  return React.useContext(WorkspaceContext)
+}
+
 // ─── Provider ─────────────────────────────────────────────────
 
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
@@ -614,12 +619,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [route, setRoute] = React.useState<ParsedRoute>({ page: "home" })
   const [routeReady, setRouteReady] = React.useState(false)
   // Model configuration follows Tokens authorization and setup progress in
-  // dashboard snapshots, and service models list each device's runtimes;
+  // dashboard snapshots; the account channel follows the same shared state;
   // archived sessions also need the shared inventory.
   // Other settings and administration do not keep the dashboard socket open.
   const workspaceDataEnabled = routeReady
     && route.page !== "admin"
-    && (route.page !== "settings" || route.tab === "archived-sessions" || route.tab === "model-configs" || route.tab === "service-models")
+    && (route.page !== "settings" || route.tab === "archived-sessions" || route.tab === "model-configs" || route.tab === "channel-switch" || route.tab === "service-models")
   const workspaceDataEnabledRef = React.useRef(workspaceDataEnabled)
   workspaceDataEnabledRef.current = workspaceDataEnabled
   const [canGoBack, setCanGoBack] = React.useState(false)

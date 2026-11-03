@@ -28,6 +28,7 @@ _MAX_TRACKED_LOCKS = 4096
 _TRACKED_LOCK_IDLE_SECONDS = 900.0
 
 
+from agent_server.infra.repositories.model_channels import ModelChannelRepositoryMixin
 from agent_server.infra.repositories.model_config import ModelConfigRepositoryMixin
 from agent_server.infra.repositories.planning import PlanningRepositoryMixin
 from agent_server.infra.repositories.runtime_workflows import (
@@ -37,6 +38,7 @@ from agent_server.infra.repositories.tokens_links import TokensLinkRepositoryMix
 
 
 class Store(
+    ModelChannelRepositoryMixin,
     ModelConfigRepositoryMixin,
     TokensLinkRepositoryMixin,
     PlanningRepositoryMixin,

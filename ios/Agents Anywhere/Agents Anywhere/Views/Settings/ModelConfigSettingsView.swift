@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// 「配置管理」: model profiles, where they are applied, and the Tokens Anywhere
-/// link. Everything renders from runtime capabilities, never runtime names.
+/// 「配置管理」: the current channel and each runtime's switch, model profiles,
+/// and the Tokens Anywhere link. Everything renders from the channel state and
+/// runtime capabilities, never runtime names.
 struct ModelConfigSettingsView: View {
     @Environment(AppState.self) private var appState
 
@@ -23,9 +24,7 @@ private struct ModelConfigPage: View {
     @StateObject private var storage: StableViewModel<ModelConfigModel>
     @State private var linker = TokensLinkCoordinator()
     @State private var creating = false
-    @State private var applying: V2ModelProfile?
-    @State private var confirmsUnlink = false
-    @State private var unlinkAllowsInterrupt = false
+    @State private var confirmingOverride: PendingChannelOverride?
     @State private var deleting: V2ModelProfile?
     @State private var rotating: V2ModelProfile?
     @Environment(\.scenePhase) private var scenePhase
@@ -49,12 +48,14 @@ private struct ModelConfigPage: View {
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
+                if let channel = model.channel {
+                    CurrentChannelSections(model: model, state: channel,
+                        confirmingOverride: $confirmingOverride)
+                }
                 if let tokens = overview.tokens, tokens.available {
-                    TokensQuickSetupSection(model: model, tokens: tokens, linker: linker,
-                        confirmsUnlink: $confirmsUnlink, unlinkAllowsInterrupt: $unlinkAllowsInterrupt)
+                    TokensChannelSection(model: model, tokens: tokens, linker: linker)
                 }
                 profilesSection(overview)
-                devicesSection(overview)
             } else {
                 Section {
                     HStack { Spacer(); ProgressView(); Spacer() }.padding(.vertical, 24)
@@ -63,10 +64,9 @@ private struct ModelConfigPage: View {
         }
         // The browser sheet covers this page, so leaving it open is not a reason
         // to cancel; the next snapshot that shows the link closes it.
-        .onChange(of: model.overview?.tokens?.link) { _, link in
-            linker.observe(link)
-            if link?.isLinked == true { model.finishAuthorizing() }
-        }
+        .onChange(of: model.overview?.tokens?.link) { _, link in linker.observe(link) }
+        // Reading the state also lets the Server resume switches waiting for this moment.
+        .task { await model.refreshChannel() }
         .safeAreaInset(edge: .bottom) {
             if showsAccount && model.account.tab == .models && model.account.changes > 0 {
                 TokensPendingBar(model: model)
@@ -78,7 +78,7 @@ private struct ModelConfigPage: View {
         }
         .onChange(of: showsAccount, initial: true) { _, shows in
             if !shows { model.account.tab = nil }
-            else if model.account.tab == nil { model.account.tab = model.initialAccountTab }
+            else if model.account.tab == nil { model.account.tab = .models }
         }
         // Back from topping up in the browser, the balance should already show it.
         .task(id: accountKey) {
@@ -91,18 +91,6 @@ private struct ModelConfigPage: View {
             if usageKey != nil { await model.account.loadUsage() }
         }
         .sheet(isPresented: $creating) { ModelProfileEditorSheet(model: model) }
-        .sheet(item: $applying) { profile in ModelApplySheet(model: model.makeApplyModel(profile: profile)) { operation in
-            model.feedback = ModelConfigPresentation.operationMessage(operation)
-        } }
-        .confirmationDialog(String(localized: "Unlink Tokens Anywhere?"), isPresented: $confirmsUnlink, titleVisibility: .visible) {
-            Button(String(localized: "Unlink"), role: .destructive) {
-                let allow = unlinkAllowsInterrupt
-                Task { await model.unlinkTokens(allowInterrupt: allow) }
-            }
-            Button(String(localized: "Cancel"), role: .cancel) {}
-        } message: {
-            Text(String(localized: "The \(tokensUsage) runtimes using this profile go back to their previous configuration first, then the authorization is revoked and the key stops working."))
-        }
         .alert(String(localized: "Delete profile"), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
             Button(String(localized: "Cancel"), role: .cancel) { deleting = nil }
             Button(String(localized: "Delete profile"), role: .destructive) {
@@ -131,16 +119,28 @@ private struct ModelConfigPage: View {
         } message: {
             Text(String(localized: "Continuing restarts the affected runtimes and interrupts their running tasks."))
         }
+        .alert(String(localized: "Change its own global settings?"), isPresented: Binding(
+            get: { confirmingOverride != nil }, set: { if !$0 { confirmingOverride = nil } }
+        ), presenting: confirmingOverride) { pending in
+            Button(String(localized: "Cancel"), role: .cancel) { confirmingOverride = nil }
+            Button(String(localized: "Confirm and switch")) {
+                confirmingOverride = nil
+                Task { await model.setRuntimeChannel(pending.row, channel: pending.channel, confirmNativeGlobal: true) }
+            }
+        } message: { pending in
+            Text(String(localized: "\(pending.row.runtimeName) keeps its model connection in its own global settings, so this also affects using it outside AA."))
+        }
     }
 
     /// The linked account's page is showing.
     private var showsAccount: Bool {
-        model.overview?.tokens?.available == true && model.quickPhase == .done
+        model.overview?.tokens?.available == true && model.overview?.tokens?.link?.isLinked == true
     }
 
     /// Changes when another account's page shows; nil while none does.
     private var accountKey: String? {
-        showsAccount ? model.overview?.tokens?.link?.account.id ?? "" : nil
+        guard showsAccount, let link = model.overview?.tokens?.link else { return nil }
+        return "\(link.account.id)#\(link.linkedAt ?? "")"
     }
 
     /// Changes when the usage tab opens or its period changes; nil while it is closed.
@@ -149,10 +149,6 @@ private struct ModelConfigPage: View {
         return "\(account)#\(model.account.usageDays)"
     }
 
-    private var tokensUsage: Int {
-        guard let overview = model.overview, let profile = overview.activeTokensProfile else { return 0 }
-        return overview.usage(of: profile.id)
-    }
 
     // MARK: Feedback
 
@@ -182,9 +178,7 @@ private struct ModelConfigPage: View {
             if overview.profiles.isEmpty {
                 Text(String(localized: "No model profiles yet.")).font(.subheadline).foregroundStyle(.secondary)
             }
-            ForEach(overview.profiles) { profile in
-                profileRow(profile, usedBy: overview.usage(of: profile.id))
-            }
+            ForEach(overview.profiles) { profile in profileRow(profile) }
             Button {
                 creating = true
             } label: {
@@ -198,9 +192,12 @@ private struct ModelConfigPage: View {
         }
     }
 
-    private func profileRow(_ profile: V2ModelProfile, usedBy: Int) -> some View {
+    private func profileRow(_ profile: V2ModelProfile) -> some View {
         let busy = model.busyProfileID == profile.id
         let canDelete = profile.source == "manual" || !profile.isActive
+        let channel = profile.isTokens ? V2ModelChannel.tokens : profile.id
+        let current = model.isCurrentChannel(channel)
+        let canBeCurrent = !current && profile.isActive && model.channelOptions.contains { $0.id == channel }
         return HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
@@ -208,16 +205,19 @@ private struct ModelConfigPage: View {
                     // The Tokens profile is already named after its source.
                     let source = ModelConfigPresentation.sourceLabel(profile.source)
                     if source != profile.name { ModelStatusBadge(title: source, tone: .neutral) }
+                    if current { ModelStatusBadge(title: String(localized: "In use"), tone: .ok) }
                     if !profile.isActive { ModelStatusBadge(title: String(localized: "Unlinked"), tone: .warning) }
                 }
-                ModelProfileDetails(profile: profile, usedBy: usedBy)
+                ModelProfileDetails(profile: profile, usedBy: model.runtimeCount(using: channel))
             }
             Spacer(minLength: 0)
             if busy { ProgressView() }
             Menu {
-                if !profile.isTokens {
-                    Button(String(localized: "Apply to devices"), systemImage: "arrow.up.circle") { applying = profile }
-                        .disabled(!profile.isActive || !model.canWrite)
+                if canBeCurrent {
+                    Button(String(localized: "Set as current channel"), systemImage: "checkmark.circle") {
+                        Task { await model.setChannel(channel) }
+                    }
+                    .disabled(model.channelBusyKey != nil || !model.canWrite)
                 }
                 if profile.isTokens && profile.isActive {
                     Button(String(localized: "Rotate key"), systemImage: "key") { rotating = profile }
@@ -226,7 +226,7 @@ private struct ModelConfigPage: View {
                 if canDelete {
                     Divider()
                     Button(String(localized: "Delete profile"), systemImage: "trash", role: .destructive) { deleting = profile }
-                        .disabled(usedBy > 0 || !model.canWrite)
+                        .disabled(model.isInUse(profile) || !model.canWrite)
                 }
             } label: {
                 AppSymbol("ellipsis", size: 18).foregroundStyle(.secondary)
@@ -236,68 +236,13 @@ private struct ModelConfigPage: View {
             .accessibilityLabel(Text(profile.name))
         }
         .swipeActions(edge: .trailing) {
-            if profile.isActive {
-                Button(String(localized: "Apply to devices")) { applying = profile }.tint(.accentColor)
+            if canBeCurrent && model.canWrite && model.channelBusyKey == nil {
+                Button(String(localized: "Set as current channel")) {
+                    Task { await model.setChannel(channel) }
+                }
+                .tint(.accentColor)
             }
         }
-    }
-
-    // MARK: Devices
-
-    private func devicesSection(_ overview: V2ModelConfigOverview) -> some View {
-        Section {
-            let rows = model.rows
-            if rows.isEmpty {
-                Text(String(localized: "No runtimes take a model connection yet.")).font(.subheadline).foregroundStyle(.secondary)
-            }
-            ForEach(rows) { row in deviceRow(row) }
-        } header: {
-            Text(String(localized: "Devices"))
-        } footer: {
-            Text(String(localized: "Runtimes on your devices that take a model connection. “Applied” means the runtime took the configuration, not that the connection was verified."))
-        }
-    }
-
-    private func deviceRow(_ row: ModelRuntimeRow) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Text(row.runtime.sessionDisplayName).font(.body.weight(.semibold)).lineLimit(1)
-                RuntimeMaturityBadge(maturity: row.runtime.badgeMaturity)
-                if row.isManagedInstance { ModelStatusBadge(title: String(localized: "Created here"), tone: .neutral) }
-                Spacer(minLength: 0)
-            }
-            Text(row.deviceName).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
-            Text(rowDetail(row)).font(.footnote).foregroundStyle(.secondary).lineLimit(3)
-            HStack(spacing: 6) {
-                if let assignment = row.assignment, assignment.status != "applied" {
-                    ModelStatusBadge(title: ModelConfigPresentation.assignmentStatusLabel(assignment.status),
-                        tone: ModelConfigPresentation.assignmentTone(assignment.status))
-                }
-                if let status = row.status {
-                    ModelStatusBadge(title: ModelConfigPresentation.connectionStateLabel(status.state),
-                        tone: ModelConfigPresentation.connectionTone(status.state))
-                }
-                Spacer(minLength: 0)
-                if let assignment = row.assignment {
-                    Button {
-                        Task { await model.restore(assignment) }
-                    } label: {
-                        if model.restoringID == assignment.id { ProgressView() }
-                        else { Label(String(localized: "pages.settings.modelConfigs.restore"), appSymbol: "arrow.counterclockwise").font(.footnote) }
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(model.restoringID != nil || !model.canWrite)
-                }
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    private func rowDetail(_ row: ModelRuntimeRow) -> String {
-        var text = row.assignment.map { String(localized: "Uses “\(model.profileName($0.profileId))”") }
-            ?? String(localized: "Not managed here")
-        if let reason = row.status?.reason, !reason.isEmpty { text += " · " + reason }
-        return text
     }
 }
 
@@ -374,95 +319,5 @@ private struct ModelProfileEditorSheet: View {
     private func save() async {
         error = await model.createProfile(draft)
         if error == nil { dismiss() }
-    }
-}
-
-// MARK: - Apply
-
-private struct ModelApplySheet: View {
-    @State private var model: ModelApplyModel
-    let onApplied: (V2ModelOperation) -> Void
-    @Environment(\.dismiss) private var dismiss
-
-    init(model: ModelApplyModel, onApplied: @escaping (V2ModelOperation) -> Void) {
-        _model = State(initialValue: model)
-        self.onApplied = onApplied
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    Text(String(localized: "Choose the runtimes that should use this profile. Only instances AA manages change by default; changing a runtime's own global settings needs separate confirmation."))
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                if let targets = model.targets {
-                    if targets.isEmpty {
-                        Section { Text(String(localized: "No runtimes can take this profile.")).foregroundStyle(.secondary) }
-                    } else {
-                        Section {
-                            ForEach(targets) { target in targetRow(target) }
-                        }
-                    }
-                    if model.interruptedSessions > 0 {
-                        Section {
-                            Toggle(String(localized: "Allow interrupting running tasks"), isOn: $model.allowInterrupt).tint(.green)
-                        } footer: {
-                            Text(String(localized: "Applying restarts the runtime and interrupts \(model.interruptedSessions) running tasks."))
-                        }
-                    }
-                    if model.needsNativeGlobal {
-                        Section {
-                            Toggle(isOn: $model.confirmNativeGlobal) {
-                                Text(String(localized: "I confirm changing the selected runtimes' own global settings, which also affects using them outside AA."))
-                                    .font(.footnote)
-                            }
-                            .tint(.orange)
-                        }
-                    }
-                } else if let error = model.loadError {
-                    Section { Text(error).foregroundStyle(.red) }
-                } else {
-                    Section { HStack { Spacer(); ProgressView(); Spacer() }.padding(.vertical, 24) }
-                }
-                if let error = model.applyError {
-                    Section { Text(error).font(.footnote).foregroundStyle(.red) }
-                }
-            }
-            .disabled(model.isApplying)
-            .navigationTitle(Text(String(localized: "Apply “\(model.profile.name)”")))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                SheetEditorToolbar(saveTitle: String(localized: "Apply to \(model.chosen.count)"), isWorking: model.isApplying,
-                    saveDisabled: !model.canApply,
-                    onCancel: { dismiss() },
-                    onSave: {
-                        Task {
-                            if let operation = await model.apply() {
-                                onApplied(operation)
-                                dismiss()
-                            }
-                        }
-                    })
-            }
-            .task { await model.load() }
-        }
-        .appSheetPresentation(.expanded)
-        .interactiveDismissDisabled(model.isApplying)
-    }
-
-    private func targetRow(_ target: V2ModelPreviewTarget) -> some View {
-        Toggle(isOn: Binding(get: { model.selected.contains(target.id) }, set: { model.toggle(target, $0) })) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(target.name ?? target.runtimeId).font(.body.weight(.semibold)).lineLimit(1)
-                    RuntimeMaturityBadge(maturity: target.capabilityMaturity ?? target.maturity)
-                }
-                Text(model.deviceName(target.connectorId)).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
-                Text(ModelConfigPresentation.previewDetail(target)).font(.footnote).foregroundStyle(.secondary)
-            }
-        }
-        .tint(.green)
-        .disabled(!target.canApply)
     }
 }

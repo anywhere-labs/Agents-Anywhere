@@ -4,17 +4,26 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 
-from agent_server.core.model_config import (
-    ApplyRequest,
-    ManualProfileRequest,
-    PreviewRequest,
-    ProfilePatchRequest,
+from agent_server.core.model_channel import (
+    ChannelRequest,
+    RetryRequest,
+    RuntimeChannelRequest,
 )
-from agent_server.deps import current_user_id, get_model_config_service
+from agent_server.core.model_config import ManualProfileRequest, ProfilePatchRequest
+from agent_server.deps import (
+    current_user_id,
+    get_model_channel_service,
+    get_model_config_service,
+    get_tokens_link_service,
+)
 from agent_server.services.device_runtimes import DeviceRuntimeError
+from agent_server.services.model_channels import ModelChannelService
 from agent_server.services.model_config import ModelConfigError, ModelConfigService
+from agent_server.services.tokens_link import TokensLinkService
 
 router = APIRouter(tags=["model-config"])
+Channels = Annotated[ModelChannelService, Depends(get_model_channel_service)]
+UserId = Annotated[str, Depends(current_user_id)]
 
 
 def _raise(exc: ModelConfigError | DeviceRuntimeError) -> None:
@@ -30,17 +39,12 @@ def _etag(value: str | None) -> int | None:
         raise HTTPException(status_code=400, detail="If-Match must be a profile etag") from exc
 
 
-def _idempotency_key(value: str | None) -> str:
-    if not value or len(value) > 200:
-        raise HTTPException(status_code=400, detail="Idempotency-Key header is required")
-    return value
-
-
 @router.get("/model-profiles")
 async def list_model_profiles(
-    service: Annotated[ModelConfigService, Depends(get_model_config_service)],
+    service: Annotated[TokensLinkService, Depends(get_tokens_link_service)],
     user_id: Annotated[str, Depends(current_user_id)],
 ) -> dict[str, Any]:
+    # The same shape as the snapshot's ``modelConfig``.
     return await service.overview(user_id=user_id)
 
 
@@ -85,65 +89,39 @@ async def delete_model_profile(
     return Response(status_code=204)
 
 
-@router.get("/model-config/assignments")
-async def list_assignments(
-    service: Annotated[ModelConfigService, Depends(get_model_config_service)],
-    user_id: Annotated[str, Depends(current_user_id)],
-) -> dict[str, Any]:
-    overview = await service.overview(user_id=user_id)
-    return {"assignments": overview["assignments"]}
+@router.get("/model-config/channel")
+async def get_model_channel(channels: Channels, user_id: UserId) -> dict[str, Any]:
+    # Looking at the channel is also a chance for waiting switches to go on.
+    await channels.kick(user_id=user_id)
+    return await channels.state(user_id=user_id)
 
 
-@router.post("/model-config/assignments/preview")
-async def preview_assignments(
-    payload: PreviewRequest,
-    service: Annotated[ModelConfigService, Depends(get_model_config_service)],
-    user_id: Annotated[str, Depends(current_user_id)],
-) -> dict[str, Any]:
+@router.put("/model-config/channel")
+async def put_model_channel(payload: ChannelRequest, channels: Channels, user_id: UserId) -> dict[str, Any]:
     try:
-        return await service.preview(payload, user_id=user_id)
+        return await channels.set_channel(payload.channel, user_id=user_id)
     except (ModelConfigError, DeviceRuntimeError) as exc:
         _raise(exc)
 
 
-@router.post("/model-config/assignments")
-async def apply_assignments(
-    payload: ApplyRequest,
-    service: Annotated[ModelConfigService, Depends(get_model_config_service)],
-    user_id: Annotated[str, Depends(current_user_id)],
-    idempotency_key: Annotated[str | None, Header()] = None,
+@router.put("/model-config/channel/runtimes/{connector_id}/{runtime_id}")
+async def put_runtime_channel(
+    connector_id: str, runtime_id: str, payload: RuntimeChannelRequest, channels: Channels, user_id: UserId,
 ) -> dict[str, Any]:
     try:
-        return await service.apply(
-            payload, user_id=user_id, idempotency_key=_idempotency_key(idempotency_key)
+        return await channels.set_runtime_channel(
+            connector_id, runtime_id, payload.channel,
+            user_id=user_id, confirm_native_global=payload.confirmNativeGlobal,
         )
     except (ModelConfigError, DeviceRuntimeError) as exc:
         _raise(exc)
 
 
-@router.delete("/model-config/assignments/{connector_id}/{runtime_id}")
-async def restore_assignment(
-    connector_id: str,
-    runtime_id: str,
-    service: Annotated[ModelConfigService, Depends(get_model_config_service)],
-    user_id: Annotated[str, Depends(current_user_id)],
-    allow_interrupt: bool = False,
+@router.post("/model-config/channel/retry")
+async def retry_model_channel(
+    channels: Channels, user_id: UserId, payload: RetryRequest | None = None,
 ) -> dict[str, Any]:
-    try:
-        return await service.restore(
-            connector_id, runtime_id, user_id=user_id, allow_interrupt=allow_interrupt
-        )
-    except (ModelConfigError, DeviceRuntimeError) as exc:
-        _raise(exc)
-
-
-@router.get("/model-config/operations/{operation_id}")
-async def get_operation(
-    operation_id: str,
-    service: Annotated[ModelConfigService, Depends(get_model_config_service)],
-    user_id: Annotated[str, Depends(current_user_id)],
-) -> dict[str, Any]:
-    try:
-        return await service.get_operation(operation_id, user_id=user_id)
-    except ModelConfigError as exc:
-        _raise(exc)
+    target = payload or RetryRequest()
+    if (target.connectorId is None) != (target.runtimeId is None):
+        raise HTTPException(status_code=422, detail="connectorId and runtimeId go together")
+    return await channels.retry(user_id=user_id, connector_id=target.connectorId, runtime_id=target.runtimeId)

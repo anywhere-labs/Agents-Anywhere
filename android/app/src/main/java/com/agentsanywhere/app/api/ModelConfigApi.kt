@@ -1,14 +1,14 @@
 package com.agentsanywhere.app.api
 
+import com.agentsanywhere.app.model.ModelChannelState
 import com.agentsanywhere.app.model.ModelOffer
 import com.agentsanywhere.app.model.ModelPreferences
 import com.agentsanywhere.app.model.ModelProfile
-import com.agentsanywhere.app.model.QuickSetupRequest
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Model profiles, their assignments to runtimes and the Tokens Anywhere link.
+ * Model profiles, the channel runtimes use and the Tokens Anywhere link.
  * Keys go in and never come back; the overview arrives with the dashboard snapshot.
  */
 class ModelConfigApi(
@@ -45,61 +45,60 @@ class ModelConfigApi(
         )
     }
 
-    fun preview(
-        serverUrl: String,
-        authorizationToken: String,
-        profileId: String,
-    ): List<RemoteModelPreviewTarget> {
-        return client.postJson(
+    fun getChannel(serverUrl: String, authorizationToken: String): ModelChannelState =
+        client.getJson(
             serverUrl = serverUrl,
-            path = "/model-config/assignments/preview",
-            body = JSONObject().put("profileId", profileId),
+            path = "/model-config/channel",
             authorizationToken = authorizationToken,
-        ).optJSONArray("targets").toObjectList { toModelPreviewTarget() }
-    }
+        ).toModelChannelState()
 
-    fun apply(
-        serverUrl: String,
-        authorizationToken: String,
-        profileId: String,
-        targets: List<RemoteModelTarget>,
-        allowInterrupt: Boolean,
-        confirmNativeGlobal: Boolean,
-        idempotencyKey: String,
-    ): RemoteModelOperation {
-        val body = JSONObject()
-            .put("profileId", profileId)
-            .put(
-                "targets",
-                JSONArray().apply {
-                    targets.forEach { put(JSONObject().put("connectorId", it.connectorId).put("runtimeId", it.runtimeId)) }
-                },
-            )
-            .put("allowInterrupt", allowInterrupt)
-            .put("confirmNativeGlobal", confirmNativeGlobal)
-        return client.postJson(
+    /** Sets the current channel; runtimes switch in the background. */
+    fun setChannel(serverUrl: String, authorizationToken: String, channel: String): ModelChannelState =
+        client.putJson(
             serverUrl = serverUrl,
-            path = "/model-config/assignments",
-            body = body,
+            path = "/model-config/channel",
+            body = JSONObject().put("channel", channel),
             authorizationToken = authorizationToken,
-            headers = mapOf(IDEMPOTENCY_KEY to idempotencyKey),
-        ).toModelOperation()
-    }
+        ).toModelChannelState()
 
-    fun restore(
+    /** A runtime's own channel; null follows the current channel. */
+    fun setRuntimeChannel(
         serverUrl: String,
         authorizationToken: String,
         connectorId: String,
         runtimeId: String,
-        allowInterrupt: Boolean,
-    ): RemoteModelOperationResult {
-        return client.deleteJson(
+        channel: String?,
+        confirmNativeGlobal: Boolean,
+    ): ModelChannelState {
+        val body = JSONObject().put("channel", channel ?: JSONObject.NULL)
+        if (confirmNativeGlobal) body.put("confirmNativeGlobal", true)
+        return client.putJson(
             serverUrl = serverUrl,
-            path = "/model-config/assignments/${connectorId.urlEncode()}/${runtimeId.urlEncode()}" +
-                "?allow_interrupt=$allowInterrupt",
+            path = runtimePath(connectorId, runtimeId),
+            body = body,
             authorizationToken = authorizationToken,
-        ).toModelOperationResult()
+        ).toModelChannelState()
     }
+
+    /** Retries one runtime, or every restored and failed one when no runtime is given. */
+    fun retryChannel(
+        serverUrl: String,
+        authorizationToken: String,
+        connectorId: String? = null,
+        runtimeId: String? = null,
+    ): ModelChannelState {
+        val body = JSONObject()
+        if (connectorId != null && runtimeId != null) body.put("connectorId", connectorId).put("runtimeId", runtimeId)
+        return client.postJson(
+            serverUrl = serverUrl,
+            path = "/model-config/channel/retry",
+            body = body,
+            authorizationToken = authorizationToken,
+        ).toModelChannelState()
+    }
+
+    private fun runtimePath(connectorId: String, runtimeId: String): String =
+        "/model-config/channel/runtimes/${connectorId.urlEncode()}/${runtimeId.urlEncode()}"
 
     /** A one-time address to open in the browser; the link finishes there. */
     fun beginTokensLink(
@@ -113,44 +112,6 @@ class ModelConfigApi(
         ).getString("startUrl")
     }
 
-    /** Runtimes the one-click Tokens Anywhere setup can reach, with what it would do to each. */
-    fun quickSetupCandidates(
-        serverUrl: String,
-        authorizationToken: String,
-    ): List<RemoteModelPreviewTarget> {
-        return client.getJson(
-            serverUrl = serverUrl,
-            path = "/integrations/tokens/quick-setup",
-            authorizationToken = authorizationToken,
-        ).optJSONArray("targets").toObjectList { toModelPreviewTarget() }
-    }
-
-    /** Starts the setup; a [RemoteQuickSetupStart.startUrl] must be opened in the browser first. */
-    fun startQuickSetup(
-        serverUrl: String,
-        authorizationToken: String,
-        request: QuickSetupRequest,
-    ): RemoteQuickSetupStart {
-        val body = JSONObject()
-            .put(
-                "targets",
-                JSONArray().apply {
-                    request.targets.forEach { put(JSONObject().put("connectorId", it.connectorId).put("runtimeId", it.runtimeId)) }
-                },
-            )
-            .put("confirmNativeGlobal", request.confirmNativeGlobal)
-        val response = client.postJson(
-            serverUrl = serverUrl,
-            path = "/integrations/tokens/quick-setup",
-            body = body,
-            authorizationToken = authorizationToken,
-        )
-        return RemoteQuickSetupStart(
-            started = response.optBoolean("started", false),
-            startUrl = response.optNullableString("startUrl"),
-        )
-    }
-
     fun syncTokens(
         serverUrl: String,
         authorizationToken: String,
@@ -162,20 +123,16 @@ class ModelConfigApi(
         ).toModelProfile()
     }
 
+    /** Revokes and removes the link; refused with `channel_in_use` while runtimes want or use it. */
     fun unlinkTokens(
         serverUrl: String,
         authorizationToken: String,
-        allowInterrupt: Boolean,
-    ): RemoteTokensUnlinkResult {
-        val response = client.deleteJson(
+    ): Boolean {
+        return client.deleteJson(
             serverUrl = serverUrl,
-            path = "/integrations/tokens/link?allow_interrupt=$allowInterrupt",
+            path = "/integrations/tokens/link",
             authorizationToken = authorizationToken,
-        )
-        return RemoteTokensUnlinkResult(
-            revoked = response.optBoolean("revoked", false),
-            results = response.optJSONArray("results").toObjectList { toModelOperationResult() },
-        )
+        ).optBoolean("revoked", false)
     }
 
     /** The linked account, its balance and its console pages. */
@@ -220,23 +177,21 @@ class ModelConfigApi(
         ).optBoolean("applying", false)
     }
 
+    /**
+     * Rotates the managed key; runtimes using Anywhere get it through the channel
+     * switch. Refused with `busy` while tasks run, unless [allowInterrupt].
+     */
     fun rotateTokensKey(
         serverUrl: String,
         authorizationToken: String,
         profileId: String,
         allowInterrupt: Boolean,
-        idempotencyKey: String,
-    ): RemoteModelOperation {
-        return client.postJson(
+    ) {
+        client.postJson(
             serverUrl = serverUrl,
             path = "/model-profiles/${profileId.urlEncode()}/rotate-key",
             body = JSONObject().put("allowInterrupt", allowInterrupt),
             authorizationToken = authorizationToken,
-            headers = mapOf(IDEMPOTENCY_KEY to idempotencyKey),
-        ).toModelOperation()
-    }
-
-    private companion object {
-        const val IDEMPOTENCY_KEY = "Idempotency-Key"
+        )
     }
 }

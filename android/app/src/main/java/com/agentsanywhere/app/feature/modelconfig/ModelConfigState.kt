@@ -2,17 +2,17 @@ package com.agentsanywhere.app.feature.modelconfig
 
 import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.RemoteDashboardSnapshot
-import com.agentsanywhere.app.api.RemoteModelOperation
-import com.agentsanywhere.app.api.RemoteModelPreviewTarget
 import com.agentsanywhere.app.feature.devices.DeviceRuntime
 import com.agentsanywhere.app.feature.devices.toDeviceRuntime
-import com.agentsanywhere.app.model.ModelAssignment
+import com.agentsanywhere.app.model.AgentDevice
+import com.agentsanywhere.app.model.CHANNEL_NATIVE
+import com.agentsanywhere.app.model.CHANNEL_TOKENS
+import com.agentsanywhere.app.model.ChannelRuntime
+import com.agentsanywhere.app.model.ModelChannelState
 import com.agentsanywhere.app.model.ModelConfigOverview
-import com.agentsanywhere.app.model.ModelConnectionStatus
 import com.agentsanywhere.app.model.ModelOffer
 import com.agentsanywhere.app.model.ModelProfile
 import com.agentsanywhere.app.model.ModelSpec
-import java.util.UUID
 
 /** What the dashboard snapshot says about runtimes and model configuration. */
 data class ModelConfigState(
@@ -40,43 +40,152 @@ fun runtimeMaturityBadge(maturity: String?): RuntimeMaturityBadge? = when (matur
 
 enum class ModelStatusTone { Ok, Progress, Warning, Error, Neutral }
 
-fun connectionStateTone(state: String?): ModelStatusTone = when (state) {
+/** States in which a runtime is still on its way to the channel it should use. */
+private val CHANNEL_IN_PROGRESS = setOf("pending", "waiting_online", "switching", "restoring")
+
+fun channelStateTone(state: String): ModelStatusTone = when (state) {
     "applied" -> ModelStatusTone.Ok
-    "saved_pending" -> ModelStatusTone.Progress
+    in CHANNEL_IN_PROGRESS -> ModelStatusTone.Progress
+    "restored" -> ModelStatusTone.Warning
     "failed" -> ModelStatusTone.Error
-    "managed_externally" -> ModelStatusTone.Warning
     else -> ModelStatusTone.Neutral
 }
 
-fun assignmentStatusTone(status: String): ModelStatusTone = when (status) {
-    "applied" -> ModelStatusTone.Ok
-    "applying" -> ModelStatusTone.Progress
-    "failed" -> ModelStatusTone.Error
-    else -> ModelStatusTone.Warning
+enum class ChannelKind { Native, Tokens, Manual }
+
+fun channelKind(channel: String): ChannelKind = when (channel) {
+    CHANNEL_NATIVE -> ChannelKind.Native
+    CHANNEL_TOKENS -> ChannelKind.Tokens
+    else -> ChannelKind.Manual
 }
 
-const val MODEL_CONFIG_MANAGED = "model-config"
+/** A channel the user can pick; manual services carry their profile. */
+data class ChannelOption(
+    val id: String,
+    val kind: ChannelKind,
+    val profile: ModelProfile? = null,
+)
 
-/** A runtime that takes a model connection, with its assignment if it has one. */
-data class ModelConfigDeviceRow(
-    val runtime: DeviceRuntime,
-    val assignment: ModelAssignment?,
+/** The device's own configuration, Anywhere once linked, then every active manual service. */
+fun ModelConfigOverview.channelOptions(): List<ChannelOption> = buildList {
+    add(ChannelOption(CHANNEL_NATIVE, ChannelKind.Native))
+    val tokens = tokens
+    if (tokens != null && tokens.available && tokens.linked) {
+        add(ChannelOption(CHANNEL_TOKENS, ChannelKind.Tokens, activeTokensProfile()))
+    }
+    profiles.filter { it.isManual && it.isActive }.forEach { add(ChannelOption(it.id, ChannelKind.Manual, it)) }
+}
+
+enum class ChannelPhase { Idle, Running, Done, Attention }
+
+/** How far the latest switch got, counted over the runtimes taking part (not the unsupported ones). */
+data class ChannelProgress(
+    val phase: ChannelPhase,
+    val total: Int,
+    /** Reached an end state: applied, restored or failed. */
+    val finished: Int,
+    val applied: Int,
+    val restored: Int,
+    val failed: Int,
+    val waitingOnline: Int,
+)
+
+fun ModelChannelState.progress(): ChannelProgress {
+    val taking = runtimes.filter { it.state != "unsupported" }
+    val applied = taking.count { it.state == "applied" }
+    val restored = taking.count { it.state == "restored" }
+    val failed = taking.count { it.state == "failed" }
+    val phase = when (switch?.state) {
+        "running" -> ChannelPhase.Running
+        "attention" -> ChannelPhase.Attention
+        "done" -> ChannelPhase.Done
+        // Before the first switch, or a state this client does not know: read the runtimes.
+        else -> when {
+            taking.any { it.state in CHANNEL_IN_PROGRESS } -> ChannelPhase.Running
+            restored + failed > 0 -> ChannelPhase.Attention
+            applied > 0 -> ChannelPhase.Done
+            else -> ChannelPhase.Idle
+        }
+    }
+    return ChannelProgress(
+        phase = phase,
+        total = taking.size,
+        finished = applied + restored + failed,
+        applied = applied,
+        restored = restored,
+        failed = failed,
+        waitingOnline = taking.count { it.state == "waiting_online" },
+    )
+}
+
+/** Runtimes that should use [channel] are still being switched to it. */
+fun ModelChannelState.updating(channel: String): Boolean =
+    runtimes.any { it.desired == channel && it.state in CHANNEL_IN_PROGRESS }
+
+/** The Server refuses to delete a service that is current, chosen for a runtime or still used. */
+fun ModelChannelState?.uses(channel: String): Boolean = this != null &&
+    (this.channel == channel || runtimes.any { it.override == channel || it.desired == channel || it.actual == channel })
+
+/** A runtime's channel row, with what the runtime itself declares; capability fields decide, never names. */
+data class ChannelRuntimeRow(
+    val item: ChannelRuntime,
+    val runtime: DeviceRuntime?,
+    val deviceName: String,
 ) {
-    val key: String get() = "${runtime.connectorId}/${runtime.id}"
-    val status: ModelConnectionStatus? get() = assignment?.modelConnectionStatus ?: runtime.modelConnectionStatus
-    val maturity: String? get() = runtime.modelConnection?.maturity ?: runtime.maturity
-    val managedHere: Boolean get() = runtime.managedBy == MODEL_CONFIG_MANAGED
+    val key: String get() = item.key
+    val name: String get() = runtime?.labels?.primary ?: item.runtimeId
+    val maturity: String? get() = runtime?.modelConnection?.maturity ?: runtime?.maturity
+    val supported: Boolean get() = item.state != "unsupported"
+
+    /** Takes a model connection, so it can be given its own channel. */
+    val canOverride: Boolean get() = runtime?.modelConnection != null
+
+    /** Writing an AA channel changes the runtime's own global settings. */
+    val nativeGlobal: Boolean get() = runtime?.modelConnection?.scope == "native_global"
+    val canRetry: Boolean get() = item.state == "restored" || item.state == "failed"
+
+    /** Giving a global-scope runtime an AA channel needs the user's explicit confirmation. */
+    fun needsNativeGlobalConfirmation(channel: String?): Boolean =
+        nativeGlobal && channel != null && channel != CHANNEL_NATIVE
 }
 
-/** Rows for every instance that declares a model connection; capability fields decide, never names. */
-fun modelConfigDeviceRows(
+data class ChannelDeviceGroup(
+    val connectorId: String,
+    val deviceName: String,
+    val rows: List<ChannelRuntimeRow>,
+)
+
+/** Rows by device in the device list's order; unsupported runtimes on their own, last. */
+data class ChannelGroups(
+    val devices: List<ChannelDeviceGroup>,
+    val unsupported: List<ChannelRuntimeRow>,
+)
+
+fun channelGroups(
+    state: ModelChannelState,
     runtimes: List<DeviceRuntime>,
-    assignments: List<ModelAssignment>,
-): List<ModelConfigDeviceRow> {
-    val byTarget = assignments.associateBy { "${it.connectorId}/${it.runtimeId}" }
-    return runtimes
-        .filter { it.modelConnection != null }
-        .map { ModelConfigDeviceRow(it, byTarget["${it.connectorId}/${it.id}"]) }
+    devices: List<AgentDevice>,
+): ChannelGroups {
+    val byKey = runtimes.associateBy { "${it.connectorId}/${it.id}" }
+    val deviceOrder = devices.withIndex().associate { (index, device) -> device.id to index }
+    val rows = state.runtimes.map { item ->
+        ChannelRuntimeRow(
+            item = item,
+            runtime = byKey[item.key],
+            deviceName = devices.firstOrNull { it.id == item.connectorId }?.name ?: item.connectorId,
+        )
+    }
+    val (supported, unsupported) = rows.partition { it.supported }
+    val groups = supported
+        .groupBy { it.item.connectorId }
+        .map { (connectorId, items) -> ChannelDeviceGroup(connectorId, items.first().deviceName, items) }
+        .withIndex()
+        .sortedWith(compareBy({ deviceOrder[it.value.connectorId] ?: Int.MAX_VALUE }, { it.index }))
+        .map { it.value }
+    val unsupportedSorted = unsupported.withIndex()
+        .sortedWith(compareBy({ deviceOrder[it.value.item.connectorId] ?: Int.MAX_VALUE }, { it.index }))
+        .map { it.value }
+    return ChannelGroups(groups, unsupportedSorted)
 }
 
 fun ModelConfigOverview.activeTokensProfile(): ModelProfile? =
@@ -87,9 +196,9 @@ fun ModelConfigOverview.usedBy(profileId: String): Int =
 
 fun ModelProfile.modelCount(): Int = offers.flatMap { offer -> offer.models.map { it.id } }.toSet().size
 
-fun ModelProfile.canDelete(usedBy: Int): Boolean = (isManual || !isActive) && usedBy == 0
-
-fun newIdempotencyKey(): String = UUID.randomUUID().toString()
+/** Only manual or detached services, and only when no runtime uses or wants them. */
+fun ModelProfile.canDelete(usedBy: Int, inChannel: Boolean = false): Boolean =
+    (isManual || !isActive) && usedBy == 0 && !inChannel
 
 /** Model IDs parsed from a free-form list: one per line or separated by commas. */
 fun parseModelIds(text: String): List<String> =
@@ -131,50 +240,6 @@ data class ManualProfileDraft(
     private companion object {
         val HTTP_URL = Regex("^https?://\\S+$")
     }
-}
-
-/** Apply dialog choices derived from the preview. */
-data class ApplySelection(
-    val targets: List<RemoteModelPreviewTarget>,
-    val selected: Set<String>,
-) {
-    val chosen: List<RemoteModelPreviewTarget>
-        get() = targets.filter { it.key in selected }
-
-    /** Changing a runtime's own global settings needs an explicit confirmation. */
-    val needsNativeGlobalConfirmation: Boolean
-        get() = chosen.any { it.requiresConfirmation }
-
-    /** Tasks a restart would interrupt. */
-    val runningSessions: Int
-        get() = chosen.sumOf { if (it.effect == "restart") it.runningSessions else 0 }
-
-    fun selectable(target: RemoteModelPreviewTarget): Boolean = target.canApply && !target.tooManyModels
-
-    fun toggle(target: RemoteModelPreviewTarget, checked: Boolean): ApplySelection {
-        if (!selectable(target)) return this
-        return copy(selected = if (checked) selected + target.key else selected - target.key)
-    }
-
-    fun canSubmit(confirmedNativeGlobal: Boolean): Boolean =
-        chosen.isNotEmpty() && (!needsNativeGlobalConfirmation || confirmedNativeGlobal)
-
-    companion object {
-        /** Never preselects targets that change global settings or import too many models. */
-        fun initial(targets: List<RemoteModelPreviewTarget>): ApplySelection = ApplySelection(
-            targets = targets,
-            selected = targets
-                .filter { it.canApply && !it.requiresConfirmation && !it.tooManyModels }
-                .mapTo(mutableSetOf()) { it.key },
-        )
-    }
-}
-
-data class OperationSummary(val applied: Int, val other: Int)
-
-fun RemoteModelOperation.summary(): OperationSummary {
-    val applied = results.count { it.result == "applied" }
-    return OperationSummary(applied = applied, other = results.size - applied)
 }
 
 /** The Server's stable error code, used to pick localized text. */

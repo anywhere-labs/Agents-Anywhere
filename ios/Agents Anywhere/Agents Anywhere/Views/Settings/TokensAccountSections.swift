@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The linked Tokens Anywhere account: who it is, its balance, which of its
 /// models runtimes get and under which names, what it has spent, and the
-/// runtimes it is set up on. Ported from the Web account page.
+/// runtimes using it. Ported from the Web account page.
 struct TokensAccountSections<Devices: View, Unlink: View>: View {
     let model: ModelConfigModel
     let tokens: V2TokensLinkStatus
@@ -17,7 +17,7 @@ struct TokensAccountSections<Devices: View, Unlink: View>: View {
         accountSection
         Section {
             Picker(String(localized: "Anywhere account"), selection: Binding(
-                get: { account.tab ?? model.initialAccountTab },
+                get: { account.tab ?? .models },
                 set: { account.tab = $0 })) {
                 Text(String(localized: "pages.settings.modelConfigs.account.tabModels")).tag(TokensAccountTab.models)
                 Text(String(localized: "pages.settings.modelConfigs.account.tabUsage")).tag(TokensAccountTab.usage)
@@ -28,7 +28,7 @@ struct TokensAccountSections<Devices: View, Unlink: View>: View {
             .listRowInsets(EdgeInsets())
             .listRowBackground(Color.clear)
         }
-        switch account.tab ?? model.initialAccountTab {
+        switch account.tab ?? .models {
         case .models: TokensModelsTab(model: model)
         case .usage: TokensUsageTab(account: account)
         case .devices: devices()
@@ -76,7 +76,7 @@ struct TokensAccountSections<Devices: View, Unlink: View>: View {
                 RuntimeMaturityBadge(maturity: V2RuntimeMaturity.beta.rawValue)
             }
         } footer: {
-            if model.quickRunning {
+            if model.tokensSwitching {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.mini)
                     Text(String(localized: "Applying changes to runtimes…"))
@@ -141,7 +141,7 @@ private struct TokensModelsTab: View {
     let model: ModelConfigModel
 
     private var account: TokensAccountModel { model.account }
-    private var locked: Bool { account.isSaving || model.quickRunning || !model.canWrite }
+    private var locked: Bool { account.isSaving || !model.canWrite }
 
     var body: some View {
         if account.models.isEmpty {
@@ -160,7 +160,7 @@ private struct TokensModelsTab: View {
                         .font(.subheadline)
                     HStack(spacing: 16) {
                         Button {
-                            Task { await account.restoreDefaults(applying: model.quickRunning) }
+                            Task { await account.restoreDefaults() }
                         } label: {
                             Label(String(localized: "Restore defaults"), appSymbol: "arrow.counterclockwise")
                         }
@@ -302,7 +302,7 @@ struct TokensPendingBar: View {
                 .buttonStyle(.borderless)
                 .disabled(account.isSaving)
             Button {
-                Task { await account.saveDraft(applying: model.quickRunning) }
+                Task { await account.saveDraft() }
             } label: {
                 HStack(spacing: 6) {
                     if account.isSaving { ProgressView().controlSize(.small) }
@@ -310,7 +310,7 @@ struct TokensPendingBar: View {
                 }
             }
             .buttonStyle(.borderedProminent)
-            .disabled(account.isSaving || model.quickRunning || none || !model.canWrite)
+            .disabled(account.isSaving || none || !model.canWrite)
         }
         .controlSize(.small)
         .padding(.horizontal, 16).padding(.vertical, 10)

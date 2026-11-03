@@ -6,9 +6,7 @@ from urllib.parse import urlencode
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
-    Header,
     HTTPException,
     Query,
     Request,
@@ -17,7 +15,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent_server.core.api_namespace import api_v2_path
-from agent_server.core.model_config import ModelPreferences, QuickSetupRequest
+from agent_server.core.model_config import ModelPreferences
 from agent_server.core.models import UserView
 from agent_server.deps import current_user_id, get_tokens_link_service, require_admin
 from agent_server.infra.tokens_client import TokensError
@@ -113,38 +111,6 @@ async def start_tokens_link(request: Request, service: Service, ticket: str = ""
     return response
 
 
-@router.get("/integrations/tokens/quick-setup")
-async def get_quick_setup(service: Service, user_id: UserId) -> dict[str, Any]:
-    """The runtimes a one-click setup would configure, with reasons for the rest."""
-    try:
-        return {"targets": await service.quick_setup_candidates(user_id=user_id)}
-    except TokensLinkError as exc:
-        _raise(exc)
-
-
-@router.post("/integrations/tokens/quick-setup")
-async def start_quick_setup(
-    payload: QuickSetupRequest,
-    request: Request,
-    background: BackgroundTasks,
-    service: Service,
-    user_id: UserId,
-) -> dict[str, Any]:
-    """Link if needed, then sync and apply in the background; progress is in the snapshot."""
-    origin = _public_origin(request)
-    try:
-        ticket = await service.start_quick_setup(
-            payload, user_id=user_id, redirect_uri=f"{origin}{api_v2_path(CALLBACK_PATH)}"
-        )
-    except TokensLinkError as exc:
-        _raise(exc)
-    if ticket is None:
-        background.add_task(service.run_quick_setup, user_id=user_id)
-        return {"started": True, "startUrl": None}
-    start = f"{origin}{api_v2_path('/integrations/tokens/start')}?{urlencode({'ticket': ticket})}"
-    return {"started": False, "startUrl": start}
-
-
 @router.get("/integrations/tokens/account")
 async def get_tokens_account(service: Service, user_id: UserId) -> dict[str, Any]:
     try:
@@ -166,26 +132,18 @@ async def get_tokens_usage(
 
 
 @router.put("/integrations/tokens/models")
-async def put_tokens_models(
-    payload: ModelPreferences,
-    background: BackgroundTasks,
-    service: Service,
-    user_id: UserId,
-) -> dict[str, Any]:
-    """Choose and rename the Tokens models; runtimes using them are updated in the background."""
+async def put_tokens_models(payload: ModelPreferences, service: Service, user_id: UserId) -> dict[str, Any]:
+    """Choose and rename the Tokens models; runtimes on Anywhere are rewritten through the switch."""
     try:
         applying = await service.save_model_preferences(payload, user_id=user_id)
     except (TokensLinkError, ModelConfigError) as exc:
         _raise(exc)
-    if applying:
-        background.add_task(service.run_quick_setup, user_id=user_id)
     return {"applying": applying}
 
 
 @router.get("/integrations/tokens/callback")
 async def tokens_link_callback(
     request: Request,
-    background: BackgroundTasks,
     service: Service,
     state: str | None = None,
     code: str | None = None,
@@ -193,7 +151,7 @@ async def tokens_link_callback(
     error: str | None = None,
 ) -> RedirectResponse:
     try:
-        issuer, quick_user = await service.complete(
+        issuer = await service.complete(
             state=state,
             code=code,
             issuer=iss,
@@ -202,8 +160,6 @@ async def tokens_link_callback(
         )
     except TokensLinkError as exc:
         return _settings_redirect(request, exc.code, clear_cookie=True)
-    if quick_user is not None:
-        background.add_task(service.run_quick_setup, user_id=quick_user)
     # The rest of the flow stays on Tokens Anywhere; clients learn the result from the snapshot.
     response = RedirectResponse(f"{issuer}/oauth/done/", status_code=302)
     response.delete_cookie(_browser_cookie(request), path="/")
@@ -223,9 +179,9 @@ async def sync_tokens_catalog(service: Service, user_id: UserId) -> dict[str, An
 
 
 @router.delete("/integrations/tokens/link")
-async def unlink_tokens(service: Service, user_id: UserId, allow_interrupt: bool = False) -> dict[str, Any]:
+async def unlink_tokens(service: Service, user_id: UserId) -> dict[str, Any]:
     try:
-        return await service.unlink(user_id=user_id, allow_interrupt=allow_interrupt)
+        return await service.unlink(user_id=user_id)
     except (TokensLinkError, ModelConfigError) as exc:
         _raise(exc)
 
@@ -236,17 +192,10 @@ async def rotate_tokens_key(
     payload: RotateKeyRequest,
     service: Service,
     user_id: UserId,
-    idempotency_key: Annotated[str | None, Header()] = None,
 ) -> dict[str, Any]:
-    if not idempotency_key or len(idempotency_key) > 200:
-        raise HTTPException(status_code=400, detail="Idempotency-Key header is required")
+    """Rotate the managed key; returns the channel state the rewrite shows up in."""
     try:
-        return await service.rotate_key(
-            profile_id,
-            user_id=user_id,
-            allow_interrupt=payload.allowInterrupt,
-            idempotency_key=idempotency_key,
-        )
+        return await service.rotate_key(profile_id, user_id=user_id, allow_interrupt=payload.allowInterrupt)
     except (TokensLinkError, ModelConfigError, DeviceRuntimeError) as exc:
         _raise(exc)
     except TokensError as exc:

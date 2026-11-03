@@ -5,7 +5,7 @@ import base64
 import hashlib
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -44,6 +44,7 @@ from agent_server.deps import (
     get_store,
     get_timeline_broker,
     get_timeline_write_buffer,
+    model_channel_service_for,
 )
 from agent_server.infra.connector_rpc import (
     ConnectorConnection,
@@ -571,6 +572,7 @@ async def connector_ws(
                 timeline_broker, runtime_service, manager,
                 websocket.app.state.session_runtime_state_cache,
                 websocket.app.state.capability_refresh,
+                runtime_event=model_channel_service_for(websocket.app.state).runtime_event,
             )
             notification_pump = _ConnectorNotificationPump(
                 connector_id, ingest_service,
@@ -685,6 +687,7 @@ async def connector_ws(
                 connector_id,
                 connection,
                 reason=discovery_reason or "runtime.recovery",
+                on_ready=model_channel_service_for(websocket.app.state).connector_event,
             ),
             name=f"runtime-discovery-complete-{connection.connection_id}",
         )
@@ -793,6 +796,7 @@ async def _complete_runtime_discovery(
     connection: ConnectorConnection,
     *,
     reason: str,
+    on_ready: Callable[[str], Awaitable[None]] | None = None,
 ) -> None:
     try:
         await runtime_service.publish_discovery(connector_id, reason)
@@ -837,6 +841,14 @@ async def _complete_runtime_discovery(
             connector_id,
             connection.connection_id,
         )
+    if on_ready is not None:
+        try:
+            # Model channel switches waiting for this device go on now.
+            await on_ready(connector_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - background task errors must be observed
+            logger.exception("model channel resume failed connector_id={}", connector_id)
 
 
 def _connector_device_os(value: str | None) -> str | None:

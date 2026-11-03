@@ -225,7 +225,7 @@ nonisolated struct V2ModelAssignment: Decodable, Hashable, Identifiable {
     let profileId: String
     let offerFormat: String?
     let createdRuntime: Bool
-    /// applying, failed, modified, outdated or applied.
+    /// applied, modified or outdated. Switch progress lives in the channel state.
     let status: String
     let error: JSONValue?
     let appliedAt: String?
@@ -288,10 +288,8 @@ nonisolated struct V2TokensLinkStatus: Decodable, Hashable {
     let tokensUrl: String?
     let secretConfigured: Bool
     let link: V2TokensLink?
-    /// The last one-click setup: what was ticked and how far it got.
-    let quickSetup: V2QuickSetupProgress?
 
-    private enum CodingKeys: String, CodingKey { case available, tokensUrl, secretConfigured, link, quickSetup }
+    private enum CodingKeys: String, CodingKey { case available, tokensUrl, secretConfigured, link }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -299,119 +297,171 @@ nonisolated struct V2TokensLinkStatus: Decodable, Hashable {
         tokensUrl = try? container.decodeIfPresent(String.self, forKey: .tokensUrl)
         secretConfigured = (try? container.decodeIfPresent(Bool.self, forKey: .secretConfigured)) ?? false
         link = try? container.decodeIfPresent(V2TokensLink.self, forKey: .link)
-        quickSetup = try? container.decodeIfPresent(V2QuickSetupProgress.self, forKey: .quickSetup)
     }
 }
 
-/// The runtimes a one-click setup was asked to configure.
-nonisolated struct V2QuickSetupRequest: Codable, Hashable {
-    let targets: [V2ModelTarget]
-    let confirmNativeGlobal: Bool
+// MARK: - Current channel and switching
 
-    private enum CodingKeys: String, CodingKey { case targets, confirmNativeGlobal }
+/// Channel values: `native` (the device's own configuration), `tokens` (the
+/// linked Tokens Anywhere account) or a manual profile ID.
+nonisolated enum V2ModelChannel {
+    static let native = "native"
+    static let tokens = "tokens"
+}
 
-    init(targets: [V2ModelTarget], confirmNativeGlobal: Bool) {
-        self.targets = targets; self.confirmNativeGlobal = confirmNativeGlobal
+/// The last switch of the current channel or an override.
+nonisolated struct V2ChannelSwitch: Decodable, Hashable {
+    let revision: Int
+    /// running, done or attention.
+    let state: String
+    let startedAt: String?
+    let finishedAt: String?
+
+    init(revision: Int, state: String, startedAt: String? = nil, finishedAt: String? = nil) {
+        self.revision = revision; self.state = state; self.startedAt = startedAt; self.finishedAt = finishedAt
     }
+
+    private enum CodingKeys: String, CodingKey { case revision, state, startedAt, finishedAt }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        targets = (try? container.decodeIfPresent(V2LossyArray<V2ModelTarget>.self, forKey: .targets))?.values ?? []
-        confirmNativeGlobal = (try? container.decodeIfPresent(Bool.self, forKey: .confirmNativeGlobal)) ?? false
+        state = try container.decode(String.self, forKey: .state)
+        revision = (try? container.decodeIfPresent(Int.self, forKey: .revision)) ?? 0
+        startedAt = try? container.decodeIfPresent(String.self, forKey: .startedAt)
+        finishedAt = try? container.decodeIfPresent(String.self, forKey: .finishedAt)
     }
 }
 
-nonisolated struct V2QuickSetupResult: Decodable, Hashable, Identifiable {
+/// One runtime's channel: what it should use, what it actually uses, and how
+/// far its switch got. Unknown states and reasons stay strings.
+nonisolated struct V2ChannelRuntime: Decodable, Hashable, Identifiable {
     let connectorId: V2ConnectorID
     let runtimeId: V2RuntimeID
-    /// applied, deferred, skipped or failed.
-    let result: String
+    /// A channel chosen for this runtime only; nil follows the current channel.
+    let override: String?
+    let desired: String
+    /// Changes only once the runtime is verified on the new channel.
+    let actual: String
+    /// applied, pending, waiting_online, switching, restoring,
+    /// restored, failed or unsupported.
+    let state: String
+    /// preparing, activating or verifying while switching.
+    let step: String?
     let reason: String?
-    let modelsTrimmed: Int?
-    let servesRuntimeId: String?
+    let message: String?
+    let updatedAt: String?
 
-    private enum CodingKeys: String, CodingKey { case connectorId, runtimeId, result, reason, modelsTrimmed, servesRuntimeId }
+    init(connectorId: V2ConnectorID, runtimeId: V2RuntimeID, override: String? = nil, desired: String, actual: String,
+         state: String, step: String? = nil, reason: String? = nil, message: String? = nil,
+         updatedAt: String? = nil) {
+        self.connectorId = connectorId; self.runtimeId = runtimeId; self.override = override
+        self.desired = desired; self.actual = actual; self.state = state; self.step = step
+        self.reason = reason; self.message = message; self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case connectorId, runtimeId, override, desired, actual, state, step, reason, message, updatedAt
+    }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         connectorId = try container.decode(String.self, forKey: .connectorId)
         runtimeId = try container.decode(String.self, forKey: .runtimeId)
-        result = (try? container.decodeIfPresent(String.self, forKey: .result)) ?? "failed"
+        override = try? container.decodeIfPresent(String.self, forKey: .override)
+        actual = (try? container.decodeIfPresent(String.self, forKey: .actual)) ?? V2ModelChannel.native
+        desired = (try? container.decodeIfPresent(String.self, forKey: .desired)) ?? actual
+        state = (try? container.decodeIfPresent(String.self, forKey: .state)) ?? "unsupported"
+        step = try? container.decodeIfPresent(String.self, forKey: .step)
         reason = try? container.decodeIfPresent(String.self, forKey: .reason)
-        modelsTrimmed = try? container.decodeIfPresent(Int.self, forKey: .modelsTrimmed)
-        servesRuntimeId = try? container.decodeIfPresent(String.self, forKey: .servesRuntimeId)
+        message = try? container.decodeIfPresent(String.self, forKey: .message)
+        updatedAt = try? container.decodeIfPresent(String.self, forKey: .updatedAt)
     }
 
     var id: String { target.key }
     var target: V2ModelTarget { .init(connectorId: connectorId, runtimeId: runtimeId) }
-    var isProblem: Bool { result == "skipped" || result == "failed" }
 }
 
-/// Progress of a one-click setup, pushed with every snapshot.
-nonisolated struct V2QuickSetupProgress: Decodable, Hashable {
-    /// syncing, applying, done or failed.
-    let state: String
-    let request: V2QuickSetupRequest
-    let startedAt: String?
-    /// "sync" or "apply": where a failed setup stopped.
-    let step: String?
-    let code: String?
-    let results: [V2QuickSetupResult]
+/// The current channel, every runtime's place in it, and the last switch.
+/// `GET /model-config/channel`, every channel write and the snapshot's
+/// `modelConfig.channel` return it.
+nonisolated struct V2ModelChannelState: Decodable, Hashable {
+    let channel: String
+    let revision: Int
+    /// The wire field `switch`; nil until the first switch.
+    let progress: V2ChannelSwitch?
+    let runtimes: [V2ChannelRuntime]
 
-    private enum CodingKeys: String, CodingKey { case state, request, startedAt, step, code, results }
+    init(channel: String, revision: Int, progress: V2ChannelSwitch? = nil, runtimes: [V2ChannelRuntime] = []) {
+        self.channel = channel; self.revision = revision; self.progress = progress; self.runtimes = runtimes
+    }
+
+    private enum CodingKeys: String, CodingKey { case channel, revision, progress = "switch", runtimes }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        state = try container.decode(String.self, forKey: .state)
-        request = (try? container.decodeIfPresent(V2QuickSetupRequest.self, forKey: .request))
-            ?? V2QuickSetupRequest(targets: [], confirmNativeGlobal: false)
-        startedAt = try? container.decodeIfPresent(String.self, forKey: .startedAt)
-        step = try? container.decodeIfPresent(String.self, forKey: .step)
-        code = try? container.decodeIfPresent(String.self, forKey: .code)
-        results = (try? container.decodeIfPresent(V2LossyArray<V2QuickSetupResult>.self, forKey: .results))?.values ?? []
+        channel = (try? container.decodeIfPresent(String.self, forKey: .channel)) ?? V2ModelChannel.native
+        revision = (try? container.decodeIfPresent(Int.self, forKey: .revision)) ?? 0
+        progress = try? container.decodeIfPresent(V2ChannelSwitch.self, forKey: .progress)
+        runtimes = (try? container.decodeIfPresent(V2LossyArray<V2ChannelRuntime>.self, forKey: .runtimes))?.values ?? []
+    }
+
+    func runtime(_ target: V2ModelTarget) -> V2ChannelRuntime? {
+        runtimes.first { $0.connectorId == target.connectorId && $0.runtimeId == target.runtimeId }
+    }
+
+    /// The channel is current, chosen for a runtime, or in use somewhere.
+    func uses(_ channel: String) -> Bool {
+        self.channel == channel || runtimes.contains { $0.override == channel || $0.desired == channel || $0.actual == channel }
     }
 }
 
-nonisolated struct V2QuickSetupCandidatesResponse: Decodable, Hashable {
-    let targets: [V2ModelPreviewTarget]
+nonisolated struct V2ChannelRequest: Encodable, Hashable {
+    let channel: String
+}
 
-    private enum CodingKeys: String, CodingKey { case targets }
+/// `channel: null` follows the current channel, so it is always sent.
+nonisolated struct V2RuntimeChannelRequest: Encodable, Hashable {
+    let channel: String?
+    let confirmNativeGlobal: Bool
 
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        targets = (try? container.decodeIfPresent(V2LossyArray<V2ModelPreviewTarget>.self, forKey: .targets))?.values ?? []
+    private enum CodingKeys: String, CodingKey { case channel, confirmNativeGlobal }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        if let channel { try container.encode(channel, forKey: .channel) }
+        else { try container.encodeNil(forKey: .channel) }
+        if confirmNativeGlobal { try container.encode(true, forKey: .confirmNativeGlobal) }
     }
 }
 
-nonisolated struct V2QuickSetupStartResponse: Decodable, Hashable {
-    let started: Bool
-    /// The authorization page to open when the account has to link first.
-    let startUrl: String?
+/// Retries every restored or failed runtime, or only the one named.
+nonisolated struct V2ChannelRetryRequest: Encodable, Hashable {
+    let connectorId: V2ConnectorID?
+    let runtimeId: V2RuntimeID?
 
-    private enum CodingKeys: String, CodingKey { case started, startUrl }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        started = (try? container.decodeIfPresent(Bool.self, forKey: .started)) ?? false
-        startUrl = try? container.decodeIfPresent(String.self, forKey: .startUrl)
+    init(_ target: V2ModelTarget? = nil) {
+        connectorId = target?.connectorId; runtimeId = target?.runtimeId
     }
 }
 
-/// The dashboard snapshot's `modelConfig`: profiles, where they are applied,
-/// and the Tokens Anywhere link. Never keys.
+/// The dashboard snapshot's `modelConfig`: profiles, where they are in use,
+/// the current channel with its switch progress, and the Tokens Anywhere link.
+/// Never keys.
 nonisolated struct V2ModelConfigOverview: Decodable, Hashable {
     let secretConfigured: Bool
     let profiles: [V2ModelProfile]
     let assignments: [V2ModelAssignment]
+    let channel: V2ModelChannelState?
     let tokens: V2TokensLinkStatus?
 
-    private enum CodingKeys: String, CodingKey { case secretConfigured, profiles, assignments, tokens }
+    private enum CodingKeys: String, CodingKey { case secretConfigured, profiles, assignments, channel, tokens }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         secretConfigured = (try? container.decodeIfPresent(Bool.self, forKey: .secretConfigured)) ?? false
         profiles = (try? container.decodeIfPresent(V2LossyArray<V2ModelProfile>.self, forKey: .profiles))?.values ?? []
         assignments = (try? container.decodeIfPresent(V2LossyArray<V2ModelAssignment>.self, forKey: .assignments))?.values ?? []
+        channel = try? container.decodeIfPresent(V2ModelChannelState.self, forKey: .channel)
         tokens = try? container.decodeIfPresent(V2TokensLinkStatus.self, forKey: .tokens)
     }
 
@@ -446,122 +496,6 @@ nonisolated struct V2ModelProfileCreateRequest: Encodable, Hashable {
     let name: String
     let apiKey: String
     let offers: [V2ModelOffer]
-}
-
-nonisolated struct V2ModelPreviewRequest: Encodable, Hashable {
-    let profileId: String
-}
-
-nonisolated struct V2ModelPreviewReplacement: Decodable, Hashable {
-    /// "profile" or "manual".
-    let kind: String
-    let profileId: String?
-    let host: String
-}
-
-nonisolated struct V2ModelPreviewModels: Decodable, Hashable {
-    let importing: Int
-    let existing: Int
-    let limit: Int
-}
-
-nonisolated struct V2ModelPreviewTarget: Decodable, Hashable, Identifiable {
-    let connectorId: V2ConnectorID
-    let runtimeId: V2RuntimeID
-    let runtimeType: String
-    let name: String?
-    let maturity: String?
-    /// "apply" or "skip".
-    let decision: String
-    let reason: String?
-    let offerFormat: String?
-    /// new_instance, immediate, new_session or restart.
-    let effect: String?
-    let scope: String?
-    let requiresConfirmation: Bool
-    let runningSessions: Int
-    let replaces: V2ModelPreviewReplacement?
-    let models: V2ModelPreviewModels?
-    let tooManyModels: Bool
-    let capabilityMaturity: String?
-
-    private enum CodingKeys: String, CodingKey {
-        case connectorId, runtimeId, runtimeType, name, maturity, decision, reason, offerFormat, effect, scope
-        case requiresConfirmation, runningSessions, replaces, models, tooManyModels, capabilityMaturity
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        connectorId = try container.decode(String.self, forKey: .connectorId)
-        runtimeId = try container.decode(String.self, forKey: .runtimeId)
-        runtimeType = (try? container.decodeIfPresent(String.self, forKey: .runtimeType)) ?? ""
-        name = try? container.decodeIfPresent(String.self, forKey: .name)
-        maturity = try? container.decodeIfPresent(String.self, forKey: .maturity)
-        decision = (try? container.decodeIfPresent(String.self, forKey: .decision)) ?? "skip"
-        reason = try? container.decodeIfPresent(String.self, forKey: .reason)
-        offerFormat = try? container.decodeIfPresent(String.self, forKey: .offerFormat)
-        effect = try? container.decodeIfPresent(String.self, forKey: .effect)
-        scope = try? container.decodeIfPresent(String.self, forKey: .scope)
-        requiresConfirmation = (try? container.decodeIfPresent(Bool.self, forKey: .requiresConfirmation)) ?? false
-        runningSessions = (try? container.decodeIfPresent(Int.self, forKey: .runningSessions)) ?? 0
-        replaces = try? container.decodeIfPresent(V2ModelPreviewReplacement.self, forKey: .replaces)
-        models = try? container.decodeIfPresent(V2ModelPreviewModels.self, forKey: .models)
-        tooManyModels = (try? container.decodeIfPresent(Bool.self, forKey: .tooManyModels)) ?? false
-        capabilityMaturity = try? container.decodeIfPresent(String.self, forKey: .capabilityMaturity)
-    }
-
-    var id: String { target.key }
-    var target: V2ModelTarget { .init(connectorId: connectorId, runtimeId: runtimeId) }
-    var canApply: Bool { decision == "apply" && !tooManyModels }
-    /// Running tasks this target would interrupt; only a restart interrupts them.
-    var interruptedSessions: Int { effect == "restart" ? runningSessions : 0 }
-}
-
-nonisolated struct V2ModelPreviewResponse: Decodable, Hashable {
-    let targets: [V2ModelPreviewTarget]
-
-    private enum CodingKeys: String, CodingKey { case targets }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        targets = (try? container.decodeIfPresent(V2LossyArray<V2ModelPreviewTarget>.self, forKey: .targets))?.values ?? []
-    }
-}
-
-nonisolated struct V2ModelApplyRequest: Encodable, Hashable {
-    let profileId: String
-    let targets: [V2ModelTarget]
-    let allowInterrupt: Bool
-    let confirmNativeGlobal: Bool
-}
-
-nonisolated struct V2ModelOperationResult: Decodable, Hashable {
-    let connectorId: V2ConnectorID
-    let runtimeId: V2RuntimeID
-    /// applied, skipped, failed or restored.
-    let result: String
-    let reason: String?
-    let message: String?
-}
-
-nonisolated struct V2ModelOperation: Decodable, Hashable {
-    let operationId: String?
-    let kind: String?
-    let finished: Bool
-    let results: [V2ModelOperationResult]
-
-    private enum CodingKeys: String, CodingKey { case operationId, kind, finished, results }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        operationId = try? container.decodeIfPresent(String.self, forKey: .operationId)
-        kind = try? container.decodeIfPresent(String.self, forKey: .kind)
-        finished = (try? container.decodeIfPresent(Bool.self, forKey: .finished)) ?? true
-        results = (try? container.decodeIfPresent(V2LossyArray<V2ModelOperationResult>.self, forKey: .results))?.values ?? []
-    }
-
-    var appliedCount: Int { results.filter { $0.result == "applied" }.count }
-    var otherCount: Int { results.count - appliedCount }
 }
 
 nonisolated struct V2TokensLinkStart: Decodable, Hashable {
@@ -688,19 +622,15 @@ nonisolated struct V2TokensModelsSaveResponse: Decodable, Hashable {
 }
 
 nonisolated struct V2TokensUnlinkResponse: Decodable, Hashable {
+    /// False when Tokens Anywhere did not confirm revoking the authorization.
     let revoked: Bool
-    let results: [V2ModelOperationResult]
 
-    private enum CodingKeys: String, CodingKey { case revoked, results }
+    private enum CodingKeys: String, CodingKey { case revoked }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        revoked = (try? container.decodeIfPresent(Bool.self, forKey: .revoked)) ?? false
-        results = (try? container.decodeIfPresent(V2LossyArray<V2ModelOperationResult>.self, forKey: .results))?.values ?? []
+        revoked = (try? container.decodeIfPresent(Bool.self, forKey: .revoked)) ?? true
     }
-
-    /// Runtimes that could not be put back before the authorization was revoked.
-    var unrestoredCount: Int { results.filter { $0.result != "restored" }.count }
 }
 
 nonisolated struct V2AllowInterruptRequest: Encodable, Hashable {

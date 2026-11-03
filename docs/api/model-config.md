@@ -1,6 +1,6 @@
 # 模型配置 API
 
-用户在任意客户端把模型服务（网关地址、API Key、模型列表）应用到各设备上的 Runtime。模型服务来自手动填写，或来自 Tokens Anywhere 链接。设计依据见 [模型配置方案](../model-config-management-proposal.md)，Runtime 侧的契约见 [Runtime Control 2.0](../../contracts/runtime-control/2.0/README.md) 的「Maturity and model connections」一节。
+用户在任意客户端选择各设备上的 Runtime 使用哪个模型渠道（网关地址、API Key、模型列表）。模型服务来自手动填写，或来自 Tokens Anywhere 链接。设计依据见 [模型配置方案](../model-config-management-proposal.md)，Runtime 侧的契约见 [Runtime Control 2.0](../../contracts/runtime-control/2.0/README.md) 的「Maturity and model connections」一节。
 
 所有接口都在 `/api/v2` 下，使用登录态的 Bearer token。
 
@@ -10,7 +10,8 @@
 - **按能力渲染**：Runtime 是否接受模型连接、支持哪些协议、改动的范围和生效时机，都来自它声明的 `modelConnection`，客户端不按 Runtime 名称判断。
 - **先拒绝、不忽略**：Runtime 不支持的组合在保存前就被拒绝（`model_connection_unsupported`），不会保存后静默不用。
 - **已应用不等于已验证**：`applied` 表示 Runtime 已采用配置，不代表网关连通。
-- **默认只改 AA 管理的实例**：`scope=native_global` 的 Runtime 会修改其自身全局配置，应用时必须带 `confirmNativeGlobal: true`。
+- **默认只改 AA 管理的实例**：`scope=native_global` 的 Runtime 会修改其自身全局配置，不跟随当前渠道（`unsupported`，原因 `confirmation_required`），只能单独指定并带 `confirmNativeGlobal: true`。
+- **切换失败不丢可用性**：切换前保存快照，失败时恢复原配置，见「当前渠道与切换」。
 
 服务器需要设置至少 32 个字符的 `AGENT_SERVER_SECRET` 才能保存手动 Key 和链接 Tokens Anywhere；没有设置时相关写接口返回 409 `secret_unconfigured`，快照中 `secretConfigured` 为 `false`。
 
@@ -38,39 +39,99 @@
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/model-profiles` | 返回 `{secretConfigured, profiles, assignments}` |
+| GET | `/model-profiles` | 返回 `{secretConfigured, profiles, assignments, channel}` |
 | POST | `/model-profiles` | 手动配置：`{name, apiKey, offers: [{format, baseUrl, models: [{id, name?}]}]}`，每种协议最多一个 offer；返回 201 |
 | PATCH | `/model-profiles/{id}` | 需要 `If-Match: <etag>`；改了地址的 host 必须同时提供新 `apiKey`；Tokens 配置只读 |
-| DELETE | `/model-profiles/{id}` | 仍有 Runtime 在用时返回 409 `profile_in_use` |
+| DELETE | `/model-profiles/{id}` | 是当前渠道、被某个 Runtime 指定或仍有 Runtime 在用时返回 409 `profile_in_use` |
 
 `format` 为 `openai_responses`、`openai_chat` 或 `anthropic`。
 
-## 预览、应用与恢复
+`assignments` 是各 Runtime 实际在用的 AA 渠道记录（`actual` 不是 `native` 的 Runtime 各一条）：`{connectorId, runtimeId, profileId, offerFormat, createdRuntime, status, appliedAt, modelConnectionStatus}`，`status` 为 `applied`、`modified`（之后手动改过连接）或 `outdated`（渠道的模型或 Key 已变化，等待重新写入）。切换进度只看渠道状态。
+
+## 当前渠道与切换
+
+本功能使用 `v2_48` 数据库结构，渠道切换不保存等待空闲状态或允许中断标记，也不提供 `switch-now` 接口。
+
+每个 Runtime 同一时间只能使用一个渠道。渠道取值：
+
+| 值 | 含义 |
+| --- | --- |
+| `native` | 设备自带配置：不使用 AA 写入的模型连接 |
+| `tokens` | Anywhere 渠道（当前用户已链接的 Tokens Anywhere 配置） |
+| `mpr_…` | 某个手动添加的模型服务（`source=manual` 且 `state=active` 的配置 ID） |
+
+用户选择一个**当前渠道**，所有 Runtime 默认跟随；单个 Runtime 可以单独指定渠道（覆盖）。Runtime 想要的渠道 = 覆盖 ?? 当前渠道。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| POST | `/model-config/assignments/preview` | `{profileId, targets?, model?}`；省略 `targets` 时列出用户所有 Runtime |
-| POST | `/model-config/assignments` | 需要 `Idempotency-Key`；`{profileId, targets, allowInterrupt, confirmNativeGlobal, modelIds?, model?}`；`model` 见下文「Runtime 模型」 |
-| GET | `/model-config/assignments` | 当前的应用记录 |
-| DELETE | `/model-config/assignments/{connectorId}/{runtimeId}?allow_interrupt=` | 恢复应用前的配置 |
-| GET | `/model-config/operations/{id}` | 操作结果 |
+| GET | `/model-config/channel` | 返回渠道状态（见下） |
+| PUT | `/model-config/channel` | `{channel}`；应用当前渠道并立即切换，允许中断运行中的任务；立即返回渠道状态，不等切换完成 |
+| PUT | `/model-config/channel/runtimes/{connectorId}/{runtimeId}` | `{channel: string \| null, confirmNativeGlobal?: boolean}`；`null` 表示跟随当前渠道；`scope=native_global` 的 Runtime 指定 AA 渠道时必须带 `confirmNativeGlobal: true` |
+| POST | `/model-config/channel/retry` | 重新尝试所有 `restored` 和 `failed` 的 Runtime；也可带 `{connectorId, runtimeId}` 只重试一个 |
 
-**预览**的每个目标包含 `decision`（`apply` 或 `skip`）。跳过原因：`model_connection_unsupported`、`not_installed`、`format_unsupported`、`mode_unsupported`、`models_required`（`catalog.required` 的 Runtime 没有可导入的模型）、`busy_operation`、`device_offline`。可以应用时给出 `offerFormat`、`effect`（`new_instance` 或能力的 `apply`）、`scope`、`requiresConfirmation`、`runningSessions`、`replaces`、`models`、`tooManyModels`。
+错误：渠道不存在 404 `channel_not_found`；配置已断开 409 `profile_detached`；`tokens` 但未链接 409 `tokens_not_linked`；Runtime 不存在 404。
 
-**应用**规则：
+### 渠道状态
 
-- 协议取 Runtime 声明顺序中第一个配置也提供的协议。
-- Runtime 当前模式（包括尚未配置时的默认模式）不能使用模型连接时，新建一个 `managedBy=model-config` 的受管实例，原实例保持不变；每台设备每种类型最多一个，再次应用时复用，恢复后再次应用会重新启动它。
-- 只改写模型连接字段、上次导入的模型和必要的模式字段；用户自己添加的模型保留，ID 冲突时保留用户的；模型总数最多 64 个，超出时该目标跳过，原因为 `too_many_models`，可以用 `modelIds` 选择要导入的模型。
-- `apply=restart` 且有任务运行时，必须 `allowInterrupt: true`，否则该目标以 `busy` 跳过；带 `deferBusy: true` 时改为先保存配置、不重启，记录状态 `deferred`，后台每 20 秒检查一次，Runtime 空闲后重启生效。
-- `trimModels: true` 时，模型超过 64 个只导入放得下的部分，结果带 `modelsTrimmed`，不再跳过。
-- 同一个 `Idempotency-Key` 重放返回同一操作；用于不同请求返回 409 `idempotency_key_reused`；仍在进行时返回 409 `operation_in_progress`。
+`GET /model-config/channel`、上面所有写接口和快照的 `modelConfig.channel` 返回同一结构：
 
-恢复和轮换 Key 也遵循「先不中断」：带 `allow_interrupt=false`（或 `allowInterrupt: false`）时，有任务运行会返回 409 `busy`，客户端确认后再带 `true` 重试。轮换在 Tokens 一侧生效之前就会检查，所以被拒绝时旧 Key 仍然有效；轮换后没能更新的 Runtime 标为 `failed`，原因 `key_rotated`。
+```json
+{
+  "channel": "tokens",
+  "revision": 7,
+  "switch": {"revision": 7, "state": "running", "startedAt": "…", "finishedAt": null},
+  "runtimes": [
+    {
+      "connectorId": "con_…", "runtimeId": "codex",
+      "override": null, "desired": "tokens", "actual": "native",
+      "state": "pending", "step": null,
+      "reason": null, "message": null,
+      "updatedAt": "…"
+    }
+  ]
+}
+```
 
-**恢复**只撤销本模块写入的内容：恢复应用前的 `modelGateway`、删除导入的模型；受管实例只停用，不删除实例和会话。恢复从不删除 Runtime 配置。
+- `revision` 每次修改当前渠道或覆盖时加一。
+- `switch.state`：`running`（还有 Runtime 没切完）、`done`（全部到达终态且没有失败）、`attention`（有 `restored` 或 `failed`）。从未切换过时 `switch` 为 `null`。
+- `runtimes` 列出用户所有 Runtime（包括不支持模型连接的），不仅是参与切换的；配置管理创建的受管实例（`managedBy=model-config`）不单独列出，它代表的本机 Runtime 那一行就是它的状态。
+- `actual` 是 Runtime 当前**实际**在用的渠道，只有核实成功后才会变成新渠道；切换失败恢复后仍是原渠道。
 
-应用记录的 `status` 按优先级为 `applying`、`failed`、`deferred`（已保存，空闲后生效）、`modified`（应用后手动改过）、`outdated`（配置的模型或 Key 已变化）、`applied`。
+`state` 取值：
+
+| state | 含义 | 客户端展示 |
+| --- | --- | --- |
+| `applied` | `actual == desired`，已核实 | 已生效 |
+| `pending` | 已排队，马上开始 | 排队中 |
+| `waiting_online` | 设备离线，上线后自动切换 | 上线后切换 |
+| `switching` | 正在切换，`step` 为 `preparing`、`activating`、`verifying` | 切换中 |
+| `restoring` | 切换失败，正在恢复原配置 | 正在恢复 |
+| `restored` | 切换失败，已恢复原渠道，Runtime 可用；`reason` 给出原因 | 切换失败，已恢复，可重试 |
+| `failed` | 切换和恢复都没有成功，需要处理；`reason` 给出原因 | 需要处理，可重试 |
+| `unsupported` | 不能使用想要的渠道，保持原样；`reason` 给出原因 | 不支持 |
+
+`reason` 取值：`model_connection_unsupported`、`not_installed`、`format_unsupported`、`mode_unsupported`、`models_required`、`model_unavailable`、`confirmation_required`、`profile_unavailable`、`validate_failed`、`start_failed`、`verify_failed`、`verify_timeout`、`device_offline`、`rollback_failed`、`superseded`。`message` 是可选的说明文字，不含 Key。
+
+### 切换流程
+
+每个 Runtime 的切换是一个可恢复的事务，步骤和状态都保存在数据库里：
+
+1. **排队**：修改当前渠道或覆盖后，想要的渠道和实际渠道不同的 Runtime 进入 `pending`；比当前更早的未完成切换被新的一次取代（`superseded`，不再执行）。
+2. **调度**：在线 Runtime 立即执行，不等待运行中的任务结束；设备离线时进入 `waiting_online`，上线后立即执行。
+3. **准备**：先把 Runtime 当前的完整配置、启用状态和应用记录加密保存为快照，再计算新配置。快照写入之前不改动 Runtime。
+4. **激活**：暂停这个 Runtime 接收新任务（新建会话和发送消息会等待最多 90 秒，超时返回 409 `runtime_switching`），写入新配置并**硬替换**：停掉旧实例并等它退出，再用目标渠道的完整配置创建新实例。即使配置没有变化也会重建，不在原实例上热更新，也不复用旧实例的客户端或连接。
+5. **核实**：Runtime 运行起来、回报的模型连接与目标配置一致即记为 `applied`；Connector 返回 `status: error`、启动超时或回报不一致才算失败。请求超时或结果不明时，Server 先读取 Connector 上实际生效的配置再决定。切换不发送真实模型请求，不产生探针调用费用；余额不足、鉴权失败或模型服务不可用由实际模型请求报告，不影响配置切换结果，也不触发回滚。
+6. **完成或恢复**：成功后更新应用记录、恢复接收新任务；失败则写回快照里的配置和启用状态，同样重建实例并核实配置，恢复成功为 `restored`，恢复失败为 `failed`，同样恢复接收新任务。恢复结果不依赖原渠道能否完成模型请求。
+
+切换不使用定时轮询。等待中的 Runtime 在 Redis 中记一条待处理标记（没有 Redis 时在进程内存中），由事件触发处理：这个 Runtime 上的任务结束、设备重新上线、Runtime 启动完成、有人在它上面新建会话或发送消息、客户端读取渠道状态。Server 启动时把数据库中未完成的切换重新登记一次。
+
+Tokens 模型选择变化、轮换 Key、切换账号后，使用 Anywhere 渠道的 Runtime 也按这个流程重新写入配置（`revision` 加一，渠道不变）。
+
+新建会话和获取模型目录时，如果这个 Runtime 还有待处理的切换且现在可以执行，会先执行并等待它完成（最多 90 秒）；切换失败并已恢复时，会话继续使用原渠道，不报错。
+
+Connector 2.2.0 起在 `runtime.discover` 结果中声明 `switchFence` 和 `modelProbe`（渠道切换不调用模型探针）。Server 只对声明了 `switchFence` 的 Connector 在 `runtime.validateConfig`、`runtime.start` 中带 `operationId` 和 `switchRevision`：Connector 拒绝比已接受的更早的 `switchRevision`（`switch_revision_stale`），带这两个字段的 `runtime.start` 总是硬替换实例，并在启动结果中回报实际加载的 `configDigest` 和进程标识 `instanceId`。声明了 `modelProbe` 的 Connector 支持独立的 `runtime.probeModelConnection`，不作为切换或恢复的成功条件。旧版 Connector 由 Server 读取 `runtime.config` 核实。
+
+外部管理的实例不在切换的保证范围内，例如 Codex App 自己持有的线程、本机独立运行的 Pi。要保证切换生效，让会话交给 AA 管理的实例执行。
 
 ## Runtime 模型
 
@@ -81,20 +142,13 @@
 - **不重启**：只改 `model` 时 Runtime 不会重启，也不会打断任务。Codex 和 Claude Code 刷新模型目录；Pi 改写 AA 私有配置里的 `defaultModel`，下一个会话起生效。
 - **目录标记**：模型目录里对应的那一项 `default` 为 `true`，各端新建会话时会预先选中它。
 
-「设置 → 服务模型」页用两栏选择：第一栏是渠道（模型服务或「本机配置」），第二栏是这个渠道里的模型。
+启用了模型连接的 Runtime 返回的模型目录只展示它实际所在渠道当前启用的模型，保留 Runtime 原生的模型选择标识和目录 revision（与查询或分页一样，仅投影可见模型，不改变 Runtime 的目录）。模型与推理强度继续在输入框中选择。Web 和 Desktop 在 Runtime 实际渠道为 `tokens` 且状态为 `applied` 时，在输入框的模型选择前显示 Anywhere 图标。Pi 自动复用或创建隔离的受管实例，不覆盖本机 Pi；渠道改回 `native` 后新会话回到本机实例。
 
-| 选择 | 调用 |
-| --- | --- |
-| 当前渠道里的另一个模型 | `PUT /connectors/{id}/runtimes/{rid}/config`，只改 `model` |
-| 另一个模型服务里的模型 | `POST /model-config/assignments`，带 `model`；按应用规则预览、确认中断或空闲后生效 |
-| 本机配置的模型 | 先 `DELETE /model-config/assignments/{connectorId}/{runtimeId}` 恢复，再 `PUT` 写入 `model` |
+写入渠道配置时：
 
-应用时：
-
-- 带了 `model` 但匹配的 offer 里没有这个模型（或被关闭、被裁剪掉），该目标以 `model_unavailable` 跳过。
-- 没带 `model` 时，Runtime 原有的设置如果仍在新的模型列表里就保留，否则删除，回到 Runtime 自己的选择；关闭 Tokens Anywhere 模型后的重新应用也按这条处理。
-- 恢复时，指向导入模型的设置随导入的模型一起删除；指向 Runtime 自带模型的设置保留。
-- `model` 不计入应用记录的「已修改」判断，在服务模型页换模型不会改变应用状态。
+- Runtime 原有的 `model` 设置如果仍在新的模型列表里就保留，否则删除，回到 Runtime 自己的选择；关闭 Tokens Anywhere 模型后的重新写入也按这条处理。
+- 切回 `native` 时，指向导入模型的设置随导入的模型一起删除；指向 Runtime 自带模型的设置保留。
+- `model` 不计入核实用的配置摘要，单独修改默认模型不会触发切换。
 
 已有会话在换渠道之后：Codex 接入网关后恢复线程时，如果会话没有显式选择，会带上线程最近一次使用的模型（不带的话 Codex 会改用 `config.toml` 里的模型）；Claude Code 没有显式选择的会话仍使用 Claude Code 当前的默认模型；Pi 沿用会话里保存的模型。会话里的模型在新渠道不存在时，请求会失败，需要在会话里重新选择。
 
@@ -105,13 +159,21 @@ Tokens Anywhere 是 OAuth 授权服务器，每个 AA 实例是公共 PKCE 客�
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/integrations/tokens` | `{available, tokensUrl, secretConfigured, link}` |
-| POST | `/integrations/tokens/link` | 返回一次性的 `startUrl`（60 秒有效） |
+| POST | `/integrations/tokens/link` | 返回一次性的 `startUrl`（60 秒有效）；已绑定时用于切换账号 |
 | GET | `/integrations/tokens/start?ticket=` | 浏览器打开；把链接绑定到这个浏览器的 cookie 后跳到 Tokens 授权页 |
-| GET | `/integrations/tokens/callback` | Tokens 回跳；校验 state、浏览器 cookie 和 `iss`，换取 token，同步模型后跳到 `{Tokens}/oauth/done/`；失败时跳回 `/?tokensLink=<code>#/settings/model-configs` |
+| GET | `/integrations/tokens/callback` | Tokens 回跳；校验 state、浏览器 cookie 和 `iss`，换取 token，首次绑定同步模型、切换账号保存绑定并排队更新 Key 后跳到 `{Tokens}/oauth/done/`；失败时跳回 `/?tokensLink=<code>#/settings/model-configs` |
 | POST | `/integrations/tokens/sync` | 重新读取托管 Key 能用的模型，更新 Tokens 配置 |
-| DELETE | `/integrations/tokens/link?allow_interrupt=` | 先恢复用这份配置的 Runtime，再撤销授权；无法恢复的标为 `failed` |
-| POST | `/model-profiles/{id}/rotate-key` | 需要 `Idempotency-Key`；轮换托管 Key 并写入所有用它的 Runtime |
+| DELETE | `/integrations/tokens/link` | 撤销授权并删除链接；还有 Runtime 想要或实际在用 `tokens` 时返回 409 `channel_in_use`，需要先切换到其他渠道 |
+| POST | `/model-profiles/{id}/rotate-key` | `{allowInterrupt}`；轮换托管 Key，再按切换流程把新 Key 写入所有使用 Anywhere 渠道的 Runtime。旧 Key 立即失效，所以有任务运行且没有 `allowInterrupt: true` 时先返回 409 `busy`，不轮换 |
 | GET、PUT | `/admin/integrations/tokens` | 管理员读取或修改 Tokens Anywhere 地址：返回 `{tokensUrl, source, linkedAccounts, secretConfigured}`，`source` 为 `setting`、`environment` 或 `null`；PUT `{tokensUrl}`，空值关闭；有账户已链接时不能改成别的地址（409 `tokens_links_exist`），地址带路径时返回 422 `invalid_tokens_url` |
+
+### 切换账号
+
+四端的「切换账号」直接打开现有授权页，用户可选择其他账号后授权。取消授权、获取新 Key 或读取新账户失败时，原绑定保持可用；同一次授权发起后若账户已被另一授权替换，旧回调会被拒绝。
+
+切换时在同一事务中替换绑定、更新原 Tokens 配置的 Key 标识，并让使用 Anywhere 渠道的 Runtime 重新走一次切换流程写入新 Key。网关地址、模型目录、当前渠道、别名、默认模型、实例启用状态和会话不变；不调用解绑接口，也不撤销旧账号授权，以免影响尚未切换的任务。旧授权可在 Tokens Anywhere 的已连接应用中管理。
+
+在线 Runtime 立即写入并重建，运行中的任务会被中断；离线设备上线后写入，失败时恢复原配置并可重试；客户端在渠道状态里看到每个 Runtime 的进度。
 
 ### 账户、用量与模型选择
 
@@ -119,20 +181,11 @@ Tokens Anywhere 是 OAuth 授权服务器，每个 AA 实例是公共 PKCE 客�
 | --- | --- | --- |
 | GET | `/integrations/tokens/account` | `{account: {id, displayName, email}, balance: {balance, available, held, bonus}, links: {console, billing, usage}}`。金额是 Tokens Anywhere 给出的人民币元字符串（4 位小数），客户端只做展示，求和时按 0.0001 元的整数计算 |
 | GET | `/integrations/tokens/usage?days=` | `days` 为 1–92，默认 30。返回 `{from, to, items}`，`items` 是整个 Tokens 账户按北京时间日期和模型统计的已结算用量：`date`、`model`、`requests`、`inputTokens`、`outputTokens`、`cacheReadTokens`、`cacheWrite5mTokens`、`cacheWrite1hTokens`、`amountCharged`；没有请求的日期不返回 |
-| PUT | `/integrations/tokens/models` | `{disabled: [模型 ID], names: {模型 ID: 名称}}`，关闭模型或改名，只影响 Agents Anywhere。返回 `{applying}`：为 `true` 时 Server 在后台重新应用到所有使用 Tokens 配置的 Runtime，进度和一键配置一样在 `tokens.quickSetup`，有任务的 Runtime 空闲后生效。一键配置进行中时返回 409 `quick_setup_running` |
+| PUT | `/integrations/tokens/models` | `{disabled: [模型 ID], names: {模型 ID: 名称}}`，关闭模型或改名，只影响 Agents Anywhere。返回 `{applying}`：为 `true` 时使用 Anywhere 渠道的 Runtime 按切换流程重新写入，进度在渠道状态里 |
 
-Tokens 配置的 `offers` 始终是 Tokens 给出的完整模型目录，模型带 `vendor`、`contextWindow`、`maxOutputTokens`（来自 Tokens 价格表，可能为空）；配置另有 `preferences: {disabled, names}`。预览和应用时 Server 先去掉关闭的模型、换上新名称；某种协议的模型全部关闭时，这种协议不再提供给 Runtime。同步模型目录时保留 `preferences`。
+Tokens 配置的 `offers` 始终是 Tokens 给出的完整模型目录，模型带 `vendor`、`contextWindow`、`maxOutputTokens`（来自 Tokens 价格表，可能为空）；配置另有 `preferences: {disabled, names}`。写入 Runtime 时 Server 先去掉关闭的模型、换上新名称；某种协议的模型全部关闭时，这种协议不再提供给 Runtime。同步模型目录时保留 `preferences`。
 
-### 一键配置
-
-Tokens Anywhere 在账户区域统一提供设备配置入口，连接卡片展示连接信息并提供 Key 轮换，不再重复提供「应用到设备」；手动添加的模型连接继续通过「应用到设备」选择 Runtime。
-
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/integrations/tokens/quick-setup` | 一键配置会处理哪些 Runtime：每项带 `decision`、跳过原因、`effect`、`requiresConfirmation`、`runningSessions`。还没链接时按三种协议都可用来判断，真正应用时以 Tokens 的模型目录为准 |
-| POST | `/integrations/tokens/quick-setup` | `{targets, confirmNativeGlobal}`。还没链接时返回 `{started: false, startUrl}`，所选 Runtime 随授权请求保存；已经链接时返回 `{started: true}`，立即开始。同时只能有一个在进行，否则 409 `quick_setup_running` |
-
-授权完成后，Server 在后台同步模型，再按 `deferBusy: true`、`trimModels: true` 应用到所选 Runtime，不打断正在运行的任务。进度在快照的 `tokens.quickSetup`：`state` 依次为 `syncing`、`applying`、`done`，失败时为 `failed` 并带 `step`（`sync` 或 `apply`）和 `code`；完成时 `results` 列出每个 Runtime 的结果（`applied`、`deferred`、`skipped`、`failed`）。
+### 授权页
 
 客户端在完成授权的浏览器里打开 `startUrl`：Web 在用户点击时先创建浏览器小弹窗，获取地址后在弹窗中导航，弹窗被拦截时回退到当前页；Desktop 用系统浏览器，Android 用 Custom Tabs，iOS 用 `ASWebAuthenticationSession`。客户端不接收回调，链接结果通过实时快照得知；Web 在快照显示已链接后关闭授权弹窗，用户取消或请求失败时也会关闭弹窗；iOS 在快照显示已链接后主动结束授权会话。
 
@@ -147,10 +200,13 @@ Server 保存加密的 refresh token，access token 放在 Redis（没有 Redis 
   "secretConfigured": true,
   "profiles": [{"id": "mpr_…", "source": "tokens", "name": "Tokens Anywhere", "originHost": "tokens.example", "offers": [], "keyHint": "sk-aa-se", "strategyName": "Default", "state": "active", "etag": "1", "updatedAt": "…"}],
   "assignments": [{"connectorId": "…", "runtimeId": "codex", "profileId": "mpr_…", "offerFormat": "openai_responses", "createdRuntime": false, "status": "applied", "error": null, "appliedAt": "…", "modelConnectionStatus": {"state": "applied"}}],
+  "channel": {"channel": "tokens", "revision": 7, "switch": null, "runtimes": []},
   "tokens": {"available": true, "tokensUrl": "https://tokens.example", "secretConfigured": true, "link": {"status": "linked", "issuer": "https://tokens.example", "account": {"id": "42", "displayName": "Ada", "email": null}, "linkedAt": "…", "relinkSoon": false}}
 }
 ```
 
-配置、应用、恢复、链接状态的变化都会触发 `dashboard.changed`，所有在线客户端随下一份快照更新。
+配置、渠道、切换进度、链接状态的变化都会触发 `dashboard.changed`，所有在线客户端随下一份快照更新。
 
 启动后才应用连接的 Runtime 通过 `runtime.statusChanged` 的 `modelConnection` 回报结果；Server 只在已存的报告对应当前保存的连接时采用它，避免还在用旧配置的实例被误报为「已应用」。
+
+所有渠道切换（应用渠道、单个 Runtime 变更、模型或 Key 更新、重试与重启恢复）均不等待任务结束；在线 Runtime 立即重新加载配置，运行中的任务会被中断，离线设备上线后立即执行。

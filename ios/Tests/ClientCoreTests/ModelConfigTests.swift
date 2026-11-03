@@ -30,6 +30,12 @@ import Testing
         #expect(assignment.status == "applied" && assignment.offerFormat == "openai_chat")
         #expect(overview.tokens?.available == true && overview.tokens?.link?.isLinked == true)
         #expect(overview.tokens?.link?.account.label == "Test")
+        let channel = try #require(overview.channel)
+        #expect(channel.channel == "mpr_test" && channel.revision == 3)
+        #expect(channel.progress == V2ChannelSwitch(revision: 3, state: "attention", startedAt: "2026-09-05T12:00:00Z", finishedAt: "2026-09-05T12:00:00Z"))
+        #expect(channel.runtimes.map(\.state) == ["unsupported", "applied", "restored"])
+        #expect(channel.runtime(gateway.target)?.actual == "mpr_test")
+        #expect(channel.runtimes[2].override == "tokens" && channel.runtimes[2].reason == "verify_timeout")
     }
 
     @Test func newSnapshotFieldsNeverBreakTheDashboard() throws {
@@ -68,66 +74,24 @@ import Testing
         repository.apply(try decode(object, as: V2DashboardSnapshot.self))
         #expect(repository.runtimes.count == 2 && repository.modelConfig != nil)
         let model = ModelConfigModel(api: .init(transport: transport), dashboard: repository)
-        #expect(model.rows.map(\.runtime.runtimeId) == ["rti_gateway"])
-        #expect(model.rows.first?.assignment?.profileId == "mpr_test")
-        #expect(model.rows.first?.deviceName == "Mac")
-        #expect(model.rows.first?.isManagedInstance == true)
+        let groups = model.channelGroups
+        #expect(groups.devices.map(\.name) == ["Mac"])
+        #expect(groups.devices.first?.rows.map(\.runtimeName) == ["Gateway", "rti_global"])
+        #expect(groups.unsupported.map(\.runtimeName) == ["Work"])
         #expect(model.profileName("mpr_test") == "Gateway")
+        #expect(model.runtimeCount(using: "mpr_test") == 1 && model.runtimeCount(using: "native") == 2)
         repository.invalidate()
         #expect(repository.runtimes.isEmpty && repository.modelConfig == nil)
-    }
-
-    @Test func previewNeverPreselectsGlobalChangesOrTooManyModels() throws {
-        var object = try fixtureObject("modelPreview")
-        var targets = object["targets"] as! [[String: Any]]
-        var crowded = targets[0]; crowded["runtimeId"] = "rti_crowded"; crowded["tooManyModels"] = true
-        targets.append(crowded); object["targets"] = targets
-        let preview: V2ModelPreviewResponse = try decode(object)
-        #expect(preview.targets.count == 4)
-        #expect(preview.targets[0].replaces?.host == "old.example" && preview.targets[0].models?.limit == 64)
-        #expect(preview.targets[1].requiresConfirmation && preview.targets[1].scope == "native_global")
-        #expect(preview.targets[2].decision == "skip" && !preview.targets[2].canApply)
-        #expect(!preview.targets[3].canApply)
-        #expect(ModelConfigPresentation.initialSelection(preview.targets) == ["device/rti_gateway"])
-        #expect(preview.targets[0].interruptedSessions == 2)
-        #expect(preview.targets[1].interruptedSessions == 0)
-        #expect(ModelConfigPresentation.previewDetail(preview.targets[2]) == ModelConfigPresentation.skipReason("model_connection_unsupported"))
-    }
-
-    @Test func applySheetRequiresConfirmationAndSendsOneKey() async throws {
-        let transport = TestHTTPTransport()
-        transport.respond = { call in
-            try fixtureData(call.path.hasSuffix("/preview") ? "modelPreview" : "modelOperation")
-        }
-        let profile = try fixture("modelProfile", as: V2ModelProfile.self)
-        let apply = ModelApplyModel(profile: profile, api: .init(transport: transport), idempotencyKey: "key-1", deviceName: { $0 })
-        await apply.load()
-        #expect(apply.selected == ["device/rti_gateway"])
-        #expect(apply.interruptedSessions == 2 && !apply.needsNativeGlobal && apply.canApply)
-        apply.toggle(apply.targets![2], true)
-        #expect(!apply.selected.contains("device/rti_work"), "A skipped runtime cannot be chosen")
-        apply.toggle(apply.targets![1], true)
-        #expect(apply.needsNativeGlobal && !apply.canApply)
-        apply.confirmNativeGlobal = true
-        apply.allowInterrupt = true
-        #expect(apply.canApply)
-        let operation = try #require(await apply.apply())
-        #expect(operation.appliedCount == 1 && operation.otherCount == 1)
-        let body = try #require(transport.calls.last?.body)
-        #expect(transport.calls.last?.path == "/model-config/assignments")
-        #expect(body["profileId"]?.stringValue == "mpr_test")
-        #expect(body["allowInterrupt"] == .bool(true) && body["confirmNativeGlobal"] == .bool(true))
-        #expect(body["targets"]?.configArray?.count == 2)
-        #expect(ModelConfigPresentation.operationMessage(operation) == .warning(String(localized: "Applied to \(1); \(1) not applied")))
     }
 
     @Test func knownErrorCodesReadAsUserText() {
         let error = HTTPError.server(statusCode: 409, message: "devices still use this profile",
             detail: .object(["code": .string("profile_in_use"), "message": .string("devices still use this profile")]))
-        #expect(ModelConfigErrorText.text(error) == String(localized: "Devices still use this profile. Restore them first."))
+        #expect(ModelConfigErrorText.text(error) == String(localized: "This profile is a channel in use. Switch to another channel first."))
         let unknown = HTTPError.server(statusCode: 500, message: "boom", detail: .object(["code": .string("mystery")]))
         #expect(ModelConfigErrorText.text(unknown) == String(localized: "That did not finish. Try again later."))
         #expect(ModelConfigErrorText.text(code: "secret_required") != nil)
+        #expect(ModelConfigErrorText.text(code: "channel_in_use") != nil && ModelConfigErrorText.text(code: "runtime_switching") != nil)
     }
 
     @Test func presentationFollowsDeclaredValues() {
@@ -135,13 +99,6 @@ import Testing
         #expect(ModelConfigPresentation.maturityBadge("experimental") == .experimental)
         #expect(ModelConfigPresentation.maturityBadge("stable") == nil)
         #expect(ModelConfigPresentation.maturityBadge(nil) == nil)
-        #expect(ModelConfigPresentation.connectionTone("applied") == .ok)
-        #expect(ModelConfigPresentation.connectionTone("saved_pending") == .progress)
-        #expect(ModelConfigPresentation.connectionTone("failed") == .error)
-        #expect(ModelConfigPresentation.connectionTone("managed_externally") == .warning)
-        #expect(ModelConfigPresentation.connectionTone("future_state") == .neutral)
-        #expect(ModelConfigPresentation.assignmentTone("applying") == .progress)
-        #expect(ModelConfigPresentation.assignmentTone("modified") == .warning)
         #expect(ModelConfigPresentation.protocolLabel("future_protocol") == "future_protocol")
         #expect(ModelConfigPresentation.parseModelIDs(" a, b\nb\r\n\n c ,") == ["a", "b", "c"])
     }
@@ -249,142 +206,194 @@ import Testing
     }
 }
 
-@Suite @MainActor struct QuickSetupTests {
-    private func link(_ status: String, linkedAt: String = "2026-01-01T00:00:00Z") throws -> V2TokensLink {
-        try decode(["status": status, "account": ["id": "a"], "linkedAt": linkedAt])
-    }
-    private func progress(_ state: String, step: String? = nil) throws -> V2QuickSetupProgress {
-        var object: [String: Any] = ["state": state, "request": ["targets": [["connectorId": "c", "runtimeId": "codex"]], "confirmNativeGlobal": false], "startedAt": "2026-01-01T00:00:00Z"]
-        if let step { object["step"] = step }
-        return try decode(object)
-    }
-    private func candidates(_ items: [[String: Any]]) throws -> [V2ModelPreviewTarget] {
-        try items.map { try decode($0) }
+@Suite @MainActor struct ModelChannelTests {
+    private func entry(_ runtimeId: String, _ state: String, connector: String = "device", desired: String = "tokens",
+                       actual: String = "native", reason: String? = nil) -> V2ChannelRuntime {
+        .init(connectorId: connector, runtimeId: runtimeId, desired: desired, actual: actual, state: state, reason: reason)
     }
 
-    @Test func theCardShowsChoosingProgressOrDone() throws {
-        let linked = try link("linked")
-        #expect(QuickSetupPresentation.phase(link: nil, progress: nil, configured: false, authorizing: false) == .setup)
-        #expect(QuickSetupPresentation.phase(link: nil, progress: nil, configured: false, authorizing: true) == .progress)
-        #expect(QuickSetupPresentation.phase(link: linked, progress: try progress("syncing"), configured: false, authorizing: false) == .progress)
-        #expect(QuickSetupPresentation.phase(link: linked, progress: try progress("failed", step: "apply"), configured: true, authorizing: false) == .progress)
-        #expect(QuickSetupPresentation.phase(link: linked, progress: try progress("done"), configured: false, authorizing: false) == .done)
-        #expect(QuickSetupPresentation.phase(link: linked, progress: nil, configured: true, authorizing: false) == .done)
-        #expect(QuickSetupPresentation.phase(link: try link("reauth_required"), progress: nil, configured: true, authorizing: false) == .setup)
-        #expect(QuickSetupPresentation.phase(link: nil, progress: try progress("syncing"), configured: false, authorizing: false) == .setup)
-        // A linked account shows its own page, even before any runtime uses it.
-        #expect(QuickSetupPresentation.phase(link: linked, progress: nil, configured: false, authorizing: false) == .done)
-        // Changing models on a configured account keeps the account page in view.
-        #expect(QuickSetupPresentation.phase(link: linked, progress: try progress("applying"), configured: true, authorizing: false) == .done)
-        #expect(QuickSetupPresentation.phase(link: linked, progress: try progress("syncing"), configured: true, authorizing: false) == .done)
-    }
-
-    @Test func runningMeansSyncingOrApplying() throws {
-        #expect(QuickSetupPresentation.isRunning(try progress("syncing")))
-        #expect(QuickSetupPresentation.isRunning(try progress("applying")))
-        #expect(!QuickSetupPresentation.isRunning(try progress("done")))
-        #expect(!QuickSetupPresentation.isRunning(try progress("failed", step: "apply")))
-        #expect(!QuickSetupPresentation.isRunning(nil))
-    }
-
-    @Test func eachStepReadsFromTheLinkAndItsProgress() throws {
-        let linked = try link("linked")
-        #expect(QuickSetupPresentation.steps(link: nil, progress: nil, authorizing: true) == .init(authorize: .active, sync: .pending, apply: .pending))
-        #expect(QuickSetupPresentation.steps(link: nil, progress: nil, authorizing: false) == .init(authorize: .pending, sync: .pending, apply: .pending))
-        #expect(QuickSetupPresentation.steps(link: linked, progress: nil, authorizing: false) == .init(authorize: .done, sync: .pending, apply: .pending))
-        #expect(QuickSetupPresentation.steps(link: linked, progress: try progress("syncing"), authorizing: false) == .init(authorize: .done, sync: .active, apply: .pending))
-        #expect(QuickSetupPresentation.steps(link: linked, progress: try progress("failed", step: "sync"), authorizing: false) == .init(authorize: .done, sync: .failed, apply: .pending))
-        #expect(QuickSetupPresentation.steps(link: linked, progress: try progress("failed", step: "apply"), authorizing: false) == .init(authorize: .done, sync: .done, apply: .failed))
-        #expect(QuickSetupPresentation.steps(link: linked, progress: try progress("applying"), authorizing: false) == .init(authorize: .done, sync: .done, apply: .active))
-        #expect(QuickSetupPresentation.steps(link: linked, progress: try progress("done"), authorizing: false) == .init(authorize: .done, sync: .done, apply: .done))
-    }
-
-    @Test func runtimesChangingTheirOwnSettingsAreNotTickedByDefault() throws {
-        let items = try candidates([
-            ["connectorId": "c", "runtimeId": "codex", "decision": "apply"],
-            ["connectorId": "c", "runtimeId": "dsh", "decision": "apply", "requiresConfirmation": true],
-            ["connectorId": "d", "runtimeId": "codex", "decision": "skip", "reason": "device_offline"],
-        ])
-        #expect(QuickSetupPresentation.defaultSelection(items) == ["c/codex"])
-        let request = QuickSetupPresentation.request(candidates: items, selection: ["c/codex", "d/codex"])
-        #expect(request.targets == [.init(connectorId: "c", runtimeId: "codex")] && !request.confirmNativeGlobal)
-        #expect(QuickSetupPresentation.request(candidates: items, selection: ["c/codex", "c/dsh"]).confirmNativeGlobal)
-        #expect(QuickSetupPresentation.candidateNote(items[1]) == String(localized: "Changes its own global settings; set up only when ticked"))
-        #expect(QuickSetupPresentation.candidateNote(items[2]) == ModelConfigPresentation.skipReason("device_offline"))
-    }
-
-    @Test func aRuntimeServedByAManagedInstanceIsNotNew() throws {
-        let items = try candidates([
-            ["connectorId": "c", "runtimeId": "codex", "runtimeType": "codex", "decision": "apply", "effect": "restart"],
-            ["connectorId": "c", "runtimeId": "pi", "runtimeType": "pi", "decision": "apply", "effect": "new_instance"],
-            ["connectorId": "c", "runtimeId": "claude", "runtimeType": "claude", "decision": "apply", "effect": "restart"],
-        ])
-        let assigned = [
-            QuickAssignedTarget(connectorId: "c", runtimeId: "codex", runtimeType: nil, createdRuntime: false),
-            QuickAssignedTarget(connectorId: "c", runtimeId: "pi-managed", runtimeType: "pi", createdRuntime: true),
-        ]
-        #expect(QuickSetupPresentation.newCandidates(items, assigned: assigned).map(\.runtimeId) == ["claude"])
-        #expect(QuickSetupPresentation.candidateNote(items[1]) == String(localized: "Gets a separate managed instance; the original stays as it is"))
-    }
-
-    @Test func notesAndReasonsReadFromFields() throws {
-        let busy = try candidates([["connectorId": "c", "runtimeId": "r", "decision": "apply", "effect": "restart", "runningSessions": 2]])[0]
-        #expect(QuickSetupPresentation.candidateNote(busy) == String(localized: "Tasks are running; applies when idle"))
-        #expect(QuickSetupPresentation.assignmentNote(status: "deferred", createdRuntime: false) == String(localized: "Tasks are running; applies when idle"))
-        #expect(QuickSetupPresentation.assignmentNote(status: "applied", createdRuntime: true)
-            == String(localized: "Applied") + String(localized: "pages.settings.modelConfigs.quick.viaManagedInstance"))
-        #expect(ModelConfigPresentation.assignmentStatusLabel("deferred") == String(localized: "Applies when idle"))
-        #expect(QuickSetupPresentation.reasonText("key_not_kept") == ModelConfigErrorText.text(code: "key_not_kept"))
-        #expect(QuickSetupPresentation.reasonText("mystery") == ModelConfigPresentation.skipReason(nil))
-        #expect(ModelConfigErrorText.text(code: "quick_setup_running") == String(localized: "A setup is already running."))
-        #expect(QuickSetupPresentation.failureText(try progress("failed", step: "sync")) == String(localized: "That did not finish. Try again later."))
-    }
-
-    @Test func snapshotCarriesTheLastSetupAndToleratesOddShapes() throws {
-        let snapshot: V2DashboardSnapshot = try fixture("dashboard")
-        let quick = try #require(snapshot.modelConfig?.tokens?.quickSetup)
-        #expect(quick.state == "done" && quick.request.confirmNativeGlobal && quick.request.targets.count == 2)
-        #expect(quick.results.map(\.result) == ["deferred", "skipped"])
-        #expect(quick.results[0].modelsTrimmed == 3 && quick.results.filter(\.isProblem).map(\.reason) == ["device_offline"])
-        let odd: V2TokensLinkStatus = try decode(["available": true, "quickSetup": ["state": "syncing", "request": "?", "results": [["runtimeId": 1], ["connectorId": "c", "runtimeId": "r"]]]])
-        #expect(odd.quickSetup?.request.targets == [] && odd.quickSetup?.results.count == 1)
-        let broken: V2TokensLinkStatus = try decode(["available": true, "quickSetup": ["results": []]])
-        #expect(broken.quickSetup == nil && broken.available)
-    }
-
-    @Test func modelStartsWithTheTickedRuntimesAndWaitsForTheBrowser() async throws {
-        let transport = TestHTTPTransport()
-        transport.respond = { call in
-            call.method == .get ? try fixtureData("quickSetupCandidates") : try fixtureData("quickSetupStart")
-        }
+    private func repository(_ transport: TestHTTPTransport) throws -> V2DashboardRepository {
         let repository = V2DashboardRepository(service: .init(connectorAPI: V2ConnectorAPI(transport: transport),
             projectAPI: .init(transport: transport), sessionAPI: V2SessionAPI(transport: transport), realtimeAPI: TestRealtimeAPI()))
         repository.apply(try fixture("dashboard"))
-        let model = ModelConfigModel(api: .init(transport: transport), dashboard: repository)
-        // The fixture account is linked and its Tokens profile has no assignment, but the last setup is done.
-        #expect(model.quickPhase == .done)
-        await model.loadQuickCandidates()
-        #expect(model.quickCandidates?.count == 3)
-        #expect(model.effectiveQuickSelection == ["device/rti_gateway"])
-        #expect(model.freshQuickCandidates.map(\.runtimeId) == ["rti_gateway", "rti_global"])
-        #expect(model.showsQuickChoices && model.initialAccountTab == .devices)
-        model.chooseNewQuickCandidates()
-        // Choosing new runtimes happens on the account page's Devices tab.
-        #expect(model.quickPhase == .done && model.quickChoosing && model.effectiveQuickSelection == ["device/rti_gateway"])
-        model.toggleQuick(model.quickCandidates![2], true)
-        #expect(!model.effectiveQuickSelection.contains("device/rti_work"), "A skipped runtime cannot be ticked")
-        model.toggleQuick(model.quickCandidates![1], true)
-        let url = await model.startQuickSetup()
-        #expect(url?.absoluteString == "https://example.test/api/v2/integrations/tokens/start?ticket=quick")
-        #expect(model.quickAuthorizing && !model.quickChoosing)
-        let body = try #require(transport.calls.last?.body)
-        #expect(transport.calls.last?.path == "/integrations/tokens/quick-setup" && transport.calls.last?.method == .post)
-        #expect(body["confirmNativeGlobal"] == .bool(true) && body["targets"]?.configArray?.count == 2)
-        model.finishAuthorizing()
-        #expect(!model.quickAuthorizing)
+        return repository
+    }
 
-        transport.respond = { _ in throw HTTPError.server(statusCode: 409, message: "running", detail: .object(["code": .string("quick_setup_running")])) }
-        #expect(await model.startQuickSetup(retrying: .init(targets: [.init(connectorId: "device", runtimeId: "rti_gateway")], confirmNativeGlobal: false)) == nil)
-        #expect(model.feedback == .error(String(localized: "A setup is already running.")))
+    private func push(_ repository: V2DashboardRepository, channel: [String: Any]) throws {
+        var object = try fixtureObject("dashboard")
+        var config = object["modelConfig"] as! [String: Any]
+        config["channel"] = channel
+        object["modelConfig"] = config
+        repository.apply(try decode(object, as: V2DashboardSnapshot.self))
+    }
+
+    private func channelData(_ channel: String, revision: Int, state: String = "running") throws -> Data {
+        var object = try fixtureObject("modelChannel")
+        object["channel"] = channel; object["revision"] = revision
+        object["switch"] = ["revision": revision, "state": state]
+        return try JSONSerialization.data(withJSONObject: object)
+    }
+
+    @Test func channelStateKeepsUnknownValuesAndDropsBrokenRuntimes() throws {
+        let state: V2ModelChannelState = try decode([
+            "channel": "mpr_new", "revision": 9, "switch": ["revision": 9, "state": "paused", "startedAt": 7],
+            "runtimes": [
+                ["connectorId": "c", "runtimeId": "a", "desired": "tokens", "actual": "native", "state": "hibernating", "step": "warming", "runningSessions": "two"],
+                ["runtimeId": "orphan"],
+                ["connectorId": "c", "runtimeId": "b"],
+            ],
+        ])
+        #expect(state.channel == "mpr_new" && state.revision == 9)
+        #expect(state.progress?.state == "paused" && state.progress?.startedAt == nil)
+        #expect(state.runtimes.map(\.runtimeId) == ["a", "b"])
+        #expect(state.runtimes[0].state == "hibernating" && state.runtimes[0].runningSessions == 0)
+        #expect(ChannelPresentation.stateLabel(state.runtimes[0]) == "hibernating")
+        #expect(ChannelPresentation.stateLabel(entry("x", "switching")) == String(localized: "Switching"))
+        #expect(ChannelPresentation.tone("hibernating") == .neutral)
+        // A runtime the Server reports with nothing else stays where it is.
+        #expect(state.runtimes[1].actual == "native" && state.runtimes[1].desired == "native" && state.runtimes[1].state == "unsupported")
+        #expect(state.uses("tokens") && !state.uses("mpr_old"))
+
+        let never: V2ModelChannelState = try decode(["channel": "native", "revision": 0, "switch": NSNull(), "runtimes": "?"])
+        #expect(never.progress == nil && never.runtimes.isEmpty)
+        #expect(ChannelPresentation.summary(never).phase == .idle)
+        var object = try fixtureObject("dashboard")
+        var config = object["modelConfig"] as! [String: Any]
+        config["channel"] = "tokens"
+        object["modelConfig"] = config
+        let odd: V2DashboardSnapshot = try decode(object)
+        #expect(odd.modelConfig?.channel == nil && odd.modelConfig?.profiles.count == 2)
+    }
+
+    @Test func summaryCountsOnlyRuntimesThatTakePart() {
+        let state = V2ModelChannelState(channel: "tokens", revision: 4, progress: .init(revision: 4, state: "running"), runtimes: [
+            entry("a", "applied", actual: "tokens"), entry("b", "waiting_idle"), entry("c", "waiting_online"),
+            entry("d", "switching"), entry("e", "restored", reason: "verify_failed"), entry("f", "unsupported", reason: "model_connection_unsupported"),
+        ])
+        let summary = ChannelPresentation.summary(state)
+        #expect(summary == ChannelSummary(phase: .running, total: 5, finished: 2, applied: 1, waitingIdle: 1, waitingOnline: 1, restored: 1, failed: 0))
+        let attention = V2ModelChannelState(channel: "tokens", revision: 4, progress: .init(revision: 4, state: "attention"),
+            runtimes: [entry("a", "failed", reason: "rollback_failed"), entry("b", "restored")])
+        #expect(ChannelPresentation.summary(attention).phase == .attention && ChannelPresentation.summary(attention).failed == 1)
+        #expect(ChannelPresentation.summary(.init(channel: "native", revision: 1, progress: .init(revision: 1, state: "done"))).phase == .done)
+    }
+
+    @Test func runtimesGroupByDeviceAndCapability() throws {
+        let runtimes: [V2DeviceRuntime] = try fixture("dashboard", as: V2DashboardSnapshot.self).runtimes ?? []
+        let connectors: [V2Connector] = try fixture("dashboard", as: V2DashboardSnapshot.self).connectors
+        let state = V2ModelChannelState(channel: "tokens", revision: 1, runtimes: [
+            entry("rti_work", "unsupported", reason: "model_connection_unsupported"),
+            entry("rti_gateway", "waiting_idle"),
+            entry("dsh", "unsupported", connector: "elsewhere", reason: "confirmation_required"),
+            entry("gone", "unsupported", connector: "elsewhere", reason: "not_installed"),
+        ])
+        let groups = ChannelPresentation.groups(state, runtimes: runtimes, connectors: connectors)
+        #expect(groups.devices.map(\.name) == ["Mac", "elsewhere"])
+        #expect(groups.devices[0].rows.map(\.runtimeName) == ["Gateway"])
+        #expect(groups.devices[0].rows[0].maturity == "beta" && groups.devices[0].rows[0].canSwitchNow)
+        // A runtime that writes its own global settings waits for a confirmed choice.
+        let global = groups.devices[1].rows[0]
+        #expect(global.changesGlobalSettings && !global.isUnsupported)
+        #expect(global.needsGlobalConfirmation(for: "tokens") && !global.needsGlobalConfirmation(for: nil)
+            && !global.needsGlobalConfirmation(for: V2ModelChannel.native))
+        #expect(groups.unsupported.map(\.runtimeName) == ["Work", "gone"])
+        #expect(ChannelPresentation.reasonText(state.runtimes[0]) == String(localized: "Takes no model connection"))
+        let unknown = V2ChannelRuntime(connectorId: "c", runtimeId: "r", desired: "tokens", actual: "native", state: "failed",
+            reason: "mystery", message: "custom")
+        #expect(ChannelPresentation.reasonText(unknown) == "custom")
+        #expect(ChannelPresentation.reasonText(entry("x", "applied")) == nil)
+    }
+
+    @Test func optionsOfferTheLinkedAccountAndActiveManualProfiles() throws {
+        let overview = try #require(try fixture("dashboard", as: V2DashboardSnapshot.self).modelConfig)
+        let options = ChannelPresentation.options(overview: overview, current: "mpr_test")
+        #expect(options.map(\.id) == ["native", "tokens", "mpr_test"])
+        #expect(options.map(\.kind) == [.native, .tokens, .profile])
+        #expect(options[2].label == "Gateway")
+        // A current channel that went away still shows, so the picker has a value.
+        #expect(ChannelPresentation.options(overview: overview, current: "mpr_gone").last?.id == "mpr_gone")
+        var object = try fixtureObject("dashboard")
+        var config = object["modelConfig"] as! [String: Any]
+        config["tokens"] = ["available": true, "link": NSNull()]
+        object["modelConfig"] = config
+        let unlinked = try #require(try decode(object, as: V2DashboardSnapshot.self).modelConfig)
+        #expect(ChannelPresentation.options(overview: unlinked, current: "native").map(\.id) == ["native", "mpr_test"])
+        #expect(ChannelPresentation.label("native", profiles: []) == String(localized: "Device's own configuration"))
+    }
+
+    @Test func writesShowTheirAnswerUntilANewerPush() async throws {
+        let transport = TestHTTPTransport()
+        let repository = try repository(transport)
+        let model = ModelConfigModel(api: .init(transport: transport), dashboard: repository)
+        #expect(model.channel?.channel == "mpr_test")
+        transport.respond = { _ in try self.channelData("tokens", revision: 4) }
+        await model.setChannel("tokens")
+        #expect(transport.calls.last?.method == .put && transport.calls.last?.path == "/model-config/channel")
+        #expect(transport.calls.last?.body == .object(["channel": .string("tokens")]))
+        #expect(model.channel?.channel == "tokens" && model.channelSummary?.phase == .running)
+        #expect(model.channelBusyKey == nil)
+        // Choosing the current channel again sends nothing.
+        await model.setChannel("tokens")
+        #expect(transport.calls.count == 1)
+
+        // The next push replaces the answer.
+        var pushed = try fixtureObject("modelChannel"); pushed["channel"] = "native"; pushed["revision"] = 5
+        try push(repository, channel: pushed)
+        #expect(model.channel?.channel == "native")
+        // An answer older than the push is not shown.
+        transport.respond = { _ in try self.channelData("tokens", revision: 4) }
+        await model.retryChannel()
+        #expect(transport.calls.last?.path == "/model-config/channel/retry" && transport.calls.last?.body == .object([:]))
+        #expect(model.channel?.channel == "native")
+
+        transport.respond = { _ in throw HTTPError.server(statusCode: 409, message: "not linked", detail: .object(["code": .string("tokens_not_linked")])) }
+        await model.setChannel("tokens")
+        #expect(model.feedback == .error(String(localized: "Link Tokens Anywhere first.")))
+        #expect(model.channel?.channel == "native")
+    }
+
+    @Test func runtimeActionsTargetOneRuntime() async throws {
+        let transport = TestHTTPTransport()
+        let model = ModelConfigModel(api: .init(transport: transport), dashboard: try repository(transport))
+        transport.respond = { _ in try self.channelData("mpr_test", revision: 6) }
+        let rows = model.channelGroups.devices.flatMap(\.rows)
+        let gateway = try #require(rows.first { $0.entry.runtimeId == "rti_gateway" })
+        let restored = try #require(rows.first { $0.entry.runtimeId == "rti_global" })
+        #expect(restored.canRetry && !restored.canSwitchNow && restored.entry.override == "tokens")
+
+        await model.setRuntimeChannel(gateway, channel: nil)
+        #expect(transport.calls.last?.method == .put && transport.calls.last?.path == "/model-config/channel/runtimes/device/rti_gateway")
+        #expect(transport.calls.last?.body == .object(["channel": .null]))
+        // Confirmation is sent only for a runtime that changes its own global settings.
+        await model.setRuntimeChannel(gateway, channel: "tokens", confirmNativeGlobal: true)
+        #expect(transport.calls.last?.body == .object(["channel": .string("tokens")]))
+        await model.switchNow(gateway)
+        #expect(transport.calls.last?.method == .post && transport.calls.last?.path == "/model-config/channel/runtimes/device/rti_gateway/switch-now")
+        #expect(transport.calls.last?.body == nil)
+        await model.retryChannel(restored)
+        #expect(transport.calls.last?.body == .object(["connectorId": .string("device"), "runtimeId": .string("rti_global")]))
+        #expect(model.channel?.revision == 6)
+
+        let global = ChannelRuntimeRow(entry: restored.entry, runtimeName: "DSH", deviceName: "Mac", maturity: nil,
+            changesGlobalSettings: true, isUnsupported: false)
+        await model.setRuntimeChannel(global, channel: "tokens", confirmNativeGlobal: true)
+        #expect(transport.calls.last?.body == .object(["channel": .string("tokens"), "confirmNativeGlobal": .bool(true)]))
+    }
+
+    @Test func rotationAsksBeforeInterrupting() async throws {
+        let transport = TestHTTPTransport()
+        let model = ModelConfigModel(api: .init(transport: transport), dashboard: try repository(transport))
+        let tokens = try #require(model.overview?.activeTokensProfile)
+        transport.respond = { _ in throw HTTPError.server(statusCode: 409, message: "busy", detail: .object(["code": .string("busy")])) }
+        await model.rotateKey(tokens)
+        #expect(model.pendingInterrupt == .rotate(tokens) && model.feedback == nil)
+        transport.respond = { _ in try self.channelData("mpr_test", revision: 8) }
+        await model.resumeInterrupted()
+        #expect(transport.calls.map(\.body) == [.object(["allowInterrupt": .bool(false)]), .object(["allowInterrupt": .bool(true)])])
+        #expect(model.feedback == .success(String(localized: "Key rotated. Runtimes using Anywhere get the new key.")))
+        #expect(model.channel?.revision == 8, "The rewrite's progress shows at once")
+        // The profile in the current channel, or one a runtime uses, cannot be deleted.
+        #expect(model.isInUse(try #require(model.overview?.profile(id: "mpr_test"))))
+        #expect(model.isInUse(tokens))
     }
 }

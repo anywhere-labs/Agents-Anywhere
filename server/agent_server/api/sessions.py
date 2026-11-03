@@ -80,6 +80,7 @@ from agent_server.deps import (
     get_catalog_service,
     get_device_runtime_service,
     get_event_recovery_service,
+    get_model_channel_service,
     get_rpc,
     get_session_run_service,
     get_session_runtime_state_cache,
@@ -112,6 +113,7 @@ from agent_server.services.effective_capabilities import (
     read_session_capability_facts,
 )
 from agent_server.services.event_recovery import EventRecoveryService
+from agent_server.services.model_channels import ModelChannelService
 from agent_server.services.session_meta_projection import (
     project_session_meta_for_dashboard,
 )
@@ -732,6 +734,7 @@ async def session_runtime_model_catalog(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
+    channels: ModelChannelService = Depends(get_model_channel_service),
 ) -> ProtocolModelCatalogResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
@@ -751,7 +754,7 @@ async def session_runtime_model_catalog(
         limit=200,
     )
     return ProtocolModelCatalogResponse(
-        catalog=parse_runtime_model_catalog_response(result),
+        catalog=await channels.channel_catalog(session.connectorId, _session_runtime_id(session), parse_runtime_model_catalog_response(result), user_id=user_id),
         serverTime=utc_now(),
     )
 
@@ -1311,6 +1314,7 @@ async def execute_session_command(
         raise HTTPException(status_code=404, detail="session not found") from None
     if payload.command == "plan":
         from uuid import uuid4
+
         from agent_server.core.capabilities import SESSION_PLANNING
         from agent_server.core.planning.commands import parse_plan_command
         from agent_server.core.planning.models import PlanningRequest
