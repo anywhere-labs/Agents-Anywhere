@@ -175,6 +175,13 @@ class NativeZcodeRuntime(AcpRuntime):
                     # 让 start_turn/state 走普通 ACP 路径，而不是原生浏览路径。
                     self.app.store.delete("zcode_native_source", session_id)
                     self.app.store.delete("zcode_native_failure", session_id)
+                    self.app.store.delete("sync_rejected_sessions", session_id)
+                    continue
+                # 服务端以不可变身份拒绝过的会话（历史实例遗留的身份冲突）
+                # 会被每轮扫描重发并被再次拒绝；跳过并清源，阻断毒条再生。
+                # 墓碑在上方绑定分支清除，接管后即可恢复发布。
+                if self.app.store.get("sync_rejected_sessions", session_id):
+                    self.app.store.delete("zcode_native_source", session_id)
                     continue
                 previous = self._source(session_id)
                 existing_failure = self.app.store.get(

@@ -67,6 +67,14 @@ class SynchronizationService:
                     )
                     with self.store.transaction():
                         self.store.acknowledge([key])
+                        # 身份冲突类永久拒绝会随每轮原生扫描整批重发：不记
+                        # 墓碑则「剔除→扫描重发→再剔除」无限循环，快照上传
+                        # 在锁内排队放大成全局上行停摆（2026-11-04 死锁）。
+                        # 墓碑在会话被绑定（接管/恢复）时清除。
+                        if session_id:
+                            self.store.put("sync_rejected_sessions", session_id, {
+                                "method": method,
+                            })
                     continue
                 mid = len(chunk) // 2
                 stack.append(chunk[mid:])
