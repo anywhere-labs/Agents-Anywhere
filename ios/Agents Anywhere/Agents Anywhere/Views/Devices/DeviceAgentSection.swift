@@ -169,6 +169,9 @@ struct AgentRediscoveryButton: View {
 }
 
 struct AgentSetupSheet: View {
+    @Environment(AppState.self) private var appState
+    @State private var checkingSkip = false
+    @State private var showsSkipReminder = false
     let connector: V2Connector
     let model: DeviceAgentModel
     let onFinish: () -> Void
@@ -187,9 +190,26 @@ struct AgentSetupSheet: View {
             }
             .navigationTitle(connector.name).navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                SheetCloseToolbar(disabled: model.busyID != nil, action: onFinish)
+                SheetCloseToolbar(disabled: model.busyID != nil || model.isLoading || checkingSkip) {
+                    guard let services = appState.nativeChatServices else { return }
+                    checkingSkip = true
+                    Task {
+                        defer { checkingSkip = false }
+                        do {
+                            let configured = try await services.deviceManagement.hasConfiguredAgents(connectors: appState.connectors)
+                            guard !Task.isCancelled else { return }
+                            if configured { onFinish() } else { showsSkipReminder = true }
+                        } catch is CancellationError {
+                            // The sheet or account was closed while checking.
+                        } catch { onFinish() }
+                    }
+                }
             }
         }
-        .appSheetPresentation(.compact).interactiveDismissDisabled(model.busyID != nil)
+        .appSheetPresentation(.compact).interactiveDismissDisabled(true)
+        .alert(String(localized: "agentReminder.title"), isPresented: $showsSkipReminder) {
+            Button(String(localized: "agentReminder.add"), role: .cancel) {}
+            Button(String(localized: "agentReminder.skip")) { onFinish() }
+        } message: { Text(String(localized: "agentReminder.description")) }
     }
 }

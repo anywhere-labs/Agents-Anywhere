@@ -12,6 +12,7 @@ struct SessionAgentIcon: View {
         let type = String((source?.isEmpty == false ? source! : runtime).lowercased()
             .filter { !$0.isWhitespace && $0 != "_" && $0 != "-" })
         switch type {
+        case "pi": return ("aa-AgentPi", "Pi")
         case "codex": return ("aa-AgentCodex", "Codex")
         case "claude", "claudecode": return ("aa-AgentClaudeCode", "Claude Code")
         case "dsh", "deepseek", "deepseekharness": return ("aa-AgentDeepSeek", "DeepSeek Harness")

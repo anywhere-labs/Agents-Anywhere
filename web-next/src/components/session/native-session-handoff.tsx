@@ -1,5 +1,6 @@
 "use client"
 
+import { runtimeFailureOf, useRuntimeErrorText, type RuntimeFailure } from "@/lib/runtime-error-text"
 import * as React from "react"
 import { useTranslations } from "next-intl"
 import { Loader2 } from "lucide-react"
@@ -19,6 +20,7 @@ export function NativeSessionHandoff({ token, session, state, capabilities, onSe
   capabilities: ProtocolCapabilitySet | null; onSettled: () => Promise<void>;
 }) {
   const t = useTranslations("dashboard.session.nativeHistory")
+  const errorText = useRuntimeErrorText()
   const recovery = findCapability(capabilities, "session.recover")
   const close = findCapability(capabilities, "session.close")
   const rawMetadata = recovery?.metadata ?? state?.metadata
@@ -28,7 +30,7 @@ export function NativeSessionHandoff({ token, session, state, capabilities, onSe
   const [confirmed, setConfirmed] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
   const [releasing, setReleasing] = React.useState(false)
-  const [error, setError] = React.useState<string | null>(null)
+  const [error, setError] = React.useState<RuntimeFailure | null>(null)
   const pending = React.useRef<RecoveryRequest | null>(null)
   const mounted = React.useRef(true)
   React.useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
@@ -51,15 +53,15 @@ export function NativeSessionHandoff({ token, session, state, capabilities, onSe
         if (result.phase === "completed") { pending.current = null; await onSettled(); return }
         if (result.phase === "rejected" || result.phase === "failed") {
           pending.current = null
-          throw new Error(result.failure?.message ?? t("failed"))
+          throw result.failure ?? { message: t("failed") }
         }
-        if (result.phase !== "running") throw new Error(t("unknown"))
+        if (result.phase !== "running") throw { code: "native_history_recovery_unconfirmed" }
         await new Promise(resolve => setTimeout(resolve, 1000))
       }
-      if (mounted.current) throw new Error(t("unknown"))
+      if (mounted.current) throw { code: "native_history_recovery_unconfirmed" }
     } catch (cause) {
       if (isApiError(cause) && cause.status >= 400 && cause.status < 500) pending.current = null
-      if (mounted.current) { setError(cause instanceof Error ? cause.message : t("failed")); await onSettled() }
+      if (mounted.current) { setError(runtimeFailureOf(cause)); await onSettled() }
     } finally { if (mounted.current) setBusy(false) }
   }
 
@@ -67,9 +69,9 @@ export function NativeSessionHandoff({ token, session, state, capabilities, onSe
     setBusy(true); setReleasing(true); setError(null)
     try {
       const result = await workflowApi.close(token, session.id, { ownerGeneration: generation, closeOperationId: crypto.randomUUID() })
-      if (!result.closed) throw new Error(t("releaseFailed"))
+      if (!result.closed) throw { code: "native_history_release_unconfirmed" }
       await onSettled()
-    } catch (cause) { if (mounted.current) setError(cause instanceof Error ? cause.message : t("releaseFailed")) }
+    } catch (cause) { if (mounted.current) setError(runtimeFailureOf(cause)) }
     finally { if (mounted.current) { setBusy(false); setReleasing(false) } }
   }
 
@@ -80,8 +82,9 @@ export function NativeSessionHandoff({ token, session, state, capabilities, onSe
     <Alert>
       <AlertTitle>{busy ? t(releasing ? "releasing" : "preparing") : canClose ? t("active") : t("title")}</AlertTitle>
       <AlertDescription>
-        <p role="status">{error ?? (typeof state?.error?.message === "string" ? state.error.message : (canClose ? t("activeHint") : t("browseHint")))}</p>
-        {!canRecover && !canClose && typeof metadata.reasonMessage === "string" ? <p>{metadata.reasonMessage}</p> : null}
+        <p role="status">{errorText(error ?? (state?.error ? runtimeFailureOf(state.error) : null), canClose ? t("activeHint") : t("browseHint"))}</p>
+        {!canRecover && !canClose && (typeof metadata.reasonCode === "string" || typeof metadata.reasonMessage === "string")
+          ? <p>{errorText(runtimeFailureOf({ code: metadata.reasonCode, message: metadata.reasonMessage }))}</p> : null}
         <div className="flex flex-wrap gap-2 pt-2">
           {canClose ? <Button size="sm" variant="outline" disabled={busy} onClick={() => void release()}>{t("release")}</Button>
             : <Button size="sm" disabled={busy || (!canRecover && !pending.current) || session.connectorStatus !== "online"}

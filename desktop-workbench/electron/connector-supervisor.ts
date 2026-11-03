@@ -334,6 +334,7 @@ export class ConnectorSupervisor {
       if (fs.existsSync(path.join(context.environment, "pyvenv.cfg"))) {
         fs.rmSync(context.environment, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
       }
+      fs.rmSync(path.join(this.options.dataPath, "pi-npm-runtimes"), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
       if (this.options.packaged) {
         for (const name of ["uv-cache", "connector-source"]) fs.rmSync(path.join(this.options.dataPath, name), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
         this.projectDir = null;
@@ -943,6 +944,7 @@ export class ConnectorSupervisor {
       ...process.env,
       ...this.shellEnvironment,
       AA_CONNECTOR_OWNER_KIND: "desktop-workbench",
+      AA_PI_NPM_ROOT: path.join(this.options.dataPath, "pi-npm-runtimes"),
       PATH: [...new Set(entries)].join(path.delimiter),
       PYTHONUNBUFFERED: "1",
       PYTHONDONTWRITEBYTECODE: "1",

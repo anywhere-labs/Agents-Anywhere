@@ -32,11 +32,13 @@ from ...domain.definitions import AcpError, LaunchDefinition
 from ...infrastructure.npm import install_npm_runtime
 from .adapter import prepare_adapter
 from .client import PiClient
+from .environment import DEPENDENCIES, npm_root
 from .installation import (
     PiInstallation,
     agent_directory,
     history_directories,
     installation_identity,
+    probe_sdk,
     resolve_local,
 )
 from .native_runtime import NativePiRuntime
@@ -44,13 +46,18 @@ from .profile import PI_PROFILE
 from .runtime import ManagedPiRuntime
 from .settings import prepare_settings, private_json
 
-# Pin the compatible dependency set for the managed OpenMA executable.
-DEPENDENCIES = {
-    "@openma/pi-acp": "0.1.8",
-    "@earendil-works/pi-coding-agent": "1.4.0",
-    "@earendil-works/pi-ai": "1.4.0",
-    "@earendil-works/pi-agent-core": "1.4.0",
-}
+
+def source_changed(previous: dict | None, current: dict) -> bool:
+    """Pi, Node and adapter upgrades are re-checked on every launch.
+
+    Only a different mode or native configuration directory makes this a
+    different source; an explicit managed configuration edit rotates its
+    private directory.
+    """
+    if not previous:
+        return False
+    fixed = ("mode",) if current["mode"] == "managed" else ("mode", "agentDir")
+    return any(previous.get(key) != current[key] for key in fixed)
 
 
 class PiProvider(RuntimeProvider):
@@ -199,9 +206,12 @@ class PiProvider(RuntimeProvider):
                 if managed
                 else await asyncio.to_thread(resolve_local, dict(config.values))
             )
+            if installation:
+                # Reject an unusable local SDK before downloading the adapter.
+                await asyncio.to_thread(probe_sdk, installation)
             node, entry = await asyncio.to_thread(
                 install_npm_runtime,
-                host.runtime_kv.path.parent / "npm-runtimes",
+                npm_root(host.runtime_kv.path.parent / "npm-runtimes"),
                 DEPENDENCIES,
                 "@openma/pi-acp/dist/bin.js",
             )
@@ -210,11 +220,17 @@ class PiProvider(RuntimeProvider):
                     prepare_settings, settings_root, dict(config.values)
                 )
                 sdk = entry.parents[3] / "@earendil-works/pi-coding-agent"
-                installation = PiInstallation(entry, node, sdk, "1.4.0")
+                installation = PiInstallation(
+                    entry, node, sdk, DEPENDENCIES["@earendil-works/pi-coding-agent"]
+                )
+                await asyncio.to_thread(probe_sdk, installation)
             provenance = await asyncio.to_thread(installation_identity, installation)
+            adapter_version = json.loads(
+                (entry.parent.parent / "package.json").read_text(encoding="utf-8")
+            )["version"]
             adapter_dependencies = await asyncio.to_thread(
                 installation_identity,
-                PiInstallation(entry, node, entry.parent.parent, "0.1.8"),
+                PiInstallation(entry, node, entry.parent.parent, adapter_version),
             )
             patched, adapter = await asyncio.to_thread(
                 prepare_adapter,
@@ -236,21 +252,10 @@ class PiProvider(RuntimeProvider):
             old_identity = (
                 json.loads(previous.read_text(encoding="utf-8")) if previous.exists() else None
             )
-            expected_identity = identity
-            if managed and old_identity and old_identity.get("mode") == "managed":
-                # An explicit gateway/configuration edit rotates the private configuration directory.
-                old_identity = {
-                    key: value
-                    for key, value in old_identity.items()
-                    if key != "agentDir"
-                }
-                expected_identity = {
-                    key: value for key, value in identity.items() if key != "agentDir"
-                }
-            if old_identity and old_identity != expected_identity:
+            if source_changed(old_identity, identity):
                 raise AcpError(
                     "pi_execution_source_changed",
-                    "此 Pi 来源的 SDK、依赖或适配器已变化；请保留旧来源，或新建 Pi 实例使用新环境。",
+                    "此 Pi 实例的运行模式或配置目录已变化；请恢复原配置，或新建 Pi 实例。",
                 )
             private_json(previous, identity)
             env = [
@@ -284,7 +289,7 @@ class PiProvider(RuntimeProvider):
             return LaunchDefinition(
                 str(installation.node),
                 tuple(args),
-                "openma-pi-acp-0.1.8",
+                "openma-pi-acp-" + adapter["version"],
                 environment=tuple(env),
             )
 
@@ -293,7 +298,7 @@ class PiProvider(RuntimeProvider):
             config,
             host,
             self.profile,
-            LaunchDefinition(str(root / ".pending-node"), (), "openma-pi-acp-0.1.8"),
+            LaunchDefinition(str(root / ".pending-node"), (), "openma-pi-acp"),
             prepare_launch=prepare_launch,
             client_factory=partial(
                 PiClient, agent_dir=agent_dir, permission_file=permission_file

@@ -1,6 +1,7 @@
 package com.agentsanywhere.app.feature.sessions
 
 import com.agentsanywhere.app.api.ApiException
+import com.agentsanywhere.app.feature.sessiondetail.PlanningFailure
 import com.agentsanywhere.app.api.DevicesApi
 import com.agentsanywhere.app.api.FilesApi
 import com.agentsanywhere.app.api.RemoteInlineAttachmentRef
@@ -147,9 +148,11 @@ class SessionsController(
         devices: List<AgentDevice>,
         projects: List<AgentProject> = emptyList(),
     ): NewSessionCreateOutcome {
-        validateNewSessionDraft(draft)?.let { error ->
-            return NewSessionCreateOutcome.Failed(IllegalArgumentException(error))
-        }
+        val planning = com.agentsanywhere.app.feature.sessiondetail.PlanningCommand.parse(draft.content)
+        if (planning?.command == "exit_plan" || planning?.command == "enter_plan") return NewSessionCreateOutcome.Failed(PlanningFailure(PlanningFailure.Reason.TaskRequired))
+        // Prepared-workspace creation does not carry a planning intent yet; refuse instead of silently dropping it.
+        if (planning != null && draft.preparedWorkspace != null) return NewSessionCreateOutcome.Failed(PlanningFailure(PlanningFailure.Reason.WorkspaceRequired))
+        validateNewSessionDraft(draft)?.let { error -> return NewSessionCreateOutcome.Failed(error) }
         val serverUrl = sessionStore.readServerUrl()
         val accessToken = sessionStore.readAccessToken()
         if (serverUrl.isBlank() || accessToken.isBlank()) {
@@ -200,7 +203,8 @@ class SessionsController(
                         runtime = draft.runtimeType,
                         title = draft.title?.trim()?.takeIf(String::isNotBlank),
                         cwd = resolved.cwd,
-                        content = draft.content.trim(),
+                        content = planning?.content ?: if (planning != null) "" else draft.content.trim(),
+                        planningIntent = planning != null,
                         selections = draft.selections.toMap(),
                         attachments = draft.attachments.map(NewSessionAttachmentPart::toInlineAttachmentRef),
                         clientMessageId = draft.clientMessageId,
@@ -789,26 +793,35 @@ class SessionsController(
     )
 }
 
-internal fun validateNewSessionDraft(draft: NewSessionCreateDraft): String? {
-    if (draft.connectorId.isBlank()) return "Choose a connector before starting."
-    if (draft.cwd.isNullOrBlank()) return "Choose a workspace before starting."
+/** A draft that cannot be submitted; the UI shows the localized [reason]. The message is for logs. */
+class NewSessionDraftInvalid(val reason: Reason, val argument: Any? = null, message: String) : IllegalArgumentException(message) {
+    enum class Reason {
+        ConnectorRequired, WorkspaceRequired, RuntimeTypeInvalid, RuntimeInstanceInvalid, ContentRequired,
+        ClientMessageMissing, ImageInputUnsupported, AttachmentLimit, AttachmentNameMissing, AttachmentEmpty, AttachmentTooLarge,
+    }
+}
+
+internal fun validateNewSessionDraft(draft: NewSessionCreateDraft): NewSessionDraftInvalid? {
+    fun invalid(reason: NewSessionDraftInvalid.Reason, message: String, argument: Any? = null) = NewSessionDraftInvalid(reason, argument, message)
+    if (draft.connectorId.isBlank()) return invalid(NewSessionDraftInvalid.Reason.ConnectorRequired, "Choose a connector before starting.")
+    if (draft.cwd.isNullOrBlank()) return invalid(NewSessionDraftInvalid.Reason.WorkspaceRequired, "Choose a workspace before starting.")
     if (!draft.runtimeType.isValidRuntimeType() || draft.runtime != draft.runtimeType) {
-        return "Choose a valid runtime type before starting."
+        return invalid(NewSessionDraftInvalid.Reason.RuntimeTypeInvalid, "Choose a valid runtime type before starting.")
     }
     if (!draft.runtimeId.isValidRuntimeInstanceId(draft.runtimeType)) {
-        return "Choose a valid runtime instance before starting."
+        return invalid(NewSessionDraftInvalid.Reason.RuntimeInstanceInvalid, "Choose a valid runtime instance before starting.")
     }
-    if (draft.content.isBlank() && draft.attachments.isEmpty()) return "Enter a message or attach a file before starting."
-    if (draft.clientMessageId.isBlank()) return "The client message ID is missing."
+    if (draft.content.isBlank() && draft.attachments.isEmpty()) return invalid(NewSessionDraftInvalid.Reason.ContentRequired, "Enter a message or attach a file before starting.")
+    if (draft.clientMessageId.isBlank()) return invalid(NewSessionDraftInvalid.Reason.ClientMessageMissing, "The client message ID is missing.")
     val inputs = draft.preparedWorkspace?.inputModalities(draft.selections.model)
     if (inputs != null && "image" !in inputs && draft.attachments.any { AgentForm.isModelImage(it.mediaType) }) {
-        return "The selected model does not declare image input support. Remove the image or choose another model."
+        return invalid(NewSessionDraftInvalid.Reason.ImageInputUnsupported, "The selected model does not declare image input support. Remove the image or choose another model.")
     }
-    if (draft.attachments.size > MAX_CREATE_ATTACHMENTS) return "You can attach up to $MAX_CREATE_ATTACHMENTS files."
-    draft.attachments.firstOrNull { it.name.isBlank() }?.let { return "An attachment name is missing." }
-    draft.attachments.firstOrNull { it.bytes.isEmpty() }?.let { return "Attachments cannot be empty." }
+    if (draft.attachments.size > MAX_CREATE_ATTACHMENTS) return invalid(NewSessionDraftInvalid.Reason.AttachmentLimit, "You can attach up to $MAX_CREATE_ATTACHMENTS files.", MAX_CREATE_ATTACHMENTS)
+    draft.attachments.firstOrNull { it.name.isBlank() }?.let { return invalid(NewSessionDraftInvalid.Reason.AttachmentNameMissing, "An attachment name is missing.") }
+    draft.attachments.firstOrNull { it.bytes.isEmpty() }?.let { return invalid(NewSessionDraftInvalid.Reason.AttachmentEmpty, "${it.name} is empty.", it.name) }
     draft.attachments.firstOrNull { it.bytes.size > MAX_CREATE_ATTACHMENT_BYTES }?.let {
-        return "Attachment ${it.name} is too large."
+        return invalid(NewSessionDraftInvalid.Reason.AttachmentTooLarge, "Attachment ${it.name} is too large.", it.name)
     }
     return null
 }

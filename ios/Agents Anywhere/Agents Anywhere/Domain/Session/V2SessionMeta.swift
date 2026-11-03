@@ -127,6 +127,7 @@ nonisolated struct V2SessionCreateAndStartRequest: Encodable, Hashable {
     var runtimeId: V2RuntimeID? = nil
     let title: String?
     let cwd: String?
+    var planningIntent: V2PlanningIntent? = nil
     let content: String
     let selections: [V2RuntimeSelectionScope: V2SelectionID]
     var runtimeOptions: [String: JSONValue] = [:]
@@ -140,6 +141,7 @@ nonisolated struct V2SessionCreateAndStartRequest: Encodable, Hashable {
         case runtimeId
         case title
         case cwd
+        case planningIntent
         case content
         case selections
         case runtimeOptions
@@ -155,6 +157,7 @@ nonisolated struct V2SessionCreateAndStartRequest: Encodable, Hashable {
         try container.encodeIfPresent(runtimeId, forKey: .runtimeId)
         try container.encodeIfPresent(title, forKey: .title)
         try container.encodeIfPresent(cwd, forKey: .cwd)
+        try container.encodeIfPresent(planningIntent, forKey: .planningIntent)
         try container.encode(content, forKey: .content)
         let rawSelections = selections.reduce(into: [String: V2SelectionID]()) { result, entry in
             result[entry.key.rawValue] = entry.value

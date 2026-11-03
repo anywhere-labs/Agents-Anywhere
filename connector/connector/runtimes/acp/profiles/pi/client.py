@@ -202,7 +202,15 @@ class PiClient(AgentClient):
         return result
 
     async def open_session(self, cwd, **metadata):
-        result = await super().open_session(cwd, **metadata)
+        try:
+            result = await super().open_session(cwd, **metadata)
+        except RequestError as error:
+            if error.code == -32000 or "pi_model_unavailable" in str(error.data):
+                raise AcpError(
+                    "pi_authentication_required",
+                    "Pi 没有可用的模型或认证：本机模式请先运行 pi 完成登录或模型配置，受管环境请检查模型网关。",
+                ) from error
+            raise
         self.verify_session(result)
         self.native_files[result["sessionId"]] = (
             result.get("_meta", {}).get("pi", {}).get("sessionFile")

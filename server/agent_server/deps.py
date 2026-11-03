@@ -62,6 +62,7 @@ def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService
         conn.app.state.device_runtime_service,
         conn.app.state.rpc,
         conn.app.state.session_runtime_state_cache,
+        conn.app.state.capability_refresh,
     )
 
 

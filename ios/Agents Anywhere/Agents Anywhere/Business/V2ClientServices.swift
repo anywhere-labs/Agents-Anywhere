@@ -56,7 +56,7 @@ final class V2ClientServices {
         sessionCreation = V2SessionCreationService(sessionAPI: api.sessions)
         attachments = V2AttachmentService(attachmentAPI: api.attachments)
         interactions = V2RuntimeInteractionService(runtimeAPI: api.runtime)
-        sessionRepository = V2SessionRepository(scope: scope, detail: sessionDetail, interactions: interactions, localStore: localStore)
+        sessionRepository = V2SessionRepository(scope: scope, detail: sessionDetail, interactions: interactions, planningAPI: api.planning, localStore: localStore)
         devicePairing = V2DevicePairingService(connectorAPI: api.connectors)
         agentSetup = AgentSetupCoordinator(service: devicePairing)
         deviceManagement = V2DeviceManagementService(connectorAPI: api.connectors)

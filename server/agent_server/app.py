@@ -25,7 +25,6 @@ from agent_server.api import (
     connector_files,
     connector_ingress,
     connector_runtimes,
-    runtime_workflows,
     connector_shell,
     connector_terminal,
     connectors,
@@ -34,7 +33,9 @@ from agent_server.api import (
     oauth,
     pairing,
     projects,
+    runtime_workflows,
     service,
+    session_planning,
     sessions,
     sessions_fs,
     sessions_terminal,
@@ -62,7 +63,7 @@ from agent_server.services.connector_rpc import ConnectorServiceError
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_runtimes import DeviceRuntimeService
 from agent_server.services.effective_capabilities import (
-    publish_connector_session_capabilities,
+    ConnectorCapabilityRefresh,
 )
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.setup_tokens import SetupTokenService
@@ -92,12 +93,7 @@ async def _connector_presence_watchdog(app: FastAPI) -> None:
                     connection.connector_id,
                     connection.connection_id,
                 )
-            await publish_connector_session_capabilities(
-                app.state.store,
-                app.state.rpc,
-                app.state.timeline_broker,
-                connection.connector_id,
-            )
+            app.state.capability_refresh.request(connection.connector_id)
             await publish_dashboard_changed(
                 app.state.store,
                 app.state.timeline_broker,
@@ -169,6 +165,7 @@ def create_app(
                 await app.state.usage_recorder.close()
             except Exception:  # noqa: BLE001 - shutdown must continue
                 logger.exception("failed to flush usage events on shutdown")
+            await app.state.capability_refresh.close()
             try:
                 await app.state.rpc.close()
             finally:
@@ -242,6 +239,9 @@ def create_app(
         event_threshold_bytes=int(os.getenv("AGENT_SERVER_EVENT_THRESHOLD_BYTES", str(256 * 1024))),
         event_queue_items=int(os.getenv("AGENT_SERVER_EVENT_QUEUE_ITEMS", "32")),
         event_queue_bytes=int(os.getenv("AGENT_SERVER_EVENT_QUEUE_BYTES", str(32 * 1024 * 1024))),
+    )
+    app.state.capability_refresh = ConnectorCapabilityRefresh(
+        app.state.store, app.state.rpc, app.state.timeline_broker,
     )
     app.state.timeline_write_buffer = TimelineWriteBuffer(
         app.state.store,
@@ -380,6 +380,7 @@ def create_app(
     app.include_router(pairing.router, prefix=API_V2_PREFIX)
     app.include_router(projects.router, prefix=API_V2_PREFIX)
     app.include_router(sessions.router, prefix=API_V2_PREFIX)
+    app.include_router(session_planning.router, prefix=API_V2_PREFIX)
     app.include_router(sessions_fs.router, prefix=API_V2_PREFIX)
     app.include_router(sessions_terminal.router, prefix=API_V2_PREFIX)
 

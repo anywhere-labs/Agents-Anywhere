@@ -13,6 +13,7 @@ import tempfile
 import zipfile
 from contextlib import contextmanager
 from pathlib import Path
+from typing import TextIO
 
 import httpx
 
@@ -129,7 +130,7 @@ def node_runtime(root: Path) -> tuple[Path, Path]:
     return _node_pair(executable)
 
 
-def install_npm_runtime(root: Path, dependencies: dict[str, str], entry: str) -> tuple[Path, Path]:
+def install_npm_runtime(root: Path, dependencies: dict[str, str], entry: str, *, output: TextIO | None = None) -> tuple[Path, Path]:
     """Use npm's registry integrity checks; never build application source here."""
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     identity = hashlib.sha256(json.dumps(dependencies, sort_keys=True).encode()).hexdigest()[:20]
@@ -145,7 +146,7 @@ def install_npm_runtime(root: Path, dependencies: dict[str, str], entry: str) ->
             (staging / "package.json").write_text(json.dumps({"private": True, "dependencies": dependencies}))
             env = {key: value for key, value in os.environ.items() if key not in {"NODE_OPTIONS", "NODE_PATH"}}
             env["PATH"] = str(node.parent) + os.pathsep + env.get("PATH", "")
-            result = subprocess.run([str(node), str(npm), "install", "--omit=dev", "--ignore-scripts", "--package-lock=false", "--no-audit", "--no-fund"], cwd=staging, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300, check=False)
+            result = subprocess.run([str(node), str(npm), "install", "--omit=dev", "--ignore-scripts", "--package-lock=false", "--no-audit", "--no-fund"], cwd=staging, env=env, stdout=output if output is not None else subprocess.DEVNULL, stderr=output if output is not None else subprocess.DEVNULL, timeout=300, check=False)
             if result.returncode or not (staging / "node_modules" / entry).is_file():
                 raise AcpError("agent_install_failed", "Agent 运行环境安装失败，请检查网络后重试。")
             (staging / ".ready").write_text(identity)
