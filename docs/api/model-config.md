@@ -85,7 +85,17 @@ Tokens Anywhere 是 OAuth 授权服务器，每个 AA 实例是公共 PKCE 客�
 | POST | `/integrations/tokens/sync` | 重新读取托管 Key 能用的模型，更新 Tokens 配置 |
 | DELETE | `/integrations/tokens/link?allow_interrupt=` | 先恢复用这份配置的 Runtime，再撤销授权；无法恢复的标为 `failed` |
 | POST | `/model-profiles/{id}/rotate-key` | 需要 `Idempotency-Key`；轮换托管 Key 并写入所有用它的 Runtime |
-| GET、PUT | `/admin/integrations/tokens` | 管理员读取或修改 Tokens Anywhere 地址；有账户已链接时不能改成别的地址（409 `tokens_links_exist`） |
+| GET、PUT | `/admin/integrations/tokens` | 管理员读取或修改 Tokens Anywhere 地址：返回 `{tokensUrl, source, linkedAccounts, secretConfigured}`，`source` 为 `setting`、`environment` 或 `null`；PUT `{tokensUrl}`，空值关闭；有账户已链接时不能改成别的地址（409 `tokens_links_exist`），地址带路径时返回 422 `invalid_tokens_url` |
+
+### 账户、用量与模型选择
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/integrations/tokens/account` | `{account: {id, displayName, email}, balance: {balance, available, held, bonus}, links: {console, billing, usage}}`。金额是 Tokens Anywhere 给出的人民币元字符串（4 位小数），客户端只做展示，求和时按 0.0001 元的整数计算 |
+| GET | `/integrations/tokens/usage?days=` | `days` 为 1–92，默认 30。返回 `{from, to, items}`，`items` 是整个 Tokens 账户按北京时间日期和模型统计的已结算用量：`date`、`model`、`requests`、`inputTokens`、`outputTokens`、`cacheReadTokens`、`cacheWrite5mTokens`、`cacheWrite1hTokens`、`amountCharged`；没有请求的日期不返回 |
+| PUT | `/integrations/tokens/models` | `{disabled: [模型 ID], names: {模型 ID: 名称}}`，关闭模型或改名，只影响 Agents Anywhere。返回 `{applying}`：为 `true` 时 Server 在后台重新应用到所有使用 Tokens 配置的 Runtime，进度和一键配置一样在 `tokens.quickSetup`，有任务的 Runtime 空闲后生效。一键配置进行中时返回 409 `quick_setup_running` |
+
+Tokens 配置的 `offers` 始终是 Tokens 给出的完整模型目录，模型带 `vendor`、`contextWindow`、`maxOutputTokens`（来自 Tokens 价格表，可能为空）；配置另有 `preferences: {disabled, names}`。预览和应用时 Server 先去掉关闭的模型、换上新名称；某种协议的模型全部关闭时，这种协议不再提供给 Runtime。同步模型目录时保留 `preferences`。
 
 ### 一键配置
 

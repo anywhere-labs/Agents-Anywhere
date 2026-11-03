@@ -30,7 +30,14 @@
 
 ### 配置管理
 
-- 「设置 → 配置管理」顶部新增「Tokens Anywhere 快速配置」：勾选要配置的 Runtime，点「一键配置」并在浏览器里确认一次，就会自动同步模型并应用到各设备，每一步的进度都显示在卡片上；之后有新 Runtime 接入时会提示可以配置。
+- 「设置 → 配置管理」顶部新增「Tokens Anywhere 快速配置」：勾选要配置的 Runtime，点「一键配置」并在浏览器里确认一次，就会自动同步模型并应用到各设备，每一步的进度都显示在卡片上；之后有新 Runtime 接入时会提示可以配置。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 链接后这里变成「Anywhere 账户」页，可以看到账户和余额、跳转充值，并分三个页签管理：
+  - 「模型」按厂商分组列出 Tokens Anywhere 的模型，可以关闭单个模型或整组、给模型改名（只影响 Agents Anywhere），保存后应用到所有使用 Tokens Anywhere 的 Runtime，有任务的 Runtime 空闲后生效；「恢复默认」撤销全部改动。
+  - 「用量」显示整个 Tokens Anywhere 账户近 7 天或 30 天的花费、请求数和 Tokens，按天和按模型统计，可以只看某个模型。
+  - 「设备」列出已经用上 Tokens Anywhere 的 Runtime，还没有时直接在这里一键配置。
+
+  （[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 管理员可以在「管理 → 常规」里填写或清空 Tokens Anywhere 地址；已有账户链接时地址会锁定，全部断开后才能修改。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 「设置 → 配置管理」也可以手动添加模型服务，再应用到各设备上的 Codex、Claude Code、Pi 和 DSH；在任一客户端修改后，其他客户端立即同步显示。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 应用前会预览每台设备的结果和不能应用的原因；需要重启的 Runtime 有任务在运行时，要允许中断才会应用，一键配置则不打断任务，先保存配置，等任务结束后自动生效；DSH 会修改它自身的全局模型配置，需要单独确认；模型超过 64 个时，一键配置只导入前 64 个并提示。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 可以随时把单个 Runtime 恢复为应用前的配置，之后做的其他修改会保留；断开 Tokens Anywhere 时会先恢复用它的 Runtime，再撤销授权；轮换 Tokens Anywhere 的 Key 后会自动写入所有用它的 Runtime。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
