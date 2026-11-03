@@ -158,7 +158,8 @@ export function TokensAccount({
             <TabsTrigger value="usage">{t("account.tabUsage")}</TabsTrigger>
             <TabsTrigger value="devices">{t("account.tabDevices")}</TabsTrigger>
           </TabsList>
-          <TabsContent value="models" className="pt-2">
+          {/* Kept mounted so unsaved model changes survive a look at another tab. */}
+          <TabsContent value="models" forceMount className="pt-2 data-[state=inactive]:hidden">
             <ModelsTab token={token} profile={profile} syncing={syncing} applying={applying} onSync={onSync} onChanged={onChanged} errorText={errorText} />
           </TabsContent>
           <TabsContent value="usage" className="pt-2">
