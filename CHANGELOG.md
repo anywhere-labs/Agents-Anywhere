@@ -125,6 +125,7 @@
 
 ### Desktop
 
+- 本机 Connector 持续无响应时自动重建后台并恢复连接，短暂故障或主动停止时不会自动重启。
 - 把本地文件夹拖进侧栏就能创建项目。重复目录、普通文件和一次拖入多项时会给出提示；拖拽结束或窗口失焦时，提示自动消失。（[#82](https://github.com/anywhere-labs/Agents-Anywhere/pull/82)）
 - Connector 启动失败时显示真实原因，可以复制错误信息、打开日志目录。（[#294](https://github.com/anywhere-labs/Agents-Anywhere/pull/294)）
 - 依赖下载失败时，可以在启动弹窗里切换 PyPI 镜像或 Python 下载镜像、重试，或者「清空缓存并重试」；所选镜像缺少的包会自动从官方 PyPI 补齐。（[#450](https://github.com/anywhere-labs/Agents-Anywhere/pull/450)）
@@ -135,6 +136,7 @@
 
 ### 本机连接、所有权与日志
 
+- Codex 版本检测不再阻塞发现和配置验证期间的心跳与本机控制，并避免 Windows 管道读取线程卡住导致检测超时失效。
 - 本机控制和 DSH 桥接改用 MeshCall：Router 意外退出后自动重启；状态和日志断线后接着上次的位置继续，不需要重启 Connector。（[#353](https://github.com/anywhere-labs/Agents-Anywhere/pull/353)）
 - 启动、停止、重启和保存配置按顺序执行，有操作正在进行时新操作直接拒绝；取消配对后，旧流程不会再保存凭据或自动连接。（[#353](https://github.com/anywhere-labs/Agents-Anywhere/pull/353)）
 - 插件管理锁和机器记录锁改为随机端口加连接核实，修复 Windows 保留端口导致的启动失败。（[#329](https://github.com/anywhere-labs/Agents-Anywhere/pull/329)、[#330](https://github.com/anywhere-labs/Agents-Anywhere/pull/330)）

@@ -1,6 +1,6 @@
 from __future__ import annotations
-from connector.runtime_protocol.host import runtime_kv_store
 
+import asyncio
 import sys
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -20,7 +20,7 @@ from connector.runtime_protocol import (
     RuntimeUnavailableError,
 )
 from connector.runtime_protocol.filesystem import filesystem_resource_key
-from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtime_protocol.host import RuntimeHostClient, runtime_kv_store
 from connector.runtimes.codex import provider_config
 from connector.runtimes.codex.runtime import CodexRuntime
 from connector.runtimes.codex.sdk.binary import (
@@ -85,8 +85,9 @@ class CodexProvider(RuntimeProvider):
 
         sdk = self._sdk_checker()
         self._discovered_sdk = sdk
-        runtime_environment, shell_path = codex_runtime_environment(None)
-        binary_selection = select_codex_runtime_binary(
+        runtime_environment, shell_path = await asyncio.to_thread(codex_runtime_environment, None)
+        binary_selection = await asyncio.to_thread(
+            select_codex_runtime_binary,
             "prefer_system",
             runtime_environment,
             shell_path,
@@ -200,11 +201,13 @@ class CodexProvider(RuntimeProvider):
         binary_mode = provider_config.runtime_binary_mode_for_system_preference(
             use_system_codex
         )
-        runtime_environment, shell_path = codex_runtime_environment(
+        runtime_environment, shell_path = await asyncio.to_thread(
+            codex_runtime_environment,
             raw_values.get("environment"),
             codex_home=codex_home,
         )
-        binary_selection = select_codex_runtime_binary(
+        binary_selection = await asyncio.to_thread(
+            select_codex_runtime_binary,
             binary_mode,
             runtime_environment,
             shell_path,
