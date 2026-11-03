@@ -2444,5 +2444,33 @@
     "experimental": "Experimental",
     "betaDescription": "Mostly works; issues may remain.",
     "experimentalDescription": "Early feature; behavior may change. Use with care."
+  },
+  "agentReminder": {
+    "title": "Add an Agent to get started",
+    "description": "You have not added any Agents yet. Add an Agent before starting a session. You can also configure one later on the device page.",
+    "skipTitle": "Skip the tutorial?",
+    "skipDescription": "Device and Agent setup will be skipped. You can continue setup later on the device page.",
+    "continueTutorial": "Continue tutorial",
+    "skipAnyway": "Continue without setup",
+    "addAgent": "Add Agent",
+    "later": "Later",
+    "checking": "Checking configured Agents…",
+    "checkFailed": "Could not check your Agents. Please try again.",
+    "retry": "Retry",
+    "phoneTitle": "Connect your phone",
+    "phoneDescription": "Open Agents Anywhere on your phone and scan the QR code.",
+    "deviceConnected": "{name}\nis connected.",
+    "deviceDescription": "Add Agents available on this computer.\nYou can also configure them later on the device page.",
+    "configureAgent": "Configure Agents",
+    "next": "Next",
+    "ready": "Ready",
+    "starting": "Starting",
+    "notReady": "Not ready",
+    "quickConfigure": "Quick setup",
+    "available": "Available to add",
+    "offline": "Connect a device to add an Agent.",
+    "openDevice": "Open device",
+    "chooseDevice": "Choose a device",
+    "done": "Done"
   }
 }

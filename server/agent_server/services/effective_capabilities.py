@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Protocol
 from weakref import WeakKeyDictionary
+
+from loguru import logger
 
 from agent_server.core.capabilities import (
     CATALOG_EFFORT,
@@ -203,6 +206,56 @@ async def publish_connector_session_capabilities(
             active.pop(connector_id)
         if not active:
             _ACTIVE_PUBLICATIONS.pop(publisher, None)
+
+
+class ConnectorCapabilityRefresh:
+    """App-owned, latest-wins session broadcasts, outside ingestion barriers."""
+
+    def __init__(self, store: SessionCapabilityRepository, presence: ConnectorPresencePort,
+                 publisher: SessionCapabilityPublisher) -> None:
+        self._store, self._presence, self._publisher = store, presence, publisher
+        self._current: dict[str, asyncio.Task[None]] = {}
+        self._tasks: set[asyncio.Task[None]] = set()
+        self._closed = False
+
+    def request(self, connector_id: str) -> None:
+        if self._closed:
+            return
+        previous = self._current.get(connector_id)
+        if previous is not None:
+            previous.cancel()
+
+        async def refresh() -> None:
+            # Let cancellation release the old session fence before proceeding.
+            if previous is not None:
+                await asyncio.gather(previous, return_exceptions=True)
+            await publish_connector_session_capabilities(
+                self._store, self._presence, self._publisher, connector_id,
+            )
+
+        task = asyncio.create_task(refresh(), name=f"session-capabilities-{connector_id}")
+        self._current[connector_id] = task
+        self._tasks.add(task)
+
+        def completed(task: asyncio.Task[None]) -> None:
+            self._tasks.discard(task)
+            if self._current.get(connector_id) is task:
+                self._current.pop(connector_id, None)
+            if not task.cancelled() and (error := task.exception()) is not None:
+                logger.opt(exception=error).error(
+                    "session capability refresh failed connector_id={}", connector_id,
+                )
+
+        task.add_done_callback(completed)
+
+    async def close(self) -> None:
+        self._closed = True
+        tasks = list(self._tasks)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._tasks.clear()
+        self._current.clear()
 
 
 class SessionCapabilityIndex:

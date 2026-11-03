@@ -22334,6 +22334,118 @@
           }
         }
       }
+    },
+    "agentReminder.title": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add an Agent to get started"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加 Agent 后开始使用"
+          }
+        }
+      }
+    },
+    "agentReminder.description": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You have not added any Agents yet. Add an Agent before starting a session. You can also configure one later on the device page."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你还没有添加任何 Agent，添加后才能开始会话。也可以稍后在设备页面配置。"
+          }
+        }
+      }
+    },
+    "agentReminder.add": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add Agent"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加 Agent"
+          }
+        }
+      }
+    },
+    "agentReminder.later": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Later"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "稍后添加"
+          }
+        }
+      }
+    },
+    "agentReminder.skip": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continue without setup"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂不配置，继续"
+          }
+        }
+      }
+    },
+    "agentReminder.skipTitle": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skip Agent setup?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "跳过 Agent 配置？"
+          }
+        }
+      }
+    },
+    "agentReminder.checkFailed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not check your Agents. You can continue setup or leave and configure them later."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂时无法检查已添加的 Agent。你可以继续配置，也可以先离开，稍后再设置。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

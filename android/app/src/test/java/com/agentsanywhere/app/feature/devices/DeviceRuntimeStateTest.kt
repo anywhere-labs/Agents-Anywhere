@@ -24,21 +24,25 @@ class DeviceRuntimeStateTest {
 
     @Test
     fun deletionRemovesTheInstance() {
-        val state = DeviceRuntimeManagementState(runtimes = listOf(runtime("old"), runtime("other")))
+        val next = listOf(runtime("old"), runtime("other")).afterRuntimeDeletion("old", runtime("old", configured = false))
 
-        val next = state.afterDeletion("old", runtime("old", configured = false))
-
-        assertEquals(listOf("other"), next.runtimes.map { it.id })
-        assertEquals(emptyList<String>(), next.discoveredUnconfiguredRuntimes.map { it.id })
+        assertEquals(listOf("other"), next.map { it.id })
     }
 
     @Test
     fun deletionKeepsASuccessorFromAnOlderServer() {
-        val state = DeviceRuntimeManagementState(runtimes = listOf(runtime("old"), runtime("other")))
+        val next = listOf(runtime("old"), runtime("other")).afterRuntimeDeletion("old", runtime("new", configured = false))
 
-        val next = state.afterDeletion("old", runtime("new", configured = false))
+        assertEquals(setOf("other", "new"), next.map { it.id }.toSet())
+    }
 
-        assertEquals(setOf("other", "new"), next.runtimes.map { it.id }.toSet())
+    @Test
+    fun anUpdatedRuntimeReplacesItsEntryOrIsAppended() {
+        val runtimes = listOf(runtime("a"), runtime("b"))
+
+        assertEquals(listOf("a", "b"), runtimes.withRuntime(runtime("b").copy(active = true)).map { it.id })
+        assertEquals(true, runtimes.withRuntime(runtime("b").copy(active = true)).last().active)
+        assertEquals(listOf("a", "b", "c"), runtimes.withRuntime(runtime("c")).map { it.id })
     }
 
     @Test

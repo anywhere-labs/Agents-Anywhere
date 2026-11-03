@@ -29,6 +29,7 @@ from agent_server.services.device_runtimes import (
     DeviceRuntimeService,
 )
 from agent_server.services.effective_capabilities import (
+    ConnectorCapabilityRefresh,
     project_session_capabilities,
     publish_connector_session_capabilities,
 )
@@ -68,6 +69,7 @@ class ConnectorIngestService:
         device_runtimes: DeviceRuntimeService,
         presence: ConnectorPresencePort,
         runtime_state_cache: SessionRuntimeStateCache,
+        capability_refresh: ConnectorCapabilityRefresh | None = None,
     ) -> None:
         self._store = store
         self._notifications = notifications
@@ -75,6 +77,15 @@ class ConnectorIngestService:
         self._device_runtimes = device_runtimes
         self._presence = presence
         self._runtime_state_cache = runtime_state_cache
+        self._capability_refresh = capability_refresh
+
+    async def _refresh_session_capabilities(self, connector_id: str) -> None:
+        if self._capability_refresh is not None:
+            self._capability_refresh.request(connector_id)
+        else:
+            await publish_connector_session_capabilities(
+                self._store, self._presence, self._timeline_broker, connector_id,
+            )
 
     async def ingest(
         self,
@@ -150,19 +161,9 @@ class ConnectorIngestService:
                 )
         dashboard_changed = await self._publish_effects(effects)
         if protocol_capabilities_changed:
-            await publish_connector_session_capabilities(
-                self._store,
-                self._presence,
-                self._timeline_broker,
-                connector_id,
-            )
+            await self._refresh_session_capabilities(connector_id)
         if runtime_scoped_capabilities_changed:
-            await publish_connector_session_capabilities(
-                self._store,
-                self._presence,
-                self._timeline_broker,
-                connector_id,
-            )
+            await self._refresh_session_capabilities(connector_id)
         if dashboard_changed:
             await publish_dashboard_changed(
                 self._store,
@@ -220,23 +221,13 @@ class ConnectorIngestService:
         )
         dashboard_changed = await self._publish_effects([effect])
         if method == "protocol.capabilitiesUpdated" and effect.protocol_changed:
-            await publish_connector_session_capabilities(
-                self._store,
-                self._presence,
-                self._timeline_broker,
-                connector_id,
-            )
+            await self._refresh_session_capabilities(connector_id)
         if (
             method == "runtime.capability.updated"
             and effect.protocol_changed
             and not isinstance(params.get("sessionId"), str)
         ):
-            await publish_connector_session_capabilities(
-                self._store,
-                self._presence,
-                self._timeline_broker,
-                connector_id,
-            )
+            await self._refresh_session_capabilities(connector_id)
         if dashboard_changed:
             await publish_dashboard_changed(
                 self._store,

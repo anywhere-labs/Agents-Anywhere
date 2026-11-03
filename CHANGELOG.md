@@ -53,6 +53,10 @@
 
 ### 会话创建与消息交付
 
+- Desktop 在准备本机 Connector 环境时一并准备 Pi 适配器及依赖，支持查看安装输出、取消与失败重试，兼容已有缓存，首次创建 Pi 会话不再临时下载适配器。（[#518](https://github.com/anywhere-labs/Agents-Anywhere/pull/518)）
+
+- Connector 重连恢复期间，Web 与 Desktop 会等待 Agent 就绪后再允许创建会话，运行时启动不再等待所有历史会话的能力刷新。（[#518](https://github.com/anywhere-labs/Agents-Anywhere/pull/518)）
+
 - 附件上传与下载改为流式处理，发送或打开大文件时不再整包占用服务端内存；图片附件同时提供缩略图地址，浏览大图更省流量。（[#492](https://github.com/anywhere-labs/Agents-Anywhere/pull/492)）
 
 - 修复 Codex 查看图片的记录显示为 `unknown` 的问题，现可点击图片路径打开预览。（[#491](https://github.com/anywhere-labs/Agents-Anywhere/pull/491)）
@@ -60,6 +64,7 @@
 - 修复接入 Codex 已有会话后，补入的旧消息出现在最新消息下方、历史消息交错或重排后顺序没有更新的问题；升级后同步会自动校准已有记录。（[#480](https://github.com/anywhere-labs/Agents-Anywhere/pull/480)）
 
 - Pi 接入：
+  - Web、Desktop、Android 和 iOS 会话列表统一显示 Pi 官方单色图标，并随应用主题着色。（[#514](https://github.com/anywhere-labs/Agents-Anywhere/pull/514)）
   - 沿用 Codex 的 Agent、模型、权限和发送入口，各端自动加载工作区模型；
   - 支持首条及后续附件、工具审批、运行中追加指示和会话恢复；
   - 可以浏览本机原生历史，退出对应 CLI 会话后用「继续任务」恢复原会话；
@@ -87,6 +92,16 @@
 - Beta 和实验性的 Runtime 会在状态旁显示「Beta」「实验性」标记，例如「Pi Beta · 运行中」。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 
 ### Android
+
+- 修复开启接管后输入框有时仍提示「当前运行时状态下不可发送消息」、需要重新进入会话才能发送的问题。（[#519](https://github.com/anywhere-labs/Agents-Anywhere/pull/519)）
+
+- Android 可以直接添加和管理 Agent，不必再去桌面端操作：
+  - 设备页可以快速添加、配置、重命名、启停和删除 Agent，配置项按 Agent 类型自动生成，包括路径、模型 Gateway、环境变量和自定义模型等；
+  - 连接设备后直接打开「为这台设备选择 Agent」，可一键配置；离开配对页后设备才上线时，也会提示添加 Agent；
+  - 进入主界面仍没有 Agent 时会弹窗提醒，「添加 Agent」直接打开这个面板；已添加但离线的 Agent 不会误触发提醒；
+  - 删除 Agent 配置前会说明关联的会话、消息记录和附件将被永久删除。
+
+  [#513](https://github.com/anywhere-labs/Agents-Anywhere/pull/513)、[#521](https://github.com/anywhere-labs/Agents-Anywhere/pull/521)
 
 - 终端文件页可以预览工作区图片；对话里工具和命令输出提到的工作区截图，点一下即可加载缩略图，再点可打开大图。（[#493](https://github.com/anywhere-labs/Agents-Anywhere/pull/493)）
 
@@ -170,6 +185,8 @@
 
 ### Web 与 Desktop 界面
 
+- 跳过教程或未添加 Agent 就继续时会提醒配置，进入主界面仍无 Agent 时可直接在弹窗中添加，已添加但离线的 Agent 不会触发空配置提醒，添加期间设备离线也可关闭弹窗。（[#513](https://github.com/anywhere-labs/Agents-Anywhere/pull/513)）
+
 - 管理看板重做：
   - 新增概览、用户、使用量、设备与 Runtime、运行质量视图；
   - 支持选择时间范围，并显示实时指标；
@@ -200,6 +217,8 @@
 - 「立即更新」会从官网 www.agents-anywhere.com 下载最新 APK。（[#458](https://github.com/anywhere-labs/Agents-Anywhere/pull/458)）
 
 ### iOS
+
+- 跳过 Agent 配置或关闭连接引导时会提醒确认，进入主界面尚无 Agent 时可从提醒弹窗打开现有配置面板，没有设备时引导连接设备。（[#513](https://github.com/anywhere-labs/Agents-Anywhere/pull/513)）
 
 - 启动和回到前台时展示公告，已读记录按服务器分别保存。（[#248](https://github.com/anywhere-labs/Agents-Anywhere/pull/248)）
 - 模型选择器按供应商分组，与其他端一致。（[#449](https://github.com/anywhere-labs/Agents-Anywhere/pull/449)）

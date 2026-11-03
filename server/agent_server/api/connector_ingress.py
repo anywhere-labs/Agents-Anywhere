@@ -67,7 +67,7 @@ from agent_server.services.device_runtimes import (
     DeviceRuntimeService,
 )
 from agent_server.services.effective_capabilities import (
-    publish_connector_session_capabilities,
+    ConnectorCapabilityRefresh,
 )
 from agent_server.services.runtime_ingress import (
     notification_runtime_id,
@@ -570,6 +570,7 @@ async def connector_ws(
                 ),
                 timeline_broker, runtime_service, manager,
                 websocket.app.state.session_runtime_state_cache,
+                websocket.app.state.capability_refresh,
             )
             notification_pump = _ConnectorNotificationPump(
                 connector_id, ingest_service,
@@ -590,6 +591,7 @@ async def connector_ws(
                 ):
                     await websocket.close(code=1008, reason="connector was revoked")
                     return
+                await runtime_service.mark_reconnecting(connector_id)
                 await db.record_connector_activity(connector_id)
                 await websocket.accept()
                 if not await manager.mark_ready(connection):
@@ -643,7 +645,7 @@ async def connector_ws(
             name=f"connector-reader-{connection.connection_id}",
         )
         capabilities_task = asyncio.create_task(
-            _publish_connection_presence(db, manager, timeline_broker, connector_id),
+            _publish_connection_presence(db, manager, timeline_broker, connector_id, websocket.app.state.capability_refresh),
             name=f"connector-presence-{connection.connection_id}",
         )
         done, _pending = await asyncio.wait(
@@ -738,12 +740,7 @@ async def connector_ws(
                     connector_id,
                     len(removed_terminals),
                 )
-            await publish_connector_session_capabilities(
-                db,
-                manager,
-                timeline_broker,
-                connector_id,
-            )
+            websocket.app.state.capability_refresh.request(connector_id)
             await publish_dashboard_changed(
                 db,
                 timeline_broker,
@@ -752,12 +749,12 @@ async def connector_ws(
             )
 
 
-async def _publish_connection_presence(db, manager, broker, connector_id: str) -> None:
+async def _publish_connection_presence(db, manager, broker, connector_id: str, refresh: ConnectorCapabilityRefresh) -> None:
     try:
         await publish_dashboard_changed(
             db, broker, connector_id=connector_id, reason="connector.online",
         )
-        await publish_connector_session_capabilities(db, manager, broker, connector_id)
+        refresh.request(connector_id)
     except Exception:  # noqa: BLE001 - background publication must not stop the reader
         logger.exception("connector presence publication failed connector_id={}", connector_id)
 

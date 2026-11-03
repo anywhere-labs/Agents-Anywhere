@@ -567,6 +567,20 @@ class DeviceRuntimeService:
             await self._publish(connector_id, "runtime.active")
             return runtime
 
+    async def mark_reconnecting(self, connector_id: str) -> None:
+        """Persisted running state cannot authorize requests to a new process.
+
+        Called under connector lifecycle admission before the new connection is
+        ready. Reconciliation will replace this phase after runtime.start.
+        """
+        for row in await self._store.list_device_runtimes(connector_id):
+            runtime = DeviceRuntimeView.model_validate(row)
+            if runtime.present and runtime.active and runtime.configured:
+                await self._store.set_device_runtime_status(
+                    connector_id, runtime.runtimeId, "starting",
+                    phase={"stage": "reconnecting"},
+                )
+
     async def ensure_active_running(
         self,
         connector_id: str,

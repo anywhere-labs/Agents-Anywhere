@@ -126,3 +126,11 @@ yarn dist:win   # 在 Windows 构建 x64 NSIS 安装包
 ```
 
 签名、公证、架构选择及缓存重试见 [Desktop Packaging](../desktop-workbench/README.md#packaging)。凭据从环境或安全存储注入，不能提交到源码或文档。Android 的命令和签名边界见 [Android README](../android/README.md)。发布步骤见 [2.0.0 发布说明](releases/2.0.0.md)。
+
+### Desktop 的 Pi 适配器准备
+
+Desktop 在启动本机 Connector 前，先通过 `uv sync` 准备 Python 依赖，再安装并检查 Pi ACP 适配器及其 npm 依赖。环境准备弹窗会显示 Pi 准备阶段与安装输出，支持取消和失败后重试；全部完成后才启动 Connector。
+
+Desktop 的所有 Pi 实例共用应用数据目录下的 `pi-npm-runtimes` 缓存；本机 Pi 的模型、认证和配置仍使用原来的本机目录。清空 Connector 环境会同时清空该适配器缓存，下次准备时重新安装。独立 Connector 保留首次创建或恢复 Pi 会话时按需安装的行为。
+
+Connector 重连时，Server 保存并校验能力后即可继续恢复运行时；历史会话的能力广播由应用级后台任务完成，同一设备的新刷新替代旧刷新，断线和重连使用最新在线状态重新广播，服务退出时取消任务后再关闭存储。

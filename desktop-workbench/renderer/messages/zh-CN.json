@@ -30,6 +30,7 @@
     "stalled": "已有一段时间未检测到活动，安装可能已卡住。可以查看日志，或取消后切换镜像重试。",
     "packageProgress": "已安装 {completed} / 已解析 {total} 个依赖",
     "environmentPhase": {
+      "pi": "正在准备 Pi 适配器及依赖",
       "checking": "检查环境",
       "downloading": "下载依赖",
       "resolving": "解析依赖",
@@ -2636,5 +2637,33 @@
     "experimental": "实验性",
     "betaDescription": "功能基本可用，可能还有问题。",
     "experimentalDescription": "早期功能，行为可能变化，请谨慎使用。"
+  },
+  "agentReminder": {
+    "title": "添加 Agent 后开始使用",
+    "description": "你还没有添加任何 Agent，添加后才能开始会话。也可以稍后在设备页面配置。",
+    "skipTitle": "确认跳过引导？",
+    "skipDescription": "跳过后将略过设备与 Agent 的配置引导，你可以稍后在设备页面继续设置。",
+    "continueTutorial": "继续引导",
+    "skipAnyway": "暂不配置，继续",
+    "addAgent": "添加 Agent",
+    "later": "稍后添加",
+    "checking": "正在检查已添加的 Agent…",
+    "checkFailed": "无法检查已添加的 Agent，请重试。",
+    "retry": "重新检测",
+    "phoneTitle": "连接手机",
+    "phoneDescription": "打开手机端 Agents Anywhere，扫描二维码。",
+    "deviceConnected": "{name}\n已连接。",
+    "deviceDescription": "添加这台电脑上可用的 Agent，\n也可以稍后在设备页面配置。",
+    "configureAgent": "配置 Agent",
+    "next": "下一步",
+    "ready": "已就绪",
+    "starting": "正在启动",
+    "notReady": "未就绪",
+    "quickConfigure": "一键配置",
+    "available": "可添加",
+    "offline": "请连接设备后添加 Agent。",
+    "openDevice": "前往设备",
+    "chooseDevice": "选择设备",
+    "done": "完成"
   }
 }
