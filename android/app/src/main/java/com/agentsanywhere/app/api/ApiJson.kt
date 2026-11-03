@@ -13,6 +13,11 @@ internal fun JSONObject.optNullableInt(name: String): Int? {
     return optInt(name)
 }
 
+internal fun JSONObject.optNullableLong(name: String): Long? {
+    if (!has(name) || isNull(name)) return null
+    return (opt(name) as? Number)?.toLong()
+}
+
 internal fun JSONObject.optNullableBoolean(name: String): Boolean? {
     if (!has(name) || isNull(name)) return null
     return opt(name) as? Boolean

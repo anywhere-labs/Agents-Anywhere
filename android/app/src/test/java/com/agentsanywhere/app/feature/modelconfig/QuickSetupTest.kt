@@ -61,7 +61,20 @@ class QuickSetupTest {
         assertEquals(QuickSetupPhase.Progress, quickSetupPhase(tokens("linked", "failed", "apply"), configured = true, authorizing = false))
         assertEquals(QuickSetupPhase.Done, quickSetupPhase(tokens("linked", "done"), configured = false, authorizing = false))
         assertEquals(QuickSetupPhase.Done, quickSetupPhase(tokens("linked"), configured = true, authorizing = false))
+        // A linked account shows its page even before any runtime uses it.
+        assertEquals(QuickSetupPhase.Done, quickSetupPhase(tokens("linked"), configured = false, authorizing = false))
+        // Changing models on a configured account keeps the account page in view.
+        assertEquals(QuickSetupPhase.Done, quickSetupPhase(tokens("linked", "applying"), configured = true, authorizing = false))
         assertEquals(QuickSetupPhase.Setup, quickSetupPhase(tokens("reauth_required"), configured = true, authorizing = false))
+    }
+
+    @Test
+    fun aSetupOrModelChangeRunsWhileSyncingOrApplying() {
+        assertTrue(quickSetupRunning(tokens("linked", "syncing")))
+        assertTrue(quickSetupRunning(tokens("linked", "applying")))
+        assertFalse(quickSetupRunning(tokens("linked", "done")))
+        assertFalse(quickSetupRunning(tokens("linked", "failed", "apply")))
+        assertFalse(quickSetupRunning(tokens("linked")))
     }
 
     @Test

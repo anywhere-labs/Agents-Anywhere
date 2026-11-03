@@ -3,12 +3,13 @@ package com.agentsanywhere.app.ui.screens.modelconfig
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -21,7 +22,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -99,6 +99,7 @@ fun ModelConfigScreen(
     val context = LocalContext.current
     var creating by remember { mutableStateOf(false) }
     var applyProfile by remember { mutableStateOf<ModelProfile?>(null) }
+    val pendingBar = remember { PendingModelsBarSlot() }
     BackHandler(onBack = onBack)
 
     fun notify(message: String, error: Boolean = false) {
@@ -121,48 +122,57 @@ fun ModelConfigScreen(
                 }
             } else {
                 val rows = modelConfigDeviceRows(state.runtimes, overview.assignments)
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize().navigationBarsPadding().padding(horizontal = 18.dp),
-                    contentPadding = PaddingValues(top = 8.dp, bottom = 28.dp),
+                // A plain column keeps the Tokens card (its tab, edits and loaded
+                // usage) alive while the rest of the page scrolls past it.
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .navigationBarsPadding()
+                        .padding(horizontal = 18.dp)
+                        .padding(top = 8.dp, bottom = 28.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     if (!overview.secretConfigured) {
-                        item("secret") { NoticeText(stringResource(R.string.model_config_secret_missing)) }
+                        NoticeText(stringResource(R.string.model_config_secret_missing))
                     }
                     overview.tokens?.takeIf { it.available }?.let { tokens ->
-                        item("tokens") {
-                            TokensQuickSetupCard(
-                                tokens = tokens,
-                                overview = overview,
-                                runtimes = state.runtimes,
-                                devices = devices,
-                                controller = controller,
-                                onNotice = { notify(it) },
-                                onError = notifyError,
-                            )
-                        }
-                    }
-                    item("profiles") {
-                        ProfilesSection(
+                        TokensQuickSetupCard(
+                            tokens = tokens,
                             overview = overview,
-                            controller = controller,
-                            onAdd = { creating = true },
-                            onApply = { applyProfile = it },
-                            onNotice = { message, error -> notify(message, error) },
-                            onError = notifyError,
-                        )
-                    }
-                    item("devices") {
-                        DevicesSection(
-                            rows = rows,
+                            runtimes = state.runtimes,
                             devices = devices,
-                            overview = overview,
                             controller = controller,
+                            pendingBar = pendingBar,
                             onNotice = { notify(it) },
                             onError = notifyError,
                         )
                     }
+                    ProfilesSection(
+                        overview = overview,
+                        controller = controller,
+                        onAdd = { creating = true },
+                        onApply = { applyProfile = it },
+                        onNotice = { message, error -> notify(message, error) },
+                        onError = notifyError,
+                    )
+                    DevicesSection(
+                        rows = rows,
+                        devices = devices,
+                        overview = overview,
+                        controller = controller,
+                        onNotice = { notify(it) },
+                        onError = notifyError,
+                    )
+                    PendingBarSpacer(pendingBar)
                 }
+                PendingModelsBarHost(
+                    slot = pendingBar,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(horizontal = 18.dp, vertical = 12.dp),
+                )
             }
             AAToastHost(
                 hostState = toastHostState,
@@ -473,7 +483,9 @@ private fun DevicesSection(
 @Composable
 internal fun Section(
     title: String,
-    description: String,
+    description: String?,
+    badge: String? = null,
+    descriptionLoading: Boolean = false,
     action: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
@@ -481,8 +493,18 @@ internal fun Section(
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, color = colors.ink, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                Text(description, color = colors.muted, fontSize = 12.sp, lineHeight = 16.sp)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(title, color = colors.ink, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
+                    badge?.let { StatusPill(it, ModelStatusTone.Neutral) }
+                }
+                if (description != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (descriptionLoading) {
+                            CircularProgressIndicator(color = colors.muted, strokeWidth = 1.5.dp, modifier = Modifier.size(11.dp))
+                        }
+                        Text(description, color = colors.muted, fontSize = 12.sp, lineHeight = 16.sp)
+                    }
+                }
             }
             action?.invoke()
         }

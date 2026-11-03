@@ -44,7 +44,21 @@ data class ModelSpec(
     val name: String? = null,
     val efforts: List<String> = emptyList(),
     val input: List<String> = emptyList(),
+    /** Who makes the model, as Tokens Anywhere reports it. */
+    val vendor: String? = null,
+    val contextWindow: Long? = null,
+    val maxOutputTokens: Long? = null,
 )
+
+/** Models turned off, and names shown in place of the model's own; Agents Anywhere only. */
+data class ModelPreferences(
+    val disabled: List<String> = emptyList(),
+    val names: Map<String, String> = emptyMap(),
+) {
+    companion object {
+        val EMPTY = ModelPreferences()
+    }
+}
 
 data class ModelOffer(
     val format: String,
@@ -63,6 +77,7 @@ data class ModelProfile(
     val state: String,
     val etag: String,
     val updatedAt: String?,
+    val preferences: ModelPreferences = ModelPreferences.EMPTY,
 ) {
     val isActive: Boolean get() = state == "active"
     val isTokens: Boolean get() = source == "tokens"

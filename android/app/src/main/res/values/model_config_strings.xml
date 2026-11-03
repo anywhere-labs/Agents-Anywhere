@@ -2,7 +2,6 @@
 <resources>
     <string name="model_config_title">Model configuration</string>
     <string name="model_config_secret_missing">The server has no AGENT_SERVER_SECRET (at least 32 characters) yet. Ask an administrator to set it before saving keys or linking Tokens Anywhere.</string>
-    <string name="model_config_tokens_title">Tokens Anywhere</string>
     <string name="model_config_tokens_linked">Linked: %1$s</string>
     <string name="model_config_tokens_reauth">The authorization expired. Link again.</string>
     <string name="model_config_synced">Models synced</string>
@@ -161,8 +160,6 @@
         <item quantity="other">Apply to %1$d runtimes</item>
     </plurals>
     <string name="model_config_quick_applying">Writing to your devices…</string>
-    <string name="model_config_quick_configured">Set up</string>
-    <string name="model_config_quick_update_models">Update models</string>
     <plurals name="model_config_quick_new_runtimes">
         <item quantity="one">%1$d new runtime can be set up</item>
         <item quantity="other">%1$d new runtimes can be set up</item>
@@ -176,4 +173,55 @@
     <string name="model_config_assignment_deferred">Applies when idle</string>
     <string name="model_config_error_quick_setup_running">A setup is already running.</string>
     <string name="model_config_error_key_not_kept">Tokens Anywhere did not keep this instance\'s key, so it cannot be fetched again. Ask its operator to set TOKENS_SECRETS_KEY, then unlink and link again.</string>
+    <!-- Anywhere account: the linked Tokens Anywhere account page. -->
+    <string name="model_config_account_title">Anywhere account</string>
+    <string name="model_config_account_more_info">More account details</string>
+    <string name="model_config_account_balance">Balance</string>
+    <string name="model_config_account_balance_detail">Available %1$s · Bonus %2$s</string>
+    <string name="model_config_account_view_usage">View usage</string>
+    <string name="model_config_account_top_up">Top up</string>
+    <string name="model_config_account_load_failed">Couldn\'t read the Tokens Anywhere account right now.</string>
+    <string name="model_config_account_tab_models">Models</string>
+    <string name="model_config_account_tab_usage">Usage</string>
+    <string name="model_config_account_tab_devices">Devices</string>
+    <plurals name="model_config_account_models_summary">
+        <item quantity="one">Set up by Tokens Anywhere: %1$d model, %2$d turned on.</item>
+        <item quantity="other">Set up by Tokens Anywhere: %1$d models, %2$d turned on.</item>
+    </plurals>
+    <string name="model_config_account_models_hint">Turning models off or renaming them only affects Agents Anywhere, and applies to every runtime using Tokens Anywhere.</string>
+    <string name="model_config_account_restore_defaults">Restore defaults</string>
+    <string name="model_config_account_refresh">Refresh</string>
+    <string name="model_config_account_other_vendor">Other</string>
+    <string name="model_config_account_rename">Rename</string>
+    <string name="model_config_account_rename_placeholder">Leave empty for the original name</string>
+    <string name="model_config_account_original_name">Originally %1$s</string>
+    <string name="model_config_account_context">%1$s context</string>
+    <string name="model_config_account_output">%1$s output</string>
+    <string name="model_config_account_image">Images</string>
+    <string name="model_config_account_toggle_group">Turn on all %1$s models</string>
+    <string name="model_config_account_toggle_model">Turn on %1$s</string>
+    <string name="model_config_account_discard">Discard</string>
+    <string name="model_config_account_save_apply">Save and apply</string>
+    <string name="model_config_account_saved">Saved. Applying to the runtimes using Tokens Anywhere.</string>
+    <string name="model_config_account_saved_no_runtimes">Saved.</string>
+    <string name="model_config_account_need_one_model">Keep at least one model.</string>
+    <string name="model_config_account_no_models">No models synced yet. Tap Refresh to read them.</string>
+    <string name="model_config_account_days7">Last 7 days</string>
+    <string name="model_config_account_days30">Last 30 days</string>
+    <string name="model_config_account_all_models">All models</string>
+    <string name="model_config_account_cost">Cost</string>
+    <string name="model_config_account_requests">Requests</string>
+    <string name="model_config_account_tokens">Tokens</string>
+    <string name="model_config_account_daily_cost">Daily cost</string>
+    <string name="model_config_account_model">Model</string>
+    <string name="model_config_account_unknown_model">Unknown model</string>
+    <string name="model_config_account_no_usage">No usage in this period.</string>
+    <string name="model_config_account_usage_note">Covers the whole Tokens Anywhere account, other apps included; settled requests by Beijing date.</string>
+    <string name="model_config_account_usage_details">See details in Tokens Anywhere</string>
+    <string name="model_config_account_usage_failed">Couldn\'t read usage right now.</string>
+    <string name="model_config_account_applying">Applying changes to runtimes…</string>
+    <plurals name="model_config_account_pending">
+        <item quantity="one">%1$d unsaved change</item>
+        <item quantity="other">%1$d unsaved changes</item>
+    </plurals>
 </resources>

@@ -8,6 +8,9 @@ import com.agentsanywhere.app.api.RemoteModelTarget
 import com.agentsanywhere.app.api.RemoteTokensUnlinkResult
 import com.agentsanywhere.app.feature.auth.AuthSessionReader
 import com.agentsanywhere.app.api.RemoteQuickSetupStart
+import com.agentsanywhere.app.api.RemoteTokensAccount
+import com.agentsanywhere.app.api.RemoteTokensUsage
+import com.agentsanywhere.app.model.ModelPreferences
 import com.agentsanywhere.app.model.ModelProfile
 import com.agentsanywhere.app.model.QuickSetupRequest
 import kotlinx.coroutines.CancellationException
@@ -67,6 +70,14 @@ class ModelConfigController(
 
     suspend fun unlinkTokens(allowInterrupt: Boolean): Result<RemoteTokensUnlinkResult> =
         call { server, token -> api.unlinkTokens(server, token, allowInterrupt) }
+
+    suspend fun tokensAccount(): Result<RemoteTokensAccount> = call { server, token -> api.tokensAccount(server, token) }
+
+    suspend fun tokensUsage(days: Int): Result<RemoteTokensUsage> = call { server, token -> api.tokensUsage(server, token, days) }
+
+    /** True when runtimes using Tokens are being updated. */
+    suspend fun saveTokensModels(preferences: ModelPreferences): Result<Boolean> =
+        call { server, token -> api.saveTokensModels(server, token, preferences) }
 
     suspend fun rotateTokensKey(profileId: String, allowInterrupt: Boolean, idempotencyKey: String): Result<RemoteModelOperation> =
         call { server, token -> api.rotateTokensKey(server, token, profileId, allowInterrupt, idempotencyKey) }

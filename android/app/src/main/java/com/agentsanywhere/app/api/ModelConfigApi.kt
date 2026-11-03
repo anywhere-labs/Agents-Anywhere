@@ -1,6 +1,7 @@
 package com.agentsanywhere.app.api
 
 import com.agentsanywhere.app.model.ModelOffer
+import com.agentsanywhere.app.model.ModelPreferences
 import com.agentsanywhere.app.model.ModelProfile
 import com.agentsanywhere.app.model.QuickSetupRequest
 import org.json.JSONArray
@@ -175,6 +176,48 @@ class ModelConfigApi(
             revoked = response.optBoolean("revoked", false),
             results = response.optJSONArray("results").toObjectList { toModelOperationResult() },
         )
+    }
+
+    /** The linked account, its balance and its console pages. */
+    fun tokensAccount(
+        serverUrl: String,
+        authorizationToken: String,
+    ): RemoteTokensAccount {
+        return client.getJson(
+            serverUrl = serverUrl,
+            path = "/integrations/tokens/account",
+            authorizationToken = authorizationToken,
+        ).toTokensAccount()
+    }
+
+    /** The whole Tokens account's settled usage over the last [days] Beijing days. */
+    fun tokensUsage(
+        serverUrl: String,
+        authorizationToken: String,
+        days: Int,
+    ): RemoteTokensUsage {
+        return client.getJson(
+            serverUrl = serverUrl,
+            path = "/integrations/tokens/usage?days=$days",
+            authorizationToken = authorizationToken,
+        ).toTokensUsage()
+    }
+
+    /**
+     * Turns models off and renames them; runtimes using Tokens get the change in
+     * the background. Returns whether any runtime is being updated.
+     */
+    fun saveTokensModels(
+        serverUrl: String,
+        authorizationToken: String,
+        preferences: ModelPreferences,
+    ): Boolean {
+        return client.putJson(
+            serverUrl = serverUrl,
+            path = "/integrations/tokens/models",
+            body = preferences.toJson(),
+            authorizationToken = authorizationToken,
+        ).optBoolean("applying", false)
     }
 
     fun rotateTokensKey(

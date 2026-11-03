@@ -6,6 +6,7 @@ import com.agentsanywhere.app.model.ModelConnectionCapability
 import com.agentsanywhere.app.model.ModelConnectionMode
 import com.agentsanywhere.app.model.ModelConnectionStatus
 import com.agentsanywhere.app.model.ModelOffer
+import com.agentsanywhere.app.model.ModelPreferences
 import com.agentsanywhere.app.model.ModelProfile
 import com.agentsanywhere.app.model.ModelSpec
 import com.agentsanywhere.app.model.ModelTarget
@@ -70,6 +71,46 @@ data class RemoteTokensUnlinkResult(
     val results: List<RemoteModelOperationResult>,
 )
 
+/** Amounts are decimal yuan strings with four places, as Tokens Anywhere sends them. */
+data class RemoteTokensBalance(
+    val balance: String?,
+    val available: String?,
+    val held: String?,
+    val bonus: String?,
+)
+
+data class RemoteTokensAccount(
+    val id: String,
+    val displayName: String?,
+    val email: String?,
+    val balance: RemoteTokensBalance,
+    val consoleUrl: String?,
+    val billingUrl: String?,
+    val usageUrl: String?,
+) {
+    val label: String get() = displayName ?: email ?: id
+}
+
+data class RemoteTokensUsageItem(
+    /** A Beijing date, `yyyy-MM-dd`. */
+    val date: String,
+    val model: String?,
+    val requests: Long,
+    val inputTokens: Long,
+    val outputTokens: Long,
+    val cacheReadTokens: Long,
+    val cacheWrite5mTokens: Long,
+    val cacheWrite1hTokens: Long,
+    val amountCharged: String,
+)
+
+/** The whole Tokens account's settled usage; quiet days are absent. */
+data class RemoteTokensUsage(
+    val from: String,
+    val to: String,
+    val items: List<RemoteTokensUsageItem>,
+)
+
 internal fun JSONObject.toModelConfigOverview(): ModelConfigOverview {
     return ModelConfigOverview(
         secretConfigured = optBoolean("secretConfigured", false),
@@ -92,6 +133,62 @@ internal fun JSONObject.toModelProfile(): ModelProfile {
         state = optString("state", "active").ifBlank { "active" },
         etag = if (has("etag") && !isNull("etag")) opt("etag").toString() else "",
         updatedAt = optNullableString("updatedAt"),
+        preferences = optJSONObject("preferences")?.toModelPreferences() ?: ModelPreferences.EMPTY,
+    )
+}
+
+internal fun JSONObject.toModelPreferences(): ModelPreferences {
+    val names = optJSONObject("names")
+    return ModelPreferences(
+        disabled = optJSONArray("disabled").toStringList().distinct(),
+        names = names?.keys()?.asSequence()
+            ?.mapNotNull { id -> names.optNullableString(id)?.let { id to it } }
+            ?.toMap()
+            .orEmpty(),
+    )
+}
+
+internal fun ModelPreferences.toJson(): JSONObject = JSONObject()
+    .put("disabled", JSONArray().apply { disabled.forEach { put(it) } })
+    .put("names", JSONObject().apply { names.forEach { (id, name) -> put(id, name) } })
+
+internal fun JSONObject.toTokensAccount(): RemoteTokensAccount {
+    val account = optJSONObject("account")
+    val balance = optJSONObject("balance")
+    val links = optJSONObject("links")
+    return RemoteTokensAccount(
+        id = account?.optString("id").orEmpty(),
+        displayName = account?.optNullableString("displayName"),
+        email = account?.optNullableString("email"),
+        balance = RemoteTokensBalance(
+            balance = balance?.optNullableString("balance"),
+            available = balance?.optNullableString("available"),
+            held = balance?.optNullableString("held"),
+            bonus = balance?.optNullableString("bonus"),
+        ),
+        consoleUrl = links?.optNullableString("console"),
+        billingUrl = links?.optNullableString("billing"),
+        usageUrl = links?.optNullableString("usage"),
+    )
+}
+
+internal fun JSONObject.toTokensUsage(): RemoteTokensUsage {
+    return RemoteTokensUsage(
+        from = optString("from"),
+        to = optString("to"),
+        items = optJSONArray("items").toObjectList {
+            RemoteTokensUsageItem(
+                date = optString("date"),
+                model = optNullableString("model"),
+                requests = optLong("requests", 0),
+                inputTokens = optLong("inputTokens", 0),
+                outputTokens = optLong("outputTokens", 0),
+                cacheReadTokens = optLong("cacheReadTokens", 0),
+                cacheWrite5mTokens = optLong("cacheWrite5mTokens", 0),
+                cacheWrite1hTokens = optLong("cacheWrite1hTokens", 0),
+                amountCharged = optString("amountCharged", "0"),
+            )
+        }.filter { it.date.isNotBlank() },
     )
 }
 
@@ -105,6 +202,9 @@ private fun JSONObject.toModelOffer(): ModelOffer {
                 name = optNullableString("name"),
                 efforts = optJSONArray("efforts").toStringList(),
                 input = optJSONArray("input").toStringList(),
+                vendor = optNullableString("vendor"),
+                contextWindow = optNullableLong("contextWindow"),
+                maxOutputTokens = optNullableLong("maxOutputTokens"),
             )
         }.filter { it.id.isNotBlank() },
     )

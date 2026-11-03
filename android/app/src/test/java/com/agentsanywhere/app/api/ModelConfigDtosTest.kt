@@ -119,4 +119,58 @@ class ModelConfigDtosTest {
         assertEquals(64, target.modelLimit)
         assertTrue(target.tooManyModels)
     }
+
+    @Test
+    fun tokensProfileCarriesPreferencesAndModelDetails() {
+        val profile = JSONObject(
+            """{"id":"p1","source":"tokens","name":"Tokens","originHost":"t","state":"active",
+                "offers":[{"format":"openai_chat","baseUrl":"https://t/v1","models":[
+                  {"id":"m1","vendor":"openai","contextWindow":400000,"maxOutputTokens":128000,"input":["text","image"]},
+                  {"id":"m2","vendor":null,"contextWindow":null}]}],
+                "preferences":{"disabled":["m2","m2"],"names":{"m1":"Fast","m3":null}}}""",
+        ).toModelProfile()
+
+        val (m1, m2) = profile.offers.single().models
+        assertEquals("openai", m1.vendor)
+        assertEquals(400_000L, m1.contextWindow)
+        assertEquals(128_000L, m1.maxOutputTokens)
+        assertNull(m2.vendor)
+        assertNull(m2.contextWindow)
+        assertEquals(listOf("m2"), profile.preferences.disabled)
+        assertEquals(mapOf("m1" to "Fast"), profile.preferences.names)
+
+        val older = JSONObject("""{"id":"p2","offers":[]}""").toModelProfile()
+        assertTrue(older.preferences.disabled.isEmpty())
+        assertTrue(older.preferences.names.isEmpty())
+
+        val body = profile.preferences.toJson()
+        assertEquals("m2", body.getJSONArray("disabled").getString(0))
+        assertEquals("Fast", body.getJSONObject("names").getString("m1"))
+    }
+
+    @Test
+    fun tokensAccountAndUsageParse() {
+        val account = JSONObject(
+            """{"account":{"id":"acc","displayName":null,"email":"a@example.com"},
+                "balance":{"balance":"115.5000","available":"100.0000","held":"0.0000","bonus":"15.5000"},
+                "links":{"console":"https://t/console","billing":"https://t/billing","usage":"https://t/usage"}}""",
+        ).toTokensAccount()
+        assertEquals("a@example.com", account.label)
+        assertEquals("115.5000", account.balance.balance)
+        assertEquals("15.5000", account.balance.bonus)
+        assertEquals("https://t/billing", account.billingUrl)
+        assertEquals("https://t/usage", account.usageUrl)
+
+        val usage = JSONObject(
+            """{"from":"2026-10-28","to":"2026-11-03","items":[
+                {"date":"2026-11-01","model":"m1","requests":3,"inputTokens":10,"outputTokens":5,"cacheReadTokens":1,
+                 "cacheWrite5mTokens":2,"cacheWrite1hTokens":3,"amountCharged":"0.0123"},
+                {"date":"2026-11-02","model":null,"requests":1,"amountCharged":"0.0001"}]}""",
+        ).toTokensUsage()
+        assertEquals("2026-10-28", usage.from)
+        assertEquals(2, usage.items.size)
+        assertEquals(3L, usage.items[0].cacheWrite1hTokens)
+        assertNull(usage.items[1].model)
+        assertEquals(0L, usage.items[1].inputTokens)
+    }
 }

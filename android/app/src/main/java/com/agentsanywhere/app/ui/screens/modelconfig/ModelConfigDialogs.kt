@@ -391,7 +391,7 @@ private fun SwitchRow(label: String, description: String?, checked: Boolean, onC
 }
 
 @Composable
-private fun FormField(
+internal fun FormField(
     value: String,
     placeholder: String,
     secret: Boolean = false,

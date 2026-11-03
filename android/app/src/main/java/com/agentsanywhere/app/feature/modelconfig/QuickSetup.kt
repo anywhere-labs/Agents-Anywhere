@@ -18,17 +18,24 @@ data class QuickSetupSteps(
 
 /**
  * Choosing what to set up, a setup on its way (including the browser
- * authorization this screen started), or the result once runtimes use the
- * Tokens profile.
+ * authorization this screen started), or the linked account's page.
  */
 fun quickSetupPhase(tokens: TokensLinkStatus, configured: Boolean, authorizing: Boolean): QuickSetupPhase {
     val state = tokens.quickSetup?.state
     if (authorizing && !tokens.linked) return QuickSetupPhase.Progress
+    // A linked account shows its own page; once runtimes use Tokens, later runs
+    // (new runtimes, changed models) show there too.
+    if (tokens.linked && configured && state != "failed") return QuickSetupPhase.Done
     if (state == "syncing" || state == "applying" || state == "failed") {
         return if (tokens.linked) QuickSetupPhase.Progress else QuickSetupPhase.Setup
     }
-    if (tokens.linked && (configured || state == "done")) return QuickSetupPhase.Done
-    return QuickSetupPhase.Setup
+    return if (tokens.linked) QuickSetupPhase.Done else QuickSetupPhase.Setup
+}
+
+/** A setup or a model change is being written to runtimes right now. */
+fun quickSetupRunning(tokens: TokensLinkStatus): Boolean {
+    val state = tokens.quickSetup?.state
+    return state == "syncing" || state == "applying"
 }
 
 fun quickSetupSteps(tokens: TokensLinkStatus, authorizing: Boolean): QuickSetupSteps {

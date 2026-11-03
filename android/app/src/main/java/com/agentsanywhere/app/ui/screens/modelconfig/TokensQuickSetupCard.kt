@@ -41,10 +41,12 @@ import com.agentsanywhere.app.feature.modelconfig.QuickSetupPhase
 import com.agentsanywhere.app.feature.modelconfig.QuickStepStatus
 import com.agentsanywhere.app.feature.modelconfig.activeTokensProfile
 import com.agentsanywhere.app.feature.modelconfig.defaultQuickSelection
+import com.agentsanywhere.app.feature.modelconfig.initialTokensAccountTab
 import com.agentsanywhere.app.feature.modelconfig.newQuickCandidates
 import com.agentsanywhere.app.feature.modelconfig.quickCandidateNote
 import com.agentsanywhere.app.feature.modelconfig.quickSetupPhase
 import com.agentsanywhere.app.feature.modelconfig.quickSetupRequest
+import com.agentsanywhere.app.feature.modelconfig.quickSetupRunning
 import com.agentsanywhere.app.feature.modelconfig.quickSetupSteps
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.ModelConfigOverview
@@ -73,6 +75,7 @@ internal fun TokensQuickSetupCard(
     runtimes: List<DeviceRuntime>,
     devices: List<AgentDevice>,
     controller: ModelConfigController,
+    pendingBar: PendingModelsBarSlot,
     onNotice: (String) -> Unit,
     onError: (Throwable) -> Unit,
 ) {
@@ -106,7 +109,7 @@ internal fun TokensQuickSetupCard(
         QuickAssigned(it.connectorId, it.runtimeId, runtimeFor(it.connectorId, it.runtimeId)?.type, it.createdRuntime)
     }
     val fresh = candidates?.let { newQuickCandidates(it, assigned) }.orEmpty()
-    val phase = if (choosing) QuickSetupPhase.Setup else quickSetupPhase(tokens, tokenAssignments.isNotEmpty(), authorizing)
+    val phase = quickSetupPhase(tokens, tokenAssignments.isNotEmpty(), authorizing)
     val selection = selected ?: candidates?.let(::defaultQuickSelection).orEmpty()
 
     fun start(request: QuickSetupRequest?) {
@@ -141,6 +144,41 @@ internal fun TokensQuickSetupCard(
         }
     }
 
+    val choices: @Composable () -> Unit = {
+        MutedText(stringResource(R.string.model_config_quick_will_configure))
+        val list = candidates
+        when {
+            list == null -> Box(Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = LocalAAColors.current.muted, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+            }
+            list.isEmpty() -> MutedText(stringResource(R.string.model_config_no_devices))
+            else -> list.forEach { item ->
+                CandidateRow(
+                    item = item,
+                    label = targetLabel(item.connectorId, item.runtimeId, item.name),
+                    checked = item.canApply && item.key in selection,
+                    onCheckedChange = { checked ->
+                        selected = if (checked) selection + item.key else selection - item.key
+                    },
+                )
+            }
+        }
+    }
+    val startButtons: @Composable () -> Unit = {
+        SmallButton(
+            label = stringResource(R.string.model_config_quick_start),
+            icon = Lucide.Link2,
+            primary = true,
+            loading = busy,
+            enabled = !busy && tokens.secretConfigured &&
+                candidates.orEmpty().any { it.canApply && it.key in selection },
+            onClick = { start(null) },
+        )
+        if (choosing) {
+            SmallButton(label = stringResource(R.string.common_cancel), onClick = { choosing = false })
+        }
+    }
+
     when (phase) {
         QuickSetupPhase.Setup -> Section(
             title = stringResource(R.string.model_config_quick_title),
@@ -150,37 +188,9 @@ internal fun TokensQuickSetupCard(
         ) {
             ProfileCard {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    MutedText(stringResource(R.string.model_config_quick_will_configure))
-                    val list = candidates
-                    when {
-                        list == null -> Box(Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(color = LocalAAColors.current.muted, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
-                        }
-                        list.isEmpty() -> MutedText(stringResource(R.string.model_config_no_devices))
-                        else -> list.forEach { item ->
-                            CandidateRow(
-                                item = item,
-                                label = targetLabel(item.connectorId, item.runtimeId, item.name),
-                                checked = item.canApply && item.key in selection,
-                                onCheckedChange = { checked ->
-                                    selected = if (checked) selection + item.key else selection - item.key
-                                },
-                            )
-                        }
-                    }
+                    choices()
                     ActionRow {
-                        SmallButton(
-                            label = stringResource(R.string.model_config_quick_start),
-                            icon = Lucide.Link2,
-                            primary = true,
-                            loading = busy,
-                            enabled = !busy && tokens.secretConfigured &&
-                                candidates.orEmpty().any { it.canApply && it.key in selection },
-                            onClick = { start(null) },
-                        )
-                        if (choosing) {
-                            SmallButton(label = stringResource(R.string.common_cancel), onClick = { choosing = false })
-                        }
+                        startButtons()
                         unlinkButton()
                     }
                 }
@@ -193,72 +203,71 @@ internal fun TokensQuickSetupCard(
             onRetry = { start(tokens.quickSetup?.request) },
             onCancel = { authorizing = false },
         )
-        QuickSetupPhase.Done -> Section(
-            title = stringResource(R.string.model_config_tokens_title),
-            description = stringResource(R.string.model_config_tokens_linked, tokens.link?.accountLabel.orEmpty()),
+        QuickSetupPhase.Done -> TokensAccountPage(
+            tokens = tokens,
+            profile = tokensProfile,
+            controller = controller,
+            applying = quickSetupRunning(tokens),
+            initialTab = initialTokensAccountTab(configured = tokenAssignments.isNotEmpty()),
+            syncing = busy,
+            onSync = {
+                busy = true
+                scope.launch {
+                    controller.syncTokens()
+                        .onSuccess { onNotice(context.getString(R.string.model_config_synced)) }
+                        .onFailure(onError)
+                    busy = false
+                }
+            },
+            pendingBar = pendingBar,
+            onNotice = onNotice,
+            onError = onError,
+            action = unlinkButton,
         ) {
-            ProfileCard {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    StatusPill(stringResource(R.string.model_config_quick_configured), ModelStatusTone.Ok)
-                    if (fresh.isNotEmpty()) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(toneColor(ModelStatusTone.Progress).copy(alpha = 0.08f))
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text(
-                                pluralStringResource(R.plurals.model_config_quick_new_runtimes, fresh.size, fresh.size),
-                                color = LocalAAColors.current.ink,
-                                fontSize = 13.sp,
-                                modifier = Modifier.weight(1f),
-                            )
-                            SmallButton(
-                                label = stringResource(R.string.model_config_quick_configure_new),
-                                onClick = {
-                                    selected = fresh.filterNot { it.requiresConfirmation }.mapTo(mutableSetOf()) { it.key }
-                                    choosing = true
-                                },
-                            )
-                        }
-                    }
-                    if (tokens.link?.relinkSoon == true) NoticeText(stringResource(R.string.model_config_relink_soon))
-                    tokenAssignments.forEach { item ->
-                        val status = if (item.status == "deferred") {
-                            stringResource(R.string.model_config_quick_applies_when_idle)
-                        } else {
-                            val label = assignmentStatusRes(item.status)?.let { stringResource(it) } ?: item.status
-                            if (item.createdRuntime) label + stringResource(R.string.model_config_quick_via_managed_instance) else label
-                        }
-                        ResultLine(targetLabel(item.connectorId, item.runtimeId), status, warning = false)
-                    }
-                    val results = tokens.quickSetup?.results.orEmpty()
-                    results.filter { it.result == "skipped" || it.result == "failed" }.forEach { item ->
-                        ResultLine(targetLabel(item.connectorId, item.runtimeId), stringResource(reasonRes(item.reason)), warning = true)
-                    }
-                    if (results.any { it.modelsTrimmed > 0 }) MutedText(stringResource(R.string.model_config_quick_models_trimmed))
-                    ActionRow {
+            if (choosing || tokenAssignments.isEmpty()) {
+                choices()
+                ActionRow { startButtons() }
+            } else {
+                if (fresh.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(toneColor(ModelStatusTone.Progress).copy(alpha = 0.08f))
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            pluralStringResource(R.plurals.model_config_quick_new_runtimes, fresh.size, fresh.size),
+                            color = LocalAAColors.current.ink,
+                            fontSize = 13.sp,
+                            modifier = Modifier.weight(1f),
+                        )
                         SmallButton(
-                            label = stringResource(R.string.model_config_quick_update_models),
-                            icon = Lucide.RefreshCw,
-                            loading = busy,
-                            enabled = !busy,
+                            label = stringResource(R.string.model_config_quick_configure_new),
                             onClick = {
-                                busy = true
-                                scope.launch {
-                                    controller.syncTokens()
-                                        .onSuccess { onNotice(context.getString(R.string.model_config_synced)) }
-                                        .onFailure(onError)
-                                    busy = false
-                                }
+                                selected = fresh.filterNot { it.requiresConfirmation }.mapTo(mutableSetOf()) { it.key }
+                                choosing = true
                             },
                         )
-                        unlinkButton()
                     }
                 }
+                if (tokens.link?.relinkSoon == true) NoticeText(stringResource(R.string.model_config_relink_soon))
+                tokenAssignments.forEach { item ->
+                    val status = if (item.status == "deferred") {
+                        stringResource(R.string.model_config_quick_applies_when_idle)
+                    } else {
+                        val label = assignmentStatusRes(item.status)?.let { stringResource(it) } ?: item.status
+                        if (item.createdRuntime) label + stringResource(R.string.model_config_quick_via_managed_instance) else label
+                    }
+                    ResultLine(targetLabel(item.connectorId, item.runtimeId), status, warning = false)
+                }
+                val results = tokens.quickSetup?.results.orEmpty()
+                results.filter { it.result == "skipped" || it.result == "failed" }.forEach { item ->
+                    ResultLine(targetLabel(item.connectorId, item.runtimeId), stringResource(reasonRes(item.reason)), warning = true)
+                }
+                if (results.any { it.modelsTrimmed > 0 }) MutedText(stringResource(R.string.model_config_quick_models_trimmed))
             }
         }
     }
