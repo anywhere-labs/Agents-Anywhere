@@ -7,7 +7,24 @@ from unittest.mock import AsyncMock
 import httpx
 
 from connector.server.ingest import ConnectorIngestClient
-from connector.server.snapshot_body import body_digest, snapshot_body, snapshot_pages
+from connector.server.snapshot_body import (
+    EncodedSnapshot,
+    body_digest,
+    encode_snapshot,
+    snapshot_body,
+)
+
+
+def page_bodies(snapshot: EncodedSnapshot, page_bytes: int | None, *, start: int = 0, first: bool = True) -> list[bytes]:
+    """Every request body the uploader cuts from ``start`` at this page size."""
+    bodies = []
+    while first or start < len(snapshot):
+        end = snapshot.page_end(start, page_bytes, first=first)
+        body = b"".join(snapshot.page_chunks(start, end, first=first, chunk_bytes=1000))
+        assert len(body) == snapshot.page_size(start, end, first=first)
+        bodies.append(body)
+        start, first = end, False
+    return bodies
 
 
 def test_snapshot_encoding_memory_does_not_grow_with_total_history():
@@ -41,15 +58,15 @@ def test_snapshot_binding_turn_filtering_and_empty_history():
 
 def test_snapshot_file_rewinds_for_authentication_retry_and_closes(monkeypatch):
     import connector.server.ingest as module
-    original = module.snapshot_pages
+    original = module.encode_snapshot
     files, hashes = [], []
 
     def capture(*args, **kwargs):
         result = original(*args, **kwargs)
-        files.extend(result)
+        files.append(result)
         return result
 
-    monkeypatch.setattr(module, "snapshot_pages", capture)
+    monkeypatch.setattr(module, "encode_snapshot", capture)
 
     async def run():
         async def receive(request):
@@ -67,13 +84,11 @@ def test_snapshot_file_rewinds_for_authentication_retry_and_closes(monkeypatch):
 
 def test_snapshot_pages_split_at_item_boundaries_and_rebuild_the_same_timeline():
     items = [{"id": str(index), "orderSeq": index, "content": {"text": "中" * 300}} for index in range(40)]
-    pages = snapshot_pages("dsh", "instance", "session", {"externalSessionId": "native", "title": "t"}, iter(items), page_bytes=4096)
-    try:
-        assert len(pages) > 3
-        decoded = [json.loads(page.read()) for page in pages]
-    finally:
-        for page in pages:
-            page.close()
+    with encode_snapshot("dsh", "instance", "session", {"externalSessionId": "native", "title": "t"}, iter(items)) as snapshot:
+        bodies = page_bodies(snapshot, 4096)
+    assert len(bodies) > 3
+    assert all(len(body) <= 4096 for body in bodies), "every page stays within the limit"
+    decoded = [json.loads(body) for body in bodies]
     first = decoded[0]["notifications"]
     assert [n["method"] for n in first] == ["session.meta.upsert", "timeline.sync"]
     assert first[1]["params"]["complete"] is True
@@ -86,25 +101,35 @@ def test_snapshot_pages_split_at_item_boundaries_and_rebuild_the_same_timeline()
     merged = [item for page in decoded for item in page["notifications"][-1]["params"]["items"]]
     assert [item["id"] for item in merged] == [item["id"] for item in items]
     assert [item["orderSeq"] for item in merged] == sorted(item["orderSeq"] for item in merged)
-    sizes = []
-    pages = snapshot_pages("dsh", "instance", "session", {"externalSessionId": "native"}, iter(items), page_bytes=4096)
-    try:
-        for page in pages:
-            page.seek(0, 2)
-            sizes.append(page.tell())
-    finally:
-        for page in pages:
-            page.close()
-    assert all(size <= 4096 for size in sizes[1:-1]), "middle pages stay within the limit"
+
+
+def test_remaining_items_are_recut_at_another_page_size_without_encoding_again():
+    items = [{"id": str(index), "orderSeq": index, "content": {"text": "x" * 500}} for index in range(30)]
+    with encode_snapshot("dsh", "instance", "session", {"externalSessionId": "native"}, iter(items)) as snapshot:
+        assert len(snapshot) == 30
+        coarse = page_bodies(snapshot, 8192)
+        start = len(json.loads(coarse[0])["notifications"][-1]["params"]["items"])
+        # The first page was accepted; the rest goes out in smaller appending pages.
+        fine = page_bodies(snapshot, 2048, start=start, first=False)
+    assert len(fine) > len(coarse) - 1
+    later = [json.loads(body)["notifications"] for body in fine]
+    assert all(len(notices) == 1 and notices[0]["params"]["complete"] is False for notices in later)
+    ids = [item["id"] for notices in [json.loads(coarse[0])["notifications"], *later] for item in notices[-1]["params"]["items"]]
+    assert ids == [item["id"] for item in items]
+
+
+def test_an_item_larger_than_the_page_still_goes_out_alone():
+    items = [{"id": "big", "content": {"text": "x" * 5000}}, {"id": "small", "content": {"text": "y"}}]
+    with encode_snapshot("dsh", "instance", "session", {"externalSessionId": "native"}, iter(items)) as snapshot:
+        assert snapshot.page_end(0, 1024, first=True) == 1
+        assert snapshot.page_end(1, 1024, first=False) == 2
+        assert snapshot.page_end(0, None, first=True) == 2
 
 
 def test_single_page_body_is_the_unpaged_snapshot():
     items = [{"id": "a", "content": {"text": "x"}}, {"id": "b", "content": {"text": "y"}}]
     with snapshot_body("dsh", "instance", "session", {"externalSessionId": "native"}, iter(items)) as whole:
         single = whole.read()
-    pages = snapshot_pages("dsh", "instance", "session", {"externalSessionId": "native"}, iter(items))
-    try:
-        assert len(pages) == 1 and pages[0].read() == single
-    finally:
-        for page in pages:
-            page.close()
+    with encode_snapshot("dsh", "instance", "session", {"externalSessionId": "native"}, iter(items)) as snapshot:
+        assert page_bodies(snapshot, 45 * 1024 * 1024) == [single]
+    assert json.loads(single)["notifications"][1]["params"]["items"] == items

@@ -49,8 +49,13 @@ class RuntimeHostClient(ABC):
 
     async def publish_runtime_snapshot(
         self, runtime: str, session_id: str, meta: dict[str, Any], items: Iterable[dict[str, Any]],
-        runtime_id: str | None = None, on_progress: UploadProgress | None = None,
+        runtime_id: str | None = None, on_progress: UploadProgress | None = None, ordered: bool = True,
     ) -> None:
+        """Replace one session's timeline with a complete snapshot.
+
+        ``ordered=False`` is for a runtime that orders its own deliveries: the
+        upload then does not hold back the Connector's other notifications.
+        """
         raise NotImplementedError("Snapshot ingestion is unavailable")
 
     async def publish_runtime_notifications(
