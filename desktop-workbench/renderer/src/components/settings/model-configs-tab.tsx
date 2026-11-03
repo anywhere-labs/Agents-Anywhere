@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Link2, Plus, RefreshCw, RotateCcw, Trash2, Unlink, Upload } from "lucide-react"
+import { Globe, KeyRound, Link2, Plus, RefreshCw, RotateCcw, Trash2, Unlink, Upload } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
@@ -24,9 +24,11 @@ import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useWorkspace } from "@/components/workspace-context"
 import type {
   DeviceRuntimeView,
+  ModelOffer,
   ModelAssignment,
   ModelConfigOverview,
   ModelProfile,
@@ -310,7 +312,6 @@ function ProfileRow({
   const [busy, setBusy] = React.useState(false)
   const interrupt = useInterruptConfirm()
   const changed = useModelConfigChanged()
-  const models = new Set(profile.offers.flatMap((offer) => offer.models.map((model) => model.id))).size
 
   const remove = async () => {
     setBusy(true)
@@ -350,15 +351,23 @@ function ProfileRow({
           <Badge variant="secondary">{t(`source.${profile.source}`)}</Badge>
           {profile.state === "detached" ? <Badge variant="outline">{t("detached")}</Badge> : null}
         </div>
-        <span className="text-xs text-muted-foreground">
-          {[
-            profile.originHost,
-            profile.offers.map((offer) => t(`protocols.${offer.format}`)).join(" / "),
-            t("modelCount", { count: models }),
-            profile.keyHint ? t("keyHint", { hint: profile.keyHint }) : null,
-            usedBy ? t("usedBy", { count: usedBy }) : null,
-          ].filter(Boolean).join(" · ")}
-        </span>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          <span className="flex min-w-0 items-center gap-1" title={t("address")}>
+            <Globe className="size-3.5 shrink-0" />
+            <span className="truncate">{profile.originHost}</span>
+          </span>
+          {profile.keyHint ? (
+            <span className="flex items-center gap-1 font-mono" title={t("apiKey")}>
+              <KeyRound className="size-3.5 shrink-0" />{profile.keyHint}
+            </span>
+          ) : null}
+          <span>{usedBy ? t("usedBy", { count: usedBy }) : t("unused")}</span>
+        </div>
+        <TooltipProvider>
+          <div className="flex flex-wrap gap-1.5 pt-0.5">
+            {profile.offers.map((offer) => <OfferChip key={offer.format} offer={offer} />)}
+          </div>
+        </TooltipProvider>
       </div>
       <div className="flex gap-2">
         <Button size="sm" onClick={onApply} disabled={busy || profile.state !== "active"}>
@@ -376,6 +385,36 @@ function ProfileRow({
         ) : null}
       </div>
     </div>
+  )
+}
+
+/** One protocol the profile offers, with how many models; hover lists them. */
+function OfferChip({ offer }: { offer: ModelOffer }) {
+  const t = useTranslations("pages.settings.modelConfigs")
+  const shown = offer.models.slice(0, 12)
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge variant="outline" className="cursor-default font-normal">
+          {t(`protocolsShort.${offer.format}`)}
+          <span className="text-muted-foreground">
+            {offer.models.length ? t("modelCount", { count: offer.models.length }) : t("modelsDiscovered")}
+          </span>
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs">
+        <div className="flex flex-col gap-1">
+          <span className="font-medium">{t(`protocols.${offer.format}`)}</span>
+          <span className="break-all opacity-80">{offer.baseUrl}</span>
+          {shown.length ? (
+            <span className="break-all font-mono">
+              {shown.map((model) => model.id).join(", ")}
+              {offer.models.length > shown.length ? ` ${t("andMore", { count: offer.models.length - shown.length })}` : ""}
+            </span>
+          ) : <span>{t("modelsDiscoveredDescription")}</span>}
+        </div>
+      </TooltipContent>
+    </Tooltip>
   )
 }
 

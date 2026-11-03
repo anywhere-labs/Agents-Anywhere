@@ -1665,9 +1665,8 @@
         "profileSaved": "配置已保存",
         "deleteProfile": "删除配置",
         "detached": "已断开",
-        "keyHint": "Key {hint}",
         "modelCount": "{count} 个模型",
-        "usedBy": "{count} 个设备在用",
+        "usedBy": "{count} 个 Runtime 在用",
         "source": {
           "tokens": "Tokens Anywhere",
           "manual": "手动"
@@ -1766,7 +1765,17 @@
         "interruptDescription": "继续会重启相关 Runtime，正在运行的任务会被中断。",
         "interruptContinue": "中断并继续",
         "loadFailed": "没能读取配置管理的数据。",
-        "retry": "重试"
+        "retry": "重试",
+        "address": "地址",
+        "unused": "未被使用",
+        "modelsDiscovered": "自动获取模型",
+        "modelsDiscoveredDescription": "没有指定模型，由 Runtime 自己从这个地址获取。",
+        "andMore": "等 {count} 个",
+        "protocolsShort": {
+          "openai_responses": "Responses",
+          "openai_chat": "Chat Completions",
+          "anthropic": "Anthropic"
+        }
       },
       "modelConfigsTitle": "配置管理"
     },
