@@ -210,8 +210,9 @@ class SessionDetailController(
         sessionId: String,
         snapshot: SessionDetailState,
         live: SessionDetailState,
+        requestState: SessionDetailState,
     ): SessionDetailState {
-        val next = reduceSnapshotWithLiveState(snapshot, live)
+        val next = reduceSnapshotWithLiveState(snapshot, live, requestState)
         optimisticStore.replace(sessionId, next.messages.filter { it.optimistic })
         return next
     }
@@ -312,10 +313,7 @@ class SessionDetailController(
                 },
                 onFailure = { error ->
                     next = next.copy(
-                        capabilities = next.capabilities.copy(
-                            isLoading = false,
-                            errorMessage = error.userMessage(),
-                        ),
+                        capabilities = next.capabilities.afterReadFailure(error).copy(isLoading = false),
                     )
                 },
             )
@@ -390,7 +388,7 @@ class SessionDetailController(
                     )
                 },
                 onFailure = { error ->
-                    next = next.copy(capabilities = next.capabilities.copy(errorMessage = error.userMessage()))
+                    next = next.copy(capabilities = next.capabilities.afterReadFailure(error))
                 },
             )
             noticesRequest.await().fold(
@@ -852,6 +850,11 @@ class SessionDetailController(
     private fun Throwable.userMessage(): String {
         return message ?: "Could not refresh this session."
     }
+
+    // As on Web, a failed background read keeps loaded facts rather than
+    // disabling the composer; the error only shows before any have loaded.
+    private fun EffectiveCapabilities.afterReadFailure(error: Throwable): EffectiveCapabilities =
+        if (isLoaded) this else copy(errorMessage = error.userMessage())
 
     private fun mergeOptimistic(
         sessionId: String,

@@ -220,6 +220,7 @@ internal fun reduceRuntimeLiveState(
 internal fun reduceSnapshotWithLiveState(
     snapshot: SessionDetailState,
     live: SessionDetailState,
+    requestState: SessionDetailState,
 ): SessionDetailState {
     if (!live.initialized) {
         return snapshot.copy(
@@ -250,7 +251,11 @@ internal fun reduceSnapshotWithLiveState(
     } else {
         snapshot.runtime
     }
-    val capabilities = if (live.capabilities.isLoaded && live.capabilities.revision >= snapshot.capabilities.revision) {
+    // Capability revisions are not comparable (see applyCapabilitiesObservation).
+    // Facts observed after the snapshot request started are newer than it.
+    val capabilitiesObserved = live.capabilities.withoutRequestStatus() !=
+        requestState.capabilities.withoutRequestStatus()
+    val capabilities = if (live.capabilities.isLoaded && capabilitiesObserved) {
         live.capabilities
     } else {
         snapshot.capabilities
@@ -377,13 +382,18 @@ internal fun SessionDetailState.applyRuntimeObservation(
 internal fun SessionDetailState.applyCapabilitiesObservation(
     observed: EffectiveCapabilities,
 ): SessionDetailState {
-    val nextCapabilities = if (!capabilities.isLoaded || observed.revision >= capabilities.revision) {
-        observed
-    } else {
-        capabilities.copy(isLoading = false, errorMessage = null)
-    }
-    return copy(capabilities = nextCapabilities)
+    // Revisions are not comparable across sources: live reads carry the session
+    // sequence, stored connector facts a microsecond clock. As on Web and iOS,
+    // the latest observation wins; identical facts keep the current object.
+    val sameFacts = capabilities.isLoaded &&
+        capabilities.capabilities == observed.capabilities &&
+        capabilities.connectorId == observed.connectorId
+    return copy(capabilities = if (sameFacts) capabilities.withoutRequestStatus() else observed)
 }
+
+// Loading and error flags describe a request, not the capability facts.
+private fun EffectiveCapabilities.withoutRequestStatus(): EffectiveCapabilities =
+    copy(isLoading = false, errorMessage = null)
 
 internal fun SessionDetailState.applyNoticeObservation(
     incoming: List<RemoteRuntimeNotice>,
