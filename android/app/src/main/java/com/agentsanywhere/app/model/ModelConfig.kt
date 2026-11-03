@@ -100,6 +100,45 @@ data class TokensLinkStatus(
     val tokensUrl: String?,
     val secretConfigured: Boolean,
     val link: TokensLink?,
+    /** The last one-click setup: what was ticked and how far it got. */
+    val quickSetup: QuickSetupProgress? = null,
+) {
+    val linked: Boolean get() = link?.linked == true
+}
+
+data class ModelTarget(
+    val connectorId: String,
+    val runtimeId: String,
+) {
+    val key: String get() = "$connectorId/$runtimeId"
+}
+
+data class QuickSetupRequest(
+    val targets: List<ModelTarget>,
+    val confirmNativeGlobal: Boolean,
+)
+
+data class QuickSetupResult(
+    val connectorId: String,
+    val runtimeId: String,
+    /** "applied", "deferred", "skipped" or "failed". */
+    val result: String,
+    val reason: String?,
+    val modelsTrimmed: Int,
+    val servesRuntimeId: String?,
+) {
+    val key: String get() = "$connectorId/$runtimeId"
+}
+
+data class QuickSetupProgress(
+    /** "syncing", "applying", "done" or "failed". */
+    val state: String,
+    val request: QuickSetupRequest,
+    val startedAt: String?,
+    /** Where a failure happened: "sync" or "apply". */
+    val step: String?,
+    val code: String?,
+    val results: List<QuickSetupResult>,
 )
 
 data class ModelConfigOverview(

@@ -104,7 +104,10 @@ internal fun effectLabelRes(effect: String?): Int? = when (effect) {
 }
 
 @StringRes
-internal fun skipReasonRes(reason: String?): Int = when (reason) {
+internal fun skipReasonRes(reason: String?): Int = knownSkipReasonRes(reason) ?: R.string.model_config_skip_unknown
+
+@StringRes
+private fun knownSkipReasonRes(reason: String?): Int? = when (reason) {
     "model_connection_unsupported" -> R.string.model_config_skip_model_connection_unsupported
     "not_installed" -> R.string.model_config_skip_not_installed
     "format_unsupported" -> R.string.model_config_skip_format_unsupported
@@ -112,12 +115,18 @@ internal fun skipReasonRes(reason: String?): Int = when (reason) {
     "busy_operation" -> R.string.model_config_skip_busy_operation
     "device_offline" -> R.string.model_config_skip_device_offline
     "models_required" -> R.string.model_config_skip_models_required
-    else -> R.string.model_config_skip_unknown
+    else -> null
 }
+
+/** A skip or failure reason: a skip text when there is one, else an error text, else "cannot apply". */
+@StringRes
+internal fun reasonRes(reason: String?): Int =
+    knownSkipReasonRes(reason) ?: knownErrorRes(reason) ?: R.string.model_config_skip_unknown
 
 @StringRes
 internal fun assignmentStatusRes(status: String): Int? = when (status) {
     "applying" -> R.string.model_config_assignment_applying
+    "deferred" -> R.string.model_config_assignment_deferred
     "failed" -> R.string.model_config_assignment_failed
     "modified" -> R.string.model_config_assignment_modified
     "outdated" -> R.string.model_config_assignment_outdated
@@ -137,7 +146,10 @@ internal fun connectionStateRes(state: String): Int? = when (state) {
 
 /** Localized text for a model configuration error code; generic text for anything else. */
 @StringRes
-internal fun modelConfigErrorRes(code: String?): Int = when (code) {
+internal fun modelConfigErrorRes(code: String?): Int = knownErrorRes(code) ?: R.string.model_config_error_generic
+
+@StringRes
+private fun knownErrorRes(code: String?): Int? = when (code) {
     "secret_unconfigured" -> R.string.model_config_error_secret_unconfigured
     "secret_required" -> R.string.model_config_error_secret_required
     "profile_changed" -> R.string.model_config_error_profile_changed
@@ -166,5 +178,7 @@ internal fun modelConfigErrorRes(code: String?): Int = when (code) {
     "device_offline" -> R.string.model_config_error_device_offline
     "models_required" -> R.string.model_config_error_models_required
     "key_rotated" -> R.string.model_config_error_key_rotated
-    else -> R.string.model_config_error_generic
+    "quick_setup_running" -> R.string.model_config_error_quick_setup_running
+    "key_not_kept" -> R.string.model_config_error_key_not_kept
+    else -> null
 }

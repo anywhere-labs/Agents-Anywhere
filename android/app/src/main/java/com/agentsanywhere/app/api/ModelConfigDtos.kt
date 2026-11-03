@@ -8,6 +8,10 @@ import com.agentsanywhere.app.model.ModelConnectionStatus
 import com.agentsanywhere.app.model.ModelOffer
 import com.agentsanywhere.app.model.ModelProfile
 import com.agentsanywhere.app.model.ModelSpec
+import com.agentsanywhere.app.model.ModelTarget
+import com.agentsanywhere.app.model.QuickSetupProgress
+import com.agentsanywhere.app.model.QuickSetupRequest
+import com.agentsanywhere.app.model.QuickSetupResult
 import com.agentsanywhere.app.model.SecretFieldState
 import com.agentsanywhere.app.model.TokensLink
 import com.agentsanywhere.app.model.TokensLinkStatus
@@ -53,6 +57,12 @@ data class RemoteModelOperation(
     val kind: String,
     val finished: Boolean,
     val results: List<RemoteModelOperationResult>,
+)
+
+data class RemoteQuickSetupStart(
+    val started: Boolean,
+    /** Set when the browser must authorize the link first. */
+    val startUrl: String?,
 )
 
 data class RemoteTokensUnlinkResult(
@@ -132,6 +142,34 @@ private fun JSONObject.toTokensLinkStatus(): TokensLinkStatus {
                 accountEmail = account?.optNullableString("email"),
                 linkedAt = value.optNullableString("linkedAt"),
                 relinkSoon = value.optBoolean("relinkSoon", false),
+            )
+        },
+        quickSetup = optJSONObject("quickSetup")?.toQuickSetupProgress(),
+    )
+}
+
+internal fun JSONObject.toQuickSetupProgress(): QuickSetupProgress? {
+    val state = optNullableString("state") ?: return null
+    val request = optJSONObject("request")
+    return QuickSetupProgress(
+        state = state,
+        request = QuickSetupRequest(
+            targets = request?.optJSONArray("targets").toObjectList {
+                ModelTarget(optString("connectorId"), optString("runtimeId"))
+            }.filter { it.connectorId.isNotBlank() && it.runtimeId.isNotBlank() },
+            confirmNativeGlobal = request?.optBoolean("confirmNativeGlobal", false) ?: false,
+        ),
+        startedAt = optNullableString("startedAt"),
+        step = optNullableString("step"),
+        code = optNullableString("code"),
+        results = optJSONArray("results").toObjectList {
+            QuickSetupResult(
+                connectorId = optString("connectorId"),
+                runtimeId = optString("runtimeId"),
+                result = optString("result"),
+                reason = optNullableString("reason"),
+                modelsTrimmed = optInt("modelsTrimmed", 0),
+                servesRuntimeId = optNullableString("servesRuntimeId"),
             )
         },
     )

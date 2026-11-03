@@ -3,14 +3,8 @@
     <string name="model_config_title">配置管理</string>
     <string name="model_config_secret_missing">服务器还没有配置 AGENT_SERVER_SECRET（至少 32 个字符）。请管理员配置后再保存 Key 或链接 Tokens Anywhere。</string>
     <string name="model_config_tokens_title">Tokens Anywhere</string>
-    <string name="model_config_tokens_description">链接后，可以一键把 Tokens Anywhere 的模型配置到各设备的 Runtime。</string>
     <string name="model_config_tokens_linked">已链接：%1$s</string>
     <string name="model_config_tokens_reauth">授权已失效，请重新链接。</string>
-    <string name="model_config_tokens_not_synced">模型还没有同步，请点「同步模型」。</string>
-    <string name="model_config_link">链接</string>
-    <string name="model_config_relink">重新链接</string>
-    <string name="model_config_link_opened">已在浏览器中打开授权页，完成后这里会自动更新。</string>
-    <string name="model_config_sync">同步模型</string>
     <string name="model_config_synced">模型已同步</string>
     <string name="model_config_unlink">断开</string>
     <string name="model_config_relink_soon">授权即将满一年，请尽快重新链接。</string>
@@ -145,4 +139,31 @@
     <string name="model_config_models_discovered_description">没有指定模型，由 Runtime 自己从这个地址获取。</string>
     <string name="model_config_show_models">查看模型和地址</string>
     <string name="model_config_hide_models">收起</string>
+    <string name="model_config_quick_title">Tokens Anywhere 快速配置</string>
+    <string name="model_config_quick_description">用 Tokens Anywhere 账号，一键给所有设备配好模型。</string>
+    <string name="model_config_quick_will_configure">将配置这些 Runtime：</string>
+    <string name="model_config_quick_start">一键配置</string>
+    <string name="model_config_quick_in_progress">正在配置，完成后这里会自动更新。</string>
+    <string name="model_config_quick_step_authorize">在浏览器中授权</string>
+    <string name="model_config_quick_authorize_hint">在打开的页面上确认授权，完成后回到这里。</string>
+    <string name="model_config_quick_step_sync">同步模型</string>
+    <string name="model_config_quick_syncing">正在读取可用模型…</string>
+    <plurals name="model_config_quick_step_apply">
+        <item quantity="other">应用到 %1$d 个 Runtime</item>
+    </plurals>
+    <string name="model_config_quick_applying">正在写入各设备…</string>
+    <string name="model_config_quick_configured">已配置</string>
+    <string name="model_config_quick_update_models">更新模型</string>
+    <plurals name="model_config_quick_new_runtimes">
+        <item quantity="other">有 %1$d 个新 Runtime 可以配置</item>
+    </plurals>
+    <string name="model_config_quick_configure_new">配置</string>
+    <string name="model_config_quick_changes_own_settings">会修改它自身的全局配置，勾选后才配置</string>
+    <string name="model_config_quick_managed_instance">另建一个受管实例，不影响原来的</string>
+    <string name="model_config_quick_applies_when_idle">有任务在运行，空闲后生效</string>
+    <string name="model_config_quick_via_managed_instance">（受管实例）</string>
+    <string name="model_config_quick_models_trimmed">部分 Runtime 的模型超过 64 个，只导入了前 64 个。</string>
+    <string name="model_config_assignment_deferred">空闲后生效</string>
+    <string name="model_config_error_quick_setup_running">上一次配置还在进行中。</string>
+    <string name="model_config_error_key_not_kept">Tokens Anywhere 没有保存本实例的 Key，无法再次取回。请让 Tokens Anywhere 的部署者设置 TOKENS_SECRETS_KEY，然后断开并重新链接。</string>
 </resources>

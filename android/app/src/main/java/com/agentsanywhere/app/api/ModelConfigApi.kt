@@ -2,6 +2,7 @@ package com.agentsanywhere.app.api
 
 import com.agentsanywhere.app.model.ModelOffer
 import com.agentsanywhere.app.model.ModelProfile
+import com.agentsanywhere.app.model.QuickSetupRequest
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -109,6 +110,44 @@ class ModelConfigApi(
             path = "/integrations/tokens/link",
             authorizationToken = authorizationToken,
         ).getString("startUrl")
+    }
+
+    /** Runtimes the one-click Tokens Anywhere setup can reach, with what it would do to each. */
+    fun quickSetupCandidates(
+        serverUrl: String,
+        authorizationToken: String,
+    ): List<RemoteModelPreviewTarget> {
+        return client.getJson(
+            serverUrl = serverUrl,
+            path = "/integrations/tokens/quick-setup",
+            authorizationToken = authorizationToken,
+        ).optJSONArray("targets").toObjectList { toModelPreviewTarget() }
+    }
+
+    /** Starts the setup; a [RemoteQuickSetupStart.startUrl] must be opened in the browser first. */
+    fun startQuickSetup(
+        serverUrl: String,
+        authorizationToken: String,
+        request: QuickSetupRequest,
+    ): RemoteQuickSetupStart {
+        val body = JSONObject()
+            .put(
+                "targets",
+                JSONArray().apply {
+                    request.targets.forEach { put(JSONObject().put("connectorId", it.connectorId).put("runtimeId", it.runtimeId)) }
+                },
+            )
+            .put("confirmNativeGlobal", request.confirmNativeGlobal)
+        val response = client.postJson(
+            serverUrl = serverUrl,
+            path = "/integrations/tokens/quick-setup",
+            body = body,
+            authorizationToken = authorizationToken,
+        )
+        return RemoteQuickSetupStart(
+            started = response.optBoolean("started", false),
+            startUrl = response.optNullableString("startUrl"),
+        )
     }
 
     fun syncTokens(

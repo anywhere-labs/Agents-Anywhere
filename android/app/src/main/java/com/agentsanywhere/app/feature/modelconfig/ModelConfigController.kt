@@ -7,7 +7,9 @@ import com.agentsanywhere.app.api.RemoteModelPreviewTarget
 import com.agentsanywhere.app.api.RemoteModelTarget
 import com.agentsanywhere.app.api.RemoteTokensUnlinkResult
 import com.agentsanywhere.app.feature.auth.AuthSessionReader
+import com.agentsanywhere.app.api.RemoteQuickSetupStart
 import com.agentsanywhere.app.model.ModelProfile
+import com.agentsanywhere.app.model.QuickSetupRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -54,6 +56,12 @@ class ModelConfigController(
         call { server, token -> api.restore(server, token, connectorId, runtimeId, allowInterrupt) }
 
     suspend fun beginTokensLink(): Result<String> = call { server, token -> api.beginTokensLink(server, token) }
+
+    suspend fun quickSetupCandidates(): Result<List<RemoteModelPreviewTarget>> =
+        call { server, token -> api.quickSetupCandidates(server, token) }
+
+    suspend fun startQuickSetup(request: QuickSetupRequest): Result<RemoteQuickSetupStart> =
+        call { server, token -> api.startQuickSetup(server, token, request) }
 
     suspend fun syncTokens(): Result<ModelProfile> = call { server, token -> api.syncTokens(server, token) }
 

@@ -131,9 +131,11 @@ fun ModelConfigScreen(
                     }
                     overview.tokens?.takeIf { it.available }?.let { tokens ->
                         item("tokens") {
-                            TokensSection(
+                            TokensQuickSetupCard(
                                 tokens = tokens,
                                 overview = overview,
+                                runtimes = state.runtimes,
+                                devices = devices,
                                 controller = controller,
                                 onNotice = { notify(it) },
                                 onError = notifyError,
@@ -224,127 +226,6 @@ private fun ModelConfigHeader(onBack: () -> Unit) {
             overflow = TextOverflow.Ellipsis,
         )
         Spacer(Modifier.width(40.dp))
-    }
-}
-
-@Composable
-private fun TokensSection(
-    tokens: TokensLinkStatus,
-    overview: ModelConfigOverview,
-    controller: ModelConfigController,
-    onNotice: (String) -> Unit,
-    onError: (Throwable) -> Unit,
-) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var busy by remember { mutableStateOf<String?>(null) }
-    var confirmUnlink by remember { mutableStateOf(false) }
-    val link = tokens.link
-    val tokensProfile = overview.activeTokensProfile()
-    val usedBy = tokensProfile?.let { overview.usedBy(it.id) } ?: 0
-
-    fun run(kind: String, action: suspend () -> Unit) {
-        if (busy != null) return
-        busy = kind
-        scope.launch {
-            try {
-                action()
-            } finally {
-                busy = null
-            }
-        }
-    }
-
-    Section(
-        title = stringResource(R.string.model_config_tokens_title),
-        description = when {
-            link == null -> stringResource(R.string.model_config_tokens_description)
-            link.linked -> stringResource(R.string.model_config_tokens_linked, link.accountLabel)
-            else -> stringResource(R.string.model_config_tokens_reauth)
-        },
-    ) {
-        ProfileCard {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (link?.relinkSoon == true) {
-                    NoticeText(stringResource(R.string.model_config_relink_soon))
-                }
-                if (link != null && tokensProfile == null) {
-                    MutedText(stringResource(R.string.model_config_tokens_not_synced))
-                }
-                ActionRow {
-                    if (link == null || !link.linked) {
-                        SmallButton(
-                            label = stringResource(if (link == null) R.string.model_config_link else R.string.model_config_relink),
-                            icon = Lucide.Link2,
-                            primary = true,
-                            loading = busy == "link",
-                            enabled = busy == null && tokens.secretConfigured,
-                            onClick = {
-                                run("link") {
-                                    controller.beginTokensLink()
-                                        .onSuccess { startUrl ->
-                                            if (openTokensLinkStart(context, startUrl)) {
-                                                onNotice(context.getString(R.string.model_config_link_opened))
-                                            } else {
-                                                onError(IllegalStateException("No browser"))
-                                            }
-                                        }
-                                        .onFailure(onError)
-                                }
-                            },
-                        )
-                    } else {
-                        SmallButton(
-                            label = stringResource(R.string.model_config_sync),
-                            icon = Lucide.RefreshCw,
-                            loading = busy == "sync",
-                            enabled = busy == null,
-                            onClick = {
-                                run("sync") {
-                                    controller.syncTokens()
-                                        .onSuccess { onNotice(context.getString(R.string.model_config_synced)) }
-                                        .onFailure(onError)
-                                }
-                            },
-                        )
-                    }
-                    if (link != null) {
-                        SmallButton(
-                            label = stringResource(R.string.model_config_unlink),
-                            icon = Lucide.Unlink,
-                            enabled = busy == null,
-                            onClick = { confirmUnlink = true },
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    if (confirmUnlink) {
-        UnlinkTokensDialog(
-            usedBy = usedBy,
-            onDismiss = { confirmUnlink = false },
-            onConfirm = { allowInterrupt ->
-                controller.unlinkTokens(allowInterrupt)
-                    .onSuccess { result ->
-                        confirmUnlink = false
-                        val failed = result.results.count { it.result != "restored" }
-                        onNotice(
-                            when {
-                                failed > 0 -> context.resources.getQuantityString(
-                                    R.plurals.model_config_unlinked_with_failures,
-                                    failed,
-                                    failed,
-                                )
-                                result.revoked -> context.getString(R.string.model_config_unlinked)
-                                else -> context.getString(R.string.model_config_unlinked_not_revoked)
-                            },
-                        )
-                    }
-                    .onFailure(onError)
-            },
-        )
     }
 }
 
@@ -590,7 +471,7 @@ private fun DevicesSection(
 }
 
 @Composable
-private fun Section(
+internal fun Section(
     title: String,
     description: String,
     action: (@Composable () -> Unit)? = null,
@@ -611,7 +492,7 @@ private fun Section(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TitleLine(
+internal fun TitleLine(
     title: String,
     subtitle: String? = null,
     maturity: String? = null,
@@ -740,7 +621,7 @@ private fun DetailValue(text: String, monospace: Boolean = false) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ActionRow(content: @Composable () -> Unit) {
+internal fun ActionRow(content: @Composable () -> Unit) {
     FlowRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -753,7 +634,7 @@ internal fun MutedText(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun NoticeText(text: String) {
+internal fun NoticeText(text: String) {
     val colors = LocalAAColors.current
     Text(
         text,
@@ -769,7 +650,7 @@ private fun NoticeText(text: String) {
 }
 
 @Composable
-private fun RowDivider() {
+internal fun RowDivider() {
     Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp).height(1.dp).background(LocalAAColors.current.border))
 }
 
