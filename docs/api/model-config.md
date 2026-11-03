@@ -62,18 +62,19 @@
 - 协议取 Runtime 声明顺序中第一个配置也提供的协议。
 - Runtime 当前模式（包括尚未配置时的默认模式）不能使用模型连接时，新建一个 `managedBy=model-config` 的受管实例，原实例保持不变；每台设备每种类型最多一个，再次应用时复用，恢复后再次应用会重新启动它。
 - 只改写模型连接字段、上次导入的模型和必要的模式字段；用户自己添加的模型保留，ID 冲突时保留用户的；模型总数最多 64 个，超出时该目标跳过，原因为 `too_many_models`，可以用 `modelIds` 选择要导入的模型。
-- `apply=restart` 且有任务运行时，必须 `allowInterrupt: true`，否则该目标以 `busy` 跳过。
+- `apply=restart` 且有任务运行时，必须 `allowInterrupt: true`，否则该目标以 `busy` 跳过；带 `deferBusy: true` 时改为先保存配置、不重启，记录状态 `deferred`，后台每 20 秒检查一次，Runtime 空闲后重启生效。
+- `trimModels: true` 时，模型超过 64 个只导入放得下的部分，结果带 `modelsTrimmed`，不再跳过。
 - 同一个 `Idempotency-Key` 重放返回同一操作；用于不同请求返回 409 `idempotency_key_reused`；仍在进行时返回 409 `operation_in_progress`。
 
 恢复和轮换 Key 也遵循「先不中断」：带 `allow_interrupt=false`（或 `allowInterrupt: false`）时，有任务运行会返回 409 `busy`，客户端确认后再带 `true` 重试。轮换在 Tokens 一侧生效之前就会检查，所以被拒绝时旧 Key 仍然有效；轮换后没能更新的 Runtime 标为 `failed`，原因 `key_rotated`。
 
 **恢复**只撤销本模块写入的内容：恢复应用前的 `modelGateway`、删除导入的模型；受管实例只停用，不删除实例和会话。恢复从不删除 Runtime 配置。
 
-应用记录的 `status` 按优先级为 `applying`、`failed`、`modified`（应用后手动改过）、`outdated`（配置的模型或 Key 已变化）、`applied`。
+应用记录的 `status` 按优先级为 `applying`、`failed`、`deferred`（已保存，空闲后生效）、`modified`（应用后手动改过）、`outdated`（配置的模型或 Key 已变化）、`applied`。
 
 ## Tokens Anywhere 链接
 
-Tokens Anywhere 是 OAuth 授权服务器，每个 AA 实例是公共 PKCE 客户端 `agents-anywhere`，以 origin 区分。Tokens Anywhere 地址是实例设置，默认取环境变量 `AGENT_SERVER_TOKENS_URL`，必须与 Tokens 的 `TOKENS_PUBLIC_ORIGIN` 完全一致（回跳的 `iss` 按它校验）；回调地址用 `AGENT_SERVER_PUBLIC_ORIGIN` 拼出。同步模型时，网关地址取 Tokens `GET /api/v1/status` 返回的 `apiBaseUrl`，没有时用 Tokens 地址。
+Tokens Anywhere 是 OAuth 授权服务器，每个 AA 实例是公共 PKCE 客户端 `agents-anywhere`，以 origin 区分。Tokens Anywhere 地址是实例设置，默认取环境变量 `AGENT_SERVER_TOKENS_URL`，必须与 Tokens 的 `TOKENS_PUBLIC_ORIGIN` 完全一致（回跳的 `iss` 按它校验）；回调地址用 `AGENT_SERVER_PUBLIC_ORIGIN` 拼出。同步模型时，网关地址取 Tokens `GET /api/v1/status` 返回的 `apiBaseUrl`，没有时用 Tokens 地址。Tokens 必须设置 `TOKENS_SECRETS_KEY`：否则托管 Key 的明文只在创建时返回一次，AA 之后每次应用都要重新取回，会得到 409 `key_not_kept`。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -85,6 +86,15 @@ Tokens Anywhere 是 OAuth 授权服务器，每个 AA 实例是公共 PKCE 客�
 | DELETE | `/integrations/tokens/link?allow_interrupt=` | 先恢复用这份配置的 Runtime，再撤销授权；无法恢复的标为 `failed` |
 | POST | `/model-profiles/{id}/rotate-key` | 需要 `Idempotency-Key`；轮换托管 Key 并写入所有用它的 Runtime |
 | GET、PUT | `/admin/integrations/tokens` | 管理员读取或修改 Tokens Anywhere 地址；有账户已链接时不能改成别的地址（409 `tokens_links_exist`） |
+
+### 一键配置
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/integrations/tokens/quick-setup` | 一键配置会处理哪些 Runtime：每项带 `decision`、跳过原因、`effect`、`requiresConfirmation`、`runningSessions`。还没链接时按三种协议都可用来判断，真正应用时以 Tokens 的模型目录为准 |
+| POST | `/integrations/tokens/quick-setup` | `{targets, confirmNativeGlobal}`。还没链接时返回 `{started: false, startUrl}`，所选 Runtime 随授权请求保存；已经链接时返回 `{started: true}`，立即开始。同时只能有一个在进行，否则 409 `quick_setup_running` |
+
+授权完成后，Server 在后台同步模型，再按 `deferBusy: true`、`trimModels: true` 应用到所选 Runtime，不打断正在运行的任务。进度在快照的 `tokens.quickSetup`：`state` 依次为 `syncing`、`applying`、`done`，失败时为 `failed` 并带 `step`（`sync` 或 `apply`）和 `code`；完成时 `results` 列出每个 Runtime 的结果（`applied`、`deferred`、`skipped`、`failed`）。
 
 客户端在完成授权的浏览器里打开 `startUrl`：Web 用新标签页，Desktop 用系统浏览器，Android 用 Custom Tabs，iOS 用 `ASWebAuthenticationSession`。客户端不接收回调，链接结果通过实时快照得知；iOS 在快照显示已链接后主动结束授权会话。
 

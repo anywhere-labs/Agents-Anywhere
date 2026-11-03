@@ -10,7 +10,7 @@
 - Pi 接入需要 Server 执行 `v2_45` 数据库迁移，并配套更新 Connector 和使用此功能的客户端。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 - 统一 Plan 需要 Server 执行 `v2_46` 数据库迁移，并配套更新 Connector、客户端和 DSH Bridge；DSH 还需组合原生 Plan 插件。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
 - 配置管理需要 Server 执行 `v2_47` 数据库迁移，并配套更新 Connector、各客户端和 DSH 插件；保存手动填写的 Key、链接 Tokens Anywhere 之前，部署者要把 `AGENT_SERVER_SECRET` 设为至少 32 个字符。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
-- 链接 Tokens Anywhere 需要设置 `AGENT_SERVER_TOKENS_URL`（或由管理员在实例设置中填写 Tokens Anywhere 地址），并用 `AGENT_SERVER_PUBLIC_ORIGIN` 指定实例对外的地址。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 链接 Tokens Anywhere 需要设置 `AGENT_SERVER_TOKENS_URL`（或由管理员在实例设置中填写 Tokens Anywhere 地址），并用 `AGENT_SERVER_PUBLIC_ORIGIN` 指定实例对外的地址；Tokens Anywhere 一侧要设置 `TOKENS_SECRETS_KEY`，否则 AA 拿不回托管 Key。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - Runtime 配置中的模型网关 Key 改为只写，接口和实时快照不再返回已保存的 Key；旧版客户端编辑这类配置时需要重新填写 Key。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 
 ### 统一 Plan
@@ -30,8 +30,9 @@
 
 ### 配置管理
 
-- 「设置 → 配置管理」可以链接 Tokens Anywhere，或手动添加模型服务，再一键应用到各设备上的 Codex、Claude Code、Pi 和 DSH；在任一客户端修改后，其他客户端立即同步显示。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
-- 应用前会预览每台设备的结果和不能应用的原因；需要重启的 Runtime 有任务在运行时，要允许中断才会应用；DSH 会修改它自身的全局模型配置，需要单独确认。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 「设置 → 配置管理」顶部新增「Tokens Anywhere 快速配置」：勾选要配置的 Runtime，点「一键配置」并在浏览器里确认一次，就会自动同步模型并应用到各设备，每一步的进度都显示在卡片上；之后有新 Runtime 接入时会提示可以配置。
+- 「设置 → 配置管理」也可以手动添加模型服务，再应用到各设备上的 Codex、Claude Code、Pi 和 DSH；在任一客户端修改后，其他客户端立即同步显示。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 应用前会预览每台设备的结果和不能应用的原因；需要重启的 Runtime 有任务在运行时，要允许中断才会应用，一键配置则不打断任务，先保存配置，等任务结束后自动生效；DSH 会修改它自身的全局模型配置，需要单独确认；模型超过 64 个时，一键配置只导入前 64 个并提示。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 可以随时把单个 Runtime 恢复为应用前的配置，之后做的其他修改会保留；断开 Tokens Anywhere 时会先恢复用它的 Runtime，再撤销授权；轮换 Tokens Anywhere 的 Key 后会自动写入所有用它的 Runtime。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - Runtime 的模型连接状态分为「未配置」「已保存，待应用」「已应用」「应用失败」「由外部客户端管理」；「已应用」表示 Runtime 已采用配置，不代表连接已验证。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 模型网关的 Key 保存后不再显示，只保留开头和结尾几位用于辨认；不改 Key 时可以留空，更换地址时需要重新填写。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
