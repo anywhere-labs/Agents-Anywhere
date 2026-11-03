@@ -91,6 +91,16 @@ private struct ModelConfigPage: View {
         } message: {
             Text(String(localized: "Creates a new key in Tokens Anywhere and writes it to every runtime that uses it; the old key stops working at once."))
         }
+        .alert(String(localized: "Tasks are running"), isPresented: Binding(
+            get: { model.pendingInterrupt != nil }, set: { if !$0 { model.pendingInterrupt = nil } }
+        )) {
+            Button(String(localized: "Cancel"), role: .cancel) { model.pendingInterrupt = nil }
+            Button(String(localized: "Interrupt and continue"), role: .destructive) {
+                Task { await model.resumeInterrupted() }
+            }
+        } message: {
+            Text(String(localized: "Continuing restarts the affected runtimes and interrupts their running tasks."))
+        }
     }
 
     private var tokensUsage: Int {

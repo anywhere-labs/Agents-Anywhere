@@ -2253,6 +2253,24 @@
         }
       }
     },
+    "Continuing restarts the affected runtimes and interrupts their running tasks.": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.interruptDescription. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continuing restarts the affected runtimes and interrupts their running tasks."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "继续会重启相关 Runtime，正在运行的任务会被中断。"
+          }
+        }
+      }
+    },
     "Copied": {
       "comment": "Shared with Web: common.copied. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -3580,6 +3598,24 @@
         }
       }
     },
+    "Interrupt and continue": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.interruptContinue. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Interrupt and continue"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "中断并继续"
+          }
+        }
+      }
+    },
     "Keep editing": {
       "extractionState": "manual",
       "localizations": {
@@ -4228,6 +4264,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "名称"
+          }
+        }
+      }
+    },
+    "Needs at least one model": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.skip.models_required. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Needs at least one model"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要至少导入一个模型"
           }
         }
       }
@@ -6382,6 +6436,24 @@
         }
       }
     },
+    "Tasks are running": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.interruptTitle. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tasks are running"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "有任务正在运行"
+          }
+        }
+      }
+    },
     "Tasks are running. Allow interrupting them to apply.": {
       "comment": "Shared with Web: pages.settings.modelConfigs.errors.busy. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -6676,6 +6748,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "文件预览地址无效。"
+          }
+        }
+      }
+    },
+    "The key was rotated. Apply this profile again.": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.errors.key_rotated. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The key was rotated. Apply this profile again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Key 已轮换，请重新应用这份配置。"
           }
         }
       }
@@ -7573,6 +7663,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "这份配置已在其他地方修改，请刷新后再试。"
+          }
+        }
+      }
+    },
+    "This runtime needs at least one imported model.": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.errors.models_required. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This runtime needs at least one imported model."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这个 Runtime 需要至少导入一个模型。"
           }
         }
       }

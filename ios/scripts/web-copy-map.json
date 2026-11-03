@@ -615,6 +615,12 @@
     "项目关联这个目录，不会在设备上新建文件夹。": "dashboard.projects.createDescription",
     "项目名称": "dashboard.projects.name",
     "项目选项": "dashboard.projects.options",
-    "默认": "dashboard.new.defaultReasoning"
+    "默认": "dashboard.new.defaultReasoning",
+    "Tasks are running": "pages.settings.modelConfigs.interruptTitle",
+    "Continuing restarts the affected runtimes and interrupts their running tasks.": "pages.settings.modelConfigs.interruptDescription",
+    "Interrupt and continue": "pages.settings.modelConfigs.interruptContinue",
+    "Needs at least one model": "pages.settings.modelConfigs.skip.models_required",
+    "This runtime needs at least one imported model.": "pages.settings.modelConfigs.errors.models_required",
+    "The key was rotated. Apply this profile again.": "pages.settings.modelConfigs.errors.key_rotated"
   }
 }

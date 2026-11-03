@@ -329,6 +329,43 @@ internal fun UnlinkTokensDialog(
     }
 }
 
+/** Asked only after the Server answered `busy`: continuing interrupts running tasks. */
+@Composable
+internal fun InterruptConfirmDialog(
+    onDismiss: () -> Unit,
+    onConfirm: suspend () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    ProfileDialog(title = stringResource(R.string.model_config_interrupt_title), onDismiss = { if (!busy) onDismiss() }) {
+        MutedText(stringResource(R.string.model_config_interrupt_description))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            ProfileDialogButton(
+                label = stringResource(R.string.common_cancel),
+                enabled = !busy,
+                modifier = Modifier.weight(1f),
+                onClick = onDismiss,
+            )
+            ProfileDialogButton(
+                label = stringResource(R.string.model_config_interrupt_continue),
+                primary = true,
+                enabled = !busy,
+                modifier = Modifier.weight(1f),
+                onClick = {
+                    busy = true
+                    scope.launch {
+                        try {
+                            onConfirm()
+                        } finally {
+                            busy = false
+                        }
+                    }
+                },
+            )
+        }
+    }
+}
+
 @Composable
 private fun FieldLabel(text: String) {
     Text(text, color = LocalAAColors.current.ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)

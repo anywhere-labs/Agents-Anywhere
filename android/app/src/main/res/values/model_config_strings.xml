@@ -139,4 +139,10 @@
     <string name="runtime_maturity_experimental">Experimental</string>
     <string name="runtime_maturity_beta_description">Mostly works; issues may remain.</string>
     <string name="runtime_maturity_experimental_description">Early feature; behavior may change. Use with care.</string>
+    <string name="model_config_interrupt_title">Tasks are running</string>
+    <string name="model_config_interrupt_description">Continuing restarts the affected runtimes and interrupts their running tasks.</string>
+    <string name="model_config_interrupt_continue">Interrupt and continue</string>
+    <string name="model_config_error_models_required">This runtime needs at least one imported model.</string>
+    <string name="model_config_error_key_rotated">The key was rotated. Apply this profile again.</string>
+    <string name="model_config_skip_models_required">Needs at least one model</string>
 </resources>

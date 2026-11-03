@@ -244,6 +244,7 @@ import Testing
         #expect(RuntimeConfigurationModel.sameOrigin("https://a.example/v1", "HTTPS://A.example/v2"))
         #expect(!RuntimeConfigurationModel.sameOrigin("https://a.example", "http://a.example"))
         #expect(!RuntimeConfigurationModel.sameOrigin("https://a.example:8443", "https://a.example"))
+        #expect(RuntimeConfigurationModel.sameOrigin("https://a.example:443/v1", "https://a.example/v1"))
         #expect(!RuntimeConfigurationModel.sameOrigin("not a url", "not a url"))
     }
 }

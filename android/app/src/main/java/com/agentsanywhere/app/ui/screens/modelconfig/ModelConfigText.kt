@@ -103,6 +103,7 @@ internal fun skipReasonRes(reason: String?): Int = when (reason) {
     "mode_unsupported" -> R.string.model_config_skip_mode_unsupported
     "busy_operation" -> R.string.model_config_skip_busy_operation
     "device_offline" -> R.string.model_config_skip_device_offline
+    "models_required" -> R.string.model_config_skip_models_required
     else -> R.string.model_config_skip_unknown
 }
 
@@ -155,5 +156,7 @@ internal fun modelConfigErrorRes(code: String?): Int = when (code) {
     "exchange_failed" -> R.string.model_config_error_exchange_failed
     "model_connection_unsupported" -> R.string.model_config_error_model_connection_unsupported
     "device_offline" -> R.string.model_config_error_device_offline
+    "models_required" -> R.string.model_config_error_models_required
+    "key_rotated" -> R.string.model_config_error_key_rotated
     else -> R.string.model_config_error_generic
 }

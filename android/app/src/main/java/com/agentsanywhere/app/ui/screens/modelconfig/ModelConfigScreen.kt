@@ -398,6 +398,16 @@ private fun ProfileItem(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var busy by remember(profile.id) { mutableStateOf(false) }
+    var confirmInterrupt by remember { mutableStateOf<(suspend () -> Unit)?>(null) }
+    confirmInterrupt?.let { retry ->
+        InterruptConfirmDialog(
+            onDismiss = { confirmInterrupt = null },
+            onConfirm = {
+                retry()
+                confirmInterrupt = null
+            },
+        )
+    }
     val details = listOfNotNull(
         profile.originHost.takeIf(String::isNotBlank),
         profile.offers.map { protocolLabel(it.format) }.takeIf { it.isNotEmpty() }?.joinToString(" / "),
@@ -431,8 +441,10 @@ private fun ProfileItem(
                     enabled = !busy,
                     onClick = {
                         busy = true
-                        scope.launch {
-                            controller.rotateTokensKey(profile.id, allowInterrupt = false, idempotencyKey = newIdempotencyKey())
+                        // One key for both attempts: a `busy` answer comes before anything rotates.
+                        val key = newIdempotencyKey()
+                        suspend fun rotate(allowInterrupt: Boolean) {
+                            controller.rotateTokensKey(profile.id, allowInterrupt = allowInterrupt, idempotencyKey = key)
                                 .onSuccess { operation ->
                                     val summary = operation.summary()
                                     if (summary.other == 0) {
@@ -441,7 +453,16 @@ private fun ProfileItem(
                                         onNotice(context.getString(R.string.model_config_applied_partially, summary.applied, summary.other), true)
                                     }
                                 }
-                                .onFailure(onError)
+                                .onFailure { error ->
+                                    if (!allowInterrupt && modelConfigErrorCode(error) == "busy") {
+                                        confirmInterrupt = { rotate(allowInterrupt = true) }
+                                    } else {
+                                        onError(error)
+                                    }
+                                }
+                        }
+                        scope.launch {
+                            rotate(allowInterrupt = false)
                             busy = false
                         }
                     },
@@ -479,6 +500,16 @@ private fun DevicesSection(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var restoring by remember { mutableStateOf<String?>(null) }
+    var confirmInterrupt by remember { mutableStateOf<(suspend () -> Unit)?>(null) }
+    confirmInterrupt?.let { retry ->
+        InterruptConfirmDialog(
+            onDismiss = { confirmInterrupt = null },
+            onConfirm = {
+                retry()
+                confirmInterrupt = null
+            },
+        )
+    }
     Section(
         title = stringResource(R.string.model_config_devices_title),
         description = stringResource(R.string.model_config_devices_description),
@@ -535,10 +566,19 @@ private fun DevicesSection(
                                 enabled = restoring == null,
                                 onClick = {
                                     restoring = row.key
-                                    scope.launch {
-                                        controller.restore(assignment.connectorId, assignment.runtimeId, allowInterrupt = true)
+                                    suspend fun restore(allowInterrupt: Boolean) {
+                                        controller.restore(assignment.connectorId, assignment.runtimeId, allowInterrupt = allowInterrupt)
                                             .onSuccess { onNotice(context.getString(R.string.model_config_restored)) }
-                                            .onFailure(onError)
+                                            .onFailure { error ->
+                                                if (!allowInterrupt && modelConfigErrorCode(error) == "busy") {
+                                                    confirmInterrupt = { restore(allowInterrupt = true) }
+                                                } else {
+                                                    onError(error)
+                                                }
+                                            }
+                                    }
+                                    scope.launch {
+                                        restore(allowInterrupt = false)
                                         restoring = null
                                     }
                                 },

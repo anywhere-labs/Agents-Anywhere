@@ -6,12 +6,19 @@ import Observation
 @MainActor @Observable
 final class ModelConfigModel {
     enum TokensAction: Hashable { case link, sync, unlink }
+    /// An action the Server refused as `busy`, kept to run again once the user
+    /// agrees to interrupt the running tasks.
+    enum InterruptRetry: Hashable {
+        case rotate(V2ModelProfile, idempotencyKey: String)
+        case restore(V2ModelAssignment)
+    }
 
     private(set) var tokensBusy: TokensAction?
     private(set) var busyProfileID: String?
     private(set) var restoringID: String?
     private(set) var isCreatingProfile = false
     var feedback: ModelConfigFeedback?
+    var pendingInterrupt: InterruptRetry?
     @ObservationIgnored private let api: V2ModelConfigAPI
     @ObservationIgnored private let dashboard: V2DashboardRepository
     @ObservationIgnored private let newKey: () -> String
@@ -82,10 +89,25 @@ final class ModelConfigModel {
         await performProfile(profile.id) { try await api.deleteProfile(id: profile.id) }
     }
 
-    func rotateKey(_ profile: V2ModelProfile) async {
+    /// The first attempt never interrupts; a `busy` answer comes before anything rotates.
+    func rotateKey(_ profile: V2ModelProfile, allowInterrupt: Bool = false, idempotencyKey: String? = nil) async {
+        let key = idempotencyKey ?? newKey()
         await performProfile(profile.id) {
-            let operation = try await api.rotateTokensKey(profileId: profile.id, allowInterrupt: false, idempotencyKey: newKey())
-            feedback = ModelConfigPresentation.operationMessage(operation)
+            do {
+                let operation = try await api.rotateTokensKey(profileId: profile.id, allowInterrupt: allowInterrupt, idempotencyKey: key)
+                feedback = ModelConfigPresentation.operationMessage(operation)
+            } catch let error as HTTPError where !allowInterrupt && error.serverCode == "busy" {
+                pendingInterrupt = .rotate(profile, idempotencyKey: key)
+            }
+        }
+    }
+
+    func resumeInterrupted() async {
+        guard let retry = pendingInterrupt else { return }
+        pendingInterrupt = nil
+        switch retry {
+        case let .rotate(profile, key): await rotateKey(profile, allowInterrupt: true, idempotencyKey: key)
+        case let .restore(assignment): await restore(assignment, allowInterrupt: true)
         }
     }
 
@@ -103,13 +125,15 @@ final class ModelConfigModel {
         }
     }
 
-    func restore(_ assignment: V2ModelAssignment) async {
+    func restore(_ assignment: V2ModelAssignment, allowInterrupt: Bool = false) async {
         guard restoringID == nil else { return }
         restoringID = assignment.id
         defer { restoringID = nil }
         do {
-            _ = try await api.restore(assignment.target, allowInterrupt: true)
+            _ = try await api.restore(assignment.target, allowInterrupt: allowInterrupt)
             feedback = .success(String(localized: "Previous configuration restored"))
+        } catch let error as HTTPError where !allowInterrupt && error.serverCode == "busy" {
+            pendingInterrupt = .restore(assignment)
         } catch { feedback = .error(ModelConfigErrorText.text(error)) }
     }
 

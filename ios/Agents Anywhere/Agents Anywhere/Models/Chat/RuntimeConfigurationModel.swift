@@ -232,7 +232,9 @@ extension RuntimeConfigurationModel {
         func origin(_ value: String?) -> String? {
             guard let value, let components = URLComponents(string: value.trimmingCharacters(in: .whitespacesAndNewlines)),
                   let scheme = components.scheme?.lowercased(), let host = components.host?.lowercased(), !host.isEmpty else { return nil }
-            return "\(scheme)://\(host):\(components.port.map(String.init) ?? "")"
+            // A default port written out or left off is the same origin.
+            let port = components.port ?? (scheme == "https" ? 443 : scheme == "http" ? 80 : nil)
+            return "\(scheme)://\(host):\(port.map(String.init) ?? "")"
         }
         guard let left = origin(left), let right = origin(right) else { return false }
         return left == right

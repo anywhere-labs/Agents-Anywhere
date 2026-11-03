@@ -131,4 +131,10 @@
     <string name="runtime_maturity_experimental">实验性</string>
     <string name="runtime_maturity_beta_description">功能基本可用，可能还有问题。</string>
     <string name="runtime_maturity_experimental_description">早期功能，行为可能变化，请谨慎使用。</string>
+    <string name="model_config_interrupt_title">有任务正在运行</string>
+    <string name="model_config_interrupt_description">继续会重启相关 Runtime，正在运行的任务会被中断。</string>
+    <string name="model_config_interrupt_continue">中断并继续</string>
+    <string name="model_config_error_models_required">这个 Runtime 需要至少导入一个模型。</string>
+    <string name="model_config_error_key_rotated">Key 已轮换，请重新应用这份配置。</string>
+    <string name="model_config_skip_models_required">需要至少导入一个模型</string>
 </resources>

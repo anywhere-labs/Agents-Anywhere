@@ -100,6 +100,7 @@ nonisolated enum ModelConfigPresentation {
         case "mode_unsupported": String(localized: "No mode that takes a model connection")
         case "busy_operation": String(localized: "Another change is being applied")
         case "device_offline": String(localized: "Device offline")
+        case "models_required": String(localized: "Needs at least one model")
         default: String(localized: "Cannot apply right now")
         }
     }
@@ -211,6 +212,8 @@ nonisolated enum ModelConfigErrorText {
         case "exchange_failed": String(localized: "Tokens Anywhere did not issue a token. Try again.")
         case "model_connection_unsupported": String(localized: "This runtime takes no model connection.")
         case "device_offline": String(localized: "The device is offline.")
+        case "models_required": String(localized: "This runtime needs at least one imported model.")
+        case "key_rotated": String(localized: "The key was rotated. Apply this profile again.")
         default: nil
         }
     }
