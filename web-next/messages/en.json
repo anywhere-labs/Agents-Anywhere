@@ -421,6 +421,10 @@
       "createFailed": "Failed to create session.",
       "selectModel": "Choose a model",
       "modelCatalogUnavailable": "Model catalog not ready",
+      "modelCatalogStarting": "Starting {agent}…",
+      "modelCatalogLoading": "Loading models…",
+      "modelCatalogLoadFailed": "Could not load models",
+      "modelCatalogEmpty": "No models available",
       "recoveryConfigurationRequired": "Your draft and attachments are retained. Review the model, permissions and Agent mode in Runtime settings before sending.",
       "attachmentOnlyPrompt": "(No text content.)",
       "imagePreview": {
