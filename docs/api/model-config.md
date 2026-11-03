@@ -21,7 +21,7 @@
 | 字段 | 说明 |
 | --- | --- |
 | `maturity` | `experimental`、`beta`、`stable` 或 `null`；客户端显示在状态旁边，例如「Pi Beta · 运行中」，`stable` 不显示 |
-| `modelConnection` | Runtime 声明的能力：`maturity`、`configField`、`modelsField`、`protocols`、`modes`、`modeField`、`scope`、`catalog`、`apply`；不接受模型连接时为 `null` |
+| `modelConnection` | Runtime 声明的能力：`maturity`、`configField`、`modelsField`、`protocols`、`modes`、`modeField`、`scope`、`catalog`（`auto`、`manual`，以及表示必须导入模型的 `required`）、`apply`；不接受模型连接时为 `null` |
 | `modelConnectionStatus` | `{state, protocol, scope, mode, reason, externalOwner}`，`state` 为 `not_configured`、`saved_pending`、`applied`、`failed`、`managed_externally` |
 | `secretFields` | 已保存的只写字段，例如 `{"modelGateway.apiKey": {"set": true, "hint": "sk-gate…1234"}}` |
 | `managedBy` | 由其他功能创建的实例的标记；配置管理创建的实例为 `model-config` |
@@ -55,15 +55,17 @@
 | DELETE | `/model-config/assignments/{connectorId}/{runtimeId}?allow_interrupt=` | 恢复应用前的配置 |
 | GET | `/model-config/operations/{id}` | 操作结果 |
 
-**预览**的每个目标包含 `decision`（`apply` 或 `skip`）。跳过原因：`model_connection_unsupported`、`not_installed`、`format_unsupported`、`mode_unsupported`、`busy_operation`、`device_offline`。可以应用时给出 `offerFormat`、`effect`（`new_instance` 或能力的 `apply`）、`scope`、`requiresConfirmation`、`runningSessions`、`replaces`、`models`、`tooManyModels`。
+**预览**的每个目标包含 `decision`（`apply` 或 `skip`）。跳过原因：`model_connection_unsupported`、`not_installed`、`format_unsupported`、`mode_unsupported`、`models_required`（`catalog.required` 的 Runtime 没有可导入的模型）、`busy_operation`、`device_offline`。可以应用时给出 `offerFormat`、`effect`（`new_instance` 或能力的 `apply`）、`scope`、`requiresConfirmation`、`runningSessions`、`replaces`、`models`、`tooManyModels`。
 
 **应用**规则：
 
 - 协议取 Runtime 声明顺序中第一个配置也提供的协议。
-- Runtime 当前模式不能使用模型连接时（`modeField` 指向的模式 `supported=false`），新建一个 `managedBy=model-config` 的受管实例，每台设备每种类型最多一个，再次应用时复用。
+- Runtime 当前模式（包括尚未配置时的默认模式）不能使用模型连接时，新建一个 `managedBy=model-config` 的受管实例，原实例保持不变；每台设备每种类型最多一个，再次应用时复用，恢复后再次应用会重新启动它。
 - 只改写模型连接字段、上次导入的模型和必要的模式字段；用户自己添加的模型保留，ID 冲突时保留用户的；模型总数最多 64 个，超出时该目标跳过，原因为 `too_many_models`，可以用 `modelIds` 选择要导入的模型。
 - `apply=restart` 且有任务运行时，必须 `allowInterrupt: true`，否则该目标以 `busy` 跳过。
 - 同一个 `Idempotency-Key` 重放返回同一操作；用于不同请求返回 409 `idempotency_key_reused`；仍在进行时返回 409 `operation_in_progress`。
+
+恢复和轮换 Key 也遵循「先不中断」：带 `allow_interrupt=false`（或 `allowInterrupt: false`）时，有任务运行会返回 409 `busy`，客户端确认后再带 `true` 重试。轮换在 Tokens 一侧生效之前就会检查，所以被拒绝时旧 Key 仍然有效；轮换后没能更新的 Runtime 标为 `failed`，原因 `key_rotated`。
 
 **恢复**只撤销本模块写入的内容：恢复应用前的 `modelGateway`、删除导入的模型；受管实例只停用，不删除实例和会话。恢复从不删除 Runtime 配置。
 
@@ -102,3 +104,5 @@ Server 保存加密的 refresh token，access token 放在 Redis（没有 Redis 
 ```
 
 配置、应用、恢复、链接状态的变化都会触发 `dashboard.changed`，所有在线客户端随下一份快照更新。
+
+启动后才应用连接的 Runtime（如 DSH 在连上 Bridge 后）通过 `runtime.statusChanged` 的 `modelConnection` 回报结果；Server 只在已存的报告对应当前保存的连接时采用它，避免还在用旧配置的实例被误报为「已应用」。

@@ -6,7 +6,7 @@
 
 - Tokens Anywhere 地址没有内置默认值：取环境变量 `AGENT_SERVER_TOKENS_URL`，管理员可以在实例设置里改；两者都没有时不显示入口。Tokens 云的正式地址确定后再作为默认值。
 - 声明多个协议的 Runtime 在连接对象里多一个 `protocol` 字段；Runtime 的模式由能力里的 `modeField` 指出。
-- DSH 的连接由 Connector 在连上 Bridge 时交给插件，插件写入 `providers.aa-tokens-<协议>` 和凭据引用；Bridge 未连接时显示「已保存，待应用」，连上后要等下一次启动结果才更新。
+- DSH 的连接由 Connector 在连上 Bridge 时交给插件，插件写入 `providers.aa-tokens-<协议>` 和凭据引用；Bridge 未连接时显示「已保存，待应用」，连上后由状态变化回报结果。DSH 声明 `catalog.required`，没有模型时直接跳过。
 - 尚未实现：嵌入 Tokens 控制台的票据（8.4）、识别已自行链接 Tokens 的 DSH（7.6）、「全部断开后修改地址」、Runtime 配置的字段加密（第三阶段）。
 
 ## 关于本文
