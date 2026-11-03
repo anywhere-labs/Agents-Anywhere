@@ -28,7 +28,7 @@ GATEWAY_PROTOCOL = "protocol"
 MANAGED_BY = "model-config"
 
 ProfileSource = Literal["tokens", "manual"]
-AssignmentStatus = Literal["applying", "failed", "modified", "outdated", "applied"]
+AssignmentStatus = Literal["applying", "failed", "deferred", "modified", "outdated", "applied"]
 
 
 class ModelSpec(BaseModel):
@@ -103,6 +103,21 @@ class ApplyRequest(BaseModel):
     confirmNativeGlobal: bool = False
     # Limits which of the profile's models are written when there are too many.
     modelIds: list[str] | None = Field(default=None, max_length=MAX_RUNTIME_MODELS)
+    # With tasks running and no permission to interrupt: save now and let the
+    # runtime take it once idle, instead of skipping it.
+    deferBusy: bool = False
+    # Import as many models as fit instead of skipping the runtime.
+    trimModels: bool = False
+
+
+class QuickSetupRequest(BaseModel):
+    """One-click Tokens Anywhere setup: the runtimes the user ticked."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    targets: list[AssignmentTarget] = Field(min_length=1, max_length=64)
+    # Required for runtimes whose own global configuration changes (scope native_global).
+    confirmNativeGlobal: bool = False
 
 
 class PreviewRequest(BaseModel):
@@ -196,6 +211,7 @@ def apply_patch(
     previous_imported: list[str],
     model_ids: list[str] | None,
     mode: ModePlan,
+    trim: bool = False,
 ) -> tuple[dict[str, Any], list[str]]:
     """Write the offer into the runtime's connection fields.
 
@@ -226,7 +242,9 @@ def apply_patch(
             if spec.id not in own_ids and (model_ids is None or spec.id in model_ids)
         ]
         if len(current) + len(chosen) > MAX_RUNTIME_MODELS:
-            raise TooManyModelsError(len(chosen), len(current))
+            if not trim:
+                raise TooManyModelsError(len(chosen), len(current))
+            chosen = chosen[: max(MAX_RUNTIME_MODELS - len(current), 0)]
         patched[models_field] = current + [_custom_model(spec) for spec in chosen]
         imported = [spec.id for spec in chosen]
     return patched, imported
@@ -282,6 +300,8 @@ def assignment_status(
         return "applying"
     if stored == "failed":
         return "failed"
+    if stored == "deferred":
+        return "deferred"
     if current_written_digest != applied_digest:
         return "modified"
     if profile_catalog_digest != applied_catalog_digest:

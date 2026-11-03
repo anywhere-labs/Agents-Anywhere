@@ -169,6 +169,10 @@ def _checked(response: httpx.Response) -> dict[str, Any]:
         raise TokensUnavailableError("tokens_unavailable", "Tokens Anywhere is unavailable", status=response.status_code)
     if response.status_code >= 400:
         body = _json(response)
-        code = str(body.get("code") or body.get("error") or "tokens_request_failed")
-        raise TokensError(code, "Tokens Anywhere refused the request", status=response.status_code)
+        # Problems arrive as {"error": {"code", "message"}}; older answers put the code at the top.
+        error = body.get("error")
+        code = error.get("code") if isinstance(error, dict) else (body.get("code") or error)
+        raise TokensError(
+            str(code or "tokens_request_failed"), "Tokens Anywhere refused the request", status=response.status_code
+        )
     return _json(response)

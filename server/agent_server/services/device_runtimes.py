@@ -468,6 +468,8 @@ class DeviceRuntimeService:
         self,
         runtime: DeviceRuntimeView,
         config: dict[str, Any],
+        *,
+        restart: bool = True,
     ) -> DeviceRuntimeView:
         connector_id, runtime_id = runtime.connectorId, runtime.runtimeId
         base_schema = self._schema(runtime)
@@ -515,7 +517,10 @@ class DeviceRuntimeService:
             )
         )
         await self._manager.set_runtime_ingress_enabled(connector_id, runtime_id, True)
-        if runtime.active:
+        if runtime.active and not restart:
+            # Saved for the next start; the running instance keeps going.
+            pass
+        elif runtime.active:
             runtime = await self._restart_locked(runtime)
         elif runtime.status != "stopped":
             # A successful configuration without activation settles on the
@@ -1177,8 +1182,14 @@ class LockedRuntime:
         )
         return len(sessions)
 
-    async def put_config(self, config: dict[str, Any]) -> DeviceRuntimeView:
-        self.runtime = await self._service._put_config_locked(self.runtime, config)
+    async def put_config(self, config: dict[str, Any], *, restart: bool = True) -> DeviceRuntimeView:
+        self.runtime = await self._service._put_config_locked(self.runtime, config, restart=restart)
+        return self.runtime
+
+    async def restart(self) -> DeviceRuntimeView:
+        """Start the saved configuration of an active runtime."""
+        if self.runtime.active:
+            self.runtime = await self._service._restart_locked(self.runtime)
         return self.runtime
 
     async def set_active(self, active: bool) -> DeviceRuntimeView:

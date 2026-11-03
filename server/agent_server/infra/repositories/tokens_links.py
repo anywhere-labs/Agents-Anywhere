@@ -92,8 +92,9 @@ class TokensLinkRepositoryMixin:
     # Links.
 
     async def save_tokens_link(self, row: dict[str, Any]) -> None:
-        values = {key: value for key, value in row.items() if key != "account"}
+        values = {key: value for key, value in row.items() if key not in {"account", "quick_setup"}}
         values["account_json"] = _json_dumps(row["account"])
+        values["quick_setup_json"] = _json_dumps(row["quick_setup"]) if row.get("quick_setup") else None
         async with self._engine.begin() as conn:
             statement = pg_insert(tokens_links).values(**values)
             await conn.execute(
@@ -109,6 +110,14 @@ class TokensLinkRepositoryMixin:
                 await conn.execute(select(tokens_links).where(tokens_links.c.user_id == user_id))
             ).mappings().first()
         return _link_row(row) if row is not None else None
+
+    async def set_tokens_link_quick_setup(self, user_id: str, value: dict[str, Any] | None) -> None:
+        async with self._engine.begin() as conn:
+            await conn.execute(
+                update(tokens_links)
+                .where(tokens_links.c.user_id == user_id)
+                .values(quick_setup_json=_json_dumps(value) if value else None)
+            )
 
     async def delete_tokens_link(self, user_id: str) -> None:
         async with self._engine.begin() as conn:
@@ -151,6 +160,7 @@ def _state_row(row: Any) -> dict[str, Any]:
         "issuer": row["issuer"],
         "redirectUri": row["redirect_uri"],
         "expiresAt": row["expires_at"],
+        "quickSetup": _json_loads(row["quick_setup_json"]),
     }
 
 
@@ -164,4 +174,5 @@ def _link_row(row: Any) -> dict[str, Any]:
         "linkedAt": row["linked_at"],
         "refreshedAt": row["refreshed_at"],
         "issuedAt": row["issued_at"],
+        "quickSetup": _json_loads(row["quick_setup_json"]),
     }

@@ -633,14 +633,15 @@ tokens_links = Table("tokens_links", metadata,
     Column("issuer", Text, nullable=False), Column("account_json", Text, nullable=False),
     Column("status", Text, nullable=False), Column("refresh_token_ciphertext", Text),
     Column("linked_at", Text, nullable=False), Column("refreshed_at", Text),
-    Column("issued_at", Text, nullable=False))
+    Column("issued_at", Text, nullable=False), Column("quick_setup_json", Text))
 tokens_link_states = Table("tokens_link_states", metadata,
     Column("state_hash", Text, primary_key=True),
     Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
     Column("ticket_hash", Text, nullable=False, unique=True), Column("browser_hash", Text),
     Column("code_verifier_ciphertext", Text, nullable=False), Column("issuer", Text, nullable=False),
     Column("redirect_uri", Text, nullable=False), Column("created_at", Text, nullable=False),
-    Column("expires_at", Text, nullable=False), Column("consumed_at", Text))
+    Column("expires_at", Text, nullable=False), Column("consumed_at", Text),
+    Column("quick_setup_json", Text))
 model_profiles = Table("model_profiles", metadata,
     Column("id", Text, primary_key=True),
     Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),

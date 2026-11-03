@@ -150,6 +150,29 @@ class ModelConfigRepositoryMixin:
             ).mappings().all()
         return [_assignment_row(row) for row in rows]
 
+    async def list_deferred_runtime_assignments(self) -> list[dict[str, Any]]:
+        """Assignments saved while tasks ran, waiting for the runtime to be idle."""
+        async with self._engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    select(runtime_model_assignments, connectors.c.user_id)
+                    .join(connectors, connectors.c.id == runtime_model_assignments.c.connector_id)
+                    .where(runtime_model_assignments.c.status == "deferred")
+                )
+            ).mappings().all()
+        return [{**_assignment_row(row), "userId": row["user_id"]} for row in rows]
+
+    async def set_runtime_assignment_status(self, connector_id: str, runtime_id: str, status: str) -> None:
+        async with self._engine.begin() as conn:
+            await conn.execute(
+                update(runtime_model_assignments)
+                .where(
+                    runtime_model_assignments.c.connector_id == connector_id,
+                    runtime_model_assignments.c.runtime_id == runtime_id,
+                )
+                .values(status=status, error_json=None, updated_at=utc_now())
+            )
+
     async def save_runtime_assignment(self, row: dict[str, Any]) -> None:
         values = {
             key: value for key, value in row.items() if key not in {"imported_model_ids", "error"}

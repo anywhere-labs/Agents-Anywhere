@@ -36,6 +36,7 @@ class FakeTokens:
         self.revoked: list[str] = []
         self.refresh_error: str | None = None
         self.api_base_url: str | None = None
+        self.key_kept = True
         self.model_hosts: list[str] = []
 
     def _pair(self) -> httpx.Response:
@@ -98,6 +99,8 @@ class FakeTokens:
             return httpx.Response(200, json={"id": "42", "displayName": "Ada", "email": "ada@example.com"})
         key = {"id": "7", "prefix": self.secret[:8], "strategy": {"id": "1", "name": "Default"}}
         if path == "/api/v1/keys/managed":
+            if not self.key_kept:
+                return httpx.Response(409, json={"error": {"code": "key_secret_not_kept", "message": "not kept"}})
             return httpx.Response(200, json={"key": key, "secret": self.secret})
         if path == "/api/v1/keys/7/rotate":
             self.secret = "sk-aa-secret-0002"
@@ -349,3 +352,108 @@ def test_models_come_from_the_gateway_address_tokens_reports(tokens):
     assert set(fake.model_hosts) == {"https://api.tokens.test"}
     assert offers["openai_chat"]["baseUrl"] == "https://api.tokens.test/v1"
     assert offers["anthropic"]["baseUrl"] == "https://api.tokens.test"
+
+
+def test_a_key_tokens_did_not_keep_asks_for_its_secrets_key(tokens):
+    client, fake, _connector_id, headers = tokens
+    _link(client, headers, fake)
+    fake.key_kept = False
+
+    synced = client.post("/integrations/tokens/sync", headers=headers)
+
+    assert synced.status_code == 409, synced.text
+    assert synced.json()["detail"]["code"] == "key_not_kept"
+
+
+def _quick_setup(client, headers, connector_id, **extra):
+    return client.post(
+        "/integrations/tokens/quick-setup",
+        headers=headers,
+        json={"targets": [_target(connector_id)], **extra},
+    )
+
+
+def test_one_click_setup_links_syncs_and_applies(tokens):
+    client, fake, connector_id, headers = tokens
+
+    candidates = client.get("/integrations/tokens/quick-setup", headers=headers)
+    assert candidates.status_code == 200, candidates.text
+    [candidate] = candidates.json()["targets"]
+    assert candidate["decision"] == "apply"
+    assert candidate["requiresConfirmation"] is False
+
+    started = _quick_setup(client, headers, connector_id)
+    assert started.status_code == 200, started.text
+    assert started.json()["started"] is False
+    start_url = urlsplit(started.json()["startUrl"])
+    opened = client.get(f"{start_url.path}?{start_url.query}", follow_redirects=False)
+    query = {key: values[0] for key, values in parse_qs(urlsplit(opened.headers["location"]).query).items()}
+    fake.challenge, fake.redirect_uri = query["code_challenge"], query["redirect_uri"]
+
+    done = _callback(client, code="good-code", state=query["state"], iss=ISSUER)
+
+    assert done.headers["location"] == f"{ISSUER}/oauth/done/"
+    progress = client.get("/integrations/tokens", headers=headers).json()["quickSetup"]
+    assert progress["state"] == "done"
+    assert progress["results"][0]["result"] == "applied"
+    [assignment] = _overview(client, headers)["assignments"]
+    assert assignment["profileId"] == _tokens_profile(client, headers)["id"]
+    assert _runtimes(client, connector_id, headers)["codex"]["config"]["modelGateway"] == {"baseUrl": f"{ISSUER}/v1"}
+
+
+def test_one_click_setup_when_linked_waits_for_busy_runtimes(tokens):
+    client, fake, connector_id, headers = tokens
+    _link(client, headers, fake)
+    profile = _tokens_profile(client, headers)
+    _applied(client, headers, profile["id"], [_target(connector_id)])
+    fake.secret = "sk-aa-secret-0002"
+
+    async def one_running_session(**_kwargs):
+        return [{"id": "ses_running"}]
+
+    store = client.app.state.store
+    store.list_running_sessions_for_connector_agent = one_running_session
+    starts = len([call for call in client.app.state.rpc.requests if call[1] == "runtime.start"])
+
+    started = _quick_setup(client, headers, connector_id)
+
+    assert started.json()["started"] is True
+    progress = client.get("/integrations/tokens", headers=headers).json()["quickSetup"]
+    assert progress["state"] == "done"
+    assert progress["results"][0]["result"] == "deferred"
+    [assignment] = _overview(client, headers)["assignments"]
+    assert assignment["status"] == "deferred"
+    runtime = _runtimes(client, connector_id, headers)["codex"]
+    assert runtime["secretFields"]["modelGateway.apiKey"]["hint"] == "sk-aa-s…0002"
+    # Saved, not restarted: the running task goes on.
+    assert len([call for call in client.app.state.rpc.requests if call[1] == "runtime.start"]) == starts
+
+    # Once the task is done the runtime restarts with the saved configuration.
+    del store.list_running_sessions_for_connector_agent
+    import asyncio
+
+    from agent_server.deps import tokens_link_service_for
+
+    asyncio.run(tokens_link_service_for(client.app.state).model_config.resume_deferred())
+    [assignment] = _overview(client, headers)["assignments"]
+    assert assignment["status"] == "applied"
+    assert len([call for call in client.app.state.rpc.requests if call[1] == "runtime.start"]) == starts + 1
+
+
+def test_one_click_setup_cannot_start_twice(tokens):
+    client, fake, connector_id, headers = tokens
+    _link(client, headers, fake)
+    import asyncio
+
+    from agent_server.deps import tokens_link_service_for
+
+    service = tokens_link_service_for(client.app.state)
+    asyncio.run(service._store.set_tokens_link_quick_setup(
+        client.get("/auth/me", headers=headers).json()["userId"],
+        {"state": "applying", "request": {"targets": []}, "startedAt": "2999-01-01T00:00:00Z"},
+    ))
+
+    again = _quick_setup(client, headers, connector_id)
+
+    assert again.status_code == 409, again.text
+    assert again.json()["detail"]["code"] == "quick_setup_running"

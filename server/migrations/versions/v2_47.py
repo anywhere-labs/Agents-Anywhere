@@ -35,6 +35,8 @@ def upgrade() -> None:
         sa.Column("linked_at", sa.Text(), nullable=False),
         sa.Column("refreshed_at", sa.Text()),
         sa.Column("issued_at", sa.Text(), nullable=False),
+        # Progress of the one-click setup that came with this link.
+        sa.Column("quick_setup_json", sa.Text()),
     )
     op.create_table(
         "tokens_link_states",
@@ -53,6 +55,8 @@ def upgrade() -> None:
         sa.Column("created_at", sa.Text(), nullable=False),
         sa.Column("expires_at", sa.Text(), nullable=False),
         sa.Column("consumed_at", sa.Text()),
+        # The runtimes to set up once the link completes.
+        sa.Column("quick_setup_json", sa.Text()),
     )
     op.create_table(
         "model_profiles",

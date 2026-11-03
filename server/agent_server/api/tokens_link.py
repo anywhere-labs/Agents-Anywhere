@@ -4,11 +4,12 @@ import os
 from typing import Annotated, Any
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent_server.core.api_namespace import api_v2_path
+from agent_server.core.model_config import QuickSetupRequest
 from agent_server.core.models import UserView
 from agent_server.deps import current_user_id, get_tokens_link_service, require_admin
 from agent_server.infra.tokens_client import TokensError
@@ -104,9 +105,42 @@ async def start_tokens_link(request: Request, service: Service, ticket: str = ""
     return response
 
 
+@router.get("/integrations/tokens/quick-setup")
+async def get_quick_setup(service: Service, user_id: UserId) -> dict[str, Any]:
+    """The runtimes a one-click setup would configure, with reasons for the rest."""
+    try:
+        return {"targets": await service.quick_setup_candidates(user_id=user_id)}
+    except TokensLinkError as exc:
+        _raise(exc)
+
+
+@router.post("/integrations/tokens/quick-setup")
+async def start_quick_setup(
+    payload: QuickSetupRequest,
+    request: Request,
+    background: BackgroundTasks,
+    service: Service,
+    user_id: UserId,
+) -> dict[str, Any]:
+    """Link if needed, then sync and apply in the background; progress is in the snapshot."""
+    origin = _public_origin(request)
+    try:
+        ticket = await service.start_quick_setup(
+            payload, user_id=user_id, redirect_uri=f"{origin}{api_v2_path(CALLBACK_PATH)}"
+        )
+    except TokensLinkError as exc:
+        _raise(exc)
+    if ticket is None:
+        background.add_task(service.run_quick_setup, user_id=user_id)
+        return {"started": True, "startUrl": None}
+    start = f"{origin}{api_v2_path('/integrations/tokens/start')}?{urlencode({'ticket': ticket})}"
+    return {"started": False, "startUrl": start}
+
+
 @router.get("/integrations/tokens/callback")
 async def tokens_link_callback(
     request: Request,
+    background: BackgroundTasks,
     service: Service,
     state: str | None = None,
     code: str | None = None,
@@ -114,7 +148,7 @@ async def tokens_link_callback(
     error: str | None = None,
 ) -> RedirectResponse:
     try:
-        issuer = await service.complete(
+        issuer, quick_user = await service.complete(
             state=state,
             code=code,
             issuer=iss,
@@ -123,6 +157,8 @@ async def tokens_link_callback(
         )
     except TokensLinkError as exc:
         return _settings_redirect(request, exc.code, clear_cookie=True)
+    if quick_user is not None:
+        background.add_task(service.run_quick_setup, user_id=quick_user)
     # The rest of the flow stays on Tokens Anywhere; clients learn the result from the snapshot.
     response = RedirectResponse(f"{issuer}/oauth/done/", status_code=302)
     response.delete_cookie(_browser_cookie(request), path="/")

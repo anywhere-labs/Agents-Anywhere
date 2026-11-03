@@ -103,6 +103,8 @@ class ModelConfigRepository(Protocol):
         finished: bool = False,
     ) -> None: ...
     async def list_running_model_config_operations(self, *, user_id: str, now: str) -> list[dict[str, Any]]: ...
+    async def list_deferred_runtime_assignments(self) -> list[dict[str, Any]]: ...
+    async def set_runtime_assignment_status(self, connector_id: str, runtime_id: str, status: str) -> None: ...
     async def prune_model_config_operations(self, *, before: str) -> None: ...
     async def list_user_device_runtimes(self, *, user_id: str) -> list[dict[str, Any]]: ...
 
@@ -325,19 +327,65 @@ class ModelConfigService:
     async def preview(self, request: PreviewRequest, *, user_id: str) -> dict[str, Any]:
         profile = await self._get_profile(request.profileId, user_id=user_id)
         offers = [Offer.model_validate(offer) for offer in profile["offers"]]
-        if request.targets is None:
+        return {
+            "profileId": profile["id"],
+            "targets": await self._preview_offers(offers, user_id=user_id, targets=request.targets),
+        }
+
+    async def preview_offers(self, offers: list[Offer], *, user_id: str) -> list[dict[str, Any]]:
+        """What applying a service with these offers would do, before it exists."""
+        return await self._preview_offers(offers, user_id=user_id, targets=None)
+
+    async def _preview_offers(
+        self, offers: list[Offer], *, user_id: str, targets: list[AssignmentTarget] | None
+    ) -> list[dict[str, Any]]:
+        if targets is None:
             rows = await self._store.list_user_device_runtimes(user_id=user_id)
             runtimes = [DeviceRuntimeView.model_validate(row) for row in rows]
         else:
-            runtimes = [await self._owned_runtime(target, user_id=user_id) for target in request.targets]
+            runtimes = [await self._owned_runtime(target, user_id=user_id) for target in targets]
         running = await self._running_targets(user_id)
-        targets = []
+        decisions = []
         for runtime in runtimes:
-            if runtime.managedBy == MANAGED_BY and request.targets is None:
+            if runtime.managedBy == MANAGED_BY and targets is None:
                 # A managed instance is reached through the runtime it serves.
                 continue
-            targets.append(await self._preview_target(runtime, profile, offers, running))
-        return {"profileId": profile["id"], "targets": targets}
+            decisions.append(await self._preview_target(runtime, offers, running))
+        return decisions
+
+    async def resume_deferred(self) -> None:
+        """Restart runtimes that took a configuration while busy, once idle."""
+        for item in await self._store.list_deferred_runtime_assignments():
+            try:
+                async with self._runtimes.locked_runtime(
+                    item["connectorId"], item["runtimeId"], user_id=item["userId"]
+                ) as handle:
+                    current = await self._store.get_runtime_assignment(item["connectorId"], item["runtimeId"])
+                    if current is None or current["status"] != "deferred":
+                        continue
+                    if handle.runtime.active and await handle.running_session_count():
+                        continue
+                    if handle.runtime.active and not await self._runtimes.is_connector_online(item["connectorId"]):
+                        continue
+                    # An inactive runtime takes the saved configuration when it starts.
+                    await handle.restart()
+                    await self._store.set_runtime_assignment_status(item["connectorId"], item["runtimeId"], "applied")
+            except DeviceRuntimeError as exc:
+                await self._store.set_runtime_assignment_failed(
+                    item["connectorId"], item["runtimeId"], {"code": exc.code, "message": exc.message}
+                )
+            except Exception:  # noqa: BLE001 - one runtime must not stop the others
+                logger.exception("deferred model configuration failed runtime_id={}", item["runtimeId"])
+                continue
+            await self._publish(item["userId"])
+
+    async def run_deferred(self, interval: float = 20.0) -> None:
+        while True:
+            try:
+                await self.resume_deferred()
+            except Exception:  # noqa: BLE001 - try again on the next round
+                logger.exception("deferred model configuration round failed")
+            await asyncio.sleep(interval)
 
     async def apply(self, request: ApplyRequest, *, user_id: str, idempotency_key: str) -> dict[str, Any]:
         box = self._box()
@@ -476,7 +524,6 @@ class ModelConfigService:
     async def _preview_target(
         self,
         runtime: DeviceRuntimeView,
-        profile: dict[str, Any],
         offers: list[Offer],
         running: set[tuple[str, str]],
     ) -> dict[str, Any]:
@@ -541,11 +588,14 @@ class ModelConfigService:
             "capabilityMaturity": capability.get("maturity"),
         }
 
-    async def _check_interruption(self, handle: LockedRuntime, capability: dict[str, Any], allow: bool) -> None:
-        if allow or capability.get("apply") != "restart":
-            return
+    async def _would_interrupt(self, handle: LockedRuntime, capability: dict[str, Any]) -> bool:
+        if capability.get("apply") != "restart":
+            return False
         restarts = handle.runtime.active and handle.runtime.status in RESTARTING_STATUSES
-        if restarts and await handle.running_session_count():
+        return bool(restarts and await handle.running_session_count())
+
+    async def _check_interruption(self, handle: LockedRuntime, capability: dict[str, Any], allow: bool) -> None:
+        if not allow and await self._would_interrupt(handle, capability):
             raise ModelConfigConflictError("busy", "tasks are running; allow interrupting them to apply")
 
     async def _apply_target(
@@ -587,7 +637,13 @@ class ModelConfigService:
             target = AssignmentTarget(connectorId=runtime.connectorId, runtimeId=managed_id)
             managed = True
         async with self._runtimes.locked_runtime(target.connectorId, target.runtimeId, user_id=user_id) as handle:
-            await self._check_interruption(handle, capability, request.allowInterrupt)
+            # Busy and not to be interrupted: save now, restart once idle.
+            defer = (
+                not request.allowInterrupt
+                and await self._would_interrupt(handle, capability)
+            )
+            if defer and not request.deferBusy:
+                raise ModelConfigConflictError("busy", "tasks are running; allow interrupting them to apply")
             current = handle.runtime
             assignment = await self._store.get_runtime_assignment(target.connectorId, target.runtimeId)
             previous_imported = assignment["importedModelIds"] if assignment else []
@@ -615,6 +671,7 @@ class ModelConfigService:
                     previous_imported=previous_imported,
                     model_ids=request.modelIds,
                     mode=plan,
+                    trim=request.trimModels,
                 )
             except TooManyModelsError as exc:
                 raise ModelConfigInvalidError(
@@ -629,7 +686,7 @@ class ModelConfigService:
             # the managed instance a restore stopped.
             start = not current.configured or created_runtime
             try:
-                updated = await handle.put_config(patched)
+                updated = await handle.put_config(patched, restart=not defer)
                 if start and not updated.active:
                     updated = await handle.set_active(True)
             except DeviceRuntimeError as exc:
@@ -649,14 +706,15 @@ class ModelConfigService:
                     "applied_catalog_digest": catalog,
                     "imported_model_ids": imported,
                     "previous_gateway_ciphertext": previous_ciphertext,
-                    "status": "applied",
+                    "status": "deferred" if defer else "applied",
                     "error": None,
                     "applied_at": utc_now(),
                 }
             )
             return {
                 **target.model_dump(),
-                "result": "applied",
+                "result": "deferred" if defer else "applied",
+                **({"modelsTrimmed": len(match.offer.models) - len(imported)} if _trimmed(match.offer, imported, capability, request, patched) else {}),
                 "modelConnectionStatus": public_runtime_view(handle.runtime).modelConnectionStatus,
             }
 
@@ -681,6 +739,7 @@ class ModelConfigService:
             previous_imported=[],
             model_ids=request.modelIds,
             mode=mode,
+            trim=request.trimModels,
         )
         _check_models(capability, config)
         created = await self._runtimes.create_runtime(
@@ -822,6 +881,19 @@ class ModelConfigService:
             )
         except Exception:  # noqa: BLE001 - a missed push is recovered by the next one
             logger.exception("model config dashboard publish failed user_id={}", user_id)
+
+
+def _trimmed(
+    offer: Offer, imported: list[str], capability: dict[str, Any], request: ApplyRequest, config: dict[str, Any]
+) -> bool:
+    """Whether models were left out because the runtime had no room for them."""
+    field = capability.get("modelsField")
+    return (
+        request.trimModels
+        and isinstance(field, str)
+        and len(imported) < len(offer.models)
+        and len(config.get(field) or []) >= MAX_RUNTIME_MODELS
+    )
 
 
 def _requires_models(capability: dict[str, Any]) -> bool:

@@ -135,6 +135,7 @@ def create_app(
         deletion_task: asyncio.Task[None] | None = None
         usage_task: asyncio.Task[None] | None = None
         tokens_task: asyncio.Task[None] | None = None
+        deferred_task: asyncio.Task[None] | None = None
         try:
             logger.info(
                 "server concurrency pid={} workers={} event_workers={}",
@@ -155,14 +156,17 @@ def create_app(
             deletion_task = asyncio.create_task(app.state.connector_deletion_recovery.run())
             usage_task = asyncio.create_task(app.state.usage_maintenance.run())
             tokens_task = asyncio.create_task(tokens_link_service_for(app.state).run_keep_alive())
+            # Runtimes that took a model configuration while busy restart once idle.
+            deferred_task = asyncio.create_task(tokens_link_service_for(app.state).model_config.run_deferred())
             # Generate the bootstrap token early so operators see it in logs.
             if await app.state.store.count_users() == 0:
                 await SetupTokenService(app.state.setup_token, app.state.redis).snapshot()
             yield
         finally:
-            if tokens_task is not None:
-                tokens_task.cancel()
-                await asyncio.gather(tokens_task, return_exceptions=True)
+            for task in (tokens_task, deferred_task):
+                if task is not None:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
             if usage_task is not None:
                 usage_task.cancel()
                 await asyncio.gather(usage_task, return_exceptions=True)

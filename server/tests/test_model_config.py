@@ -503,3 +503,17 @@ def test_open_dashboards_get_the_saved_profile_without_a_refresh(tmp_path, serve
             snapshot = ws.receive_json()
 
     assert [item["id"] for item in snapshot["modelConfig"]["profiles"]] == [profile["id"]]
+
+
+def test_too_many_models_can_be_trimmed_to_what_fits(tmp_path, server_secret):
+    client, _rpc, connector_id, headers = _client(tmp_path, PI_LIKE)
+    _save_config(client, connector_id, headers, {"executionMode": "managed"})
+    profile = _profile(client, headers, formats=("openai_chat",), models=70)
+
+    applied = _applied(client, headers, profile["id"], [_target(connector_id)], trimModels=True)
+
+    [result] = applied["results"]
+    assert result["result"] == "applied"
+    assert result["modelsTrimmed"] == 6
+    models = _runtimes(client, connector_id, headers)["codex"]["config"]["customModels"]
+    assert len(models) == 64
