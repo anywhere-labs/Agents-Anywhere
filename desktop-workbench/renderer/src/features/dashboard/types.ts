@@ -137,7 +137,7 @@ export type ModelProfile = {
   updatedAt: string;
 };
 
-export type ModelAssignmentStatus = "applying" | "failed" | "modified" | "outdated" | "applied";
+export type ModelAssignmentStatus = "applying" | "failed" | "deferred" | "modified" | "outdated" | "applied";
 
 export type ModelAssignment = {
   connectorId: string;
@@ -162,6 +162,24 @@ export type TokensLinkStatus = {
     linkedAt: string;
     relinkSoon: boolean;
   } | null;
+  /** The last one-click setup: what was ticked and how far it got. */
+  quickSetup?: QuickSetupProgress | null;
+};
+
+export type QuickSetupProgress = {
+  state: "syncing" | "applying" | "done" | "failed";
+  request: { targets: { connectorId: string; runtimeId: string }[]; confirmNativeGlobal: boolean };
+  startedAt: string;
+  step?: "sync" | "apply";
+  code?: string;
+  results?: {
+    connectorId: string;
+    runtimeId: string;
+    result: "applied" | "deferred" | "skipped" | "failed";
+    reason?: string;
+    modelsTrimmed?: number;
+    servesRuntimeId?: string;
+  }[];
 };
 
 export type ModelConfigOverview = {

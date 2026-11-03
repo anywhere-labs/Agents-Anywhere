@@ -52,3 +52,44 @@ test("model config: both languages carry the same strings", () => {
   assert.equal(typeof zh.pages.settings.modelConfigsTitle, "string")
   assert.equal(zh.dashboard.device.showModelGatewayApiKey, undefined)
 })
+
+test("quick setup: the card shows choosing, progress or done", () => {
+  const linked = { status: "linked" }
+  assert.equal(presentation.quickSetupPhase({ link: null }, false, false), "setup")
+  assert.equal(presentation.quickSetupPhase({ link: null }, false, true), "progress")
+  assert.equal(presentation.quickSetupPhase({ link: linked, quickSetup: { state: "syncing" } }, false, false), "progress")
+  assert.equal(presentation.quickSetupPhase({ link: linked, quickSetup: { state: "failed", step: "apply" } }, true, false), "progress")
+  assert.equal(presentation.quickSetupPhase({ link: linked, quickSetup: { state: "done" } }, false, false), "done")
+  assert.equal(presentation.quickSetupPhase({ link: linked }, true, false), "done")
+  assert.equal(presentation.quickSetupPhase({ link: { status: "reauth_required" } }, true, false), "setup")
+})
+
+test("quick setup: each step reads from the link and its progress", () => {
+  const linked = { status: "linked" }
+  assert.deepEqual(presentation.quickSetupSteps({ link: null }, true), { authorize: "active", sync: "pending", apply: "pending" })
+  assert.deepEqual(presentation.quickSetupSteps({ link: linked, quickSetup: { state: "syncing" } }, false), { authorize: "done", sync: "active", apply: "pending" })
+  assert.deepEqual(presentation.quickSetupSteps({ link: linked, quickSetup: { state: "failed", step: "sync" } }, false), { authorize: "done", sync: "failed", apply: "pending" })
+  assert.deepEqual(presentation.quickSetupSteps({ link: linked, quickSetup: { state: "applying" } }, false), { authorize: "done", sync: "done", apply: "active" })
+})
+
+test("quick setup: runtimes changing their own settings are not ticked by default", () => {
+  const candidates = [
+    { connectorId: "c", runtimeId: "codex", decision: "apply" },
+    { connectorId: "c", runtimeId: "dsh", decision: "apply", requiresConfirmation: true },
+    { connectorId: "d", runtimeId: "codex", decision: "skip", reason: "device_offline" },
+  ]
+  assert.deepEqual([...presentation.defaultQuickSelection(candidates)], ["c/codex"])
+})
+
+test("quick setup: a runtime served by a managed instance is not new", () => {
+  const candidates = [
+    { connectorId: "c", runtimeId: "codex", runtimeType: "codex", decision: "apply", effect: "restart" },
+    { connectorId: "c", runtimeId: "pi", runtimeType: "pi", decision: "apply", effect: "new_instance" },
+    { connectorId: "c", runtimeId: "claude", runtimeType: "claude", decision: "apply", effect: "restart" },
+  ]
+  const assigned = [
+    { connectorId: "c", runtimeId: "codex" },
+    { connectorId: "c", runtimeId: "pi-managed", runtimeType: "pi", createdRuntime: true },
+  ]
+  assert.deepEqual(presentation.newQuickCandidates(candidates, assigned).map((item) => item.runtimeId), ["claude"])
+})

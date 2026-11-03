@@ -117,6 +117,19 @@ export class ModelConfigApi {
     return this.client.delete("/integrations/tokens/link", { token, query: { allow_interrupt: allowInterrupt } });
   }
 
+  /** Runtimes a one-click Tokens Anywhere setup would configure, with reasons for the rest. */
+  quickSetupCandidates(token: string): Promise<{ targets: ModelPreviewTarget[] }> {
+    return this.client.get("/integrations/tokens/quick-setup", { token });
+  }
+
+  /** Starts the setup; when the account must link first, returns the address to open. */
+  startQuickSetup(
+    token: string,
+    request: { targets: ModelTarget[]; confirmNativeGlobal: boolean },
+  ): Promise<{ started: boolean; startUrl: string | null }> {
+    return this.client.post("/integrations/tokens/quick-setup", request, { token });
+  }
+
   rotateTokensKey(token: string, profileId: string, allowInterrupt: boolean, idempotencyKey: string): Promise<ModelOperation> {
     return this.client.post<ModelOperation>(
       `/model-profiles/${encodeURIComponent(profileId)}/rotate-key`,

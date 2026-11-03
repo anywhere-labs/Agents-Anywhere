@@ -1,12 +1,13 @@
 "use client"
 
 import * as React from "react"
-import { ChevronRight, Link2, Plus, RefreshCw, RotateCcw, Trash2, Unlink, Upload } from "lucide-react"
+import { ChevronRight, Plus, RefreshCw, RotateCcw, Trash2, Upload } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
 import { RuntimeMaturityBadge } from "@/components/runtime-maturity-badge"
 import { SettingsSection } from "@/components/settings/settings-section"
+import { TokensQuickSetup } from "@/components/settings/tokens-quick-setup"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -43,7 +44,6 @@ import {
 } from "@/features/model-config/presentation"
 import { isApiError } from "@/lib/api/errors"
 import { cn } from "@/lib/utils"
-import { openTokensLinkStart } from "@/features/model-config/open-link"
 
 /** Only what the page shows of a device. */
 type ConnectorView = { id: string; name: string }
@@ -112,6 +112,7 @@ function useErrorText() {
 export function ModelConfigsTab({ token, connectors }: { token: string; connectors: ConnectorView[] }) {
   const t = useTranslations("pages.settings.modelConfigs")
   const { modelConfig, runtimes, refreshModelConfig } = useWorkspace()
+  const changed = useModelConfigChanged()
   const [loadFailed, setLoadFailed] = React.useState(false)
   const [applyProfile, setApplyProfile] = React.useState<ModelProfile | null>(null)
   const [creating, setCreating] = React.useState(false)
@@ -152,7 +153,14 @@ export function ModelConfigsTab({ token, connectors }: { token: string; connecto
       {!modelConfig.secretConfigured ? (
         <Alert><AlertDescription>{t("secretMissing")}</AlertDescription></Alert>
       ) : null}
-      <TokensSection token={token} overview={modelConfig} errorText={errorText} />
+      <TokensQuickSetup
+        token={token}
+        overview={modelConfig}
+        connectors={connectors}
+        runtimes={runtimes}
+        errorText={errorText}
+        onChanged={changed}
+      />
       <SettingsSection
         title={t("profilesTitle")}
         description={t("profilesDescription")}
@@ -197,100 +205,6 @@ export function ModelConfigsTab({ token, connectors }: { token: string; connecto
         />
       ) : null}
     </div>
-  )
-}
-
-function TokensSection({ token, overview, errorText }: { token: string; overview: ModelConfigOverview; errorText: (error: unknown) => string }) {
-  const t = useTranslations("pages.settings.modelConfigs")
-  const [busy, setBusy] = React.useState<"link" | "sync" | "unlink" | null>(null)
-  const changed = useModelConfigChanged()
-  const [confirmUnlink, setConfirmUnlink] = React.useState(false)
-  const [allowInterrupt, setAllowInterrupt] = React.useState(false)
-  const tokens = overview.tokens
-  if (!tokens?.available) return null
-  const link = tokens.link
-  const tokensProfile = overview.profiles.find((profile) => profile.source === "tokens" && profile.state === "active")
-  const usedBy = tokensProfile ? overview.assignments.filter((item) => item.profileId === tokensProfile.id).length : 0
-
-  const run = async (kind: "link" | "sync" | "unlink", action: () => Promise<unknown>) => {
-    setBusy(kind)
-    try {
-      await action()
-      changed()
-    } catch (error) {
-      toast.error(errorText(error))
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const startLink = () => run("link", async () => {
-    const { startUrl } = await modelConfigApi.beginTokensLink(token)
-    await openTokensLinkStart(startUrl)
-    toast.message(t("linkOpened"))
-  })
-
-  return (
-    <SettingsSection
-      title={t("tokensTitle")}
-      description={link
-        ? link.status === "linked"
-          ? t("tokensLinked", { account: link.account.displayName ?? link.account.email ?? link.account.id })
-          : t("tokensReauth")
-        : t("tokensDescription")}
-      action={(
-        <div className="flex flex-wrap gap-2">
-          {!link || link.status === "reauth_required" ? (
-            <Button size="sm" onClick={() => void startLink()} disabled={busy !== null || !tokens.secretConfigured}>
-              {busy === "link" ? <Spinner /> : <Link2 data-icon="inline-start" />}
-              {link ? t("relink") : t("link")}
-            </Button>
-          ) : (
-            <Button size="sm" variant="outline" onClick={() => void run("sync", async () => {
-              await modelConfigApi.syncTokens(token)
-              toast.success(t("synced"))
-            })} disabled={busy !== null}>
-              {busy === "sync" ? <Spinner /> : <RefreshCw data-icon="inline-start" />}
-              {t("sync")}
-            </Button>
-          )}
-          {link ? (
-            <Button size="sm" variant="ghost" onClick={() => setConfirmUnlink(true)} disabled={busy !== null}>
-              <Unlink data-icon="inline-start" />{t("unlink")}
-            </Button>
-          ) : null}
-        </div>
-      )}
-    >
-      {link?.relinkSoon ? <p className="text-sm text-amber-700 dark:text-amber-400">{t("relinkSoon")}</p> : null}
-      {link && !tokensProfile ? <p className="text-sm text-muted-foreground">{t("tokensNotSynced")}</p> : null}
-      <Dialog open={confirmUnlink} onOpenChange={setConfirmUnlink}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t("unlinkTitle")}</DialogTitle>
-            <DialogDescription>{t("unlinkDescription", { count: usedBy })}</DialogDescription>
-          </DialogHeader>
-          {usedBy > 0 ? (
-            <Field orientation="horizontal">
-              <FieldLabel htmlFor="tokens-unlink-interrupt">{t("allowInterrupt")}</FieldLabel>
-              <Switch id="tokens-unlink-interrupt" checked={allowInterrupt} onCheckedChange={setAllowInterrupt} />
-            </Field>
-          ) : null}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmUnlink(false)}>{t("cancel")}</Button>
-            <Button variant="destructive" disabled={busy !== null} onClick={() => void run("unlink", async () => {
-              const result = await modelConfigApi.unlinkTokens(token, allowInterrupt)
-              setConfirmUnlink(false)
-              const failed = result.results.filter((item) => item.result !== "restored").length
-              if (failed) toast.warning(t("unlinkedWithFailures", { count: failed }))
-              else toast.success(result.revoked ? t("unlinked") : t("unlinkedNotRevoked"))
-            })}>
-              {busy === "unlink" ? <Spinner /> : null}{t("unlink")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </SettingsSection>
   )
 }
 

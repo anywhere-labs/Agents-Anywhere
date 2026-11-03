@@ -1888,7 +1888,8 @@
           "failed": "应用失败",
           "modified": "已手动修改",
           "outdated": "有更新",
-          "applied": "已应用"
+          "applied": "已应用",
+          "deferred": "空闲后生效"
         },
         "connectionState": {
           "not_configured": "未配置",
@@ -1928,7 +1929,9 @@
           "model_connection_unsupported": "这个 Runtime 不支持模型连接。",
           "device_offline": "设备离线。",
           "models_required": "这个 Runtime 需要至少导入一个模型。",
-          "key_rotated": "Key 已轮换，请重新应用这份配置。"
+          "key_rotated": "Key 已轮换，请重新应用这份配置。",
+          "key_not_kept": "Tokens Anywhere 没有保存本实例的 Key，无法再次取回。请让 Tokens Anywhere 的部署者设置 TOKENS_SECRETS_KEY，然后断开并重新链接。",
+          "quick_setup_running": "上一次配置还在进行中。"
         },
         "interruptTitle": "有任务正在运行",
         "interruptDescription": "继续会重启相关 Runtime，正在运行的任务会被中断。",
@@ -1947,7 +1950,29 @@
         "usage": "使用情况",
         "protocolsLabel": "协议",
         "showModels": "查看模型和地址",
-        "hideModels": "收起"
+        "hideModels": "收起",
+        "quick": {
+          "title": "Tokens Anywhere 快速配置",
+          "description": "用 Tokens Anywhere 账号，一键给所有设备配好模型。",
+          "willConfigure": "将配置这些 Runtime：",
+          "start": "一键配置",
+          "inProgress": "正在配置，完成后这里会自动更新。",
+          "stepAuthorize": "在浏览器中授权",
+          "authorizeHint": "在打开的页面上确认授权，完成后回到这里。",
+          "stepSync": "同步模型",
+          "syncing": "正在读取可用模型…",
+          "stepApply": "应用到 {count} 个 Runtime",
+          "applying": "正在写入各设备…",
+          "configured": "已配置",
+          "updateModels": "更新模型",
+          "newRuntimes": "有 {count} 个新 Runtime 可以配置",
+          "configureNew": "配置",
+          "changesOwnSettings": "会修改它自身的全局配置，勾选后才配置",
+          "managedInstance": "另建一个受管实例，不影响原来的",
+          "appliesWhenIdle": "有任务在运行，空闲后生效",
+          "viaManagedInstance": "（受管实例）",
+          "modelsTrimmed": "部分 Runtime 的模型超过 64 个，只导入了前 64 个。"
+        }
       },
       "modelConfigsTitle": "配置管理"
     },

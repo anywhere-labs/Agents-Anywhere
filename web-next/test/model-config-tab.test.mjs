@@ -19,6 +19,7 @@ const workspace = registerHooks({ load(url, context, nextLoad) {
   return nextLoad(url, context)
 } })
 const { ModelConfigsTab } = await import('../src/components/settings/model-configs-tab.tsx')
+const { modelConfigApi } = await import('../src/features/model-config/api.ts')
 workspace.deregister(); hooks.deregister()
 const messages = JSON.parse(readFileSync(new URL('../messages/zh-CN.json', import.meta.url), 'utf8'))
 
@@ -61,4 +62,48 @@ test('a model profile labels each detail and shows it in full', async (t) => {
   assert.match(container.textContent, /model-19/)
   assert.match(container.textContent, new RegExp(`https://${longHost.replace(/[.]/g, '\\.')}/v1`))
   assert.match(container.textContent, /没有指定模型/)
+})
+
+async function renderTab(t, modelConfig) {
+  globalThis.modelConfigWorkspace = { modelConfig, runtimes: [], refreshModelConfig: async () => {} }
+  const container = document.createElement('div'); document.body.append(container)
+  const root = createRoot(container)
+  await act(async () => root.render(h(NextIntlClientProvider, { locale: 'zh-CN', messages, timeZone: 'Asia/Shanghai' }, h(ModelConfigsTab, { token: 'fixture', connectors: [{ id: 'c', name: 'MacBook' }] }))))
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)) })
+  t.after(async () => { await act(async () => root.unmount()); container.remove() })
+  return container
+}
+
+const unlinked = { available: true, tokensUrl: 'https://tokens.test', secretConfigured: true, link: null, quickSetup: null }
+
+test('one-click setup ticks only runtimes that keep their own settings and starts with them', async (t) => {
+  t.mock.method(modelConfigApi, 'quickSetupCandidates', async () => ({ targets: [
+    { connectorId: 'c', runtimeId: 'codex', runtimeType: 'codex', name: 'Codex', maturity: null, decision: 'apply', effect: 'restart', scope: 'instance', requiresConfirmation: false, runningSessions: 0 },
+    { connectorId: 'c', runtimeId: 'dsh', runtimeType: 'dsh', name: 'DSH', maturity: null, capabilityMaturity: 'experimental', decision: 'apply', effect: 'immediate', scope: 'native_global', requiresConfirmation: true },
+    { connectorId: 'c', runtimeId: 'pi', runtimeType: 'pi', name: 'Pi', maturity: 'beta', decision: 'apply', effect: 'new_instance', scope: 'instance', requiresConfirmation: false },
+  ] }))
+  const started = []
+  t.mock.method(modelConfigApi, 'startQuickSetup', async (_token, request) => { started.push(request); return { started: true, startUrl: null } })
+  const container = await renderTab(t, { secretConfigured: true, profiles: [], assignments: [], tokens: unlinked })
+
+  assert.match(container.textContent, /Tokens Anywhere 快速配置/)
+  assert.match(container.textContent, /会修改它自身的全局配置/)
+  assert.match(container.textContent, /另建一个受管实例/)
+  const boxes = [...container.querySelectorAll('button[role=checkbox]')].slice(0, 3)
+  assert.deepEqual(boxes.map((box) => box.getAttribute('aria-checked')), ['true', 'false', 'true'])
+
+  const start = [...container.querySelectorAll('button')].find((button) => button.textContent.includes('一键配置'))
+  await act(async () => { start.click(); await new Promise((resolve) => setTimeout(resolve, 20)) })
+  assert.deepEqual(started, [{ targets: [{ connectorId: 'c', runtimeId: 'codex' }, { connectorId: 'c', runtimeId: 'pi' }], confirmNativeGlobal: false }])
+})
+
+test('a running setup shows its steps', async (t) => {
+  t.mock.method(modelConfigApi, 'quickSetupCandidates', async () => ({ targets: [] }))
+  const tokens = { ...unlinked, link: { status: 'linked', issuer: 'https://tokens.test', account: { id: '1', displayName: 'Ada', email: null }, linkedAt: '', relinkSoon: false },
+    quickSetup: { state: 'applying', request: { targets: [{ connectorId: 'c', runtimeId: 'codex' }], confirmNativeGlobal: false }, startedAt: '' } }
+  const container = await renderTab(t, { secretConfigured: true, profiles: [], assignments: [], tokens })
+
+  assert.match(container.textContent, /已链接：Ada/)
+  assert.match(container.textContent, /应用到 1 个 Runtime/)
+  assert.match(container.textContent, /正在写入各设备/)
 })

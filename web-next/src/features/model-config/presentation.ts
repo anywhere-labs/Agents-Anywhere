@@ -46,3 +46,67 @@ export function parseModelIds(text: string): string[] {
   }
   return [...seen]
 }
+
+export type QuickSetupPhase = "setup" | "progress" | "done"
+export type QuickStepStatus = "pending" | "active" | "done" | "failed"
+type QuickTokens = {
+  link: { status: "linked" | "reauth_required" } | null
+  quickSetup?: { state: "syncing" | "applying" | "done" | "failed"; step?: "sync" | "apply" } | null
+}
+type QuickCandidate = {
+  connectorId: string
+  runtimeId: string
+  decision: "apply" | "skip"
+  requiresConfirmation?: boolean
+}
+
+export const quickTargetKey = (target: { connectorId: string; runtimeId: string }) =>
+  `${target.connectorId}/${target.runtimeId}`
+
+/**
+ * Which face the Tokens Anywhere card shows: choosing what to set up, a setup
+ * on its way (including the browser authorization this page started), or the
+ * result once runtimes use the Tokens profile.
+ */
+export function quickSetupPhase(tokens: QuickTokens, configured: boolean, authorizing: boolean): QuickSetupPhase {
+  const state = tokens.quickSetup?.state
+  if (authorizing && tokens.link?.status !== "linked") return "progress"
+  if (state === "syncing" || state === "applying" || state === "failed") return tokens.link?.status === "linked" ? "progress" : "setup"
+  if (tokens.link?.status === "linked" && (configured || state === "done")) return "done"
+  return "setup"
+}
+
+export function quickSetupSteps(tokens: QuickTokens, authorizing: boolean): Record<"authorize" | "sync" | "apply", QuickStepStatus> {
+  const linked = tokens.link?.status === "linked"
+  const progress = tokens.quickSetup
+  if (!linked) return { authorize: authorizing ? "active" : "pending", sync: "pending", apply: "pending" }
+  if (!progress) return { authorize: "done", sync: "pending", apply: "pending" }
+  if (progress.state === "failed") {
+    return progress.step === "sync"
+      ? { authorize: "done", sync: "failed", apply: "pending" }
+      : { authorize: "done", sync: "done", apply: "failed" }
+  }
+  if (progress.state === "syncing") return { authorize: "done", sync: "active", apply: "pending" }
+  if (progress.state === "applying") return { authorize: "done", sync: "done", apply: "active" }
+  return { authorize: "done", sync: "done", apply: "done" }
+}
+
+/** Ticked by default: everything that can be applied without changing a runtime's own global settings. */
+export function defaultQuickSelection(candidates: QuickCandidate[]): Set<string> {
+  return new Set(candidates.filter((item) => item.decision === "apply" && !item.requiresConfirmation).map(quickTargetKey))
+}
+
+/**
+ * Runtimes that could use Tokens Anywhere but do not yet. A runtime served by
+ * a managed instance counts as set up: the instance carries the assignment.
+ */
+export function newQuickCandidates<T extends QuickCandidate & { runtimeType?: string; effect?: string }>(
+  candidates: T[],
+  assigned: { connectorId: string; runtimeId: string; runtimeType?: string; createdRuntime?: boolean }[],
+): T[] {
+  const taken = new Set(assigned.map(quickTargetKey))
+  const managed = new Set(assigned.filter((item) => item.createdRuntime && item.runtimeType).map((item) => `${item.connectorId}/${item.runtimeType}`))
+  return candidates.filter((item) => item.decision === "apply"
+    && !taken.has(quickTargetKey(item))
+    && !(item.effect === "new_instance" && managed.has(`${item.connectorId}/${item.runtimeType}`)))
+}

@@ -1888,7 +1888,8 @@
           "failed": "Failed",
           "modified": "Changed by hand",
           "outdated": "Update available",
-          "applied": "Applied"
+          "applied": "Applied",
+          "deferred": "Applies when idle"
         },
         "connectionState": {
           "not_configured": "Not configured",
@@ -1928,7 +1929,9 @@
           "model_connection_unsupported": "This runtime takes no model connection.",
           "device_offline": "The device is offline.",
           "models_required": "This runtime needs at least one imported model.",
-          "key_rotated": "The key was rotated. Apply this profile again."
+          "key_rotated": "The key was rotated. Apply this profile again.",
+          "key_not_kept": "Tokens Anywhere did not keep this instance's key, so it cannot be fetched again. Ask its operator to set TOKENS_SECRETS_KEY, then unlink and link again.",
+          "quick_setup_running": "A setup is already running."
         },
         "interruptTitle": "Tasks are running",
         "interruptDescription": "Continuing restarts the affected runtimes and interrupts their running tasks.",
@@ -1947,7 +1950,29 @@
         "usage": "Usage",
         "protocolsLabel": "Protocols",
         "showModels": "Show models and addresses",
-        "hideModels": "Hide"
+        "hideModels": "Hide",
+        "quick": {
+          "title": "Tokens Anywhere quick setup",
+          "description": "Set up models on all your devices in one step with your Tokens Anywhere account.",
+          "willConfigure": "These runtimes will be set up:",
+          "start": "Set up",
+          "inProgress": "Setting up; this updates when it finishes.",
+          "stepAuthorize": "Authorize in the browser",
+          "authorizeHint": "Confirm on the page that opened, then come back here.",
+          "stepSync": "Sync models",
+          "syncing": "Reading the available models…",
+          "stepApply": "Apply to {count} runtimes",
+          "applying": "Writing to your devices…",
+          "configured": "Set up",
+          "updateModels": "Update models",
+          "newRuntimes": "{count} new runtimes can be set up",
+          "configureNew": "Set up",
+          "changesOwnSettings": "Changes its own global settings; set up only when ticked",
+          "managedInstance": "Gets a separate managed instance; the original stays as it is",
+          "appliesWhenIdle": "Tasks are running; applies when idle",
+          "viaManagedInstance": " (managed instance)",
+          "modelsTrimmed": "Some runtimes had more than 64 models; only the first 64 were imported."
+        }
       },
       "modelConfigsTitle": "Model configuration"
     },
