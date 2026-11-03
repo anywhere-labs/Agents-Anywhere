@@ -57,6 +57,42 @@ const TONE_CLASS: Record<ModelStatusTone, string> = {
   neutral: "text-muted-foreground",
 }
 
+/**
+ * Run an action that may restart runtimes: first without interrupting
+ * anything; if the Server answers `busy`, ask, then run it again allowing it.
+ */
+function useInterruptConfirm() {
+  const t = useTranslations("pages.settings.modelConfigs")
+  const [pending, setPending] = React.useState<{ resume: () => void; cancel: () => void } | null>(null)
+  const run = React.useCallback(async <T,>(action: (allowInterrupt: boolean) => Promise<T>): Promise<T | null> => {
+    try {
+      return await action(false)
+    } catch (error) {
+      if (!isApiError(error) || error.code !== "busy") throw error
+    }
+    const confirmed = await new Promise<boolean>((resolve) => {
+      setPending({ resume: () => resolve(true), cancel: () => resolve(false) })
+    })
+    setPending(null)
+    return confirmed ? action(true) : null
+  }, [])
+  const dialog = (
+    <Dialog open={pending !== null} onOpenChange={(open) => { if (!open) pending?.cancel() }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t("interruptTitle")}</DialogTitle>
+          <DialogDescription>{t("interruptDescription")}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => pending?.cancel()}>{t("cancel")}</Button>
+          <Button variant="destructive" onClick={() => pending?.resume()}>{t("interruptContinue")}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+  return { run, dialog }
+}
+
 function useErrorText() {
   const t = useTranslations("pages.settings.modelConfigs")
   return React.useCallback((error: unknown) => {
@@ -247,6 +283,7 @@ function ProfileRow({
 }) {
   const t = useTranslations("pages.settings.modelConfigs")
   const [busy, setBusy] = React.useState(false)
+  const interrupt = useInterruptConfirm()
   const models = new Set(profile.offers.flatMap((offer) => offer.models.map((model) => model.id))).size
 
   const remove = async () => {
@@ -263,8 +300,10 @@ function ProfileRow({
   const rotate = async () => {
     setBusy(true)
     try {
-      const operation = await modelConfigApi.rotateTokensKey(token, profile.id, false, newIdempotencyKey())
-      reportOperation(operation, t)
+      // One key for both attempts: the first is refused before anything rotates.
+      const key = newIdempotencyKey()
+      const operation = await interrupt.run((allow) => modelConfigApi.rotateTokensKey(token, profile.id, allow, key))
+      if (operation) reportOperation(operation, t)
     } catch (error) {
       toast.error(errorText(error))
     } finally {
@@ -274,6 +313,7 @@ function ProfileRow({
 
   return (
     <div className="flex flex-wrap items-center gap-3 py-3">
+      {interrupt.dialog}
       <div className="flex min-w-0 flex-1 basis-60 flex-col gap-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="truncate font-medium">{profile.name}</span>
@@ -580,6 +620,7 @@ function DevicesSection({
   const t = useTranslations("pages.settings.modelConfigs")
   const tStatus = useTranslations("pages.settings.modelConfigs.connectionState")
   const [restoring, setRestoring] = React.useState<string | null>(null)
+  const interrupt = useInterruptConfirm()
   const byTarget = new Map(overview.assignments.map((item) => [`${item.connectorId}/${item.runtimeId}`, item]))
   const profileName = (id: string) => overview.profiles.find((profile) => profile.id === id)?.name ?? id
 
@@ -587,8 +628,8 @@ function DevicesSection({
     const key = `${assignment.connectorId}/${assignment.runtimeId}`
     setRestoring(key)
     try {
-      await modelConfigApi.restore(token, assignment, true)
-      toast.success(t("restored"))
+      const result = await interrupt.run((allow) => modelConfigApi.restore(token, assignment, allow))
+      if (result) toast.success(t("restored"))
     } catch (error) {
       toast.error(errorText(error))
     } finally {
@@ -603,6 +644,7 @@ function DevicesSection({
 
   return (
     <SettingsSection title={t("devicesTitle")} description={t("devicesDescription")}>
+      {interrupt.dialog}
       {rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t("noDevices")}</p>
       ) : (

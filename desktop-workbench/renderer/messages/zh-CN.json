@@ -1869,7 +1869,8 @@
           "mode_unsupported": "当前模式不能使用模型连接",
           "busy_operation": "正在应用其他配置",
           "device_offline": "设备离线",
-          "unknown": "暂时不能应用"
+          "unknown": "暂时不能应用",
+          "models_required": "需要至少导入一个模型"
         },
         "confirmNativeGlobal": "我确认修改所选 Runtime 自身的全局配置（会影响不经过 AA 使用它的地方）。",
         "applyCount": "应用到 {count} 个",
@@ -1926,8 +1927,13 @@
           "authorization_failed": "Tokens Anywhere 没有完成授权。",
           "exchange_failed": "Tokens Anywhere 没有签发令牌，请重试。",
           "model_connection_unsupported": "这个 Runtime 不支持模型连接。",
-          "device_offline": "设备离线。"
-        }
+          "device_offline": "设备离线。",
+          "models_required": "这个 Runtime 需要至少导入一个模型。",
+          "key_rotated": "Key 已轮换，请重新应用这份配置。"
+        },
+        "interruptTitle": "有任务正在运行",
+        "interruptDescription": "继续会重启相关 Runtime，正在运行的任务会被中断。",
+        "interruptContinue": "中断并继续"
       },
       "modelConfigsTitle": "配置管理"
     },

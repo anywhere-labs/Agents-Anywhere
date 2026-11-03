@@ -604,7 +604,8 @@ function ModelGatewayEditor({
     const nextBaseUrl = patch.baseUrl ?? baseUrl
     const nextApiKey = patch.apiKey ?? apiKey
     const nextProtocol = patch.protocol ?? protocol
-    if (!nextBaseUrl && !nextApiKey && !storedSecret) {
+    // Clearing both fields removes the gateway, saved key included.
+    if (!nextBaseUrl && !nextApiKey) {
       onChange(undefined)
       return
     }
@@ -615,8 +616,10 @@ function ModelGatewayEditor({
       ...(protocols.length ? { protocol: nextProtocol } : {}),
     })
   }
-  const keyHelp = storedSecret
-    ? t("modelGatewayApiKeyKept", { hint: storedSecret.hint ?? "••••" })
+  // A cleared gateway no longer keeps the saved key.
+  const kept = storedSecret && baseUrl ? storedSecret : undefined
+  const keyHelp = kept
+    ? t("modelGatewayApiKeyKept", { hint: kept.hint ?? "••••" })
     : apiKeyDescription
 
   return (
@@ -665,21 +668,21 @@ function ModelGatewayEditor({
       </div>
       <div className="flex min-w-0 flex-col gap-1.5">
         <label htmlFor={apiKeyId} className="text-xs font-medium text-muted-foreground">
-          {apiKeyLabel}{required && !storedSecret ? " *" : ""}
+          {apiKeyLabel}{required && !kept ? " *" : ""}
         </label>
         <Input
           id={apiKeyId}
           name={`${idPrefix}-secret`}
           type="password"
           value={apiKey}
-          placeholder={storedSecret ? storedSecret.hint ?? "••••" : undefined}
+          placeholder={kept ? kept.hint ?? "••••" : undefined}
           onChange={(event) => update({ apiKey: event.currentTarget.value })}
           minLength={apiKeySchema.minLength}
           maxLength={apiKeySchema.maxLength}
           aria-invalid={invalid}
           autoComplete="new-password"
           spellCheck={false}
-          required={required && !storedSecret}
+          required={required && !kept}
           data-1p-ignore
           data-bwignore="true"
           data-form-type="other"
@@ -1004,10 +1007,13 @@ function withoutStoredSecrets(
   return { ...schema, properties }
 }
 
+/** Scheme, host and port, as the Server compares them before keeping a saved key. */
 function urlOrigin(value: unknown): string | null {
   if (typeof value !== "string") return null
   try {
-    return new URL(value.trim()).host.toLowerCase()
+    // URL drops a default port, so `https://a` and `https://a:443` compare equal.
+    const url = new URL(value.trim())
+    return url.host ? `${url.protocol}//${url.host}`.toLowerCase() : null
   } catch {
     return null
   }

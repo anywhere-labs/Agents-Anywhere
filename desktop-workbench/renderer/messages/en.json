@@ -1869,7 +1869,8 @@
           "mode_unsupported": "No mode that takes a model connection",
           "busy_operation": "Another change is being applied",
           "device_offline": "Device offline",
-          "unknown": "Cannot apply right now"
+          "unknown": "Cannot apply right now",
+          "models_required": "Needs at least one model"
         },
         "confirmNativeGlobal": "I confirm changing the selected runtimes' own global settings, which also affects using them outside AA.",
         "applyCount": "Apply to {count}",
@@ -1926,8 +1927,13 @@
           "authorization_failed": "Tokens Anywhere did not finish the authorization.",
           "exchange_failed": "Tokens Anywhere did not issue a token. Try again.",
           "model_connection_unsupported": "This runtime takes no model connection.",
-          "device_offline": "The device is offline."
-        }
+          "device_offline": "The device is offline.",
+          "models_required": "This runtime needs at least one imported model.",
+          "key_rotated": "The key was rotated. Apply this profile again."
+        },
+        "interruptTitle": "Tasks are running",
+        "interruptDescription": "Continuing restarts the affected runtimes and interrupts their running tasks.",
+        "interruptContinue": "Interrupt and continue"
       },
       "modelConfigsTitle": "Model configuration"
     },
