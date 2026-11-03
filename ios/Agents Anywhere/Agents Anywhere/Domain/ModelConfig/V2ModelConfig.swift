@@ -112,6 +112,47 @@ nonisolated struct V2ModelSpec: Codable, Hashable {
     var name: String?
     var efforts: [String]?
     var input: [String]?
+    /// Who makes the model, as Tokens Anywhere names it.
+    var vendor: String?
+    var contextWindow: Int?
+    var maxOutputTokens: Int?
+}
+
+extension V2ModelSpec {
+    private enum CodingKeys: String, CodingKey { case id, name, efforts, input, vendor, contextWindow, maxOutputTokens }
+
+    /// Only the ID is required; an odd optional field reads as absent.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try? container.decodeIfPresent(String.self, forKey: .name)
+        efforts = try? container.decodeIfPresent([String].self, forKey: .efforts)
+        input = try? container.decodeIfPresent([String].self, forKey: .input)
+        vendor = try? container.decodeIfPresent(String.self, forKey: .vendor)
+        contextWindow = try? container.decodeIfPresent(Int.self, forKey: .contextWindow)
+        maxOutputTokens = try? container.decodeIfPresent(Int.self, forKey: .maxOutputTokens)
+    }
+}
+
+/// Models turned off, and names shown in place of the model's own. They apply
+/// to every runtime using Tokens Anywhere and to Agents Anywhere only.
+nonisolated struct V2ModelPreferences: Codable, Hashable {
+    var disabled: [String]
+    var names: [String: String]
+
+    static let empty = V2ModelPreferences(disabled: [], names: [:])
+
+    init(disabled: [String] = [], names: [String: String] = [:]) {
+        self.disabled = disabled; self.names = names
+    }
+
+    private enum CodingKeys: String, CodingKey { case disabled, names }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        disabled = (try? container.decodeIfPresent([String].self, forKey: .disabled)) ?? []
+        names = (try? container.decodeIfPresent([String: String].self, forKey: .names)) ?? [:]
+    }
 }
 
 nonisolated struct V2ModelOffer: Codable, Hashable {
@@ -144,9 +185,11 @@ nonisolated struct V2ModelProfile: Decodable, Hashable, Identifiable {
     let state: String
     let etag: String?
     let updatedAt: String?
+    /// Models turned off and renamed; only the Tokens profile carries them.
+    let preferences: V2ModelPreferences
 
     private enum CodingKeys: String, CodingKey {
-        case id, source, name, originHost, offers, keyHint, strategyName, state, etag, updatedAt
+        case id, source, name, originHost, offers, keyHint, strategyName, state, etag, updatedAt, preferences
     }
 
     init(from decoder: Decoder) throws {
@@ -161,6 +204,7 @@ nonisolated struct V2ModelProfile: Decodable, Hashable, Identifiable {
         state = (try? container.decodeIfPresent(String.self, forKey: .state)) ?? "active"
         etag = try? container.decodeIfPresent(String.self, forKey: .etag)
         updatedAt = try? container.decodeIfPresent(String.self, forKey: .updatedAt)
+        preferences = (try? container.decodeIfPresent(V2ModelPreferences.self, forKey: .preferences)) ?? .empty
     }
 
     var isActive: Bool { state == "active" }
@@ -522,6 +566,125 @@ nonisolated struct V2ModelOperation: Decodable, Hashable {
 
 nonisolated struct V2TokensLinkStart: Decodable, Hashable {
     let startUrl: String
+}
+
+/// The linked Tokens Anywhere account. Amounts are decimal yuan strings with
+/// four places; add them as ten-thousandths, never as floating point.
+nonisolated struct V2TokensAccountInfo: Decodable, Hashable {
+    let account: V2TokensLinkAccount
+    let balance: V2TokensBalance
+    let links: V2TokensConsoleLinks
+
+    private enum CodingKeys: String, CodingKey { case account, balance, links }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        account = (try? container.decodeIfPresent(V2TokensLinkAccount.self, forKey: .account))
+            ?? V2TokensLinkAccount(id: "", displayName: nil, email: nil)
+        balance = (try? container.decodeIfPresent(V2TokensBalance.self, forKey: .balance)) ?? V2TokensBalance()
+        links = try container.decode(V2TokensConsoleLinks.self, forKey: .links)
+    }
+}
+
+nonisolated struct V2TokensBalance: Decodable, Hashable {
+    var balance: String?
+    var available: String?
+    var held: String?
+    var bonus: String?
+
+    init(balance: String? = nil, available: String? = nil, held: String? = nil, bonus: String? = nil) {
+        self.balance = balance; self.available = available; self.held = held; self.bonus = bonus
+    }
+
+    private enum CodingKeys: String, CodingKey { case balance, available, held, bonus }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        balance = try? container.decodeIfPresent(String.self, forKey: .balance)
+        available = try? container.decodeIfPresent(String.self, forKey: .available)
+        held = try? container.decodeIfPresent(String.self, forKey: .held)
+        bonus = try? container.decodeIfPresent(String.self, forKey: .bonus)
+    }
+}
+
+/// Tokens Anywhere console pages, opened in the browser.
+nonisolated struct V2TokensConsoleLinks: Decodable, Hashable {
+    let console: String
+    let billing: String
+    let usage: String
+}
+
+/// One model's settled usage on one Beijing date.
+nonisolated struct V2TokensUsageItem: Decodable, Hashable {
+    let date: String
+    let model: String?
+    let requests: Int
+    let inputTokens: Int
+    let outputTokens: Int
+    let cacheReadTokens: Int
+    let cacheWrite5mTokens: Int
+    let cacheWrite1hTokens: Int
+    let amountCharged: String
+
+    init(date: String, model: String?, requests: Int = 0, inputTokens: Int = 0, outputTokens: Int = 0,
+         cacheReadTokens: Int = 0, cacheWrite5mTokens: Int = 0, cacheWrite1hTokens: Int = 0, amountCharged: String = "0") {
+        self.date = date; self.model = model; self.requests = requests
+        self.inputTokens = inputTokens; self.outputTokens = outputTokens; self.cacheReadTokens = cacheReadTokens
+        self.cacheWrite5mTokens = cacheWrite5mTokens; self.cacheWrite1hTokens = cacheWrite1hTokens
+        self.amountCharged = amountCharged
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case date, model, requests, inputTokens, outputTokens, cacheReadTokens, cacheWrite5mTokens, cacheWrite1hTokens, amountCharged
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        date = try container.decode(String.self, forKey: .date)
+        model = try? container.decodeIfPresent(String.self, forKey: .model)
+        func count(_ key: CodingKeys) -> Int { (try? container.decodeIfPresent(Int.self, forKey: key)) ?? 0 }
+        requests = count(.requests)
+        inputTokens = count(.inputTokens)
+        outputTokens = count(.outputTokens)
+        cacheReadTokens = count(.cacheReadTokens)
+        cacheWrite5mTokens = count(.cacheWrite5mTokens)
+        cacheWrite1hTokens = count(.cacheWrite1hTokens)
+        amountCharged = (try? container.decodeIfPresent(String.self, forKey: .amountCharged)) ?? "0"
+    }
+
+    var tokens: Int { inputTokens + outputTokens + cacheReadTokens + cacheWrite5mTokens + cacheWrite1hTokens }
+}
+
+/// The whole Tokens account's usage from `from` to `to`; quiet days are absent.
+nonisolated struct V2TokensUsage: Decodable, Hashable {
+    let from: String
+    let to: String
+    let items: [V2TokensUsageItem]
+
+    init(from: String, to: String, items: [V2TokensUsageItem]) {
+        self.from = from; self.to = to; self.items = items
+    }
+
+    private enum CodingKeys: String, CodingKey { case from, to, items }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        from = try container.decode(String.self, forKey: .from)
+        to = try container.decode(String.self, forKey: .to)
+        items = (try? container.decodeIfPresent(V2LossyArray<V2TokensUsageItem>.self, forKey: .items))?.values ?? []
+    }
+}
+
+nonisolated struct V2TokensModelsSaveResponse: Decodable, Hashable {
+    /// True when runtimes using Tokens get the change in the background.
+    let applying: Bool
+
+    private enum CodingKeys: String, CodingKey { case applying }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        applying = (try? container.decodeIfPresent(Bool.self, forKey: .applying)) ?? false
+    }
 }
 
 nonisolated struct V2TokensUnlinkResponse: Decodable, Hashable {

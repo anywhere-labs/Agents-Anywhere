@@ -28,6 +28,7 @@ private struct ModelConfigPage: View {
     @State private var unlinkAllowsInterrupt = false
     @State private var deleting: V2ModelProfile?
     @State private var rotating: V2ModelProfile?
+    @Environment(\.scenePhase) private var scenePhase
 
     init(services: V2ClientServices) {
         _storage = StateObject(wrappedValue: StableViewModel {
@@ -65,6 +66,29 @@ private struct ModelConfigPage: View {
         .onChange(of: model.overview?.tokens?.link) { _, link in
             linker.observe(link)
             if link?.isLinked == true { model.finishAuthorizing() }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if showsAccount && model.account.tab == .models && model.account.changes > 0 {
+                TokensPendingBar(model: model)
+            }
+        }
+        // A push with new saved model choices replaces what the page started from.
+        .onChange(of: model.overview?.activeTokensProfile, initial: true) { _, profile in
+            model.account.reconcile(profile: profile)
+        }
+        .onChange(of: showsAccount, initial: true) { _, shows in
+            if !shows { model.account.tab = nil }
+            else if model.account.tab == nil { model.account.tab = model.initialAccountTab }
+        }
+        // Back from topping up in the browser, the balance should already show it.
+        .task(id: accountKey) {
+            if accountKey != nil { await model.account.loadInfo() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active && showsAccount { Task { await model.account.loadInfo() } }
+        }
+        .task(id: usageKey) {
+            if usageKey != nil { await model.account.loadUsage() }
         }
         .sheet(isPresented: $creating) { ModelProfileEditorSheet(model: model) }
         .sheet(item: $applying) { profile in ModelApplySheet(model: model.makeApplyModel(profile: profile)) { operation in
@@ -107,6 +131,22 @@ private struct ModelConfigPage: View {
         } message: {
             Text(String(localized: "Continuing restarts the affected runtimes and interrupts their running tasks."))
         }
+    }
+
+    /// The linked account's page is showing.
+    private var showsAccount: Bool {
+        model.overview?.tokens?.available == true && model.quickPhase == .done
+    }
+
+    /// Changes when another account's page shows; nil while none does.
+    private var accountKey: String? {
+        showsAccount ? model.overview?.tokens?.link?.account.id ?? "" : nil
+    }
+
+    /// Changes when the usage tab opens or its period changes; nil while it is closed.
+    private var usageKey: String? {
+        guard let account = accountKey, model.account.tab == .usage else { return nil }
+        return "\(account)#\(model.account.usageDays)"
     }
 
     private var tokensUsage: Int {

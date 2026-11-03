@@ -53,6 +53,25 @@ struct V2ModelConfigAPI {
             method: .post, path: "/integrations/tokens/quick-setup", body: request))
     }
 
+    /// The linked account, its balance and its console pages.
+    func tokensAccount() async throws -> V2TokensAccountInfo {
+        try await transport.send(HTTPRequest<EmptyRequestBody, V2TokensAccountInfo>(
+            method: .get, path: "/integrations/tokens/account"))
+    }
+
+    /// The whole Tokens account's settled usage over the last `days` Beijing days.
+    func tokensUsage(days: Int) async throws -> V2TokensUsage {
+        try await transport.send(HTTPRequest<EmptyRequestBody, V2TokensUsage>(
+            method: .get, path: "/integrations/tokens/usage",
+            queryItems: [URLQueryItem(name: "days", value: String(days))]))
+    }
+
+    /// Turns models off and renames them; runtimes using Tokens get the change in the background.
+    func saveTokensModels(_ preferences: V2ModelPreferences) async throws -> V2TokensModelsSaveResponse {
+        try await transport.send(HTTPRequest<V2ModelPreferences, V2TokensModelsSaveResponse>(
+            method: .put, path: "/integrations/tokens/models", body: preferences))
+    }
+
     func syncTokens() async throws -> V2ModelProfile {
         try await transport.send(HTTPRequest<EmptyRequestBody, V2ModelProfile>(
             method: .post, path: "/integrations/tokens/sync"))

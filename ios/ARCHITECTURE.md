@@ -138,6 +138,11 @@ sheet never shows a saved gateway key, an empty key keeps it on the same origin,
 and a new address needs it again. `TokensLinkCoordinator` opens the Tokens
 Anywhere link in `ASWebAuthenticationSession` and closes it once a snapshot
 shows the new link, because the flow never calls back into the app.
+Once linked, the page shows the Anywhere account: `TokensAccountModel` reads
+the account, balance and usage on request (again when the app returns to the
+foreground), edits a draft of the pushed model choices and saves it in one
+request. `TokensAccountPresentation` sums yuan amounts as integer
+ten-thousandths, never as floating point.
 
 ## Migration boundary
 

@@ -5,7 +5,8 @@ nonisolated enum QuickSetupPhase: Hashable {
     case setup
     /// A setup on its way, including the browser authorization this page started.
     case progress
-    /// Runtimes use the Tokens profile.
+    /// The linked account's own page; once runtimes use Tokens, later runs
+    /// (new runtimes, changed models) show there too.
     case done
 }
 
@@ -34,9 +35,14 @@ nonisolated enum QuickSetupPresentation {
         let linked = link?.isLinked == true
         let state = progress?.state
         if authorizing && !linked { return .progress }
+        if linked && configured && state != "failed" { return .done }
         if state == "syncing" || state == "applying" || state == "failed" { return linked ? .progress : .setup }
-        if linked && (configured || state == "done") { return .done }
-        return .setup
+        return linked ? .done : .setup
+    }
+
+    /// A setup or a model change is being written to runtimes right now.
+    static func isRunning(_ progress: V2QuickSetupProgress?) -> Bool {
+        progress?.state == "syncing" || progress?.state == "applying"
     }
 
     static func steps(link: V2TokensLink?, progress: V2QuickSetupProgress?, authorizing: Bool) -> QuickSetupSteps {

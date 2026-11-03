@@ -15,7 +15,12 @@ struct TokensQuickSetupSection: View {
             switch model.quickPhase {
             case .setup: setupSection
             case .progress: progressSection
-            case .done: doneSection
+            case .done:
+                TokensAccountSections(model: model, tokens: tokens) {
+                    devicesSection
+                } unlink: {
+                    unlinkRows
+                }
             }
         }
         .task(id: model.quickCandidatesKey) { await model.loadQuickCandidates() }
@@ -25,28 +30,7 @@ struct TokensQuickSetupSection: View {
 
     private var setupSection: some View {
         Section {
-            Text(String(localized: "These runtimes will be set up:")).font(.footnote).foregroundStyle(.secondary)
-            if let candidates = model.quickCandidates {
-                if candidates.isEmpty {
-                    Text(String(localized: "No runtimes take a model connection yet.")).font(.subheadline).foregroundStyle(.secondary)
-                }
-                ForEach(candidates) { item in candidateRow(item) }
-            } else {
-                HStack { Spacer(); ProgressView(); Spacer() }.padding(.vertical, 8)
-            }
-            Button {
-                start()
-            } label: {
-                HStack {
-                    Label(String(localized: "pages.settings.modelConfigs.quick.start"), appSymbol: "link")
-                    Spacer()
-                    if model.quickBusy { ProgressView() }
-                }
-            }
-            .disabled(model.quickBusy || !tokens.secretConfigured || !model.canWrite || model.quickRequest.targets.isEmpty)
-            if model.quickChoosing {
-                Button(String(localized: "Cancel")) { model.quickChoosing = false }
-            }
+            choiceRows
             unlinkRows
         } header: {
             Text(String(localized: "Tokens Anywhere quick setup"))
@@ -54,6 +38,32 @@ struct TokensQuickSetupSection: View {
             Text(tokens.link?.isLinked == false
                 ? String(localized: "The authorization expired. Link again.")
                 : String(localized: "Set up models on all your devices in one step with your Tokens Anywhere account."))
+        }
+    }
+
+    /// The runtimes to tick and the button that starts the setup.
+    @ViewBuilder private var choiceRows: some View {
+        Text(String(localized: "These runtimes will be set up:")).font(.footnote).foregroundStyle(.secondary)
+        if let candidates = model.quickCandidates {
+            if candidates.isEmpty {
+                Text(String(localized: "No runtimes take a model connection yet.")).font(.subheadline).foregroundStyle(.secondary)
+            }
+            ForEach(candidates) { item in candidateRow(item) }
+        } else {
+            HStack { Spacer(); ProgressView(); Spacer() }.padding(.vertical, 8)
+        }
+        Button {
+            start()
+        } label: {
+            HStack {
+                Label(String(localized: "pages.settings.modelConfigs.quick.start"), appSymbol: "link")
+                Spacer()
+                if model.quickBusy { ProgressView() }
+            }
+        }
+        .disabled(model.quickBusy || !tokens.secretConfigured || !model.canWrite || model.quickRequest.targets.isEmpty)
+        if model.quickChoosing {
+            Button(String(localized: "Cancel")) { model.quickChoosing = false }
         }
     }
 
@@ -140,54 +150,42 @@ struct TokensQuickSetupSection: View {
         .accessibilityElement(children: .combine)
     }
 
-    // MARK: Done
+    // MARK: Devices tab
 
-    private var doneSection: some View {
+    /// The account page's Devices tab: the runtime choices until one uses
+    /// Tokens (or while choosing new ones), then where it is set up.
+    private var devicesSection: some View {
         let fresh = model.freshQuickCandidates
         let results = tokens.quickSetup?.results ?? []
         return Section {
-            if !fresh.isEmpty {
-                HStack {
-                    Text(String(localized: "\(fresh.count) new runtimes can be set up")).font(.subheadline)
-                    Spacer()
-                    Button(String(localized: "pages.settings.modelConfigs.quick.configureNew")) { model.chooseNewQuickCandidates() }
-                        .buttonStyle(.borderless)
+            if model.showsQuickChoices {
+                choiceRows
+            } else {
+                if !fresh.isEmpty {
+                    HStack {
+                        Text(String(localized: "\(fresh.count) new runtimes can be set up")).font(.subheadline)
+                        Spacer()
+                        Button(String(localized: "pages.settings.modelConfigs.quick.configureNew")) { model.chooseNewQuickCandidates() }
+                            .buttonStyle(.borderless)
+                    }
+                }
+                if tokens.link?.relinkSoon == true {
+                    Text(String(localized: "The authorization is almost a year old. Link again soon.")).font(.footnote).foregroundStyle(.orange)
+                }
+                ForEach(model.tokenAssignments) { item in
+                    resultRow(title: "\(model.deviceName(item.connectorId)) · \(model.runtimeName(item.target))",
+                        detail: QuickSetupPresentation.assignmentNote(status: item.status, createdRuntime: item.createdRuntime),
+                        warning: false)
+                }
+                ForEach(results.filter(\.isProblem)) { item in
+                    resultRow(title: "\(model.deviceName(item.connectorId)) · \(model.runtimeName(item.target))",
+                        detail: QuickSetupPresentation.reasonText(item.reason), warning: true)
+                }
+                if results.contains(where: { ($0.modelsTrimmed ?? 0) > 0 }) {
+                    Text(String(localized: "Some runtimes had more than 64 models; only the first 64 were imported."))
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
             }
-            if tokens.link?.relinkSoon == true {
-                Text(String(localized: "The authorization is almost a year old. Link again soon.")).font(.footnote).foregroundStyle(.orange)
-            }
-            ForEach(model.tokenAssignments) { item in
-                resultRow(title: "\(model.deviceName(item.connectorId)) · \(model.runtimeName(item.target))",
-                    detail: QuickSetupPresentation.assignmentNote(status: item.status, createdRuntime: item.createdRuntime),
-                    warning: false)
-            }
-            ForEach(results.filter(\.isProblem)) { item in
-                resultRow(title: "\(model.deviceName(item.connectorId)) · \(model.runtimeName(item.target))",
-                    detail: QuickSetupPresentation.reasonText(item.reason), warning: true)
-            }
-            if results.contains(where: { ($0.modelsTrimmed ?? 0) > 0 }) {
-                Text(String(localized: "Some runtimes had more than 64 models; only the first 64 were imported."))
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-            Button {
-                Task { await model.syncTokens() }
-            } label: {
-                HStack {
-                    Label(String(localized: "Update models"), appSymbol: "arrow.clockwise")
-                    Spacer()
-                    if model.tokensBusy == .sync { ProgressView() }
-                }
-            }
-            .disabled(model.tokensBusy != nil || !model.canWrite)
-            unlinkRows
-        } header: {
-            HStack(spacing: 6) {
-                Text(String(localized: "Tokens Anywhere"))
-                ModelStatusBadge(title: String(localized: "pages.settings.modelConfigs.quick.configured"), tone: .ok)
-            }
-        } footer: {
-            Text(String(localized: "Linked: \(tokens.link?.account.label ?? "")"))
         }
     }
 

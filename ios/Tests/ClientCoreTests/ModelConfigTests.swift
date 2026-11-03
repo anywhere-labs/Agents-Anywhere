@@ -272,6 +272,19 @@ import Testing
         #expect(QuickSetupPresentation.phase(link: linked, progress: nil, configured: true, authorizing: false) == .done)
         #expect(QuickSetupPresentation.phase(link: try link("reauth_required"), progress: nil, configured: true, authorizing: false) == .setup)
         #expect(QuickSetupPresentation.phase(link: nil, progress: try progress("syncing"), configured: false, authorizing: false) == .setup)
+        // A linked account shows its own page, even before any runtime uses it.
+        #expect(QuickSetupPresentation.phase(link: linked, progress: nil, configured: false, authorizing: false) == .done)
+        // Changing models on a configured account keeps the account page in view.
+        #expect(QuickSetupPresentation.phase(link: linked, progress: try progress("applying"), configured: true, authorizing: false) == .done)
+        #expect(QuickSetupPresentation.phase(link: linked, progress: try progress("syncing"), configured: true, authorizing: false) == .done)
+    }
+
+    @Test func runningMeansSyncingOrApplying() throws {
+        #expect(QuickSetupPresentation.isRunning(try progress("syncing")))
+        #expect(QuickSetupPresentation.isRunning(try progress("applying")))
+        #expect(!QuickSetupPresentation.isRunning(try progress("done")))
+        #expect(!QuickSetupPresentation.isRunning(try progress("failed", step: "apply")))
+        #expect(!QuickSetupPresentation.isRunning(nil))
     }
 
     @Test func eachStepReadsFromTheLinkAndItsProgress() throws {
@@ -354,8 +367,10 @@ import Testing
         #expect(model.quickCandidates?.count == 3)
         #expect(model.effectiveQuickSelection == ["device/rti_gateway"])
         #expect(model.freshQuickCandidates.map(\.runtimeId) == ["rti_gateway", "rti_global"])
+        #expect(model.showsQuickChoices && model.initialAccountTab == .devices)
         model.chooseNewQuickCandidates()
-        #expect(model.quickPhase == .setup && model.effectiveQuickSelection == ["device/rti_gateway"])
+        // Choosing new runtimes happens on the account page's Devices tab.
+        #expect(model.quickPhase == .done && model.quickChoosing && model.effectiveQuickSelection == ["device/rti_gateway"])
         model.toggleQuick(model.quickCandidates![2], true)
         #expect(!model.effectiveQuickSelection.contains("device/rti_work"), "A skipped runtime cannot be ticked")
         model.toggleQuick(model.quickCandidates![1], true)

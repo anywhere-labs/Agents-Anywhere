@@ -19,12 +19,16 @@ final class ModelConfigModel {
     private(set) var isCreatingProfile = false
     var feedback: ModelConfigFeedback?
     var pendingInterrupt: InterruptRetry?
+    /// The linked Tokens Anywhere account page.
+    let account: TokensAccountModel
     @ObservationIgnored private let api: V2ModelConfigAPI
     @ObservationIgnored private let dashboard: V2DashboardRepository
     @ObservationIgnored private let newKey: () -> String
 
     init(api: V2ModelConfigAPI, dashboard: V2DashboardRepository, newKey: @escaping () -> String = { UUID().uuidString }) {
         self.api = api; self.dashboard = dashboard; self.newKey = newKey
+        account = TokensAccountModel(api: api)
+        account.report = { [weak self] in self?.feedback = $0 }
     }
 
     var overview: V2ModelConfigOverview? { dashboard.modelConfig }
@@ -74,6 +78,7 @@ final class ModelConfigModel {
         await perform(.unlink) {
             let result = try await api.unlinkTokens(allowInterrupt: allowInterrupt)
             finished = true
+            account.reset()
             if result.unrestoredCount > 0 {
                 feedback = .warning(String(localized: "Unlinked. \(result.unrestoredCount) runtimes could not be restored; restore them later."))
             } else if result.revoked {
@@ -145,7 +150,7 @@ final class ModelConfigModel {
     var quickSelection: Set<String>?
     /// The browser authorization this page opened and is waiting for.
     var quickAuthorizing = false
-    /// Choosing newly found runtimes after a setup is done.
+    /// Choosing newly found runtimes on the account page's Devices tab.
     var quickChoosing = false
     private(set) var quickBusy = false
 
@@ -164,10 +169,18 @@ final class ModelConfigModel {
     }
 
     var quickPhase: QuickSetupPhase {
-        if quickChoosing { return .setup }
-        return QuickSetupPresentation.phase(link: tokens?.link, progress: tokens?.quickSetup,
+        QuickSetupPresentation.phase(link: tokens?.link, progress: tokens?.quickSetup,
             configured: !tokenAssignments.isEmpty, authorizing: quickAuthorizing)
     }
+
+    /// A setup or a model change is being written to runtimes; saving waits for it.
+    var quickRunning: Bool { QuickSetupPresentation.isRunning(tokens?.quickSetup) }
+
+    /// The account page's Devices tab offers the runtime choices instead of the result.
+    var showsQuickChoices: Bool { quickChoosing || tokenAssignments.isEmpty }
+
+    /// The tab the account page opens on: Devices until a runtime uses Tokens.
+    var initialAccountTab: TokensAccountTab { tokenAssignments.isEmpty ? .devices : .models }
 
     var quickSteps: QuickSetupSteps {
         QuickSetupPresentation.steps(link: tokens?.link, progress: tokens?.quickSetup, authorizing: quickAuthorizing)

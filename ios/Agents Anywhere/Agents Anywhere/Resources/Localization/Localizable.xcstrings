@@ -53,6 +53,24 @@
         }
       }
     },
+    "%@ context": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.context. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ context"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 上下文"
+          }
+        }
+      }
+    },
     "%@ is online. You can now choose which agents to configure and start on this device, or finish without adding any.": {
       "comment": "Shared with Web: dashboard.pairDevice.successDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -67,6 +85,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ 已上线。你可以选择要配置并启动的 Agent，也可以不添加直接完成。"
+          }
+        }
+      }
+    },
+    "%@ output": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.output. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ output"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 输出"
           }
         }
       }
@@ -286,6 +322,48 @@
           "stringUnit": {
             "state": "translated",
             "value": "%lld 个任务运行中"
+          }
+        }
+      }
+    },
+    "%lld unsaved changes": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.pending. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld unsaved change"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld unsaved changes"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "有 %lld 项改动未保存"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "有 %lld 项改动未保存"
+                }
+              }
+            }
           }
         }
       }
@@ -961,6 +1039,24 @@
         }
       }
     },
+    "All models": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.allModels. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All models"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全部模型"
+          }
+        }
+      }
+    },
     "All projects": {
       "comment": "Shared with Web: pages.settings.archivedAllProjects. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -1100,6 +1196,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "Anthropic Messages"
+          }
+        }
+      }
+    },
+    "Anywhere account": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.title. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anywhere account"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anywhere 账户"
           }
         }
       }
@@ -1355,6 +1469,24 @@
         }
       }
     },
+    "Applying changes to runtimes…": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.applying. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applying changes to runtimes…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在把改动应用到 Runtime…"
+          }
+        }
+      }
+    },
     "Applying restarts the runtime and interrupts %lld running tasks.": {
       "comment": "Shared with Web: pages.settings.modelConfigs.allowInterruptDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -1594,6 +1726,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "可用"
+          }
+        }
+      }
+    },
+    "Available %@ · Bonus %@": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.balanceDetail. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Available %1$@ · Bonus %2$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可用 %1$@ · 赠金 %2$@"
           }
         }
       }
@@ -2605,6 +2755,60 @@
         }
       }
     },
+    "Couldn't read the Tokens Anywhere account right now.": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.loadFailed. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't read the Tokens Anywhere account right now."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂时读不到 Tokens Anywhere 账户。"
+          }
+        }
+      }
+    },
+    "Couldn't read usage right now.": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.usageFailed. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't read usage right now."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂时读不到用量。"
+          }
+        }
+      }
+    },
+    "Covers the whole Tokens Anywhere account, other apps included; settled requests by Beijing date.": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.usageNote. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Covers the whole Tokens Anywhere account, other apps included; settled requests by Beijing date."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "统计整个 Tokens Anywhere 账户，包括其他应用；按北京时间、已结算的请求计算。"
+          }
+        }
+      }
+    },
     "Create": {
       "comment": "Shared with Web: common.create. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -2759,6 +2963,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "DSH 现可实时同步（Beta）Agents Anywhere。启用接管即可发送消息。"
+          }
+        }
+      }
+    },
+    "Daily cost": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.dailyCost. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daily cost"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每日花费"
           }
         }
       }
@@ -3778,6 +4000,24 @@
         }
       }
     },
+    "Keep at least one model.": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.needOneModel. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep at least one model."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "至少保留一个模型。"
+          }
+        }
+      }
+    },
     "Keep editing": {
       "extractionState": "manual",
       "localizations": {
@@ -3809,6 +4049,60 @@
           "stringUnit": {
             "state": "translated",
             "value": "语言"
+          }
+        }
+      }
+    },
+    "Last 30 days": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.days30. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last 30 days"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "近 30 天"
+          }
+        }
+      }
+    },
+    "Last 7 days": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.days7. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last 7 days"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "近 7 天"
+          }
+        }
+      }
+    },
+    "Leave empty for the original name": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.renamePlaceholder. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leave empty for the original name"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "留空使用原名"
           }
         }
       }
@@ -4377,6 +4671,24 @@
         }
       }
     },
+    "More account details": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.moreInfo. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "More account details"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更多账号信息"
+          }
+        }
+      }
+    },
     "More than %lld models": {
       "comment": "Shared with Web: pages.settings.modelConfigs.tooManyModels. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -4679,6 +4991,24 @@
         }
       }
     },
+    "No models synced yet. Click Refresh to read them.": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.noModels. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No models synced yet. Click Refresh to read them."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "还没有同步到模型，点「刷新」读取。"
+          }
+        }
+      }
+    },
     "No pinned sessions": {
       "extractionState": "manual",
       "localizations": {
@@ -4799,6 +5129,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "还没有会话"
+          }
+        }
+      }
+    },
+    "No usage in this period.": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.noUsage. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No usage in this period."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这段时间没有用量。"
           }
         }
       }
@@ -5136,6 +5484,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "OpenAI Responses"
+          }
+        }
+      }
+    },
+    "Originally %@": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.originalName. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Originally %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "原名 %@"
           }
         }
       }
@@ -5832,6 +6198,24 @@
         }
       }
     },
+    "Restore defaults": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.restoreDefaults. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore defaults"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复默认"
+          }
+        }
+      }
+    },
     "Restore these sessions?": {
       "comment": "Shared with Web: dashboard.device.unarchiveAllTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -6059,6 +6443,24 @@
         }
       }
     },
+    "Save and apply": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.saveApply. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save and apply"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存并应用"
+          }
+        }
+      }
+    },
     "Saved, not applied": {
       "comment": "Shared with Web: pages.settings.modelConfigs.connectionState.saved_pending. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -6073,6 +6475,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "已保存，待应用"
+          }
+        }
+      }
+    },
+    "Saved. Applying to the runtimes using Tokens Anywhere.": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.saved. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved. Applying to the runtimes using Tokens Anywhere."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已保存，正在应用到使用 Tokens Anywhere 的 Runtime。"
           }
         }
       }
@@ -6107,6 +6527,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "扫描 Web 控制台上的登录二维码。"
+          }
+        }
+      }
+    },
+    "See details in Tokens Anywhere": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.usageDetails. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "See details in Tokens Anywhere"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在 Tokens Anywhere 查看明细"
           }
         }
       }
@@ -6317,6 +6755,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "会话"
+          }
+        }
+      }
+    },
+    "Set up by Tokens Anywhere: %lld models, %lld turned on.": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.modelsSummary. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Set up by Tokens Anywhere: %1$lld models, %2$lld turned on."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "由 Tokens Anywhere 自动配置，共 %1$lld 个模型，已启用 %2$lld 个。"
           }
         }
       }
@@ -8276,6 +8732,78 @@
         }
       }
     },
+    "Top up": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.topUp. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Top up"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "充值"
+          }
+        }
+      }
+    },
+    "Turn on %@": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.toggleModel. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turn on %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "启用 %@"
+          }
+        }
+      }
+    },
+    "Turn on all %@ models": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.toggleGroup. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turn on all %@ models"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "启用全部 %@ 模型"
+          }
+        }
+      }
+    },
+    "Turning models off or renaming them only affects Agents Anywhere, and applies to every runtime using Tokens Anywhere.": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.modelsHint. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turning models off or renaming them only affects Agents Anywhere, and applies to every runtime using Tokens Anywhere."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭或改名只影响 Agents Anywhere，会应用到所有使用 Tokens Anywhere 的 Runtime。"
+          }
+        }
+      }
+    },
     "Unable to Load Files": {
       "comment": "Shared with Web: dashboard.workspacePicker.loadFailed. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -8324,6 +8852,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "未知"
+          }
+        }
+      }
+    },
+    "Unknown model": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.unknownModel. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unknown model"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未知模型"
           }
         }
       }
@@ -8468,24 +9014,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "有更新"
-          }
-        }
-      }
-    },
-    "Update models": {
-      "comment": "Shared with Web: pages.settings.modelConfigs.quick.updateModels. Sync with ios/scripts/web_copy.py.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Update models"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "更新模型"
           }
         }
       }
@@ -8698,6 +9226,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "版本"
+          }
+        }
+      }
+    },
+    "View usage": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.viewUsage. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "View usage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查询用量"
           }
         }
       }
@@ -10422,6 +10968,258 @@
         }
       }
     },
+    "pages.settings.modelConfigs.account.balance": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.balance. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Balance"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "账户余额"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.account.cost": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.cost. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cost"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "花费"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.account.discard": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.discard. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discard"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "放弃"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.account.image": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.image. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Images"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "支持图片"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.account.model": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.model. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.account.otherVendor": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.otherVendor. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Other"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "其他"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.account.refresh": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.refresh. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Refresh"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "刷新"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.account.rename": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.rename. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rename"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重命名"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.account.requests": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.requests. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Requests"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请求"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.account.savedNoRuntimes": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.savedNoRuntimes. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已保存。"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.account.tabDevices": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.tabDevices. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Devices"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.account.tabModels": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.tabModels. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Models"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.account.tabUsage": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.tabUsage. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用量"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.account.tokens": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.tokens. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tokens"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tokens"
+          }
+        }
+      }
+    },
     "pages.settings.modelConfigs.quick.configureNew": {
       "comment": "Shared with Web: pages.settings.modelConfigs.quick.configureNew. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -10436,24 +11234,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "配置"
-          }
-        }
-      }
-    },
-    "pages.settings.modelConfigs.quick.configured": {
-      "comment": "Shared with Web: pages.settings.modelConfigs.quick.configured. Sync with ios/scripts/web_copy.py.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Set up"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已配置"
           }
         }
       }
