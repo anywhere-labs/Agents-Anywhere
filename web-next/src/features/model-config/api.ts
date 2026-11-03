@@ -65,6 +65,14 @@ export type TokensUsageItem = {
 
 export type TokensUsage = { from: string; to: string; items: TokensUsageItem[] };
 
+/** Where this instance finds Tokens Anywhere; set by an administrator. */
+export type TokensAdminSettings = {
+  tokensUrl: string | null;
+  source: "setting" | "environment" | null;
+  linkedAccounts: number;
+  secretConfigured: boolean;
+};
+
 export type ManualProfileInput = { name: string; apiKey: string; offers: ModelOffer[] };
 
 /** Model profiles and the Tokens Anywhere link. Keys go in and never come back. */
@@ -165,6 +173,15 @@ export class ModelConfigApi {
   /** Turns models off and renames them; runtimes using Tokens get the change in the background. */
   saveTokensModels(token: string, preferences: ModelPreferences): Promise<{ applying: boolean }> {
     return this.client.put<{ applying: boolean }>("/integrations/tokens/models", preferences, { token });
+  }
+
+  adminTokensSettings(token: string): Promise<TokensAdminSettings> {
+    return this.client.get<TokensAdminSettings>("/admin/integrations/tokens", { token });
+  }
+
+  /** An empty address turns Tokens Anywhere off; refused while accounts are linked to the old one. */
+  saveAdminTokensSettings(token: string, tokensUrl: string): Promise<TokensAdminSettings> {
+    return this.client.put<TokensAdminSettings>("/admin/integrations/tokens", { tokensUrl: tokensUrl || null }, { token });
   }
 
   rotateTokensKey(token: string, profileId: string, allowInterrupt: boolean, idempotencyKey: string): Promise<ModelOperation> {

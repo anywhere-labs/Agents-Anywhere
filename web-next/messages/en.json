@@ -2183,7 +2183,27 @@
       "webCallbackHint": "Register this callback URL when creating the app at the upstream provider.",
       "mobileClient": "Mobile app",
       "desktopClient": "Desktop app",
-      "callbackUrl": "Callback URL"
+      "callbackUrl": "Callback URL",
+      "tokens": {
+        "description": "With an address set, users can link their Tokens Anywhere account in Model configuration and set up models in one click. Leave it empty to turn it off.",
+        "address": "Address",
+        "addressHint": "An HTTP(S) address without a path; it must equal TOKENS_PUBLIC_ORIGIN of Tokens Anywhere.",
+        "lockedByLinks": "{count, plural, one {# account is} other {# accounts are}} linked to this address. It can change once all of them unlink.",
+        "fromEnvironment": "Currently from the AGENT_SERVER_TOKENS_URL environment variable; once saved, this setting wins.",
+        "fromSetting": "Set here.",
+        "off": "Turned off.",
+        "secretMissing": "The server has no AGENT_SERVER_SECRET (at least 32 characters) yet, so users can't link accounts.",
+        "save": "Save",
+        "saved": "Tokens Anywhere address saved.",
+        "turnedOff": "Tokens Anywhere turned off.",
+        "retry": "Retry",
+        "loadFailed": "Couldn't read the Tokens Anywhere settings.",
+        "saveFailed": "Couldn't save. Try again later.",
+        "errors": {
+          "invalid_tokens_url": "The address must be an HTTP or HTTPS address without a path.",
+          "tokens_links_exist": "Accounts are still linked to the current address. It can change once all of them unlink."
+        }
+      }
     }
   },
   "preview": {

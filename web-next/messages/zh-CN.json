@@ -2183,7 +2183,27 @@
       "webCallbackHint": "在上游提供方注册应用时填写这个回调地址。",
       "mobileClient": "手机客户端",
       "desktopClient": "桌面客户端",
-      "callbackUrl": "回调地址"
+      "callbackUrl": "回调地址",
+      "tokens": {
+        "description": "填写地址后，用户可以在「配置管理」里链接 Tokens Anywhere 账户，一键配置模型。留空则关闭。",
+        "address": "地址",
+        "addressHint": "不带路径的 HTTP(S) 地址，必须和 Tokens Anywhere 的 TOKENS_PUBLIC_ORIGIN 一致。",
+        "lockedByLinks": "有 {count} 个账户链接着这个地址，全部断开后才能修改。",
+        "fromEnvironment": "当前来自环境变量 AGENT_SERVER_TOKENS_URL，保存后以这里为准。",
+        "fromSetting": "已在这里设置。",
+        "off": "未开启。",
+        "secretMissing": "服务器还没有配置 AGENT_SERVER_SECRET（至少 32 个字符），用户暂时不能链接账户。",
+        "save": "保存",
+        "saved": "已保存 Tokens Anywhere 地址。",
+        "turnedOff": "已关闭 Tokens Anywhere。",
+        "retry": "重试",
+        "loadFailed": "读取 Tokens Anywhere 设置失败。",
+        "saveFailed": "保存失败，请稍后再试。",
+        "errors": {
+          "invalid_tokens_url": "地址必须是不带路径的 HTTP 或 HTTPS 地址。",
+          "tokens_links_exist": "还有账户链接着当前地址，全部断开后才能修改。"
+        }
+      }
     }
   },
   "preview": {
