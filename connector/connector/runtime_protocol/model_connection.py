@@ -58,6 +58,8 @@ class ModelConnectionCapability:
     models_field: str | None = "customModels"
     catalog_auto: bool = False
     catalog_manual: bool = True
+    # The connection is only used with the models listed in ``models_field``.
+    catalog_required: bool = False
     modes: tuple[ModelConnectionMode, ...] = field(default_factory=tuple)
     # Config field that selects one of ``modes``.
     mode_field: str | None = None
@@ -83,7 +85,11 @@ class ModelConnectionCapability:
             "modes": [mode.payload() for mode in self.modes],
             "modeField": self.mode_field,
             "scope": self.scope,
-            "catalog": {"auto": self.catalog_auto, "manual": self.catalog_manual},
+            "catalog": {
+                "auto": self.catalog_auto,
+                "manual": self.catalog_manual,
+                **({"required": True} if self.catalog_required else {}),
+            },
             "apply": self.apply,
         }
 

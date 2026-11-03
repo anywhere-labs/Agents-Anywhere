@@ -129,9 +129,13 @@ class DshRuntime(AgentRuntime):
         return self.config
 
     def model_connection_status(self) -> ModelConnectionStatus | None:
-        # None until the plugin answered; the Server then shows the saved
-        # connection as not applied yet.
-        return self._model_connection
+        if self._model_connection is not None:
+            return self._model_connection
+        # Until the plugin answers, a saved connection is not applied yet; the
+        # outcome follows in a later status change.
+        if isinstance(self.config.values.get("modelGateway"), Mapping):
+            return ModelConnectionStatus("not_configured")
+        return None
 
     async def _apply_model_connection(self, client: BridgeClient, values: Mapping[str, Any]) -> None:
         """Hand the saved connection to the plugin, which owns DSH's settings."""

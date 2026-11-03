@@ -91,7 +91,7 @@ async def _dashboard_snapshot(
         },
         # Profiles and per-runtime assignments for the model configuration page.
         **(
-            {"modelConfig": await model_config.overview(user_id=user_id)}
+            {"modelConfig": await model_config.overview(user_id=user_id, runtime_rows=runtimes)}
             if model_config is not None
             else {}
         ),

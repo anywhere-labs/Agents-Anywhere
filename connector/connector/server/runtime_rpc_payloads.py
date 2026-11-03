@@ -354,3 +354,22 @@ def agent_inventory_payload(item: RuntimeInventoryItem) -> dict[str, Any]:
         "capabilities": dict(item.capabilities),
         "metadata": dict(item.metadata),
     }
+
+
+def model_connection_result(entry: Any) -> dict[str, Any]:
+    """Report what the adapter did with the model connection, never the key."""
+    if entry.config is None:
+        return {}
+    status = entry.runtime.model_connection_status() if entry.runtime is not None else None
+    if status is None:
+        status = entry.provider.model_connection_status(entry.config)
+    if status is None:
+        return {}
+    payload = status.payload()
+    if entry.status == "error" and payload["state"] == "applied":
+        error = entry.error or {}
+        payload.update(
+            state="failed",
+            reason=str(error.get("message") or "the runtime did not start"),
+        )
+    return {"modelConnection": payload}

@@ -496,6 +496,7 @@ class ConnectorIngestService:
             raise ValueError("runtime.statusChanged requires status")
         error = params.get("error") if isinstance(params.get("error"), dict) else None
         phase = params.get("phase") if isinstance(params.get("phase"), dict) else None
+        model_connection = params.get("modelConnection")
         try:
             await self._device_runtimes.apply_status(
                 connector_id,
@@ -504,6 +505,7 @@ class ConnectorIngestService:
                 error=error,
                 phase=phase,
                 expected_connection_id=connection_id,
+                model_connection=model_connection if isinstance(model_connection, dict) else None,
             )
         except DeviceRuntimeNotFoundError:
             # Runtime lifecycle notifications may arrive while the connector is

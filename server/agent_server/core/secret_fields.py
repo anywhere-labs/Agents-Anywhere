@@ -175,11 +175,19 @@ def _same_origin(left: Any, right: Any) -> bool:
         a, b = urlsplit(left.strip()), urlsplit(right.strip())
     except ValueError:
         return False
-    return (
-        a.scheme.lower() == b.scheme.lower()
-        and a.netloc.lower() == b.netloc.lower()
-        and bool(a.netloc)
-    )
+    return bool(a.hostname) and _origin(a) == _origin(b)
+
+
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _origin(parts: Any) -> tuple[str, str, int | None] | None:
+    """Scheme, host and port, with a default port written out or not alike."""
+    try:
+        scheme = parts.scheme.lower()
+        return scheme, (parts.hostname or "").lower(), parts.port or _DEFAULT_PORTS.get(scheme)
+    except ValueError:
+        return None
 
 
 def secret_values(config: dict[str, Any] | None, paths: list[SecretPath]) -> list[str]:

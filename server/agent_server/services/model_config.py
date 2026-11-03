@@ -7,6 +7,7 @@ branches on a runtime's name.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import secrets
@@ -38,6 +39,7 @@ from agent_server.core.model_config import (
 )
 from agent_server.core.secret_fields import secret_hint
 from agent_server.core.utc import utc_now
+from agent_server.infra.repositories.model_config import ModelProfileInUseError
 from agent_server.infra.secret_box import SecretBox, SecretBoxUnavailableError
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.device_runtimes import (
@@ -47,6 +49,8 @@ from agent_server.services.device_runtimes import (
 )
 
 OPERATION_LEASE = timedelta(minutes=5)
+# Finished operations are kept this long for idempotent replays.
+OPERATION_RETENTION = timedelta(hours=24)
 RESTARTING_STATUSES = {"starting", "running"}
 
 
@@ -99,6 +103,7 @@ class ModelConfigRepository(Protocol):
         finished: bool = False,
     ) -> None: ...
     async def list_running_model_config_operations(self, *, user_id: str, now: str) -> list[dict[str, Any]]: ...
+    async def prune_model_config_operations(self, *, before: str) -> None: ...
     async def list_user_device_runtimes(self, *, user_id: str) -> list[dict[str, Any]]: ...
 
 
@@ -140,17 +145,30 @@ class ModelConfigService:
 
     # Reading.
 
-    async def overview(self, *, user_id: str) -> dict[str, Any]:
-        """Profiles and assignments as every client renders them; no secrets."""
-        profiles = await self._store.list_model_profiles(user_id=user_id)
+    async def overview(
+        self,
+        *,
+        user_id: str,
+        runtime_rows: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Profiles and assignments as every client renders them; no secrets.
+
+        ``runtime_rows`` saves a query when the caller already listed them.
+        """
+        profiles, stored_assignments = await asyncio.gather(
+            self._store.list_model_profiles(user_id=user_id),
+            self._store.list_runtime_assignments(user_id=user_id),
+        )
         by_id = {profile["id"]: profile for profile in profiles}
+        if stored_assignments and runtime_rows is None:
+            runtime_rows = await self._store.list_user_device_runtimes(user_id=user_id)
         runtimes = {
             (row["connectorId"], row["runtimeId"]): DeviceRuntimeView.model_validate(row)
-            for row in await self._store.list_user_device_runtimes(user_id=user_id)
+            for row in runtime_rows or []
         }
-        running = await self._running_targets(user_id)
+        running = await self._running_targets(user_id) if stored_assignments else set()
         assignments = []
-        for assignment in await self._store.list_runtime_assignments(user_id=user_id):
+        for assignment in stored_assignments:
             key = (assignment["connectorId"], assignment["runtimeId"])
             runtime = runtimes.get(key)
             profile = by_id.get(assignment["profileId"])
@@ -243,7 +261,8 @@ class ModelConfigService:
             return
         try:
             await self._store.delete_model_profile(existing["id"], user_id=user_id)
-        except Exception:  # noqa: BLE001 - still in use: keep it as detached
+        except ModelProfileInUseError:
+            # Still in use: keep it as detached until the last runtime is restored.
             await self._store.update_model_profile(existing["id"], user_id=user_id, values={"state": "detached"})
         await self._publish(user_id)
 
@@ -295,7 +314,7 @@ class ModelConfigService:
             await self._store.delete_model_profile(profile_id, user_id=user_id)
         except KeyError as exc:
             raise ModelConfigNotFoundError("profile_not_found", "profile not found") from exc
-        except Exception as exc:
+        except ModelProfileInUseError as exc:
             raise ModelConfigConflictError(
                 "profile_in_use", "restore the runtimes that use this profile first"
             ) from exc
@@ -398,6 +417,19 @@ class ModelConfigService:
         await self._publish(user_id)
         return {"connectorId": connector_id, "runtimeId": runtime_id, "result": "restored"}
 
+    async def interrupting(self, targets: list[AssignmentTarget], *, user_id: str) -> bool:
+        """Whether applying to these runtimes would interrupt running tasks."""
+        for target in targets:
+            runtime = await self._owned_runtime(target, user_id=user_id)
+            capability = runtime.modelConnection or {}
+            if capability.get("apply") != "restart" or not runtime.active:
+                continue
+            if runtime.status in RESTARTING_STATUSES and await self._runtimes.running_session_count(
+                runtime.connectorId, runtime.runtimeId
+            ):
+                return True
+        return False
+
     # Internals.
 
     def _box_available(self) -> bool:
@@ -481,6 +513,8 @@ class ModelConfigService:
             if isinstance(entry, dict) and entry.get("modelId") not in previous_imported
         ]
         importing = [spec for spec in match.offer.models if spec.id not in {e.get("modelId") for e in own}]
+        if _requires_models(capability) and not own and not importing:
+            return {**base, "decision": "skip", "reason": "models_required"}
         gateway = config.get(capability["configField"])
         replaces = None
         if isinstance(gateway, dict) and gateway.get("baseUrl"):
@@ -541,6 +575,7 @@ class ModelConfigService:
         if mode.field and mode.target is None:
             raise ModelConfigConflictError("mode_unsupported", "no mode of this runtime takes a connection")
         catalog = profile["catalogDigest"]
+        managed = False
         if mode.needs_new_instance:
             managed_id = await self._store.find_managed_runtime_id(
                 runtime.connectorId, runtime.runtimeType, MANAGED_BY
@@ -550,12 +585,17 @@ class ModelConfigService:
                     runtime, capability, profile, match.offer, api_key, request, mode, user_id=user_id
                 )
             target = AssignmentTarget(connectorId=runtime.connectorId, runtimeId=managed_id)
+            managed = True
         async with self._runtimes.locked_runtime(target.connectorId, target.runtimeId, user_id=user_id) as handle:
             await self._check_interruption(handle, capability, request.allowInterrupt)
             current = handle.runtime
             assignment = await self._store.get_runtime_assignment(target.connectorId, target.runtimeId)
             previous_imported = assignment["importedModelIds"] if assignment else []
-            if assignment is not None:
+            # The managed instance is this module's own: it has no connection to give back.
+            created_runtime = managed or bool(assignment and assignment["createdRuntime"])
+            if created_runtime:
+                previous_ciphertext = None
+            elif assignment is not None:
                 previous_ciphertext = assignment["previousGatewayCiphertext"]
             else:
                 gateway = (current.config or {}).get(capability["configField"])
@@ -584,10 +624,13 @@ class ModelConfigService:
                     existing=exc.existing,
                     limit=MAX_RUNTIME_MODELS,
                 ) from exc
-            first_configuration = not current.configured
+            _check_models(capability, patched)
+            # A first configuration starts the runtime, and so does applying to
+            # the managed instance a restore stopped.
+            start = not current.configured or created_runtime
             try:
                 updated = await handle.put_config(patched)
-                if first_configuration and not updated.active:
+                if start and not updated.active:
                     updated = await handle.set_active(True)
             except DeviceRuntimeError as exc:
                 if assignment is not None:
@@ -601,7 +644,7 @@ class ModelConfigService:
                     "runtime_id": target.runtimeId,
                     "profile_id": profile["id"],
                     "offer_format": match.offer.format,
-                    "created_runtime": int(bool(assignment and assignment["createdRuntime"])),
+                    "created_runtime": int(created_runtime),
                     "applied_digest": written_digest(handle.runtime.config, capability, imported),
                     "applied_catalog_digest": catalog,
                     "imported_model_ids": imported,
@@ -639,6 +682,7 @@ class ModelConfigService:
             model_ids=request.modelIds,
             mode=mode,
         )
+        _check_models(capability, config)
         created = await self._runtimes.create_runtime(
             runtime.connectorId,
             runtime_type=runtime.runtimeType,
@@ -683,6 +727,7 @@ class ModelConfigService:
         targets: list[dict[str, Any]],
     ) -> dict[str, Any]:
         now = _now()
+        await self._store.prune_model_config_operations(before=_iso(now - OPERATION_RETENTION))
         request_digest = _digest({"kind": kind, "request": request})
         operation, created = await self._store.start_model_config_operation(
             {
@@ -776,6 +821,16 @@ class ModelConfigService:
             )
         except Exception:  # noqa: BLE001 - a missed push is recovered by the next one
             logger.exception("model config dashboard publish failed user_id={}", user_id)
+
+
+def _requires_models(capability: dict[str, Any]) -> bool:
+    catalog = capability.get("catalog")
+    return isinstance(catalog, dict) and bool(catalog.get("required")) and isinstance(capability.get("modelsField"), str)
+
+
+def _check_models(capability: dict[str, Any], config: dict[str, Any]) -> None:
+    if _requires_models(capability) and not config.get(capability["modelsField"]):
+        raise ModelConfigConflictError("models_required", "this runtime needs at least one model")
 
 
 def _host(url: str) -> str:

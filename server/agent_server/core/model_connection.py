@@ -36,6 +36,8 @@ class ModelConnectionCatalog(BaseModel):
 
     auto: bool
     manual: bool
+    # The connection is only used with the models listed in ``modelsField``.
+    required: bool = False
 
 
 class ModelConnectionCapability(BaseModel):

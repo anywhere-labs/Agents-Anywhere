@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -45,6 +46,7 @@ def test_dsh_declares_an_experimental_native_global_connection() -> None:
     assert capability["scope"] == "native_global"
     assert capability["apply"] == "immediate"
     assert capability["protocols"] == ["openai_chat", "anthropic", "openai_responses"]
+    assert capability["catalog"] == {"auto": False, "manual": True, "required": True}
     properties = descriptor.config_schema.schema["properties"]
     assert properties["modelGateway"]["properties"]["protocol"]["enum"] == capability["protocols"]
 
@@ -64,6 +66,24 @@ def test_dsh_gateway_needs_a_protocol_and_models() -> None:
         assert "sk-dsh-secret" not in str(caught.value)
 
     asyncio.run(run())
+
+
+def test_a_saved_connection_reads_as_pending_until_the_plugin_answers() -> None:
+    assert _runtime({"modelGateway": GATEWAY}).model_connection_status().payload()["state"] == "not_configured"
+    assert _runtime({}).model_connection_status() is None
+
+
+def test_status_changes_carry_what_the_wrapped_runtime_reports() -> None:
+    from connector.runtime_protocol.instance_binding import RuntimeInstance
+    from connector.runtime_protocol.instance_models import RuntimeInstanceSpec
+    from connector.server.runtime_rpc_payloads import model_connection_result
+
+    native = _runtime({"modelGateway": GATEWAY, "customModels": MODELS})
+    asyncio.run(native._apply_model_connection(_Client(), native.config.values))
+    bound = RuntimeInstance(instance=RuntimeInstanceSpec("dsh", "dsh", "DSH"), native_runtime=native)
+    entry = SimpleNamespace(config=native.config, runtime=bound, provider=None, status="running", error=None)
+
+    assert model_connection_result(entry)["modelConnection"]["state"] == "applied"
 
 
 def _runtime(values: dict[str, Any]) -> DshRuntime:

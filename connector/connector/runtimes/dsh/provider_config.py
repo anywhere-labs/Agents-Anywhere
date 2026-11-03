@@ -29,6 +29,7 @@ MODEL_CONNECTION = ModelConnectionCapability(
     apply="immediate",
     catalog_auto=False,
     catalog_manual=True,
+    catalog_required=True,
 )
 
 

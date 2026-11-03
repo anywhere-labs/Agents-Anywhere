@@ -411,6 +411,22 @@ def test_unsupported_mode_gets_a_managed_instance(tmp_path, server_secret):
     assert managed_id in runtimes
     assert runtimes[managed_id]["active"] is False
 
+    # Applying again starts the same managed instance and keeps it this module's own.
+    again = _applied(client, headers, profile["id"], [_target(connector_id)], key="op-3")
+    assert again["results"][0]["runtimeId"] == managed_id
+    assert _runtimes(client, connector_id, headers)[managed_id]["active"] is True
+    [assignment] = _overview(client, headers)["assignments"]
+    assert assignment["createdRuntime"] is True
+    restored = client.delete(
+        f"/model-config/assignments/{connector_id}/{managed_id}",
+        headers=headers,
+        params={"allow_interrupt": "true"},
+    )
+    assert restored.status_code == 200, restored.text
+    runtime = _runtimes(client, connector_id, headers)[managed_id]
+    assert runtime["active"] is False
+    assert runtime["config"]["modelGateway"] == {"baseUrl": RELAY}
+
 
 def test_dashboard_snapshot_carries_model_config(tmp_path, server_secret):
     client, _rpc, _connector_id, headers = _client(tmp_path, CODEX_LIKE)
@@ -450,3 +466,22 @@ def test_a_runtime_with_several_protocols_is_told_which_one(tmp_path, server_sec
     config = _runtimes(client, connector_id, headers)["codex"]["config"]
     assert config["modelGateway"] == {"baseUrl": RELAY, "protocol": "anthropic"}
     assert [model["modelId"] for model in config["customModels"]] == ["m0", "m1"]
+
+
+def test_a_runtime_that_needs_models_is_skipped_without_them(tmp_path, server_secret):
+    capability = {
+        **CODEX_LIKE,
+        "modelsField": "customModels",
+        "catalog": {"auto": False, "manual": True, "required": True},
+    }
+    client, _rpc, connector_id, headers = _client(tmp_path, capability)
+    profile = _profile(client, headers, models=0)
+
+    preview = client.post(
+        "/model-config/assignments/preview", headers=headers, json={"profileId": profile["id"]}
+    ).json()
+    applied = _applied(client, headers, profile["id"], [_target(connector_id)])
+
+    assert preview["targets"][0]["reason"] == "models_required"
+    assert applied["results"][0]["reason"] == "models_required"
+    assert _runtimes(client, connector_id, headers)["codex"]["configured"] is False

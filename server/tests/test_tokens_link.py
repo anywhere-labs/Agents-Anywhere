@@ -289,3 +289,45 @@ def test_snapshot_carries_the_link(tokens):
     assert snapshot["modelConfig"]["tokens"]["link"]["status"] == "linked"
     assert fake.secret not in json.dumps(snapshot)
     assert fake.refresh not in json.dumps(snapshot)
+
+
+def test_rotation_with_running_tasks_needs_permission_first(tokens):
+    client, fake, connector_id, headers = tokens
+    _link(client, headers, fake)
+    profile = _tokens_profile(client, headers)
+    _applied(client, headers, profile["id"], [_target(connector_id)])
+
+    async def one_running_session(**_kwargs):
+        return [{"id": "ses_running"}]
+
+    client.app.state.store.list_running_sessions_for_connector_agent = one_running_session
+    refused = client.post(
+        f"/model-profiles/{profile['id']}/rotate-key",
+        headers={**headers, "Idempotency-Key": "rotate-busy"},
+        json={"allowInterrupt": False},
+    )
+
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["detail"]["code"] == "busy"
+    # Nothing was rotated, so the runtime's key still works.
+    assert fake.secret == "sk-aa-secret-0001"
+
+
+def test_runtimes_left_on_the_old_key_are_marked_failed(tokens):
+    client, fake, connector_id, headers = tokens
+    _link(client, headers, fake)
+    profile = _tokens_profile(client, headers)
+    _applied(client, headers, profile["id"], [_target(connector_id)])
+    client.app.state.rpc.online = False
+
+    rotated = client.post(
+        f"/model-profiles/{profile['id']}/rotate-key",
+        headers={**headers, "Idempotency-Key": "rotate-offline"},
+        json={"allowInterrupt": True},
+    )
+
+    assert rotated.status_code == 200, rotated.text
+    assert rotated.json()["results"][0]["result"] != "applied"
+    [assignment] = _overview(client, headers)["assignments"]
+    assert assignment["status"] == "failed"
+    assert assignment["error"]["code"] == "key_rotated"

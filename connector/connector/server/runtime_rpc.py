@@ -22,6 +22,7 @@ from connector.server.runtime_rpc_params import (
 from connector.server.runtime_rpc_payloads import (
     capability_set_payload,
     model_catalog_payload,
+    model_connection_result,
     permission_catalog_payload,
     runtime_config_payload,
     runtime_config_schema_payload,
@@ -188,7 +189,7 @@ class RuntimeRpcHandler:
                     "status": entry.status,
                     **({"error": dict(entry.error)} if entry.error is not None else {}),
                     **({"phase": dict(entry.phase)} if entry.phase is not None else {}),
-                    **_model_connection_result(entry),
+                    **model_connection_result(entry),
                 },
             )
         if method == "runtime.stop":
@@ -393,22 +394,3 @@ class RuntimeRpcHandler:
             "runtime": scope.runtime_type,
             "runtimeId": scope.runtime_id,
         }
-
-
-def _model_connection_result(entry: Any) -> dict[str, Any]:
-    """Report what the adapter did with the model connection, never the key."""
-    if entry.config is None:
-        return {}
-    status = entry.runtime.model_connection_status() if entry.runtime is not None else None
-    if status is None:
-        status = entry.provider.model_connection_status(entry.config)
-    if status is None:
-        return {}
-    payload = status.payload()
-    if entry.status == "error" and payload["state"] == "applied":
-        error = entry.error or {}
-        payload.update(
-            state="failed",
-            reason=str(error.get("message") or "the runtime did not start"),
-        )
-    return {"modelConnection": payload}

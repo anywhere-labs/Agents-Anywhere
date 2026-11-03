@@ -705,6 +705,7 @@ class DeviceRuntimeService:
         error: dict[str, Any] | None = None,
         phase: dict[str, Any] | None = None,
         expected_connection_id: str | None = None,
+        model_connection: dict[str, Any] | None = None,
     ) -> DeviceRuntimeView | None:
         if status not in {
             "stopped",
@@ -738,6 +739,7 @@ class DeviceRuntimeService:
                     "unavailable",
                 }:
                     return current
+                await self._store_later_report(current, model_connection)
                 runtime = DeviceRuntimeView.model_validate(
                     await self._store.set_device_runtime_status(
                         connector_id,
@@ -751,6 +753,28 @@ class DeviceRuntimeService:
                 raise DeviceRuntimeNotFoundError("runtime not found") from exc
         await self._publish(connector_id, "runtime.status")
         return runtime
+
+    async def _store_later_report(
+        self, runtime: DeviceRuntimeView, reply: dict[str, Any] | None
+    ) -> None:
+        """Keep a report an adapter sent after starting, such as DSH once its
+        Bridge connected.
+
+        Only while the stored report belongs to the saved connection: that
+        means the running instance was started with it, so a report from an
+        instance still running an older connection cannot pass as applied.
+        """
+        if reply is None:
+            return
+        digest = connection_digest(runtime.config, runtime.modelConnection)
+        stored = runtime.modelConnectionReport
+        if digest is None or not isinstance(stored, dict) or stored.get("digest") != digest:
+            return
+        report = stored_report(reply, digest=digest)
+        if report is not None and report != stored:
+            await self._store.set_device_runtime_model_connection(
+                runtime.connectorId, runtime.runtimeId, report
+            )
 
     async def reconcile_active(
         self,

@@ -30,6 +30,10 @@
             },
             "manual": {
               "type": "boolean"
+            },
+            "required": {
+              "description": "The connection is only used with models listed in `modelsField`; absent means false.",
+              "type": "boolean"
             }
           },
           "required": [

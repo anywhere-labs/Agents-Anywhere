@@ -20,7 +20,7 @@ CAPABILITY = {
     "modes": [],
     "modeField": None,
     "scope": "instance",
-    "catalog": {"auto": False, "manual": True},
+    "catalog": {"auto": False, "manual": True, "required": False},
     "apply": "restart",
 }
 GATEWAY = {"baseUrl": "https://gateway.example/v1", "apiKey": GATEWAY_KEY}
@@ -175,3 +175,39 @@ def test_runtime_without_a_capability_has_no_status(tmp_path):
     assert runtime["maturity"] is None
     assert runtime["modelConnection"] is None
     assert runtime["modelConnectionStatus"] is None
+
+
+def _status_change(client, connector_id, report):
+    asyncio.run(
+        client.app.state.device_runtime_service.apply_status(
+            connector_id, "codex", "running", model_connection=report
+        )
+    )
+
+
+def test_a_later_report_from_the_started_connection_is_kept(tmp_path):
+    client, rpc, connector_id, headers = _client_with_capability(tmp_path)
+    url = f"{_runtime_url(connector_id)}/config"
+    assert client.put(url, headers=headers, json={"config": {"modelGateway": GATEWAY}}).status_code == 200
+    # Like DSH waiting for its Bridge: started, connection not applied yet.
+    rpc.responses["runtime.start"] = {
+        "runtimeId": "codex",
+        "status": "starting",
+        "modelConnection": {"state": "not_configured"},
+    }
+    assert _activate(client, connector_id, headers)["modelConnectionStatus"]["state"] == "saved_pending"
+
+    _status_change(client, connector_id, APPLIED)
+
+    assert _runtime(client, connector_id, headers)["modelConnectionStatus"]["state"] == "applied"
+
+
+def test_a_report_from_an_instance_started_before_a_change_is_ignored(tmp_path):
+    client, _rpc, connector_id, headers = _client_with_capability(tmp_path)
+    url = f"{_runtime_url(connector_id)}/config"
+    # Saved but never started with this connection: no report carries its digest.
+    assert client.put(url, headers=headers, json={"config": {"modelGateway": GATEWAY}}).status_code == 200
+
+    _status_change(client, connector_id, APPLIED)
+
+    assert _runtime(client, connector_id, headers)["modelConnectionStatus"]["state"] == "saved_pending"

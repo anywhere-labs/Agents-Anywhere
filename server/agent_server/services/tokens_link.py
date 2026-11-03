@@ -189,12 +189,18 @@ class TokensLinkService:
             "link": public_link,
         }
 
-    async def overview(self, *, user_id: str) -> dict[str, Any]:
+    async def overview(
+        self,
+        *,
+        user_id: str,
+        runtime_rows: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """The snapshot's ``modelConfig``: profiles, assignments and the link."""
-        return {
-            **await self.model_config.overview(user_id=user_id),
-            "tokens": await self.status(user_id=user_id),
-        }
+        overview, tokens = await asyncio.gather(
+            self.model_config.overview(user_id=user_id, runtime_rows=runtime_rows),
+            self.status(user_id=user_id),
+        )
+        return {**overview, "tokens": tokens}
 
     # Linking.
 
@@ -431,6 +437,10 @@ class TokensLinkService:
             for item in await self._store.list_runtime_assignments(user_id=user_id)
             if item["profileId"] == profile_id
         ]
+        # The old key stops working at once, so refuse before rotating rather
+        # than leave runtimes with running tasks on a dead key.
+        if not allow_interrupt and await self.model_config.interrupting(targets, user_id=user_id):
+            raise TokensLinkError("busy", "tasks are running; allow interrupting them to rotate the key")
         try:
             await self._call(user_id, lambda client, token: client.rotate_key(token, key_id))
         except TokensError as exc:
@@ -438,11 +448,20 @@ class TokensLinkService:
         await self.sync(user_id=user_id)
         if not targets:
             return {"operationId": None, "kind": "apply", "finished": True, "results": []}
-        return await self.model_config.apply(
+        operation = await self.model_config.apply(
             ApplyRequest(profileId=profile_id, targets=targets, allowInterrupt=allow_interrupt),
             user_id=user_id,
             idempotency_key=idempotency_key,
         )
+        for result in operation["results"]:
+            if result.get("result") != "applied":
+                # Offline or refused: the runtime still holds the revoked key.
+                await self._store.set_runtime_assignment_failed(
+                    result["connectorId"],
+                    result["runtimeId"],
+                    {"code": "key_rotated", "message": "the key was rotated; apply this profile again"},
+                )
+        return operation
 
     # Unlinking.
 

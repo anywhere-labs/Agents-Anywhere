@@ -41,6 +41,7 @@ from connector.server.rpc import ConnectorRpcChannel, ConnectorWebSocketFrameToo
 from connector.server.runtime_host import ConnectorRuntimeHost
 from connector.server.runtime_rpc_payloads import (
     DeferredServerPayload,
+    model_connection_result,
     server_payload_without_turn_data,
 )
 from connector.server.runtime_sync import RuntimeSyncRunner
@@ -416,6 +417,7 @@ class BackendRpcClient:
         status: str,
         error: Mapping[str, Any] | None,
         phase: Mapping[str, Any] | None = None,
+        model_connection: Mapping[str, Any] | None = None,
     ) -> None:
         payload: dict[str, Any] = {
             "runtime": runtime_type,
@@ -426,6 +428,9 @@ class BackendRpcClient:
             payload["error"] = error
         if phase is not None:
             payload["phase"] = phase
+        if model_connection is not None:
+            # Adapters that apply the connection after start (DSH) report it here.
+            payload["modelConnection"] = model_connection
         await self.send_notification("runtime.statusChanged", payload)
 
     async def _publish_agent_runtime_status(
@@ -437,7 +442,12 @@ class BackendRpcClient:
     ) -> None:
         entry = self.agent_runtime_supervisor.entry(runtime_id)
         await self._publish_runtime_status(
-            entry.runtime_type, runtime_id, status, error, phase
+            entry.runtime_type,
+            runtime_id,
+            status,
+            error,
+            phase,
+            model_connection_result(entry).get("modelConnection"),
         )
 
     async def ingest_snapshot(self, *args, **kwargs) -> None:
