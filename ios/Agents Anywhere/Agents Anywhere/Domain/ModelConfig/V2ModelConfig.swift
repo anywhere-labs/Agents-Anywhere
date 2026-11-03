@@ -244,8 +244,10 @@ nonisolated struct V2TokensLinkStatus: Decodable, Hashable {
     let tokensUrl: String?
     let secretConfigured: Bool
     let link: V2TokensLink?
+    /// The last one-click setup: what was ticked and how far it got.
+    let quickSetup: V2QuickSetupProgress?
 
-    private enum CodingKeys: String, CodingKey { case available, tokensUrl, secretConfigured, link }
+    private enum CodingKeys: String, CodingKey { case available, tokensUrl, secretConfigured, link, quickSetup }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -253,6 +255,101 @@ nonisolated struct V2TokensLinkStatus: Decodable, Hashable {
         tokensUrl = try? container.decodeIfPresent(String.self, forKey: .tokensUrl)
         secretConfigured = (try? container.decodeIfPresent(Bool.self, forKey: .secretConfigured)) ?? false
         link = try? container.decodeIfPresent(V2TokensLink.self, forKey: .link)
+        quickSetup = try? container.decodeIfPresent(V2QuickSetupProgress.self, forKey: .quickSetup)
+    }
+}
+
+/// The runtimes a one-click setup was asked to configure.
+nonisolated struct V2QuickSetupRequest: Codable, Hashable {
+    let targets: [V2ModelTarget]
+    let confirmNativeGlobal: Bool
+
+    private enum CodingKeys: String, CodingKey { case targets, confirmNativeGlobal }
+
+    init(targets: [V2ModelTarget], confirmNativeGlobal: Bool) {
+        self.targets = targets; self.confirmNativeGlobal = confirmNativeGlobal
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        targets = (try? container.decodeIfPresent(V2LossyArray<V2ModelTarget>.self, forKey: .targets))?.values ?? []
+        confirmNativeGlobal = (try? container.decodeIfPresent(Bool.self, forKey: .confirmNativeGlobal)) ?? false
+    }
+}
+
+nonisolated struct V2QuickSetupResult: Decodable, Hashable, Identifiable {
+    let connectorId: V2ConnectorID
+    let runtimeId: V2RuntimeID
+    /// applied, deferred, skipped or failed.
+    let result: String
+    let reason: String?
+    let modelsTrimmed: Int?
+    let servesRuntimeId: String?
+
+    private enum CodingKeys: String, CodingKey { case connectorId, runtimeId, result, reason, modelsTrimmed, servesRuntimeId }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        connectorId = try container.decode(String.self, forKey: .connectorId)
+        runtimeId = try container.decode(String.self, forKey: .runtimeId)
+        result = (try? container.decodeIfPresent(String.self, forKey: .result)) ?? "failed"
+        reason = try? container.decodeIfPresent(String.self, forKey: .reason)
+        modelsTrimmed = try? container.decodeIfPresent(Int.self, forKey: .modelsTrimmed)
+        servesRuntimeId = try? container.decodeIfPresent(String.self, forKey: .servesRuntimeId)
+    }
+
+    var id: String { target.key }
+    var target: V2ModelTarget { .init(connectorId: connectorId, runtimeId: runtimeId) }
+    var isProblem: Bool { result == "skipped" || result == "failed" }
+}
+
+/// Progress of a one-click setup, pushed with every snapshot.
+nonisolated struct V2QuickSetupProgress: Decodable, Hashable {
+    /// syncing, applying, done or failed.
+    let state: String
+    let request: V2QuickSetupRequest
+    let startedAt: String?
+    /// "sync" or "apply": where a failed setup stopped.
+    let step: String?
+    let code: String?
+    let results: [V2QuickSetupResult]
+
+    private enum CodingKeys: String, CodingKey { case state, request, startedAt, step, code, results }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        state = try container.decode(String.self, forKey: .state)
+        request = (try? container.decodeIfPresent(V2QuickSetupRequest.self, forKey: .request))
+            ?? V2QuickSetupRequest(targets: [], confirmNativeGlobal: false)
+        startedAt = try? container.decodeIfPresent(String.self, forKey: .startedAt)
+        step = try? container.decodeIfPresent(String.self, forKey: .step)
+        code = try? container.decodeIfPresent(String.self, forKey: .code)
+        results = (try? container.decodeIfPresent(V2LossyArray<V2QuickSetupResult>.self, forKey: .results))?.values ?? []
+    }
+}
+
+nonisolated struct V2QuickSetupCandidatesResponse: Decodable, Hashable {
+    let targets: [V2ModelPreviewTarget]
+
+    private enum CodingKeys: String, CodingKey { case targets }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        targets = (try? container.decodeIfPresent(V2LossyArray<V2ModelPreviewTarget>.self, forKey: .targets))?.values ?? []
+    }
+}
+
+nonisolated struct V2QuickSetupStartResponse: Decodable, Hashable {
+    let started: Bool
+    /// The authorization page to open when the account has to link first.
+    let startUrl: String?
+
+    private enum CodingKeys: String, CodingKey { case started, startUrl }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        started = (try? container.decodeIfPresent(Bool.self, forKey: .started)) ?? false
+        startUrl = try? container.decodeIfPresent(String.self, forKey: .startUrl)
     }
 }
 

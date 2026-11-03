@@ -19,6 +19,12 @@
         "count": "lld"
       }
     },
+    "%lld new runtimes can be set up": {
+      "source": "pages.settings.modelConfigs.quick.newRuntimes",
+      "arguments": {
+        "count": "lld"
+      }
+    },
     "%lld selected": {
       "source": "dashboard.device.selectedCount",
       "arguments": {
@@ -40,6 +46,7 @@
       }
     },
     "A model service's address, key and models. Keys are write-only and never shown again.": "pages.settings.modelConfigs.profilesDescription",
+    "A setup is already running.": "pages.settings.modelConfigs.errors.quick_setup_running",
     "API key": "pages.settings.modelConfigs.apiKey",
     "Account": "pages.settings.account",
     "Account update failed": "pages.settings.profile.failed",
@@ -79,8 +86,15 @@
     "Applies after a restart": "pages.settings.modelConfigs.effect.restart",
     "Applies now": "pages.settings.modelConfigs.effect.immediate",
     "Applies to new sessions": "pages.settings.modelConfigs.effect.new_session",
+    "Applies when idle": "pages.settings.modelConfigs.assignmentStatus.deferred",
     "Apply to %lld": {
       "source": "pages.settings.modelConfigs.applyCount",
+      "arguments": {
+        "count": "lld"
+      }
+    },
+    "Apply to %lld runtimes": {
+      "source": "pages.settings.modelConfigs.quick.stepApply",
       "arguments": {
         "count": "lld"
       }
@@ -112,10 +126,12 @@
     "Archive these sessions?": "dashboard.device.archiveAllTitle",
     "Archived": "dashboard.device.archived",
     "Authorization was cancelled.": "pages.settings.modelConfigs.errors.access_denied",
+    "Authorize in the browser": "pages.settings.modelConfigs.quick.stepAuthorize",
     "Beta": "runtimeMaturity.beta",
     "Cancel": "common.cancel",
     "Cannot apply right now": "pages.settings.modelConfigs.skip.unknown",
     "Changed by hand": "pages.settings.modelConfigs.assignmentStatus.modified",
+    "Changes its own global settings; set up only when ticked": "pages.settings.modelConfigs.quick.changesOwnSettings",
     "Changes the runtime's own global settings": "pages.settings.modelConfigs.scopeNativeGlobal",
     "Choose an image smaller than 8 MB.": "pages.settings.avatarTooLarge",
     "Choose how to connect %@ to your account.": {
@@ -135,7 +151,9 @@
       }
     },
     "Confirm Login": "common.mobileConfirm",
+    "Confirm on the page that opened, then come back here.": "pages.settings.modelConfigs.quick.authorizeHint",
     "Confirm password": "pages.settings.confirmPassword",
+    "Continuing restarts the affected runtimes and interrupts their running tasks.": "pages.settings.modelConfigs.interruptDescription",
     "Copied": "common.copied",
     "Copy device ID": "dashboard.actions.copyDeviceId",
     "Copy path": "dashboard.panels.files.copyPath",
@@ -167,10 +185,13 @@
     "Files": "dashboard.panels.files.title",
     "Gateway API key": "dashboard.device.modelGatewayApiKey",
     "Gateway URL": "dashboard.device.modelGatewayBaseUrl",
+    "Gets a separate managed instance; the original stays as it is": "pages.settings.modelConfigs.quick.managedInstance",
     "Got it": "announcement.acknowledge",
+    "Hide": "pages.settings.modelConfigs.hideModels",
     "Home 目录": "dashboard.workspacePicker.home",
     "I confirm changing the selected runtimes' own global settings, which also affects using them outside AA.": "pages.settings.modelConfigs.confirmNativeGlobal",
     "Instance name": "dashboard.device.runtimeName",
+    "Interrupt and continue": "pages.settings.modelConfigs.interruptContinue",
     "Language": "pages.settings.language",
     "Light": "pages.settings.light",
     "Link": "pages.settings.modelConfigs.link",
@@ -195,6 +216,7 @@
     "Model profiles": "pages.settings.modelConfigs.profilesTitle",
     "Models": "pages.settings.modelConfigs.models",
     "Models are not synced yet. Choose “Sync models”.": "pages.settings.modelConfigs.tokensNotSynced",
+    "Models discovered": "pages.settings.modelConfigs.modelsDiscovered",
     "Models synced": "pages.settings.modelConfigs.synced",
     "More than %lld models": {
       "source": "pages.settings.modelConfigs.tooManyModels",
@@ -203,6 +225,7 @@
       }
     },
     "Mostly works; issues may remain.": "runtimeMaturity.betaDescription",
+    "Needs at least one model": "pages.settings.modelConfigs.skip.models_required",
     "Never shown again after saving; only its first and last characters are kept to recognize it.": "pages.settings.modelConfigs.apiKeyWriteOnly",
     "New managed instance": "pages.settings.modelConfigs.effect.new_instance",
     "New password": "pages.settings.newPassword",
@@ -212,6 +235,7 @@
     "No environment overrides.": "dashboard.device.noEnvironmentOverrides",
     "No mode that takes a model connection": "pages.settings.modelConfigs.skip.mode_unsupported",
     "No model profiles yet.": "pages.settings.modelConfigs.noProfiles",
+    "No models listed; the runtime reads them from this address.": "pages.settings.modelConfigs.modelsDiscoveredDescription",
     "No projects yet": "dashboard.device.noProjects",
     "No protocol in common": "pages.settings.modelConfigs.skip.format_unsupported",
     "No runtimes can take this profile.": "pages.settings.modelConfigs.noTargets",
@@ -219,6 +243,7 @@
     "No sessions here": "dashboard.device.noSessions",
     "No workspaces yet": "dashboard.device.noWorkspaces",
     "Not configured": "pages.settings.modelConfigs.connectionState.not_configured",
+    "Not in use": "pages.settings.modelConfigs.unused",
     "Not installed on the device": "pages.settings.modelConfigs.skip.not_installed",
     "Not managed here": "pages.settings.modelConfigs.notAssigned",
     "Not verified": "pages.settings.profile.unverified",
@@ -241,6 +266,7 @@
     "Profile saved": "pages.settings.modelConfigs.profileSaved",
     "Project actions": "dashboard.projects.options",
     "Projects": "dashboard.device.projects",
+    "Protocols": "pages.settings.modelConfigs.protocolsLabel",
     "Published %@": {
       "source": "announcement.publishedAt",
       "arguments": {
@@ -248,6 +274,7 @@
       }
     },
     "QR Code Login": "dashboard.mobileConnections.scanTitle",
+    "Reading the available models…": "pages.settings.modelConfigs.quick.syncing",
     "Reasoning efforts": "dashboard.device.customModelEfforts",
     "Recent": "common.sections.recents",
     "Remove effort": "dashboard.device.removeCustomEffort",
@@ -290,6 +317,8 @@
     "Server URL": "dashboard.pairDevice.serverAddress",
     "Session ID": "dashboard.session.sessionId",
     "Sessions": "common.sessions",
+    "Set up models on all your devices in one step with your Tokens Anywhere account.": "pages.settings.modelConfigs.quick.description",
+    "Setting up; this updates when it finishes.": "pages.settings.modelConfigs.quick.inProgress",
     "Settings": "pages.settings.title",
     "Show all %lld more": {
       "source": "dashboard.device.showAllMore",
@@ -298,13 +327,17 @@
       }
     },
     "Show less": "dashboard.device.showLess",
+    "Show models and addresses": "pages.settings.modelConfigs.showModels",
     "Sign out": "common.actions.signOut",
     "Sign out?": "common.signOut.title",
+    "Some runtimes had more than 64 models; only the first 64 were imported.": "pages.settings.modelConfigs.quick.modelsTrimmed",
     "Sync models": "pages.settings.modelConfigs.sync",
     "Sync the Tokens Anywhere models first.": "pages.settings.modelConfigs.errors.tokens_not_synced",
     "System": "pages.settings.autoDescription",
     "Takes no model connection": "pages.settings.modelConfigs.skip.model_connection_unsupported",
+    "Tasks are running": "pages.settings.modelConfigs.interruptTitle",
     "Tasks are running. Allow interrupting them to apply.": "pages.settings.modelConfigs.errors.busy",
+    "Tasks are running; applies when idle": "pages.settings.modelConfigs.quick.appliesWhenIdle",
     "That did not finish. Try again later.": "pages.settings.modelConfigs.errors.generic",
     "The %lld runtimes using this profile go back to their previous configuration first, then the authorization is revoked and the key stops working.": {
       "source": "pages.settings.modelConfigs.unlinkDescription",
@@ -318,6 +351,7 @@
     "The authorization expired. Link again.": "pages.settings.modelConfigs.tokensReauth",
     "The authorization is almost a year old. Link again soon.": "pages.settings.modelConfigs.relinkSoon",
     "The device is offline.": "pages.settings.modelConfigs.errors.device_offline",
+    "The key was rotated. Apply this profile again.": "pages.settings.modelConfigs.errors.key_rotated",
     "The link expired. Start again.": "pages.settings.modelConfigs.errors.link_expired",
     "The link was not started in this browser. Start again.": "pages.settings.modelConfigs.errors.invalid_state",
     "The previous operation is still running.": "pages.settings.modelConfigs.errors.operation_in_progress",
@@ -331,6 +365,7 @@
         "name": "@"
       }
     },
+    "These runtimes will be set up:": "pages.settings.modelConfigs.quick.willConfigure",
     "This changes the runtime's own global settings and needs confirmation.": "pages.settings.modelConfigs.errors.confirmation_required",
     "This instance has no Tokens Anywhere address yet.": "pages.settings.modelConfigs.errors.tokens_unconfigured",
     "This key reaches no models yet.": "pages.settings.modelConfigs.errors.catalog_empty",
@@ -338,6 +373,7 @@
     "This profile is managed by its source and cannot be edited here.": "pages.settings.modelConfigs.errors.profile_read_only",
     "This profile is unlinked and can no longer be applied.": "pages.settings.modelConfigs.errors.profile_detached",
     "This profile was changed elsewhere. Refresh and try again.": "pages.settings.modelConfigs.errors.profile_changed",
+    "This runtime needs at least one imported model.": "pages.settings.modelConfigs.errors.models_required",
     "This runtime takes no model connection.": "pages.settings.modelConfigs.errors.model_connection_unsupported",
     "This service accepts email without a verification code.": "pages.settings.profile.verificationDisabled",
     "This will permanently remove %@ and all its associated data. This action cannot be undone.": {
@@ -349,7 +385,9 @@
     "Tokens Anywhere": "pages.settings.modelConfigs.tokensTitle",
     "Tokens Anywhere did not finish the authorization.": "pages.settings.modelConfigs.errors.authorization_failed",
     "Tokens Anywhere did not issue a token. Try again.": "pages.settings.modelConfigs.errors.exchange_failed",
+    "Tokens Anywhere did not keep this instance's key, so it cannot be fetched again. Ask its operator to set TOKENS_SECRETS_KEY, then unlink and link again.": "pages.settings.modelConfigs.errors.key_not_kept",
     "Tokens Anywhere is unavailable right now.": "pages.settings.modelConfigs.errors.tokens_unavailable",
+    "Tokens Anywhere quick setup": "pages.settings.modelConfigs.quick.title",
     "Tokens Anywhere refused this instance's key.": "pages.settings.modelConfigs.errors.key_rejected",
     "Too many models. Import fewer.": "pages.settings.modelConfigs.errors.too_many_models",
     "Unable to Load Files": "dashboard.workspacePicker.loadFailed",
@@ -366,6 +404,8 @@
     "Unpin": "dashboard.actions.unpin",
     "Untitled session": "pages.settings.archivedUntitled",
     "Update available": "pages.settings.modelConfigs.assignmentStatus.outdated",
+    "Update models": "pages.settings.modelConfigs.quick.updateModels",
+    "Usage": "pages.settings.modelConfigs.usage",
     "Use at least 8 characters. Changing the password does not sign out this device.": "pages.settings.newPasswordDescription",
     "Used by %lld": {
       "source": "pages.settings.modelConfigs.usedBy",
@@ -384,6 +424,7 @@
     "Verified": "pages.settings.profile.verified",
     "Version": "common.version",
     "Waiting for approval": "dashboard.sessionStatus.waitingApproval",
+    "Writing to your devices…": "pages.settings.modelConfigs.quick.applying",
     "Your saved credentials will be removed from this device. You will need to sign in again to reconnect.": "common.signOut.description",
     "Zoom": "pages.settings.avatarZoom",
     "dashboard.device.agentRuntimes": "dashboard.device.agentRuntimes",
@@ -432,6 +473,10 @@
     "dashboard.projects.workspace": "dashboard.projects.workspace",
     "dashboard.session.workspace": "dashboard.session.workspace",
     "https://example.com/v1": "pages.settings.modelConfigs.baseUrlPlaceholder",
+    "pages.settings.modelConfigs.quick.configureNew": "pages.settings.modelConfigs.quick.configureNew",
+    "pages.settings.modelConfigs.quick.configured": "pages.settings.modelConfigs.quick.configured",
+    "pages.settings.modelConfigs.quick.start": "pages.settings.modelConfigs.quick.start",
+    "pages.settings.modelConfigs.quick.viaManagedInstance": "pages.settings.modelConfigs.quick.viaManagedInstance",
     "pages.settings.modelConfigs.restore": "pages.settings.modelConfigs.restore",
     "上一级目录": "common.parent",
     "下载": "dashboard.panels.files.download",
@@ -609,19 +654,6 @@
     "项目关联这个目录，不会在设备上新建文件夹。": "dashboard.projects.createDescription",
     "项目名称": "dashboard.projects.name",
     "项目选项": "dashboard.projects.options",
-    "默认": "dashboard.new.defaultReasoning",
-    "Tasks are running": "pages.settings.modelConfigs.interruptTitle",
-    "Continuing restarts the affected runtimes and interrupts their running tasks.": "pages.settings.modelConfigs.interruptDescription",
-    "Interrupt and continue": "pages.settings.modelConfigs.interruptContinue",
-    "Needs at least one model": "pages.settings.modelConfigs.skip.models_required",
-    "This runtime needs at least one imported model.": "pages.settings.modelConfigs.errors.models_required",
-    "The key was rotated. Apply this profile again.": "pages.settings.modelConfigs.errors.key_rotated",
-    "Usage": "pages.settings.modelConfigs.usage",
-    "Protocols": "pages.settings.modelConfigs.protocolsLabel",
-    "Not in use": "pages.settings.modelConfigs.unused",
-    "Models discovered": "pages.settings.modelConfigs.modelsDiscovered",
-    "No models listed; the runtime reads them from this address.": "pages.settings.modelConfigs.modelsDiscoveredDescription",
-    "Show models and addresses": "pages.settings.modelConfigs.showModels",
-    "Hide": "pages.settings.modelConfigs.hideModels"
+    "默认": "dashboard.new.defaultReasoning"
   }
 }

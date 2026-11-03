@@ -41,6 +41,18 @@ struct V2ModelConfigAPI {
             method: .post, path: "/integrations/tokens/link"))
     }
 
+    /// Runtimes a one-click Tokens Anywhere setup would configure, with reasons for the rest.
+    func quickSetupCandidates() async throws -> V2QuickSetupCandidatesResponse {
+        try await transport.send(HTTPRequest<EmptyRequestBody, V2QuickSetupCandidatesResponse>(
+            method: .get, path: "/integrations/tokens/quick-setup"))
+    }
+
+    /// Starts the setup; when the account must link first, returns the address to open.
+    func startQuickSetup(_ request: V2QuickSetupRequest) async throws -> V2QuickSetupStartResponse {
+        try await transport.send(HTTPRequest<V2QuickSetupRequest, V2QuickSetupStartResponse>(
+            method: .post, path: "/integrations/tokens/quick-setup", body: request))
+    }
+
     func syncTokens() async throws -> V2ModelProfile {
         try await transport.send(HTTPRequest<EmptyRequestBody, V2ModelProfile>(
             method: .post, path: "/integrations/tokens/sync"))

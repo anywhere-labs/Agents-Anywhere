@@ -137,6 +137,110 @@ final class ModelConfigModel {
         } catch { feedback = .error(ModelConfigErrorText.text(error)) }
     }
 
+    // MARK: One-click Tokens Anywhere setup
+
+    /// Runtimes the setup would configure; nil until the first answer.
+    private(set) var quickCandidates: [V2ModelPreviewTarget]?
+    /// The user's ticks; nil keeps the default selection.
+    var quickSelection: Set<String>?
+    /// The browser authorization this page opened and is waiting for.
+    var quickAuthorizing = false
+    /// Choosing newly found runtimes after a setup is done.
+    var quickChoosing = false
+    private(set) var quickBusy = false
+
+    var tokens: V2TokensLinkStatus? { overview?.tokens }
+
+    /// Assignments of the active Tokens profile.
+    var tokenAssignments: [V2ModelAssignment] {
+        guard let overview, let profile = overview.activeTokensProfile else { return [] }
+        return overview.assignments.filter { $0.profileId == profile.id }
+    }
+
+    /// Changes whenever the candidates may have changed on the Server.
+    var quickCandidatesKey: String {
+        let runtimes = dashboard.runtimes.map { "\($0.target.key):\($0.status.rawValue):\($0.configured)" }.joined(separator: "|")
+        return "\(tokens?.available == true)#\(overview?.activeTokensProfile?.id ?? "")#\(runtimes)"
+    }
+
+    var quickPhase: QuickSetupPhase {
+        if quickChoosing { return .setup }
+        return QuickSetupPresentation.phase(link: tokens?.link, progress: tokens?.quickSetup,
+            configured: !tokenAssignments.isEmpty, authorizing: quickAuthorizing)
+    }
+
+    var quickSteps: QuickSetupSteps {
+        QuickSetupPresentation.steps(link: tokens?.link, progress: tokens?.quickSetup, authorizing: quickAuthorizing)
+    }
+
+    var effectiveQuickSelection: Set<String> {
+        quickSelection ?? QuickSetupPresentation.defaultSelection(quickCandidates ?? [])
+    }
+
+    var quickRequest: V2QuickSetupRequest {
+        QuickSetupPresentation.request(candidates: quickCandidates ?? [], selection: effectiveQuickSelection)
+    }
+
+    /// Candidates not yet using the Tokens profile.
+    var freshQuickCandidates: [V2ModelPreviewTarget] {
+        guard let candidates = quickCandidates else { return [] }
+        let assigned = tokenAssignments.map { item in
+            QuickAssignedTarget(connectorId: item.connectorId, runtimeId: item.runtimeId,
+                runtimeType: dashboard.runtimes.first { $0.target == item.target }?.runtimeType,
+                createdRuntime: item.createdRuntime)
+        }
+        return QuickSetupPresentation.newCandidates(candidates, assigned: assigned)
+    }
+
+    func runtimeName(_ target: V2ModelTarget) -> String {
+        dashboard.runtimes.first { $0.target == target }?.sessionDisplayName ?? target.runtimeId
+    }
+
+    /// A failed read shows no candidates rather than an error.
+    func loadQuickCandidates() async {
+        guard tokens?.available == true else { return }
+        do { quickCandidates = try await api.quickSetupCandidates().targets }
+        catch { if !Task.isCancelled { quickCandidates = [] } }
+    }
+
+    func toggleQuick(_ target: V2ModelPreviewTarget, _ on: Bool) {
+        guard target.decision == "apply" else { return }
+        var selection = effectiveQuickSelection
+        if on { selection.insert(target.id) } else { selection.remove(target.id) }
+        quickSelection = selection
+    }
+
+    /// Ticks the newly found runtimes, never one that changes its own global settings.
+    func chooseNewQuickCandidates() {
+        quickSelection = Set(freshQuickCandidates.filter { !$0.requiresConfirmation }.map(\.id))
+        quickChoosing = true
+    }
+
+    /// Starts the setup, or retries one with its earlier request. Returns the
+    /// authorization page to open when the account has to link first.
+    func startQuickSetup(retrying request: V2QuickSetupRequest? = nil) async -> URL? {
+        let payload = request ?? quickRequest
+        guard !payload.targets.isEmpty, !quickBusy else { return nil }
+        quickBusy = true
+        defer { quickBusy = false }
+        do {
+            let response = try await api.startQuickSetup(payload)
+            quickChoosing = false
+            guard let start = response.startUrl else { return nil }
+            guard let url = URL(string: start), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
+                throw HTTPError.invalidResponse
+            }
+            quickAuthorizing = true
+            return url
+        } catch {
+            feedback = .error(ModelConfigErrorText.text(error))
+            return nil
+        }
+    }
+
+    /// The link showed up (or the user gave up): stop waiting for the browser.
+    func finishAuthorizing() { quickAuthorizing = false }
+
     private func perform(_ action: TokensAction, _ body: () async throws -> Void) async {
         guard tokensBusy == nil else { return }
         tokensBusy = action

@@ -326,6 +326,37 @@
           "relinkSoon": false,
           "status": "linked"
         },
+        "quickSetup": {
+          "request": {
+            "confirmNativeGlobal": true,
+            "targets": [
+              {
+                "connectorId": "device",
+                "runtimeId": "rti_gateway"
+              },
+              {
+                "connectorId": "device",
+                "runtimeId": "rti_global"
+              }
+            ]
+          },
+          "results": [
+            {
+              "connectorId": "device",
+              "modelsTrimmed": 3,
+              "result": "deferred",
+              "runtimeId": "rti_gateway"
+            },
+            {
+              "connectorId": "device",
+              "reason": "device_offline",
+              "result": "skipped",
+              "runtimeId": "rti_global"
+            }
+          ],
+          "startedAt": "2026-09-05T12:00:00Z",
+          "state": "done"
+        },
         "secretConfigured": true,
         "tokensUrl": "https://tokens.example"
       }
@@ -871,6 +902,49 @@
     ],
     "serverTime": "2026-09-05T12:00:00Z"
   },
+  "quickSetupCandidates": {
+    "targets": [
+      {
+        "capabilityMaturity": "beta",
+        "connectorId": "device",
+        "decision": "apply",
+        "effect": "restart",
+        "maturity": "beta",
+        "name": "Gateway",
+        "requiresConfirmation": false,
+        "runningSessions": 1,
+        "runtimeId": "rti_gateway",
+        "runtimeType": "pi",
+        "scope": "instance"
+      },
+      {
+        "capabilityMaturity": "experimental",
+        "connectorId": "device",
+        "decision": "apply",
+        "effect": "immediate",
+        "maturity": "experimental",
+        "name": "DSH",
+        "requiresConfirmation": true,
+        "runningSessions": 0,
+        "runtimeId": "rti_global",
+        "runtimeType": "dsh",
+        "scope": "native_global"
+      },
+      {
+        "connectorId": "device",
+        "decision": "skip",
+        "maturity": null,
+        "name": "Work",
+        "reason": "model_connection_unsupported",
+        "runtimeId": "rti_work",
+        "runtimeType": "claude"
+      }
+    ]
+  },
+  "quickSetupStart": {
+    "startUrl": "https://example.test/api/v2/integrations/tokens/start?ticket=quick",
+    "started": false
+  },
   "recovery": {
     "events": [
       {
@@ -996,6 +1070,15 @@
     },
     "patchProject": {
       "pinned": true
+    },
+    "quickSetup": {
+      "confirmNativeGlobal": true,
+      "targets": [
+        {
+          "connectorId": "device",
+          "runtimeId": "rti_gateway"
+        }
+      ]
     },
     "readText": {
       "maxBytes": 1048576,
@@ -1258,6 +1341,14 @@
     {
       "method": "POST",
       "path": "/api/v2/integrations/tokens/link"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/integrations/tokens/quick-setup"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/integrations/tokens/quick-setup"
     },
     {
       "method": "GET",

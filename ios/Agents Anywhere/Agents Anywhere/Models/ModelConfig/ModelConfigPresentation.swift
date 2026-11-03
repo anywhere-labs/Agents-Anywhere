@@ -69,6 +69,7 @@ nonisolated enum ModelConfigPresentation {
         case "modified": String(localized: "Changed by hand")
         case "outdated": String(localized: "Update available")
         case "applied": String(localized: "Applied")
+        case "deferred": String(localized: "Applies when idle")
         default: status
         }
     }
@@ -93,6 +94,10 @@ nonisolated enum ModelConfigPresentation {
     }
 
     static func skipReason(_ reason: String?) -> String {
+        reason.flatMap(knownSkipReason) ?? String(localized: "Cannot apply right now")
+    }
+
+    static func knownSkipReason(_ reason: String) -> String? {
         switch reason {
         case "model_connection_unsupported": String(localized: "Takes no model connection")
         case "not_installed": String(localized: "Not installed on the device")
@@ -101,7 +106,7 @@ nonisolated enum ModelConfigPresentation {
         case "busy_operation": String(localized: "Another change is being applied")
         case "device_offline": String(localized: "Device offline")
         case "models_required": String(localized: "Needs at least one model")
-        default: String(localized: "Cannot apply right now")
+        default: nil
         }
     }
 
@@ -218,6 +223,8 @@ nonisolated enum ModelConfigErrorText {
         case "exchange_failed": String(localized: "Tokens Anywhere did not issue a token. Try again.")
         case "model_connection_unsupported": String(localized: "This runtime takes no model connection.")
         case "device_offline": String(localized: "The device is offline.")
+        case "quick_setup_running": String(localized: "A setup is already running.")
+        case "key_not_kept": String(localized: "Tokens Anywhere did not keep this instance's key, so it cannot be fetched again. Ask its operator to set TOKENS_SECRETS_KEY, then unlink and link again.")
         case "models_required": String(localized: "This runtime needs at least one imported model.")
         case "key_rotated": String(localized: "The key was rotated. Apply this profile again.")
         default: nil

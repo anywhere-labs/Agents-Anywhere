@@ -64,7 +64,9 @@ def fixtures() -> dict:
         "secretConfigured": True,
         "profiles": [profile, {**profile, "id": "mpr_tokens", "source": "tokens", "name": "Tokens Anywhere", "keyHint": "sk-tok…abcd", "strategyName": "default"}],
         "assignments": [{"connectorId": "device", "runtimeId": "rti_gateway", "profileId": "mpr_test", "offerFormat": "openai_chat", "createdRuntime": False, "status": "applied", "error": None, "appliedAt": NOW, "modelConnectionStatus": status}],
-        "tokens": {"available": True, "tokensUrl": "https://tokens.example", "secretConfigured": True, "link": {"status": "linked", "issuer": "https://tokens.example", "account": {"id": "acct", "displayName": "Test", "email": "test@example.com"}, "linkedAt": NOW, "relinkSoon": False}},
+        "tokens": {"available": True, "tokensUrl": "https://tokens.example", "secretConfigured": True, "link": {"status": "linked", "issuer": "https://tokens.example", "account": {"id": "acct", "displayName": "Test", "email": "test@example.com"}, "linkedAt": NOW, "relinkSoon": False},
+            "quickSetup": {"state": "done", "request": {"targets": [{"connectorId": "device", "runtimeId": "rti_gateway"}, {"connectorId": "device", "runtimeId": "rti_global"}], "confirmNativeGlobal": True}, "startedAt": NOW,
+                "results": [{"connectorId": "device", "runtimeId": "rti_gateway", "result": "deferred", "modelsTrimmed": 3}, {"connectorId": "device", "runtimeId": "rti_global", "result": "skipped", "reason": "device_offline"}]}},
     }
     runtime_type = d.RuntimeTypeView(connectorId="device", runtimeType="claude", implementationType="claude_sdk", displayName="Claude", description=None, present=True, available=True, reason=None, recommended=True, recommendationRank=1, discovery={}, schema={"type": "object", "properties": {}}, uiSchema={}, defaults={}, capabilities={}, metadata={}, instancePolicy="multiple", maxInstances=3, lastDiscoveredAt=NOW, createdAt=NOW, updatedAt=NOW)
     snapshot = p.ProtocolSessionSnapshotResponse(session=session.model_dump(), state=state.model_dump(), timeline=p.ProtocolTimelineSnapshot(items=[item], nextSeq=10), notices=[notice], effectiveCapabilities=capabilities, runtimeCapabilities=capabilities, catalogs={"model": model.model_dump(), "permission": permission.model_dump()}, eventCursor="seq:10", serverTime=NOW)
@@ -114,6 +116,12 @@ def fixtures() -> dict:
         {"connectorId": "device", "runtimeId": "rti_work", "runtimeType": "claude", "name": "Work", "maturity": None, "decision": "skip", "reason": "model_connection_unsupported"},
     ]}
     result["modelOperation"] = {"operationId": "mco_test", "kind": "apply", "finished": True, "results": [{"connectorId": "device", "runtimeId": "rti_gateway", "result": "applied"}, {"connectorId": "device", "runtimeId": "rti_global", "result": "failed", "reason": "busy", "message": "tasks are running"}]}
+    result["quickSetupCandidates"] = {"targets": [
+        {"connectorId": "device", "runtimeId": "rti_gateway", "runtimeType": "pi", "name": "Gateway", "maturity": "beta", "capabilityMaturity": "beta", "decision": "apply", "effect": "restart", "scope": "instance", "requiresConfirmation": False, "runningSessions": 1},
+        {"connectorId": "device", "runtimeId": "rti_global", "runtimeType": "dsh", "name": "DSH", "maturity": "experimental", "capabilityMaturity": "experimental", "decision": "apply", "effect": "immediate", "scope": "native_global", "requiresConfirmation": True, "runningSessions": 0},
+        {"connectorId": "device", "runtimeId": "rti_work", "runtimeType": "claude", "name": "Work", "maturity": None, "decision": "skip", "reason": "model_connection_unsupported"},
+    ]}
+    result["quickSetupStart"] = {"started": False, "startUrl": "https://example.test/api/v2/integrations/tokens/start?ticket=quick"}
     result["tokensLinkStart"] = {"startUrl": "https://example.test/api/v2/integrations/tokens/start?ticket=test"}
     result["tokensUnlink"] = {"revoked": True, "results": [{"connectorId": "device", "runtimeId": "rti_gateway", "result": "restored"}]}
     result["modelConfigError"] = {"detail": {"code": "profile_in_use", "message": "devices still use this profile"}}
@@ -134,10 +142,14 @@ def fixtures() -> dict:
         "ticket": p.ProtocolWsTicketRequest(clientId="client", scope=p.ProtocolWsTicketScope(sessionId="session")),
         "readText": m.FsReadTextRequest(path="test.txt"),
         "createModelProfile": mc.ManualProfileRequest(name="Gateway", apiKey="sk-test", offers=[mc.Offer(format="openai_chat", baseUrl="https://gateway.example/v1", models=[mc.ModelSpec(id="gpt-test")])]),
+        "quickSetup": mc.QuickSetupRequest(targets=[mc.AssignmentTarget(connectorId="device", runtimeId="rti_gateway")], confirmNativeGlobal=True),
         "applyModelProfile": mc.ApplyRequest(profileId="mpr_test", targets=[mc.AssignmentTarget(connectorId="device", runtimeId="rti_gateway")], allowInterrupt=True, confirmNativeGlobal=False),
     }
     result["requests"] = {key: value.model_dump(mode="json", by_alias=True, exclude_none=True) for key, value in requests.items()}
     result["requests"]["createProject"].pop("attachMatchingSessions", None)
+    # Server-internal switches the one-click setup uses; clients leave them at their defaults.
+    for key in ("deferBusy", "trimModels"):
+        result["requests"]["applyModelProfile"].pop(key, None)
     result["routes"] = routes()
     return result
 

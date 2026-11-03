@@ -272,6 +272,25 @@ nonisolated private final class InterceptingURLProtocol: URLProtocol, @unchecked
         #expect(requests[5].httpBody == nil && requests[6].httpBody == nil)
     }
 
+    @Test func quickSetupRoutesAndBodyMatchTheBackend() async throws {
+        let session = session(); defer { session.invalidateAndCancel() }
+        let api = V2APIClient(serverURL: URL(string: "https://example.test")!, tokenProvider: StaticAuthTokenProvider(token: "test-token"), urlSession: session)
+        InterceptingURLProtocol.state.reset([.response(200, try fixtureData("quickSetupCandidates")), .response(200, try fixtureData("quickSetupStart"))])
+        let candidates = try await api.modelConfig.quickSetupCandidates()
+        #expect(candidates.targets.map(\.decision) == ["apply", "apply", "skip"])
+        let start = try await api.modelConfig.startQuickSetup(.init(targets: [.init(connectorId: "device", runtimeId: "rti_gateway")], confirmNativeGlobal: true))
+        #expect(!start.started && start.startUrl != nil)
+        let requests = InterceptingURLProtocol.state.requests
+        #expect(requests.map(\.httpMethod) == ["GET", "POST"])
+        #expect(requests.allSatisfy { $0.url?.path == "/api/v2/integrations/tokens/quick-setup" })
+        let routes: [[String: String]] = try JSONDecoder().decode([[String: String]].self, from: fixtureData("routes"))
+        #expect(routes.contains(["method": "GET", "path": "/api/v2/integrations/tokens/quick-setup"]))
+        #expect(routes.contains(["method": "POST", "path": "/api/v2/integrations/tokens/quick-setup"]))
+        let body = try JSONDecoder().decode(JSONValue.self, from: #require(requests[1].httpBody))
+        let backend = try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: (try fixtureObject("requests"))["quickSetup"]!))
+        #expect(body == backend)
+    }
+
     private func query(_ request: URLRequest) -> [String: String] {
         Dictionary(uniqueKeysWithValues: URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!.map { ($0.name, $0.value ?? "") })
     }

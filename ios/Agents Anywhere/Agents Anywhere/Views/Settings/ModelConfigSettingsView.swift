@@ -48,7 +48,10 @@ private struct ModelConfigPage: View {
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
-                if let tokens = overview.tokens, tokens.available { tokensSection(tokens, overview: overview) }
+                if let tokens = overview.tokens, tokens.available {
+                    TokensQuickSetupSection(model: model, tokens: tokens, linker: linker,
+                        confirmsUnlink: $confirmsUnlink, unlinkAllowsInterrupt: $unlinkAllowsInterrupt)
+                }
                 profilesSection(overview)
                 devicesSection(overview)
             } else {
@@ -59,7 +62,10 @@ private struct ModelConfigPage: View {
         }
         // The browser sheet covers this page, so leaving it open is not a reason
         // to cancel; the next snapshot that shows the link closes it.
-        .onChange(of: model.overview?.tokens?.link) { _, link in linker.observe(link) }
+        .onChange(of: model.overview?.tokens?.link) { _, link in
+            linker.observe(link)
+            if link?.isLinked == true { model.finishAuthorizing() }
+        }
         .sheet(isPresented: $creating) { ModelProfileEditorSheet(model: model) }
         .sheet(item: $applying) { profile in ModelApplySheet(model: model.makeApplyModel(profile: profile)) { operation in
             model.feedback = ModelConfigPresentation.operationMessage(operation)
@@ -127,79 +133,6 @@ private struct ModelConfigPage: View {
             do { try await Task.sleep(for: .seconds(6)) } catch { return }
             if model.feedback == feedback { model.feedback = nil }
         }
-    }
-
-    // MARK: Tokens Anywhere
-
-    @ViewBuilder
-    private func tokensSection(_ tokens: V2TokensLinkStatus, overview: V2ModelConfigOverview) -> some View {
-        let link = tokens.link
-        let busy = model.tokensBusy != nil || !model.canWrite
-        Section {
-            if link == nil || link?.isLinked == false {
-                Button {
-                    Task { await startLink(current: link) }
-                } label: {
-                    HStack {
-                        Label(link == nil ? String(localized: "Link") : String(localized: "Link again"), appSymbol: "link")
-                        Spacer()
-                        if model.tokensBusy == .link || linker.isActive { ProgressView() }
-                    }
-                }
-                .disabled(busy || !tokens.secretConfigured || linker.isActive)
-            } else {
-                Button {
-                    Task { await model.syncTokens() }
-                } label: {
-                    HStack {
-                        Label(String(localized: "Sync models"), appSymbol: "arrow.clockwise")
-                        Spacer()
-                        if model.tokensBusy == .sync { ProgressView() }
-                    }
-                }
-                .disabled(busy)
-            }
-            if link != nil {
-                Button(role: .destructive) {
-                    confirmsUnlink = true
-                } label: {
-                    HStack {
-                        Label(String(localized: "Unlink"), appSymbol: "bolt.horizontal.circle")
-                        Spacer()
-                        if model.tokensBusy == .unlink { ProgressView() }
-                    }
-                }
-                .disabled(busy)
-                if tokensUsage > 0 {
-                    Toggle(String(localized: "Allow interrupting running tasks"), isOn: $unlinkAllowsInterrupt)
-                        .tint(.green).disabled(busy)
-                }
-            }
-        } header: {
-            Text(String(localized: "Tokens Anywhere"))
-        } footer: {
-            VStack(alignment: .leading, spacing: 4) {
-                if let link {
-                    Text(link.isLinked ? String(localized: "Linked: \(link.account.label)") : String(localized: "The authorization expired. Link again."))
-                    if link.relinkSoon {
-                        Text(String(localized: "The authorization is almost a year old. Link again soon.")).foregroundStyle(.orange)
-                    }
-                    if overview.activeTokensProfile == nil {
-                        Text(String(localized: "Models are not synced yet. Choose “Sync models”."))
-                    }
-                } else {
-                    Text(String(localized: "Link it to set up Tokens Anywhere models on your devices' runtimes in one step."))
-                }
-            }
-        }
-    }
-
-    private func startLink(current link: V2TokensLink?) async {
-        guard let url = await model.beginTokensLink() else { return }
-        let started = linker.start(url: url, current: link) {
-            model.feedback = .success(String(localized: "Linked: \(model.overview?.tokens?.link?.account.label ?? "")"))
-        }
-        if !started { model.feedback = .error(String(localized: "That did not finish. Try again later.")) }
     }
 
     // MARK: Profiles

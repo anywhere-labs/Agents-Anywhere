@@ -248,3 +248,128 @@ import Testing
         #expect(!RuntimeConfigurationModel.sameOrigin("not a url", "not a url"))
     }
 }
+
+@Suite @MainActor struct QuickSetupTests {
+    private func link(_ status: String, linkedAt: String = "2026-01-01T00:00:00Z") throws -> V2TokensLink {
+        try decode(["status": status, "account": ["id": "a"], "linkedAt": linkedAt])
+    }
+    private func progress(_ state: String, step: String? = nil) throws -> V2QuickSetupProgress {
+        var object: [String: Any] = ["state": state, "request": ["targets": [["connectorId": "c", "runtimeId": "codex"]], "confirmNativeGlobal": false], "startedAt": "2026-01-01T00:00:00Z"]
+        if let step { object["step"] = step }
+        return try decode(object)
+    }
+    private func candidates(_ items: [[String: Any]]) throws -> [V2ModelPreviewTarget] {
+        try items.map { try decode($0) }
+    }
+
+    @Test func theCardShowsChoosingProgressOrDone() throws {
+        let linked = try link("linked")
+        #expect(QuickSetupPresentation.phase(link: nil, progress: nil, configured: false, authorizing: false) == .setup)
+        #expect(QuickSetupPresentation.phase(link: nil, progress: nil, configured: false, authorizing: true) == .progress)
+        #expect(QuickSetupPresentation.phase(link: linked, progress: try progress("syncing"), configured: false, authorizing: false) == .progress)
+        #expect(QuickSetupPresentation.phase(link: linked, progress: try progress("failed", step: "apply"), configured: true, authorizing: false) == .progress)
+        #expect(QuickSetupPresentation.phase(link: linked, progress: try progress("done"), configured: false, authorizing: false) == .done)
+        #expect(QuickSetupPresentation.phase(link: linked, progress: nil, configured: true, authorizing: false) == .done)
+        #expect(QuickSetupPresentation.phase(link: try link("reauth_required"), progress: nil, configured: true, authorizing: false) == .setup)
+        #expect(QuickSetupPresentation.phase(link: nil, progress: try progress("syncing"), configured: false, authorizing: false) == .setup)
+    }
+
+    @Test func eachStepReadsFromTheLinkAndItsProgress() throws {
+        let linked = try link("linked")
+        #expect(QuickSetupPresentation.steps(link: nil, progress: nil, authorizing: true) == .init(authorize: .active, sync: .pending, apply: .pending))
+        #expect(QuickSetupPresentation.steps(link: nil, progress: nil, authorizing: false) == .init(authorize: .pending, sync: .pending, apply: .pending))
+        #expect(QuickSetupPresentation.steps(link: linked, progress: nil, authorizing: false) == .init(authorize: .done, sync: .pending, apply: .pending))
+        #expect(QuickSetupPresentation.steps(link: linked, progress: try progress("syncing"), authorizing: false) == .init(authorize: .done, sync: .active, apply: .pending))
+        #expect(QuickSetupPresentation.steps(link: linked, progress: try progress("failed", step: "sync"), authorizing: false) == .init(authorize: .done, sync: .failed, apply: .pending))
+        #expect(QuickSetupPresentation.steps(link: linked, progress: try progress("failed", step: "apply"), authorizing: false) == .init(authorize: .done, sync: .done, apply: .failed))
+        #expect(QuickSetupPresentation.steps(link: linked, progress: try progress("applying"), authorizing: false) == .init(authorize: .done, sync: .done, apply: .active))
+        #expect(QuickSetupPresentation.steps(link: linked, progress: try progress("done"), authorizing: false) == .init(authorize: .done, sync: .done, apply: .done))
+    }
+
+    @Test func runtimesChangingTheirOwnSettingsAreNotTickedByDefault() throws {
+        let items = try candidates([
+            ["connectorId": "c", "runtimeId": "codex", "decision": "apply"],
+            ["connectorId": "c", "runtimeId": "dsh", "decision": "apply", "requiresConfirmation": true],
+            ["connectorId": "d", "runtimeId": "codex", "decision": "skip", "reason": "device_offline"],
+        ])
+        #expect(QuickSetupPresentation.defaultSelection(items) == ["c/codex"])
+        let request = QuickSetupPresentation.request(candidates: items, selection: ["c/codex", "d/codex"])
+        #expect(request.targets == [.init(connectorId: "c", runtimeId: "codex")] && !request.confirmNativeGlobal)
+        #expect(QuickSetupPresentation.request(candidates: items, selection: ["c/codex", "c/dsh"]).confirmNativeGlobal)
+        #expect(QuickSetupPresentation.candidateNote(items[1]) == String(localized: "Changes its own global settings; set up only when ticked"))
+        #expect(QuickSetupPresentation.candidateNote(items[2]) == ModelConfigPresentation.skipReason("device_offline"))
+    }
+
+    @Test func aRuntimeServedByAManagedInstanceIsNotNew() throws {
+        let items = try candidates([
+            ["connectorId": "c", "runtimeId": "codex", "runtimeType": "codex", "decision": "apply", "effect": "restart"],
+            ["connectorId": "c", "runtimeId": "pi", "runtimeType": "pi", "decision": "apply", "effect": "new_instance"],
+            ["connectorId": "c", "runtimeId": "claude", "runtimeType": "claude", "decision": "apply", "effect": "restart"],
+        ])
+        let assigned = [
+            QuickAssignedTarget(connectorId: "c", runtimeId: "codex", runtimeType: nil, createdRuntime: false),
+            QuickAssignedTarget(connectorId: "c", runtimeId: "pi-managed", runtimeType: "pi", createdRuntime: true),
+        ]
+        #expect(QuickSetupPresentation.newCandidates(items, assigned: assigned).map(\.runtimeId) == ["claude"])
+        #expect(QuickSetupPresentation.candidateNote(items[1]) == String(localized: "Gets a separate managed instance; the original stays as it is"))
+    }
+
+    @Test func notesAndReasonsReadFromFields() throws {
+        let busy = try candidates([["connectorId": "c", "runtimeId": "r", "decision": "apply", "effect": "restart", "runningSessions": 2]])[0]
+        #expect(QuickSetupPresentation.candidateNote(busy) == String(localized: "Tasks are running; applies when idle"))
+        #expect(QuickSetupPresentation.assignmentNote(status: "deferred", createdRuntime: false) == String(localized: "Tasks are running; applies when idle"))
+        #expect(QuickSetupPresentation.assignmentNote(status: "applied", createdRuntime: true)
+            == String(localized: "Applied") + String(localized: "pages.settings.modelConfigs.quick.viaManagedInstance"))
+        #expect(ModelConfigPresentation.assignmentStatusLabel("deferred") == String(localized: "Applies when idle"))
+        #expect(QuickSetupPresentation.reasonText("key_not_kept") == ModelConfigErrorText.text(code: "key_not_kept"))
+        #expect(QuickSetupPresentation.reasonText("mystery") == ModelConfigPresentation.skipReason(nil))
+        #expect(ModelConfigErrorText.text(code: "quick_setup_running") == String(localized: "A setup is already running."))
+        #expect(QuickSetupPresentation.failureText(try progress("failed", step: "sync")) == String(localized: "That did not finish. Try again later."))
+    }
+
+    @Test func snapshotCarriesTheLastSetupAndToleratesOddShapes() throws {
+        let snapshot: V2DashboardSnapshot = try fixture("dashboard")
+        let quick = try #require(snapshot.modelConfig?.tokens?.quickSetup)
+        #expect(quick.state == "done" && quick.request.confirmNativeGlobal && quick.request.targets.count == 2)
+        #expect(quick.results.map(\.result) == ["deferred", "skipped"])
+        #expect(quick.results[0].modelsTrimmed == 3 && quick.results.filter(\.isProblem).map(\.reason) == ["device_offline"])
+        let odd: V2TokensLinkStatus = try decode(["available": true, "quickSetup": ["state": "syncing", "request": "?", "results": [["runtimeId": 1], ["connectorId": "c", "runtimeId": "r"]]]])
+        #expect(odd.quickSetup?.request.targets == [] && odd.quickSetup?.results.count == 1)
+        let broken: V2TokensLinkStatus = try decode(["available": true, "quickSetup": ["results": []]])
+        #expect(broken.quickSetup == nil && broken.available)
+    }
+
+    @Test func modelStartsWithTheTickedRuntimesAndWaitsForTheBrowser() async throws {
+        let transport = TestHTTPTransport()
+        transport.respond = { call in
+            call.method == .get ? try fixtureData("quickSetupCandidates") : try fixtureData("quickSetupStart")
+        }
+        let repository = V2DashboardRepository(service: .init(connectorAPI: V2ConnectorAPI(transport: transport),
+            projectAPI: .init(transport: transport), sessionAPI: V2SessionAPI(transport: transport), realtimeAPI: TestRealtimeAPI()))
+        repository.apply(try fixture("dashboard"))
+        let model = ModelConfigModel(api: .init(transport: transport), dashboard: repository)
+        // The fixture account is linked and its Tokens profile has no assignment, but the last setup is done.
+        #expect(model.quickPhase == .done)
+        await model.loadQuickCandidates()
+        #expect(model.quickCandidates?.count == 3)
+        #expect(model.effectiveQuickSelection == ["device/rti_gateway"])
+        #expect(model.freshQuickCandidates.map(\.runtimeId) == ["rti_gateway", "rti_global"])
+        model.chooseNewQuickCandidates()
+        #expect(model.quickPhase == .setup && model.effectiveQuickSelection == ["device/rti_gateway"])
+        model.toggleQuick(model.quickCandidates![2], true)
+        #expect(!model.effectiveQuickSelection.contains("device/rti_work"), "A skipped runtime cannot be ticked")
+        model.toggleQuick(model.quickCandidates![1], true)
+        let url = await model.startQuickSetup()
+        #expect(url?.absoluteString == "https://example.test/api/v2/integrations/tokens/start?ticket=quick")
+        #expect(model.quickAuthorizing && !model.quickChoosing)
+        let body = try #require(transport.calls.last?.body)
+        #expect(transport.calls.last?.path == "/integrations/tokens/quick-setup" && transport.calls.last?.method == .post)
+        #expect(body["confirmNativeGlobal"] == .bool(true) && body["targets"]?.configArray?.count == 2)
+        model.finishAuthorizing()
+        #expect(!model.quickAuthorizing)
+
+        transport.respond = { _ in throw HTTPError.server(statusCode: 409, message: "running", detail: .object(["code": .string("quick_setup_running")])) }
+        #expect(await model.startQuickSetup(retrying: .init(targets: [.init(connectorId: "device", runtimeId: "rti_gateway")], confirmNativeGlobal: false)) == nil)
+        #expect(model.feedback == .error(String(localized: "A setup is already running.")))
+    }
+}
