@@ -115,8 +115,26 @@ def prepare_adapter(entry: Path, sdk: Path, root: Path) -> tuple[Path, dict]:
         .read_text(encoding="utf-8")
         .replace("__AA_PI_SDK_URL__", (sdk / "dist/index.js").as_uri())
     )
+    # Dependency resolution is part of the executable cache identity. Desktop
+    # may move an unchanged npm release from an instance cache to its shared
+    # cache; keep the old adapter intact for processes still using it.
+    modules = next(
+        (
+            parent / "node_modules"
+            for parent in (package, *package.parents)
+            if (parent / "node_modules").is_dir()
+        ),
+        None,
+    )
+    if modules is None:
+        raise AcpError("pi_adapter_dependencies_missing", "Pi ACP 依赖目录不存在。")
     patch = fingerprint(
-        {"bridge": bridge, "source": release_files, "revision": PATCH_REVISION}
+        {
+            "bridge": bridge,
+            "source": release_files,
+            "revision": PATCH_REVISION,
+            "dependencyRoot": str(modules.resolve()),
+        }
     )
     destination = root / patch
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -135,18 +153,6 @@ def prepare_adapter(entry: Path, sdk: Path, root: Path) -> tuple[Path, dict]:
                     source, encoding="utf-8", newline="\n"
                 )
             # Keep third-party dependency resolution attached to its original install.
-            modules = next(
-                (
-                    parent / "node_modules"
-                    for parent in (package, *package.parents)
-                    if (parent / "node_modules").is_dir()
-                ),
-                None,
-            )
-            if modules is None:
-                raise AcpError(
-                    "pi_adapter_dependencies_missing", "Pi ACP 依赖目录不存在。"
-                )
             try:
                 (staging / "node_modules").symlink_to(modules, target_is_directory=True)
             except OSError:
@@ -180,4 +186,3 @@ def prepare_adapter(entry: Path, sdk: Path, root: Path) -> tuple[Path, dict]:
         "sdkEntry": str(sdk / "dist/index.js"),
     }
     return destination / "dist" / entry.name, metadata
-

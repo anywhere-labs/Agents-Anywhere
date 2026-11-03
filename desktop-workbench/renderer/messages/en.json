@@ -30,6 +30,7 @@
     "stalled": "No activity detected recently. Installation may be stalled. View logs, or cancel and retry with another mirror.",
     "packageProgress": "{completed} installed / {total} resolved dependencies",
     "environmentPhase": {
+      "pi": "Preparing Pi adapter and dependencies",
       "checking": "Checking environment",
       "downloading": "Downloading dependencies",
       "resolving": "Resolving dependencies",

@@ -1,7 +1,7 @@
 /** Desktop-local environment lifecycle; independent of Connector ownership. */
 export type ConnectorEnvironmentState = {
   status: "unknown" | "checking" | "preparing" | "ready" | "stale" | "failed" | "cancelled";
-  phase: "checking" | "downloading" | "resolving" | "building" | "syncing" | "ready" | "failed" | "cancelled";
+  phase: "pi" | "checking" | "downloading" | "resolving" | "building" | "syncing" | "ready" | "failed" | "cancelled";
   event: string;
   message: string;
   startedAt: string | null;
