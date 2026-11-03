@@ -658,12 +658,13 @@ fun SessionDetailScreen(
         val hadInitializedState = state.initialized
         try {
             state = state.beginSnapshotLoad(clearErrors = !hadInitializedState)
-            controller.loadInitialSnapshot(id, devices, state).fold(
+            val requestState = state
+            controller.loadInitialSnapshot(id, devices, requestState).fold(
                 onSuccess = { loaded ->
                     if (!appVisible) {
                         state = state.failSnapshotLoad(null)
                     } else {
-                        state = controller.mergeSnapshotWithLiveState(id, loaded, state)
+                        state = controller.mergeSnapshotWithLiveState(id, loaded, state, requestState)
                             .completeSnapshotLoad()
                         state.session?.let(onSessionChanged)
                     }
