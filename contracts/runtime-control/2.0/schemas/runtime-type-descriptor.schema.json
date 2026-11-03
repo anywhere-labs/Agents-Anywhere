@@ -132,6 +132,10 @@
             "native_global"
           ],
           "type": "string"
+        },
+        "multiProtocol": {
+          "type": "boolean",
+          "description": "Apply all compatible protocol offers together; absent means false. The gateway may carry primary modelIds and additional routes with protocol, baseUrl and modelIds, sharing its write-only apiKey."
         }
       },
       "required": [

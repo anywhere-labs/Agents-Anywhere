@@ -195,16 +195,23 @@ def _digest(value: Any) -> str:
 class Match:
     offer: Offer | None
     reason: str | None = None
+    offers: tuple[Offer, ...] = ()
 
 
 def match_offer(capability: dict[str, Any] | None, offers: list[Offer]) -> Match:
-    """The first protocol the runtime speaks that the profile offers."""
+    """Match one protocol, or all compatible offers for a multi-protocol adapter."""
     if not isinstance(capability, dict):
         return Match(None, "model_connection_unsupported")
     by_format = {offer.format: offer for offer in offers}
-    for protocol in capability.get("protocols") or []:
-        if protocol in by_format:
-            return Match(by_format[protocol])
+    matching = [by_format[p] for p in capability.get("protocols") or [] if p in by_format]
+    if matching:
+        if not capability.get("multiProtocol"):
+            return Match(matching[0])
+        models = {}
+        for offer in matching:
+            for spec in offer.models:
+                models.setdefault(spec.id, spec)
+        return Match(matching[0].model_copy(update={"models": list(models.values())}), offers=tuple(matching))
     return Match(None, "format_unsupported")
 
 
@@ -258,6 +265,7 @@ def apply_patch(
     model_ids: list[str] | None,
     mode: ModePlan,
     trim: bool = False,
+    offers: tuple[Offer, ...] = (),
 ) -> tuple[dict[str, Any], list[str]]:
     """Write the offer into the runtime's connection fields.
 
@@ -293,6 +301,18 @@ def apply_patch(
             chosen = chosen[: max(MAX_RUNTIME_MODELS - len(current), 0)]
         patched[models_field] = current + [_custom_model(spec) for spec in chosen]
         imported = [spec.id for spec in chosen]
+    if capability.get("multiProtocol") and offers and isinstance(models_field, str):
+        available = {item["modelId"] for item in patched[models_field]}
+        gateway["modelIds"] = [m.id for m in offers[0].models if m.id in available]
+        # Keep user-added models on the primary route. Shared IDs may occur on
+        # several routes; the model selector identifies them by provider + ID.
+        offered = {m.id for item in offers for m in item.models}
+        gateway["modelIds"] += [item["modelId"] for item in patched[models_field] if item["modelId"] not in offered]
+        gateway["routes"] = [
+            {"protocol": item.format, "baseUrl": item.baseUrl,
+             "modelIds": [m.id for m in item.models if m.id in available]}
+            for item in offers[1:] if any(m.id in available for m in item.models)
+        ]
     return patched, imported
 
 

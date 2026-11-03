@@ -688,6 +688,7 @@ class ModelConfigService:
                     config=base,
                     capability=capability,
                     offer=match.offer,
+                    offers=match.offers,
                     api_key=api_key,
                     previous_imported=previous_imported,
                     model_ids=request.modelIds,

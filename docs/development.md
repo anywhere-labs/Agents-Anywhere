@@ -14,7 +14,7 @@
 ./local-up.sh
 ```
 
-它启动 Docker PostgreSQL/Redis、迁移数据库，再在前台运行 Server 和 Web。默认 Web 为 `http://127.0.0.1:5174`，Server 为 `http://127.0.0.1:8000`，PostgreSQL/Redis 端口为 `55432` / `56379`。日志在 `.local-dev/logs/`。按 Ctrl-C 停止本次启动的服务。
+它启动 Docker PostgreSQL/Redis、迁移数据库，再在前台运行 Server 和 Web。默认 Web 为 `http://127.0.0.1:5174`，Server 为 `http://127.0.0.1:8000`，PostgreSQL/Redis 端口为 `55432` / `56379`。日志在 `.local-dev/logs/`。按 Ctrl-C 停止本次启动的应用进程；两个启动脚本共用的 PostgreSQL/Redis 保持运行，下次启动直接复用，避免旧启动器退出时中断新实例。应用关闭超过 5 秒时，启动器会强制结束残留进程，避免旧 Server 长期占用会话锁。需要手动停止基础设施时运行 `docker compose -f docker/docker-compose.local.yml stop`（保留数据）。
 
 - `--skip-install`：复用依赖。
 - `--with-connector`：一起启动 Connector；默认不启动。
@@ -22,6 +22,8 @@
 - `--access-log`：打印 uvicorn 逐请求访问日志；默认关闭。Server 日志级别默认为 INFO，可用 `LOGURU_LEVEL=DEBUG` 查看调试日志（`desktop-local-up.sh` 同样适用）。
 - `--listen`：监听局域网地址；默认只监听回环。
 - `--reset-data`：删除本地数据库数据卷，仅在明确不要这些数据时使用。
+
+两个本地启动脚本都会读取根目录的 `.env.local`（可用 `--env-file` 指定其他文件）。未设置 `AGENT_SERVER_SECRET` 时，首次启动会自动生成随机密钥并保存到该文件，文件权限设为仅当前用户可读写；后续启动复用它，可直接测试模型 Key 的加密保存。已有的有效密钥会保留，过短或使用开发默认值时会提示修正。不要删除或更换密钥，否则原有登录令牌和已保存的加密凭据可能失效；不要提交本地配置文件。
 
 ## Desktop
 
@@ -40,7 +42,7 @@ yarn dev
 ./desktop-local-up.sh down
 ```
 
-此启动器使用 Server `8000`、Web `5174`（Desktop 开发模式的登录页）和 Desktop `5184`，会释放这三个应用端口的既有监听者，然后像 `local-up.sh` 一样在前台运行 Server、Web 和 Desktop，并带前缀输出日志（同时写入 `.local-dev/logs/`）。按 Ctrl-C 停止本次启动的服务和数据库容器；`down` 用于停止另一个终端里仍在运行的启动器。更多环境变量与生命周期见 [Desktop README](../desktop-workbench/README.md)。
+此启动器使用 Server `8000`、Web `5174`（Desktop 开发模式的登录页）和 Desktop `5184`，会释放这三个应用端口的既有监听者，然后像 `local-up.sh` 一样在前台运行 Server、Web 和 Desktop，并带前缀输出日志（同时写入 `.local-dev/logs/`）。按 Ctrl-C 停止本次启动的应用进程，关闭超时后强制结束残留进程，共用的 PostgreSQL/Redis 容器保持运行；`down` 用于停止另一个终端里仍在运行的启动器。更多环境变量与生命周期见 [Desktop README](../desktop-workbench/README.md)。
 
 ## Headless 检查
 

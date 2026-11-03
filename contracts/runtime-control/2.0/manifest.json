@@ -70,7 +70,7 @@
       "direction": "egress",
       "model": "RuntimeTypeDescriptor",
       "path": "schemas/runtime-type-descriptor.schema.json",
-      "sha256": "43771e5b33a36afceec375a9e75ce5ce1476ae9972174c6d4174bd5538e99460",
+      "sha256": "b3ca5f9b88d098eef1e52f1b6427b4062e023b1df9f8e79ee470d1e92c651503",
       "slug": "runtime-type-descriptor"
     },
     {

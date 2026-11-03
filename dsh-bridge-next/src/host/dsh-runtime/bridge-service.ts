@@ -164,6 +164,9 @@ export class BridgeService {
   @mutates({ description: "Write or remove Agents Anywhere's model connection in DSH's provider settings.", request: payload, response: payload, inject: [callScope] })
   async applyModelConnection(request: Payload, call: CallScope, context: RpcContext): Promise<Payload> { return this.forward('applyModelConnection', request, call, context) }
 
+  @mutates({ description: "Apply all Agents Anywhere model protocols together in DSH's provider settings.", request: payload, response: payload, inject: [callScope] })
+  async applyModelConnections(request: Payload, call: CallScope, context: RpcContext): Promise<Payload> { return this.forward('applyModelConnections', request, call, context) }
+
   @mutates({ description: 'Capture one session again, for example after it was quarantined.', request: payload, response: payload, inject: [callScope] })
   async refreshSync(request: Payload, call: CallScope, context: RpcContext): Promise<Payload> { return this.forward('refreshSync', request, call, context) }
 

@@ -49,6 +49,7 @@ class ModelConnectionCapability(BaseModel):
     configField: str = Field(min_length=1, max_length=128)
     modelsField: str | None = Field(default=None, min_length=1, max_length=128)
     protocols: list[ModelProtocol] = Field(min_length=1, max_length=8)
+    multiProtocol: bool = Field(default=False, exclude_if=lambda value: not value)
     modes: list[ModelConnectionMode] = Field(default_factory=list, max_length=16)
     modeField: str | None = Field(default=None, min_length=1, max_length=128)
     scope: ConnectionScope

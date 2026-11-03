@@ -149,3 +149,7 @@ uv run python ../contracts/runtime-control/2.0/validate.py
 The validator checks every schema as Draft 2020-12, resolves contract-local
 references, verifies valid and invalid fixtures, and confirms the SHA-256
 digests recorded in `manifest.json`.
+
+### Simultaneous model protocols
+
+The optional `modelConnection.multiProtocol` flag defaults to false. When true, configuration applies all matching offers. The gateway retains its primary `protocol`, `baseUrl`, and write-only `apiKey`, plus optional primary `modelIds` and additional `routes: [{protocol, baseUrl, modelIds}]`. Routes share the primary key and refer to the models in `modelsField`; protocol IDs must be supported and unique. A missing route list retains legacy single-protocol behavior. The connection digest and restore cover the complete gateway object.

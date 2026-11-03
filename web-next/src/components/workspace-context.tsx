@@ -550,12 +550,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   // Derive page state from hash — start at "home" for safe SSR, correct on mount.
   const [route, setRoute] = React.useState<ParsedRoute>({ page: "home" })
   const [routeReady, setRouteReady] = React.useState(false)
-  // Administration and personal settings do not show the workspace, so they
-  // neither load the inventory nor hold the dashboard socket open. Archived
-  // sessions still read the shared inventory. Returning home resumes both.
+  // Model configuration follows Tokens authorization and setup progress in
+  // dashboard snapshots; archived sessions also need the shared inventory.
+  // Other settings and administration do not keep the dashboard socket open.
   const workspaceDataEnabled = routeReady
     && route.page !== "admin"
-    && (route.page !== "settings" || route.tab === "archived-sessions")
+    && (route.page !== "settings" || route.tab === "archived-sessions" || route.tab === "model-configs")
   const workspaceDataEnabledRef = React.useRef(workspaceDataEnabled)
   workspaceDataEnabledRef.current = workspaceDataEnabled
 

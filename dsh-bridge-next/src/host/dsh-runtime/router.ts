@@ -194,6 +194,7 @@ export class RuntimeRouter {
         await this.reader.native.interrupt(id)
         return { accepted: true, sessionId: sessionId(this.namespace, id), externalSessionId: id }
       }
+      case 'applyModelConnections':
       case 'applyModelConnection': {
         const native = this.reader.native
         if (!native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Model connections are unavailable.')

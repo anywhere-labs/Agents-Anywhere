@@ -15,6 +15,8 @@
 
 ### 统一 Plan
 
+- 修复本机 Codex 会话首次同步时计划状态可能先于会话到达、导致计划同步被拒绝的问题。
+
 - 补齐 Web、Desktop、Android 和 iOS 计划卡片、审阅、阅读器及规划入口提示的中英文翻译，随客户端语言切换。
 
 - 修复 Codex 规划模式调用旧写入路由接口导致首轮任务创建失败的问题，并避免异常日志展开运行时对象造成 Connector 卡顿和断连。
@@ -38,6 +40,10 @@
 
   （[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 管理员可以在「管理 → 常规」里填写或清空 Tokens Anywhere 地址；已有账户链接时地址会锁定，全部断开后才能修改。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 修复 Web 和 Desktop 配置管理页在浏览器授权 Tokens Anywhere 后进度不更新、同步失败仍持续转圈的问题。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- DSH 应用模型服务时同时导入 OpenAI Chat、OpenAI Responses 和 Anthropic 协议的可用模型，模型选择时可区分同名模型所属的协议。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 本地启动器退出时保留共用的 PostgreSQL 和 Redis，并在关闭超时后结束残留应用进程，避免重启期间数据库断连或新旧进程重叠。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 本地启动时自动生成并保存配置管理所需的密钥，后续启动继续复用，无需手动填写即可测试模型 Key 保存。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 「设置 → 配置管理」也可以手动添加模型服务，再应用到各设备上的 Codex、Claude Code、Pi 和 DSH；在任一客户端修改后，其他客户端立即同步显示。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 应用前会预览每台设备的结果和不能应用的原因；需要重启的 Runtime 有任务在运行时，要允许中断才会应用，一键配置则不打断任务，先保存配置，等任务结束后自动生效；DSH 会修改它自身的全局模型配置，需要单独确认；模型超过 64 个时，一键配置只导入前 64 个并提示。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 可以随时把单个 Runtime 恢复为应用前的配置，之后做的其他修改会保留；断开 Tokens Anywhere 时会先恢复用它的 Runtime，再撤销授权；轮换 Tokens Anywhere 的 Key 后会自动写入所有用它的 Runtime。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）

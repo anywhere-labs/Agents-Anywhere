@@ -98,6 +98,7 @@ export type ModelConnectionCapability = {
   configField: string;
   modelsField: string | null;
   protocols: ModelProtocol[];
+  multiProtocol?: boolean;
   modes: { id: string; supported: boolean; reason: string | null }[];
   modeField?: string | null;
   scope: ModelConnectionScope;

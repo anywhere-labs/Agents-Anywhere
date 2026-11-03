@@ -160,10 +160,23 @@ def merge_secrets(
         if not isinstance(container, dict):
             # Leaving the whole object out clears it.
             continue
-        if path.gateway and not _same_origin(
-            container.get(GATEWAY_URL), (stored or {}).get(path.field, {}).get(GATEWAY_URL)
-        ):
-            raise SecretOriginChangedError(path)
+        if path.gateway:
+            previous = (stored or {}).get(path.field, {})
+            if not _same_origin(container.get(GATEWAY_URL), previous.get(GATEWAY_URL)):
+                raise SecretOriginChangedError(path)
+            # Additional protocol routes share this key. Keeping it must not
+            # silently authorize a new destination for any of those routes.
+            previous_routes = {
+                route.get("protocol"): route.get(GATEWAY_URL)
+                for route in previous.get("routes", []) if isinstance(route, dict)
+            }
+            routes = container.get("routes", [])
+            if not isinstance(routes, list):
+                raise SecretOriginChangedError(path)
+            for route in routes:
+                if (not isinstance(route, dict) or not isinstance(route.get("protocol"), str)
+                        or not _same_origin(route.get(GATEWAY_URL), previous_routes.get(route["protocol"]))):
+                    raise SecretOriginChangedError(path)
         container[path.key] = saved
     return merged
 

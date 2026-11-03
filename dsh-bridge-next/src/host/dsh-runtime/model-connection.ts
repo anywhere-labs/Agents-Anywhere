@@ -22,7 +22,8 @@ const PROTOCOLS = {
 
 export type ModelProtocol = keyof typeof PROTOCOLS
 export interface ConnectionModel { id: string, name?: string }
-export interface Connection { protocol: ModelProtocol, baseUrl: string, apiKey: string, models: ConnectionModel[] }
+export interface ConnectionRoute { protocol: ModelProtocol, baseUrl: string, models: ConnectionModel[] }
+export interface Connection extends ConnectionRoute { apiKey: string, routes?: ConnectionRoute[] }
 
 type PathOp = { op: 'set', path: readonly string[], value: unknown } | { op: 'unset', path: readonly string[] }
 
@@ -56,7 +57,7 @@ export function parseConnection(raw: unknown): Connection | null {
   if (raw === null || raw === undefined) return null
   const value = record(raw)
   const protocol = value.protocol
-  if (typeof protocol !== 'string' || !(protocol in PROTOCOLS)) throw new BridgeError('INVALID_PARAMS', 'Choose a protocol DSH supports.')
+  if (typeof protocol !== 'string' || !Object.hasOwn(PROTOCOLS, protocol)) throw new BridgeError('INVALID_PARAMS', 'Choose a protocol DSH supports.')
   const baseUrl = value.baseUrl
   if (typeof baseUrl !== 'string' || !/^https?:\/\/[^\s]+$/.test(baseUrl) || baseUrl.length > 2048) {
     throw new BridgeError('INVALID_PARAMS', 'The model gateway address must be an HTTP or HTTPS URL.')
@@ -69,8 +70,22 @@ export function parseConnection(raw: unknown): Connection | null {
   const parsed = models.flatMap(model => typeof model.id === 'string' && model.id
     ? [{ id: model.id, ...(typeof model.name === 'string' && model.name ? { name: model.name } : {}) }] : [])
   // A route DSH's catalog does not describe needs its models listed.
-  if (!parsed.length) throw new BridgeError('INVALID_PARAMS', 'Import at least one model for DSH.')
-  return { protocol: protocol as ModelProtocol, baseUrl: baseUrl.replace(/\/+$/, ''), apiKey, models: parsed.slice(0, 256) }
+  let routes: ConnectionRoute[] | undefined
+  if (value.routes !== undefined) {
+    if (!Array.isArray(value.routes) || value.routes.length > 2) throw new BridgeError('INVALID_PARAMS', 'Invalid DSH model routes.')
+    const seen = new Set([protocol])
+    routes = value.routes.map(rawRoute => {
+      const route = record(rawRoute)
+      if (route.routes !== undefined || route.apiKey !== undefined) throw new BridgeError('INVALID_PARAMS', 'DSH routes share the gateway key.')
+      const parsedRoute = parseConnection({ ...route, apiKey })!
+      if (seen.has(parsedRoute.protocol)) throw new BridgeError('INVALID_PARAMS', 'Duplicate DSH model protocol.')
+      seen.add(parsedRoute.protocol)
+      return { protocol: parsedRoute.protocol, baseUrl: parsedRoute.baseUrl, models: parsedRoute.models }
+    })
+  }
+  if (!parsed.length && !routes?.length) throw new BridgeError('INVALID_PARAMS', 'Import at least one model for DSH.')
+  return { protocol: protocol as ModelProtocol, baseUrl: baseUrl.replace(/\/+$/, ''), apiKey, models: parsed.slice(0, 256),
+    ...(routes !== undefined ? { routes } : {}) }
 }
 
 function providersNamespace(host: ProviderSettingsHost): string {
@@ -86,7 +101,7 @@ function ownedRoutes(value: unknown): string[] {
 }
 
 /**
- * Write the connection, or remove AA's routes when it is null.
+ * Atomically write every requested protocol, or remove AA's routes when null.
  * @returns the route AA now owns, or null when none remains.
  */
 export async function applyConnection(host: ProviderSettingsHost, connection: Connection | null): Promise<{ provider: string | null }> {
@@ -94,20 +109,25 @@ export async function applyConnection(host: ProviderSettingsHost, connection: Co
   if (!settings || !credentials || !host.llm) throw new BridgeError('UNSUPPORTED_OPERATION', 'DSH provider settings are unavailable.')
   if (!settings.writable) throw new BridgeError('UNSUPPORTED_OPERATION', 'The active DSH profile is read-only.')
   const ns = providersNamespace(host)
-  const route = connection ? routeName(connection.protocol) : null
-  if (connection && route) await credentials.set(keyReference(route), connection.apiKey)
+  const connections = connection ? [connection, ...(connection.routes ?? [])].filter(item => item.models.length) : []
+  const desired = new Set(connections.map(item => routeName(item.protocol)))
+  const route = connections.length ? routeName(connections[0]!.protocol) : null
+  if (connection) {
+    for (const item of connections) await credentials.set(keyReference(routeName(item.protocol)), connection.apiKey)
+  }
   for (let attempt = 0; ; attempt++) {
     const descriptor = settings.describe({ redactSecrets: true }).find(item => item.ns === ns)
     if (!descriptor) throw new BridgeError('UNSUPPORTED_OPERATION', 'DSH provider settings are unavailable.')
-    const stale = ownedRoutes(descriptor.value).filter(name => name !== route)
+    const stale = ownedRoutes(descriptor.value).filter(name => !desired.has(name))
     const ops: PathOp[] = stale.map(name => ({ op: 'unset', path: ['providers', name] }))
-    if (connection && route) {
-      ops.push({ op: 'set', path: ['providers', route], value: {
-        displayName: 'Agents Anywhere',
-        api: PROTOCOLS[connection.protocol],
-        baseURL: connection.baseUrl,
-        apiKeyEnv: keyReference(route),
-        models: connection.models.map(model => ({ id: model.id, name: model.name ?? model.id })),
+    for (const item of connections) {
+      const name = routeName(item.protocol)
+      ops.push({ op: 'set', path: ['providers', name], value: {
+        displayName: connections.length > 1 ? `Agents Anywhere · ${PROTOCOLS[item.protocol]}` : 'Agents Anywhere',
+        api: PROTOCOLS[item.protocol],
+        baseURL: item.baseUrl,
+        apiKeyEnv: keyReference(name),
+        models: item.models.map(model => ({ id: model.id, name: model.name ?? model.id })),
       } })
     }
     try {

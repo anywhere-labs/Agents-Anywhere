@@ -30,6 +30,7 @@ MODEL_CONNECTION = ModelConnectionCapability(
     catalog_auto=False,
     catalog_manual=True,
     catalog_required=True,
+    multi_protocol=True,
 )
 
 
@@ -69,7 +70,7 @@ def dsh_config_schema() -> dict[str, Any]:
                 **positive_timeout,
                 "default": DEFAULT_RESTART_BACKOFF_MS,
             },
-            "modelGateway": model_gateway_schema(MODEL_PROTOCOLS),
+            "modelGateway": model_gateway_schema(MODEL_PROTOCOLS, multi_protocol=True),
             "customModels": custom_models_schema(),
         },
         "additionalProperties": False,
@@ -110,7 +111,7 @@ def normalized_config_values(raw: dict[str, Any]) -> dict[str, Any]:
             raise RuntimeInvalidRequestError(
                 f"{key} must be an integer between 100 and 600000"
             )
-    gateway = model_gateway_from_config(values.get("modelGateway"), protocols=MODEL_PROTOCOLS)
+    gateway = model_gateway_from_config(values.get("modelGateway"), protocols=MODEL_PROTOCOLS, multi_protocol=True)
     if gateway is None:
         values.pop("modelGateway", None)
     else:
@@ -120,6 +121,13 @@ def normalized_config_values(raw: dict[str, Any]) -> dict[str, Any]:
     if gateway is not None and not values.get("customModels"):
         # DSH only serves a declared gateway route with its models listed.
         raise ModelConnectionUnsupportedError("DSH needs at least one model for a model gateway")
+    if gateway is not None:
+        available = {item["modelId"] for item in values.get("customModels", [])}
+        referenced = set(gateway.model_ids or ())
+        for route in gateway.routes or ():
+            referenced.update(route["modelIds"])
+        if referenced - available:
+            raise ModelConnectionUnsupportedError("DSH route refers to a model missing from customModels")
     attempts = values.get("maxRestartAttempts")
     if (
         not isinstance(attempts, int)

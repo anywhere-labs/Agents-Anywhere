@@ -151,8 +151,19 @@ class DshRuntime(AgentRuntime):
                     for model in values.get("customModels") or []
                 ],
             }
+        if connection is not None and isinstance(gateway, Mapping):
+            all_models = connection["models"]
+            if "modelIds" in gateway:
+                connection["models"] = [m for m in all_models if m["id"] in gateway["modelIds"]]
+            if "routes" in gateway:
+                connection["routes"] = [
+                    {"protocol": route["protocol"], "baseUrl": route["baseUrl"],
+                     "models": [m for m in all_models if m["id"] in route["modelIds"]]}
+                    for route in gateway["routes"]
+                ]
         try:
-            await client.request("applyModelConnection", {"connection": connection})
+            method = "applyModelConnections" if isinstance(gateway, Mapping) and ("routes" in gateway or "modelIds" in gateway) else "applyModelConnection"
+            await client.request(method, {"connection": connection})
         except (OSError, TimeoutError, ValueError) as exc:
             # The rest of the start decides whether the Bridge is usable.
             logger.warning("DSH model connection request failed error_type={}", type(exc).__name__)

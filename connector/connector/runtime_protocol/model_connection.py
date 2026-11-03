@@ -60,6 +60,7 @@ class ModelConnectionCapability:
     catalog_manual: bool = True
     # The connection is only used with the models listed in ``models_field``.
     catalog_required: bool = False
+    multi_protocol: bool = False
     modes: tuple[ModelConnectionMode, ...] = field(default_factory=tuple)
     # Config field that selects one of ``modes``.
     mode_field: str | None = None
@@ -82,6 +83,7 @@ class ModelConnectionCapability:
             "configField": self.config_field,
             "modelsField": self.models_field,
             "protocols": list(self.protocols),
+            **({"multiProtocol": True} if self.multi_protocol else {}),
             "modes": [mode.payload() for mode in self.modes],
             "modeField": self.mode_field,
             "scope": self.scope,

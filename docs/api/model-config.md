@@ -72,6 +72,14 @@
 
 应用记录的 `status` 按优先级为 `applying`、`failed`、`deferred`（已保存，空闲后生效）、`modified`（应用后手动改过）、`outdated`（配置的模型或 Key 已变化）、`applied`。
 
+### 多协议模型连接
+
+声明 `modelConnection.multiProtocol: true` 的 Runtime（当前为 DSH）会同时应用模型服务中所有兼容协议。预览和 64 个模型限制按去重后的模型 ID 计算；同一模型可以出现在多个协议下，选择时以 Provider 和模型 ID 区分。
+
+`modelGateway` 保留主协议的 `protocol`、`baseUrl` 和只写的 `apiKey`，可附带主协议的 `modelIds` 和额外的 `routes: [{protocol, baseUrl, modelIds}]`。所有路由共用该 Key，模型名称来自 `customModels`；没有这些附加字段的旧单协议配置仍可使用。恢复、重新应用和 Key 轮换以整个网关对象为单位处理。
+
+DSH Bridge 在一次设置更新中写入各协议 Provider，仅删除本次配置已不再包含的 AA 路由，保留用户自己的 Provider；模型目录随设置更新失效并重新读取。已有单协议配置需要重新应用模型服务，才能补齐其余协议。Server、Connector 和 DSH Bridge 需配套更新；多协议下发使用 `applyModelConnections`，旧插件会明确拒绝，避免只应用主协议却报告成功。
+
 ## Tokens Anywhere 链接
 
 Tokens Anywhere 是 OAuth 授权服务器，每个 AA 实例是公共 PKCE 客户端 `agents-anywhere`，以 origin 区分。Tokens Anywhere 地址是实例设置，默认取环境变量 `AGENT_SERVER_TOKENS_URL`，必须与 Tokens 的 `TOKENS_PUBLIC_ORIGIN` 完全一致（回跳的 `iss` 按它校验）；回调地址用 `AGENT_SERVER_PUBLIC_ORIGIN` 拼出。同步模型时，网关地址取 Tokens `GET /api/v1/status` 返回的 `apiBaseUrl`，没有时用 Tokens 地址。Tokens 必须设置 `TOKENS_SECRETS_KEY`：否则托管 Key 的明文只在创建时返回一次，AA 之后每次应用都要重新取回，会得到 409 `key_not_kept`。
