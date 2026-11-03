@@ -30,7 +30,7 @@
 - **应用流程按真实代码重新设计**：网关型 Runtime 由 Server 直接写配置，避免死锁和 Key 来回传；恢复改为反向修改，绝不删除 Runtime。
 - **Key 脱敏在 Server 统一处理**：不依赖 Connector 版本。
 - **删除了中转站内部实现**：那部分以 Tokens 仓库的设计文档为准，本文可以公开。
-- **对齐 Tokens #94**：授权服务器的服务端核心已合并；授权页还没有，先用临时授权页联调（见 3.7）。
+- **对齐 Tokens #94、#95、#98、#99**：授权服务器的服务端核心、授权页、嵌入控制台和 DSH 接入都已合并，AA 一侧按正式授权页对接（见 3.7）。
 
 ## 1. 结论
 
@@ -297,13 +297,14 @@ Server 保存最近一次回报，并记录当时下发的连接摘要（地址�
 
 本节摘录 Tokens 一侧已经确定的设计。实现时如有变化，以 #510 和 Tokens 的设计文档为准。下文用 `{TOKENS}` 表示 Tokens 地址。
 
-**Tokens 的实现进度**（截至 `997f5dd`）：
+**Tokens 的实现进度**（截至 `a8b1fd9`）：
 
 | 步骤 | 内容 | 状态 |
 | --- | --- | --- |
-| 1 服务端核心 | `/api/v1/oauth/token`、`/api/v1/oauth/revoke`、Bearer 认证、Key 绑定授权、安全页「已连接的应用」 | **已合并（#94）**，生产还没部署 |
-| 2 授权流程 | `/oauth/authorize/` 授权页、串联 AA 云登录、`state` 和 `iss` 回传、完成页 | 没做，先用临时授权页（3.7） |
-| 3 嵌入控制台 | 票据、嵌入会话 | 没做，只影响 Web 上的可选嵌入 |
+| 1 服务端核心 | `/api/v1/oauth/token`、`/api/v1/oauth/revoke`、Bearer 认证、Key 绑定授权、安全页「已连接的应用」 | 已合并（anywhere-tokenhub#94） |
+| 2 授权流程 | `/oauth/authorize/` 授权页、串联 AA 云登录、`state` 和 `iss` 回传、完成页、RFC 8414 元数据 | 已合并（anywhere-tokenhub#95） |
+| 3 嵌入控制台 | 票据、嵌入会话 | 已合并（anywhere-tokenhub#98）；AA 一侧还没做 |
+| 4 DSH 接入 | `dsh://v1/tokens/login` 触发 DSH 自己发起授权 | 已合并（anywhere-tokenhub#99）；DSH 一侧见 dsh-desktop#1583 |
 
 ### 3.1 角色
 
@@ -387,90 +388,23 @@ AA 不会用到这些接口。下表的接口 #94 都已支持 Bearer：
 | 3 | 明确 DeepSeek 等模型能否走 Responses | 决定 Codex 能用哪些模型 |
 | 4 | 和 dsh-desktop#1583 约定 Provider ID | DSH Next 会自己链接 Tokens 并配置 Provider，AA 也会写入，需要避免重复（见 7.6） |
 
-### 3.7 临时授权页（demo，以后替换）
+### 3.7 授权页（anywhere-tokenhub#95）
 
-Tokens 的第 2 步（授权页）还没实现，所以先做一个**临时授权页**，让 AA 一侧能够联调。正式授权页上线后直接替换它，**AA 一侧不用改任何代码**。
+AA 只依赖下面这些对外约定，和 Tokens 的实现细节无关：
 
-#### 能做到「替换后 AA 不改」的前提
-
-临时页和正式页必须对外完全一致：
-
-| 对外约定 | 要求 |
+| 约定 | 内容 |
 | --- | --- |
-| 入口地址 | 同样是 `{TOKENS}/oauth/authorize/?response_type=code&client_id=…&redirect_uri=…&code_challenge=…&code_challenge_method=S256&state=…` |
-| 回跳 | 同样是 302 到 `redirect_uri?code=…&state=…&iss=…`；取消时带 `error=access_denied&state=…&iss=…` |
-| 授权码 | 用 #94 现成的 `auth.Service.IssueCode` 签发，所以 60 秒有效、只能用一次、绑定 client、redirect_uri 和 PKCE，`/api/v1/oauth/token` 原样可用 |
-| 完成页 | 提供 `{TOKENS}/oauth/done/`，内容可以很简单 |
+| 授权地址 | `{TOKENS}/oauth/authorize/?response_type=code&client_id=agents-anywhere&redirect_uri=…&code_challenge=…&code_challenge_method=S256&state=…`；`scope` 可以不传，传的话只能是 `user` |
+| 回调地址 | 任意 http/https origin 加固定路径 `/api/v2/integrations/tokens/callback`，不带 userinfo、query、fragment，主机名只能是字母、数字、点、短横线或 IPv6 |
+| `state` | 可打印 ASCII，最长 512；AA 用 43 个字符的随机串 |
+| PKCE | 只接受 S256；verifier 为 43–128 个 `[A-Za-z0-9._~-]` 字符，AA 用 64 个 |
+| 回跳 | 成功带 `code`、`state`、`iss`；错误和取消带 `error`、`state`、`iss`。`iss` 等于 Tokens 的 `TOKENS_PUBLIC_ORIGIN`，所以 AA 配置的 Tokens 地址必须与它完全一致 |
+| 确认 | `TOKENS_OAUTH_TRUSTED_ORIGINS` 里的实例直接去 AA 云登录；自部署实例先看到确认页（大字显示实例地址，http 标注未加密） |
+| 身份 | 每次授权都用 AA 云登录，并替换浏览器里原有的 Tokens 会话，授权给的一定是刚确认的 AA 云账号 |
+| 完成页 | 换完 token 后 AA 把浏览器送到 `{TOKENS}/oauth/done/`，它按会话显示链接结果 |
+| 网关地址 | `/v1` 可能由单独的 `TOKENS_API_BASE_URL` 提供；AA 同步模型时读 `GET {TOKENS}/api/v1/status` 的 `apiBaseUrl`，读不到时用 Tokens 地址 |
 
-AA 只依赖这几条，看不到授权页内部怎么实现。
-
-#### 最小实现
-
-#94 已经有签发授权码的服务函数 `IssueCode(userID, clientID, redirectURI, codeChallenge)`，只是还没有 HTTP 入口。临时授权页只需要补两样：
-
-1. **页面 `web/app/oauth/authorize/page.tsx`**：静态页，读取地址栏参数后调用下面的接口。
-2. **接口 `POST /api/v1/oauth/authorize`**：只接受控制台会话，走现有的 CSRF 检查。
-   - 请求体：authorize 的参数，加 `approved: true | false`。
-   - 校验：`response_type=code`；client 已注册；`code_challenge_method=S256`；`state` 必填，最长 512 个字符。`redirect_uri` 和 `code_challenge` 由 `IssueCode` 校验。
-   - 同意：调用 `IssueCode`，返回带 `code`、`state`、`iss` 的回跳地址；取消：返回带 `error=access_denied` 的回跳地址。
-   - `iss` 取 `TOKENS_PUBLIC_ORIGIN`。
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor U as 用户
-    participant B as 浏览器
-    participant P as 临时授权页（Tokens）
-    participant API as Tokens API
-    participant SVC as auth.Service.IssueCode
-    participant AA as AA 实例回调
-
-    B->>P: GET /oauth/authorize/?client_id…&redirect_uri…&state…
-    P->>P: 读取参数（静态页，不依赖首个请求带会话 cookie）
-    P->>API: GET /api/v1/me（会话）
-    alt 未登录 Tokens
-        API-->>P: 401
-        P-->>B: 跳到登录页，next 带回本页完整地址
-        Note over B,P: 用 AA 云账号登录后回到本页
-    end
-    P->>U: 显示当前 Tokens 账号、实例 origin（http 时标注未加密）
-    alt 同意
-        U->>P: 链接
-        P->>API: POST /api/v1/oauth/authorize（approved=true）
-        API->>SVC: IssueCode(userID, clientID, redirectURI, challenge)
-        SVC-->>API: code
-        API-->>P: redirect_uri?code&state&iss
-    else 取消
-        U->>P: 取消
-        P->>API: POST /api/v1/oauth/authorize（approved=false）
-        API-->>P: redirect_uri?error=access_denied&state&iss
-    end
-    P-->>B: 跳转
-    B->>AA: GET /api/v2/integrations/tokens/callback
-```
-
-**为什么是静态页再调接口**：Tokens 的会话 cookie 是 `SameSite=Strict`，从 AA 实例跳过来是跨站导航，第一个请求不带会话。页面加载后再由页面自己发同站请求，就能带上会话。
-
-#### 临时页省掉的部分，以及因此带来的限制
-
-| 正式页（Tokens 第 2 步） | 临时页 | 限制 |
-| --- | --- | --- |
-| 每次都串联 AA 云登录，确认当场的身份 | 用浏览器里已有的 Tokens 会话 | 授权给实例的是浏览器里登录的 Tokens 账号，不一定是用户此刻以为的那个，所以页面必须醒目显示当前账号 |
-| 授权请求绑定浏览器（`__Host-` cookie）、存在服务端 | 参数只在页面和这次请求里 | 不影响安全：code 只发给 `redirect_uri`，没有 PKCE verifier 换不出 token |
-| 自部署实例的确认页、可信 origin 列表 | 所有 origin 都显示确认，不区分 | 体验差一点，可以接受 |
-| 完成页显示链接结果、余额 | 只显示「已链接，可以返回」 | — |
-
-#### 不能省的
-
-- **必须由用户点击确认，绝不自动同意。** 否则任何网站都能把用户的浏览器导向授权地址，`redirect_uri` 写成攻击者自己的实例，静默拿到用户的 token。
-- **大字显示实例 origin**，http 的标注「未加密连接」。
-- **页面禁止被嵌入**：保持 `X-Frame-Options: DENY`，防点击劫持。
-
-#### 上线范围
-
-- **开关**：临时页由环境变量 `TOKENS_OAUTH_DEMO_AUTHORIZE=true` 开启，默认关闭。
-- **环境**：用于测试环境和联调。**生产环境要不要先开**，取决于能否接受上表的身份限制，见第 13 节。
-- **替换时**：删除开关和临时接口，正式授权页沿用同一个地址；AA 和 DSH 不用改动。
+**已知限制**：用户在 AA 云的确认页上拒绝时，Tokens 显示「登录已取消」，不会把 `access_denied` 回传给实例；AA 的链接记录 10 分钟后自然过期。
 
 ## 4. 链接与令牌（AA 一侧）
 
@@ -863,7 +797,7 @@ sequenceDiagram
 
 用户在 Tokens 或 AA 云取消时，回调带 `error`，Server 跳回配置管理页并提示。
 
-上图画的是 Tokens 的正式授权页。临时授权页阶段，Tokens 不串联 AA 云登录，用浏览器里已有的 Tokens 会话（见 3.7）；AA 一侧的步骤完全相同。
+上图画的是 Tokens 的正式授权页（anywhere-tokenhub#95）。
 
 ### 5.5 在 Desktop 或手机上链接
 
@@ -1622,7 +1556,7 @@ MacBook Pro
 
 | 阶段 | 内容 | 结果 |
 | --- | --- | --- |
-| **0 前提与验证** | #470 变基后合并（目前与 main 冲突）；Tokens 部署 #94，并上线临时授权页（3.7）或正式的第 2 步；DSH 写入接口实测；确认 DeepSeek 能否走 Responses | 排除阻塞，可以联调 |
+| **0 前提与验证** | #470 合并并部署到 AA 云（Tokens 用它登录）；Tokens 部署 #94、#95，并把 AA 云加入 `TOKENS_OAUTH_TRUSTED_ORIGINS`；DSH 写入接口实测；确认 DeepSeek 能否走 Responses | 排除阻塞，可以联调 |
 | **1 主流程** | 链接与刷新；配置管理模块；手动配置；Codex、Claude、Pi；四端配置管理页；快照同步；Key 只写不读 | 任何端都能链接和导入，改动实时同步，Key 不再发给客户端 |
 | **2 DSH 与增强** | DSH 通道（含和 #1583 的协调）；离线和任务结束后自动应用（`pending`）；自动更新开关；Web 嵌入控制台 | 四个 Runtime 齐全 |
 | **3 安全加固** | `config_json` 字段加密 | 数据库里不再有明文 Key |
@@ -1634,7 +1568,7 @@ MacBook Pro
 | 依赖 | 影响 |
 | --- | --- |
 | #470（与 main 冲突，需变基） | **前置条件**：Tokens 用 AA 云登录。#510 不要求再改它 |
-| Tokens 的 OAuth 授权服务器 | 第 1 步已合并（#94）；第 2 步没做，用临时授权页先联调（3.7）；第 3 步只影响 Web 嵌入 |
+| Tokens 的 OAuth 授权服务器 | 第 1–4 步都已合并（anywhere-tokenhub#94、#95、#98、#99）；AA 一侧的嵌入控制台还没做 |
 | dsh-desktop#1583 | 和 DSH 自行链接的协调（7.6） |
 | #441（Server 与 Connector 的控制 RPC 迁到 MeshCall） | DSH 的新 RPC 要多加一处映射 |
 | #379（OpenCode） | 合并后按能力字段加一个 Runtime，可检验端口设计 |
@@ -1650,14 +1584,12 @@ MacBook Pro
 | 5 | DSH 是否第一版必须有 | 取决于第 0 阶段的实测和 #1583 的进展；建议第二阶段 |
 | 6 | 嵌入控制台是否做 | 第二阶段，只做 Web；其他端打开浏览器 |
 | 7 | 自部署实例默认显示 Tokens 入口吗 | **显示**，#510 要求默认可用。点「链接」之前不向 Tokens 发任何请求 |
-| 8 | 临时授权页由谁做、生产环境开不开 | 由 Tokens 一侧做，按 3.7 的约定，工作量是一个页面和一个接口。**只开在测试环境**：它用浏览器里已有的会话，不当场确认 AA 云身份，正式页上线前不建议在生产开启 |
 
 ## 14. 尚未验证
 
 没有写代码，也没有端到端跑过：
 
 - **前置条件还没完全就绪**：Tokens 授权服务器的第 1 步已合并但没部署，授权页还没有；#470 还没合并。第 3 节的授权页部分以设计为准，实现时可能会变。
-- **临时授权页**：3.7 是对 Tokens 一侧的建议，还没有实现，也没和 Tokens 的作者确认。
 - **`/v1/models` 未实测**：「按 Key 的策略和可用线路过滤」是读代码得出的。DeepSeek 能否走 Responses 未确认。
 - **非 Web 端的 cookie 未实测**：Desktop、iOS、Android 在系统浏览器和授权会话里打开启动地址后，cookie 能否在 Tokens 往返中保持，需要真机验证。局域网 http 实例的 cookie 也要验证。
 - **嵌入控制台的浏览器支持**：分区 cookie 的支持情况由 Tokens 实测，Safari 尤其要确认。

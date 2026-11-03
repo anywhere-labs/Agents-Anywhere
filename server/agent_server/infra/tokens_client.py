@@ -142,6 +142,12 @@ class TokensClient:
         data = body.get("data")
         return [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
 
+    async def api_base_url(self) -> str | None:
+        """Where the gateway serves ``/v1``; it may differ from the site's origin."""
+        body = _checked(await self._send("GET", "/api/v1/status"))
+        value = body.get("apiBaseUrl")
+        return value if isinstance(value, str) and value else None
+
     async def pricing(self) -> dict[str, Any]:
         body = _checked(await self._send("GET", "/api/v1/pricing"))
         profiles = body.get("profiles")

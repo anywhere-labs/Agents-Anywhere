@@ -35,6 +35,8 @@ class FakeTokens:
         self.secret = "sk-aa-secret-0001"
         self.revoked: list[str] = []
         self.refresh_error: str | None = None
+        self.api_base_url: str | None = None
+        self.model_hosts: list[str] = []
 
     def _pair(self) -> httpx.Response:
         self.refresh_count += 1
@@ -73,7 +75,10 @@ class FakeTokens:
             return httpx.Response(
                 200, json={"groups": [], "profiles": {"gpt-5": {"displayName": "GPT-5", "capabilities": ["vision"]}}}
             )
+        if path == "/api/v1/status":
+            return httpx.Response(200, json={"siteName": "Tokens", "apiBaseUrl": self.api_base_url or ISSUER})
         if path == "/v1/models":
+            self.model_hosts.append(f"{request.url.scheme}://{request.url.host}")
             assert request.headers["authorization"] == f"Bearer {self.secret}"
             if request.headers.get("anthropic-version"):
                 return httpx.Response(200, json={"data": [{"type": "model", "id": "claude-x"}]})
@@ -331,3 +336,16 @@ def test_runtimes_left_on_the_old_key_are_marked_failed(tokens):
     [assignment] = _overview(client, headers)["assignments"]
     assert assignment["status"] == "failed"
     assert assignment["error"]["code"] == "key_rotated"
+
+
+def test_models_come_from_the_gateway_address_tokens_reports(tokens):
+    client, fake, _connector_id, headers = tokens
+    fake.api_base_url = "https://api.tokens.test"
+
+    _link(client, headers, fake)
+
+    profile = _tokens_profile(client, headers)
+    offers = {offer["format"]: offer for offer in profile["offers"]}
+    assert set(fake.model_hosts) == {"https://api.tokens.test"}
+    assert offers["openai_chat"]["baseUrl"] == "https://api.tokens.test/v1"
+    assert offers["anthropic"]["baseUrl"] == "https://api.tokens.test"

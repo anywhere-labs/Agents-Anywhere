@@ -404,9 +404,11 @@ class TokensLinkService:
         body = await self._call(user_id, lambda client, token: client.managed_key(token))
         client = self._client_factory(issuer)
         secret = str(body["secret"])
+        gateway = await self._gateway_origin(client, issuer)
+        gateway_client = client if gateway == issuer else self._client_factory(gateway)
         try:
-            openai_models = await client.models(secret, anthropic=False)
-            anthropic_models = await client.models(secret, anthropic=True)
+            openai_models = await gateway_client.models(secret, anthropic=False)
+            anthropic_models = await gateway_client.models(secret, anthropic=True)
         except TokensUnauthorizedError as exc:
             raise TokensLinkError("key_rejected", "Tokens Anywhere refused this instance's key") from exc
         try:
@@ -414,13 +416,25 @@ class TokensLinkService:
         except TokensError:
             profiles = {}
         offers = catalog_offers(
-            issuer, openai_models=openai_models, anthropic_models=anthropic_models, profiles=profiles
+            gateway, openai_models=openai_models, anthropic_models=anthropic_models, profiles=profiles
         )
         if not offers:
             raise TokensLinkError("catalog_empty", "this key reaches no models yet")
         return await self.model_config.save_tokens_profile(
             user_id=user_id, name=PROFILE_NAME, offers=offers, key_ref=key_ref(body["key"])
         )
+
+    async def _gateway_origin(self, client: TokensClient, issuer: str) -> str:
+        """The gateway's origin from Tokens Anywhere's status, else the site's own."""
+        try:
+            configured = await client.api_base_url()
+        except TokensError:
+            return issuer
+        try:
+            return normalize_tokens_url(configured) if configured else issuer
+        except ValueError:
+            logger.warning("Tokens Anywhere reported an unusable apiBaseUrl; using its own origin")
+            return issuer
 
     async def rotate_key(
         self, profile_id: str, *, user_id: str, allow_interrupt: bool, idempotency_key: str
