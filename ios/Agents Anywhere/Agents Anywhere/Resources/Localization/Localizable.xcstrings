@@ -3493,6 +3493,24 @@
         }
       }
     },
+    "Hide": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.hideModels. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收起"
+          }
+        }
+      }
+    },
     "Hide secret": {
       "extractionState": "manual",
       "localizations": {
@@ -3629,24 +3647,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "继续编辑"
-          }
-        }
-      }
-    },
-    "Key %@": {
-      "comment": "Shared with Web: pages.settings.modelConfigs.keyHint. Sync with ios/scripts/web_copy.py.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Key %@"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Key %@"
           }
         }
       }
@@ -4180,6 +4180,24 @@
         }
       }
     },
+    "Models discovered": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.modelsDiscovered. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Models discovered"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动获取模型"
+          }
+        }
+      }
+    },
     "Models synced": {
       "comment": "Shared with Web: pages.settings.modelConfigs.synced. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -4499,6 +4517,24 @@
         }
       }
     },
+    "No models listed; the runtime reads them from this address.": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.modelsDiscoveredDescription. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No models listed; the runtime reads them from this address."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有指定模型，由 Runtime 自己从这个地址获取。"
+          }
+        }
+      }
+    },
     "No pinned sessions": {
       "extractionState": "manual",
       "localizations": {
@@ -4655,6 +4691,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "未配置"
+          }
+        }
+      }
+    },
+    "Not in use": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.unused. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not in use"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未被使用"
           }
         }
       }
@@ -5221,6 +5275,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "项目"
+          }
+        }
+      }
+    },
+    "Protocols": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.protocolsLabel. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Protocols"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "协议"
           }
         }
       }
@@ -6137,6 +6209,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "收起"
+          }
+        }
+      }
+    },
+    "Show models and addresses": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.showModels. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show models and addresses"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看模型和地址"
           }
         }
       }
@@ -8094,6 +8184,24 @@
         }
       }
     },
+    "Usage": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.usage. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用情况"
+          }
+        }
+      }
+    },
     "Use at least 8 characters. Changing the password does not sign out this device.": {
       "comment": "Shared with Web: pages.settings.newPasswordDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -8119,13 +8227,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Used by %lld"
+            "value": "Used by %lld runtimes"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld 个设备在用"
+            "value": "%lld 个 Runtime 在用"
           }
         }
       }

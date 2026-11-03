@@ -231,12 +231,13 @@ private struct ModelConfigPage: View {
         return HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Text(profile.name).font(.body.weight(.semibold)).lineLimit(1)
-                    ModelStatusBadge(title: ModelConfigPresentation.sourceLabel(profile.source), tone: .neutral)
+                    Text(profile.name).font(.body.weight(.semibold))
+                    // The Tokens profile is already named after its source.
+                    let source = ModelConfigPresentation.sourceLabel(profile.source)
+                    if source != profile.name { ModelStatusBadge(title: source, tone: .neutral) }
                     if !profile.isActive { ModelStatusBadge(title: String(localized: "Unlinked"), tone: .warning) }
                 }
-                Text(ModelConfigPresentation.profileSummary(profile, usedBy: usedBy))
-                    .font(.footnote).foregroundStyle(.secondary).lineLimit(3)
+                ModelProfileDetails(profile: profile, usedBy: usedBy)
             }
             Spacer(minLength: 0)
             if busy { ProgressView() }

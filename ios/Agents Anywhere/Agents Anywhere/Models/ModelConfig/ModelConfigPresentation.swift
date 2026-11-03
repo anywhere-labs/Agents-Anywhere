@@ -137,15 +137,21 @@ nonisolated enum ModelConfigPresentation {
         Set(targets.filter { $0.canApply && !$0.requiresConfirmation }.map(\.id))
     }
 
-    static func profileSummary(_ profile: V2ModelProfile, usedBy: Int) -> String {
-        var parts: [String] = []
-        if !profile.originHost.isEmpty { parts.append(profile.originHost) }
-        let protocols = profile.offers.map { protocolLabel($0.format) }.joined(separator: " / ")
-        if !protocols.isEmpty { parts.append(protocols) }
-        parts.append(String(localized: "\(profile.modelCount) models"))
-        if let hint = profile.keyHint, !hint.isEmpty { parts.append(String(localized: "Key \(hint)")) }
-        if usedBy > 0 { parts.append(String(localized: "Used by \(usedBy)")) }
-        return parts.joined(separator: " · ")
+    /// Short enough for a tag; the full protocol name shows in the expanded details.
+    static func protocolShortLabel(_ value: String) -> String {
+        switch V2ModelProtocol(rawValue: value) {
+        case .openaiResponses: "Responses"
+        case .openaiChat: "Chat Completions"
+        case .anthropic: "Anthropic"
+        case nil: value
+        }
+    }
+
+    static func offerSummary(_ offer: V2ModelOffer) -> String {
+        let models = offer.models.isEmpty
+            ? String(localized: "Models discovered")
+            : String(localized: "\(offer.models.count) models")
+        return "\(protocolShortLabel(offer.format))  \(models)"
     }
 
     static func previewDetail(_ target: V2ModelPreviewTarget) -> String {

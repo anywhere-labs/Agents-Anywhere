@@ -43,14 +43,13 @@
     <string name="model_config_profile_saved">Profile saved</string>
     <string name="model_config_delete_profile">Delete profile</string>
     <string name="model_config_detached">Unlinked</string>
-    <string name="model_config_key_hint">Key %1$s</string>
     <plurals name="model_config_model_count">
         <item quantity="one">%1$d model</item>
         <item quantity="other">%1$d models</item>
     </plurals>
     <plurals name="model_config_used_by">
-        <item quantity="one">Used by %1$d</item>
-        <item quantity="other">Used by %1$d</item>
+        <item quantity="one">Used by %1$d runtime</item>
+        <item quantity="other">Used by %1$d runtimes</item>
     </plurals>
     <string name="model_config_source_tokens">Tokens Anywhere</string>
     <string name="model_config_source_manual">Manual</string>
@@ -145,4 +144,13 @@
     <string name="model_config_error_models_required">This runtime needs at least one imported model.</string>
     <string name="model_config_error_key_rotated">The key was rotated. Apply this profile again.</string>
     <string name="model_config_skip_models_required">Needs at least one model</string>
+    <string name="model_config_address">Address</string>
+    <string name="model_config_usage">Usage</string>
+    <string name="model_config_protocols_label">Protocols</string>
+    <string name="model_config_models">Models</string>
+    <string name="model_config_unused">Not in use</string>
+    <string name="model_config_models_discovered">Models discovered</string>
+    <string name="model_config_models_discovered_description">No models listed; the runtime reads them from this address.</string>
+    <string name="model_config_show_models">Show models and addresses</string>
+    <string name="model_config_hide_models">Hide</string>
 </resources>

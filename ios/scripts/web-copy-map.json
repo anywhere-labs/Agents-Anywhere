@@ -171,12 +171,6 @@
     "Home 目录": "dashboard.workspacePicker.home",
     "I confirm changing the selected runtimes' own global settings, which also affects using them outside AA.": "pages.settings.modelConfigs.confirmNativeGlobal",
     "Instance name": "dashboard.device.runtimeName",
-    "Key %@": {
-      "source": "pages.settings.modelConfigs.keyHint",
-      "arguments": {
-        "hint": "@"
-      }
-    },
     "Language": "pages.settings.language",
     "Light": "pages.settings.light",
     "Link": "pages.settings.modelConfigs.link",
@@ -621,6 +615,13 @@
     "Interrupt and continue": "pages.settings.modelConfigs.interruptContinue",
     "Needs at least one model": "pages.settings.modelConfigs.skip.models_required",
     "This runtime needs at least one imported model.": "pages.settings.modelConfigs.errors.models_required",
-    "The key was rotated. Apply this profile again.": "pages.settings.modelConfigs.errors.key_rotated"
+    "The key was rotated. Apply this profile again.": "pages.settings.modelConfigs.errors.key_rotated",
+    "Usage": "pages.settings.modelConfigs.usage",
+    "Protocols": "pages.settings.modelConfigs.protocolsLabel",
+    "Not in use": "pages.settings.modelConfigs.unused",
+    "Models discovered": "pages.settings.modelConfigs.modelsDiscovered",
+    "No models listed; the runtime reads them from this address.": "pages.settings.modelConfigs.modelsDiscoveredDescription",
+    "Show models and addresses": "pages.settings.modelConfigs.showModels",
+    "Hide": "pages.settings.modelConfigs.hideModels"
   }
 }

@@ -2,6 +2,7 @@ package com.agentsanywhere.app.ui.screens.modelconfig
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,6 +43,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -408,23 +410,19 @@ private fun ProfileItem(
             },
         )
     }
-    val details = listOfNotNull(
-        profile.originHost.takeIf(String::isNotBlank),
-        profile.offers.map { protocolLabel(it.format) }.takeIf { it.isNotEmpty() }?.joinToString(" / "),
-        pluralStringResource(R.plurals.model_config_model_count, profile.modelCount(), profile.modelCount()),
-        profile.keyHint?.let { stringResource(R.string.model_config_key_hint, it) },
-        usedBy.takeIf { it > 0 }?.let { pluralStringResource(R.plurals.model_config_used_by, it, it) },
-    ).joinToString(" · ")
+    val source = stringResource(if (profile.isTokens) R.string.model_config_source_tokens else R.string.model_config_source_manual)
 
     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         TitleLine(
             title = profile.name,
+            // The Tokens profile is already named after its source.
             tags = listOfNotNull(
-                stringResource(if (profile.isTokens) R.string.model_config_source_tokens else R.string.model_config_source_manual),
+                source.takeIf { it != profile.name },
                 stringResource(R.string.model_config_detached).takeIf { !profile.isActive },
             ),
+            wrapTitle = true,
         )
-        MutedText(details)
+        ProfileDetails(profile, usedBy)
         ActionRow {
             SmallButton(
                 label = stringResource(R.string.model_config_apply),
@@ -618,6 +616,7 @@ private fun TitleLine(
     subtitle: String? = null,
     maturity: String? = null,
     tags: List<String> = emptyList(),
+    wrapTitle: Boolean = false,
 ) {
     val colors = LocalAAColors.current
     FlowRow(
@@ -629,7 +628,7 @@ private fun TitleLine(
             color = colors.ink,
             fontSize = 15.sp,
             fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
+            maxLines = if (wrapTitle) Int.MAX_VALUE else 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.align(Alignment.CenterVertically),
         )
@@ -639,6 +638,104 @@ private fun TitleLine(
         RuntimeMaturityBadge(maturity, Modifier.align(Alignment.CenterVertically))
         tags.forEach { StatusPill(it, ModelStatusTone.Neutral, Modifier.align(Alignment.CenterVertically)) }
     }
+}
+
+/** Every detail is labelled and wraps instead of being cut off. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ProfileDetails(profile: ModelProfile, usedBy: Int) {
+    val colors = LocalAAColors.current
+    var expanded by remember(profile.id) { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        DetailRow(stringResource(R.string.model_config_address)) {
+            DetailValue(profile.originHost)
+        }
+        profile.keyHint?.let { hint ->
+            DetailRow(stringResource(R.string.model_config_api_key)) {
+                DetailValue(hint, monospace = true)
+            }
+        }
+        DetailRow(stringResource(R.string.model_config_usage)) {
+            DetailValue(
+                if (usedBy > 0) pluralStringResource(R.plurals.model_config_used_by, usedBy, usedBy)
+                else stringResource(R.string.model_config_unused),
+            )
+        }
+        DetailRow(stringResource(R.string.model_config_protocols_label)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                profile.offers.forEach { offer ->
+                    val count = offer.models.size
+                    StatusPill(
+                        "${protocolShortLabel(offer.format)}  " + if (count > 0) {
+                            pluralStringResource(R.plurals.model_config_model_count, count, count)
+                        } else {
+                            stringResource(R.string.model_config_models_discovered)
+                        },
+                        ModelStatusTone.Neutral,
+                    )
+                }
+            }
+        }
+        Text(
+            text = (if (expanded) "▾ " else "▸ ") + stringResource(
+                if (expanded) R.string.model_config_hide_models else R.string.model_config_show_models,
+            ),
+            color = colors.muted,
+            fontSize = 12.sp,
+            modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .clickable { expanded = !expanded }
+                .padding(vertical = 4.dp),
+        )
+        if (expanded) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(colors.border.copy(alpha = 0.25f))
+                    .padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                profile.offers.forEach { offer ->
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(protocolLabel(offer.format), color = colors.ink, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+                        DetailRow(stringResource(R.string.model_config_address)) { DetailValue(offer.baseUrl) }
+                        DetailRow(stringResource(R.string.model_config_models)) {
+                            if (offer.models.isEmpty()) {
+                                MutedText(stringResource(R.string.model_config_models_discovered_description))
+                            } else {
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    offer.models.forEach { model ->
+                                        val label = model.name?.takeIf { it != model.id }?.let { "$it  ${model.id}" } ?: model.id
+                                        StatusPill(label, ModelStatusTone.Neutral)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailRow(label: String, value: @Composable () -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(label, color = LocalAAColors.current.muted, fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.width(64.dp))
+        Box(Modifier.weight(1f)) { value() }
+    }
+}
+
+@Composable
+private fun DetailValue(text: String, monospace: Boolean = false) {
+    Text(
+        text,
+        color = LocalAAColors.current.ink,
+        fontSize = 12.sp,
+        lineHeight = 17.sp,
+        fontFamily = if (monospace) FontFamily.Monospace else null,
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)

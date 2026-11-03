@@ -86,6 +86,14 @@ internal fun protocolLabelRes(protocol: String?): Int? = when (protocol) {
 internal fun protocolLabel(protocol: String): String =
     protocolLabelRes(protocol)?.let { stringResource(it) } ?: protocol
 
+/** Short enough for a tag; the full name shows in the expanded details. */
+internal fun protocolShortLabel(protocol: String): String = when (protocol) {
+    "openai_responses" -> "Responses"
+    "openai_chat" -> "Chat Completions"
+    "anthropic" -> "Anthropic"
+    else -> protocol
+}
+
 @StringRes
 internal fun effectLabelRes(effect: String?): Int? = when (effect) {
     "new_instance" -> R.string.model_config_effect_new_instance

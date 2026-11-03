@@ -40,12 +40,11 @@
     <string name="model_config_profile_saved">配置已保存</string>
     <string name="model_config_delete_profile">删除配置</string>
     <string name="model_config_detached">已断开</string>
-    <string name="model_config_key_hint">Key %1$s</string>
     <plurals name="model_config_model_count">
         <item quantity="other">%1$d 个模型</item>
     </plurals>
     <plurals name="model_config_used_by">
-        <item quantity="other">%1$d 个设备在用</item>
+        <item quantity="other">%1$d 个 Runtime 在用</item>
     </plurals>
     <string name="model_config_source_tokens">Tokens Anywhere</string>
     <string name="model_config_source_manual">手动</string>
@@ -137,4 +136,13 @@
     <string name="model_config_error_models_required">这个 Runtime 需要至少导入一个模型。</string>
     <string name="model_config_error_key_rotated">Key 已轮换，请重新应用这份配置。</string>
     <string name="model_config_skip_models_required">需要至少导入一个模型</string>
+    <string name="model_config_address">地址</string>
+    <string name="model_config_usage">使用情况</string>
+    <string name="model_config_protocols_label">协议</string>
+    <string name="model_config_models">模型</string>
+    <string name="model_config_unused">未被使用</string>
+    <string name="model_config_models_discovered">自动获取模型</string>
+    <string name="model_config_models_discovered_description">没有指定模型，由 Runtime 自己从这个地址获取。</string>
+    <string name="model_config_show_models">查看模型和地址</string>
+    <string name="model_config_hide_models">收起</string>
 </resources>
