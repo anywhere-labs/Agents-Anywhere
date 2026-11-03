@@ -27,6 +27,10 @@
 
 ### 会话创建与消息交付
 
+- Desktop 在准备本机 Connector 环境时一并准备 Pi 适配器及依赖，支持查看安装输出、取消与失败重试，兼容已有缓存，首次创建 Pi 会话不再临时下载适配器。（[#518](https://github.com/anywhere-labs/Agents-Anywhere/pull/518)）
+
+- Connector 重连恢复期间，Web 与 Desktop 会等待 Agent 就绪后再允许创建会话，运行时启动不再等待所有历史会话的能力刷新。（[#518](https://github.com/anywhere-labs/Agents-Anywhere/pull/518)）
+
 - 附件上传与下载改为流式处理，发送或打开大文件时不再整包占用服务端内存；图片附件同时提供缩略图地址，浏览大图更省流量。（[#492](https://github.com/anywhere-labs/Agents-Anywhere/pull/492)）
 
 - 修复 Codex 查看图片的记录显示为 `unknown` 的问题，现可点击图片路径打开预览。（[#491](https://github.com/anywhere-labs/Agents-Anywhere/pull/491)）
@@ -120,8 +124,6 @@
 - 插件「设置 → 维护」新增「重装依赖环境」：依赖下载中断或环境损坏时一键删除并重新安装，进行中的安装会被中断，账号、设备连接和设置都保留。（[#452](https://github.com/anywhere-labs/Agents-Anywhere/pull/452)）
 
 ### Desktop
-
-- Desktop 在准备本机 Connector 环境时一并准备 Pi 适配器及依赖，显示准备阶段和安装输出，支持取消与失败重试，首次创建 Pi 会话不再临时下载适配器，并兼容原有缓存；Connector 重连恢复期间不再误报可用并允许创建失败的会话，启动也不再等待所有历史会话的能力刷新。
 
 - 把本地文件夹拖进侧栏就能创建项目。重复目录、普通文件和一次拖入多项时会给出提示；拖拽结束或窗口失焦时，提示自动消失。（[#82](https://github.com/anywhere-labs/Agents-Anywhere/pull/82)）
 - Connector 启动失败时显示真实原因，可以复制错误信息、打开日志目录。（[#294](https://github.com/anywhere-labs/Agents-Anywhere/pull/294)）
