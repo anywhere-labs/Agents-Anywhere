@@ -1,6 +1,6 @@
 "use client"
 
-import { useRuntimeErrorText } from "@/lib/runtime-error-text"
+import { runtimeFailureOf, useRuntimeErrorText, type RuntimeFailure } from "@/lib/runtime-error-text"
 import { RuntimeWorkflowPanel } from "@/components/session/runtime-workflow-panel"
 import { useWorkspacePreparation } from "@/components/session/use-workspace-preparation"
 import { RuntimeCreationStatus } from "@/components/session/runtime-creation-status"
@@ -259,6 +259,7 @@ export function TaskComposer() {
   const [modelCatalog, setModelCatalog] = React.useState<ProtocolModelCatalog | null>(null)
   const [permissionCatalog, setPermissionCatalog] = React.useState<ProtocolPermissionCatalog | null>(null)
   const [runtimeCapabilities, setRuntimeCapabilities] = React.useState<ProtocolCapabilitySet | null>(null)
+  const [catalogError, setCatalogError] = React.useState<{ scope: string; failure: RuntimeFailure } | null>(null)
   const [catalogsLoading, setCatalogsLoading] = React.useState(false)
   const [catalogRefreshKey, setCatalogRefreshKey] = React.useState(0)
   const catalogScope = JSON.stringify([authSession?.accessToken, selectedConnectorId, selectedAgent])
@@ -456,13 +457,15 @@ export function TaskComposer() {
       })
       .then(({ capabilitySet, modelCatalogResponse, permissionCatalogResponse }) => {
         if (cancelled) return
+        setCatalogError(null)
         setLoadedCatalogScope(catalogScope)
         setRuntimeCapabilities(capabilitySet)
         setModelCatalog(modelCatalogResponse?.catalog ?? null)
         setPermissionCatalog(permissionCatalogResponse?.catalog ?? null)
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (cancelled) return
+        setCatalogError({ scope: catalogScope, failure: runtimeFailureOf(error) })
         setRuntimeCapabilities(null)
         setModelCatalog(null)
         setPermissionCatalog(null)
@@ -765,10 +768,18 @@ export function TaskComposer() {
     (!requiresPermissionSelection || Boolean(selectedPermissionSelection)) &&
     (attachments.length === 0 || canUseAttachments) && attachmentsAllowed &&
     (prompt.trim().length > 0 || attachments.length > 0)
-  const selectorsLoading =
-    runtimeInventoryLoading || (
-      Boolean(authSession?.accessToken && hasOnlineDevice && selectedConnector && selectedAgent) && (catalogsLoading || !capabilitiesReady)
-    )
+  // Keep the target picker usable while its catalogs load or recover.
+  const selectorsLoading = runtimeInventoryLoading
+  const catalogFailure = catalogError?.scope === catalogScope ? catalogError.failure : null
+  const runtimeStarting = selectedRuntime?.status === "starting"
+  const showCatalogStatus = Boolean(hasOnlineDevice && selectedRuntime && !needsPreparation && (
+    runtimeStarting || catalogsLoading || !capabilitiesReady || (requiresModelSelection && models.length === 0)
+  ))
+  const catalogStatusLabel = runtimeStarting
+    ? t("modelCatalogStarting", { agent: runtimeInstanceName(selectedRuntime!) })
+    : catalogsLoading || (!capabilitiesReady && !catalogFailure)
+      ? t("modelCatalogLoading")
+      : catalogFailure ? t("modelCatalogLoadFailed") : t("modelCatalogEmpty")
   const preparationPhase = preparation.operation?.state.phase
   const preparationStopped = ["failed", "cancelled", "expired", "consumed"].includes(preparationPhase ?? "")
   const preparationNeedsAttention = preparation.error || preparation.operation?.state.failure || preparationStopped
@@ -1198,6 +1209,23 @@ export function TaskComposer() {
               </>
             )}
 
+            {showCatalogStatus ? (
+              <div className="flex min-w-0 items-center gap-1">
+                <span role="status" className="flex min-w-0 items-center gap-1.5 text-sm text-muted-foreground">
+                  {runtimeStarting || catalogsLoading ? <Spinner aria-hidden="true" /> : null}
+                  <span className="truncate">{catalogStatusLabel}</span>
+                </span>
+                {!runtimeStarting ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={catalogsLoading}
+                    onClick={() => setCatalogRefreshKey((key) => key + 1)}
+                  >{tCommon("retry")}</Button>
+                ) : null}
+              </div>
+            ) : null}
+
             <Button
               size="icon"
               aria-label={t("sendTask")}
@@ -1208,6 +1236,11 @@ export function TaskComposer() {
               {creating ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
             </Button>
           </div>
+          {showCatalogStatus && catalogFailure && !runtimeStarting ? (
+            <p role="alert" className="px-5 pb-3 text-sm text-destructive">
+              {errorText(catalogFailure, t("modelCatalogLoadFailed"))}
+            </p>
+          ) : null}
         </div>
 
         <div className="mt-3">

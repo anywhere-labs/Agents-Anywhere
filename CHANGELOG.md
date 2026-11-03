@@ -29,7 +29,7 @@
 
 - Desktop 在准备本机 Connector 环境时一并准备 Pi 适配器及依赖，支持查看安装输出、取消与失败重试，兼容已有缓存，首次创建 Pi 会话不再临时下载适配器。（[#518](https://github.com/anywhere-labs/Agents-Anywhere/pull/518)）
 
-- Connector 重连恢复期间，Web 与 Desktop 会等待 Agent 就绪后再允许创建会话，运行时启动不再等待所有历史会话的能力刷新。（[#518](https://github.com/anywhere-labs/Agents-Anywhere/pull/518)）
+- Connector 重连恢复期间，Web 与 Desktop 会等待 Agent 就绪后再允许创建会话，显示 Agent 启动、模型加载和空目录状态，加载失败时可查看原因并重试，且仍可切换设备与 Agent；运行时启动不再等待所有历史会话的能力刷新。（[#518](https://github.com/anywhere-labs/Agents-Anywhere/pull/518)、[#523](https://github.com/anywhere-labs/Agents-Anywhere/pull/523)）
 
 - 附件上传与下载改为流式处理，发送或打开大文件时不再整包占用服务端内存；图片附件同时提供缩略图地址，浏览大图更省流量。（[#492](https://github.com/anywhere-labs/Agents-Anywhere/pull/492)）
 
