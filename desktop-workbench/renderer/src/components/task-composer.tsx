@@ -753,7 +753,9 @@ export function TaskComposer() {
   const hasSelectionSettings = models.length > 0 || permissionOptions.length > 0
   const recoveryTargetUnavailable = Boolean(creationEditorDraft && !recoveryTargetChanged && !runtimeInventoryLoading
     && (selectedConnectorId !== creationEditorDraft.request.connectorId || selectedAgent !== creationEditorDraft.request.runtimeId))
+  const capabilitiesReady = loadedCatalogScope === catalogScope && runtimeCapabilities !== null && selectedRuntime?.status === "running"
   const canCreate =
+    capabilitiesReady &&
     !recoveryTargetUnavailable &&
     Boolean(authSession?.accessToken && selectedConnector && selectedRuntime && workspace?.path) &&
     workspace?.connectorId === selectedConnectorId &&
@@ -766,7 +768,7 @@ export function TaskComposer() {
     (prompt.trim().length > 0 || attachments.length > 0)
   const selectorsLoading =
     runtimeInventoryLoading || (
-      Boolean(authSession?.accessToken && hasOnlineDevice && selectedConnector && selectedAgent) && catalogsLoading
+      Boolean(authSession?.accessToken && hasOnlineDevice && selectedConnector && selectedAgent) && (catalogsLoading || !capabilitiesReady)
     )
   const preparationPhase = preparation.operation?.state.phase
   const preparationStopped = ["failed", "cancelled", "expired", "consumed"].includes(preparationPhase ?? "")
@@ -786,7 +788,7 @@ export function TaskComposer() {
     if (!authSession?.accessToken || !selectedConnector || !selectedRuntime || !workspace?.path || creatingRef.current) return
     if (recoveryTargetUnavailable || workspace.connectorId !== selectedConnector.id) return
     if (!prompt.trim() && attachments.length === 0) return
-    if (catalogsLoading || (needsPreparation && preparation.operation?.state.phase !== "ready")) return
+    if (!capabilitiesReady || catalogsLoading || (needsPreparation && preparation.operation?.state.phase !== "ready")) return
     // Prepared-workspace creation does not carry a planning intent yet; refuse instead of silently dropping it.
     if (usePlanning && needsPreparation) { toast.error(tPlanning("workspaceUnsupported")); return }
     if (requiresModelSelection && !selectedModelSelection) return

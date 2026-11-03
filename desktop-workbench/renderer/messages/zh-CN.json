@@ -30,6 +30,7 @@
     "stalled": "已有一段时间未检测到活动，安装可能已卡住。可以查看日志，或取消后切换镜像重试。",
     "packageProgress": "已安装 {completed} / 已解析 {total} 个依赖",
     "environmentPhase": {
+      "pi": "正在准备 Pi 适配器及依赖",
       "checking": "检查环境",
       "downloading": "下载依赖",
       "resolving": "解析依赖",

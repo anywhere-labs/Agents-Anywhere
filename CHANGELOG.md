@@ -121,6 +121,8 @@
 
 ### Desktop
 
+- Desktop 在准备本机 Connector 环境时一并准备 Pi 适配器及依赖，显示准备阶段和安装输出，支持取消与失败重试，首次创建 Pi 会话不再临时下载适配器，并兼容原有缓存；Connector 重连恢复期间不再误报可用并允许创建失败的会话，启动也不再等待所有历史会话的能力刷新。
+
 - 把本地文件夹拖进侧栏就能创建项目。重复目录、普通文件和一次拖入多项时会给出提示；拖拽结束或窗口失焦时，提示自动消失。（[#82](https://github.com/anywhere-labs/Agents-Anywhere/pull/82)）
 - Connector 启动失败时显示真实原因，可以复制错误信息、打开日志目录。（[#294](https://github.com/anywhere-labs/Agents-Anywhere/pull/294)）
 - 依赖下载失败时，可以在启动弹窗里切换 PyPI 镜像或 Python 下载镜像、重试，或者「清空缓存并重试」；所选镜像缺少的包会自动从官方 PyPI 补齐。（[#450](https://github.com/anywhere-labs/Agents-Anywhere/pull/450)）

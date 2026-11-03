@@ -32,6 +32,7 @@ from ...domain.definitions import AcpError, LaunchDefinition
 from ...infrastructure.npm import install_npm_runtime
 from .adapter import prepare_adapter
 from .client import PiClient
+from .environment import DEPENDENCIES, npm_root
 from .installation import (
     PiInstallation,
     agent_directory,
@@ -44,15 +45,6 @@ from .native_runtime import NativePiRuntime
 from .profile import PI_PROFILE
 from .runtime import ManagedPiRuntime
 from .settings import prepare_settings, private_json
-
-# The managed environment keeps a verified SDK; the adapter follows its 0.1.x
-# releases because every patch anchor is re-checked before use.
-DEPENDENCIES = {
-    "@openma/pi-acp": "^0.1.8",
-    "@earendil-works/pi-coding-agent": "1.4.0",
-    "@earendil-works/pi-ai": "1.4.0",
-    "@earendil-works/pi-agent-core": "1.4.0",
-}
 
 
 def source_changed(previous: dict | None, current: dict) -> bool:
@@ -219,7 +211,7 @@ class PiProvider(RuntimeProvider):
                 await asyncio.to_thread(probe_sdk, installation)
             node, entry = await asyncio.to_thread(
                 install_npm_runtime,
-                host.runtime_kv.path.parent / "npm-runtimes",
+                npm_root(host.runtime_kv.path.parent / "npm-runtimes"),
                 DEPENDENCIES,
                 "@openma/pi-acp/dist/bin.js",
             )
