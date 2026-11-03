@@ -1939,12 +1939,15 @@
         "unused": "Not in use",
         "modelsDiscovered": "Models discovered",
         "modelsDiscoveredDescription": "No models listed; the runtime reads them from this address.",
-        "andMore": "and {count} more",
         "protocolsShort": {
           "openai_responses": "Responses",
           "openai_chat": "Chat Completions",
           "anthropic": "Anthropic"
-        }
+        },
+        "usage": "Usage",
+        "protocolsLabel": "Protocols",
+        "showModels": "Show models and addresses",
+        "hideModels": "Hide"
       },
       "modelConfigsTitle": "Model configuration"
     },

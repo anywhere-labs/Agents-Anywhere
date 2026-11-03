@@ -167,7 +167,7 @@ def test_link_apply_rotate_and_unlink(tokens):
         "efforts": [],
         "input": ["text", "image"],
     }
-    assert profile["keyHint"] == "sk-aa-se"
+    assert profile["keyHint"] == "sk-aa-se…"
 
     _applied(client, headers, profile["id"], [_target(connector_id)])
     runtime = _runtimes(client, connector_id, headers)["codex"]

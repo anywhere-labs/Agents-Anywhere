@@ -777,7 +777,8 @@ class ModelConfigService:
             "name": profile["name"],
             "originHost": profile["originHost"],
             "offers": profile["offers"],
-            "keyHint": key_ref.get("hint") or key_ref.get("prefix"),
+            # A Tokens key is known by its prefix; the ellipsis says the rest is hidden.
+            "keyHint": key_ref.get("hint") or (f"{key_ref['prefix']}…" if key_ref.get("prefix") else None),
             "strategyName": key_ref.get("strategy"),
             "state": profile["state"],
             "etag": str(profile["etag"]),

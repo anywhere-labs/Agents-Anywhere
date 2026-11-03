@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Globe, KeyRound, Link2, Plus, RefreshCw, RotateCcw, Trash2, Unlink, Upload } from "lucide-react"
+import { ChevronRight, Link2, Plus, RefreshCw, RotateCcw, Trash2, Unlink, Upload } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
@@ -24,11 +24,9 @@ import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useWorkspace } from "@/components/workspace-context"
 import type {
   DeviceRuntimeView,
-  ModelOffer,
   ModelAssignment,
   ModelConfigOverview,
   ModelProfile,
@@ -44,6 +42,7 @@ import {
   type ModelStatusTone,
 } from "@/features/model-config/presentation"
 import { isApiError } from "@/lib/api/errors"
+import { cn } from "@/lib/utils"
 import { openTokensLinkStart } from "@/features/model-config/open-link"
 
 /** Only what the page shows of a device. */
@@ -312,6 +311,8 @@ function ProfileRow({
   const [busy, setBusy] = React.useState(false)
   const interrupt = useInterruptConfirm()
   const changed = useModelConfigChanged()
+  const [expanded, setExpanded] = React.useState(false)
+  const detailsId = React.useId()
 
   const remove = async () => {
     setBusy(true)
@@ -343,78 +344,95 @@ function ProfileRow({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-3 py-3">
+    <div className="flex flex-col gap-3 py-4">
       {interrupt.dialog}
-      <div className="flex min-w-0 flex-1 basis-60 flex-col gap-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate font-medium">{profile.name}</span>
-          <Badge variant="secondary">{t(`source.${profile.source}`)}</Badge>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 basis-48 flex-wrap items-center gap-2">
+          <span className="break-words font-medium">{profile.name}</span>
+          {/* The Tokens profile is already named after its source. */}
+          {profile.name !== t(`source.${profile.source}`) ? (
+            <Badge variant="secondary">{t(`source.${profile.source}`)}</Badge>
+          ) : null}
           {profile.state === "detached" ? <Badge variant="outline">{t("detached")}</Badge> : null}
         </div>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          <span className="flex min-w-0 items-center gap-1" title={t("address")}>
-            <Globe className="size-3.5 shrink-0" />
-            <span className="truncate">{profile.originHost}</span>
-          </span>
-          {profile.keyHint ? (
-            <span className="flex items-center gap-1 font-mono" title={t("apiKey")}>
-              <KeyRound className="size-3.5 shrink-0" />{profile.keyHint}
-            </span>
+        <div className="flex shrink-0 gap-2">
+          <Button size="sm" onClick={onApply} disabled={busy || profile.state !== "active"}>
+            <Upload data-icon="inline-start" />{t("apply")}
+          </Button>
+          {profile.source === "tokens" && profile.state === "active" ? (
+            <Button size="sm" variant="ghost" onClick={() => void rotate()} disabled={busy} title={t("rotateDescription")}>
+              <RefreshCw data-icon="inline-start" />{t("rotate")}
+            </Button>
           ) : null}
-          <span>{usedBy ? t("usedBy", { count: usedBy }) : t("unused")}</span>
+          {profile.source === "manual" || profile.state === "detached" ? (
+            <Button size="icon-sm" variant="ghost" onClick={() => void remove()} disabled={busy || usedBy > 0} aria-label={t("deleteProfile")}>
+              <Trash2 />
+            </Button>
+          ) : null}
         </div>
-        <TooltipProvider>
-          <div className="flex flex-wrap gap-1.5 pt-0.5">
-            {profile.offers.map((offer) => <OfferChip key={offer.format} offer={offer} />)}
-          </div>
-        </TooltipProvider>
       </div>
-      <div className="flex gap-2">
-        <Button size="sm" onClick={onApply} disabled={busy || profile.state !== "active"}>
-          <Upload data-icon="inline-start" />{t("apply")}
-        </Button>
-        {profile.source === "tokens" && profile.state === "active" ? (
-          <Button size="sm" variant="ghost" onClick={() => void rotate()} disabled={busy} title={t("rotateDescription")}>
-            <RefreshCw data-icon="inline-start" />{t("rotate")}
-          </Button>
+      {/* Every value is labelled and wraps instead of being cut off. */}
+      <dl className="grid grid-cols-[max-content_minmax(0,1fr)] items-baseline gap-x-4 gap-y-1.5 text-xs">
+        <dt className="text-muted-foreground">{t("address")}</dt>
+        <dd className="break-all">{profile.originHost}</dd>
+        {profile.keyHint ? (
+          <>
+            <dt className="text-muted-foreground">{t("apiKey")}</dt>
+            <dd className="break-all font-mono">{profile.keyHint}</dd>
+          </>
         ) : null}
-        {profile.source === "manual" || profile.state === "detached" ? (
-          <Button size="icon-sm" variant="ghost" onClick={() => void remove()} disabled={busy || usedBy > 0} aria-label={t("deleteProfile")}>
-            <Trash2 />
-          </Button>
-        ) : null}
-      </div>
+        <dt className="text-muted-foreground">{t("usage")}</dt>
+        <dd>{usedBy ? t("usedBy", { count: usedBy }) : t("unused")}</dd>
+        <dt className="text-muted-foreground">{t("protocolsLabel")}</dt>
+        <dd className="flex flex-wrap gap-1.5">
+          {profile.offers.map((offer) => (
+            <Badge key={offer.format} variant="outline" className="font-normal">
+              {t(`protocolsShort.${offer.format}`)}
+              <span className="text-muted-foreground">
+                {offer.models.length ? t("modelCount", { count: offer.models.length }) : t("modelsDiscovered")}
+              </span>
+            </Badge>
+          ))}
+        </dd>
+      </dl>
+      <button
+        type="button"
+        className="flex items-center gap-1 self-start text-xs text-muted-foreground hover:text-foreground"
+        aria-expanded={expanded}
+        aria-controls={detailsId}
+        onClick={() => setExpanded((current) => !current)}
+      >
+        <ChevronRight className={cn("size-3.5 transition-transform", expanded && "rotate-90")} />
+        {expanded ? t("hideModels") : t("showModels")}
+      </button>
+      {expanded ? (
+        <div id={detailsId} className="flex flex-col gap-3 rounded-md border border-border bg-muted/20 p-3 text-xs">
+          {profile.offers.map((offer) => (
+            <div key={offer.format} className="flex flex-col gap-1.5">
+              <span className="font-medium">{t(`protocols.${offer.format}`)}</span>
+              <dl className="grid grid-cols-[max-content_minmax(0,1fr)] items-baseline gap-x-4 gap-y-1.5">
+                <dt className="text-muted-foreground">{t("address")}</dt>
+                <dd className="break-all">{offer.baseUrl}</dd>
+                <dt className="text-muted-foreground">{t("models")}</dt>
+                <dd>
+              {offer.models.length ? (
+                <ul className="flex flex-wrap gap-1.5">
+                  {offer.models.map((model) => (
+                    <li key={model.id} className="break-all rounded border border-border bg-background px-1.5 py-0.5">
+                      {model.name && model.name !== model.id ? (
+                        <>{model.name} <span className="font-mono text-muted-foreground">{model.id}</span></>
+                      ) : <span className="font-mono">{model.id}</span>}
+                    </li>
+                  ))}
+                </ul>
+              ) : <span className="text-muted-foreground">{t("modelsDiscoveredDescription")}</span>}
+                </dd>
+              </dl>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
-  )
-}
-
-/** One protocol the profile offers, with how many models; hover lists them. */
-function OfferChip({ offer }: { offer: ModelOffer }) {
-  const t = useTranslations("pages.settings.modelConfigs")
-  const shown = offer.models.slice(0, 12)
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Badge variant="outline" className="cursor-default font-normal">
-          {t(`protocolsShort.${offer.format}`)}
-          <span className="text-muted-foreground">
-            {offer.models.length ? t("modelCount", { count: offer.models.length }) : t("modelsDiscovered")}
-          </span>
-        </Badge>
-      </TooltipTrigger>
-      <TooltipContent className="max-w-xs">
-        <div className="flex flex-col gap-1">
-          <span className="font-medium">{t(`protocols.${offer.format}`)}</span>
-          <span className="break-all opacity-80">{offer.baseUrl}</span>
-          {shown.length ? (
-            <span className="break-all font-mono">
-              {shown.map((model) => model.id).join(", ")}
-              {offer.models.length > shown.length ? ` ${t("andMore", { count: offer.models.length - shown.length })}` : ""}
-            </span>
-          ) : <span>{t("modelsDiscoveredDescription")}</span>}
-        </div>
-      </TooltipContent>
-    </Tooltip>
   )
 }
 

@@ -1939,12 +1939,15 @@
         "unused": "未被使用",
         "modelsDiscovered": "自动获取模型",
         "modelsDiscoveredDescription": "没有指定模型，由 Runtime 自己从这个地址获取。",
-        "andMore": "等 {count} 个",
         "protocolsShort": {
           "openai_responses": "Responses",
           "openai_chat": "Chat Completions",
           "anthropic": "Anthropic"
-        }
+        },
+        "usage": "使用情况",
+        "protocolsLabel": "协议",
+        "showModels": "查看模型和地址",
+        "hideModels": "收起"
       },
       "modelConfigsTitle": "配置管理"
     },
