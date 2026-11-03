@@ -58,6 +58,9 @@
 
 - 首次同步大量或很长的会话时，即使有 Agent 正在持续输出，也不再因事件积压反复从头同步、一直停在「正在同步 DSH 会话…」；积压过多时只重新校准占用最多的那个会话。（[#511](https://github.com/anywhere-labs/Agents-Anywhere/pull/511)）
 - 上传同步数据时连接偶尔中断或 Server 短暂返回 5xx，会先自动重试，不再立即中断并重新同步全部会话。（[#511](https://github.com/anywhere-labs/Agents-Anywhere/pull/511)）
+- DSH 启动后首次同步、同步中断重试或重新同步期间，Runtime 保持「运行中」，Web 和 Desktop 设备页显示「正在同步 DSH 会话…」；这段时间可以正常打开会话、回答审批、发消息和新建会话，不再报 `runtime is not running (status='starting')`，审批卡片也不会消失；只有 DSH Bridge 断开时才显示不可用。（[#512](https://github.com/anywhere-labs/Agents-Anywhere/pull/512)）
+- 同步全部 DSH 会话时，DSH 中已打开或正在运行的会话先完成同步，正在使用的会话在同步过程中就能实时看到回复，不再等全部会话同步完。（[#512](https://github.com/anywhere-labs/Agents-Anywhere/pull/512)）
+- DSH 同步批次被拒绝时，Connector 日志会记录拒绝原因和判定字段，日志中的错误也会带上完整堆栈，便于排查同步反复中断。（[#512](https://github.com/anywhere-labs/Agents-Anywhere/pull/512)）
 
 ### Android
 
