@@ -5,7 +5,7 @@
   "description": "Provider descriptors and Connector-wide protocol features for the single supported Runtime Control protocol.",
   "properties": {
     "features": {
-      "description": "Connector-wide protocol features. switchFence: runtime.validateConfig and runtime.start accept operationId and switchRevision, runtime.start reports configDigest and instanceId, and a fenced runtime.start always replaces the instance. modelProbe: runtime.probeModelConnection sends one minimal model request with the running instance's connection. Unknown entries must be ignored; absent means none.",
+      "description": "Connector-wide protocol features. switchFence: runtime.validateConfig and runtime.start accept operationId and switchRevision, runtime.start reports configDigest and instanceId, and a fenced runtime.start always replaces the instance. modelProbe: runtime.probeModelConnection sends one minimal model request with the running instance's connection. Unknown entries must be ignored; absent means none. channelReconcileFence: extends persistent switch fencing to runtime.stop and managed-instance reconciliation; required for automatic channel catch-up.",
       "items": {
         "maxLength": 64,
         "minLength": 1,

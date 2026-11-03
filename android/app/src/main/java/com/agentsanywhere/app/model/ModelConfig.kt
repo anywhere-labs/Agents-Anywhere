@@ -151,6 +151,10 @@ data class ChannelRuntime(
     val reason: String?,
     val message: String?,
     val updatedAt: String?,
+    val desiredGeneration: Long? = null,
+    val appliedGeneration: Long? = null,
+    val observedAt: String? = null,
+    val retryAt: String? = null,
 ) {
     val key: String get() = "$connectorId/$runtimeId"
 }

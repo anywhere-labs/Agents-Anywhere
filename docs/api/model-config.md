@@ -50,7 +50,7 @@
 
 ## 当前渠道与切换
 
-本功能使用 `v2_48` 数据库结构，渠道切换不保存等待空闲状态或允许中断标记，也不提供 `switch-now` 接口。
+本功能使用 `v2_49` 数据库结构，渠道切换不保存等待空闲状态或允许中断标记，也不提供 `switch-now` 接口。
 
 每个 Runtime 同一时间只能使用一个渠道。渠道取值：
 
@@ -119,17 +119,17 @@
 1. **排队**：修改当前渠道或覆盖后，想要的渠道和实际渠道不同的 Runtime 进入 `pending`；比当前更早的未完成切换被新的一次取代（`superseded`，不再执行）。
 2. **调度**：在线 Runtime 立即执行，不等待运行中的任务结束；设备离线时进入 `waiting_online`，上线后立即执行。
 3. **准备**：先把 Runtime 当前的完整配置、启用状态和应用记录加密保存为快照，再计算新配置。快照写入之前不改动 Runtime。
-4. **激活**：暂停这个 Runtime 接收新任务（新建会话和发送消息会等待最多 90 秒，超时返回 409 `runtime_switching`），写入新配置并**硬替换**：停掉旧实例并等它退出，再用目标渠道的完整配置创建新实例。即使配置没有变化也会重建，不在原实例上热更新，也不复用旧实例的客户端或连接。
+4. **激活**：暂停这个 Runtime 接收新任务（新建会话和发送消息会等待最多 90 秒，超时返回 409 `runtime_switching`），写入新配置并**硬替换**：停掉旧实例并等它退出，再用目标渠道的完整配置创建新实例。有效配置发生变化时重建；再次选择相同渠道且核实配置一致时不重启。
 5. **核实**：Runtime 运行起来、回报的模型连接与目标配置一致即记为 `applied`；Connector 返回 `status: error`、启动超时或回报不一致才算失败。请求超时或结果不明时，Server 先读取 Connector 上实际生效的配置再决定。切换不发送真实模型请求，不产生探针调用费用；余额不足、鉴权失败或模型服务不可用由实际模型请求报告，不影响配置切换结果，也不触发回滚。
 6. **完成或恢复**：成功后更新应用记录、恢复接收新任务；失败则写回快照里的配置和启用状态，同样重建实例并核实配置，恢复成功为 `restored`，恢复失败为 `failed`，同样恢复接收新任务。恢复结果不依赖原渠道能否完成模型请求。
 
-切换不使用定时轮询。等待中的 Runtime 在 Redis 中记一条待处理标记（没有 Redis 时在进程内存中），由事件触发处理：这个 Runtime 上的任务结束、设备重新上线、Runtime 启动完成、有人在它上面新建会话或发送消息、客户端读取渠道状态。Server 启动时把数据库中未完成的切换重新登记一次。
+最新目标和切换进度持久化在 PostgreSQL；目标变化同事务写入通知 outbox，Redis 待处理标记与发布订阅负责快速唤醒。设备每次上线完整对账，不依赖标记是否存在。Server 每 5 秒补偿到期重试和过期执行租约，每约 60 秒分页对账，并在启动时恢复未完成操作。
 
 Tokens 模型选择变化、轮换 Key、切换账号后，使用 Anywhere 渠道的 Runtime 也按这个流程重新写入配置（`revision` 加一，渠道不变）。
 
 新建会话和获取模型目录时，如果这个 Runtime 还有待处理的切换且现在可以执行，会先执行并等待它完成（最多 90 秒）；切换失败并已恢复时，会话继续使用原渠道，不报错。
 
-Connector 2.2.0 起在 `runtime.discover` 结果中声明 `switchFence` 和 `modelProbe`（渠道切换不调用模型探针）。Server 只对声明了 `switchFence` 的 Connector 在 `runtime.validateConfig`、`runtime.start` 中带 `operationId` 和 `switchRevision`：Connector 拒绝比已接受的更早的 `switchRevision`（`switch_revision_stale`），带这两个字段的 `runtime.start` 总是硬替换实例，并在启动结果中回报实际加载的 `configDigest` 和进程标识 `instanceId`。声明了 `modelProbe` 的 Connector 支持独立的 `runtime.probeModelConnection`，不作为切换或恢复的成功条件。旧版 Connector 由 Server 读取 `runtime.config` 核实。
+Connector 2.2.0 起在 `runtime.discover` 结果中声明 `switchFence` 和 `modelProbe`（渠道切换不调用模型探针）。Server 只对声明了 `switchFence` 的 Connector 在 `runtime.validateConfig`、`runtime.start` 中带 `operationId` 和 `switchRevision`：Connector 拒绝比已接受的更早的 `switchRevision`（`switch_revision_stale`），带这两个字段的 `runtime.start` 总是硬替换实例，并在启动结果中回报实际加载的 `configDigest` 和进程标识 `instanceId`。声明了 `modelProbe` 的 Connector 支持独立的 `runtime.probeModelConnection`，不作为切换或恢复的成功条件。渠道自动同步还要求声明 `channelReconcileFence`，将持久化防过期保护扩展到停止操作；缺少该能力时保留配置并提示升级，不执行兼容切换。
 
 外部管理的实例不在切换的保证范围内，例如 Codex App 自己持有的线程、本机独立运行的 Pi。要保证切换生效，让会话交给 AA 管理的实例执行。
 
@@ -171,7 +171,7 @@ Tokens Anywhere 是 OAuth 授权服务器，每个 AA 实例是公共 PKCE 客�
 
 四端的「切换账号」直接打开现有授权页，用户可选择其他账号后授权。取消授权、获取新 Key 或读取新账户失败时，原绑定保持可用；同一次授权发起后若账户已被另一授权替换，旧回调会被拒绝。
 
-切换时在同一事务中替换绑定、更新原 Tokens 配置的 Key 标识，并让使用 Anywhere 渠道的 Runtime 重新走一次切换流程写入新 Key。网关地址、模型目录、当前渠道、别名、默认模型、实例启用状态和会话不变；不调用解绑接口，也不撤销旧账号授权，以免影响尚未切换的任务。旧授权可在 Tokens Anywhere 的已连接应用中管理。
+切换时在同一事务中替换绑定、更新原 Tokens 配置的 Key 标识和连接版本；访问令牌缓存绑定当前账号链接的创建时间，旧链接的缓存不能用于新账号。随后让使用 Anywhere 渠道的 Runtime 重新走一次切换流程写入新 Key。网关地址、模型目录、当前渠道、别名、默认模型、实例启用状态和会话不变；不调用解绑接口，也不撤销旧账号授权，以免影响尚未切换的任务。旧授权可在 Tokens Anywhere 的已连接应用中管理。
 
 在线 Runtime 立即写入并重建，运行中的任务会被中断；离线设备上线后写入，失败时恢复原配置并可重试；客户端在渠道状态里看到每个 Runtime 的进度。
 
@@ -210,3 +210,13 @@ Server 保存加密的 refresh token，access token 放在 Redis（没有 Redis 
 启动后才应用连接的 Runtime 通过 `runtime.statusChanged` 的 `modelConnection` 回报结果；Server 只在已存的报告对应当前保存的连接时采用它，避免还在用旧配置的实例被误报为「已应用」。
 
 所有渠道切换（应用渠道、单个 Runtime 变更、模型或 Key 更新、重试与重启恢复）均不等待任务结束；在线 Runtime 立即重新加载配置，运行中的任务会被中断，离线设备上线后立即执行。
+
+## 离线追赶与持久化对账
+
+最新目标存入 PostgreSQL 的 `runtime_channel_sync`；每个逻辑 Runtime 一行，单独指定优先于全局选择。离线期间多次切换只覆盖目标，上线完整核实后直接追到最新配置；渠道不变但凭据、地址或模型变化也产生新目标。重复选择相同有效配置不重启。
+
+渠道状态新增可选的 `desiredGeneration`、`appliedGeneration`、`observedAt`、`retryAt`；实际状态仅在核实后推进。目标变更与通知 outbox 同事务，Redis 负责唤醒和竞争优化，数据库补偿扫描负责漏通知恢复。
+
+自动切换要求 Connector 声明 `channelReconcileFence`；缺失时返回 `unsupported` / `connector_upgrade_required`，升级重连后自动评估。切换失败恢复成功后允许使用原渠道；恢复失败阻止新任务。升级必须停净旧 Server worker 后执行迁移，再启动新 Server 并升级 Connector。
+
+Key 轮换在发出外部请求前持久化待确认意图；结果未知时后台仅查询和同步最新远端状态，不重复发出轮换。尚有待确认意图时再次轮换返回 409 `rotation_pending`。受管实例身份按逻辑 Runtime 稳定分配，并在派发前保存到加密执行计划，重复创建不会新增另一实例。

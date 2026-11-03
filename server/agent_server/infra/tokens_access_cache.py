@@ -6,6 +6,7 @@ every worker shares them; a single process without Redis keeps them in memory.
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -25,24 +26,52 @@ class TokensAccessCache:
     def _distributed(self) -> bool:
         return self._redis is not None and self._redis.distributed
 
-    async def get(self, user_id: str, box: SecretBox) -> str | None:
+    async def get(
+        self, user_id: str, box: SecretBox, *, linked_at: str | None = None
+    ) -> str | None:
+        value: str | None = None
         if self._distributed():
             sealed: Any = await self._redis.client.get(self._key(user_id))  # type: ignore[union-attr]
-            return box.open(sealed, context=f"tokens-access:{user_id}") if sealed else None
-        entry = self._memory.get(user_id)
-        if entry is None or entry[0] <= time.monotonic():
-            self._memory.pop(user_id, None)
+            value = (
+                box.open(sealed, context=f"tokens-access:{user_id}") if sealed else None
+            )
+        else:
+            entry = self._memory.get(user_id)
+            if entry is None or entry[0] <= time.monotonic():
+                self._memory.pop(user_id, None)
+                return None
+            value = entry[1]
+        if value is None:
             return None
-        return entry[1]
+        if not value.startswith("{"):
+            return value if linked_at is None else None
+        payload = json.loads(value)
+        if linked_at is not None and payload.get("linkedAt") != linked_at:
+            return None
+        token = payload.get("token")
+        return token if isinstance(token, str) else None
 
-    async def set(self, user_id: str, token: str, *, ttl_seconds: int, box: SecretBox) -> None:
+    async def set(
+        self,
+        user_id: str,
+        token: str,
+        *,
+        ttl_seconds: int,
+        box: SecretBox,
+        linked_at: str | None = None,
+    ) -> None:
         if ttl_seconds <= 0:
             return
+        value = (
+            json.dumps({"token": token, "linkedAt": linked_at})
+            if linked_at is not None
+            else token
+        )
         if self._distributed():
-            sealed = box.seal(token, context=f"tokens-access:{user_id}")
+            sealed = box.seal(value, context=f"tokens-access:{user_id}")
             await self._redis.client.set(self._key(user_id), sealed, ex=ttl_seconds)  # type: ignore[union-attr]
             return
-        self._memory[user_id] = (time.monotonic() + ttl_seconds, token)
+        self._memory[user_id] = (time.monotonic() + ttl_seconds, value)
 
     async def delete(self, user_id: str) -> None:
         self._memory.pop(user_id, None)

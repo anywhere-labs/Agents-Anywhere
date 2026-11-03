@@ -64,7 +64,7 @@ export function useChannelState(overview: ModelConfigOverview) {
   const snapshot = overview.channel ?? null
   const channel = local && (!snapshot || local.revision > snapshot.revision) ? local : snapshot
   const accept = React.useCallback((next: unknown) => {
-    if (next && typeof next === "object" && Array.isArray((next as ModelChannelState).runtimes)) setLocal(next as ModelChannelState)
+    if (next && typeof next === "object" && Array.isArray((next as ModelChannelState).runtimes)) setLocal((previous) => !previous || (next as ModelChannelState).revision > previous.revision ? next as ModelChannelState : previous)
   }, [])
   return { channel, accept }
 }

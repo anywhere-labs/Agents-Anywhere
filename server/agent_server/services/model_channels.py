@@ -30,6 +30,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from loguru import logger
+from redis.exceptions import RedisError
 
 from agent_server.core.device_runtime import DeviceRuntimeView, public_runtime_view
 from agent_server.core.model_channel import (
@@ -49,6 +50,7 @@ from agent_server.core.model_channel import (
     UNSUPPORTED,
     VERIFYING,
     WAITING_ONLINE,
+    managed_channel_runtime_id,
     profile_channel,
     switch_state,
 )
@@ -84,7 +86,7 @@ from agent_server.services.model_config import (
 )
 
 # How long a step may hold a switch before another worker may take it over.
-LEASE = timedelta(minutes=10)
+LEASE = timedelta(seconds=60)
 # Requests reaching a runtime wait this long for a switch before giving up.
 ADMISSION_WAIT_SECONDS = 90.0
 ADMISSION_TTL = timedelta(minutes=2)
@@ -103,6 +105,23 @@ class ModelChannelError(ModelConfigError):
 
 
 class ModelChannelRepository(Protocol):
+    async def channel_discovery_gated(self, connector_id: str) -> bool: ...
+    async def channel_connector_owner(self, connector_id: str) -> str | None: ...
+    async def bump_channel_connection(self, user_id: str, channel: str) -> None: ...
+    async def plan_channel_switch(self, connector_id: str, runtime_id: str, values: dict[str, Any]) -> None: ...
+    async def request_channel_retry(self, connector_id: str, runtime_id: str) -> None: ...
+    def channel_transaction(self, user_id: str) -> Any: ...
+    def channel_execution(self, connector_id: str, runtime_id: str, owner: str, epoch: int) -> Any: ...
+    async def assert_channel_execution(self) -> None: ...
+    async def refresh_channel_targets(self, user_id: str) -> None: ...
+    async def get_channel_sync(self, connector_id: str, runtime_id: str) -> dict[str, Any] | None: ...
+    async def list_channel_sync(self, user_id: str) -> list[dict[str, Any]]: ...
+    async def record_channel_observation(self, connector_id: str, runtime_id: str, **values: Any) -> None: ...
+    async def channel_retry(self, connector_id: str, runtime_id: str, error: str | None, *, automatic: bool = False) -> None: ...
+    async def enqueue_channel_sync(self, user_id: str, connector_id: str) -> None: ...
+    async def claim_channel_execution(self, connector_id: str, runtime_id: str, owner: str) -> int | None: ...
+    async def renew_channel_execution(self, connector_id: str, runtime_id: str, owner: str, epoch: int, *, release: bool = False) -> bool: ...
+
     async def list_channel_runtime_users(self) -> list[str]: ...
     async def create_channel_switch_if_missing(self, connector_id: str, runtime_id: str, *, user_id: str) -> bool: ...
     async def get_channel_selection(self, user_id: str) -> dict[str, Any] | None: ...
@@ -133,7 +152,7 @@ class ModelChannelRepository(Protocol):
     async def save_runtime_assignment(self, row: dict[str, Any]) -> None: ...
     async def delete_runtime_assignment(self, connector_id: str, runtime_id: str) -> None: ...
     async def set_device_runtime_managed_by(self, connector_id: str, runtime_id: str, managed_by: str | None) -> None: ...
-    async def find_managed_runtime_id(self, connector_id: str, runtime_type: str, managed_by: str) -> str | None: ...
+    async def find_managed_runtime_id(self, connector_id: str, runtime_type: str, managed_by: str, *, legacy_only: bool = False) -> str | None: ...
     async def get_tokens_link(self, user_id: str) -> dict[str, Any] | None: ...
     async def get_setting(self, key: str, default: str | None = None) -> str | None: ...
     async def list_running_sessions_for_connector_agent(
@@ -160,22 +179,49 @@ class ChannelWakeIndex:
         assert self._coordinator is not None
         return self._coordinator.key("channel-wait", connector_id)
 
-    async def mark(self, connector_id: str, runtime_id: str, user_id: str) -> None:
+    async def mark(self, connector_id: str, runtime_id: str, user_id: str, generation: int = 0) -> None:
+        previous = self._local.get(connector_id, {}).get(runtime_id)
+        previous_generation = json.loads(previous).get("generation", 0) if previous and previous.startswith("{") else 0
+        if previous_generation <= generation:
+            self._local.setdefault(connector_id, {})[runtime_id] = json.dumps({"user": user_id, "generation": generation})
         if self._coordinator is not None:
-            await self._coordinator.client.hset(self._key(connector_id), runtime_id, user_id)
-            return
-        self._local.setdefault(connector_id, {})[runtime_id] = user_id
+            try:
+                await self._coordinator.client.eval("""
+local old = redis.call('HGET', KEYS[1], ARGV[1])
+local decoded = old and pcall(cjson.decode, old)
+local version = 0
+if decoded then version = cjson.decode(old).generation or 0 end
+if version <= tonumber(ARGV[3]) then
+ redis.call('HSET', KEYS[1], ARGV[1], cjson.encode({user=ARGV[2], generation=tonumber(ARGV[3])}))
+end
+""", 1, self._key(connector_id), runtime_id, user_id, generation)
+            except RedisError:
+                logger.warning("channel wake cache unavailable connector_id={}", connector_id)
 
-    async def clear(self, connector_id: str, runtime_id: str) -> None:
+    async def clear(self, connector_id: str, runtime_id: str, generation: int | None = None) -> None:
+        previous = self._local.get(connector_id, {}).get(runtime_id)
+        previous_generation = json.loads(previous).get("generation", 0) if previous and previous.startswith("{") else 0
+        if generation is not None and previous_generation <= generation:
+            self._local.get(connector_id, {}).pop(runtime_id, None)
         if self._coordinator is not None:
-            await self._coordinator.client.hdel(self._key(connector_id), runtime_id)
-            return
-        self._local.get(connector_id, {}).pop(runtime_id, None)
+            try:
+                await self._coordinator.client.eval("""
+local old = redis.call('HGET', KEYS[1], ARGV[1])
+if not old then return 0 end
+local ok, value = pcall(cjson.decode, old)
+if ok and (tonumber(ARGV[2]) < (value.generation or 0)) then return 0 end
+return redis.call('HDEL', KEYS[1], ARGV[1])
+""", 1, self._key(connector_id), runtime_id, generation if generation is not None else -1)
+            except RedisError:
+                logger.warning("channel wake clear unavailable connector_id={}", connector_id)
 
     async def waiting(self, connector_id: str, runtime_id: str) -> tuple[str, str] | None:
         """The (runtime, user) waiting on events of ``runtime_id``: itself or the runtime it serves."""
         if self._coordinator is not None:
-            value = await self._coordinator.client.hget(self._key(connector_id), runtime_id)
+            try:
+                value = await self._coordinator.client.hget(self._key(connector_id), runtime_id)
+            except RedisError:
+                value = self._local.get(connector_id, {}).get(runtime_id)
         else:
             value = self._local.get(connector_id, {}).get(runtime_id)
         return _parse_wait(runtime_id, value) if value else None
@@ -183,7 +229,10 @@ class ChannelWakeIndex:
     async def on_connector_raw(self, connector_id: str) -> dict[str, tuple[str, str]]:
         """Every marked runtime of a device and the (runtime, user) it wakes."""
         if self._coordinator is not None:
-            raw = dict(await self._coordinator.client.hgetall(self._key(connector_id)) or {})
+            try:
+                raw = dict(await self._coordinator.client.hgetall(self._key(connector_id)) or {})
+            except RedisError:
+                raw = dict(self._local.get(connector_id, {}))
         else:
             raw = dict(self._local.get(connector_id, {}))
         return {runtime_id: _parse_wait(runtime_id, value) for runtime_id, value in raw.items()}
@@ -191,7 +240,10 @@ class ChannelWakeIndex:
     async def on_connector(self, connector_id: str) -> dict[str, str]:
         """Waiting runtimes of a device and their users (aliases resolved)."""
         if self._coordinator is not None:
-            raw = dict(await self._coordinator.client.hgetall(self._key(connector_id)) or {})
+            try:
+                raw = dict(await self._coordinator.client.hgetall(self._key(connector_id)) or {})
+            except RedisError:
+                raw = dict(self._local.get(connector_id, {}))
         else:
             raw = dict(self._local.get(connector_id, {}))
         return dict(_parse_wait(runtime_id, value) for runtime_id, value in raw.items())
@@ -199,6 +251,9 @@ class ChannelWakeIndex:
 
 def _parse_wait(runtime_id: str, value: str) -> tuple[str, str]:
     """``user`` waits on the runtime itself; ``user<TAB>runtime`` on the runtime it serves."""
+    if value.startswith("{"):
+        data = json.loads(value)
+        value = str(data["user"])
     user_id, _, served = value.partition("\t")
     return (served or runtime_id, user_id)
 
@@ -206,11 +261,13 @@ def _parse_wait(runtime_id: str, value: str) -> tuple[str, str]:
 class ChannelDriver:
     """Runs at most one switch per runtime: one task in this process, one claim across workers."""
 
-    def __init__(self, coordinator: RedisCoordinator | None, *, wait: bool = False) -> None:
+    def __init__(self, coordinator: RedisCoordinator | None, *, wait: bool = False, store: Any = None) -> None:
         self._coordinator = coordinator if coordinator is not None and coordinator.distributed else None
         self._tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
         # Tests (and single-request tools) finish switches before answering.
         self.wait = wait
+        self._store = store
+        self._slots = asyncio.Semaphore(8)
 
     def running(self, connector_id: str, runtime_id: str) -> asyncio.Task[None] | None:
         task = self._tasks.get((connector_id, runtime_id))
@@ -223,23 +280,71 @@ class ChannelDriver:
             return current
 
         async def run() -> None:
-            token = secrets.token_urlsafe(12)
-            claim_key = self._coordinator.key("channel-drive", *key) if self._coordinator else None
-            if claim_key is not None and not await self._coordinator.claim(
-                claim_key, token, ttl_seconds=LEASE.total_seconds()
-            ):
-                return  # another worker drives it
-            try:
-                await work()
-            except Exception:  # noqa: BLE001 - the row keeps the state; the next event retries
-                logger.exception("model channel switch failed connector_id={} runtime_id={}", *key)
-            finally:
-                if claim_key is not None:
-                    await self._coordinator.delete_if_value(claim_key, token)
+            async with self._slots:
+                if self._store is None:
+                    await work()
+                    return
+                owner = secrets.token_urlsafe(18)
+                cache_key = self._coordinator.key("channel-drive", *key) if self._coordinator else None
+                if cache_key:
+                    try:
+                        if not await self._coordinator.claim(cache_key, owner, ttl_seconds=60):
+                            return
+                    except RedisError:
+                        cache_key = None
+                epoch = await self._store.claim_channel_execution(*key, owner)
+                if epoch is None:
+                    if cache_key:
+                        try:
+                            await self._coordinator.delete_if_value(cache_key, owner)
+                        except RedisError:
+                            pass
+                    return
+                parent = asyncio.current_task()
+                async def renew() -> None:
+                    try:
+                        while True:
+                            await asyncio.sleep(15)
+                            if cache_key:
+                                try:
+                                    await self._coordinator.refresh_if_value(cache_key, owner, ttl_seconds=60)
+                                except RedisError:
+                                    pass
+                            if not await self._store.renew_channel_execution(*key, owner, epoch):
+                                logger.warning("channel lease lost connector_id={} runtime_id={}", *key)
+                                parent.cancel()
+                                return
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:  # noqa: BLE001 - background failures retain durable work
+                        logger.exception("channel lease renewal failed connector_id={} runtime_id={}", *key)
+                        parent.cancel()
+                heartbeat = asyncio.create_task(renew())
+                try:
+                    async with self._store.channel_execution(*key, owner, epoch):
+                        await work()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 - background failures retain durable work
+                    logger.exception("channel execution failed connector_id={} runtime_id={}", *key)
+                finally:
+                    heartbeat.cancel()
+                    await asyncio.gather(heartbeat, return_exceptions=True)
+                    await self._store.renew_channel_execution(*key, owner, epoch, release=True)
+                    if cache_key:
+                        try:
+                            await self._coordinator.delete_if_value(cache_key, owner)
+                        except RedisError:
+                            pass
 
         task = asyncio.create_task(run(), name=f"channel-switch-{key[0]}-{key[1]}")
         self._tasks[key] = task
-        task.add_done_callback(lambda _: self._tasks.pop(key, None) if self._tasks.get(key) is task else None)
+        def completed(finished: asyncio.Task[None]) -> None:
+            if self._tasks.get(key) is finished:
+                self._tasks.pop(key, None)
+            if not finished.cancelled() and (error := finished.exception()) is not None:
+                logger.opt(exception=error).error("channel driver failed connector_id={} runtime_id={}", *key)
+        task.add_done_callback(completed)
         return task
 
     async def close(self) -> None:
@@ -311,9 +416,11 @@ class ModelChannelService:
         runtimes = [DeviceRuntimeView.model_validate(row) for row in rows]
         overrides = {(o["connectorId"], o["runtimeId"]): o for o in await self._store.list_channel_overrides(user_id=user_id)}
         switches = {(s["connectorId"], s["runtimeId"]): s for s in await self._store.list_channel_switches(user_id=user_id)}
+        syncs = {(x["connector_id"], x["runtime_id"]): x for x in await self._store.list_channel_sync(user_id)}
         assignments = {(a["connectorId"], a["runtimeId"]): a for a in await self._store.list_runtime_assignments(user_id=user_id)}
         profiles = {p["id"]: p for p in await self._store.list_model_profiles(user_id=user_id)}
-        managed = {(r.connectorId, r.runtimeType): r for r in runtimes if r.managedBy == MANAGED_BY}
+        managed = {(r.connectorId, r.runtimeType): r for r in runtimes
+                   if r.managedBy == MANAGED_BY and not r.runtimeId.startswith("rti_channel_")}
         items = []
         for runtime in runtimes:
             if runtime.managedBy == MANAGED_BY or not runtime.modelConnection:
@@ -321,7 +428,11 @@ class ModelChannelService:
             key = (runtime.connectorId, runtime.runtimeId)
             override = overrides.get(key)
             desired = override["channel"] if override else selection["channel"]
-            instance = managed.get((runtime.connectorId, runtime.runtimeType))
+            expected_id = managed_channel_runtime_id(runtime.connectorId, runtime.runtimeId)
+            instance = next((r for r in runtimes if r.connectorId == runtime.connectorId and r.runtimeId == expected_id
+                             and r.managedBy == MANAGED_BY), None)
+            if instance is None and runtime.runtimeId == runtime.runtimeType:
+                instance = managed.get((runtime.connectorId, runtime.runtimeType))
             actual, _, assignment = _actual(runtime, instance, assignments, profiles)
             switch = switches.get(key)
             item = {
@@ -344,6 +455,14 @@ class ModelChannelService:
                 item["state"] = PENDING
             elif assignment is not None and _outdated(assignment, profiles):
                 item["state"] = PENDING
+            sync = syncs.get(key)
+            if sync:
+                item.update(desiredGeneration=sync["desired_generation"], appliedGeneration=sync["applied_generation"],
+                            observedAt=sync["observed_at"], retryAt=sync["next_retry_at"])
+                if sync["actual_channel"] is not None:
+                    item["actual"] = sync["actual_channel"]
+                if sync["applied_generation"] != sync["desired_generation"] and item["state"] == APPLIED:
+                    item["state"] = PENDING
             items.append(item)
         started = [s["startedAt"] for s in switches.values() if s.get("startedAt")]
         switch_info = None
@@ -368,9 +487,10 @@ class ModelChannelService:
     # Changing what runtimes should use.
 
     async def set_channel(self, channel: str, *, user_id: str) -> dict[str, Any]:
-        await self._check_channel(channel, user_id=user_id)
-        await self._store.save_channel_selection(user_id, channel)
-        # Applying a channel is an explicit immediate switch, including native.
+        async with self._store.channel_transaction(user_id):
+            await self._check_channel(channel, user_id=user_id)
+            await self._store.save_channel_selection(user_id, channel)
+            await self._store.refresh_channel_targets(user_id)
         await self._plan(user_id)
         return await self._respond(user_id)
 
@@ -387,11 +507,12 @@ class ModelChannelService:
                 raise ModelConfigConflictError(
                     "confirmation_required", "this changes the runtime's own global configuration"
                 )
-        await self._store.set_channel_override(
-            connector_id, runtime_id, channel, confirm_native_global=confirm_native_global
-        )
-        await self._store.save_channel_selection(user_id)
-        await self._reset(connector_id, runtime_id, user_id=user_id)
+        async with self._store.channel_transaction(user_id):
+            await self._store.set_channel_override(
+                connector_id, runtime_id, channel, confirm_native_global=confirm_native_global
+            )
+            await self._store.save_channel_selection(user_id)
+            await self._store.refresh_channel_targets(user_id)
         await self._plan(user_id, only=(connector_id, runtime_id))
         return await self._respond(user_id)
 
@@ -401,10 +522,8 @@ class ModelChannelService:
                 continue
             if connector_id and (switch["connectorId"], switch["runtimeId"]) != (connector_id, runtime_id):
                 continue
-            await self._store.save_channel_switch(switch["connectorId"], switch["runtimeId"], {
-                "userId": user_id, "state": PENDING, "reason": None, "message": None,
-            })
-            self._spawn(switch["connectorId"], switch["runtimeId"], user_id)
+            await self._store.request_channel_retry(switch["connectorId"], switch["runtimeId"])
+        await self._plan(user_id, only=(connector_id, runtime_id) if connector_id and runtime_id else None)
         return await self._respond(user_id)
 
     async def refresh(self, *, user_id: str, rewrite: str | None = None) -> bool:
@@ -413,7 +532,11 @@ class ModelChannelService:
         ``rewrite`` names a channel whose runtimes are written again even if
         nothing they can compare changed, e.g. after its key was rotated.
         """
-        await self._store.save_channel_selection(user_id)
+        async with self._store.channel_transaction(user_id):
+            await self._store.save_channel_selection(user_id)
+            if rewrite is not None:
+                await self._store.bump_channel_connection(user_id, rewrite)
+            await self._store.refresh_channel_targets(user_id)
         moving = await self._plan(user_id, rewrite=rewrite)
         await self.settle()
         return moving
@@ -449,8 +572,11 @@ class ModelChannelService:
 
     async def connector_event(self, connector_id: str) -> None:
         """The device is back: every runtime waiting on it may go on."""
-        for runtime_id, user_id in (await self._wake.on_connector(connector_id)).items():
-            self._spawn(connector_id, runtime_id, user_id)
+        # Always enumerate durable state; a missing Redis marker cannot hide work.
+        owner = await self._store.channel_connector_owner(connector_id)
+        if owner is not None:
+            await self._store.refresh_channel_targets(owner)
+            await self._plan(owner, connector=connector_id, reconnect=True)
         await self.settle()
 
     async def resume(self) -> None:
@@ -484,6 +610,8 @@ class ModelChannelService:
         base = runtime
         if runtime.managedBy == MANAGED_BY:
             base = await self._served_runtime(runtime, user_id=user_id) or runtime
+        await self._store.refresh_channel_targets(user_id)
+        await self._plan(user_id, only=(base.connectorId, base.runtimeId))
         switch = await self._store.get_channel_switch(base.connectorId, base.runtimeId)
         if switch is not None and switch["state"] in (PENDING, WAITING_ONLINE, *IN_FLIGHT):
             task = self._spawn(base.connectorId, base.runtimeId, user_id)
@@ -492,6 +620,9 @@ class ModelChannelService:
                 await asyncio.wait_for(asyncio.shield(task), timeout=ADMISSION_WAIT_SECONDS)
             except TimeoutError:
                 pass
+        switch = await self._store.get_channel_switch(base.connectorId, base.runtimeId)
+        if switch and switch["state"] in (FAILED, PENDING, WAITING_ONLINE, *IN_FLIGHT):
+            raise ModelChannelError("runtime_switching", "runtime channel reconciliation has not completed")
         context = await self._context(base, user_id=user_id)
         # Sessions go where the runtime's channel actually is right now.
         return context.actual_target.runtimeId
@@ -559,33 +690,20 @@ class ModelChannelService:
 
     async def recover_missing(self, *, user_id: str) -> None:
         """Turn an inferred pending state into a job; preserve every existing job."""
-        switches = {
-            (item["connectorId"], item["runtimeId"])
-            for item in await self._store.list_channel_switches(user_id=user_id)
-        }
-        created = False
-        for row in await self._store.list_user_device_runtimes(user_id=user_id):
-            runtime = DeviceRuntimeView.model_validate(row)
-            key = (runtime.connectorId, runtime.runtimeId)
-            if runtime.managedBy == MANAGED_BY or not runtime.modelConnection or key in switches:
-                continue
-            context = await self._context(runtime, user_id=user_id)
-            if context.desired == context.actual and not (
-                context.assignment is not None and _outdated(context.assignment, context.profiles)
-            ):
-                continue
-            if await self._store.create_channel_switch_if_missing(*key, user_id=user_id):
-                await self._wake.mark(*key, user_id)
-                self._spawn(*key, user_id)
-                created = True
-        if created:
-            await self._publish(user_id)
+        await self._store.refresh_channel_targets(user_id)
+        await self._plan(user_id)
         await self.settle()
 
     async def _plan(
         self, user_id: str, *, only: tuple[str, str] | None = None,
-        rewrite: str | None = None,
+        rewrite: str | None = None, connector: str | None = None, reconnect: bool = False,
     ) -> bool:
+        if await self._store.get_channel_selection(user_id) is None:
+            selection = await self.selection(user_id)
+            async with self._store.channel_transaction(user_id):
+                if await self._store.get_channel_selection(user_id) is None:
+                    await self._store.save_channel_selection(user_id, selection["channel"])
+        await self._store.refresh_channel_targets(user_id)
         rows = await self._store.list_user_device_runtimes(user_id=user_id)
         moving = False
         for row in rows:
@@ -594,29 +712,44 @@ class ModelChannelService:
                 continue
             if only is not None and (runtime.connectorId, runtime.runtimeId) != only:
                 continue
-            context = await self._context(runtime, user_id=user_id)
+            if connector is not None and runtime.connectorId != connector:
+                continue
             switch = await self._store.get_channel_switch(runtime.connectorId, runtime.runtimeId)
-            forced = rewrite is not None and context.actual == rewrite == context.desired
-            due = forced or context.desired != context.actual or (
-                context.assignment is not None and _outdated(context.assignment, context.profiles)
-            )
-            if not due:
-                if switch is not None and switch["state"] not in IN_FLIGHT and switch["state"] != APPLIED:
-                    await self._store.save_channel_switch(runtime.connectorId, runtime.runtimeId, {
-                        "userId": user_id, "state": APPLIED, "step": None, "reason": None,
-                        "message": None,
-                    })
-                    await self._wake.clear(runtime.connectorId, runtime.runtimeId)
+            sync = await self._store.get_channel_sync(runtime.connectorId, runtime.runtimeId)
+            due = sync is not None and (sync["desired_generation"] != sync["applied_generation"]
+                    or (switch is not None and switch["state"] in UNFINISHED))
+            if not due and not reconnect:
+                continue
+            if not due and reconnect and switch is not None and switch["state"] == APPLIED:
+                self._spawn(runtime.connectorId, runtime.runtimeId, user_id)
+                continue
+            if switch and sync and switch["state"] == WAITING_ONLINE and switch.get("targetGeneration") == sync["desired_generation"] and not reconnect:
+                try:
+                    if not await self._runtimes.is_connector_online(runtime.connectorId):
+                        continue
+                except RedisError:
+                    continue
+            if switch is not None and switch["state"] in (*NEEDS_RETRY, UNSUPPORTED):
+                same_target = switch.get("targetGeneration") == (sync or {}).get("desired_generation")
+                upgrade = reconnect and switch.get("reason") == "connector_upgrade_required"
+                if same_target and not upgrade and not (sync and sync["next_retry_at"] and sync["next_retry_at"] <= utc_now()):
+                    continue
+            if sync and sync["next_retry_at"] and sync["next_retry_at"] > utc_now() and not reconnect:
                 continue
             moving = True
-            values: dict[str, Any] = {"userId": user_id, "startedAt": utc_now()}
+            same_generation = switch is not None and sync is not None and switch.get("targetGeneration") == sync["desired_generation"]
+            values: dict[str, Any] = {"userId": user_id,
+                "targetGeneration": sync["desired_generation"] if sync else None,
+                "startedAt": switch.get("startedAt") if same_generation and switch.get("startedAt") else utc_now()}
             if switch is None or switch["state"] not in IN_FLIGHT:
-                values.update(state=PENDING, step=None, reason=REWRITE if forced else None,
-                              message=None)
-            await self._store.save_channel_switch(runtime.connectorId, runtime.runtimeId, values)
-            await self._wake.mark(runtime.connectorId, runtime.runtimeId, user_id)
+                values.update(state=RESTORING if switch and switch["state"] == FAILED and switch.get("snapshotCiphertext") else PENDING,
+                              step=None, reason=None, message=None)
+            await self._store.plan_channel_switch(runtime.connectorId, runtime.runtimeId, values)
+            await self._wake.mark(runtime.connectorId, runtime.runtimeId, user_id,
+                                  sync["desired_generation"] if sync else 0)
             self._spawn(runtime.connectorId, runtime.runtimeId, user_id)
-        await self._publish(user_id)
+        if moving:
+            await self._publish(user_id)
         return moving
 
     async def _reset(self, connector_id: str, runtime_id: str, *, user_id: str) -> None:
@@ -628,7 +761,7 @@ class ModelChannelService:
 
     def _spawn(self, connector_id: str, runtime_id: str, user_id: str) -> asyncio.Task[None]:
         task = self._driver.spawn(connector_id, runtime_id, lambda: self._drive(connector_id, runtime_id, user_id))
-        if task is not asyncio.current_task():
+        if self._driver.wait and task is not asyncio.current_task():
             self._spawned.append(task)
         return task
 
@@ -642,6 +775,8 @@ class ModelChannelService:
 
     async def _drive(self, connector_id: str, runtime_id: str, user_id: str) -> None:
         for _ in range(4):
+            if await self._store.channel_discovery_gated(connector_id):
+                return
             switch = await self._store.get_channel_switch(connector_id, runtime_id)
             if switch is None:
                 return
@@ -658,16 +793,63 @@ class ModelChannelService:
                 return
             if not runtime.modelConnection:
                 return
-            context = await self._context(runtime, user_id=user_id)
-            outdated = context.assignment is not None and (
-                _outdated(context.assignment, context.profiles)
-                or (switch["reason"] == REWRITE and switch["state"] in (PENDING, WAITING_ONLINE))
-            )
-            if context.desired == context.actual and not outdated:
-                await self._settle(connector_id, runtime_id, user_id, APPLIED)
+            async with self._store.channel_transaction(user_id):
+                context = await self._context(runtime, user_id=user_id)
+                sync = await self._store.get_channel_sync(connector_id, runtime_id)
+            if not await self._runtimes.is_connector_online(connector_id):
+                await self._wait_online(connector_id, runtime_id, user_id)
                 return
-            if switch["state"] in NEEDS_RETRY and switch["targetChannel"] == context.desired:
-                return  # failed before; waits for the user to retry
+            if not await self._runtimes.connector_supports(connector_id, "channelReconcileFence"):
+                await self._settle(connector_id, runtime_id, user_id, UNSUPPORTED, reason="connector_upgrade_required")
+                return
+            if switch["state"] in NEEDS_RETRY and switch.get("targetGeneration") == (sync or {}).get("desired_generation"):
+                return
+            if sync and sync["applied_generation"] == sync["desired_generation"] and context.desired == context.actual:
+                target = context.actual_target
+                report = await self._runtimes.read_connector_config(connector_id, target.runtimeId, target.runtimeType)
+                if report is None:
+                    await self._store.channel_retry(connector_id, runtime_id, "device_offline", automatic=True)
+                    await self._store.save_channel_switch(connector_id, runtime_id, {"state": PENDING, "reason": "device_offline"})
+                    return
+                if report["running"] == target.active and (not target.active or connection_digest(
+                    report["values"], target.modelConnection or {}) == sync["actual_config_digest"]):
+                    async with self._store.channel_transaction(user_id):
+                        latest = await self._store.get_channel_sync(connector_id, runtime_id)
+                        if latest["desired_generation"] != sync["desired_generation"]:
+                            continue
+                        await self._store.record_channel_observation(connector_id, runtime_id,
+                            generation=sync["desired_generation"], channel=context.desired,
+                            digest=sync["actual_config_digest"], instance_id=report.get("instanceId") or sync["observed_instance_id"])
+                        if switch["state"] != APPLIED:
+                            await self._settle(connector_id, runtime_id, user_id, APPLIED)
+                    return
+            if context.desired == context.actual and not (
+                context.assignment is not None and _outdated(context.assignment, context.profiles)
+            ):
+                try:
+                    plan = await self._plan_write(context)
+                except ModelConfigError:
+                    # The profile/key may have changed during the external lookup.
+                    # The executor re-captures its target and records recoverable failures.
+                    await self._execute(context, switch)
+                    continue
+                target = plan["target"]
+                if target is not None:
+                    report = await self._runtimes.read_connector_config(connector_id, target.runtimeId, target.runtimeType)
+                    expected = connection_digest(plan["config"], target.modelConnection or {})
+                    if report and (not plan["active"] or report["running"]) and connection_digest(
+                        report["values"], target.modelConnection or {}) == expected:
+                        async with self._store.channel_transaction(user_id):
+                            latest = await self._store.get_channel_sync(connector_id, runtime_id)
+                            if not sync or latest["desired_generation"] != sync["desired_generation"]:
+                                continue
+                            await self._store.save_channel_switch(connector_id, runtime_id,
+                                {"targetGeneration": sync["desired_generation"], "targetChannel": context.desired})
+                            await self._store.record_channel_observation(connector_id, runtime_id,
+                                generation=sync["desired_generation"], channel=context.desired, digest=expected,
+                                instance_id=report.get("instanceId"))
+                            await self._settle(connector_id, runtime_id, user_id, APPLIED)
+                        return
             reason = self._unsupported(context)
             if reason is not None:
                 await self._settle(connector_id, runtime_id, user_id, UNSUPPORTED, reason=reason)
@@ -678,6 +860,7 @@ class ModelChannelService:
                 return
             await self._execute(context, switch)
             # The wanted channel may have changed while this one ran.
+        await self._store.enqueue_channel_sync(user_id, connector_id)
 
     def _needs_managed(self, context: _Context) -> bool:
         capability = context.runtime.modelConnection or {}
@@ -715,6 +898,16 @@ class ModelChannelService:
     async def _execute(self, context: _Context, switch: dict[str, Any]) -> None:
         connector_id, runtime_id = context.runtime.connectorId, context.runtime.runtimeId
         operation_id = f"chs_{secrets.token_urlsafe(12)}"
+        async with self._store.channel_transaction(context.user_id):
+            sync = await self._store.get_channel_sync(connector_id, runtime_id)
+            current = await self._owned(connector_id, runtime_id, user_id=context.user_id)
+            context = await self._context(current, user_id=context.user_id)
+            if sync is not None:
+                await self._store.save_channel_switch(connector_id, runtime_id, {
+                    "targetGeneration": sync["desired_generation"], "targetSpecDigest": sync["desired_spec_digest"],
+                    "targetChannel": context.desired})
+        if sync is None:
+            return
         try:
             plan = await self._plan_write(context)
         except ModelConfigError as exc:
@@ -726,9 +919,13 @@ class ModelChannelService:
                 await self._settle(connector_id, runtime_id, context.user_id, RESTORED,
                                    reason=exc.code, message=exc.message, target=context.desired)
             return
+        latest = await self._store.get_channel_sync(connector_id, runtime_id)
+        if latest["desired_generation"] != sync["desired_generation"]:
+            return
         revision = await self._store.next_switch_revision(connector_id, runtime_id)
         box = self._box()
         target = plan["target"]
+        plan["baseConfig"] = target.config if target is not None else None
         snapshot = {
             "runtimeId": target.runtimeId if target is not None else None,
             "created": False,
@@ -739,19 +936,31 @@ class ModelChannelService:
                 "assignment": await self._store.get_runtime_assignment(connector_id, target.runtimeId),
             },
             "after": plan["after"],
+            "desiredGeneration": sync["desired_generation"],
+            "desiredChannel": context.desired,
+            "previousChannel": context.actual, "previousGeneration": sync["applied_generation"],
+            "planConfig": plan["config"], "planActive": plan["active"],
         }
-        sealed = box.seal(json.dumps(snapshot), context=f"channel-snapshot:{connector_id}:{runtime_id}")
-        await self._store.save_channel_switch(connector_id, runtime_id, {
-            "userId": context.user_id, "state": SWITCHING, "step": PREPARING, "targetChannel": context.desired,
-            "operationId": operation_id, "snapshotCiphertext": sealed, "reason": None, "message": None,
-            "leaseUntil": _iso(_now() + LEASE), "startedAt": switch.get("startedAt") or utc_now(),
-        })
-        await self._publish(context.user_id)
-        fence = {"operationId": operation_id, "switchRevision": revision}
         if target is None:
-            # A managed instance is created for this channel: nothing existing to roll back.
-            await self._create_managed(context, plan, switch_row=(connector_id, runtime_id), fence=fence)
-            return
+            snapshot["runtimeId"] = managed_channel_runtime_id(connector_id, runtime_id)
+            snapshot["created"] = True
+            plan["reservedId"] = snapshot["runtimeId"]
+        sealed = box.seal(json.dumps(snapshot), context=f"channel-snapshot:{connector_id}:{runtime_id}")
+        async with self._store.channel_transaction(context.user_id):
+            current_sync = await self._store.get_channel_sync(connector_id, runtime_id)
+            if current_sync["desired_generation"] != sync["desired_generation"]:
+                return
+            await self._store.save_channel_switch(connector_id, runtime_id, {
+                "userId": context.user_id, "state": SWITCHING, "step": PREPARING, "targetChannel": context.desired,
+                "operationId": operation_id, "snapshotCiphertext": sealed, "reason": None, "message": None,
+                "targetGeneration": sync["desired_generation"], "targetSpecDigest": sync["desired_spec_digest"],
+                "expectedConfigDigest": connection_digest(plan["config"], (target or context.runtime).modelConnection or {}),
+                "planCiphertext": sealed,
+                "leaseUntil": _iso(_now() + LEASE), "startedAt": switch.get("startedAt") or utc_now(),
+            })
+        await self._publish(context.user_id)
+        fence = {"operationId": operation_id, "switchRevision": revision,
+                 "targetGeneration": sync["desired_generation"], "logicalRuntimeId": runtime_id}
         # Close the runtime to new tasks, then make sure none slipped in.
         await self._store.close_runtime_for_switch(
             connector_id, runtime_id,
@@ -759,9 +968,19 @@ class ModelChannelService:
             now=_iso(_now()),
         )
         await self._publish(context.user_id)
+        latest = await self._store.get_channel_sync(connector_id, runtime_id)
+        if latest["desired_generation"] != sync["desired_generation"]:
+            await self._settle(connector_id, runtime_id, context.user_id, PENDING)
+            return
+        if target is None:
+            await self._create_managed(context, plan, switch_row=(connector_id, runtime_id), fence=fence, snapshot=snapshot)
+            return
         ok, reason, message = await self._activate(context, target, plan, fence)
         if ok:
             await self._commit(context, target, plan)
+            return
+        if reason == "target_changed":
+            await self._settle(connector_id, runtime_id, context.user_id, PENDING)
             return
         if reason == OFFLINE:
             await self._store.save_channel_switch(connector_id, runtime_id, {
@@ -867,6 +1086,8 @@ class ModelChannelService:
         connector_id = target.connectorId
         try:
             async with self._runtimes.locked_runtime(connector_id, target.runtimeId, user_id=context.user_id) as handle:
+                if handle.runtime.config != plan.get("baseConfig"):
+                    return False, "target_changed", None
                 if plan["config"] != handle.runtime.config or (plan["active"] and handle.runtime.active):
                     # A switch always rebuilds a running instance from the full
                     # target config, even when the saved config is unchanged.
@@ -874,7 +1095,7 @@ class ModelChannelService:
                 if plan["active"] and not handle.runtime.active:
                     await handle.set_active(True, fence=fence)
                 elif not plan["active"] and handle.runtime.active:
-                    await handle.set_active(False)
+                    await handle.set_active(False, fence=fence)
                 started = dict(handle.last_start)
         except DeviceRuntimeInvalidConfigError as exc:
             return False, "validate_failed", exc.message
@@ -884,10 +1105,13 @@ class ModelChannelService:
         except DeviceRuntimeError as exc:
             code = exc.detail.get("code") if isinstance(exc.detail, dict) else None
             # A newer switch already reached the Connector.
+            if code == "channel_target_superseded":
+                return False, "target_changed", None
             return False, "superseded" if code == "switch_revision_stale" else "start_failed", exc.message
         except TimeoutError:
             # The Connector may have started it anyway: verify asks what it runs.
             started = {}
+        plan["instanceId"] = started.get("instanceId")
         await self._store.save_channel_switch(context.runtime.connectorId, context.runtime.runtimeId, {
             "step": VERIFYING, "leaseUntil": _iso(_now() + LEASE),
         })
@@ -913,19 +1137,16 @@ class ModelChannelService:
             row = DeviceRuntimeView.model_validate(
                 await self._runtimes._store.get_device_runtime(target.connectorId, target.runtimeId)
             )
+            status = (public_runtime_view(row).modelConnectionStatus or {}).get("state")
+            actual = await self._runtimes.read_connector_config(target.connectorId, target.runtimeId, target.runtimeType)
+            if actual and actual["running"] and connection_digest(actual["values"], capability) == expected and status != "failed":
+                plan["instanceId"] = plan.get("instanceId") or actual.get("instanceId")
+                return True, None, None
             if row.status == "error":
                 message = (row.error or {}).get("message") if isinstance(row.error, dict) else None
                 return False, "start_failed", message
-            if row.status == "running" and connection_digest(row.config, capability) == expected:
-                report = row.modelConnectionReport
-                if expected is None or report is None:
-                    # Older Connectors report nothing beyond running the saved config.
-                    return True, None, None
-                status = (public_runtime_view(row).modelConnectionStatus or {}).get("state")
-                if status in {"applied", "managed_externally"}:
-                    return True, None, None
-                if status == "failed":
-                    return False, "verify_failed", (public_runtime_view(row).modelConnectionStatus or {}).get("reason")
+            if status == "failed":
+                return False, "verify_failed", (public_runtime_view(row).modelConnectionStatus or {}).get("reason")
             if asyncio.get_running_loop().time() >= deadline:
                 break
             await asyncio.sleep(delay)
@@ -937,20 +1158,28 @@ class ModelChannelService:
         return False, "verify_timeout", None
 
     async def _commit(self, context: _Context, target: DeviceRuntimeView, plan: dict[str, Any]) -> None:
-        after = plan["after"]
-        connector_id, runtime_id = context.runtime.connectorId, context.runtime.runtimeId
-        if after is None:
-            if await self._store.get_runtime_assignment(target.connectorId, target.runtimeId) is not None:
-                await self._store.delete_runtime_assignment(target.connectorId, target.runtimeId)
-        else:
-            row = DeviceRuntimeView.model_validate(
-                await self._runtimes._store.get_device_runtime(target.connectorId, target.runtimeId)
-            )
-            await self._store.save_runtime_assignment(_assignment_values(target.connectorId, target.runtimeId, after, row))
-        await self._settle(connector_id, runtime_id, context.user_id, APPLIED)
+        async with self._store.channel_transaction(context.user_id):
+            after = plan["after"]
+            connector_id, runtime_id = context.runtime.connectorId, context.runtime.runtimeId
+            if after is None:
+                if await self._store.get_runtime_assignment(target.connectorId, target.runtimeId) is not None:
+                    await self._store.delete_runtime_assignment(target.connectorId, target.runtimeId)
+            else:
+                row = DeviceRuntimeView.model_validate(
+                    await self._runtimes._store.get_device_runtime(target.connectorId, target.runtimeId)
+                )
+                await self._store.save_runtime_assignment(_assignment_values(target.connectorId, target.runtimeId, after, row))
+            switch = await self._store.get_channel_switch(connector_id, runtime_id)
+            generation = switch.get("targetGeneration")
+            await self._store.record_channel_observation(connector_id, runtime_id, generation=generation,
+                channel=switch.get("targetChannel") or context.desired,
+                digest=connection_digest(plan["config"], target.modelConnection or {}), instance_id=plan.get("instanceId"))
+            await self._settle(connector_id, runtime_id, context.user_id, APPLIED, publish=False)
+        await self._publish(context.user_id)
 
     async def _create_managed(
         self, context: _Context, plan: dict[str, Any], *, switch_row: tuple[str, str], fence: dict[str, Any],
+        snapshot: dict[str, Any],
     ) -> None:
         runtime = context.runtime
         after = plan["after"]
@@ -960,24 +1189,21 @@ class ModelChannelService:
                 runtime.connectorId, runtime_type=runtime.runtimeType,
                 name=f"{runtime.typeDisplayName}（{profile['name']}）"[:128],
                 config=plan["config"], active=True, user_id=context.user_id,
+                runtime_id=plan["reservedId"], managed_by=MANAGED_BY, fence=fence,
             )
+        except DeviceRuntimeOfflineError:
+            await self._store.save_channel_switch(*switch_row, {"step": VERIFYING})
+            await self._wake.mark(*switch_row, context.user_id)
+            return
         except DeviceRuntimeError as exc:
-            await self._settle(*switch_row, context.user_id, RESTORED, reason="start_failed",
-                               message=exc.message, target=context.desired)
+            await self._rollback(*switch_row, context.user_id, snapshot, reason="start_failed", message=exc.message)
             return
         await self._store.set_device_runtime_managed_by(runtime.connectorId, created.runtimeId, MANAGED_BY)
         ok, reason, message = await self._verify(created, plan, {})
         if not ok:
-            # The runtime it serves was never touched; the new instance just stops.
-            try:
-                async with self._runtimes.locked_runtime(runtime.connectorId, created.runtimeId, user_id=context.user_id) as handle:
-                    await handle.set_active(False)
-            except DeviceRuntimeError:
-                logger.warning("could not stop a managed instance that failed to start runtime_id={}", created.runtimeId)
-            await self._settle(*switch_row, context.user_id, RESTORED, reason=reason, message=message, target=context.desired)
+            await self._rollback(*switch_row, context.user_id, snapshot, reason=reason, message=message)
             return
-        await self._store.save_runtime_assignment(_assignment_values(runtime.connectorId, created.runtimeId, after, created))
-        await self._settle(*switch_row, context.user_id, APPLIED)
+        await self._commit(context, created, plan)
 
     async def _rollback(
         self, connector_id: str, runtime_id: str, user_id: str, snapshot: dict[str, Any], *,
@@ -989,22 +1215,36 @@ class ModelChannelService:
             "leaseUntil": _iso(_now() + LEASE),
         })
         await self._publish(user_id)
+        revision = await self._store.next_switch_revision(connector_id, runtime_id)
+        fence = {"operationId": "restore_" + secrets.token_urlsafe(12), "switchRevision": revision}
         before = snapshot.get("before")
         target_id = snapshot.get("runtimeId")
+        if before is None and target_id is not None and snapshot.get("created"):
+            try:
+                await self._runtimes._store.get_device_runtime(connector_id, target_id)
+            except KeyError:
+                target_id = None
+            try:
+                if target_id is not None:
+                    async with self._runtimes.locked_runtime(connector_id, target_id, user_id=user_id) as handle:
+                        await handle.set_active(False, fence=fence)
+            except DeviceRuntimeError:
+                await self._settle(connector_id, runtime_id, user_id, FAILED, reason="rollback_failed", keep_target=True)
+                return
         if before is None or target_id is None:
             await self._settle(connector_id, runtime_id, user_id, RESTORED, reason=reason, message=message, keep_target=True)
             return
         try:
             async with self._runtimes.locked_runtime(connector_id, target_id, user_id=user_id) as handle:
                 if before["config"] is not None and handle.runtime.config != before["config"]:
-                    await handle.put_config(before["config"], restart=bool(before["active"]))
+                    await handle.put_config(before["config"], restart=bool(before["active"]), fence=fence)
                 if before["active"] and (not handle.runtime.active or handle.runtime.status not in RESTARTING_STATUSES):
                     if handle.runtime.active:
-                        await handle.restart()
+                        await handle.restart(fence=fence)
                     else:
-                        await handle.set_active(True)
+                        await handle.set_active(True, fence=fence)
                 elif not before["active"] and handle.runtime.active:
-                    await handle.set_active(False)
+                    await handle.set_active(False, fence=fence)
                 current = handle.runtime
             assignment = before.get("assignment")
             if assignment is not None:
@@ -1018,15 +1258,18 @@ class ModelChannelService:
             logger.warning("model channel rollback failed connector_id={} runtime_id={} code={}",
                            connector_id, target_id, exc.code)
             ok = False
-        await self._settle(connector_id, runtime_id, user_id, RESTORED if ok else FAILED,
-                           reason=reason if ok else "rollback_failed", message=message, keep_target=True)
+        async with self._store.channel_transaction(user_id):
+            if ok and snapshot.get("previousChannel") is not None:
+                await self._store.record_channel_observation(connector_id, runtime_id,
+                    generation=snapshot.get("previousGeneration"), channel=snapshot["previousChannel"],
+                    digest=connection_digest(before["config"], current.modelConnection or {}))
+            await self._settle(connector_id, runtime_id, user_id, RESTORED if ok else FAILED,
+                reason=reason if ok else "rollback_failed", message=message, keep_target=True, publish=False)
+        await self._publish(user_id)
 
     async def _recover(self, switch: dict[str, Any], *, user_id: str) -> None:
         """Take over a switch whose worker stopped mid-way."""
         connector_id, runtime_id = switch["connectorId"], switch["runtimeId"]
-        owned_elsewhere = self._driver.running(connector_id, runtime_id) is not asyncio.current_task()
-        if switch["leaseUntil"] and switch["leaseUntil"] > _iso(_now()) and owned_elsewhere:
-            return  # still owned; its own task finishes it
         snapshot = None
         if switch["snapshotCiphertext"]:
             opened = self._box().open(switch["snapshotCiphertext"], context=f"channel-snapshot:{connector_id}:{runtime_id}")
@@ -1049,12 +1292,22 @@ class ModelChannelService:
         if not await self._runtimes.is_connector_online(connector_id):
             await self._wake.mark(connector_id, runtime_id, user_id)
             return  # verified when the device is back
-        target = DeviceRuntimeView.model_validate(
-            await self._runtimes._store.get_device_runtime(connector_id, target_id)
-        )
-        plan = {"config": target.config, "active": target.active, "after": after}
-        expected = after["digest"] if after else connection_digest(snapshot["before"]["config"], target.modelConnection or {})
-        if after is not None and connection_digest(target.config, target.modelConnection or {}) != expected:
+        try:
+            target = DeviceRuntimeView.model_validate(
+                await self._runtimes._store.get_device_runtime(connector_id, target_id))
+        except KeyError:
+            if not snapshot.get("created"):
+                raise
+            base = await self._owned(connector_id, runtime_id, user_id=user_id)
+            fence = {"operationId": switch["operationId"], "switchRevision": switch["switchRevision"]}
+            target = await self._runtimes.create_runtime(connector_id, runtime_type=base.runtimeType,
+                name=(base.typeDisplayName + " " + target_id)[-128:], config=snapshot["planConfig"],
+                active=snapshot["planActive"], user_id=user_id, runtime_id=target_id, managed_by=MANAGED_BY, fence=fence)
+        if snapshot.get("created"):
+            await self._store.set_device_runtime_managed_by(connector_id, target_id, MANAGED_BY)
+        plan = {"config": snapshot.get("planConfig", target.config), "active": snapshot.get("planActive", target.active), "after": after}
+        expected = connection_digest(plan["config"], target.modelConnection or {})
+        if connection_digest(target.config, target.modelConnection or {}) != expected:
             await self._rollback(connector_id, runtime_id, user_id, snapshot, reason="start_failed", message=None)
             return
         ok, reason, message = await self._verify(target, plan, {})
@@ -1068,25 +1321,42 @@ class ModelChannelService:
     async def _settle(
         self, connector_id: str, runtime_id: str, user_id: str, state: str, *,
         reason: str | None = None, message: str | None = None, target: str | None = None,
-        keep_target: bool = False,
+        keep_target: bool = False, publish: bool = True,
     ) -> None:
+        sync = await self._store.get_channel_sync(connector_id, runtime_id)
+        switch = await self._store.get_channel_switch(connector_id, runtime_id)
+        generation = (switch or {}).get("targetGeneration")
+        if state != FAILED and sync and generation is not None and generation != sync["desired_generation"]:
+            state = PENDING
+        if state in (RESTORED, FAILED, UNSUPPORTED):
+            await self._store.channel_retry(connector_id, runtime_id, reason,
+                automatic=reason in {"device_offline", "tokens_unavailable", "verify_timeout"})
+        elif state == APPLIED:
+            await self._store.channel_retry(connector_id, runtime_id, None)
         values: dict[str, Any] = {
+            "targetGeneration": generation if generation is not None else (sync["desired_generation"] if sync else None),
             "userId": user_id, "state": state, "step": None, "reason": reason, "message": message,
-            "snapshotCiphertext": None, "leaseUntil": None,
+            "snapshotCiphertext": None, "planCiphertext": None, "leaseUntil": None,
         }
+        if state == FAILED:
+            values.pop("snapshotCiphertext", None)
+            values.pop("planCiphertext", None)
         if target is not None:
             values["targetChannel"] = target
         elif not keep_target and state != PENDING:
             values["targetChannel"] = None if state == APPLIED else values.get("targetChannel")
         await self._store.save_channel_switch(connector_id, runtime_id, values)
         if state == PENDING:
-            await self._wake.mark(connector_id, runtime_id, user_id)
+            await self._wake.mark(connector_id, runtime_id, user_id, sync["desired_generation"] if sync else 0)
         else:
-            await self._wake.clear(connector_id, runtime_id)
+            await self._wake.clear(connector_id, runtime_id, sync["desired_generation"] if sync else 0)
             for alias, (waiting, _) in (await self._wake.on_connector_raw(connector_id)).items():
                 if waiting == runtime_id and alias != runtime_id:
                     await self._wake.clear(connector_id, alias)
-        await self._publish(user_id)
+        logger.info("channel reconciliation connector_id={} runtime_id={} target_generation={} desired_generation={} state={} reason={}",
+                    connector_id, runtime_id, generation, sync["desired_generation"] if sync else None, state, reason)
+        if publish:
+            await self._publish(user_id)
 
     async def _wait_online(
         self, connector_id: str, runtime_id: str, user_id: str,
@@ -1105,12 +1375,17 @@ class ModelChannelService:
         overrides = {(o["connectorId"], o["runtimeId"]): o for o in await self._store.list_channel_overrides(user_id=user_id)}
         override = overrides.get((runtime.connectorId, runtime.runtimeId))
         profiles = {p["id"]: p for p in await self._store.list_model_profiles(user_id=user_id)}
-        managed_id = await self._store.find_managed_runtime_id(runtime.connectorId, runtime.runtimeType, MANAGED_BY)
+        managed_id = managed_channel_runtime_id(runtime.connectorId, runtime.runtimeId)
         managed = None
-        if managed_id is not None:
+        try:
             managed = DeviceRuntimeView.model_validate(
-                await self._runtimes._store.get_device_runtime(runtime.connectorId, managed_id)
-            )
+                await self._runtimes._store.get_device_runtime(runtime.connectorId, managed_id))
+        except KeyError:
+            if runtime.runtimeId == runtime.runtimeType:
+                legacy_id = await self._store.find_managed_runtime_id(runtime.connectorId, runtime.runtimeType, MANAGED_BY, legacy_only=True)
+                if legacy_id is not None:
+                    managed = DeviceRuntimeView.model_validate(
+                        await self._runtimes._store.get_device_runtime(runtime.connectorId, legacy_id))
         assignments = {}
         for item in (runtime, managed):
             if item is not None:
@@ -1125,11 +1400,14 @@ class ModelChannelService:
         )
 
     async def _served_runtime(self, runtime: DeviceRuntimeView, *, user_id: str) -> DeviceRuntimeView | None:
-        for row in await self._store.list_user_device_runtimes(user_id=user_id):
-            if (row["connectorId"] == runtime.connectorId and row["runtimeType"] == runtime.runtimeType
-                    and row.get("managedBy") != MANAGED_BY):
+        rows = await self._store.list_user_device_runtimes(user_id=user_id)
+        candidates = [row for row in rows if row["connectorId"] == runtime.connectorId
+                      and row["runtimeType"] == runtime.runtimeType and row.get("managedBy") != MANAGED_BY]
+        for row in candidates:
+            if managed_channel_runtime_id(runtime.connectorId, row["runtimeId"]) == runtime.runtimeId:
                 return DeviceRuntimeView.model_validate(row)
-        return None
+        return next((DeviceRuntimeView.model_validate(row) for row in candidates
+                     if row["runtimeId"] == row["runtimeType"]), None)
 
     async def _busy(self, runtime: DeviceRuntimeView, target: DeviceRuntimeView) -> bool:
         return await self._session_count(runtime, target) > 0

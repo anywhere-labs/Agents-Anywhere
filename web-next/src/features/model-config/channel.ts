@@ -127,7 +127,7 @@ export function channelRowFor(
 
 /** Changes whenever the channel a runtime actually uses changes, or settles. */
 export function runtimeChannelKey(row: ChannelRuntimeState | null): string {
-  return row ? `${row.actual}:${row.state === "applied"}` : ""
+  return row ? `${row.actual}:${row.appliedGeneration ?? ""}:${row.state === "applied"}` : ""
 }
 
 /** Whether a runtime uses the Anywhere channel, verified. */

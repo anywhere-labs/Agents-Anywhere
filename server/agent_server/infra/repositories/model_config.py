@@ -9,9 +9,13 @@ from agent_server.core.utc import utc_now
 from agent_server.infra.db.schema import (
     connectors,
     device_runtimes,
+    model_channel_selections,
     model_profiles,
+    runtime_channel_overrides,
+    runtime_channel_switches,
     runtime_model_assignments,
 )
+from agent_server.infra.repositories.channel_reconciliation import channel_connection
 from agent_server.infra.repositories.store_support import _json_dumps, _json_loads
 
 
@@ -23,12 +27,14 @@ class ModelConfigRepositoryMixin:
     # Profiles.
 
     async def create_model_profile(self, row: dict[str, Any]) -> dict[str, Any]:
-        async with self._engine.begin() as conn:
-            await conn.execute(insert(model_profiles).values(**row))
+        async with self.channel_transaction(row["user_id"]):
+            async with channel_connection(self, write=True) as conn:
+                await conn.execute(insert(model_profiles).values(**row))
+            await self._refresh_channel_targets(row["user_id"])
         return await self.get_model_profile(row["id"], user_id=row["user_id"])
 
     async def get_model_profile(self, profile_id: str, *, user_id: str) -> dict[str, Any]:
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             row = (
                 await conn.execute(
                     select(model_profiles).where(
@@ -42,7 +48,7 @@ class ModelConfigRepositoryMixin:
         return _profile_row(row)
 
     async def list_model_profiles(self, *, user_id: str) -> list[dict[str, Any]]:
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             rows = (
                 await conn.execute(
                     select(model_profiles)
@@ -55,7 +61,7 @@ class ModelConfigRepositoryMixin:
     async def find_model_profile_by_source(
         self, *, user_id: str, source: str
     ) -> dict[str, Any] | None:
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             row = (
                 await conn.execute(
                     select(model_profiles).where(
@@ -66,40 +72,38 @@ class ModelConfigRepositoryMixin:
             ).mappings().first()
         return _profile_row(row) if row is not None else None
 
-    async def update_model_profile(
-        self,
-        profile_id: str,
-        *,
-        user_id: str,
-        values: dict[str, Any],
-        expected_etag: int | None = None,
-    ) -> dict[str, Any]:
-        """Update a profile; with ``expected_etag`` only if nobody else did."""
-        conditions = [model_profiles.c.id == profile_id, model_profiles.c.user_id == user_id]
-        if expected_etag is not None:
-            conditions.append(model_profiles.c.etag == expected_etag)
-        async with self._engine.begin() as conn:
-            result = await conn.execute(
-                update(model_profiles)
-                .where(*conditions)
-                .values(**values, etag=model_profiles.c.etag + 1, updated_at=utc_now())
-            )
-            if result.rowcount == 0:
-                exists = (
-                    await conn.execute(
-                        select(model_profiles.c.id).where(
-                            model_profiles.c.id == profile_id,
-                            model_profiles.c.user_id == user_id,
-                        )
-                    )
-                ).first()
-                if exists is None:
+    async def update_model_profile(self, profile_id: str, *, user_id: str, values: dict[str, Any],
+                                   expected_etag: int | None = None) -> dict[str, Any]:
+        async with self.channel_transaction(user_id):
+            async with channel_connection(self, write=True) as conn:
+                row = (await conn.execute(select(model_profiles).where(
+                    model_profiles.c.id == profile_id, model_profiles.c.user_id == user_id,
+                ).with_for_update())).mappings().first()
+                if row is None:
                     raise KeyError(profile_id)
-                raise ValueError("profile changed")
-        return await self.get_model_profile(profile_id, user_id=user_id)
+                if expected_etag is not None and row["etag"] != expected_etag:
+                    raise ValueError("profile changed")
+                values = dict(values)
+                if any(k in values and values[k] != row[k] for k in (
+                    "catalog_digest", "origin_host", "key_ref_json", "preferences_json", "state")):
+                    values["connection_revision"] = row["connection_revision"] + 1
+                await conn.execute(update(model_profiles).where(model_profiles.c.id == profile_id).values(
+                    **values, etag=model_profiles.c.etag + 1, updated_at=utc_now()))
+                await self._refresh_channel_targets(user_id)
+            return await self.get_model_profile(profile_id, user_id=user_id)
 
     async def delete_model_profile(self, profile_id: str, *, user_id: str) -> None:
-        async with self._engine.begin() as conn:
+        async with self.channel_transaction(user_id), channel_connection(self, write=True) as conn:
+            selected = (await conn.execute(select(model_channel_selections.c.user_id).where(
+                model_channel_selections.c.user_id == user_id, model_channel_selections.c.channel == profile_id))).first()
+            pinned = (await conn.execute(select(runtime_channel_overrides.c.runtime_id).join(
+                connectors, connectors.c.id == runtime_channel_overrides.c.connector_id).where(
+                connectors.c.user_id == user_id, runtime_channel_overrides.c.channel == profile_id))).first()
+            executing = (await conn.execute(select(runtime_channel_switches.c.runtime_id).where(
+                runtime_channel_switches.c.user_id == user_id, runtime_channel_switches.c.target_channel == profile_id,
+                runtime_channel_switches.c.state.in_(("switching", "restoring", "failed"))))).first()
+            if selected or pinned or executing:
+                raise ModelProfileInUseError(profile_id)
             in_use = (
                 await conn.execute(
                     select(func.count())
@@ -123,7 +127,7 @@ class ModelConfigRepositoryMixin:
     async def get_runtime_assignment(
         self, connector_id: str, runtime_id: str
     ) -> dict[str, Any] | None:
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             row = (
                 await conn.execute(
                     select(runtime_model_assignments).where(
@@ -135,7 +139,7 @@ class ModelConfigRepositoryMixin:
         return _assignment_row(row) if row is not None else None
 
     async def list_runtime_assignments(self, *, user_id: str) -> list[dict[str, Any]]:
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             rows = (
                 await conn.execute(
                     select(runtime_model_assignments)
@@ -156,7 +160,7 @@ class ModelConfigRepositoryMixin:
         values["imported_model_ids_json"] = _json_dumps(row["imported_model_ids"])
         values["error_json"] = _json_dumps(row["error"]) if row.get("error") else None
         values["updated_at"] = utc_now()
-        async with self._engine.begin() as conn:
+        async with channel_connection(self, write=True) as conn:
             statement = pg_insert(runtime_model_assignments).values(**values)
             await conn.execute(
                 statement.on_conflict_do_update(
@@ -173,7 +177,7 @@ class ModelConfigRepositoryMixin:
         self, connector_id: str, runtime_id: str
     ) -> None:
         """Delete an assignment, and its profile once a detached one is unused."""
-        async with self._engine.begin() as conn:
+        async with channel_connection(self, write=True) as conn:
             profile_id = (
                 await conn.execute(
                     delete(runtime_model_assignments)
@@ -206,7 +210,7 @@ class ModelConfigRepositoryMixin:
     async def set_device_runtime_managed_by(
         self, connector_id: str, runtime_id: str, managed_by: str | None
     ) -> None:
-        async with self._engine.begin() as conn:
+        async with channel_connection(self, write=True) as conn:
             await conn.execute(
                 update(device_runtimes)
                 .where(
@@ -217,9 +221,9 @@ class ModelConfigRepositoryMixin:
             )
 
     async def find_managed_runtime_id(
-        self, connector_id: str, runtime_type: str, managed_by: str
+        self, connector_id: str, runtime_type: str, managed_by: str, *, legacy_only: bool = False
     ) -> str | None:
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             return (
                 await conn.execute(
                     select(device_runtimes.c.runtime_id)
@@ -227,6 +231,7 @@ class ModelConfigRepositoryMixin:
                         device_runtimes.c.connector_id == connector_id,
                         device_runtimes.c.runtime_type == runtime_type,
                         device_runtimes.c.managed_by == managed_by,
+                        ~device_runtimes.c.runtime_id.startswith("rti_channel_", autoescape=True) if legacy_only else True,
                     )
                     .order_by(device_runtimes.c.created_at)
                     .limit(1)
@@ -248,6 +253,7 @@ def _profile_row(row: Any) -> dict[str, Any]:
         "preferences": _json_loads(row["preferences_json"]),
         "state": row["state"],
         "etag": row["etag"],
+        "connectionRevision": row["connection_revision"],
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
     }

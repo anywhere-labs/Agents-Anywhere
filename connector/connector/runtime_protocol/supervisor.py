@@ -282,6 +282,12 @@ class RuntimeSupervisor:
             # one from the full target config. Only a retry of the accepted
             # switch may find that instance already running and keep it.
             retry = await asyncio.to_thread(self._switch_fence.is_retry, runtime_id, switch)
+            accepted = await asyncio.to_thread(self._switch_fence.load, runtime_id)
+            retry = retry and accepted is not None and accepted.status in {"running", "starting"}
+            # Persist acceptance before any runtime side effect, including a process crash mid-start.
+            await asyncio.to_thread(self._switch_fence.accept, runtime_id, switch,
+                config_digest=model_connection_digest(values, self.model_connection_capability(resolved.runtime_type)),
+                status="applying")
             try:
                 return await self._start_locked(
                     resolved, values, revision, rebuild=not retry
@@ -491,11 +497,22 @@ class RuntimeSupervisor:
             )
             return result, self.config_digest(runtime_id)
 
-    async def stop(self, runtime_id: str) -> None:
+    async def stop(self, runtime_id: str, *, switch: RuntimeSwitchRequest | None = None) -> None:
         self._entry(runtime_id)
         lock = self._locks[runtime_id]
         async with lock, self._resource_lock:
+            if switch is not None:
+                await asyncio.to_thread(self._switch_fence.check, runtime_id, switch)
+                record = await asyncio.to_thread(self._switch_fence.load, runtime_id)
+                # A delayed duplicate stop must not stop the start that followed it.
+                if record and record.switch_revision == switch.switch_revision and record.operation_id == switch.operation_id and record.status != "stopping":
+                    return
+                await asyncio.to_thread(self._switch_fence.accept, runtime_id, switch,
+                                        config_digest=self.config_digest(runtime_id), status="stopping")
             await self._stop_locked(runtime_id)
+            if switch is not None:
+                await asyncio.to_thread(self._switch_fence.accept, runtime_id, switch,
+                                        config_digest=self.config_digest(runtime_id), status="stopped")
 
     def _ensure_running_capacity(
         self, instance: RuntimeInstanceSpec, provider: RuntimeProvider

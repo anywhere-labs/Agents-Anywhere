@@ -102,11 +102,15 @@ fun ModelConfigScreen(
     val notifyError: (Throwable) -> Unit = { error ->
         notify(context.getString(modelConfigErrorRes(modelConfigErrorCode(error))), error = true)
     }
+    fun acceptChannel(next: ModelChannelState) {
+        val currentRevision = maxOf(localChannel?.revision ?: -1L, state.overview?.channel?.revision ?: -1L)
+        if (next.revision >= currentRevision) localChannel = next
+    }
     fun setChannel(channel: String) {
         if (settingChannel != null) return
         settingChannel = channel
         scope.launch {
-            controller.setChannel(channel).onSuccess { localChannel = it }.onFailure(notifyError)
+            controller.setChannel(channel).onSuccess { acceptChannel(it) }.onFailure(notifyError)
             settingChannel = null
         }
     }
@@ -123,7 +127,7 @@ fun ModelConfigScreen(
                     CircularProgressIndicator(color = colors.muted, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
                 }
             } else {
-                val channel = localChannel ?: overview.channel
+                val channel = localChannel?.takeIf { it.revision >= (overview.channel?.revision ?: -1L) } ?: overview.channel
                 // A plain column keeps the Tokens card (its tab, edits and loaded
                 // usage) alive while the rest of the page scrolls past it.
                 Column(
@@ -147,7 +151,7 @@ fun ModelConfigScreen(
                             controller = controller,
                             settingChannel = settingChannel != null,
                             onSetChannel = ::setChannel,
-                            onChannelState = { localChannel = it },
+                            onChannelState = { acceptChannel(it) },
                             onError = notifyError,
                         )
                     }

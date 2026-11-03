@@ -106,6 +106,10 @@ class ModelConfigService:
         self._broker = broker
         self._tokens_key = tokens_key
         self._secret_box = secret_box
+        self._channel_changed: Callable[..., Awaitable[None]] | None = None
+
+    def set_channel_change_handler(self, handler: Callable[..., Awaitable[None]]) -> None:
+        self._channel_changed = handler
 
     def set_tokens_key_provider(self, provider: TokensKeyProvider) -> None:
         self._tokens_key = provider
@@ -274,13 +278,18 @@ class ModelConfigService:
         elif request.offers is not None and origin_host(offers) != profile["originHost"]:
             # Same rule as runtime configs: a new origin needs the key again.
             raise ModelConfigInvalidError("secret_required", "apiKey must be entered again for a new address")
-        values["catalog_digest"] = catalog_digest(offers, {**key_ref, "id": key_identity})
+        if request.apiKey is not None or request.offers is not None:
+            if key_identity is None:
+                key_identity = _digest(await self.profile_key(profile, user_id=user_id))
+            values["catalog_digest"] = catalog_digest(offers, {**key_ref, "id": key_identity})
         try:
             row = await self._store.update_model_profile(
                 profile_id, user_id=user_id, values=values, expected_etag=expected_etag
             )
         except ValueError as exc:
             raise ModelConfigConflictError("profile_changed", "the profile was changed elsewhere") from exc
+        if self._channel_changed is not None:
+            await self._channel_changed(user_id=user_id)
         await self._publish(user_id)
         return self._public_profile(row)
 

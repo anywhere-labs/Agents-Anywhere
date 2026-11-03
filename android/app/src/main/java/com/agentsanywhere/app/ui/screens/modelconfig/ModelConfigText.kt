@@ -126,6 +126,7 @@ internal fun channelReasonRes(reason: String): Int = when (reason) {
     "models_required" -> R.string.model_config_reason_models_required
     "model_unavailable" -> R.string.model_config_reason_model_unavailable
     "confirmation_required" -> R.string.model_config_reason_confirmation_required
+    "connector_upgrade_required" -> R.string.model_config_reason_connector_upgrade_required
     "profile_unavailable" -> R.string.model_config_reason_profile_unavailable
     "validate_failed" -> R.string.model_config_reason_validate_failed
     "start_failed" -> R.string.model_config_reason_start_failed
@@ -159,6 +160,7 @@ private fun knownErrorRes(code: String?): Int? = when (code) {
     "tokens_unconfigured" -> R.string.model_config_error_tokens_unconfigured
     "tokens_not_linked" -> R.string.model_config_error_tokens_not_linked
     "reauth_required" -> R.string.model_config_error_reauth_required
+    "rotation_pending" -> R.string.model_config_error_rotation_pending
     "tokens_unavailable" -> R.string.model_config_error_tokens_unavailable
     "tokens_not_synced" -> R.string.model_config_error_tokens_not_synced
     "key_rejected" -> R.string.model_config_error_key_rejected

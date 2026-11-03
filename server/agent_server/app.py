@@ -63,6 +63,7 @@ from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.tokens_access_cache import TokensAccessCache
 from agent_server.infra.tokens_client import TokensClient
 from agent_server.infra.ws_tickets import ClientWsTicketManager
+from agent_server.services.channel_reconciliation import ChannelReconciler
 from agent_server.services.connector_deletion import ConnectorDeletionRecovery
 from agent_server.services.connector_rpc import ConnectorServiceError
 from agent_server.services.dashboard_events import publish_dashboard_changed
@@ -152,6 +153,9 @@ def create_app(
             tokens_task = asyncio.create_task(tokens_link_service_for(app.state).run_keep_alive())
             # Switches a stopped worker left behind; waiting ones resume on events.
             await model_channel_service_for(app.state).resume()
+            app.state.channel_reconciler = ChannelReconciler(app.state.store,
+                model_channel_service_for(app.state), app.state.redis, tokens_link_service_for(app.state))
+            await app.state.channel_reconciler.start()
             # Generate the bootstrap token early so operators see it in logs.
             if await app.state.store.count_users() == 0:
                 await SetupTokenService(app.state.setup_token, app.state.redis).snapshot()
@@ -160,6 +164,9 @@ def create_app(
             if tokens_task is not None:
                 tokens_task.cancel()
                 await asyncio.gather(tokens_task, return_exceptions=True)
+            reconciler = getattr(app.state, "channel_reconciler", None)
+            if reconciler is not None:
+                await reconciler.close()
             driver = getattr(app.state, "channel_driver", None)
             if driver is not None:
                 await driver.close()

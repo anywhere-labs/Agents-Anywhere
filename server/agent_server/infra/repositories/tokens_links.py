@@ -8,10 +8,14 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from agent_server.infra.db.engine import closing_connection
 from agent_server.infra.db.schema import (
     model_profiles,
     tokens_link_states,
     tokens_links,
+)
+from agent_server.infra.repositories.channel_reconciliation import (
+    channel_connection,
 )
 from agent_server.infra.repositories.store_support import _json_dumps, _json_loads
 
@@ -46,14 +50,14 @@ class TokensLinkRepositoryMixin:
     # Links in progress.
 
     async def create_tokens_link_state(self, row: dict[str, Any]) -> None:
-        async with self._engine.begin() as conn:
+        async with channel_connection(self, write=True) as conn:
             await conn.execute(tokens_link_states.insert().values(**row))
 
     async def open_tokens_link_ticket(
         self, *, ticket_hash: str, browser_hash: str, now: str, expires_at: str
     ) -> dict[str, Any] | None:
         """Bind a start ticket to the browser that opened it; works once."""
-        async with self._engine.begin() as conn:
+        async with channel_connection(self, write=True) as conn:
             row = (
                 await conn.execute(
                     update(tokens_link_states)
@@ -73,7 +77,7 @@ class TokensLinkRepositoryMixin:
         self, *, state_hash: str, browser_hash: str, now: str
     ) -> dict[str, Any] | None:
         """Use a state once, from the browser the link started in."""
-        async with self._engine.begin() as conn:
+        async with channel_connection(self, write=True) as conn:
             row = (
                 await conn.execute(
                     update(tokens_link_states)
@@ -90,7 +94,7 @@ class TokensLinkRepositoryMixin:
         return _state_row(row) if row is not None else None
 
     async def prune_tokens_link_states(self, *, before: str) -> None:
-        async with self._engine.begin() as conn:
+        async with channel_connection(self, write=True) as conn:
             await conn.execute(delete(tokens_link_states).where(tokens_link_states.c.expires_at < before))
 
     # Links.
@@ -99,7 +103,7 @@ class TokensLinkRepositoryMixin:
         values = {key: value for key, value in row.items() if key not in {"account", "quick_setup"}}
         values["account_json"] = _json_dumps(row["account"])
         values["quick_setup_json"] = _json_dumps(row["quick_setup"]) if row.get("quick_setup") else None
-        async with self._engine.begin() as conn:
+        async with channel_connection(self, write=True) as conn:
             statement = pg_insert(tokens_links).values(**values)
             await conn.execute(
                 statement.on_conflict_do_update(
@@ -119,28 +123,32 @@ class TokensLinkRepositoryMixin:
         """
         values = {key: value for key, value in row.items() if key not in {"user_id", "account", "quick_setup"}}
         values.update(account_json=_json_dumps(row["account"]), quick_setup_json=None)
-        async with self._engine.begin() as conn:
-            current = (await conn.execute(
-                select(tokens_links.c.linked_at).where(tokens_links.c.user_id == row["user_id"]).with_for_update()
-            )).scalar_one_or_none()
-            if current != expected_linked_at:
-                return False
-            await conn.execute(update(tokens_links).where(tokens_links.c.user_id == row["user_id"]).values(**values))
-            await conn.execute(update(model_profiles).where(
-                model_profiles.c.id == profile_id, model_profiles.c.user_id == row["user_id"],
-            ).values(key_ref_json=_json_dumps(key_ref), catalog_digest=catalog_digest,
-                     etag=model_profiles.c.etag + 1, updated_at=row["linked_at"]))
+        async with self.channel_transaction(row["user_id"]):
+            async with channel_connection(self, write=True) as conn:
+                current = (await conn.execute(
+                    select(tokens_links.c.linked_at).where(tokens_links.c.user_id == row["user_id"]).with_for_update()
+                )).scalar_one_or_none()
+                if current != expected_linked_at:
+                    return False
+                await conn.execute(update(tokens_links).where(tokens_links.c.user_id == row["user_id"]).values(**values))
+                await conn.execute(update(model_profiles).where(
+                    model_profiles.c.id == profile_id, model_profiles.c.user_id == row["user_id"],
+                ).values(key_ref_json=_json_dumps(key_ref), catalog_digest=catalog_digest,
+                         connection_revision=model_profiles.c.connection_revision + 1,
+                         etag=model_profiles.c.etag + 1, updated_at=row["linked_at"]))
+            await self._refresh_channel_targets(row["user_id"])
         return True
 
+
     async def get_tokens_link(self, user_id: str) -> dict[str, Any] | None:
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             row = (
                 await conn.execute(select(tokens_links).where(tokens_links.c.user_id == user_id))
             ).mappings().first()
         return _link_row(row) if row is not None else None
 
     async def set_tokens_link_quick_setup(self, user_id: str, value: dict[str, Any] | None) -> None:
-        async with self._engine.begin() as conn:
+        async with channel_connection(self, write=True) as conn:
             await conn.execute(
                 update(tokens_links)
                 .where(tokens_links.c.user_id == user_id)
@@ -148,16 +156,16 @@ class TokensLinkRepositoryMixin:
             )
 
     async def delete_tokens_link(self, user_id: str) -> None:
-        async with self._engine.begin() as conn:
+        async with channel_connection(self, write=True) as conn:
             await conn.execute(delete(tokens_links).where(tokens_links.c.user_id == user_id))
 
     async def count_tokens_links(self) -> int:
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             rows = (await conn.execute(select(tokens_links.c.user_id))).all()
         return len(rows)
 
     async def list_tokens_links_to_refresh(self, *, refreshed_before: str) -> list[str]:
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             rows = (
                 await conn.execute(
                     select(tokens_links.c.user_id).where(
@@ -171,7 +179,7 @@ class TokensLinkRepositoryMixin:
     @asynccontextmanager
     async def locked_tokens_link(self, user_id: str) -> AsyncIterator[LockedTokensLink]:
         """Serialize refreshes of one link across workers and processes."""
-        async with self._engine.begin() as conn:
+        async with closing_connection(self._engine, write=True) as conn:
             row = (
                 await conn.execute(
                     select(tokens_links).where(tokens_links.c.user_id == user_id).with_for_update()

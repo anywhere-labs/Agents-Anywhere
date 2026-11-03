@@ -144,7 +144,7 @@ def _channel_runtime(state: Any) -> tuple[ChannelWakeIndex, ChannelDriver]:
     driver = getattr(state, "channel_driver", None)
     if wake is None or driver is None:
         coordinator = getattr(state, "redis", None)
-        wake, driver = ChannelWakeIndex(coordinator), ChannelDriver(coordinator)
+        wake, driver = ChannelWakeIndex(coordinator), ChannelDriver(coordinator, store=state.store)
         state.channel_wake, state.channel_driver = wake, driver
     return wake, driver
 
@@ -163,6 +163,7 @@ def tokens_link_service_for(state: Any) -> TokensLinkService:
     tokens.channels = ModelChannelService(
         state.store, model_config, state.device_runtime_service, wake=wake, driver=driver, broker=broker,
     )
+    model_config.set_channel_change_handler(tokens.channels.kick)
     return tokens
 
 

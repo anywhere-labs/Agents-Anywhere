@@ -264,3 +264,7 @@ model. With a connection, `modelId` must be one of the models in
 `modelsField`; without one it names a model from the runtime's own catalog.
 A change to this field alone applies without restarting the runtime, and the
 runtime publishes a model catalog whose matching item carries `default: true`.
+
+## Channel reconciliation fencing
+
+`channelReconcileFence` extends `switchFence` to stopping instances. Fenced stop accepts the same paired `operationId` and `switchRevision` as start. A stop consumes its revision persistently; starting with that same operation after a stop must rebuild. Older stops, starts and rollback operations must be rejected. Server assigns revisions monotonically per device, and persists managed instance IDs before dispatch so creation retries address the same instance. Channels require this feature; no unfenced fallback is permitted.

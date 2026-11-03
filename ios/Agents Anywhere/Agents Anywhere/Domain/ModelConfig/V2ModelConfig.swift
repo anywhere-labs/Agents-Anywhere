@@ -351,16 +351,25 @@ nonisolated struct V2ChannelRuntime: Decodable, Hashable, Identifiable {
     let message: String?
     let updatedAt: String?
 
+    let desiredGeneration: Int?
+    let appliedGeneration: Int?
+    let observedAt: String?
+    let retryAt: String?
+
     init(connectorId: V2ConnectorID, runtimeId: V2RuntimeID, override: String? = nil, desired: String, actual: String,
          state: String, step: String? = nil, reason: String? = nil, message: String? = nil,
-         updatedAt: String? = nil) {
+         updatedAt: String? = nil, desiredGeneration: Int? = nil, appliedGeneration: Int? = nil,
+         observedAt: String? = nil, retryAt: String? = nil) {
         self.connectorId = connectorId; self.runtimeId = runtimeId; self.override = override
         self.desired = desired; self.actual = actual; self.state = state; self.step = step
         self.reason = reason; self.message = message; self.updatedAt = updatedAt
+        self.desiredGeneration = desiredGeneration; self.appliedGeneration = appliedGeneration
+        self.observedAt = observedAt; self.retryAt = retryAt
     }
 
     private enum CodingKeys: String, CodingKey {
         case connectorId, runtimeId, override, desired, actual, state, step, reason, message, updatedAt
+        case desiredGeneration, appliedGeneration, observedAt, retryAt
     }
 
     init(from decoder: Decoder) throws {
@@ -375,6 +384,10 @@ nonisolated struct V2ChannelRuntime: Decodable, Hashable, Identifiable {
         reason = try? container.decodeIfPresent(String.self, forKey: .reason)
         message = try? container.decodeIfPresent(String.self, forKey: .message)
         updatedAt = try? container.decodeIfPresent(String.self, forKey: .updatedAt)
+        desiredGeneration = try? container.decodeIfPresent(Int.self, forKey: .desiredGeneration)
+        appliedGeneration = try? container.decodeIfPresent(Int.self, forKey: .appliedGeneration)
+        observedAt = try? container.decodeIfPresent(String.self, forKey: .observedAt)
+        retryAt = try? container.decodeIfPresent(String.self, forKey: .retryAt)
     }
 
     var id: String { target.key }

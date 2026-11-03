@@ -352,7 +352,7 @@ class TokensLinkService:
         else:
             await self._store.save_tokens_link(link_values)
         await self._cache.delete(user_id)
-        await self._cache_access(user_id, pair, box)
+        await self._cache_access(user_id, pair, box, linked_at=now)
         if replacement is not None and profile is not None:
             # The new key identity outdates every runtime on Anywhere; they are
             # rewritten through the switch, waiting for running tasks.
@@ -371,8 +371,13 @@ class TokensLinkService:
 
     async def access_token(self, *, user_id: str, force: bool = False) -> str:
         box = self._box()
+        link = await self._store.get_tokens_link(user_id)
+        if link is None:
+            raise TokensLinkError("tokens_not_linked", "link Tokens Anywhere first")
+        if link["status"] != "linked":
+            raise TokensLinkError("reauth_required", "link Tokens Anywhere again")
         if not force:
-            cached = await self._cache.get(user_id, box)
+            cached = await self._cache.get(user_id, box, linked_at=link["linkedAt"])
             if cached:
                 return cached
         reauth = False
@@ -384,7 +389,7 @@ class TokensLinkService:
             if row["status"] != "linked" or not row["refreshTokenCiphertext"]:
                 raise TokensLinkError("reauth_required", "link Tokens Anywhere again")
             # Another worker may have refreshed while this one waited.
-            token = None if force else await self._cache.get(user_id, box)
+            token = None if force else await self._cache.get(user_id, box, linked_at=row["linkedAt"])
             if token is None:
                 refresh = box.open(row["refreshTokenCiphertext"], context=f"tokens-refresh:{user_id}")
                 pair = None
@@ -403,7 +408,7 @@ class TokensLinkService:
                         box.seal(pair.refresh_token, context=f"tokens-refresh:{user_id}"),
                         refreshed_at=_iso(_now()),
                     )
-                    await self._cache_access(user_id, pair, box)
+                    await self._cache_access(user_id, pair, box, linked_at=row["linkedAt"])
                     token = pair.access_token
         if reauth:
             await self._cache.delete(user_id)
@@ -421,9 +426,9 @@ class TokensLinkService:
             await asyncio.sleep(1)
             return await client.refresh(refresh)
 
-    async def _cache_access(self, user_id: str, pair: TokenPair, box: SecretBox) -> None:
+    async def _cache_access(self, user_id: str, pair: TokenPair, box: SecretBox, *, linked_at: str) -> None:
         ttl = pair.expires_in - int(ACCESS_TOKEN_MARGIN.total_seconds())
-        await self._cache.set(user_id, pair.access_token, ttl_seconds=ttl, box=box)
+        await self._cache.set(user_id, pair.access_token, ttl_seconds=ttl, box=box, linked_at=linked_at)
 
     async def _call(self, user_id: str, action: Callable[[TokensClient, str], Any]) -> Any:
         """Call Tokens Anywhere with an access token, refreshing once on a 401."""
@@ -521,12 +526,16 @@ class TokensLinkService:
         # than leave runtimes with running tasks on a dead key.
         if not allow_interrupt and await channels.would_interrupt(targets, user_id=user_id):
             raise TokensLinkError("busy", "tasks are running; allow interrupting them to rotate the key")
+        if not await self._store.begin_channel_rotation(user_id, profile_id, key_id):
+            raise TokensLinkError("rotation_pending", "a previous key rotation is awaiting reconciliation")
         try:
             await self._call(user_id, lambda client, token: client.rotate_key(token, key_id))
         except TokensError as exc:
+            await self._store.save_rotation_intent(user_id, profile_id, key_id, "uncertain")
             raise TokensLinkError("tokens_unavailable", "Tokens Anywhere did not rotate the key", status_code=502) from exc
         await self.sync(user_id=user_id)
         await channels.refresh(user_id=user_id, rewrite=TOKENS)
+        await self._store.save_rotation_intent(user_id, profile_id, key_id, "confirmed")
         return await channels.state(user_id=user_id)
 
     async def save_model_preferences(self, preferences: ModelPreferences, *, user_id: str) -> bool:

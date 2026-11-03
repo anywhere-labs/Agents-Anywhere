@@ -130,6 +130,7 @@ final class ModelConfigModel {
     func adopt(_ state: V2ModelChannelState) {
         let pushed = overview?.channel
         if let pushed, pushed.revision > state.revision { return }
+        if let answered, answered.state.revision > state.revision { return }
         answered = AnsweredChannel(state: state, base: pushed)
     }
 

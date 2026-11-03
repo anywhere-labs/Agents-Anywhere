@@ -564,6 +564,7 @@ async def connector_ws(
         async with db.connector_lifecycle(connector_id):
             await _require_active_connector(auth_header, db)
             connection = await manager.register(connector_id, websocket, ready=False)
+            await db.set_channel_device_gate(connector_id, connection.connection_id)
             ingest_service = ConnectorIngestService(
                 db, ConnectorNotificationService(
                     db, realtime, timeline_write_buffer,
@@ -818,6 +819,21 @@ async def _complete_runtime_discovery(
             connection.connection_id,
         )
 
+    delay = 2.0
+    while True:
+        try:
+            if not await runtime_service._manager.is_connection_id_current(connector_id, connection.connection_id):
+                return
+            if on_ready is not None:
+                await on_ready(connector_id)
+            await runtime_service._store.clear_channel_device_gate(connector_id, connection.connection_id)
+            break
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - retry the owned connection's durable reconciliation
+            logger.exception("model channel discovery reconciliation failed connector_id={}", connector_id)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 30.0)
     try:
         await runtime_service.reconcile_active(
             connector_id,
@@ -841,14 +857,6 @@ async def _complete_runtime_discovery(
             connector_id,
             connection.connection_id,
         )
-    if on_ready is not None:
-        try:
-            # Model channel switches waiting for this device go on now.
-            await on_ready(connector_id)
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001 - background task errors must be observed
-            logger.exception("model channel resume failed connector_id={}", connector_id)
 
 
 def _connector_device_os(value: str | None) -> str | None:

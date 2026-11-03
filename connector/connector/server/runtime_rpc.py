@@ -12,13 +12,17 @@ from connector.runtime_protocol import (
 )
 from connector.runtime_protocol.instance_binding import runtime_config_for_instance
 from connector.runtime_protocol.model_probe import MODEL_PROBE_FEATURE
-from connector.runtime_protocol.switch_fence import SWITCH_FENCE_FEATURE
+from connector.runtime_protocol.switch_fence import (
+    CHANNEL_RECONCILE_FENCE_FEATURE,
+    SWITCH_FENCE_FEATURE,
+)
 from connector.runtime_protocol.workflows import RuntimeWorkflowRequest
 from connector.server.runtime_rpc_params import (
     RuntimeCatalogParams,
     RuntimeConfigParams,
     RuntimeIdParams,
     SessionReadParams,
+    optional_switch_request,
     scoped_runtime,
 )
 from connector.server.runtime_rpc_payloads import (
@@ -62,7 +66,7 @@ WORKFLOW_RPC = {
 
 BackgroundScheduler = Callable[[Any], None]
 
-CONNECTOR_FEATURES = (SWITCH_FENCE_FEATURE, MODEL_PROBE_FEATURE)
+CONNECTOR_FEATURES = (SWITCH_FENCE_FEATURE, MODEL_PROBE_FEATURE, CHANNEL_RECONCILE_FENCE_FEATURE)
 
 
 class RuntimeRpcHandler:
@@ -204,9 +208,11 @@ class RuntimeRpcHandler:
                 },
             )
         if method == "runtime.stop":
-            parsed = RuntimeIdParams.parse(params)
+            switch = optional_switch_request(params)
+            parsed = RuntimeIdParams.parse({key: value for key, value in params.items()
+                                            if key not in {"operationId", "switchRevision"}})
             self._validate_known_scope(parsed.scope, require_entry=True)
-            await self.agent_runtime_supervisor.stop(parsed.runtime_id)
+            await self.agent_runtime_supervisor.stop(parsed.runtime_id, switch=switch)
             return self._scoped_result(
                 parsed.scope,
                 {"runtimeId": parsed.runtime_id, "status": "stopped"},

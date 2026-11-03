@@ -35,6 +35,7 @@ from connector.runtime_protocol.instance_models import MAX_CONFIG_REVISION
 from connector.runtime_protocol.model_connection import ModelConnectionCapability
 
 SWITCH_FENCE_FEATURE = "switchFence"
+CHANNEL_RECONCILE_FENCE_FEATURE = "channelReconcileFence"
 MAX_OPERATION_ID_LENGTH = 128
 SWITCH_RECORD_VERSION = 1
 

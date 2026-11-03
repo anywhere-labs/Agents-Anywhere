@@ -15,7 +15,7 @@
       "path": "schemas/runtime-discover-response.schema.json",
       "rpcMethod": "runtime.discover",
       "rpcPart": "result",
-      "sha256": "1960494d071e68f97b33a82917e2297e9fdf83c41e5ce19bd1cd50f84d5e8e54",
+      "sha256": "ccb0ec40d9e23d14ccfd13d6ba9edf7fea6783b682619399f7e41ec533af6f0a",
       "slug": "runtime-discover-response"
     },
     {
@@ -81,7 +81,7 @@
       "path": "schemas/runtime-stop-params.schema.json",
       "rpcMethod": "runtime.stop",
       "rpcPart": "params",
-      "sha256": "bf070a694ff8a2cdbffe89ce94215edbbb0c3da1cbc59d95a14298e306e055da",
+      "sha256": "c9bab9091950e131ca0d6f7fd84109ac38200eb906450073c73919d9d2b5a3a5",
       "slug": "runtime-stop-params"
     },
     {

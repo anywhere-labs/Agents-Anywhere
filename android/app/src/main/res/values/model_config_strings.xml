@@ -211,4 +211,6 @@
         <item quantity="one">%1$d runtime can\'t use a channel</item>
         <item quantity="other">%1$d runtimes can\'t use a channel</item>
     </plurals>
+    <string name="model_config_reason_connector_upgrade_required">Upgrade the Connector to synchronize channels safely</string>
+    <string name="model_config_error_rotation_pending">A previous key rotation is still being checked. Try again shortly.</string>
 </resources>

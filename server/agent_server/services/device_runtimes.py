@@ -18,6 +18,7 @@ from agent_server.core.device_runtime import (
     RuntimeTypeView,
     validate_config,
 )
+from agent_server.core.model_channel import managed_channel_runtime_id
 from agent_server.core.model_connection import (
     connection_digest,
     failed_report,
@@ -30,6 +31,7 @@ from agent_server.core.secret_fields import (
     secret_paths,
     secret_values,
 )
+from agent_server.core.utc import utc_now
 from agent_server.infra.connector_rpc import (
     ConnectorConnection,
     ConnectorOfflineError,
@@ -214,10 +216,13 @@ class DeviceRuntimeService:
         *,
         publish: bool = True,
     ) -> list[RuntimeTypeView]:
-        rows = await self._store.replace_connector_runtime_types(
-            connector_id,
-            response.runtimeTypes,
-        )
+        owner = await self._store.channel_connector_owner(connector_id)
+        if owner is not None:
+            async with self._store.channel_transaction(owner):
+                rows = await self._store.replace_connector_runtime_types(connector_id, response.runtimeTypes)
+                await self._store.refresh_channel_targets(owner)
+        else:
+            rows = await self._store.replace_connector_runtime_types(connector_id, response.runtimeTypes)
         if publish:
             await self._publish(connector_id, "runtime.types")
         return [RuntimeTypeView.model_validate(row) for row in rows]
@@ -336,6 +341,9 @@ class DeviceRuntimeService:
         config: dict[str, Any],
         active: bool,
         user_id: str,
+        runtime_id: str | None = None,
+        managed_by: str | None = None,
+        fence: dict[str, Any] | None = None,
     ) -> DeviceRuntimeView:
         async with self._runtime_lock(connector_id, "@instances"):
             try:
@@ -377,6 +385,7 @@ class DeviceRuntimeService:
                         name=name,
                         config=config,
                         active=active,
+                        **({"runtime_id": runtime_id, "managed_by": managed_by} if runtime_id is not None else {}),
                     )
                 )
             except KeyError as exc:
@@ -385,7 +394,7 @@ class DeviceRuntimeService:
                 raise DeviceRuntimeConflictError(str(exc)) from exc
 
             try:
-                await self._request_validate(runtime, config, secrets=secrets)
+                await self._request_validate(runtime, config, secrets=secrets, fence=fence)
             except DeviceRuntimeError as exc:
                 error = (
                     exc.detail
@@ -400,7 +409,7 @@ class DeviceRuntimeService:
                 )
                 raise
             if active:
-                runtime = await self._start_locked(runtime)
+                runtime = await self._start_locked(runtime, fence=fence)
             await self._publish(connector_id, "runtime.created")
             return runtime
 
@@ -519,11 +528,17 @@ class DeviceRuntimeService:
                 error=error,
             )
             raise
-        runtime = DeviceRuntimeView.model_validate(
-            await self._store.set_device_runtime_config(
-                connector_id, runtime_id, config
-            )
-        )
+        if fence and fence.get("targetGeneration") is not None:
+            owner = await self._store.channel_connector_owner(connector_id)
+            async with self._store.channel_transaction(owner):
+                sync = await self._store.get_channel_sync(connector_id, fence["logicalRuntimeId"])
+                if sync is None or sync["desired_generation"] != fence["targetGeneration"]:
+                    raise DeviceRuntimeConflictError("channel target changed before configuration write",
+                        detail={"code": "channel_target_superseded"})
+                saved = await self._store.set_device_runtime_config(connector_id, runtime_id, config)
+        else:
+            saved = await self._store.set_device_runtime_config(connector_id, runtime_id, config)
+        runtime = DeviceRuntimeView.model_validate(saved)
         await self._manager.set_runtime_ingress_enabled(connector_id, runtime_id, True)
         if runtime.active and not restart:
             # Saved for the next start; the running instance keeps going.
@@ -835,6 +850,15 @@ class DeviceRuntimeService:
             runtime = DeviceRuntimeView.model_validate(row)
             if not runtime.present:
                 continue
+            owner = await self._store.channel_connector_owner(connector_id)
+            if owner is not None:
+                syncs = await self._store.list_channel_sync(owner)
+                logical = [x["runtime_id"] for x in syncs if x["connector_id"] == connector_id and (
+                    x["runtime_id"] == runtime.runtimeId or managed_channel_runtime_id(connector_id, x["runtime_id"]) == runtime.runtimeId
+                    or (runtime.managedBy == "model-config" and not runtime.runtimeId.startswith("rti_channel_")
+                        and x["runtime_id"] == runtime.runtimeType))]
+                if await self._store.runtime_closed_for_switch(connector_id, logical or [runtime.runtimeId], now=utc_now()):
+                    continue
             async with self._runtime_lock(connector_id, runtime.runtimeId):
                 if (
                     expected_connection_id is not None
@@ -850,6 +874,9 @@ class DeviceRuntimeService:
                     )
                 )
                 if not current.present:
+                    continue
+                if owner is not None and await self._store.runtime_closed_for_switch(
+                    connector_id, logical or [runtime.runtimeId], now=utc_now()):
                     continue
                 if not current.active:
                     if current.status in {"starting", "running", "stopping", "unknown"}:
@@ -973,6 +1000,7 @@ class DeviceRuntimeService:
         self,
         runtime: DeviceRuntimeView,
         *,
+        fence: dict[str, Any] | None = None,
         allow_offline: bool,
         connection: ConnectorConnection | None = None,
     ) -> DeviceRuntimeView:
@@ -1007,7 +1035,10 @@ class DeviceRuntimeService:
         await self._store.set_device_runtime_status(
             runtime.connectorId, runtime.runtimeId, "stopping"
         )
+        if fence is not None:
+            await self._store.assert_channel_execution()
         params = {
+            **(await self._fence_params(runtime.connectorId, fence)),
             "runtime": runtime.runtimeType,
             "runtimeId": runtime.runtimeId,
         }
@@ -1059,7 +1090,7 @@ class DeviceRuntimeService:
         started: dict[str, Any] | None = None,
     ) -> DeviceRuntimeView:
         if runtime.status in {"starting", "running", "stopping", "unknown"}:
-            runtime = await self._stop_locked(runtime, allow_offline=False)
+            runtime = await self._stop_locked(runtime, allow_offline=False, fence=fence)
         return await self._start_locked(runtime, fence=fence, started=started)
 
     async def _settle_runtime_sessions(self, runtime: DeviceRuntimeView) -> None:
@@ -1144,8 +1175,11 @@ class DeviceRuntimeService:
 
     async def _fence_params(self, connector_id: str, fence: dict[str, Any] | None) -> dict[str, Any]:
         # Older Connectors refuse unknown fields, so only send what they declared.
-        if not fence or not await self.connector_supports(connector_id, "switchFence"):
+        if not fence:
             return {}
+        await self._store.assert_channel_execution()
+        if not await self.connector_supports(connector_id, "channelReconcileFence"):
+            raise DeviceRuntimeConflictError("connector upgrade required for channel reconciliation")
         return {key: fence[key] for key in ("operationId", "switchRevision") if fence.get(key) is not None}
 
     async def probe_model_connection(
@@ -1188,7 +1222,8 @@ class DeviceRuntimeService:
             return None
         config = result.get("config")
         values = config.get("values") if isinstance(config, dict) else None
-        return {"running": bool(result.get("running")), "values": values if isinstance(values, dict) else None}
+        return {"running": bool(result.get("running")), "values": values if isinstance(values, dict) else None,
+                "instanceId": result.get("instanceId")}
 
     async def _get_owned(
         self,
@@ -1298,10 +1333,10 @@ class LockedRuntime:
         )
         return self.runtime
 
-    async def restart(self) -> DeviceRuntimeView:
+    async def restart(self, *, fence: dict[str, Any] | None = None) -> DeviceRuntimeView:
         """Start the saved configuration of an active runtime."""
         if self.runtime.active:
-            self.runtime = await self._service._restart_locked(self.runtime)
+            self.runtime = await self._service._restart_locked(self.runtime, fence=fence)
         return self.runtime
 
     async def set_active(self, active: bool, *, fence: dict[str, Any] | None = None) -> DeviceRuntimeView:
@@ -1322,7 +1357,7 @@ class LockedRuntime:
             await service._store.set_device_runtime_active(
                 runtime.connectorId, runtime.runtimeId, False
             )
-            runtime = await service._stop_locked(runtime, allow_offline=True)
+            runtime = await service._stop_locked(runtime, allow_offline=True, fence=fence)
         await service._publish(runtime.connectorId, "runtime.active")
         self.runtime = runtime
         return runtime

@@ -96,6 +96,10 @@ internal fun JSONObject.toModelChannelState(): ModelChannelState {
                 reason = optNullableString("reason"),
                 message = optNullableString("message"),
                 updatedAt = optNullableString("updatedAt"),
+                desiredGeneration = if (isNull("desiredGeneration")) null else optLong("desiredGeneration"),
+                appliedGeneration = if (isNull("appliedGeneration")) null else optLong("appliedGeneration"),
+                observedAt = optNullableString("observedAt"),
+                retryAt = optNullableString("retryAt"),
             )
         }.filter { it.connectorId.isNotBlank() && it.runtimeId.isNotBlank() },
     )

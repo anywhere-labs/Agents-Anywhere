@@ -14,6 +14,10 @@ from agent_server.infra.db.schema import (
     runtime_channel_overrides,
     runtime_channel_switches,
 )
+from agent_server.infra.repositories.channel_reconciliation import (
+    _claim,
+    channel_connection,
+)
 
 # A switch holds a runtime closed to new tasks while it writes, verifies or
 # rolls back; requests wait for it instead of reaching a restarting runtime.
@@ -34,6 +38,12 @@ _SWITCH_FIELDS = {
     "operationId": "operation_id",
     "leaseUntil": "lease_until",
     "startedAt": "started_at",
+    "targetGeneration": "target_generation",
+    "targetSpecDigest": "target_spec_digest",
+    "expectedConfigDigest": "expected_config_digest",
+    "planCiphertext": "plan_ciphertext",
+    "leaseOwner": "lease_owner",
+    "leaseEpoch": "lease_epoch",
 }
 
 
@@ -45,7 +55,7 @@ def _admission_lock(connector_id: str) -> Any:
 class ModelChannelRepositoryMixin:
     async def list_channel_runtime_users(self) -> list[str]:
         """Owners whose runtimes may need a switch even without a switch row."""
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             return list((await conn.execute(
                 select(connectors.c.user_id).join(
                     device_runtimes, device_runtimes.c.connector_id == connectors.c.id,
@@ -55,7 +65,7 @@ class ModelChannelRepositoryMixin:
     async def create_channel_switch_if_missing(self, connector_id: str, runtime_id: str, *, user_id: str) -> bool:
         """Recover a missing job without overwriting another worker's progress."""
         now = utc_now()
-        async with self._engine.begin() as conn:
+        async with channel_connection(self, write=True) as conn:
             row = (await conn.execute(
                 pg_insert(runtime_channel_switches).values(
                     connector_id=connector_id, runtime_id=runtime_id, user_id=user_id,
@@ -68,7 +78,7 @@ class ModelChannelRepositoryMixin:
     # The user's current channel.
 
     async def get_channel_selection(self, user_id: str) -> dict[str, Any] | None:
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             row = (await conn.execute(
                 select(model_channel_selections).where(model_channel_selections.c.user_id == user_id)
             )).mappings().first()
@@ -77,7 +87,7 @@ class ModelChannelRepositoryMixin:
     async def save_channel_selection(self, user_id: str, channel: str | None = None) -> dict[str, Any]:
         """Set the channel (or keep it when None) and advance the revision."""
         now = utc_now()
-        async with self._engine.begin() as conn:
+        async with channel_connection(self, write=True) as conn:
             statement = pg_insert(model_channel_selections).values(
                 user_id=user_id, channel=channel or "native", revision=1, updated_at=now,
             )
@@ -94,7 +104,7 @@ class ModelChannelRepositoryMixin:
         return _selection_row(row)
 
     async def list_channel_overrides(self, *, user_id: str) -> list[dict[str, Any]]:
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             rows = (await conn.execute(
                 select(runtime_channel_overrides)
                 .join(connectors, connectors.c.id == runtime_channel_overrides.c.connector_id)
@@ -105,7 +115,7 @@ class ModelChannelRepositoryMixin:
     async def set_channel_override(
         self, connector_id: str, runtime_id: str, channel: str | None, *, confirm_native_global: bool = False,
     ) -> None:
-        async with self._engine.begin() as conn:
+        async with channel_connection(self, write=True) as conn:
             if channel is None:
                 await conn.execute(delete(runtime_channel_overrides).where(
                     runtime_channel_overrides.c.connector_id == connector_id,
@@ -125,7 +135,7 @@ class ModelChannelRepositoryMixin:
     # Switches: one row per runtime.
 
     async def get_channel_switch(self, connector_id: str, runtime_id: str) -> dict[str, Any] | None:
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             row = (await conn.execute(select(runtime_channel_switches).where(
                 runtime_channel_switches.c.connector_id == connector_id,
                 runtime_channel_switches.c.runtime_id == runtime_id,
@@ -133,14 +143,14 @@ class ModelChannelRepositoryMixin:
         return _switch_row(row) if row is not None else None
 
     async def list_channel_switches(self, *, user_id: str) -> list[dict[str, Any]]:
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             rows = (await conn.execute(
                 select(runtime_channel_switches).where(runtime_channel_switches.c.user_id == user_id)
             )).mappings().all()
         return [_switch_row(row) for row in rows]
 
     async def list_unfinished_channel_switches(self, *, states: tuple[str, ...]) -> list[dict[str, Any]]:
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             rows = (await conn.execute(
                 select(runtime_channel_switches).where(runtime_channel_switches.c.state.in_(states))
             )).mappings().all()
@@ -149,8 +159,10 @@ class ModelChannelRepositoryMixin:
     async def save_channel_switch(self, connector_id: str, runtime_id: str, values: dict[str, Any]) -> dict[str, Any]:
         """Create or update a runtime's switch row with the given fields."""
         columns = {_SWITCH_FIELDS[key]: value for key, value in values.items()}
+        if _claim.get() is not None:
+            columns.pop("lease_until", None)
         columns["updated_at"] = utc_now()
-        async with self._engine.begin() as conn:
+        async with channel_connection(self, write=True) as conn:
             if "user_id" not in columns:
                 # A step of an existing switch: only its row changes.
                 row = (await conn.execute(
@@ -173,18 +185,9 @@ class ModelChannelRepositoryMixin:
         return _switch_row(row)
 
     async def next_switch_revision(self, connector_id: str, runtime_id: str) -> int:
-        """A runtime's switch revision only ever grows, so stale requests can be refused."""
-        async with self._engine.begin() as conn:
-            value = (await conn.execute(
-                update(runtime_channel_switches)
-                .where(
-                    runtime_channel_switches.c.connector_id == connector_id,
-                    runtime_channel_switches.c.runtime_id == runtime_id,
-                )
-                .values(switch_revision=runtime_channel_switches.c.switch_revision + 1, updated_at=utc_now())
-                .returning(runtime_channel_switches.c.switch_revision)
-            )).scalar_one()
-        return int(value)
+        revision = await self.next_device_channel_revision(connector_id)
+        await self.save_channel_switch(connector_id, runtime_id, {"switchRevision": revision})
+        return revision
 
     # Admission: closing a runtime to new tasks without racing them.
 
@@ -193,8 +196,10 @@ class ModelChannelRepositoryMixin:
         token: str, expires_at: str, now: str,
     ) -> bool:
         """Record a request about to start a task, unless a switch closed the runtime."""
-        async with self._engine.begin() as conn:
+        async with channel_connection(self, write=True) as conn:
             await conn.execute(_admission_lock(connector_id))
+            if await self.channel_admission_blocked(connector_id, gate_runtime_ids, conn, now):
+                return False
             gated = (await conn.execute(select(runtime_channel_switches.c.state).where(
                 runtime_channel_switches.c.connector_id == connector_id,
                 runtime_channel_switches.c.runtime_id.in_(gate_runtime_ids),
@@ -209,7 +214,7 @@ class ModelChannelRepositoryMixin:
         return True
 
     async def release_runtime_request(self, token: str) -> None:
-        async with self._engine.begin() as conn:
+        async with channel_connection(self, write=True) as conn:
             await conn.execute(delete(runtime_admissions).where(runtime_admissions.c.token == token))
 
     async def close_runtime_for_switch(
@@ -218,7 +223,9 @@ class ModelChannelRepositoryMixin:
     ) -> None:
         """Close the runtime to new tasks before immediate replacement."""
         columns = {_SWITCH_FIELDS[key]: value for key, value in values.items()}
-        async with self._engine.begin() as conn:
+        if _claim.get() is not None:
+            columns.pop("lease_until", None)
+        async with channel_connection(self, write=True) as conn:
             await conn.execute(_admission_lock(connector_id))
             await conn.execute(delete(runtime_admissions).where(runtime_admissions.c.expires_at <= now))
             await conn.execute(update(runtime_channel_switches).where(
@@ -226,7 +233,9 @@ class ModelChannelRepositoryMixin:
                 runtime_channel_switches.c.runtime_id == runtime_id,
             ).values(**columns, updated_at=utc_now()))
     async def runtime_closed_for_switch(self, connector_id: str, runtime_ids: list[str], *, now: str) -> bool:
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
+            if await self.channel_admission_blocked(connector_id, runtime_ids, conn, now):
+                return True
             return (await conn.execute(select(runtime_channel_switches.c.state).where(
                 runtime_channel_switches.c.connector_id == connector_id,
                 runtime_channel_switches.c.runtime_id.in_(runtime_ids),

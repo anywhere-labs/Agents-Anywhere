@@ -204,6 +204,10 @@ export type ChannelRuntimeState = {
   reason?: string | null;
   message?: string | null;
   updatedAt?: string | null;
+  desiredGeneration?: number;
+  appliedGeneration?: number | null;
+  observedAt?: string | null;
+  retryAt?: string | null;
 };
 
 export type ModelChannelSwitch = {

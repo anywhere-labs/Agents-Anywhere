@@ -110,6 +110,7 @@ nonisolated enum ModelConfigErrorText {
         case "tokens_unconfigured": String(localized: "This instance has no Tokens Anywhere address yet.")
         case "tokens_not_linked": String(localized: "Link Tokens Anywhere first.")
         case "reauth_required": String(localized: "The Tokens Anywhere authorization expired. Link again.")
+        case "rotation_pending": String(localized: "A previous key rotation is still being checked. Try again shortly.")
         case "tokens_unavailable": String(localized: "Tokens Anywhere is unavailable right now.")
         case "tokens_not_synced": String(localized: "Sync the Tokens Anywhere models first.")
         case "key_rejected": String(localized: "Tokens Anywhere refused this instance's key.")

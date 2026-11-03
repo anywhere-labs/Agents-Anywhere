@@ -178,6 +178,7 @@ nonisolated enum ChannelPresentation {
         case "models_required": String(localized: "Needs at least one model")
         case "model_unavailable": String(localized: "Its chosen model is not in this channel")
         case "confirmation_required": String(localized: "Changes its own global settings; choose a channel for it to confirm")
+        case "connector_upgrade_required": String(localized: "Upgrade the Connector to synchronize channels safely")
         case "profile_unavailable": String(localized: "The channel's profile is no longer available")
         case "validate_failed": String(localized: "The runtime rejected the configuration")
         case "start_failed": String(localized: "The runtime did not start")

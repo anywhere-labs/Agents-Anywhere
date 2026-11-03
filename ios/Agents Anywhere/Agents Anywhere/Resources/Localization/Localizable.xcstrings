@@ -22116,6 +22116,40 @@
           }
         }
       }
+    },
+    "Upgrade the Connector to synchronize channels safely": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Upgrade the Connector to synchronize channels safely"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请升级 Connector 后同步渠道"
+          }
+        }
+      }
+    },
+    "A previous key rotation is still being checked. Try again shortly.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A previous key rotation is still being checked. Try again shortly."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上一次 Key 轮换仍在核实，请稍后重试。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

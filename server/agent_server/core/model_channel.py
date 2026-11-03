@@ -9,6 +9,7 @@ listed here so every layer names them the same way.
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -71,3 +72,9 @@ def switch_state(states: list[str]) -> str:
     if any(state in NEEDS_RETRY for state in states):
         return "attention"
     return "done"
+
+
+def managed_channel_runtime_id(connector_id: str, runtime_id: str) -> str:
+    """Stable per-logical-runtime identity, so retries and aliases cannot share a sibling's instance."""
+    identity = hashlib.sha256((connector_id + "\0" + runtime_id).encode()).hexdigest()[:32]
+    return "rti_channel_" + identity
