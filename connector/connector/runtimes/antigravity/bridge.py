@@ -414,8 +414,12 @@ class AntigravityAgent:
                 lambda: subprocess.Popen(
                     cmd,
                     cwd=session.get("cwd") or None,
+                    # stdin 必须隔离：继承 bridge 的 ACP 管道会被 CLI 吃掉
+                    # 协议消息；stderr 走 DEVNULL：PIPE 不读会在 64KB 缓冲
+                    # 满后把 CLI 卡死（实测 2026-11-03 回合挂起）。
+                    stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
                     text=True,
                     bufsize=1,
                     env=cli_environment(),

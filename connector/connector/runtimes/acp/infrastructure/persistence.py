@@ -78,8 +78,17 @@ class Store:
     def delete(self, kind: str, key: str) -> None:
         self.db.execute("DELETE FROM records WHERE kind=? AND id=?", (kind, key))
 
+    # outbox 满时优先挤掉的投影类通知：状态/时间线是全量重建语义，丢了
+    # 不损事实；而 capability/meta 携带身份与目录，数量有限不会成为大头。
+    EVICTABLE_METHODS = ("timeline.itemUpsert", "timeline.sync", "session.state.updated")
+
     def emit(self, method: str, params: dict) -> str:
-        if self.db.execute("SELECT COUNT(*) FROM outbox").fetchone()[0] >= 4096:
+        count = self.db.execute("SELECT COUNT(*) FROM outbox").fetchone()[0]
+        if count >= 4096 and method in self.EVICTABLE_METHODS:
+            # 可重建通知直接并入既有积压尾部：同 key 的新值覆盖旧值语义
+            # （服务端按 updatedSeq/revision 取新），不新增行。
+            return uuid4().hex
+        if count >= 4096:
             raise AcpError("sync_backpressure", "同步积压已达到上限，请恢复连接。")
         identifier = uuid4().hex
         self.db.execute(
