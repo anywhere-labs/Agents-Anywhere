@@ -67,7 +67,7 @@
   - 进入主界面仍没有 Agent 时会弹窗提醒，「添加 Agent」直接打开这个面板；已添加但离线的 Agent 不会误触发提醒；
   - 删除 Agent 配置前会说明关联的会话、消息记录和附件将被永久删除。
 
-  [#513](https://github.com/anywhere-labs/Agents-Anywhere/pull/513)
+  [#513](https://github.com/anywhere-labs/Agents-Anywhere/pull/513)、[#521](https://github.com/anywhere-labs/Agents-Anywhere/pull/521)
 
 - 终端文件页可以预览工作区图片；对话里工具和命令输出提到的工作区截图，点一下即可加载缩略图，再点可打开大图。（[#493](https://github.com/anywhere-labs/Agents-Anywhere/pull/493)）
 
