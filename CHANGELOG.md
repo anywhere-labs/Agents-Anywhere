@@ -61,7 +61,7 @@
 
 ### Android
 
-- 修复开启接管后输入框有时仍提示「当前运行时状态下不可发送消息」、需要重新进入会话才能发送的问题。
+- 修复开启接管后输入框有时仍提示「当前运行时状态下不可发送消息」、需要重新进入会话才能发送的问题。（[#519](https://github.com/anywhere-labs/Agents-Anywhere/pull/519)）
 
 - 连接设备后尚未添加 Agent 时会提醒配置，进入主界面也可从提醒弹窗前往现有设备页添加，已添加但离线的 Agent 不会误触发，配对成功后检查 Agent 失败可重试而不会重复提交配对码。（[#513](https://github.com/anywhere-labs/Agents-Anywhere/pull/513)）
 
