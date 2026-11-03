@@ -22,7 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.config.AppConfig
-import com.agentsanywhere.app.feature.devices.DevicePairingCompletion
+import com.agentsanywhere.app.feature.devices.DeviceAgentOperations
 import com.agentsanywhere.app.feature.devices.DevicePairingStatus
 import com.agentsanywhere.app.feature.devices.DevicePairingStep
 import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
@@ -43,8 +43,8 @@ import kotlinx.coroutines.launch
 fun AddDeviceScreen(
     devices: List<AgentDevice>,
     pairingStates: Map<String, DevicePairingStatus>,
+    agentOperations: DeviceAgentOperations,
     onCheckAgents: suspend () -> Result<Boolean>,
-    onConfigureAgents: (AgentDevice) -> Unit,
     onBack: () -> Unit,
     onComplete: () -> Unit,
     onCreateCredential: suspend (String) -> Result<DeviceSetupCredential>,
@@ -69,10 +69,10 @@ fun AddDeviceScreen(
     var createdThisFlow by remember { mutableStateOf(false) }
     var showAgentReminder by remember { mutableStateOf(false) }
     var showExitConfirmation by remember { mutableStateOf(false) }
+    var setupDeviceId by remember { mutableStateOf<String?>(null) }
     val connectorId = credential?.device?.id
-    val pairingCompletion = remember(connectorId) { DevicePairingCompletion() }
-    val online = connectorId != null && (pairingStates[connectorId] == DevicePairingStatus.Online ||
-        devices.any { it.id == connectorId && it.online })
+    fun isOnline(id: String) = pairingStates[id] == DevicePairingStatus.Online || devices.any { it.id == id && it.online }
+    val online = connectorId != null && isOnline(connectorId)
     val scrollState = rememberScrollState()
 
     fun unfocus() {
@@ -164,26 +164,19 @@ fun AddDeviceScreen(
 
     fun claimPairCode() {
         val current = credential ?: return
-        if (busy || pairCode.length != 6) return
+        if (busy || waitingOnline || pairCode.length != 6) return
         busy = true
         unfocus()
         scope.launch {
             try {
-                val hasAgents = pairingCompletion.complete(
-                    claimPairing = {
-                        onClaimPairCode(current, pairCode).getOrThrow()
-                        onClearPairing(current.device.id)
-                    },
-                    checkAgents = { onCheckAgents().getOrThrow() },
-                )
-                if (hasAgents) onComplete() else showAgentReminder = true
+                onClaimPairCode(current, pairCode).getOrThrow()
+                // The code is consumed now; wait for the device instead of claiming again.
+                onWaitForDevice(current.device.id)
+                waitingOnline = true
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                showError(error.message ?: context.getString(
-                    if (pairingCompletion.claimed) R.string.device_runtime_load_failed
-                    else R.string.device_pairing_errors_claim_failed,
-                ))
+                showError(error.message ?: context.getString(R.string.device_pairing_errors_claim_failed))
             } finally {
                 busy = false
             }
@@ -195,7 +188,8 @@ fun AddDeviceScreen(
         if (waitingOnline && online && connectorId != null) {
             onClearPairing(connectorId)
             unfocus()
-            completeSetup()
+            waitingOnline = false
+            setupDeviceId = connectorId
         }
     }
     BackHandler(onBack = ::goBack)
@@ -219,7 +213,8 @@ fun AddDeviceScreen(
                     verticalArrangement = Arrangement.spacedBy(20.dp)) {
                     key(step) {
                         DevicePairingStepContent(
-                            step = step, name = name, credential = credential, code = pairCode, busy = busy, waitingOnline = waitingOnline,
+                            step = step, name = name, credential = credential, code = pairCode, busy = busy || waitingOnline,
+                            waitingOnline = waitingOnline,
                             onNameChange = { name = it }, onCodeChange = { pairCode = it }, onStep = ::showStep,
                             onCreate = ::createCredential, onClaim = ::claimPairCode,
                             onCopyError = { showError(context.getString(R.string.device_pairing_errors_copy_failed)) },
@@ -229,7 +224,7 @@ fun AddDeviceScreen(
                 Column(Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, top = 10.dp, bottom = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     DevicePairingStepActions(
-                        step = step, name = name, code = pairCode, busy = busy, onStep = ::showStep,
+                        step = step, name = name, code = pairCode, busy = busy || waitingOnline, onStep = ::showStep,
                         onCreate = ::createCredential, onClaim = ::claimPairCode, onComplete = ::completeSetup,
                         onDownload = {
                             runCatching { uriHandler.openUri(AppConfig.DESKTOP_DOWNLOAD_URL) }
@@ -251,10 +246,25 @@ fun AddDeviceScreen(
             onDismiss = { showAgentReminder = false; onComplete() },
             onConfirm = {
                 showAgentReminder = false
-                val device = devices.firstOrNull { it.id == connectorId } ?: devices.firstOrNull { it.online }
-                if (device != null) onConfigureAgents(device) else onComplete()
+                val device = devices.firstOrNull { it.id == connectorId && it.online } ?: devices.firstOrNull { it.online }
+                if (device != null) setupDeviceId = device.id else onComplete()
             },
+            onDismissRequest = { showAgentReminder = false },
         )
+    }
+    setupDeviceId?.let { id ->
+        val device = devices.firstOrNull { it.id == id } ?: credential?.device?.takeIf { it.id == id }
+        if (device != null) {
+            DeviceAgentSetupSheet(
+                devices = listOf(device.copy(online = isOnline(id))),
+                operations = agentOperations,
+                onCheckAgents = onCheckAgents,
+                onFinish = {
+                    setupDeviceId = null
+                    onComplete()
+                },
+            )
+        }
     }
     if (showExitConfirmation) {
         DeviceConfirmDialog(

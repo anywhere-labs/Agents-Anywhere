@@ -17,6 +17,7 @@ data class DeviceRuntime(
     val id: String,
     val type: String,
     val displayName: String,
+    val typeDisplayName: String? = null,
     val present: Boolean,
     val configured: Boolean,
     val active: Boolean,
@@ -25,8 +26,11 @@ data class DeviceRuntime(
     val metadata: Map<String, Any?> = emptyMap(),
     val schema: Map<String, Any?>?,
     val uiSchema: Map<String, Any?>,
+    val defaults: Map<String, Any?> = emptyMap(),
     val config: Map<String, Any?>?,
     val error: Map<String, Any?>?,
+    /** Step inside a non-error status, e.g. syncing sessions while starting. */
+    val phase: Map<String, Any?>? = null,
     val lastDiscoveredAt: String?,
     val updatedAt: String?,
 ) {
@@ -41,11 +45,24 @@ data class DeviceRuntime(
             ?: error.stringValue("code")
             ?: discovery.stringValue("reason")
 
+    val errorCode: String?
+        get() = error.stringValue("code")
+
+    val errorMessage: String?
+        get() = error.stringValue("message")
+
+    val phaseMessage: String?
+        get() = phase.stringValue("message")
+
     val canActivate: Boolean
         get() = present && configured
 
     val discoveryAvailable: Boolean
         get() = discovery["available"] != false
+
+    /** The default instance of a single-instance type uses the type as its ID. */
+    val isDefaultInstance: Boolean
+        get() = id == type
 }
 
 enum class DeviceRuntimeStatus {
@@ -61,173 +78,18 @@ enum class DeviceRuntimeStatus {
     Unknown,
 }
 
-data class DeviceRuntimeManagementState(
-    val connectorId: String? = null,
-    val runtimes: List<DeviceRuntime> = emptyList(),
-    val loading: Boolean = false,
-    val discovering: Boolean = false,
-    val pendingRuntimeId: String? = null,
-    val errorMessage: String? = null,
-    val errorFromDiscovery: Boolean = false,
-) {
-    val configuredRuntimes: List<DeviceRuntime>
-        get() = runtimes.filter(DeviceRuntime::configured).sortedWith(deviceRuntimeComparator)
-
-    val discoveredUnconfiguredRuntimes: List<DeviceRuntime>
-        get() = runtimes
-            .filter { it.present && !it.configured }
-            .sortedWith(deviceRuntimeComparator)
-
-    fun replace(result: DeviceRuntimeList): DeviceRuntimeManagementState {
-        return copy(
-            connectorId = result.connectorId,
-            runtimes = result.runtimes.sortedWith(deviceRuntimeComparator),
-            loading = false,
-            discovering = false,
-            pendingRuntimeId = null,
-            errorMessage = null,
-            errorFromDiscovery = false,
-        )
-    }
-
-    fun replace(runtime: DeviceRuntime): DeviceRuntimeManagementState {
-        val next = if (runtimes.any { it.id == runtime.id }) {
-            runtimes.map { current -> if (current.id == runtime.id) runtime else current }
-        } else {
-            runtimes + runtime
-        }
-        return copy(
-            connectorId = runtime.connectorId,
-            runtimes = next.sortedWith(deviceRuntimeComparator),
-            errorMessage = null,
-            errorFromDiscovery = false,
-        )
-    }
-
-    /**
-     * Deletion removes the instance; the response is its final state under the
-     * same ID. A server that still returns an unconfigured successor under a new
-     * ID keeps that successor in the list.
-     */
-    fun afterDeletion(deletedId: String, response: DeviceRuntime): DeviceRuntimeManagementState {
-        if (response.id != deletedId) {
-            return copy(runtimes = runtimes.filterNot { it.id == deletedId }).replace(response)
-        }
-        return copy(
-            runtimes = runtimes.filterNot { it.id == deletedId },
-            errorMessage = null,
-            errorFromDiscovery = false,
-        )
-    }
-
-    fun discoveryFailed(message: String): DeviceRuntimeManagementState {
-        return copy(
-            discovering = false,
-            errorMessage = message,
-            errorFromDiscovery = true,
-        )
-    }
+/**
+ * Deletion removes the instance; the response is its final state under the
+ * same ID. A server that still returns an unconfigured successor under a new
+ * ID keeps that successor in the list.
+ */
+internal fun List<DeviceRuntime>.afterRuntimeDeletion(deletedId: String, response: DeviceRuntime): List<DeviceRuntime> {
+    val remaining = filterNot { it.id == deletedId || it.id == response.id }
+    return if (response.id == deletedId) remaining else remaining + response
 }
 
-sealed interface DeviceRuntimeSetupResult {
-    data class Success(val runtime: DeviceRuntime) : DeviceRuntimeSetupResult
-    data class SaveFailed(val cause: Throwable) : DeviceRuntimeSetupResult
-    data class StartFailed(
-        val configuredRuntime: DeviceRuntime,
-        val cause: Throwable,
-    ) : DeviceRuntimeSetupResult
-}
-
-internal suspend fun configureAndStartRuntime(
-    saveConfig: suspend () -> Result<DeviceRuntime>,
-    startRuntime: suspend () -> Result<DeviceRuntime>,
-): DeviceRuntimeSetupResult {
-    val configured = saveConfig().getOrElse { return DeviceRuntimeSetupResult.SaveFailed(it) }
-    return startRuntime().fold(
-        onSuccess = { DeviceRuntimeSetupResult.Success(it) },
-        onFailure = { DeviceRuntimeSetupResult.StartFailed(configured, it) },
-    )
-}
-
-data class RuntimeEnvironmentVariable(
-    val key: String,
-    val value: String,
-    val removeInheritedValue: Boolean = false,
-)
-
-data class DeviceRuntimeConfigDraft(
-    val baseConfig: Map<String, Any?>,
-    val fieldOrder: List<String>,
-    val supportsExecutablePath: Boolean,
-    val supportsEnvironment: Boolean,
-    val executablePath: String,
-    val environment: List<RuntimeEnvironmentVariable>,
-) {
-    fun validationError(): RuntimeConfigValidationError? {
-        if (!supportsEnvironment) return null
-        if (environment.any { it.key.isBlank() }) return RuntimeConfigValidationError.BlankName
-        if (environment.any { '=' in it.key || '\u0000' in it.key }) {
-            return RuntimeConfigValidationError.InvalidName
-        }
-        if (environment.map { it.key }.distinct().size != environment.size) {
-            return RuntimeConfigValidationError.DuplicateName
-        }
-        return null
-    }
-
-    fun toConfig(): Map<String, Any?> {
-        val next = baseConfig.toMutableMap()
-        if (supportsExecutablePath) {
-            executablePath.trim().takeIf(String::isNotEmpty)?.let {
-                next["executablePath"] = it
-            } ?: next.remove("executablePath")
-        }
-        if (supportsEnvironment) {
-            next["environment"] = environment.associate { variable ->
-                variable.key to if (variable.removeInheritedValue) null else variable.value
-            }
-        }
-        return next
-    }
-}
-
-enum class RuntimeConfigValidationError {
-    BlankName,
-    InvalidName,
-    DuplicateName,
-}
-
-fun DeviceRuntime.toConfigDraft(): DeviceRuntimeConfigDraft {
-    val properties = schema?.get("properties") as? Map<*, *>
-    val supportedFields = properties
-        ?.keys
-        ?.mapNotNull { it as? String }
-        .orEmpty()
-    val requestedOrder = (uiSchema["order"] as? List<*>)
-        ?.mapNotNull { it as? String }
-        .orEmpty()
-    val fieldOrder = (requestedOrder + supportedFields).distinct()
-    val environment = (config?.get("environment") as? Map<*, *>)
-        ?.mapNotNull { (key, value) ->
-            val name = key as? String ?: return@mapNotNull null
-            when (value) {
-                null -> RuntimeEnvironmentVariable(name, "", removeInheritedValue = true)
-                is String -> RuntimeEnvironmentVariable(name, value)
-                else -> null
-            }
-        }
-        ?.sortedBy { it.key.lowercase() }
-        .orEmpty()
-    return DeviceRuntimeConfigDraft(
-        baseConfig = config.orEmpty(),
-        fieldOrder = fieldOrder,
-        supportsExecutablePath = "executablePath" in supportedFields,
-        supportsEnvironment = "environment" in supportedFields,
-        executablePath = config?.get("executablePath") as? String
-            ?: schema.stringDefault("executablePath").orEmpty(),
-        environment = environment,
-    )
-}
+internal fun List<DeviceRuntime>.withRuntime(runtime: DeviceRuntime): List<DeviceRuntime> =
+    if (any { it.id == runtime.id }) map { if (it.id == runtime.id) runtime else it } else this + runtime
 
 internal fun RemoteDeviceRuntimeList.toDeviceRuntimeList(): DeviceRuntimeList {
     return DeviceRuntimeList(
@@ -243,6 +105,7 @@ internal fun RemoteDeviceRuntime.toDeviceRuntime(): DeviceRuntime {
         id = runtimeId,
         type = runtimeType,
         displayName = displayName,
+        typeDisplayName = typeDisplayName,
         present = present,
         configured = configured,
         active = active,
@@ -251,14 +114,16 @@ internal fun RemoteDeviceRuntime.toDeviceRuntime(): DeviceRuntime {
         metadata = metadata,
         schema = schema,
         uiSchema = uiSchema,
+        defaults = defaults,
         config = config,
         error = error,
+        phase = phase,
         lastDiscoveredAt = lastDiscoveredAt,
         updatedAt = updatedAt,
     )
 }
 
-private val deviceRuntimeComparator = compareBy<DeviceRuntime> {
+internal val deviceRuntimeComparator = compareBy<DeviceRuntime> {
     when (it.type) {
         "codex" -> 0
         "claude" -> 1
@@ -284,10 +149,4 @@ private fun RemoteDeviceRuntimeStatus.toDeviceRuntimeStatus(): DeviceRuntimeStat
 
 private fun Map<String, Any?>?.stringValue(key: String): String? {
     return (this?.get(key) as? String)?.takeIf { it.isNotBlank() }
-}
-
-private fun Map<String, Any?>?.stringDefault(field: String): String? {
-    val properties = this?.get("properties") as? Map<*, *> ?: return null
-    val schema = properties[field] as? Map<*, *> ?: return null
-    return schema["default"] as? String
 }
