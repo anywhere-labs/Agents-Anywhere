@@ -18,6 +18,7 @@ import {
   type AdminSection,
 } from "@/features/admin/navigation"
 import { dashboardApi } from "@/features/dashboard/api"
+import { modelConfigApi } from "@/features/model-config/api"
 import { resolveWorkspaceProject } from "@/features/dashboard/project-workspaces"
 import type {
   ConnectorView as RealConnectorView,
@@ -279,6 +280,8 @@ export type WorkspaceState = ReturnType<typeof useSessionCreation> & {
   runtimes: DeviceRuntimeView[]
   /** Model profiles, assignments and the Tokens Anywhere link from the snapshot. */
   modelConfig: ModelConfigOverview | null
+  /** Read the model configuration now instead of waiting for the next push. */
+  refreshModelConfig: () => Promise<void>
   isLoading: boolean
   routeReady: boolean
 
@@ -634,8 +637,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       connectors: message.connectors,
       projects: message.projects,
       sessions: message.sessions,
-      runtimes: message.runtimes ?? [],
-      modelConfig: message.modelConfig ?? null,
+      runtimes: message.runtimes,
+      modelConfig: message.modelConfig,
     })
     if (lastDashboardSnapshotKeyRef.current === snapshotKey) return
     lastDashboardSnapshotKeyRef.current = snapshotKey
@@ -644,12 +647,14 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
     const nextConnectors = message.connectors.map(mapConnector)
     const nextProjects = sortProjectViews(message.projects)
-    const nextRuntimes = message.runtimes ?? []
     setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
     setProjects((current) => sameStableValue(current, nextProjects) ? current : nextProjects)
-    setRuntimes((current) => sameStableValue(current, nextRuntimes) ? current : nextRuntimes)
-    const nextModelConfig = message.modelConfig ?? null
-    setModelConfig((current) => sameStableValue(current, nextModelConfig) ? current : nextModelConfig)
+    // Only the pushed snapshot carries runtimes and model configuration; the
+    // HTTP refresh does not, and must not wipe what the push delivered.
+    const nextRuntimes = message.runtimes
+    if (nextRuntimes) setRuntimes((current) => sameStableValue(current, nextRuntimes) ? current : nextRuntimes)
+    const nextModelConfig = message.modelConfig
+    if (nextModelConfig) setModelConfig((current) => sameStableValue(current, nextModelConfig) ? current : nextModelConfig)
     setSessions((current) => {
       const currentById = new Map(current.map((session) => [session.id, session]))
       const next = sortSessions(message.sessions.map((session) => {
@@ -666,6 +671,18 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(false)
     initialLoadDoneRef.current = true
   }, [reconcileSessionIndicator, sortSessions])
+
+  const refreshModelConfig = React.useCallback(async () => {
+    const token = currentAccessTokenRef.current
+    if (!token) return
+    const [overview, tokens] = await Promise.all([
+      modelConfigApi.overview(token),
+      modelConfigApi.tokensStatus(token),
+    ])
+    if (currentAccessTokenRef.current !== token) return
+    const next = { ...overview, tokens }
+    setModelConfig((current) => sameStableValue(current, next) ? current : next)
+  }, [])
 
   const fetchDataInFlightRef = React.useRef<{ token: string | null; promise: Promise<boolean> } | null>(null)
   const fetchData = React.useCallback((): Promise<boolean> => {
@@ -1425,6 +1442,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     projects,
     runtimes,
     modelConfig,
+    refreshModelConfig,
     isLoading,
     routeReady,
     page,

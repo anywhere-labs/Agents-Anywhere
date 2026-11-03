@@ -93,6 +93,12 @@ function useInterruptConfirm() {
   return { run, dialog }
 }
 
+/** Re-read the overview after an action; the push that follows is a second chance. */
+function useModelConfigChanged() {
+  const { refreshModelConfig } = useWorkspace()
+  return React.useCallback(() => { void refreshModelConfig().catch(() => undefined) }, [refreshModelConfig])
+}
+
 function useErrorText() {
   const t = useTranslations("pages.settings.modelConfigs")
   return React.useCallback((error: unknown) => {
@@ -104,7 +110,8 @@ function useErrorText() {
 
 export function ModelConfigsTab({ token, connectors }: { token: string; connectors: ConnectorView[] }) {
   const t = useTranslations("pages.settings.modelConfigs")
-  const { modelConfig, runtimes } = useWorkspace()
+  const { modelConfig, runtimes, refreshModelConfig } = useWorkspace()
+  const [loadFailed, setLoadFailed] = React.useState(false)
   const [applyProfile, setApplyProfile] = React.useState<ModelProfile | null>(null)
   const [creating, setCreating] = React.useState(false)
   const errorText = useErrorText()
@@ -120,7 +127,23 @@ export function ModelConfigsTab({ token, connectors }: { token: string; connecto
     window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`)
   }, [t])
 
-  if (!modelConfig) return <div className="flex justify-center py-10"><Spinner /></div>
+  // Opening the page reads the configuration itself; it does not wait for a push.
+  const load = React.useCallback(() => {
+    setLoadFailed(false)
+    refreshModelConfig().catch(() => setLoadFailed(true))
+  }, [refreshModelConfig])
+  React.useEffect(() => {
+    if (token) load()
+  }, [load, token])
+
+  if (!modelConfig) {
+    return loadFailed ? (
+      <div className="flex flex-col items-center gap-3 py-10 text-sm text-muted-foreground">
+        <span>{t("loadFailed")}</span>
+        <Button size="sm" variant="outline" onClick={load}><RefreshCw data-icon="inline-start" />{t("retry")}</Button>
+      </div>
+    ) : <div className="flex justify-center py-10"><Spinner /></div>
+  }
 
   const profiles = modelConfig.profiles
   return (
@@ -179,6 +202,7 @@ export function ModelConfigsTab({ token, connectors }: { token: string; connecto
 function TokensSection({ token, overview, errorText }: { token: string; overview: ModelConfigOverview; errorText: (error: unknown) => string }) {
   const t = useTranslations("pages.settings.modelConfigs")
   const [busy, setBusy] = React.useState<"link" | "sync" | "unlink" | null>(null)
+  const changed = useModelConfigChanged()
   const [confirmUnlink, setConfirmUnlink] = React.useState(false)
   const [allowInterrupt, setAllowInterrupt] = React.useState(false)
   const tokens = overview.tokens
@@ -191,6 +215,7 @@ function TokensSection({ token, overview, errorText }: { token: string; overview
     setBusy(kind)
     try {
       await action()
+      changed()
     } catch (error) {
       toast.error(errorText(error))
     } finally {
@@ -284,12 +309,14 @@ function ProfileRow({
   const t = useTranslations("pages.settings.modelConfigs")
   const [busy, setBusy] = React.useState(false)
   const interrupt = useInterruptConfirm()
+  const changed = useModelConfigChanged()
   const models = new Set(profile.offers.flatMap((offer) => offer.models.map((model) => model.id))).size
 
   const remove = async () => {
     setBusy(true)
     try {
       await modelConfigApi.deleteProfile(token, profile.id)
+      changed()
     } catch (error) {
       toast.error(errorText(error))
     } finally {
@@ -303,7 +330,10 @@ function ProfileRow({
       // One key for both attempts: the first is refused before anything rotates.
       const key = newIdempotencyKey()
       const operation = await interrupt.run((allow) => modelConfigApi.rotateTokensKey(token, profile.id, allow, key))
-      if (operation) reportOperation(operation, t)
+      if (operation) {
+        reportOperation(operation, t)
+        changed()
+      }
     } catch (error) {
       toast.error(errorText(error))
     } finally {
@@ -361,6 +391,7 @@ function ProfileDialog({ token, onClose, errorText }: { token: string; onClose: 
     anthropic: { enabled: false, baseUrl: "", models: "" },
   })
   const [saving, setSaving] = React.useState(false)
+  const changed = useModelConfigChanged()
   const chosen = PROTOCOLS.filter((protocol) => offers[protocol].enabled)
   const valid = name.trim() && apiKey.trim() && chosen.length > 0
     && chosen.every((protocol) => /^https?:\/\/\S+$/.test(offers[protocol].baseUrl.trim()))
@@ -378,6 +409,7 @@ function ProfileDialog({ token, onClose, errorText }: { token: string; onClose: 
         })),
       })
       toast.success(t("profileSaved"))
+      changed()
       onClose()
     } catch (error) {
       toast.error(errorText(error))
@@ -478,6 +510,7 @@ function ApplyDialog({
   const [allowInterrupt, setAllowInterrupt] = React.useState(false)
   const [confirmGlobal, setConfirmGlobal] = React.useState(false)
   const [applying, setApplying] = React.useState(false)
+  const changed = useModelConfigChanged()
   const idempotencyKey = React.useRef(newIdempotencyKey())
   // The preview runs once per dialog; snapshot updates re-render the parent with new callbacks.
   const latest = React.useRef({ onClose, errorText })
@@ -517,6 +550,7 @@ function ApplyDialog({
         confirmNativeGlobal: confirmGlobal,
       }, idempotencyKey.current)
       reportOperation(operation, t)
+      changed()
       onClose()
     } catch (error) {
       toast.error(errorText(error))
@@ -621,6 +655,7 @@ function DevicesSection({
   const tStatus = useTranslations("pages.settings.modelConfigs.connectionState")
   const [restoring, setRestoring] = React.useState<string | null>(null)
   const interrupt = useInterruptConfirm()
+  const changed = useModelConfigChanged()
   const byTarget = new Map(overview.assignments.map((item) => [`${item.connectorId}/${item.runtimeId}`, item]))
   const profileName = (id: string) => overview.profiles.find((profile) => profile.id === id)?.name ?? id
 
@@ -629,7 +664,10 @@ function DevicesSection({
     setRestoring(key)
     try {
       const result = await interrupt.run((allow) => modelConfigApi.restore(token, assignment, allow))
-      if (result) toast.success(t("restored"))
+      if (result) {
+        toast.success(t("restored"))
+        changed()
+      }
     } catch (error) {
       toast.error(errorText(error))
     } finally {

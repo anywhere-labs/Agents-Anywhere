@@ -485,3 +485,21 @@ def test_a_runtime_that_needs_models_is_skipped_without_them(tmp_path, server_se
     assert preview["targets"][0]["reason"] == "models_required"
     assert applied["results"][0]["reason"] == "models_required"
     assert _runtimes(client, connector_id, headers)["codex"]["configured"] is False
+
+
+def test_open_dashboards_get_the_saved_profile_without_a_refresh(tmp_path, server_secret):
+    client, _rpc, _connector_id, headers = _client(tmp_path, CODEX_LIKE)
+    ticket = client.post(
+        "/ws-ticket",
+        headers=headers,
+        json={"clientId": "web_model_config_live", "scope": {"dashboard": True}},
+    ).json()["ticket"]
+
+    with client.websocket_connect(f"/dashboard/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["modelConfig"]["profiles"] == []
+        profile = _profile(client, headers)
+        snapshot = ws.receive_json()
+        while snapshot.get("type") != "dashboard.snapshot":
+            snapshot = ws.receive_json()
+
+    assert [item["id"] for item in snapshot["modelConfig"]["profiles"]] == [profile["id"]]

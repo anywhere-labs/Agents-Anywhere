@@ -1764,7 +1764,9 @@
         },
         "interruptTitle": "有任务正在运行",
         "interruptDescription": "继续会重启相关 Runtime，正在运行的任务会被中断。",
-        "interruptContinue": "中断并继续"
+        "interruptContinue": "中断并继续",
+        "loadFailed": "没能读取配置管理的数据。",
+        "retry": "重试"
       },
       "modelConfigsTitle": "配置管理"
     },
