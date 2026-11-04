@@ -6,7 +6,7 @@
 
 ### 升级须知
 
-- Codex、Claude Code 统一目标模式需要 Server 执行 `v2_47` 数据库迁移，并配套更新 Connector 和客户端。
+- Codex、Claude Code 统一目标模式需要 Server 执行 `v2_47` 数据库迁移，并配套更新 Connector 和客户端。（[#539](https://github.com/anywhere-labs/Agents-Anywhere/pull/539)）
 
 - Pi 优先复用本机兼容安装的模型、认证和配置；已有受管模型网关配置保持隔离，用户也可明确选择受管环境。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 - Pi 接入需要 Server 执行 `v2_45` 数据库迁移，并配套更新 Connector 和使用此功能的客户端。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
@@ -98,7 +98,7 @@
 
 ### Codex 与 Claude
 
-- Web、Desktop、Android 和 iOS 可用 `/goal` 设置目标，在输入区上方编辑、暂停、恢复或清除；停止时阻止自动续跑，完成结果留在会话历史中。
+- Web、Desktop、Android 和 iOS 可用 `/goal` 设置目标，在输入区上方编辑、暂停、恢复或清除；停止时阻止自动续跑，完成结果留在会话历史中。（[#539](https://github.com/anywhere-labs/Agents-Anywhere/pull/539)）
 
 - 接入 Codex App / IDE 插件的 IPC 协议，在 Codex 窗口里打开的会话也能在 AA 中继续操作，包括发消息、中断、审批、切换模型和权限、发送附件；支持 macOS 和 Windows。（[#299](https://github.com/anywhere-labs/Agents-Anywhere/pull/299)、[#334](https://github.com/anywhere-labs/Agents-Anywhere/pull/334)）
 - 新增 `/open-in-codex-app` 和 `/kill-chatgpt` 命令：前者在 Codex App 中打开当前会话，后者退出 App 以释放写锁。（[#299](https://github.com/anywhere-labs/Agents-Anywhere/pull/299)）
