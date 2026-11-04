@@ -12,12 +12,32 @@ on:
       - main
       - v2
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Checks to execute
+        type: choice
+        options: [all, server]
+        default: all
+      server_workers:
+        description: Verification workers (dependency recording uses at most 2)
+        type: choice
+        options: ['4', '2', '1']
+        default: '4'
+      server_mode:
+        description: Full, shadow, verification, or affected diagnostics
+        type: choice
+        options: [full, shadow, verify, affected]
+        default: full
+      server_sample_change:
+        description: Benchmark a harmless announcement function edit in this checkout
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -48,6 +68,7 @@ jobs:
         id: paths
         shell: bash
         env:
+          CHECK_SCOPE: ${{ inputs.scope }}
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: |
           plugin=false
@@ -66,7 +87,11 @@ jobs:
           }
 
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
-            run_everything "manual run"
+            if [[ "$CHECK_SCOPE" == server ]]; then
+              server=true
+            else
+              run_everything "manual run"
+            fi
           elif [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then
             # A push that creates a branch has no `before` commit to diff against.
             run_everything "no base commit"
@@ -215,7 +240,7 @@ jobs:
           done
 
   server:
-    name: Server tests
+    name: ${{ github.event_name == 'workflow_dispatch' && inputs.server_mode == 'affected' && 'Server affected diagnostics' || 'Server tests' }}
     needs: changes
     if: needs.changes.outputs.server == 'true'
     runs-on: ubuntu-latest
@@ -241,6 +266,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Set up uv and Python
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
@@ -259,10 +286,64 @@ jobs:
       - name: Check runtime workflow contracts
         working-directory: server
         run: uv run --no-sync python -m scripts.export_workflow_schemas --check
-      - name: Test Server
+      - name: Restore test dependency baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: server/.testmondata*
+          key: server-testmon-v1-${{ runner.os }}-${{ hashFiles('server/pyproject.toml', 'connector/pyproject.toml') }}-${{ github.sha }}
+          restore-keys: |
+            server-testmon-v1-${{ runner.os }}-${{ hashFiles('server/pyproject.toml', 'connector/pyproject.toml') }}-
+      - name: Prepare optional benchmark function change
+        if: github.event_name == 'workflow_dispatch' && inputs.server_sample_change
+        run: |
+          python - <<'PYTHON'
+          from pathlib import Path
+          path = Path('server/agent_server/api/announcements.py')
+          source = path.read_text()
+          before = 'response.headers["Cache-Control"] = "no-store"'
+          if before not in source:
+              raise SystemExit('Benchmark anchor missing; no source modified')
+          path.write_text(source.replace(before, before + '.strip()', 1))
+          print('Benchmark only: harmless announcement function edit in disposable CI checkout')
+          PYTHON
+      - name: Test Server with selection shadow
         working-directory: server
-        # Verbose names identify a stalled WebSocket test before the outer timeout.
-        run: timeout --kill-after=30s 1200 uv run --no-sync pytest -v --durations=20 -o faulthandler_timeout=120
+        env:
+          CHECK_BASE: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.pull_request.base.sha || github.event.before }}
+        run: uv run --no-sync python -m scripts.check_tests --mode "${{ inputs.server_mode || 'shadow' }}" --workers "${{ inputs.server_workers || '4' }}" --base "$CHECK_BASE"
+      - name: Publish Server timing and selection report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-test-report
+          include-hidden-files: true
+          path: server/.test-results/
+      - name: Summarize Server checks
+        if: always()
+        working-directory: server
+        run: |
+          python - <<'PYTHON'
+          import json, os
+          from pathlib import Path
+          path = Path('.test-results/summary.json')
+          if path.exists():
+              data = json.loads(path.read_text())
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+                  out.write('## Server test selection shadow\n\n')
+                  out.write(f"Fallback: {data['fallback'] or 'none'}\n\n")
+                  out.write('| Stage | Workers | Tests executed | Seconds | Exit |\n|---|---:|---:|---:|---:|\n')
+                  for stage in data['stages']:
+                      count = len({r['id'] for r in stage['reports']})
+                      out.write(f"| {stage['stage']} | {stage.get('workers', '?')} | {count} | {stage['wall_seconds']} | {stage['exit_code']} |\n")
+                  if 'missed_failures' in data:
+                      out.write(f"\nFast path reduction: {data['time_reduction_percent']}%; missed failing tests: {len(data['missed_failures'])}\n")
+          PYTHON
+      - name: Save successful test dependency baseline
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: server/.testmondata*
+          key: server-testmon-v1-${{ runner.os }}-${{ hashFiles('server/pyproject.toml', 'connector/pyproject.toml') }}-${{ github.sha }}
 
   web:
     name: Web headless checks
