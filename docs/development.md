@@ -173,8 +173,12 @@ CI 将摘要显示在 Actions Summary，并上传 `server-test-report` artifact�
 `.testmondata*` 和报告目录均不提交，业务版本号不受此检查影响。
 
 GitHub Actions 手动运行 `CI` 时，可选 `scope=server`，只执行 Server 检查；
-用 `server_workers=1/2/4` 比较同一提交的并行效果，`server_mode=full/shadow`
+用 `server_workers=1/2/4` 比较同一提交的并行效果，`server_mode=full/shadow/verify`
 选择完整运行或影子对照。手动运行互不取消，PR/push 仍会取消旧检查。
 先用 full 生成成功基线，再用 shadow 和 `server_sample_change=true` 测量
 真实函数修改的选择效果。该选项仅在一次性 CI checkout 中给公告读取函数加上
 不改变返回值的 `.strip()` 调用，不生成提交、不修改远程源码。
+
+`verify` 执行不采集依赖的全量检查，用于与原串行 CI 比较；`full` 执行全量并采集依赖基线。
+已有有效基线的 shadow 阶段只为受影响用例采集依赖，随后全量验证不重复开启覆盖跟踪，
+避免同一轮重复采集拖慢检查；冷启动和回退全量仍采集完整基线。

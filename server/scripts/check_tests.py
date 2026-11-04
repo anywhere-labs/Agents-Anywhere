@@ -167,7 +167,7 @@ def main():
     signal.signal(signal.SIGTERM, interrupted)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--mode", choices=["full", "affected", "shadow"], default="shadow"
+        "--mode", choices=["full", "affected", "shadow", "verify"], default="shadow"
     )
     parser.add_argument(
         "--base", help="PR base ref; missing/unsupported inputs fall back to full"
@@ -182,7 +182,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     reason = (
         "full explicitly requested"
-        if options.mode == "full"
+        if options.mode in {"full", "verify"}
         else selection_reason(options.base)
     )
     summary = {
@@ -229,11 +229,18 @@ def main():
                     "affected", ["--testmon", *parallel], env, output, options.timeout
                 )
             )
-        if reason or options.mode in {"full", "shadow"}:
+        if reason or options.mode in {"full", "shadow", "verify"}:
+            # Only cold/fallback runs need a complete dependency recording.
+            # A warm shadow already updated the changed tests' dependencies.
+            full_options = (
+                ["--testmon", "--testmon-noselect"]
+                if reason and options.mode != "verify"
+                else ["--no-testmon"]
+            )
             summary["stages"].append(
                 run_stage(
                     "full",
-                    ["--testmon", "--testmon-noselect", *parallel],
+                    [*full_options, *parallel],
                     env,
                     output,
                     options.timeout,

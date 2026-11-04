@@ -26,7 +26,7 @@ on:
       server_mode:
         description: Full suite or selection shadow comparison
         type: choice
-        options: [full, shadow]
+        options: [full, shadow, verify]
         default: full
       server_sample_change:
         description: Benchmark a harmless announcement function edit in this checkout
