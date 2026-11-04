@@ -90,6 +90,9 @@ LEASE = timedelta(seconds=60)
 # Requests reaching a runtime wait this long for a switch before giving up.
 ADMISSION_WAIT_SECONDS = 90.0
 ADMISSION_TTL = timedelta(minutes=2)
+# A closing switch lets requests already admitted start their task, this long at most.
+ADMISSION_DRAIN_SECONDS = 30.0
+ADMISSION_DRAIN_INTERVAL_SECONDS = 0.25
 VERIFY_TIMEOUT_SECONDS = 120.0
 RESTARTING_STATUSES = {"starting", "running"}
 # The device dropped mid-switch: the row waits for it to come back and verifies then.
@@ -142,8 +145,9 @@ class ModelChannelRepository(Protocol):
     async def release_runtime_request(self, token: str) -> None: ...
     async def close_runtime_for_switch(
         self, connector_id: str, runtime_id: str, values: dict[str, Any], *,
-        now: str,
-    ) -> None: ...
+        count_runtime_ids: list[str], now: str,
+    ) -> int: ...
+    async def count_runtime_admissions(self, connector_id: str, runtime_ids: list[str], *, now: str) -> int: ...
     async def runtime_closed_for_switch(self, connector_id: str, runtime_ids: list[str], *, now: str) -> bool: ...
     async def list_user_device_runtimes(self, *, user_id: str) -> list[dict[str, Any]]: ...
     async def list_model_profiles(self, *, user_id: str) -> list[dict[str, Any]]: ...
@@ -570,6 +574,12 @@ class ModelChannelService:
             self._spawn(connector_id, *waiting)
         await self.settle()
 
+    async def connector_discovered(self, connector_id: str) -> None:
+        """Discovery finished: fix each runtime's target before the device gate opens."""
+        owner = await self._store.channel_connector_owner(connector_id)
+        if owner is not None:
+            await self._ensure_targets(owner)
+
     async def connector_event(self, connector_id: str) -> None:
         """The device is back: every runtime waiting on it may go on."""
         # Always enumerate durable state; a missing Redis marker cannot hide work.
@@ -694,16 +704,19 @@ class ModelChannelService:
         await self._plan(user_id)
         await self.settle()
 
-    async def _plan(
-        self, user_id: str, *, only: tuple[str, str] | None = None,
-        rewrite: str | None = None, connector: str | None = None, reconnect: bool = False,
-    ) -> bool:
+    async def _ensure_targets(self, user_id: str) -> None:
         if await self._store.get_channel_selection(user_id) is None:
             selection = await self.selection(user_id)
             async with self._store.channel_transaction(user_id):
                 if await self._store.get_channel_selection(user_id) is None:
                     await self._store.save_channel_selection(user_id, selection["channel"])
         await self._store.refresh_channel_targets(user_id)
+
+    async def _plan(
+        self, user_id: str, *, only: tuple[str, str] | None = None,
+        rewrite: str | None = None, connector: str | None = None, reconnect: bool = False,
+    ) -> bool:
+        await self._ensure_targets(user_id)
         rows = await self._store.list_user_device_runtimes(user_id=user_id)
         moving = False
         for row in rows:
@@ -721,17 +734,18 @@ class ModelChannelService:
             if not due and not reconnect:
                 continue
             if not due and reconnect and switch is not None and switch["state"] == APPLIED:
-                self._spawn(runtime.connectorId, runtime.runtimeId, user_id)
+                # Periodic scans reach offline devices too; those verify when they are back.
+                if await self._connector_online(runtime.connectorId):
+                    self._spawn(runtime.connectorId, runtime.runtimeId, user_id)
                 continue
-            if switch and sync and switch["state"] == WAITING_ONLINE and switch.get("targetGeneration") == sync["desired_generation"] and not reconnect:
-                try:
-                    if not await self._runtimes.is_connector_online(runtime.connectorId):
-                        continue
-                except RedisError:
-                    continue
+            if (switch and sync and switch["state"] == WAITING_ONLINE
+                    and switch.get("targetGeneration") == sync["desired_generation"]
+                    and not await self._connector_online(runtime.connectorId)):
+                continue
             if switch is not None and switch["state"] in (*NEEDS_RETRY, UNSUPPORTED):
                 same_target = switch.get("targetGeneration") == (sync or {}).get("desired_generation")
-                upgrade = reconnect and switch.get("reason") == "connector_upgrade_required"
+                upgrade = (reconnect and switch.get("reason") == "connector_upgrade_required"
+                           and await self._runtimes.connector_supports(runtime.connectorId, "channelReconcileFence"))
                 if same_target and not upgrade and not (sync and sync["next_retry_at"] and sync["next_retry_at"] <= utc_now()):
                     continue
             if sync and sync["next_retry_at"] and sync["next_retry_at"] > utc_now() and not reconnect:
@@ -751,6 +765,12 @@ class ModelChannelService:
         if moving:
             await self._publish(user_id)
         return moving
+
+    async def _connector_online(self, connector_id: str) -> bool:
+        try:
+            return await self._runtimes.is_connector_online(connector_id)
+        except RedisError:
+            return False
 
     async def _reset(self, connector_id: str, runtime_id: str, *, user_id: str) -> None:
         switch = await self._store.get_channel_switch(connector_id, runtime_id)
@@ -797,7 +817,9 @@ class ModelChannelService:
                 context = await self._context(runtime, user_id=user_id)
                 sync = await self._store.get_channel_sync(connector_id, runtime_id)
             if not await self._runtimes.is_connector_online(connector_id):
-                await self._wait_online(connector_id, runtime_id, user_id)
+                # An applied target has nothing to wait for; coming back verifies it.
+                if switch["state"] != APPLIED or not sync or sync["applied_generation"] != sync["desired_generation"]:
+                    await self._wait_online(connector_id, runtime_id, user_id)
                 return
             if not await self._runtimes.connector_supports(connector_id, "channelReconcileFence"):
                 await self._settle(connector_id, runtime_id, user_id, UNSUPPORTED, reason="connector_upgrade_required")
@@ -808,8 +830,10 @@ class ModelChannelService:
                 target = context.actual_target
                 report = await self._runtimes.read_connector_config(connector_id, target.runtimeId, target.runtimeType)
                 if report is None:
-                    await self._store.channel_retry(connector_id, runtime_id, "device_offline", automatic=True)
-                    await self._store.save_channel_switch(connector_id, runtime_id, {"state": PENDING, "reason": "device_offline"})
+                    # An unanswered check does not undo an applied target; the next scan asks again.
+                    if switch["state"] != APPLIED:
+                        await self._store.channel_retry(connector_id, runtime_id, "device_offline", automatic=True)
+                        await self._store.save_channel_switch(connector_id, runtime_id, {"state": PENDING, "reason": "device_offline"})
                     return
                 if report["running"] == target.active and (not target.active or connection_digest(
                     report["values"], target.modelConnection or {}) == sync["actual_config_digest"]):
@@ -863,8 +887,16 @@ class ModelChannelService:
                 await self._wait_online(connector_id, runtime_id, user_id)
                 return
             await self._execute(context, switch)
-            # The wanted channel may have changed while this one ran.
+            # Done unless the wanted channel changed while this one ran; the commit verified it.
+            if await self._reached_target(connector_id, runtime_id):
+                return
         await self._store.enqueue_channel_sync(user_id, connector_id)
+
+    async def _reached_target(self, connector_id: str, runtime_id: str) -> bool:
+        switch = await self._store.get_channel_switch(connector_id, runtime_id)
+        sync = await self._store.get_channel_sync(connector_id, runtime_id)
+        return (switch is not None and sync is not None and switch["state"] == APPLIED
+                and sync["applied_generation"] == sync["desired_generation"])
 
     def _needs_managed(self, context: _Context) -> bool:
         capability = context.runtime.modelConnection or {}
@@ -965,13 +997,16 @@ class ModelChannelService:
         await self._publish(context.user_id)
         fence = {"operationId": operation_id, "switchRevision": revision,
                  "targetGeneration": sync["desired_generation"], "logicalRuntimeId": runtime_id}
-        # Close the runtime to new tasks, then make sure none slipped in.
-        await self._store.close_runtime_for_switch(
+        # Close the runtime to new tasks, then let the ones admitted before that start.
+        gate = sorted({runtime_id, snapshot["runtimeId"], context.actual_target.runtimeId,
+                       *([context.managed.runtimeId] if context.managed is not None else [])})
+        admitted = await self._store.close_runtime_for_switch(
             connector_id, runtime_id,
             {"step": ACTIVATING, "leaseUntil": _iso(_now() + LEASE)},
-            now=_iso(_now()),
+            count_runtime_ids=gate, now=_iso(_now()),
         )
         await self._publish(context.user_id)
+        await self._drain_admissions(connector_id, gate, admitted)
         latest = await self._store.get_channel_sync(connector_id, runtime_id)
         if latest["desired_generation"] != sync["desired_generation"]:
             await self._settle(connector_id, runtime_id, context.user_id, PENDING)
@@ -994,6 +1029,17 @@ class ModelChannelService:
             await self._publish(context.user_id)
             return
         await self._rollback(connector_id, runtime_id, context.user_id, snapshot, reason=reason, message=message)
+
+    async def _drain_admissions(self, connector_id: str, runtime_ids: list[str], admitted: int) -> None:
+        """Wait for admitted requests to start their task; started tasks are not waited for."""
+        deadline = asyncio.get_running_loop().time() + ADMISSION_DRAIN_SECONDS
+        while admitted:
+            if asyncio.get_running_loop().time() >= deadline:
+                logger.warning("channel switch proceeding with admitted requests connector_id={} runtime_ids={} count={}",
+                               connector_id, runtime_ids, admitted)
+                return
+            await asyncio.sleep(ADMISSION_DRAIN_INTERVAL_SECONDS)
+            admitted = await self._store.count_runtime_admissions(connector_id, runtime_ids, now=_iso(_now()))
 
     async def _plan_write(self, context: _Context) -> dict[str, Any]:
         """The configuration to write and the assignment to keep afterwards."""

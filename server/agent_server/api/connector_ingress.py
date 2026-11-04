@@ -688,6 +688,7 @@ async def connector_ws(
                 connector_id,
                 connection,
                 reason=discovery_reason or "runtime.recovery",
+                on_discovered=model_channel_service_for(websocket.app.state).connector_discovered,
                 on_ready=model_channel_service_for(websocket.app.state).connector_event,
             ),
             name=f"runtime-discovery-complete-{connection.connection_id}",
@@ -797,6 +798,7 @@ async def _complete_runtime_discovery(
     connection: ConnectorConnection,
     *,
     reason: str,
+    on_discovered: Callable[[str], Awaitable[None]] | None = None,
     on_ready: Callable[[str], Awaitable[None]] | None = None,
 ) -> None:
     try:
@@ -819,21 +821,14 @@ async def _complete_runtime_discovery(
             connection.connection_id,
         )
 
-    delay = 2.0
-    while True:
-        try:
-            if not await runtime_service._manager.is_connection_id_current(connector_id, connection.connection_id):
-                return
-            if on_ready is not None:
-                await on_ready(connector_id)
-            await runtime_service._store.clear_channel_device_gate(connector_id, connection.connection_id)
-            break
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001 - retry the owned connection's durable reconciliation
-            logger.exception("model channel discovery reconciliation failed connector_id={}", connector_id)
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, 30.0)
+    async def open_gate() -> None:
+        # Targets first: a runtime that must move stays closed once the gate opens.
+        if on_discovered is not None:
+            await on_discovered(connector_id)
+        await runtime_service._store.clear_channel_device_gate(connector_id, connection.connection_id)
+
+    if not await _retry_while_current(runtime_service, connector_id, connection, open_gate):
+        return
     try:
         await runtime_service.reconcile_active(
             connector_id,
@@ -857,6 +852,32 @@ async def _complete_runtime_discovery(
             connector_id,
             connection.connection_id,
         )
+    # Last: a drive skips a gated device, and would mistake a runtime that
+    # reconcile_active has yet to start for one whose configuration drifted.
+    if on_ready is not None:
+        await _retry_while_current(runtime_service, connector_id, connection, lambda: on_ready(connector_id))
+
+
+async def _retry_while_current(
+    runtime_service: DeviceRuntimeService,
+    connector_id: str,
+    connection: ConnectorConnection,
+    step: Callable[[], Awaitable[None]],
+) -> bool:
+    """Retry a durable reconciliation step; False once another connection took over."""
+    delay = 2.0
+    while True:
+        try:
+            if not await runtime_service._manager.is_connection_id_current(connector_id, connection.connection_id):
+                return False
+            await step()
+            return True
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - retry the owned connection's durable reconciliation
+            logger.exception("model channel discovery reconciliation failed connector_id={}", connector_id)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 30.0)
 
 
 def _connector_device_os(value: str | None) -> str | None:

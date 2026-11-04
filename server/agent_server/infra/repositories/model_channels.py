@@ -219,9 +219,9 @@ class ModelChannelRepositoryMixin:
 
     async def close_runtime_for_switch(
         self, connector_id: str, runtime_id: str, values: dict[str, Any], *,
-        now: str,
-    ) -> None:
-        """Close the runtime to new tasks before immediate replacement."""
+        count_runtime_ids: list[str], now: str,
+    ) -> int:
+        """Close the runtime to new tasks; how many requests were admitted before that."""
         columns = {_SWITCH_FIELDS[key]: value for key, value in values.items()}
         if _claim.get() is not None:
             columns.pop("lease_until", None)
@@ -232,6 +232,19 @@ class ModelChannelRepositoryMixin:
                 runtime_channel_switches.c.connector_id == connector_id,
                 runtime_channel_switches.c.runtime_id == runtime_id,
             ).values(**columns, updated_at=utc_now()))
+            return await self._count_admissions(conn, connector_id, count_runtime_ids, now)
+
+    async def count_runtime_admissions(self, connector_id: str, runtime_ids: list[str], *, now: str) -> int:
+        async with channel_connection(self) as conn:
+            return await self._count_admissions(conn, connector_id, runtime_ids, now)
+
+    async def _count_admissions(self, conn: Any, connector_id: str, runtime_ids: list[str], now: str) -> int:
+        return int((await conn.execute(select(func.count()).select_from(runtime_admissions).where(
+            runtime_admissions.c.connector_id == connector_id,
+            runtime_admissions.c.runtime_id.in_(runtime_ids),
+            runtime_admissions.c.expires_at > now,
+        ))).scalar_one())
+
     async def runtime_closed_for_switch(self, connector_id: str, runtime_ids: list[str], *, now: str) -> bool:
         async with channel_connection(self) as conn:
             if await self.channel_admission_blocked(connector_id, runtime_ids, conn, now):
