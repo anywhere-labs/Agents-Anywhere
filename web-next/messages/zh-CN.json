@@ -1887,6 +1887,7 @@
         "manualProtocols": "也可以手动选择协议并填写模型："
       },
       "modelConfigsTitle": "模型渠道",
+      "modelsGroup": "模型",
       "channelSwitchTitle": "渠道切换"
     },
     "team": {

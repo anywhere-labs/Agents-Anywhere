@@ -35,7 +35,7 @@
 
 - 所有渠道切换（包括模型或 Key 更新、重试和恢复）都立即执行，不再等待运行中的任务结束；切回设备自带配置时撤销 AA 写入的 Gateway 并重新加载原配置。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 
-- Web 和 Desktop 的模型渠道页改为开放式分区，移除导航、账户、余额和用量的嵌套卡片，用留白、分隔线和数字层级呈现信息；各渠道的 Runtime 列表固定展示所选渠道，不再提供渠道切换下拉框，渠道按钮与状态统一使用「应用／已应用」，渠道名称完整显示为「Tokens Anywhere」，移除左侧所有渠道和「添加配置」前的图标。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- Web 和 Desktop 的模型渠道页改为开放式分区，移除导航、账户、余额和用量的嵌套卡片，用留白、分隔线和数字层级呈现信息；各渠道的 Runtime 列表固定展示所选渠道，不再提供渠道切换下拉框，渠道按钮与状态统一使用「应用／已应用」，渠道名称完整显示为「Tokens Anywhere」，移除左侧所有渠道和「添加配置」前的图标；设置侧栏分为上方的设置项和下方的「模型」分组，「模型渠道」移到「模型」分组中。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 
 - 模型渠道仅列出支持模型连接配置的 Runtime，DSH 等不支持此能力的 Runtime 不再出现在列表或切换进度中。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 修复旧配置待更新或新发现的 Runtime 因缺少切换任务而一直显示「排队中」的问题，重启服务或刷新模型渠道后可自动继续切换。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）

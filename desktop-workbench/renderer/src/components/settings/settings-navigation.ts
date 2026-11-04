@@ -1,15 +1,19 @@
 import { Archive, Boxes, Laptop, Logs, Rocket, Smartphone, Sun, User } from "lucide-react"
 
 export const settingsNavigation = [
-  { id: "account", labelKey: "account", icon: User },
-  { id: "appearance", labelKey: "appearance", icon: Sun },
-  { id: "model-configs", labelKey: "modelConfigsTitle", icon: Boxes },
-  { id: "mobile-connections", labelKey: "mobileConnections", icon: Smartphone },
-  { id: "desktop", labelKey: "desktop", icon: Laptop },
-  { id: "startup", labelKey: "startup", icon: Rocket },
-  { id: "logs", labelKey: "logs", icon: Logs },
-  { id: "archived-sessions", labelKey: "archivedSessions", icon: Archive },
+  { id: "account", labelKey: "account", icon: User, group: "general" },
+  { id: "appearance", labelKey: "appearance", icon: Sun, group: "general" },
+  { id: "mobile-connections", labelKey: "mobileConnections", icon: Smartphone, group: "general" },
+  { id: "desktop", labelKey: "desktop", icon: Laptop, group: "general" },
+  { id: "startup", labelKey: "startup", icon: Rocket, group: "general" },
+  { id: "logs", labelKey: "logs", icon: Logs, group: "general" },
+  { id: "archived-sessions", labelKey: "archivedSessions", icon: Archive, group: "general" },
+  { id: "model-configs", labelKey: "modelConfigsTitle", icon: Boxes, group: "models" },
 ] as const
+
+// Sidebar groups, top to bottom. Only non-general groups get a heading; the
+// sidebar title already names the general one.
+export const settingsNavigationGroups = ["general", "models"] as const
 
 export type SettingsTab = (typeof settingsNavigation)[number]["id"]
 

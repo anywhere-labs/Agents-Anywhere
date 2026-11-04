@@ -2057,6 +2057,7 @@
         "manualProtocols": "You can also pick the protocols and enter the models yourself:"
       },
       "modelConfigsTitle": "Model channels",
+      "modelsGroup": "Models",
       "channelSwitchTitle": "Channel switching"
     },
     "team": {
