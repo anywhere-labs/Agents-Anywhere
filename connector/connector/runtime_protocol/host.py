@@ -23,6 +23,16 @@ UploadProgress = Callable[[int], Awaitable[None]]
 class RuntimeHostClient(ABC):
     """Runtime -> Connector."""
 
+    async def prepare_goal_creation(
+        self, session_id, external_id, content, attachments, operation_id
+    ):
+        service = getattr(self, "_goal_service", None)
+        if service is None or session_id not in getattr(self, "_goal_creations", {}):
+            return None
+        return await service.prepare_creation(
+            session_id, external_id, content, attachments, operation_id
+        )
+
     async def observe_planning(self, observation) -> None:
         handler = getattr(self, "_planning_observer", None)
         if handler is not None:
@@ -35,6 +45,9 @@ class RuntimeHostClient(ABC):
     async def prepare_planning_turn(self, session_id: str, external_id: str | None) -> bool:
         callback = getattr(self, "_planning_prepare", None)
         return await callback(session_id, external_id) if callback else False
+
+    async def publish_goal(self, snapshot: dict, durable: bool = False) -> None:
+        raise NotImplementedError("Goal publication is unavailable")
 
     async def publish_planning(self, snapshot: dict, durable: bool = False) -> None:
         raise NotImplementedError("Planning publication is unavailable")

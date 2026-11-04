@@ -325,8 +325,32 @@ class RuntimeInstanceHost(RuntimeHostClient):
             metadata=self.instance_metadata(metadata),
         )
 
-    async def planning_capabilities(self, capabilities: RuntimeCapabilitySet) -> RuntimeCapabilitySet:
-        return await with_planning_capabilities(capabilities, getattr(self, "_planning_port", None))
+    async def publish_goal(self, snapshot: dict, durable: bool = False) -> None:
+        await self.base.publish_goal(
+            {
+                **snapshot,
+                "runtime": self.instance.runtime_type,
+                "runtimeId": self.instance.runtime_id,
+            },
+            durable=durable,
+        )
+
+    async def prepare_goal_creation(
+        self, session_id, external_id, content, attachments, operation_id
+    ):
+        return await RuntimeHostClient.prepare_goal_creation(
+            self, session_id, external_id, content, attachments, operation_id
+        )
+
+    async def planning_capabilities(
+        self, capabilities: RuntimeCapabilitySet
+    ) -> RuntimeCapabilitySet:
+        capabilities = await with_planning_capabilities(
+            capabilities, getattr(self, "_planning_port", None)
+        )
+        return await with_goal_capabilities(
+            capabilities, getattr(self, "_goal_port", None)
+        )
 
     async def runtime_capabilities_update(
         self,
@@ -505,6 +529,10 @@ class RuntimeInstance(AgentRuntime):
         return await self.native_runtime.update_session_configuration(session_id, values)
 
     @property
+    def goals(self):
+        return self.native_runtime.goals
+
+    @property
     def planning(self):
         return self.native_runtime.planning
 
@@ -548,7 +576,12 @@ class RuntimeInstance(AgentRuntime):
     async def get_runtime_capabilities(self) -> RuntimeCapabilitySet:
         capabilities = await self.native_runtime.get_runtime_capabilities()
         if self.planning is not None:
-            capabilities = await with_planning_capabilities(capabilities, self.planning.port)
+            capabilities = await with_planning_capabilities(
+                capabilities, self.planning.port
+            )
+        capabilities = await with_goal_capabilities(
+            capabilities, self.goals.port if self.goals else None
+        )
         return runtime_capabilities_for_instance(capabilities, self.instance)
 
     async def list_model_catalog(
@@ -687,7 +720,12 @@ class RuntimeInstance(AgentRuntime):
             external_session_id,
         )
         if self.planning is not None:
-            capabilities = await with_planning_capabilities(capabilities, self.planning.port, external_session_id)
+            capabilities = await with_planning_capabilities(
+                capabilities, self.planning.port, external_session_id
+            )
+        capabilities = await with_goal_capabilities(
+            capabilities, self.goals.port if self.goals else None
+        )
         return runtime_capabilities_for_instance(capabilities, self.instance)
 
     async def create_and_start_session(
@@ -821,3 +859,28 @@ class RuntimeInstance(AgentRuntime):
 def _source_key_digest(source_key: RuntimeSourceKey) -> str:
     payload = f"{source_key.kind}\0{source_key.key}".encode()
     return hashlib.sha256(payload).hexdigest()[:24]
+
+
+async def with_goal_capabilities(capabilities, port):
+    if port is None:
+        return capabilities
+    from connector.runtime_protocol.models import RuntimeCapability
+
+    supported = await port.available(capabilities.session_id or "")
+    capability = RuntimeCapability(
+        capability_id="session.goal",
+        runtime=capabilities.runtime,
+        session_id=capabilities.session_id,
+        scope="session" if capabilities.session_id else "runtime",
+        supported=supported,
+        available=supported,
+    )
+    return replace(
+        capabilities,
+        capabilities=tuple(
+            item
+            for item in capabilities.capabilities
+            if item.capability_id != "session.goal"
+        )
+        + (capability,),
+    )

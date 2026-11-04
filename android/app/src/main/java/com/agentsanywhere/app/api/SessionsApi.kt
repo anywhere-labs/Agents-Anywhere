@@ -8,6 +8,9 @@ import java.util.Base64
 class SessionsApi(
     private val client: ApiClient = ApiClient(),
 ) {
+    fun goal(serverUrl:String,token:String,sessionId:String):RemoteGoalState = client.getJson(serverUrl=serverUrl,path="/sessions/${sessionId.urlEncode()}/goal",authorizationToken=token).toGoalState()
+    fun executeGoal(serverUrl:String,token:String,sessionId:String,request:JSONObject):JSONObject = client.postJson(serverUrl=serverUrl,path="/sessions/${sessionId.urlEncode()}/goal",body=request,authorizationToken=token)
+    fun goalOperation(serverUrl:String,token:String,sessionId:String,id:String):JSONObject = client.getJson(serverUrl=serverUrl,path="/sessions/${sessionId.urlEncode()}/goal/operations/${id.urlEncode()}",authorizationToken=token)
     fun planning(serverUrl: String, token: String, sessionId: String): RemotePlanningState =
         client.getJson(serverUrl = serverUrl, path = "/sessions/${sessionId.urlEncode()}/planning", authorizationToken = token).toRemotePlanningState()
 
@@ -158,6 +161,7 @@ class SessionsApi(
                 put("runtimeId", it)
             }
             put("content", request.content)
+            if (request.goalIntent) put("goalIntent", JSONObject().put("mode", "goal").put("operationId", request.clientMessageId))
             if (request.planningIntent) put("planningIntent", JSONObject().put("mode", "plan").put("operationId", request.clientMessageId))
             request.title?.takeIf(String::isNotBlank)?.let { put("title", it) }
             request.cwd?.takeIf(String::isNotBlank)?.let { put("cwd", it) }
@@ -649,7 +653,8 @@ class SessionsApi(
                 session = payload.optJSONObject("session")?.toRemoteSession(),
                 item = payload.optJSONObject("item")?.toRemoteTimelineItem(),
                 items = payload.optJSONArray("items").toObjectList { toRemoteTimelineItem() },
-                state = payload.optJSONObject("state")?.takeIf { value.optString("type") != "planning.state.updated" }?.toRemoteSessionRuntimeState(),
+                state = payload.optJSONObject("state")?.takeIf { value.optString("type") !in setOf("planning.state.updated","goal.state.updated") }?.toRemoteSessionRuntimeState(),
+                goal = payload.optJSONObject("state")?.takeIf { value.optString("type") == "goal.state.updated" }?.toGoalState(),
                 planning = payload.optJSONObject("state")?.takeIf { value.optString("type") == "planning.state.updated" }?.toRemotePlanningState(),
                 notice = payload.optJSONObject("notice")?.toRemoteRuntimeNotice(),
                 notices = payload.optJSONArray("notices").toObjectList { toRemoteRuntimeNotice() },

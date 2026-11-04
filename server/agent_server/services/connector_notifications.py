@@ -93,6 +93,7 @@ class ConnectorNotificationService:
             RuntimeCatalogNotificationHandler(store),
             SessionStateNotificationHandler(store),
             PlanningNotificationHandler(store),
+            GoalNotificationHandler(store),
             SessionTurnEndedNotificationHandler(
                 store, timeline_write_buffer, usage_recorder=usage
             ),
@@ -1704,3 +1705,29 @@ class PlanningNotificationHandler:
         if not await self._store.save_planning(state.sessionId, payload):
             return IngestEffect()
         return IngestEffect(session_id=state.sessionId, planning_state=payload)
+
+
+class GoalNotificationHandler:
+    def __init__(self, store):
+        self._store = store
+
+    async def apply(self, *, connector_id, method, params):
+        if method != "session.goal.updated":
+            return None
+        from agent_server.core.goal.models import GoalState
+
+        state = GoalState.model_validate(params)
+        if not state.runtimeId or not await _session_matches_runtime(
+            self._store,
+            state.sessionId,
+            state.runtime,
+            state.runtimeId,
+            connector_id=connector_id,
+        ):
+            raise NotificationValidationError(
+                "goal_binding_invalid", "Goal session binding is invalid"
+            )
+        await self._store.save_goal(
+            state.sessionId, state.model_dump(mode="json"), connector_id=connector_id
+        )
+        return IngestEffect()

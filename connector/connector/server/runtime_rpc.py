@@ -64,6 +64,10 @@ class RuntimeRpcHandler:
     """Route Runtime Control and Agent Runtime Protocol calls."""
 
     METHODS: ClassVar[set[str]] = {
+        "session.goal.forget",
+        "session.goal.get",
+        "session.goal.execute",
+        "session.goal.operation",
         "session.planning.operation",
         "session.planning.get",
         "session.planning.execute",
@@ -108,7 +112,82 @@ class RuntimeRpcHandler:
         return method in self.METHODS or method in WORKFLOW_RPC
 
     async def dispatch(self, method: str, params: dict[str, Any]) -> Any:
-        if method in {"session.planning.get", "session.planning.execute", "session.planning.operation"}:
+        if method == "session.goal.forget":
+            # Only an explicit Server deletion receipt can discard local goal data.
+            session_ids = params.get("sessionIds")
+            if not isinstance(session_ids, list) or not all(
+                isinstance(sid, str) for sid in session_ids
+            ):
+                raise RuntimeInvalidRequestError("invalid_goal_deletion")
+            from connector.goals.store import GoalStore
+
+            for runtime_id in self.agent_runtime_supervisor.runtimes:
+                if params.get("runtimeId") and params["runtimeId"] != runtime_id:
+                    continue
+                entry = self.agent_runtime_supervisor.entry(runtime_id)
+                service = entry.runtime.goals if entry.runtime else None
+                if service is not None:
+                    for sid in session_ids:
+                        await service.forget(sid)
+                else:
+                    host = await self.agent_runtime_host.prepare_runtime_host(
+                        runtime_id
+                    )
+                    kv = getattr(host, "runtime_kv", None)
+                    path = kv.path.parent / "goal.sqlite3" if kv else None
+                    if path and path.is_file():
+                        store = GoalStore(path)
+                        for sid in session_ids:
+                            store.delete(sid, tombstone=True)
+            return {"ok": True}
+        if method.startswith("session.goal."):
+            runtime = self._resolve_agent_runtime(params)
+            parsed = SessionReadParams.parse(params)
+
+            def bind_goal_result(value):
+                if isinstance(value, dict):
+                    if "sessionId" in value:
+                        return {**value, "runtimeId": params.get("runtimeId")}
+                    return {key: bind_goal_result(item) for key, item in value.items()}
+                return value
+
+            goals = runtime.goals
+            if goals is None:
+                raise RuntimeInvalidRequestError("goal_unavailable")
+            if method == "session.goal.get":
+                return bind_goal_result(
+                    await goals.snapshot(
+                        parsed.session_id,
+                        parsed.external_session_id,
+                        allow_control=bool(params.get("controlAllowed")),
+                    )
+                )
+            if method == "session.goal.operation":
+                return bind_goal_result(
+                    await goals.operation(parsed.session_id, str(params["operationId"]))
+                )
+            if not params.get("controlAllowed"):
+                raise RuntimeInvalidRequestError("goal_control_not_allowed")
+            try:
+                return bind_goal_result(
+                    await goals.execute(
+                        parsed.session_id,
+                        parsed.external_session_id,
+                        dict(params["request"]),
+                    )
+                )
+            except ValueError as error:
+                return {
+                    "operationId": params["request"]["operationId"],
+                    "ok": False,
+                    "outcome": "rejected",
+                    "code": str(error),
+                }
+        if method in {
+            "session.planning.get",
+            "session.planning.execute",
+            "session.planning.operation",
+        }:
             runtime = self._resolve_agent_runtime(params)
             parsed = SessionReadParams.parse(params)
             planning = runtime.planning

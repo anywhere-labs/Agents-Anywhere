@@ -2196,5 +2196,30 @@
     "openDevice": "前往设备",
     "chooseDevice": "选择设备",
     "done": "完成"
+  },
+  "goal": {
+    "title": "目标",
+    "commandDescription": "持续执行直到目标完成",
+    "objective": "目标内容",
+    "pause": "暂停目标",
+    "resume": "恢复目标",
+    "clear": "清除目标",
+    "clearMode": "退出目标输入",
+    "edit": "编辑目标",
+    "cancel": "取消",
+    "save": "保存",
+    "replaceTitle": "替换当前目标？",
+    "replace": "替换目标",
+    "working": "正在更新目标",
+    "operationFailed": "目标操作失败",
+    "operationUnknown": "操作结果尚不确定，正在核对原操作。",
+    "stateUnavailable": "目标状态暂不可用",
+    "workspaceUnsupported": "此工作区暂不支持目标模式",
+    "achieved": "目标已完成，用时 {time}",
+    "failed": "目标未能完成",
+    "status": "{status, select, active {目标进行中} paused {目标已暂停} blocked {目标受阻} usageLimited {目标用量受限} budgetLimited {目标预算受限} other {目标}}",
+    "achievedUnknownTime": "目标已完成",
+    "secondsUnit": " 秒",
+    "resumeTitle": "恢复此目标？"
   }
 }

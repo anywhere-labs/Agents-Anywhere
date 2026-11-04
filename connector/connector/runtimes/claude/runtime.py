@@ -142,9 +142,13 @@ class ClaudeRuntime(AgentRuntime):
 
     async def start(self) -> None:
         self._turns.runner.stopping = False
+        if self.goals is not None:
+            await self.goals.recover()
         await self._turns.runner.reconnect_sessions()
 
     async def stop(self) -> None:
+        if self.goals is not None:
+            await self.goals.close()
         await self._turns.stop()
 
     async def get_config(self) -> RuntimeConfig:
@@ -344,10 +348,23 @@ class ClaudeRuntime(AgentRuntime):
         session_id: str,
         reason: str | None = None,
     ) -> RuntimeOperationResult:
-        return await self._turns.interrupt_session(
-            session_id=session_id,
-            reason=reason,
+        pause_error = None
+        if self.goals is not None:
+            try:
+                await self.goals.pause_before_stop(session_id)
+            except Exception as error:  # noqa: BLE001 - interruption remains available after a failed pause
+                pause_error = error
+        result = await self._turns.interrupt_session(
+            session_id=session_id, reason=reason
         )
+        if pause_error is not None:
+            return RuntimeOperationResult(
+                ok=False,
+                code="goal_pause_unknown",
+                message=str(pause_error),
+                result={**result.result, "interrupted": result.ok},
+            )
+        return result
 
     async def respond_interaction(
         self,
