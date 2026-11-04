@@ -8,7 +8,10 @@ import pytest
 from connector.server import ingest as ingest_module
 from connector.server.auth import ConnectorAuthenticationError
 from connector.server.errors import ConnectorNetworkError
-from connector.server.ingest import ConnectorIngestClient
+from connector.server.ingest import (
+    ConnectorIngestClient,
+    ConnectorIngestRejectedError,
+)
 from connector.server.rpc import ConnectorRpcChannel
 
 
@@ -131,6 +134,98 @@ def test_synchronous_batch_retries_transient_failures_then_surfaces_them(monkeyp
             with pytest.raises(httpx.HTTPStatusError):
                 await ingest.ingest_notifications([{"method": "session.state.updated", "params": {"status": "idle"}}])
             assert len(attempts) == 1
+
+    asyncio.run(run())
+
+
+def test_synchronous_batch_retries_retryable_rejections(monkeypatch):
+    monkeypatch.setattr(ingest_module, "SYNC_BATCH_RETRY_BACKOFF_SECONDS", 0.001)
+
+    async def run():
+        async def token(force):
+            return "token"
+
+        attempts = []
+
+        async def transport(request):
+            attempts.append(request.content)
+            if len(attempts) == 1:
+                return httpx.Response(
+                    200,
+                    json={
+                        "accepted": 0,
+                        "rejected": [
+                            {
+                                "index": 0,
+                                "method": "timeline.itemUpsert",
+                                "code": "notification_failed",
+                                "message": (
+                                    "timed out acquiring distributed lock: "
+                                    "session-revision:sess_1"
+                                ),
+                                "errorType": "TimeoutError",
+                                "retryable": True,
+                            }
+                        ],
+                    },
+                )
+            return httpx.Response(200, json={"accepted": 1, "rejected": []})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+            ingest = ConnectorIngestClient(
+                "https://server.test", token, lambda: http, lambda timeout: http
+            )
+            await ingest.ingest_notifications(
+                [{"method": "timeline.itemUpsert", "params": {"sessionId": "sess_1"}}]
+            )
+
+        assert len(attempts) == 2
+        assert attempts[0] == attempts[1]
+
+    asyncio.run(run())
+
+
+def test_synchronous_batch_does_not_retry_permanent_rejections():
+    async def run():
+        async def token(force):
+            return "token"
+
+        attempts = []
+
+        async def transport(request):
+            attempts.append(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "accepted": 0,
+                    "rejected": [
+                        {
+                            "index": 0,
+                            "method": "timeline.itemUpsert",
+                            "code": "notification_failed",
+                            "message": "invalid timeline item",
+                            "errorType": "ValueError",
+                            "retryable": False,
+                        }
+                    ],
+                },
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+            ingest = ConnectorIngestClient(
+                "https://server.test", token, lambda: http, lambda timeout: http
+            )
+            with pytest.raises(ConnectorIngestRejectedError):
+                await ingest.ingest_notifications(
+                    [
+                        {
+                            "method": "timeline.itemUpsert",
+                            "params": {"sessionId": "sess_1"},
+                        }
+                    ]
+                )
+
+        assert len(attempts) == 1
 
     asyncio.run(run())
 

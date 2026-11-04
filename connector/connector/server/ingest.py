@@ -43,6 +43,23 @@ class ConnectorIngestRejectedError(RuntimeError):
     """The backend accepted the HTTP request but rejected notifications inside it."""
 
 
+class ConnectorIngestRetryableError(ConnectorNetworkError):
+    """The backend rejected notifications that are safe to retry."""
+
+
+def _rejection_is_retryable(rejected: list[Any]) -> bool:
+    """Only retry when every rejected notification is explicitly retryable.
+
+    A mixed batch can contain a permanent validation failure; retrying it would
+    never succeed and would hide the actual error behind a network failure.
+    """
+
+    return bool(rejected) and all(
+        isinstance(item, dict) and item.get("retryable") is True
+        for item in rejected
+    )
+
+
 class ConnectorIngestClient:
     def __init__(
         self,
@@ -335,9 +352,15 @@ def _raise_for_rejected_notifications(response: httpx.Response) -> None:
         if isinstance(first.get("message"), str)
         else "backend rejected connector notification"
     )
-    raise ConnectorIngestRejectedError(
+    error_type = (
+        ConnectorIngestRetryableError
+        if _rejection_is_retryable(rejected)
+        else ConnectorIngestRejectedError
+    )
+    suffix = " (retryable)" if error_type is ConnectorIngestRetryableError else ""
+    raise error_type(
         f"backend ingest rejected {len(rejected)} notification(s); "
-        f"first method={method} code={code}: {message}"
+        f"first method={method} code={code}: {message}{suffix}"
     )
 
 

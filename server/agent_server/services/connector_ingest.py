@@ -43,6 +43,15 @@ from agent_server.services.session_runtime_state_cache import (
 INGEST_REJECTION_MESSAGE_MAX_LENGTH = 500
 
 
+def ingest_error_is_retryable(error: Exception) -> bool:
+    """Whether the same notification can be retried after a short backoff."""
+
+    # Distributed lock acquisition and other bounded waits report TimeoutError.
+    # These are transient by construction; a validation failure or a size
+    # rejection is not.
+    return isinstance(error, TimeoutError)
+
+
 def ingest_rejection_from_exception(
     index: int,
     notification: ConnectorNotification,
@@ -57,6 +66,7 @@ def ingest_rejection_from_exception(
         code="notification_failed",
         message=message,
         errorType=type(error).__name__,
+        retryable=ingest_error_is_retryable(error),
     )
 
 
