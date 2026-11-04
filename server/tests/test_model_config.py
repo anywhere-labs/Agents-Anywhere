@@ -4,6 +4,7 @@ import asyncio
 import json
 from typing import Any
 
+import pytest
 from runtime_fixtures import describe_inventory
 from test_runtime_config import _make_client, _runtime_url
 
@@ -71,7 +72,33 @@ def _client(tmp_path, capability: dict[str, Any], **type_fields: Any):
             connector_id, describe_inventory(rpc.inventory)
         )
     )
+    _act_as_current_connector(client, rpc, connector_id)
     return client, rpc, connector_id, headers
+
+
+CONNECTOR_FEATURES = ["switchFence", "modelProbe", "channelReconcileFence"]
+
+
+def _act_as_current_connector(client, rpc, connector_id: str) -> None:
+    """Declare the features of a current Connector and report what each instance runs."""
+    asyncio.run(client.app.state.device_runtime_service._remember_features(connector_id, CONNECTOR_FEATURES))
+    running: dict[str, dict[str, Any]] = {}
+    request = rpc.request
+
+    async def answering(target: str, method: str, params: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        if method == "runtime.config" and "runtime.config" not in rpc.errors and "runtime.config" not in rpc.responses:
+            rpc.requests.append((target, method, params))
+            values = running.get(params.get("runtimeId", ""))
+            return {"running": values is not None, "config": {"values": values or {}}}
+        result = await request(target, method, params, **kwargs)
+        if method == "runtime.start" and (result or {}).get("status") != "error":
+            running[params["runtimeId"]] = params["config"]
+        elif method == "runtime.stop":
+            running.pop(params.get("runtimeId", ""), None)
+        return result
+
+    rpc.request = answering
+    rpc.running = running
 
 
 def _profile(
@@ -212,7 +239,10 @@ def test_choosing_a_channel_writes_and_verifies_it(tmp_path, server_secret):
     assert runtime["config"]["modelGateway"] == {"baseUrl": RELAY}
     assert runtime["secretFields"]["modelGateway.apiKey"]["hint"] == "sk-prof…5678"
     assert runtime["active"] is True and runtime["status"] == "running"
-    assert [request[1] for request in rpc.requests] == ["runtime.validateConfig", "runtime.stop", "runtime.start"]
+    # Verification reads back what the instance runs; it never calls the model.
+    assert [request[1] for request in rpc.requests] == [
+        "runtime.validateConfig", "runtime.stop", "runtime.start", "runtime.config",
+    ]
     [assignment] = _overview(client, headers)["assignments"]
     assert assignment["status"] == "applied"
     assert _overview(client, headers)["channel"]["channel"] == profile["id"]
@@ -268,48 +298,46 @@ def test_native_global_runtimes_only_take_a_confirmed_choice(tmp_path, server_se
     assert item["state"] == "applied"
 
 
-def test_running_tasks_wait_unless_the_user_switches_now(tmp_path, server_secret):
-    client, _rpc, connector_id, headers = _client(tmp_path, CODEX_LIKE)
+def _running_session(client, connector_id: str, headers) -> str:
+    from test_runtime_config import _create_project
+
+    store = client.app.state.store
+    session = asyncio.run(store.create_session(
+        connector_id=connector_id, project_id=_create_project(client, connector_id, headers),
+        runtime="codex", external_session_id="thread_running", title="running", cwd="/repo",
+    ))
+    asyncio.run(store.set_session_status(session.id, "running"))
+    return session.id
+
+
+@pytest.mark.parametrize("apply", ["restart", "new_session"])
+def test_a_switch_does_not_wait_for_running_tasks(tmp_path, server_secret, apply):
+    client, _rpc, connector_id, headers = _client(tmp_path, {**CODEX_LIKE, "apply": apply})
     _save_config(client, connector_id, headers, {})
     _activate(client, connector_id, headers)
     profile = _profile(client, headers)
+    session_id = _running_session(client, connector_id, headers)
 
-    async def one_running_session(**_kwargs):
-        return [{"id": "ses_running"}]
+    item = _runtime_state(_set_channel(client, headers, profile["id"]))
 
-    store = client.app.state.store
-    store.list_running_sessions_for_connector_agent = one_running_session
-    waiting = _runtime_state(_set_channel(client, headers, profile["id"]))
-    assert waiting["state"] == "waiting_idle"
-    assert waiting["runningSessions"] == 1
-    assert "modelGateway" not in _runtimes(client, connector_id, headers)["codex"]["config"]
-
-    # Restarting stops the real sessions, which a stub cannot stand in for.
-    del store.list_running_sessions_for_connector_agent
-    response = client.post(f"/model-config/channel/runtimes/{connector_id}/codex/switch-now", headers=headers)
-
-    assert response.status_code == 200, response.text
-    assert _runtime_state(response.json())["state"] == "applied"
+    # Whatever the apply mode, the instance is rebuilt now and its task is interrupted.
+    assert item["state"] == "applied"
     assert _runtimes(client, connector_id, headers)["codex"]["config"]["modelGateway"] == {"baseUrl": RELAY}
+    assert asyncio.run(client.app.state.store.get_session(session_id)).status == "idle"
 
 
-def test_an_idle_runtime_takes_its_waiting_switch_when_the_task_ends(tmp_path, server_secret):
-    client, _rpc, connector_id, headers = _client(tmp_path, CODEX_LIKE)
+def test_a_runtime_event_resumes_a_switch_waiting_for_its_device(tmp_path, server_secret):
+    client, rpc, connector_id, headers = _client(tmp_path, CODEX_LIKE)
     _save_config(client, connector_id, headers, {})
     _activate(client, connector_id, headers)
     profile = _profile(client, headers)
-    store = client.app.state.store
+    rpc.online = False
+    assert _runtime_state(_set_channel(client, headers, profile["id"]))["state"] == "waiting_online"
 
-    async def one_running_session(**_kwargs):
-        return [{"id": "ses_running"}]
-
-    store.list_running_sessions_for_connector_agent = one_running_session
-    _set_channel(client, headers, profile["id"])
-    del store.list_running_sessions_for_connector_agent
-
-    # The event a finished task raises; nothing polls for it.
+    # The event a request or a finished task raises; nothing polls for it.
     from agent_server.deps import model_channel_service_for
 
+    rpc.online = True
     asyncio.run(model_channel_service_for(client.app.state).runtime_event(connector_id, "codex"))
 
     state = client.get("/model-config/channel", headers=headers).json()
@@ -374,8 +402,6 @@ def test_a_newer_switch_on_the_connector_is_not_overwritten(tmp_path, server_sec
     from agent_server.infra.connector_rpc import ConnectorRpcError
 
     client, rpc, connector_id, headers = _client(tmp_path, CODEX_LIKE)
-    rpc.inventory["features"] = ["switchFence"]
-    asyncio.run(client.app.state.device_runtime_service._remember_features(connector_id, ["switchFence"]))
     _save_config(client, connector_id, headers, {})
     _activate(client, connector_id, headers)
     profile = _profile(client, headers)
@@ -396,110 +422,24 @@ def test_a_newer_switch_on_the_connector_is_not_overwritten(tmp_path, server_sec
     assert item["reason"] == "superseded"
 
 
-def _probing(client, rpc, connector_id, capability, *, fails_for=lambda config: False):
-    """Connector that probes the model connection of the instance it last started."""
-    from agent_server.core.model_connection import connection_digest
-
-    features = ["switchFence", "modelProbe"]
-    rpc.inventory["features"] = features
-    asyncio.run(client.app.state.device_runtime_service._remember_features(connector_id, features))
-    original = rpc.request
-    probed: list[dict[str, Any]] = []
-    loaded: dict[str, Any] = {}
-
-    async def request(connector_id, method, params, **kwargs):
-        if method == "runtime.start":
-            loaded["config"] = params["config"]
-        if method == "runtime.probeModelConnection":
-            rpc.requests.append((connector_id, method, params))
-            config = loaded["config"]
-            probed.append(config)
-            failed = fails_for(config)
-            return {
-                "runtimeId": params["runtimeId"],
-                "configDigest": connection_digest(config, capability),
-                "probe": {
-                    "state": "failed" if failed else "passed",
-                    "code": "probe_unauthorized" if failed else None,
-                    "message": "HTTP 401: invalid api key" if failed else None,
-                },
-            }
-        return await original(connector_id, method, params, **kwargs)
-
-    rpc.request = request
-    return probed
-
-
-def test_a_switch_counts_only_after_a_real_model_call(tmp_path, server_secret):
-    client, rpc, connector_id, headers = _client(tmp_path, CODEX_LIKE)
-    _save_config(client, connector_id, headers, {})
-    _activate(client, connector_id, headers)
-    profile = _profile(client, headers)
-    probed = _probing(client, rpc, connector_id, CODEX_LIKE)
-    rpc.requests.clear()
-
-    item = _runtime_state(_set_channel(client, headers, profile["id"]))
-
-    assert item["state"] == "applied"
-    assert [request[1] for request in rpc.requests] == [
-        "runtime.validateConfig", "runtime.stop", "runtime.start", "runtime.probeModelConnection",
-    ]
-    assert probed[0]["modelGateway"]["apiKey"] == PROFILE_KEY
-
-
-def test_a_failed_model_call_puts_the_previous_channel_back(tmp_path, server_secret):
+def test_a_switch_never_calls_the_model(tmp_path, server_secret):
     client, rpc, connector_id, headers = _client(tmp_path, CODEX_LIKE)
     old = {"modelGateway": {"baseUrl": "https://old.example/v1", "apiKey": OLD_KEY}}
     _save_config(client, connector_id, headers, old)
     _activate(client, connector_id, headers)
     profile = _profile(client, headers)
-    probed = _probing(
-        client, rpc, connector_id, CODEX_LIKE,
-        fails_for=lambda config: config["modelGateway"]["apiKey"] == PROFILE_KEY,
-    )
+    # Even a Connector that can probe, and whose model service would refuse the key.
+    rpc.responses["runtime.probeModelConnection"] = {
+        "runtimeId": "codex", "probe": {"state": "failed", "code": "probe_unauthorized", "message": "HTTP 401"},
+    }
+    rpc.requests.clear()
 
     item = _runtime_state(_set_channel(client, headers, profile["id"]))
 
-    assert item["state"] == "restored"
-    assert item["reason"] == "probe_failed"
-    assert item["message"] == "HTTP 401: invalid api key"
-    assert item["actual"] == "native"
-    # The previous connection is rebuilt and has to answer as well.
-    assert [config["modelGateway"]["apiKey"] for config in probed] == [PROFILE_KEY, OLD_KEY]
-    runtime = _runtimes(client, connector_id, headers)["codex"]
-    assert runtime["config"]["modelGateway"] == {"baseUrl": "https://old.example/v1"}
-    assert _overview(client, headers)["assignments"] == []
-
-
-def test_a_previous_channel_that_no_longer_answers_is_reported_unusable(tmp_path, server_secret):
-    client, rpc, connector_id, headers = _client(tmp_path, CODEX_LIKE)
-    _save_config(client, connector_id, headers, {"modelGateway": {"baseUrl": "https://old.example/v1", "apiKey": OLD_KEY}})
-    _activate(client, connector_id, headers)
-    profile = _profile(client, headers)
-    _probing(client, rpc, connector_id, CODEX_LIKE, fails_for=lambda config: True)
-
-    item = _runtime_state(_set_channel(client, headers, profile["id"]))
-
-    assert item["state"] == "failed"
-    assert item["reason"] == "rollback_failed"
-
-
-def test_every_switch_waits_for_running_tasks_whatever_the_apply_mode(tmp_path, server_secret):
-    capability = {**CODEX_LIKE, "apply": "new_session"}
-    client, _rpc, connector_id, headers = _client(tmp_path, capability)
-    _save_config(client, connector_id, headers, {})
-    _activate(client, connector_id, headers)
-    profile = _profile(client, headers)
-
-    async def one_running_session(**_kwargs):
-        return [{"id": "ses_running"}]
-
-    client.app.state.store.list_running_sessions_for_connector_agent = one_running_session
-    item = _runtime_state(_set_channel(client, headers, profile["id"]))
-
-    # The instance is rebuilt, so a running task is never cut off unasked.
-    assert item["state"] == "waiting_idle"
-    assert "modelGateway" not in _runtimes(client, connector_id, headers)["codex"]["config"]
+    # Billing, authentication and model errors belong to model requests, not to the switch.
+    assert item["state"] == "applied"
+    assert item["actual"] == profile["id"]
+    assert "runtime.probeModelConnection" not in [request[1] for request in rpc.requests]
 
 
 def test_switching_back_to_native_restores_the_previous_connection(tmp_path, server_secret):
