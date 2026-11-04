@@ -11,6 +11,7 @@ import sys
 import tarfile
 import tempfile
 import zipfile
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TextIO
@@ -73,7 +74,7 @@ def _node_pair(executable: Path) -> tuple[Path, Path] | None:
     return None
 
 
-def node_runtime(root: Path) -> tuple[Path, Path]:
+def node_runtime(root: Path, *, on_install: Callable[[], None] | None = None) -> tuple[Path, Path]:
     system = shutil.which("node")
     if system and (pair := _node_pair(Path(system))):
         return pair
@@ -88,6 +89,8 @@ def node_runtime(root: Path) -> tuple[Path, Path]:
     executable = destination / ("node.exe" if target == "win" else "bin/node")
     if pair := _node_pair(executable):
         return pair
+    if on_install:
+        on_install()
     suffix = ".zip" if target == "win" else ".tar.gz"
     filename = name + suffix
     base = f"https://nodejs.org/dist/v{NODE_VERSION}/"
@@ -130,16 +133,18 @@ def node_runtime(root: Path) -> tuple[Path, Path]:
     return _node_pair(executable)
 
 
-def install_npm_runtime(root: Path, dependencies: dict[str, str], entry: str, *, output: TextIO | None = None) -> tuple[Path, Path]:
+def install_npm_runtime(root: Path, dependencies: dict[str, str], entry: str, *, output: TextIO | None = None, on_install: Callable[[], None] | None = None) -> tuple[Path, Path]:
     """Use npm's registry integrity checks; never build application source here."""
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     identity = hashlib.sha256(json.dumps(dependencies, sort_keys=True).encode()).hexdigest()[:20]
     with installation_lock(root / ".install.lock"):
-        node, npm = node_runtime(root)
+        node, npm = node_runtime(root, on_install=on_install)
         destination = root / identity
         script = destination / "node_modules" / entry
         if script.is_file() and (destination / ".ready").is_file():
             return node, script
+        if on_install:
+            on_install()
         with tempfile.TemporaryDirectory(prefix=".npm-", dir=root) as temporary:
             staging = Path(temporary) / "runtime"
             staging.mkdir(mode=0o700)

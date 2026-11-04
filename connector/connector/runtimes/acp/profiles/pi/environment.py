@@ -23,9 +23,10 @@ def npm_root(fallback: Path) -> Path:
 
 
 def prepare_environment(root: Path) -> None:
-    print("Preparing Pi ACP adapter and dependencies", flush=True)
+    print("Checking Pi ACP adapter and dependencies", flush=True)
     install_npm_runtime(
         root, DEPENDENCIES, "@openma/pi-acp/dist/bin.js",
         output=sys.stdout,
+        on_install=lambda: print("Preparing Pi ACP adapter and dependencies", flush=True),
     )
     print("Pi ACP adapter and dependencies ready", flush=True)
