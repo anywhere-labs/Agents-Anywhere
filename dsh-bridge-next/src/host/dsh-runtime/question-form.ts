@@ -4,9 +4,23 @@ import { record } from './types.js'
 
 function invalid(message: string): never { throw new BridgeError('INVALID_PARAMS', message) }
 
+/** The plugin's notices are Chinese, so a question's localized copy is read in that language. */
+function chinese(value: unknown): string | undefined {
+  const text = record(value)
+  for (const locale of ['zh-CN', 'zh-Hans', 'zh']) {
+    const candidate = text[locale]
+    if (typeof candidate === 'string' && candidate.trim()) return candidate
+  }
+  return undefined
+}
+
+/** What AA shows in place of the native copy; answers still carry the native option labels. */
+interface QuestionView { header: string, prompt?: string, labels: Map<string, string> }
+type FormQuestion = AskUserQuestionItem & { view?: QuestionView }
+
 /** The existing inputRequest v1 contract; DSH option labels never become wire IDs. */
 export class QuestionForm {
-  readonly questions: AskUserQuestionItem[]
+  readonly questions: FormQuestion[]
   constructor(value: unknown) {
     if (!Array.isArray(value) || !value.length) invalid('DSH returned no questions.')
     const ids = new Set<string>()
@@ -27,6 +41,7 @@ export class QuestionForm {
       }
       const intent = q.intent == null ? undefined : record(q.intent)
       let kept: AskUserQuestionItem['intent']
+      let view: QuestionView | undefined
       if (intent?.kind === 'plan-review') {
         if (typeof intent.approve !== 'string' || !labels.has(intent.approve)
           || typeof q.detail !== 'string' || !q.detail.trim() || q.multiSelect === true) invalid('Invalid DSH plan review.')
@@ -39,9 +54,20 @@ export class QuestionForm {
           || q.multiSelect === true) invalid('Invalid DSH approval question.')
         kept = { kind: 'approval', approve: intent.approve as string, reject: intent.reject as string,
           ...(intent.always == null ? {} : { always: intent.always as string }) }
+        // The native question and labels are English; the intent carries the localized question,
+        // detail and grant label, and leaves the refusal and always-allow wording to the card.
+        const display = record(intent.display), subject = record(intent.subject)
+        const question = chinese(display.question), detail = chinese(display.detail) ?? q.detail
+        const name = typeof subject.name === 'string' ? subject.name.trim() : ''
+        const shown = new Map([[kept.approve, chinese(display.approve) ?? kept.approve], [kept.reject, '拒绝']])
+        if (kept.always !== undefined) shown.set(kept.always, '始终允许')
+        view = { header: typeof q.header === 'string' && q.header ? q.header : name ? `授权请求 · ${name}` : '授权请求',
+          ...(question ? { prompt: typeof detail === 'string' && detail ? `${question}\n\n${detail}` : question } : {}),
+          labels: shown }
       } else if (intent) invalid('Unsupported DSH question intent.')
       return { id: q.id, question: q.question,
         ...(kept ? { intent: kept } : {}),
+        ...(view ? { view } : {}),
         ...(typeof q.header === 'string' ? { header: q.header } : {}),
         ...(typeof q.detail === 'string' ? { detail: q.detail } : {}),
         multiSelect: q.multiSelect === true, options: options as NonNullable<AskUserQuestionItem['options']> }
@@ -53,12 +79,14 @@ export class QuestionForm {
   input() {
     const questions = this.questions.map(q => {
       const review = q.intent?.kind === 'plan-review' ? q.intent : undefined
-      return { id: q.id, prompt: q.detail ? `${q.question}\n\n${q.detail}` : q.question,
-        ...(q.header ? { header: q.header } : review ? { header: '计划审批' } : {}),
+      const header = q.view?.header ?? (q.header || (review ? '计划审批' : undefined))
+      return { id: q.id, prompt: q.view?.prompt ?? (q.detail ? `${q.question}\n\n${q.detail}` : q.question),
+        ...(header ? { header } : {}),
         ...(review ? { intent: { kind: 'plan-review', approveOptionId: `o_${q.options!.findIndex(option => option.label === review.approve)}` } } : {}),
         // An approval accepts only its offered actions: DSH reads any free text as a refusal.
         multiple: q.multiSelect === true, allowCustom: q.intent?.kind !== 'approval',
-        options: (q.options ?? []).map((o, i) => ({ id: `o_${i}`, label: o.label, ...(o.description ? { description: o.description } : {}) })) }
+        options: (q.options ?? []).map((o, i) => ({ id: `o_${i}`, label: q.view?.labels.get(o.label) ?? o.label,
+          ...(o.description ? { description: o.description } : {}) })) }
     })
     return { required: true,
       schema: { type: 'object', required: ['answers'], additionalProperties: false, properties: {

@@ -44,7 +44,7 @@
 |---|---|
 | `user-questions/request` 普通问题 | 单选、多选、自由输入、选项说明，复用 `inputRequest` 表单 |
 | `user-questions/request` 的 `plan-review` 意图 | 完整计划正文、批准选项、修改意见和整组取消，复用同一表单 |
-| `user-questions/request` 的 `approval` 意图（DSH 0.2.2 起，例如实验性 Computer Use 的应用授权） | 和 0.2.1 一样按普通单选题显示，选项就是 DSH 给出的允许、拒绝和可选的始终允许，不提供自填答案；其他不认识的意图仍留给 DSH 官方界面 |
+| `user-questions/request` 的 `approval` 意图（DSH 0.2.2 起，例如实验性 Computer Use 的应用授权） | 和 0.2.1 一样按普通单选题显示，选项就是 DSH 给出的允许、拒绝和可选的始终允许，不提供自填答案。原生问题和选项是英文，插件改用意图 `display` 里的中文问题、说明和允许文案（`zh-CN`、`zh-Hans` 或 `zh`，没有时显示原文），拒绝和始终允许按 DSH 约定由界面自己显示为「拒绝」「始终允许」，标题为「授权请求 · 对象名称」；回答时仍提交原始选项。其他不认识的意图仍留给 DSH 官方界面 |
 | `approval/request` | 复用通用审批卡片，允许一次或拒绝，不修改持久权限策略 |
 
 当前核对的 DSH Remote allowlist 中，需要回答的 waterfall 事件就是上述问答和审批两类。`exit_plan_mode` 的计划审阅沿用问答意图；其他设置、登录、插件和命令等 emit 事件不属于这两类可作答交互。本适配不把它们伪装成审批请求。未知事件或不支持的意图交回原生客户端。`session.interaction.approval` 是平台已有的通用交互门控能力，同时控制问答和审批提交。

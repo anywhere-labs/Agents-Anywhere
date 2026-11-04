@@ -51,24 +51,42 @@ test('plan review preserves the full plan and maps the declared approval option 
   assert.throws(() => new QuestionForm([{ ...plan, multiSelect: true }]))
 })
 
-test('approval questions keep their offered actions as a plain single choice and refuse free text', () => {
-  const access = { id: 'cua-app-access', question: 'Allow computer use to control Safari?', detail: 'Task access applies to Safari.',
-    options: [{ label: 'Allow for this session' }, { label: 'Deny' }, { label: 'Always allow' }],
+test('approval questions show their Chinese copy as a plain single choice and answer with the native labels', () => {
+  // Shaped like the application access request of DSH 0.2.2 Computer Use.
+  const display = {
+    question: { en: 'Allow computer use to launch, read, capture and control this application?', zh: '允许 Computer Use 启动、读取、截图和控制此应用吗？' },
+    detail: { en: 'Allowing or denying applies to every version.', zh: '允许或拒绝会应用于同一应用标识的所有版本和副本。' },
+    approve: { en: 'Allow for this session', zh: '本会话允许' },
+  }
+  const access = { id: 'cua-app-access', question: 'Allow computer use to launch if needed, read, capture, and control Safari?',
+    detail: 'Allowing or denying applies to every version.', options: [{ label: 'Allow for this session' }, { label: 'Deny' }, { label: 'Always allow' }],
     intent: { kind: 'approval', approve: 'Allow for this session', reject: 'Deny', always: 'Always allow',
-      subject: { name: 'Safari', icon: 'https://example.invalid/safari.png' }, display: { question: { en: 'Allow computer use to control Safari?' } } } }
+      subject: { name: 'Safari', icon: 'https://example.invalid/safari.png' }, display } }
   const form = new QuestionForm([access])
   assert.equal(form.hasPlanReview, false)
   const input = form.input()
   assert.deepEqual({ ...input.uiSchema.questions[0] }, {
-    id: 'cua-app-access', prompt: 'Allow computer use to control Safari?\n\nTask access applies to Safari.', multiple: false, allowCustom: false,
-    options: [{ id: 'o_0', label: 'Allow for this session' }, { id: 'o_1', label: 'Deny' }, { id: 'o_2', label: 'Always allow' }],
+    id: 'cua-app-access', header: '授权请求 · Safari',
+    prompt: '允许 Computer Use 启动、读取、截图和控制此应用吗？\n\n允许或拒绝会应用于同一应用标识的所有版本和副本。',
+    multiple: false, allowCustom: false,
+    options: [{ id: 'o_0', label: '本会话允许' }, { id: 'o_1', label: '拒绝' }, { id: 'o_2', label: '始终允许' }],
   })
   assert.deepEqual(Object.keys(input.schema.properties.answers.properties['cua-app-access']!.properties), ['optionIds'])
+  // DSH reads the decision from its native labels, whatever AA showed.
   assert.deepEqual(form.answer({ answers: { 'cua-app-access': { optionIds: ['o_2'] } } }), { answers: [{ id: 'cua-app-access', selected: ['Always allow'] }] })
   // DSH treats any free text as a refusal, so an approval accepts exactly one offered action.
   for (const answer of [{ customText: '允许' }, { optionIds: ['o_0'], customText: '允许' }, {}, { optionIds: ['o_0', 'o_1'] }]) {
     assert.throws(() => form.answer({ answers: { 'cua-app-access': answer } }))
   }
+  // Without Chinese copy the native question and grant label stay, a native header wins,
+  // and the card still owns the refusal and always-allow wording.
+  const english = new QuestionForm([{ ...access, header: '应用', intent: { ...access.intent, display: { question: { en: display.question.en } } } }])
+    .input().uiSchema.questions[0]
+  assert.equal(english?.prompt, `${access.question}\n\n${access.detail}`)
+  assert.equal(english?.header, '应用')
+  assert.deepEqual(english?.options.map(option => option.label), ['Allow for this session', '拒绝', '始终允许'])
+  const anonymous = { ...access.intent, subject: undefined, display: { question: display.question } }
+  assert.equal(new QuestionForm([{ ...access, intent: anonymous }]).input().uiSchema.questions[0]?.header, '授权请求')
   // Ordinary questions next to it keep their free-text answers.
   const mixed = new QuestionForm([access, questions[2]])
   assert.equal(mixed.input().uiSchema.questions[1]?.allowCustom, true)

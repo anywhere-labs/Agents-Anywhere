@@ -63,7 +63,7 @@
 - DSH 上传很长的会话历史时，同一设备上 Codex、Claude 等其他会话的实时消息不再排队等它传完。（[#525](https://github.com/anywhere-labs/Agents-Anywhere/pull/525)）
 - DSH 会话流式输出时，连续的回复更新改为约每 0.25 秒提交一次，Server 的请求量和写入量明显下降。（[#525](https://github.com/anywhere-labs/Agents-Anywhere/pull/525)）
 - 被 Server 拒收的 DSH 会话改为按退避时间重试，不再每次有新变化就整段重新上传；DSH 同步重连或重建后也会记得这些会话，不会马上再传一遍。（[#525](https://github.com/anywhere-labs/Agents-Anywhere/pull/525)）
-- DSH 0.2.2 的实验性 Computer Use 请求控制应用时，授权提问重新出现在 AA 里，可以在手机上选择允许或拒绝；这类提问只能从给出的选项中选择。（[#538](https://github.com/anywhere-labs/Agents-Anywhere/pull/538)）
+- DSH 0.2.2 的实验性 Computer Use 请求控制应用时，授权提问重新出现在 AA 里并以中文显示，可以在手机上选择允许或拒绝；这类提问只能从给出的选项中选择。（[#538](https://github.com/anywhere-labs/Agents-Anywhere/pull/538)、[#540](https://github.com/anywhere-labs/Agents-Anywhere/pull/540)）
 - 在 DSH 0.2.2 上安装 DSH 插件时，不再提示 Cordis、Schemastery 版本不满足。（[#538](https://github.com/anywhere-labs/Agents-Anywhere/pull/538)）
 
 ### Android
