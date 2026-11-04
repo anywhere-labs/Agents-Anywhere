@@ -461,13 +461,14 @@ class GoalService:
                     and s.get("_attachmentSuffix")
                 ):
                     native_request["objective"] += s["_attachmentSuffix"]
+            if validate:
+                validate(native_request, s)
+            if a in {"set", "edit"}:
                 s["_attachmentSuffix"] = native_request["objective"][
                     len(request["objective"]) :
                 ]
                 s["_submittedObjective"] = native_request["objective"]
                 s["_displayObjective"] = request["objective"]
-            if validate:
-                validate(native_request, s)
             g = s.get("goal")
             if a == "resume" and g["status"] not in {
                 "paused",
