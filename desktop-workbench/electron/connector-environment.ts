@@ -96,8 +96,8 @@ export class ConnectorEnvironment {
         // Check the npm cache even when the Python receipt is still current.
         // Both the preflight and all Pi instances use this same Desktop cache.
         const npmRoot = context.env.AA_PI_NPM_ROOT ?? path.join(this.options.dataPath, "pi-npm-runtimes");
-        this.publish({ status: "preparing", phase: "pi", event: "environment.pi",
-          message: "Preparing Pi ACP adapter and dependencies.", progress: undefined, stderr: undefined, exitCode: undefined });
+        this.publish({ status: "checking", phase: "checking", event: "environment.checking",
+          message: "Checking Pi ACP adapter and dependencies.", progress: undefined, stderr: undefined, exitCode: undefined });
         await this.sync(context, signal, ["run", "--no-sync", "--project", context.project,
           ...(context.python ? ["--python", context.python] : []),
           "anywhere-cli", "prepare-pi", "--root", npmRoot], "pi");
@@ -170,7 +170,13 @@ export class ConnectorEnvironment {
       lastActivity = this.now();
       recent.push(line); if (recent.length > 12) recent.shift();
       this.options.log(line);
-      const parsed = phase ? { phase, event: "environment.pi" } : parseEnvironmentOutput(line, this.state.progress);
+      // Cache probes stay silent in the startup screen. Only an actual Node/npm
+      // installation opens the preparation dialog, before any download begins.
+      const parsed = phase
+        ? line === "Preparing Pi ACP adapter and dependencies"
+          ? { status: "preparing" as const, phase, event: "environment.pi" }
+          : { phase: this.state.phase, event: this.state.event }
+        : parseEnvironmentOutput(line, this.state.progress);
       // Keep snapshots bounded during uv's carriage-return download updates.
       if (this.now() - lastPublish >= 100 || parsed.phase !== this.state.phase) {
         lastPublish = this.now();
