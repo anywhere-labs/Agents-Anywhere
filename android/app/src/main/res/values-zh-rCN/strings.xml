@@ -724,4 +724,12 @@
     <string name="agent_reminder_add">添加 Agent</string>
     <string name="agent_reminder_later">稍后添加</string>
     <string name="agent_reminder_skip">暂不配置，继续</string>
+    <string name="session_model_retry_busy">模型服务暂时繁忙，正在重试。</string>
+    <string name="session_model_retry_unavailable">模型服务暂时不可用，正在重试。</string>
+    <string name="session_model_retry_attempt">第 %1$d 次重试。</string>
+    <string name="session_model_retry_progress">第 %1$d/%2$d 次重试。</string>
+    <string name="session_model_retry_delay">本次等待 %1$d 秒后重试。</string>
+    <string name="session_model_retry_completed">重试结束，模型已恢复响应。</string>
+    <string name="session_model_retry_interrupted">已取消模型请求重试。</string>
+    <string name="session_model_retry_failed">模型请求重试后仍失败。</string>
 </resources>

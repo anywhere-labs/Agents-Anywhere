@@ -1145,7 +1145,15 @@
       "approvalTitle_codex_command": "Codex 请求执行命令",
       "approvalTitle_codex_file_change": "Codex 请求修改文件",
       "approvalTitle_codex_permissions": "Codex 请求额外权限",
-      "approvalTitle_claude_tool": "Claude 请求使用工具"
+      "approvalTitle_claude_tool": "Claude 请求使用工具",
+      "modelRetryBusy": "模型服务暂时繁忙，正在重试。",
+      "modelRetryUnavailable": "模型服务暂时不可用，正在重试。",
+      "modelRetryAttempt": "第 {attempt} 次重试。",
+      "modelRetryProgress": "第 {attempt}/{maximum} 次重试。",
+      "modelRetryDelay": "本次等待 {seconds} 秒后重试。",
+      "modelRetryCompleted": "重试结束，模型已恢复响应。",
+      "modelRetryInterrupted": "已取消模型请求重试。",
+      "modelRetryFailed": "模型请求重试后仍失败。"
     },
     "sessionStatus": {
       "idle": "空闲",

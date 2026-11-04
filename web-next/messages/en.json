@@ -1145,7 +1145,15 @@
       "approvalTitle_codex_command": "Codex wants to run a command",
       "approvalTitle_codex_file_change": "Codex wants to edit files",
       "approvalTitle_codex_permissions": "Codex requests additional permissions",
-      "approvalTitle_claude_tool": "Claude wants to use a tool"
+      "approvalTitle_claude_tool": "Claude wants to use a tool",
+      "modelRetryBusy": "The model service is busy. Retrying.",
+      "modelRetryUnavailable": "The model service is temporarily unavailable. Retrying.",
+      "modelRetryAttempt": "Retry {attempt}.",
+      "modelRetryProgress": "Retry {attempt} of {maximum}.",
+      "modelRetryDelay": "Waiting {seconds} seconds before this retry.",
+      "modelRetryCompleted": "Retry finished. The model responded.",
+      "modelRetryInterrupted": "Model request retry cancelled.",
+      "modelRetryFailed": "The model request failed after retrying."
     },
     "sessionStatus": {
       "idle": "Idle",

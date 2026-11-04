@@ -144,6 +144,8 @@
 
 ### Codex 与 Claude
 
+- Claude 模型请求遇到限流或服务暂不可用并自动重试时，四端会话会显示重试次数和等待时间，中断或请求结束后提示同步收尾。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+
 - 接入 Codex App / IDE 插件的 IPC 协议，在 Codex 窗口里打开的会话也能在 AA 中继续操作，包括发消息、中断、审批、切换模型和权限、发送附件；支持 macOS 和 Windows。（[#299](https://github.com/anywhere-labs/Agents-Anywhere/pull/299)、[#334](https://github.com/anywhere-labs/Agents-Anywhere/pull/334)）
 - 新增 `/open-in-codex-app` 和 `/kill-chatgpt` 命令：前者在 Codex App 中打开当前会话，后者退出 App 以释放写锁。（[#299](https://github.com/anywhere-labs/Agents-Anywhere/pull/299)）
 - 写入（包括 `/compact`）发往当前持有会话的一方；会话被 Codex App 占着、却没有窗口显示它时，先让正在运行的 App 打开这个会话再发送（由设置「把被锁定的线程交给 Codex App」控制），仍联系不上持有方才报错，不会和 App 抢写锁。（[#437](https://github.com/anywhere-labs/Agents-Anywhere/pull/437)、[#455](https://github.com/anywhere-labs/Agents-Anywhere/pull/455)、[#506](https://github.com/anywhere-labs/Agents-Anywhere/pull/506)）

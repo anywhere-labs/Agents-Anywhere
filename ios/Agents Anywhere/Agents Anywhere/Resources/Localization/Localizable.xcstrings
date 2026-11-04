@@ -22445,6 +22445,142 @@
           }
         }
       }
+    },
+    "模型服务暂时繁忙，正在重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The model service is busy. Retrying."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型服务暂时繁忙，正在重试。"
+          }
+        }
+      }
+    },
+    "模型服务暂时不可用，正在重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The model service is temporarily unavailable. Retrying."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型服务暂时不可用，正在重试。"
+          }
+        }
+      }
+    },
+    "重试结束，模型已恢复响应。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retry finished. The model responded."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重试结束，模型已恢复响应。"
+          }
+        }
+      }
+    },
+    "已取消模型请求重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model request retry cancelled."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已取消模型请求重试。"
+          }
+        }
+      }
+    },
+    "模型请求重试后仍失败。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The model request failed after retrying."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型请求重试后仍失败。"
+          }
+        }
+      }
+    },
+    "第 %lld 次重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retry %lld."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "第 %lld 次重试。"
+          }
+        }
+      }
+    },
+    "第 %lld/%lld 次重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retry %lld of %lld."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "第 %lld/%lld 次重试。"
+          }
+        }
+      }
+    },
+    "本次等待 %lld 秒后重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting %lld seconds before this retry."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本次等待 %lld 秒后重试。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
