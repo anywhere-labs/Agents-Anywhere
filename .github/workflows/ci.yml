@@ -19,10 +19,10 @@ on:
         options: [all, server]
         default: all
       server_workers:
-        description: Server pytest workers
+        description: Verification workers (dependency recording uses at most 2)
         type: choice
-        options: ['2', '4', '1']
-        default: '2'
+        options: ['4', '2', '1']
+        default: '4'
       server_mode:
         description: Full suite or selection shadow comparison
         type: choice
@@ -310,7 +310,7 @@ jobs:
         working-directory: server
         env:
           CHECK_BASE: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.pull_request.base.sha || github.event.before }}
-        run: uv run --no-sync python -m scripts.check_tests --mode "${{ inputs.server_mode || 'shadow' }}" --workers "${{ inputs.server_workers || '2' }}" --base "$CHECK_BASE"
+        run: uv run --no-sync python -m scripts.check_tests --mode "${{ inputs.server_mode || 'shadow' }}" --workers "${{ inputs.server_workers || '4' }}" --base "$CHECK_BASE"
       - name: Publish Server timing and selection report
         if: always()
         uses: actions/upload-artifact@v4
@@ -330,10 +330,10 @@ jobs:
               with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
                   out.write('## Server test selection shadow\n\n')
                   out.write(f"Fallback: {data['fallback'] or 'none'}\n\n")
-                  out.write('| Stage | Tests executed | Seconds | Exit |\n|---|---:|---:|---:|\n')
+                  out.write('| Stage | Workers | Tests executed | Seconds | Exit |\n|---|---:|---:|---:|---:|\n')
                   for stage in data['stages']:
                       count = len({r['id'] for r in stage['reports']})
-                      out.write(f"| {stage['stage']} | {count} | {stage['wall_seconds']} | {stage['exit_code']} |\n")
+                      out.write(f"| {stage['stage']} | {stage.get('workers', '?')} | {count} | {stage['wall_seconds']} | {stage['exit_code']} |\n")
                   if 'missed_failures' in data:
                       out.write(f"\nFast path reduction: {data['time_reduction_percent']}%; missed failing tests: {len(data['missed_failures'])}\n")
           PYTHON

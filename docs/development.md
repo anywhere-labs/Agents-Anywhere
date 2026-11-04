@@ -159,7 +159,7 @@ uv run python -m scripts.check_tests --mode shadow --base origin/main --workers 
 Connector、工作流和依赖配置等变化均回退全量。共享测试 helper 变化同样回退全量。
 基线失效时不把“没有数据”视为“没有测试需要运行”。
 
-CI 目前使用双 worker 影子模式，完整检查仍决定通过与否；第一次运行回退全量。
+CI 目前使用影子模式，依赖采集最多双 worker，全量验证默认四 worker，完整检查仍决定通过与否；第一次运行回退全量。
 后续从成功运行恢复 `.testmondata`，环境或依赖变化由 testmon 再校验。
 PR 缓存受 GitHub 分支作用域限制，不能作为其他 PR 的共享基线；main 上的成功
 运行可提供后续 PR 的初始基线。影子期会多执行相关检查，这个额外耗时用于验证
@@ -182,3 +182,6 @@ GitHub Actions 手动运行 `CI` 时，可选 `scope=server`，只执行 Server 
 `verify` 执行不采集依赖的全量检查，用于与原串行 CI 比较；`full` 执行全量并采集依赖基线。
 已有有效基线的 shadow 阶段只为受影响用例采集依赖，随后全量验证不重复开启覆盖跟踪，
 避免同一轮重复采集拖慢检查；冷启动和回退全量仍采集完整基线。
+
+云端实测中四 worker 覆盖采集触发了一条异步等待失败；因此采集限制为最多两个 worker，
+不带覆盖采集的验证可按 `server_workers` 使用四 worker。阶段报告分别记录实际 worker 数。

@@ -153,7 +153,10 @@ def run_stage(label, args, env, output, timeout):
         else {"reports": [], "exit_code": code}
     )
     result.update(
-        stage=label, wall_seconds=round(time.monotonic() - start, 3), exit_code=code
+        stage=label,
+        wall_seconds=round(time.monotonic() - start, 3),
+        exit_code=code,
+        workers=int(args[args.index("-n") + 1]) if "-n" in args else 1,
     )
     print(f"\n{label}: {result['wall_seconds']}s, exit={code}", flush=True)
     report.write_text(json.dumps(result, indent=2))
@@ -211,6 +214,14 @@ def main():
         if options.workers > 1
         else []
     )
+    # Coverage collection adds CPU pressure; the cloud comparison showed a
+    # timing-sensitive integration failure with four tracing workers. Keep
+    # tracing at two, while uninstrumented full verification can use all workers.
+    record_workers = min(options.workers, 2)
+    record_parallel = (
+        ["-n", str(record_workers), "--dist", "worksteal"] if record_workers > 1 else []
+    )
+    summary["record_workers"] = record_workers
     print(
         f"mode={options.mode}, workers={options.workers}, fallback={reason}", flush=True
     )
@@ -226,7 +237,11 @@ def main():
             )
             summary["stages"].append(
                 run_stage(
-                    "affected", ["--testmon", *parallel], env, output, options.timeout
+                    "affected",
+                    ["--testmon", *record_parallel],
+                    env,
+                    output,
+                    options.timeout,
                 )
             )
         if reason or options.mode in {"full", "shadow", "verify"}:
@@ -240,7 +255,10 @@ def main():
             summary["stages"].append(
                 run_stage(
                     "full",
-                    [*full_options, *parallel],
+                    [
+                        *full_options,
+                        *(record_parallel if "--testmon" in full_options else parallel),
+                    ],
                     env,
                     output,
                     options.timeout,
