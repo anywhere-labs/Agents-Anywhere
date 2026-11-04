@@ -6,13 +6,15 @@ struct TokensChannelSection: View {
     let model: ModelConfigModel
     let tokens: V2TokensLinkStatus
     let linker: TokensLinkCoordinator
+    let onExit: () -> Void
+    let onRotate: (V2ModelProfile) -> Void
 
-    private var linked: Bool { tokens.link?.isLinked == true }
+    private var linked: Bool { tokens.link?.isLinked == true && model.exitedLink != tokens.link }
     private var current: Bool { model.isCurrentChannel(V2ModelChannel.tokens) }
 
     var body: some View {
         if linked {
-            TokensAccountSections(model: model, tokens: tokens) {
+            TokensAccountSections(model: model, tokens: tokens, onRotate: onRotate) {
                 devices
             } unlink: {
                 if !current {
@@ -23,8 +25,13 @@ struct TokensChannelSection: View {
                     }
                     .disabled(model.channelBusyKey != nil || !model.canWrite)
                 }
-                Button(String(localized: "pages.settings.modelConfigs.switchAccount")) { link() }
-                    .disabled(model.tokensBusy != nil || !model.canWrite)
+                Button(String(localized: "pages.settings.modelConfigs.signOut"), role: .destructive, action: onExit)
+                    .disabled(model.tokensBusy != nil || model.exitBusy || !model.canWrite)
+                if model.exitBusy { ProgressView() }
+                if model.exitPhase == .switching { Text(String(localized: "Switching runtimes before signing out…")) }
+                if model.exitPhase == .waiting { Text(String(localized: "Waiting for runtimes to finish switching before signing out…")) }
+                if model.exitPhase == .offline { Text(String(localized: "Waiting for offline devices to reconnect before signing out…")) }
+                if model.exitPhase == .failed { Text(String(localized: "Sign out failed. Retry Sign out to continue.")).foregroundStyle(.red) }
             }
         } else {
             Section {

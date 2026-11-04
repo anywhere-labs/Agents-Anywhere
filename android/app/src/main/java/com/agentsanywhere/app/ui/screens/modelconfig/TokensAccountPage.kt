@@ -610,7 +610,7 @@ private fun UsageTab(controller: ModelConfigController, detailsUrl: String?, onO
         failed = false
         usage = null
         controller.tokensUsage(days)
-            .onSuccess { usage = it }
+            .onSuccess { usage = it; if (model != null && model !in usageModelIds(it)) model = null }
             .onFailure { failed = true }
     }
     val summary = remember(usage, model) { usage?.let { summarizeUsage(it, model) } }
@@ -618,6 +618,11 @@ private fun UsageTab(controller: ModelConfigController, detailsUrl: String?, onO
     val allModels = stringResource(R.string.model_config_account_all_models)
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            SmallButton(label = stringResource(R.string.model_config_account_refresh),
+                loading = usage == null && !failed, enabled = usage != null || failed,
+                onClick = { attempt += 1 })
+        }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Segmented(
                 options = listOf(

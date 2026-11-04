@@ -7,6 +7,68 @@ import Observation
 @MainActor @Observable
 final class ModelConfigModel {
     enum TokensAction: Hashable { case link, sync }
+    enum ExitPhase: Hashable { case idle, switching, waiting, offline, failed }
+    private(set) var exitPhase: ExitPhase = .idle
+    private(set) var exitedLink: V2TokensLink?
+    var exitBusy: Bool { [.switching, .waiting, .offline].contains(exitPhase) }
+
+    /// Owned by the page task, so leaving the page cancels the unfinished exit.
+    func exitTokens() async {
+        guard !exitBusy, let link = tokens?.link else { return }
+        exitPhase = .switching
+        defer { if exitPhase != .failed { exitPhase = .idle } }
+        do {
+            var state = try await api.channel()
+            try Task.checkCancellation()
+            guard tokens?.link == link else { return }
+            if state.channel == V2ModelChannel.tokens { state = try await api.setChannel(V2ModelChannel.native) }
+            adopt(state)
+            for entry in state.runtimes where entry.override == V2ModelChannel.tokens {
+                try Task.checkCancellation()
+                guard tokens?.link == link else { return }
+                let global = dashboard.runtimes.first { $0.target == entry.target }?.modelConnection?.scope == "native_global"
+                state = try await api.setRuntimeChannel(entry.target,
+                    channel: global && state.channel != V2ModelChannel.native ? V2ModelChannel.native : nil,
+                    confirmNativeGlobal: false)
+                adopt(state)
+            }
+            for entry in state.runtimes where entry.actual == V2ModelChannel.tokens && ["failed", "restored"].contains(entry.state) {
+                state = try await api.retryChannel(entry.target)
+                adopt(state)
+            }
+            while true {
+                try Task.checkCancellation()
+                guard tokens?.link == link else { return }
+                if let pushed = channel, pushed.revision > state.revision { state = pushed }
+                let used = state.channel == V2ModelChannel.tokens || state.runtimes.contains { $0.desired == V2ModelChannel.tokens || $0.actual == V2ModelChannel.tokens }
+                if !used {
+                    do {
+                        let result = try await api.unlinkTokens()
+                        try Task.checkCancellation()
+                        guard tokens?.link == link || tokens?.link == nil else { return }
+                        exitedLink = link
+                        account.reset()
+                        feedback = result.revoked
+                            ? .success(String(localized: "Signed out of Tokens Anywhere."))
+                            : .warning(String(localized: "Signed out, but the authorization could not be revoked."))
+                        return
+                    } catch let error as HTTPError where error.serverCode == "channel_in_use" { }
+                }
+                if state.runtimes.contains(where: { $0.actual == V2ModelChannel.tokens && ["failed", "restored"].contains($0.state) }) {
+                    throw HTTPError.invalidResponse
+                }
+                exitPhase = state.runtimes.contains { $0.actual == V2ModelChannel.tokens && $0.state == "waiting_online" } ? .offline : .waiting
+                try await Task.sleep(for: .seconds(2))
+                state = try await api.channel()
+                adopt(state)
+            }
+        } catch is CancellationError { }
+        catch {
+            guard tokens?.link == link, !Task.isCancelled else { return }
+            exitPhase = .failed
+            feedback = .error(ModelConfigErrorText.text(error))
+        }
+    }
     /// A rotation the Server refused as `busy`, kept to run again once the
     /// user agrees to interrupt the running tasks.
     enum InterruptRetry: Hashable {

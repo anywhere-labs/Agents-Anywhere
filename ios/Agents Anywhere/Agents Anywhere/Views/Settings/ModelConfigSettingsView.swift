@@ -26,6 +26,8 @@ private struct ModelConfigPage: View {
     @State private var creating = false
     @State private var confirmingOverride: PendingChannelOverride?
     @State private var deleting: V2ModelProfile?
+    @State private var exitRequested = false
+    @State private var confirmingExit = false
     @State private var rotating: V2ModelProfile?
     @Environment(\.scenePhase) private var scenePhase
 
@@ -53,7 +55,7 @@ private struct ModelConfigPage: View {
                         confirmingOverride: $confirmingOverride)
                 }
                 if let tokens = overview.tokens, tokens.available {
-                    TokensChannelSection(model: model, tokens: tokens, linker: linker)
+                    TokensChannelSection(model: model, tokens: tokens, linker: linker, onExit: { confirmingExit = true }, onRotate: { rotating = $0 })
                 }
                 profilesSection(overview)
             } else {
@@ -82,6 +84,9 @@ private struct ModelConfigPage: View {
         }
         // Back from topping up in the browser, the balance should already show it.
         .task(id: accountKey) {
+            model.account.reset()
+            if showsAccount { model.account.reconcile(profile: model.overview?.activeTokensProfile) }
+            if showsAccount { model.account.tab = .models }
             if accountKey != nil { await model.account.loadInfo() }
         }
         .onChange(of: scenePhase) { _, phase in
@@ -89,6 +94,15 @@ private struct ModelConfigPage: View {
         }
         .task(id: usageKey) {
             if usageKey != nil { await model.account.loadUsage() }
+        }
+        .task(id: exitRequested) {
+            if exitRequested { await model.exitTokens(); exitRequested = false }
+        }
+        .alert(String(localized: "Sign out of Tokens Anywhere?"), isPresented: $confirmingExit) {
+            Button(String(localized: "Cancel"), role: .cancel) {}
+            Button(String(localized: "pages.settings.modelConfigs.signOut"), role: .destructive) { exitRequested = true }
+        } message: {
+            Text(String(localized: "Runtimes using Tokens Anywhere will restart and interrupt running tasks. Offline devices must reconnect before this account can be signed out. Other selected channels are kept."))
         }
         .sheet(isPresented: $creating) { ModelProfileEditorSheet(model: model) }
         .alert(String(localized: "Delete profile"), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
@@ -134,7 +148,7 @@ private struct ModelConfigPage: View {
 
     /// The linked account's page is showing.
     private var showsAccount: Bool {
-        model.overview?.tokens?.available == true && model.overview?.tokens?.link?.isLinked == true
+        model.overview?.tokens?.available == true && model.overview?.tokens?.link?.isLinked == true && model.exitedLink != model.tokens?.link
     }
 
     /// Changes when another account's page shows; nil while none does.
@@ -175,10 +189,10 @@ private struct ModelConfigPage: View {
 
     private func profilesSection(_ overview: V2ModelConfigOverview) -> some View {
         Section {
-            if overview.profiles.isEmpty {
+            if overview.profiles.allSatisfy({ $0.isTokens && $0.isActive }) {
                 Text(String(localized: "No model profiles yet.")).font(.subheadline).foregroundStyle(.secondary)
             }
-            ForEach(overview.profiles) { profile in profileRow(profile) }
+            ForEach(overview.profiles.filter { !($0.isTokens && $0.isActive) }) { profile in profileRow(profile) }
             Button {
                 creating = true
             } label: {

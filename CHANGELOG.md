@@ -39,7 +39,7 @@
 
 - 模型渠道仅列出支持模型连接配置的 Runtime，DSH 等不支持此能力的 Runtime 不再出现在列表或切换进度中。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 修复旧配置待更新或新发现的 Runtime 因缺少切换任务而一直显示「排队中」的问题，重启服务或刷新模型渠道后可自动继续切换。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
-- 移除 Web、Desktop、Android 和 iOS 用量页底部的账户统计说明。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- Android 和 iOS 可在 Tokens Anywhere 账户中退出，待使用它的 Runtime 切离渠道后解除绑定；连接区域集中显示地址、协议和密钥轮换，地址可复制，用量支持主动刷新并自动清除失效的模型筛选；四端移除用量页底部的账户统计说明。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 「设置 → 模型渠道」可以选择默认渠道：设备自带配置、Anywhere 或手动添加的模型服务，没有单独指定的 Runtime 都跟随默认渠道，单个 Runtime 也可以单独指定；每个 Runtime 同一时间只用一个渠道。Web 和 Desktop 不再有顶部的渠道卡片，在左侧列表选中渠道后点「设为默认」，列表标出「默认」、每个渠道有几个 Runtime，以及是否正在切换或有切换失败。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 切换渠道时显示进度，并按设备列出每个 Runtime 的状态；Web 和 Desktop 选中渠道即可看到归它的 Runtime，Anywhere 账户的 Runtime 收入独立 Tab：
   - 在线 Runtime 立即切换并中断运行中的任务，设备离线的上线后自动切换；

@@ -1,5 +1,6 @@
 import Charts
 import SwiftUI
+import UIKit
 
 /// The linked Tokens Anywhere account: who it is, its balance, which of its
 /// models runtimes get and under which names, what it has spent, and the
@@ -7,6 +8,7 @@ import SwiftUI
 struct TokensAccountSections<Devices: View, Unlink: View>: View {
     let model: ModelConfigModel
     let tokens: V2TokensLinkStatus
+    let onRotate: (V2ModelProfile) -> Void
     @ViewBuilder let devices: () -> Devices
     @ViewBuilder let unlink: () -> Unlink
     @Environment(\.openURL) private var openURL
@@ -29,7 +31,22 @@ struct TokensAccountSections<Devices: View, Unlink: View>: View {
             .listRowBackground(Color.clear)
         }
         switch account.tab ?? .models {
-        case .models: TokensModelsTab(model: model)
+        case .models:
+            if let profile = model.overview?.activeTokensProfile {
+                Section {
+                    LabeledContent(String(localized: "Address")) { Text(verbatim: profile.originHost).textSelection(.enabled) }
+                    CopyAddressButton(address: profile.originHost)
+                    if let hint = profile.keyHint { LabeledContent(String(localized: "API key")) { Text(verbatim: hint) } }
+                    Text(String(localized: "Used by \(model.runtimeCount(using: V2ModelChannel.tokens)) runtimes"))
+                    Button(String(localized: "Rotate key")) { onRotate(profile) }
+                        .disabled(model.busyProfileID != nil || model.exitBusy || !model.canWrite)
+                    ForEach(profile.offers, id: \.format) { offer in
+                        LabeledContent(ModelConfigPresentation.protocolLabel(offer.format)) { Text(verbatim: offer.baseUrl).textSelection(.enabled) }
+                        CopyAddressButton(address: offer.baseUrl)
+                    }
+                } header: { Text(String(localized: "Connection")) }
+            }
+            TokensModelsTab(model: model)
         case .usage: TokensUsageTab(account: account)
         case .devices: devices()
         }
@@ -340,6 +357,15 @@ private struct TokensUsageTab: View {
                 ForEach(account.usageModelIDs, id: \.self) { id in Text(verbatim: id).tag(Optional(id)) }
             }
             .pickerStyle(.menu)
+            Button {
+                Task { await account.loadUsage() }
+            } label: {
+                HStack {
+                    if account.usageLoading { ProgressView().controlSize(.small) }
+                    Label(String(localized: "pages.settings.modelConfigs.account.refresh"), appSymbol: "arrow.clockwise")
+                }
+            }
+            .disabled(account.usageLoading)
         }
         Section {
             if account.usageFailed {
@@ -466,5 +492,17 @@ private struct TokensUsageTab: View {
     private static func compact(_ value: Double) -> String {
         if abs(value) < 1000 { return value.formatted(.number.precision(.fractionLength(0...2))) }
         return value.formatted(.number.notation(.compactName).precision(.fractionLength(0...1)))
+    }
+}
+
+private struct CopyAddressButton: View {
+    let address: String
+    var body: some View {
+        Button {
+            UIPasteboard.general.string = address
+        } label: {
+            Label(String(localized: "Copy address"), appSymbol: "doc.on.doc")
+        }
+        .buttonStyle(.borderless)
     }
 }

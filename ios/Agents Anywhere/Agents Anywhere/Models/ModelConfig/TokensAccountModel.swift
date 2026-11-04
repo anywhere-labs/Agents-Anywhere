@@ -35,6 +35,7 @@ final class TokensAccountModel {
     var usageModel: String?
     private(set) var usage: V2TokensUsage?
     private(set) var usageFailed = false
+    private(set) var usageLoading = false
 
     @ObservationIgnored private let api: V2ModelConfigAPI
     @ObservationIgnored private var pushed: V2ModelPreferences?
@@ -61,6 +62,7 @@ final class TokensAccountModel {
 
     /// Forgets the account, as after unlinking.
     func reset() {
+        models = []; groups = []; saved = .empty; draft = .empty; pushed = nil; usageLoading = false
         info = nil; infoFailed = false; tab = nil; usage = nil; usageFailed = false; usageModel = nil
         openGroups = nil
         infoRequest += 1; usageRequest += 1
@@ -72,7 +74,7 @@ final class TokensAccountModel {
         infoFailed = false
         do {
             let value = try await api.tokensAccount()
-            guard request == infoRequest else { return }
+            guard request == infoRequest, !Task.isCancelled else { return }
             info = value
         } catch {
             guard request == infoRequest, !Task.isCancelled else { return }
@@ -84,12 +86,15 @@ final class TokensAccountModel {
     func loadUsage() async {
         usageRequest += 1
         let request = usageRequest
+        usageLoading = true
+        defer { if request == usageRequest { usageLoading = false } }
         usageFailed = false
         usage = nil
         do {
             let value = try await api.tokensUsage(days: usageDays)
-            guard request == usageRequest else { return }
+            guard request == usageRequest, !Task.isCancelled else { return }
             usage = value
+            if let selected = usageModel, !TokensAccountPresentation.usageModelIDs(value).contains(selected) { usageModel = nil }
         } catch {
             guard request == usageRequest, !Task.isCancelled else { return }
             usageFailed = true

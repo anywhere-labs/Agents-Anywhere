@@ -4,11 +4,19 @@ import com.agentsanywhere.app.api.ModelConfigApi
 import com.agentsanywhere.app.api.RemoteTokensAccount
 import com.agentsanywhere.app.api.RemoteTokensUsage
 import com.agentsanywhere.app.feature.auth.AuthSessionReader
+import com.agentsanywhere.app.feature.devices.DeviceRuntime
+import com.agentsanywhere.app.model.CHANNEL_NATIVE
+import com.agentsanywhere.app.model.CHANNEL_TOKENS
 import com.agentsanywhere.app.model.ModelChannelState
 import com.agentsanywhere.app.model.ModelPreferences
 import com.agentsanywhere.app.model.ModelProfile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 
 /**
@@ -19,6 +27,75 @@ class ModelConfigController(
     private val api: ModelConfigApi,
     private val sessionStore: AuthSessionReader,
 ) {
+    enum class ExitPhase { Idle, Switching, WaitingOnline, Waiting, Failed }
+    private val exitState = MutableStateFlow(ExitPhase.Idle)
+    val exitPhase = exitState.asStateFlow()
+    private var observedChannel: ModelChannelState? = null
+    fun resetExitFailure() {
+        if (exitState.value == ExitPhase.Failed) exitState.value = ExitPhase.Idle
+    }
+
+    fun observeExitChannel(state: ModelChannelState) {
+        if (state.revision >= (observedChannel?.revision ?: -1)) observedChannel = state
+    }
+
+    /** Runs in the page coroutine: closing the page cancels the unfinished exit. */
+    suspend fun exitTokens(runtimes: List<DeviceRuntime>, onChannel: (ModelChannelState) -> Unit): Result<Boolean> {
+        if (exitState.value !in listOf(ExitPhase.Idle, ExitPhase.Failed)) return Result.failure(IllegalStateException("Exit in progress"))
+        val exitServer = sessionStore.readServerUrl()
+        val exitUser = sessionStore.readUserId()
+        val exitToken = sessionStore.readAccessToken()
+        suspend fun checkSession() {
+            currentCoroutineContext().ensureActive()
+            if (sessionStore.readServerUrl() != exitServer || sessionStore.readUserId() != exitUser ||
+                (exitUser.isBlank() && sessionStore.readAccessToken() != exitToken)) {
+                throw CancellationException("Account changed during exit")
+            }
+        }
+        observedChannel = null
+        exitState.value = ExitPhase.Switching
+        try {
+            checkSession()
+            var state = channel().getOrThrow()
+            checkSession()
+            if (state.channel == CHANNEL_TOKENS) state = setChannel(CHANNEL_NATIVE).getOrThrow()
+            onChannel(state)
+            for (row in state.runtimes.filter { it.override == CHANNEL_TOKENS }) {
+                val global = runtimes.find { it.connectorId == row.connectorId && it.id == row.runtimeId }?.modelConnection?.scope == "native_global"
+                checkSession()
+                state = setRuntimeChannel(row.connectorId, row.runtimeId,
+                    if (global && state.channel != CHANNEL_NATIVE) CHANNEL_NATIVE else null).getOrThrow()
+                onChannel(state)
+            }
+            // A retry resumes failed switches as well as a previously interrupted exit.
+            for (row in state.runtimes.filter { it.actual == CHANNEL_TOKENS && it.state in listOf("failed", "restored") }) {
+                checkSession()
+                state = retryChannel(row.connectorId, row.runtimeId).getOrThrow()
+                onChannel(state)
+            }
+            while (true) {
+                checkSession()
+                observedChannel?.takeIf { it.revision > state.revision }?.let { state = it }
+                val used = state.channel == CHANNEL_TOKENS || state.runtimes.any { it.desired == CHANNEL_TOKENS || it.actual == CHANNEL_TOKENS }
+                if (!used) {
+                    val result = unlinkTokens()
+                    if (result.isSuccess) return result
+                    if (modelConfigErrorCode(result.exceptionOrNull()!!) != "channel_in_use") throw result.exceptionOrNull()!!
+                }
+                if (state.runtimes.any { it.actual == CHANNEL_TOKENS && it.state in listOf("failed", "restored") }) {
+                    throw IllegalStateException("Channel switch failed")
+                }
+                exitState.value = if (state.runtimes.any { it.actual == CHANNEL_TOKENS && it.state == "waiting_online" }) ExitPhase.WaitingOnline else ExitPhase.Waiting
+                delay(2000)
+                checkSession()
+                state = channel().getOrThrow()
+                onChannel(state)
+            }
+        } catch (error: CancellationException) { throw error }
+        catch (error: Exception) { exitState.value = ExitPhase.Failed; return Result.failure(error) }
+        finally { if (exitState.value != ExitPhase.Failed) exitState.value = ExitPhase.Idle }
+    }
+
     /** Automatic drafts send only the address; the Server detects the protocols and models. */
     suspend fun createProfile(draft: ManualProfileDraft): Result<ModelProfile> = call { server, token ->
         if (draft.manual) {

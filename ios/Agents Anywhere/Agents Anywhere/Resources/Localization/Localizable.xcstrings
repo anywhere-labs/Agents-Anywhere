@@ -22258,6 +22258,193 @@
           }
         }
       }
+    },
+    "pages.settings.modelConfigs.signOut": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign out"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "退出"
+          }
+        }
+      }
+    },
+    "Sign out of Tokens Anywhere?": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign out of Tokens Anywhere?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "退出 Tokens Anywhere 账号？"
+          }
+        }
+      }
+    },
+    "Runtimes using Tokens Anywhere will restart and interrupt running tasks. Offline devices must reconnect before this account can be signed out. Other selected channels are kept.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtimes using Tokens Anywhere will restart and interrupt running tasks. Offline devices must reconnect before this account can be signed out. Other selected channels are kept."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用 Tokens Anywhere 的 Runtime 将重启并中断运行中的任务；离线设备需上线完成切换后才能退出。其他已选渠道保持不变。"
+          }
+        }
+      }
+    },
+    "Signed out of Tokens Anywhere.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Signed out of Tokens Anywhere."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已退出 Tokens Anywhere。"
+          }
+        }
+      }
+    },
+    "Signed out, but the authorization could not be revoked.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Signed out, but the authorization could not be revoked."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已退出，但未能撤销授权。"
+          }
+        }
+      }
+    },
+    "Switching runtimes before signing out…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switching runtimes before signing out…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在切换 Runtime，完成后退出…"
+          }
+        }
+      }
+    },
+    "Waiting for runtimes to finish switching before signing out…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for runtimes to finish switching before signing out…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在等待 Runtime 完成切换后退出…"
+          }
+        }
+      }
+    },
+    "Waiting for offline devices to reconnect before signing out…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for offline devices to reconnect before signing out…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在等待离线设备上线，切换完成后退出…"
+          }
+        }
+      }
+    },
+    "Sign out failed. Retry Sign out to continue.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign out failed. Retry Sign out to continue."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "退出失败，请再次点击「退出」继续。"
+          }
+        }
+      }
+    },
+    "Copy address": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy address"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "复制地址"
+          }
+        }
+      }
+    },
+    "Used by %lld runtimes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Used by %lld runtimes"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "由 %lld 个 Runtime 使用"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

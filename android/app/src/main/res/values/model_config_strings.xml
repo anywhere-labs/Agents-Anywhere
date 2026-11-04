@@ -220,4 +220,13 @@
     <string name="model_config_error_gateway_unreachable">The server could not reach this address. Check the address.</string>
     <string name="model_config_error_gateway_key_rejected">The model service refused this key. Check it and try again.</string>
     <string name="model_config_error_gateway_protocols_unknown">Couldn\'t detect any supported protocol at this address. Check the address.</string>
+    <string name="model_config_sign_out">Sign out</string>
+    <string name="model_config_sign_out_description">Runtimes using Tokens Anywhere will restart and interrupt running tasks. Offline devices must reconnect before this account can be signed out. Other selected channels are kept.</string>
+    <string name="model_config_signed_out">Signed out of Tokens Anywhere.</string>
+    <string name="model_config_not_revoked">Signed out, but the authorization could not be revoked.</string>
+    <string name="model_config_exit_switching">Switching runtimes before signing out…</string>
+    <string name="model_config_exit_waiting_online">Waiting for offline devices to reconnect before signing out…</string>
+    <string name="model_config_exit_waiting">Waiting for runtimes to finish switching before signing out…</string>
+    <string name="model_config_exit_failed">Sign out failed. Retry Sign out to continue.</string>
+    <string name="model_config_connection">Connection</string>
 </resources>

@@ -160,6 +160,8 @@ fun ModelConfigScreen(
                             tokens = tokens,
                             overview = overview,
                             channel = channel,
+                            runtimes = state.runtimes,
+                            onChannelState = ::acceptChannel,
                             controller = controller,
                             pendingBar = pendingBar,
                             settingCurrent = settingChannel == CHANNEL_TOKENS,
@@ -257,10 +259,10 @@ private fun ProfilesSection(
         },
     ) {
         ProfileCard {
-            if (overview.profiles.isEmpty()) {
+            if (overview.profiles.none { !it.isTokens || !it.isActive }) {
                 MutedText(stringResource(R.string.model_config_no_profiles), Modifier.padding(14.dp))
             }
-            overview.profiles.forEachIndexed { index, profile ->
+            overview.profiles.filterNot { it.isTokens && it.isActive }.forEachIndexed { index, profile ->
                 if (index > 0) RowDivider()
                 ProfileItem(
                     profile = profile,
@@ -281,7 +283,7 @@ private fun ProfilesSection(
 }
 
 @Composable
-private fun ProfileItem(
+internal fun ProfileItem(
     profile: ModelProfile,
     usedBy: Int,
     current: Boolean,
