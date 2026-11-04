@@ -280,7 +280,8 @@ includes:
       "method": "timeline.itemUpsert",
       "code": "notification_failed",
       "message": "...",
-      "errorType": "ValidationError"
+      "errorType": "ValidationError",
+      "retryable": false
     }
   ],
   "serverTime": "..."
@@ -292,6 +293,13 @@ per-notification failures using the original zero-based batch index. Explicit
 protocol violations that are intentionally unsupported may still return HTTP
 400; unexpected processing failures should be logged and reported through
 `rejected` instead of surfacing as HTTP 500.
+
+`retryable` is `true` when the same notification can be retried after a short
+backoff without changing the payload, for example when a session-level
+distributed lock acquisition times out. Connectors must not treat such a
+rejection as a permanent validation or size failure. A mixed batch keeps the
+permanent failure visible; the connector retries only when every rejected
+notification is retryable.
 
 时间线通知中的 `orderSeq` 必须在 PostgreSQL `integer` 范围内
 （−2147483648–2147483647）。单条通知请求中的越界值返回 HTTP 400
