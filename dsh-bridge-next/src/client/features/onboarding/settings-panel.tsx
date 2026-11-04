@@ -2,7 +2,7 @@ import { translateMessage, type Translate } from '../../locales.js'
 import { useEffect, useId, useState } from 'react'
 import { Button, Input, Menu, RiskConfirmation, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ChevronDown, FolderOpen, PackageX, Power, RotateCw } from 'lucide-react'
-import { PYPI_MIRRORS, PYTHON_MIRRORS, SYNC_INTERVALS } from '../../../contracts/connector.js'
+import { PYPI_MIRRORS, PYTHON_MIRRORS, SESSION_SYNC_SCOPES, SYNC_INTERVALS } from '../../../contracts/connector.js'
 import type { OnboardingHostApi, OnboardingSnapshot } from '../../../contracts/index.js'
 import { connectorStatus } from './account-panel.js'
 import type { OnboardingState } from './state.js'
@@ -12,7 +12,7 @@ function Choice({ label, value, options, disabled, onChange }: {
   label: string; value: string; options: { id: string; label: string }[]; disabled: boolean; onChange: (id: string) => void
 }) {
   const [open, setOpen] = useState(false)
-  return <Menu open={open && !disabled} items={options} selectedId={value} align="end"
+  return <Menu className={css.choice} open={open && !disabled} items={options} selectedId={value} align="end"
     onClose={() => setOpen(false)} onSelect={id => { onChange(id); setOpen(false) }}
     anchor={<Button variant="outline" aria-label={label} aria-haspopup="menu" aria-expanded={open && !disabled}
       disabled={disabled} onClick={() => setOpen(value => !value)}>
@@ -127,6 +127,12 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
           <Choice label={t('同步间隔')} disabled={busy} value={String(draft.syncIntervalSeconds)}
             options={[...new Set([...SYNC_INTERVALS, draft.syncIntervalSeconds])].sort((a, b) => a - b).map(value => ({ id: String(value), label: t('{count} 秒', { count: value }) }))}
             onChange={value => update('syncIntervalSeconds', Number(value))} />
+        </div>
+        <div className={css.row}>
+          <div><span>{t('会话范围')}</span><p className={css.hint}>{t('“仅人类消息”只同步你亲自发过消息的会话；“全部消息”还会同步由插件或定时任务产生的会话。')}</p></div>
+          <Choice label={t('会话范围')} disabled={busy} value={draft.sessionSyncScope}
+            options={SESSION_SYNC_SCOPES.map(({ id, label }) => ({ id, label: translateMessage(t, label) }))}
+            onChange={value => update('sessionSyncScope', SESSION_SYNC_SCOPES.find(scope => scope.id === value)!.id)} />
         </div>
         <div className={css.save}>
           {saved && !dirty ? <span className={css.hint} role="status">{t('设置已保存')}</span> : null}

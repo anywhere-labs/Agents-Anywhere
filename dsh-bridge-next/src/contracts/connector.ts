@@ -1,13 +1,24 @@
+/** Which DSH conversations the plugin imports: ones a person typed into, or all of them.
+ * A conversation started by a plugin or a scheduled turn carries only plugin or
+ * runtime context messages, so `human` skips it and `all` imports it as well. */
+export type SessionSyncScope = 'human' | 'all'
+
 export interface ConnectorSettings {
   uvPath: string
   uvPypiIndexUrl: string
   uvPythonInstallMirror: string
   syncIntervalSeconds: number
+  sessionSyncScope: SessionSyncScope
 }
 
 export const DEFAULT_CONNECTOR_SETTINGS: ConnectorSettings = {
-  uvPath: '', uvPypiIndexUrl: '', uvPythonInstallMirror: '', syncIntervalSeconds: 30,
+  uvPath: '', uvPypiIndexUrl: '', uvPythonInstallMirror: '', syncIntervalSeconds: 30, sessionSyncScope: 'human',
 }
+
+export const SESSION_SYNC_SCOPES = [
+  { id: 'human', label: '仅人类消息' },
+  { id: 'all', label: '全部消息' },
+] as const
 
 export const PYTHON_MIRRORS = [
   { id: 'default', label: '官方源', url: '' },

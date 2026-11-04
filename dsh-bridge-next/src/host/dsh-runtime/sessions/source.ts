@@ -4,7 +4,8 @@ import type {} from '@deepseek-ai/dsh-session-persistence'
 import type { SessionObservation, SessionLogSnapshot } from '@deepseek-ai/dsh-session-query'
 import type { SessionRecord } from '@deepseek-ai/dsh-session-query'
 import { BridgeError } from '../errors.js'
-import { isUserMessage, sessionVisible } from '../visibility.js'
+import { isSessionMessage, sessionVisible } from '../visibility.js'
+import type { SessionSyncScope } from '../../../contracts/connector.js'
 import { quietDiagnostics, type RuntimeDiagnostics } from '../diagnostics.js'
 
 export interface SourceState {
@@ -18,8 +19,9 @@ export const MAX_RETAINED_LOGS = 8
 /** The official query includes persisted sessions; absence from memory is not archival. */
 export class NativeSessionSource {
   archived: Set<string>
-  private readonly withUserMessages = new Set<string>()
-  /** Log identity of a read that found no user message; a changed log invalidates it. */
+  private scope: SessionSyncScope = 'human'
+  private readonly withMessages = new Set<string>()
+  /** Log identity of a read that found no message in scope; a changed log invalidates it. */
   private readonly emptyLogs = new Map<string, string>()
   private readonly failedReads = new Set<string>()
   readonly records = new Map<string, SessionRecord>()
@@ -102,13 +104,24 @@ export class NativeSessionSource {
     this.archived = new Set(ctx.workspaceRegistry.archivedSessionIds)
   }
 
+  /** Adopt the import scope from the user's settings. Cached verdicts were read
+   * under the previous rule, so every one of them is dropped and read again. */
+  setScope(scope: SessionSyncScope): boolean {
+    if (scope === this.scope) return false
+    this.scope = scope
+    this.withMessages.clear()
+    this.emptyLogs.clear()
+    this.failedReads.clear()
+    return true
+  }
+
   observe(session: Session, event?: SessionEvent): void {
     this.evict(session.id)
     this.retry(session.id)
     // Retain the identity even if the session leaves memory before the feed consumes it.
     this.records.set(session.id, { header: session.header, live: true, persisted: this.records.get(session.id)?.persisted ?? false })
-    if (event ? isUserMessage(event) : session.snapshotEvents().some(isUserMessage)) {
-      this.withUserMessages.add(session.id)
+    if (event ? isSessionMessage(event, this.scope) : session.snapshotEvents().some(item => isSessionMessage(item, this.scope))) {
+      this.withMessages.add(session.id)
       this.emptyLogs.delete(session.id)
     }
   }
@@ -134,7 +147,7 @@ export class NativeSessionSource {
     for (const [id, entry] of previous) {
       if (this.records.get(id) === entry && !listed.has(id) && !this.ctx.sessions.get(id as SessionId)) {
         this.records.delete(id)
-        this.withUserMessages.delete(id)
+        this.withMessages.delete(id)
         this.emptyLogs.delete(id)
       }
     }
@@ -178,7 +191,7 @@ export class NativeSessionSource {
     const header = live?.header ?? this.records.get(id)?.header
     if (!header || header.origin === 'subagent' || this.archived.has(id)) return false
     if (this.failedReads.has(id)) return false
-    if (!this.withUserMessages.has(id)) {
+    if (!this.withMessages.has(id)) {
       if (!live && this.records.get(id)?.persisted === false) return false
       const revision = await this.freshRevisionOf(id)
       // A blank verdict is cached only for the exact log it was read from: a
@@ -193,8 +206,8 @@ export class NativeSessionSource {
           this.markReadFailed(id)
           return false
         }
-        if (events.some(isUserMessage)) {
-          this.withUserMessages.add(id)
+        if (events.some(event => isSessionMessage(event, this.scope))) {
+          this.withMessages.add(id)
           this.emptyLogs.delete(id)
         } else if (revision !== undefined) {
           this.emptyLogs.set(id, revision)
@@ -202,7 +215,7 @@ export class NativeSessionSource {
         }
       }
     }
-    return sessionVisible({ id, ...(header.origin ? { origin: header.origin } : {}), hasUserMessage: this.withUserMessages.has(id) }, this.archived)
+    return sessionVisible({ id, ...(header.origin ? { origin: header.origin } : {}), hasMessage: this.withMessages.has(id) }, this.archived)
   }
 
   async state(id: string): Promise<SourceState> {

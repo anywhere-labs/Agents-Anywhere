@@ -5,6 +5,10 @@
 .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
 .row > div:first-child { min-width: 0; }
 .row > button { flex-shrink: 0; }
+/* Menu wraps its trigger in an inline-flex span, which the row would otherwise
+   squeeze to fit a long hint beside it and wrap the control's label. */
+.choice { flex: none; max-width: 100%; }
+.choice button { white-space: nowrap; }
 .status { display: inline-flex; align-items: center; gap: 8px; color: var(--dsw-alias-label-secondary); }
 .details { display: grid; grid-template-columns: 106px minmax(0, 1fr); gap: 10px 16px; margin: 0; font: var(--dsw-font-xs-13); }
 .details dt { color: var(--dsw-alias-label-secondary); }

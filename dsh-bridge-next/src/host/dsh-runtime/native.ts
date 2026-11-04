@@ -12,6 +12,7 @@ import { canonicalJson, digest, userMessageId } from './identity.js'
 import { BridgeError, CreationNotStartedError } from './errors.js'
 import { ClientPresence } from './visibility.js'
 import { NativeSessionSource } from './sessions/source.js'
+import type { SessionSyncScope } from '../../contracts/connector.js'
 import { record } from './types.js'
 import { UserApprovals } from './approvals.js'
 import { UserQuestions } from './questions.js'
@@ -193,6 +194,14 @@ export class NativeRuntime {
     return result
   }
   visible(id: string): Promise<boolean> { return this.source.visible(id) }
+  /** Re-run session visibility after the user changed which messages count as
+   * conversation. The feed reconciles on the change, so newly eligible
+   * conversations are imported and the others stop being updated. */
+  setSessionScope(scope: SessionSyncScope): void {
+    if (!this.source.setScope(scope)) return
+    this.diagnostics.log('info', 'session.scope_changed', { scope })
+    this.emit({ type: 'visibility' })
+  }
   /** Resolve the startup inventory once; native events maintain it afterwards. */
   async ensureKnown(id: string, signal?: AbortSignal): Promise<void> {
     if (this.source.records.has(id) || this.ctx.sessions.get(id as SessionId) !== undefined) return

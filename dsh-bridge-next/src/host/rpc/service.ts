@@ -58,9 +58,21 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
       this.diagnostics.log('error', 'onboarding.start_failed', { code: this.managerFailure.code }, error)
       return
     }
+    // The runtime may have initialized first and kept the default scope; hand
+    // it the persisted value now that the settings are loaded.
+    this.applySessionSyncScope()
     // Restoring an authorized connection must not prevent the settings page
     // from mounting while uv prepares its environment.
     void this.manager.resume().catch(() => undefined)
+  }
+
+  /** Persisted Connector settings; the DSH runtime reads the session import scope from here. */
+  currentConnectorSettings(): ConnectorSettings { return this.manager.connectorSettingsSnapshot() }
+
+  /** Only the plugin filters messages, so a saved scope reaches the running
+   * runtime directly instead of waiting for the Connector restart. */
+  private applySessionSyncScope(): void {
+    this.ctx.get('agentsAnywhereRuntime')?.applySessionSyncScope(this.manager.connectorSettingsSnapshot().sessionSyncScope)
   }
 
   @Remote('inspect')
@@ -157,13 +169,21 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
   @Remote('controlConnector')
   controlConnector(action: ConnectorAction): Promise<null> { return this.manager.controlConnector(action) }
   @Remote('saveConnectorSettings')
-  saveConnectorSettings(settings: ConnectorSettings): Promise<null> { return this.manager.saveConnectorSettings(settings) }
+  async saveConnectorSettings(settings: ConnectorSettings): Promise<null> {
+    const result = await this.manager.saveConnectorSettings(settings)
+    this.applySessionSyncScope()
+    return result
+  }
   @Remote('openConnectorFolder')
   openConnectorFolder(folder: ConnectorFolder): Promise<null> {
     return this.manager.openConnectorFolder(folder, this.ctx.get('agentsAnywhereRuntime')?.logsPath)
   }
   @Remote('resetConnector')
-  resetConnector(forceLocal: boolean): Promise<null> { return this.manager.resetConnector(forceLocal) }
+  async resetConnector(forceLocal: boolean): Promise<null> {
+    const result = await this.manager.resetConnector(forceLocal)
+    this.applySessionSyncScope()
+    return result
+  }
   @Remote('resetConnectorEnvironment')
   resetConnectorEnvironment(): Promise<null> { return this.manager.resetConnectorEnvironment() }
   @Remote('createMobileLogin')
