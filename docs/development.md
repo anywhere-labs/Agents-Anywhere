@@ -185,3 +185,7 @@ GitHub Actions 手动运行 `CI` 时，可选 `scope=server`，只执行 Server 
 
 云端实测中四 worker 覆盖采集触发了一条异步等待失败；因此采集限制为最多两个 worker，
 不带覆盖采集的验证可按 `server_workers` 使用四 worker。阶段报告分别记录实际 worker 数。
+
+手动运行还可选 `server_mode=affected`，只执行公共检查和相关用例，用于快速诊断。
+该模式的 job 名称为 `Server affected diagnostics`，不冒充必需的完整 `Server tests` 检查；
+PR/push 仍执行带全量兜底的影子对照。JSON 报告目录是隐藏目录，上传步骤明确包含该目录。

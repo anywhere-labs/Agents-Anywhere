@@ -24,9 +24,9 @@ on:
         options: ['4', '2', '1']
         default: '4'
       server_mode:
-        description: Full suite or selection shadow comparison
+        description: Full, shadow, verification, or affected diagnostics
         type: choice
-        options: [full, shadow, verify]
+        options: [full, shadow, verify, affected]
         default: full
       server_sample_change:
         description: Benchmark a harmless announcement function edit in this checkout
@@ -240,7 +240,7 @@ jobs:
           done
 
   server:
-    name: Server tests
+    name: ${{ github.event_name == 'workflow_dispatch' && inputs.server_mode == 'affected' && 'Server affected diagnostics' || 'Server tests' }}
     needs: changes
     if: needs.changes.outputs.server == 'true'
     runs-on: ubuntu-latest
@@ -316,6 +316,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: server-test-report
+          include-hidden-files: true
           path: server/.test-results/
       - name: Summarize Server checks
         if: always()
