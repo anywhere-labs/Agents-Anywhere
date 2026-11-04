@@ -358,8 +358,11 @@ struct ChatOverflowAction: Identifiable {
   键盘压缩竖排时保留在栏内；溢出自下而上，低优先级组先进"…"。
 - 次级动作放 `ToolbarOverflowMenu`（iOS 27+）直接进系统"…"第一层——
   **禁止自造 ellipsis 菜单**（会形成"…"套"…"两层）。
-- Duo 内屏**横竖屏恒注入**同一套条目（placement 恒 `.topBarTrailing`，
-  系统自行分派：横屏进右缘竖排、竖屏进顶栏）；侧栏底栏恒空。
+- Duo **内屏与合盖外屏恒注入**同一套条目（placement 恒 `.topBarTrailing`，
+  系统自行分派：横屏进右缘竖排、竖屏进顶栏）。
+- 侧栏底栏按形态收窄：内屏双栏恒空（竖排常驻可见）；合盖外屏的抽屉
+  **保留**底栏——抽屉展开会盖住 detail 顶栏，此时 rail 不可见，清空底栏
+  就没有新会话/账号入口。
 
 **踩坑实录（每条都有真机证据）**：
 - 系统"…"溢出是死控件时不可交互——但条目无标题时菜单为空也表现为死；
@@ -376,6 +379,20 @@ struct ChatOverflowAction: Identifiable {
 - rail 检测不用几何比例猜：官方信号 `toolbarVerticalEdge`（iOS 27.1+，
   nil=水平条）；本仓最终连它也不需要——Duo 内屏恒注入即可。
 
+## 合盖外屏外壳 = 原版抽屉（2026-11-04）
+
+- Duo 合盖（compact width）与普通 iPhone 共用 `sidebarLayout(.drawer)`，
+  没有独立外壳。两 Tab 的 `CompactChatShellView` / `CompactSessionListView`
+  / `CompactMoreView` 已删除；判据仍是 `horizontalSizeClass`，不要给外屏
+  再加设备型号分支。
+- Duo 专属入口只走 rail（`chatRail` 注入条件 `isDuoFoldableIPhone`），
+  竖屏落 detail 顶栏、横屏进右缘竖排；**不自绘常驻右侧栏**（外屏窄，
+  常驻竖排会挤压内容，且与系统 placement 分派重复）。
+- 历史：两 Tab 是 2026-10-22 `10-22-ios-foldable-adaptive-ui` 的 Q1 决策
+  （普通 iPhone 与外屏统一两 Tab），2026-11-04 用户要求外屏回归原版后
+  撤销。外屏原有入口（设备/账号/设置/配对）在 `ChatSidebarView` 均有
+  等价实现，删两 Tab 不丢功能。
+
 ## 溢出菜单动作必须带图标（2026-10-29）
 
 `ChatOverflowAction` 有 `systemImage` 字段，渲染处有图标走
@@ -388,8 +405,9 @@ key/trash）。新增溢出动作时对照上游同名菜单选图标。
 
 ## 机型门控的保留理由（swiftui-iphone-duo 审计结论 2026-10-28）
 
-`isDuoFoldableIPhone` 共 5 处，属 skill 红旗（`if isIPhoneDuo`）但**有意
-保留**：rail 注入/侧栏底栏清空/外屏双 tab 是折叠屏专属产品行为，用
+`isDuoFoldableIPhone` 共 4 处（2026-11-04 外屏外壳回归原版后减一处），属
+skill 红旗（`if isIPhoneDuo`）但**有意保留**：rail 注入/侧栏底栏按形态
+收窄/内屏内容宽度上限是折叠屏专属产品行为，用
 `horizontalSizeClass == .regular` 替代会误伤 15PM 横屏（同样 regular
 width）。已知的取舍：内屏聊天列全宽（2200 上限）违背 Rule 21"更宽≠
 更长文本行"，是用户决策"折叠屏铺满"。审计其余全合规（无 UIScreen/

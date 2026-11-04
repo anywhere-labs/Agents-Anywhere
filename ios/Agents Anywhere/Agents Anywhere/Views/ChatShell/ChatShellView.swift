@@ -38,19 +38,11 @@ struct ChatShellView: View {
         let layout = ChatSidebarState.Layout.resolve(
             hasRegularWidth: horizontalSizeClass == .regular
         )
-        // Regular width keeps the native split sidebar. The two-tab shell is
-        // exclusive to the iPhone Duo cover screen: its narrow strip is the
-        // only compact width where the drawer hurts. Bar phones share the
-        // compact trait with it, so the model id is the one reliable signal —
-        // the "never a device model" rule above cannot express this split.
-        // Extend the set when more foldables land.
-        Group {
-            if layout == .regularSplit || !isDuoFoldableIPhone {
-                sidebarLayout(layout)
-            } else {
-                CompactChatShellView()
-            }
-        }
+        // Regular width keeps the native split sidebar; compact width uses the
+        // original drawer, including the Duo cover screen. Duo-only entries
+        // ride the right-edge rail (see the `chatRail` injection below) instead
+        // of a second shell.
+        sidebarLayout(layout)
         .onChange(of: layout, initial: true) { _, next in sidebar.setLayout(next) }
         // 侧栏状态记忆：分栏形态下开合变化即时快照（含开关刚打开时
         // 立即落当前值，避免"开启记忆后首启仍用默认"的空窗）。
@@ -187,10 +179,10 @@ struct ChatShellView: View {
                 onNewProjectSession: startProjectSession,
                 onRestoreSession: { await appState.setSessionArchived(sessionId: $0, archived: false) },
                 account: sidebarAccount,
-                // 宽 detail（Duo 横屏）新会话/头像移到右缘竖排 toolbar，
-                // 侧栏底栏清空不重复。
-                // Duo 内屏横竖屏都走 toolbar（同套逻辑），侧栏底栏恒空。
-                showsBottomControls: !isDuoFoldableIPhone,
+                // 内屏双栏：rail 竖排常驻可见，侧栏底栏清空不重复。
+                // 合盖外屏保留底栏——抽屉展开会盖住 detail 顶栏，rail 此时
+                // 不可见，没有底栏就失去新会话/账号入口。
+                showsBottomControls: !(isDuoFoldableIPhone && layout == .regularSplit),
                 selectedDeviceId: selectedDeviceId,
                 selectedSessionId: selectedSessionId,
                 isLoadingDevices: appState.isDashboardLoading && !appState.hasLoadedConnectors,
