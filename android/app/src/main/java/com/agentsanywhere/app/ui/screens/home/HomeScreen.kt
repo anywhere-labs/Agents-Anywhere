@@ -1,9 +1,12 @@
 package com.agentsanywhere.app.ui.screens.home
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -19,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -39,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -75,12 +80,19 @@ import com.agentsanywhere.app.ui.designsystem.AAWordmark
 import com.agentsanywhere.app.ui.designsystem.AuthErrorNotice
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.screens.common.AppEmptyState
+import com.agentsanywhere.app.ui.screens.devices.DeviceActionsSheet
+import com.agentsanywhere.app.ui.screens.devices.DeviceConfirmAction
+import com.agentsanywhere.app.ui.screens.devices.DeviceConfirmDialog
 import com.agentsanywhere.app.ui.screens.profile.ProfileSettingsDrawer
+import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.Folder
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Menu
+import com.composables.icons.lucide.Mic
 import com.composables.icons.lucide.Monitor
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Search
+import com.composables.icons.lucide.SlidersHorizontal
 import com.composables.icons.lucide.Terminal
 import com.composables.icons.lucide.UserRound
 import kotlinx.coroutines.launch
@@ -135,6 +147,8 @@ fun HomeScreen(
     onOpenDevice: (AgentDevice) -> Unit,
     deviceAgentPreviews: DeviceAgentPreviews,
     onPairDevice: () -> Unit,
+    onRenameDevice: suspend (String, String) -> Result<AgentDevice> = { _, _ -> Result.failure(IllegalStateException()) },
+    onDeleteDevice: suspend (String) -> Result<Unit> = { Result.failure(IllegalStateException()) },
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -144,12 +158,22 @@ fun HomeScreen(
     var renameErrorMessage by remember { mutableStateOf<String?>(null) }
     var renameBusy by remember { mutableStateOf(false) }
     var projectActionMenu by remember { mutableStateOf<HomeProjectActionMenu?>(null) }
+    var actionsDevice by remember { mutableStateOf<AgentDevice?>(null) }
+    var confirmDeviceAction by remember { mutableStateOf<Pair<AgentDevice, DeviceConfirmAction>?>(null) }
+    var deviceActionBusy by remember { mutableStateOf(false) }
+    var deviceActionError by remember { mutableStateOf<String?>(null) }
     val projectPreferences = rememberHomeProjectPreferences(serverUrl, userId)
     val projectSessionStatus = projectPreferences.sessionStatus
     val loadingProjectIds = loadingProjectRequests.filter { it.archived in projectSessionStatus.archiveStates }.mapTo(mutableSetOf()) { it.projectId }
     val projectErrors = projectSessionErrors.filterKeys { it.archived in projectSessionStatus.archiveStates }
         .entries.associate { it.key.projectId to it.value }
-    val expandedProjectIds = projectPreferences.expandedIds
+    val expandedProjectIds = remember(projectPreferences.expandedIds, state.projects) {
+        if (projectPreferences.expandedIds.isEmpty() && state.projects.isNotEmpty()) {
+            state.projects.map { it.id }.toSet()
+        } else {
+            projectPreferences.expandedIds
+        }
+    }
     val prefetchedProjectIds = remember(serverUrl, userId, projectSessionStatus) { mutableSetOf<String>() }
     val loadedSessions = remember(projectSessionsById, state.sessions, state.archivedSessions) {
         (projectSessionsById.values.flatten() + state.sessions + state.archivedSessions).associateBy { it.id }.values.toList()
@@ -238,6 +262,7 @@ fun HomeScreen(
                 onNewSessionInProject = onNewSessionInProject,
                 onOpenSession = onOpenSession,
                 onOpenDevice = onOpenDevice,
+                onLongPressDevice = { actionsDevice = it },
                 deviceAgentPreviews = deviceAgentPreviews,
                 onPairDevice = onPairDevice,
             )
@@ -450,6 +475,55 @@ fun HomeScreen(
             },
         )
     }
+
+    actionsDevice?.let { device ->
+        DeviceActionsSheet(
+            device = device,
+            onDismiss = { actionsDevice = null },
+            onRenameDevice = onRenameDevice,
+            onRevokeDevice = {
+                actionsDevice = null
+                deviceActionError = null
+                confirmDeviceAction = device to DeviceConfirmAction.RevokeDevice(device.name)
+            },
+            onDeleteDevice = {
+                actionsDevice = null
+                deviceActionError = null
+                confirmDeviceAction = device to DeviceConfirmAction.DeleteDevice
+            },
+        )
+    }
+
+    confirmDeviceAction?.let { (device, action) ->
+        DeviceConfirmDialog(
+            action = action,
+            busy = deviceActionBusy,
+            errorMessage = deviceActionError,
+            onDismiss = {
+                confirmDeviceAction = null
+                deviceActionError = null
+            },
+            onConfirm = {
+                if (deviceActionBusy) return@DeviceConfirmDialog
+                deviceActionBusy = true
+                deviceActionError = null
+                scope.launch {
+                    val result = when (action) {
+                        DeviceConfirmAction.DeleteDevice -> onDeleteDevice(device.id)
+                        else -> Result.success(Unit)
+                    }
+                    deviceActionBusy = false
+                    result.onSuccess {
+                        confirmDeviceAction = null
+                        deviceActionError = null
+                        showToast(context.getString(R.string.common_delete) + " " + device.name)
+                    }.onFailure { error ->
+                        deviceActionError = error.message
+                    }
+                }
+            },
+        )
+    }
 }
 
 
@@ -481,6 +555,7 @@ private fun HomeContent(
     onNewSessionInProject: (AgentProject) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
     onOpenDevice: (AgentDevice) -> Unit,
+    onLongPressDevice: (AgentDevice) -> Unit = onOpenDevice,
     deviceAgentPreviews: DeviceAgentPreviews,
     onPairDevice: () -> Unit,
 ) {
@@ -495,13 +570,15 @@ private fun HomeContent(
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.statusBars)
             .padding(start = 18.dp, top = 6.dp, end = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(15.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         HomeHeader(onProfile = onProfile, onSearch = onSearch)
-        QuickEntries(
-            onDevicesClick = { navigate(AppDestination.Devices) },
-            onTerminalClick = { navigate(AppDestination.Terminal) },
-            onFilesClick = { navigate(AppDestination.Files) },
+        CodexDeviceChipsRow(
+            devices = state.devices,
+            selectedDeviceId = projectPreferences.selectedDeviceId,
+            onSelectDevice = { projectPreferences.selectDevice(it) },
+            onManageDevices = { navigate(AppDestination.Devices) },
+            onLongPressDevice = onLongPressDevice,
         )
         PullToRefreshBox(
             isRefreshing = isRefreshing,
@@ -557,12 +634,13 @@ private fun HomeContent(
     }
 
     Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.BottomEnd,
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 18.dp, vertical = 24.dp),
+        contentAlignment = Alignment.BottomCenter,
     ) {
-        FloatingHomeButton(
+        CodexBottomBar(
             onClick = { navigate(AppDestination.NewSession) },
-            modifier = Modifier.padding(end = 18.dp, bottom = 32.dp),
         )
     }
 }
@@ -615,8 +693,15 @@ private fun HomeProjectModeList(
                     .groupBy { it.projectId.orEmpty() }
                     .mapValues { (_, sessions) -> sessions.sortedWith(sessionListComparator()) }
             }
+            val filteredProjects = remember(state.projects, deviceAgentFilter.connectorId) {
+                if (deviceAgentFilter.connectorId == null) {
+                    state.projects
+                } else {
+                    state.projects.filter { it.connectorId == deviceAgentFilter.connectorId }
+                }
+            }
             HomeProjectList(
-                projects = state.projects.filter { projectHasVisibleSessions(it, allSessions, projectSessionStatus, deviceAgentFilter) },
+                projects = filteredProjects,
                 devices = state.devices,
                 agentRuntimes = remember(allSessions) {
                     allSessions.map(AgentSession::runtime).filter(String::isNotBlank).distinct().sortedBy(String::runtimeTypeLabel)
@@ -654,29 +739,17 @@ private fun HomeHeader(onProfile: () -> Unit, onSearch: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(46.dp),
+            .height(44.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         RoundLucideButton(
-            icon = Lucide.UserRound,
+            icon = Lucide.Menu,
             iconColor = icon,
             surface = colors.raisedSurface,
             border = if (darkMode) colors.border else Color(0xFFE7E6E2),
             onClick = onProfile,
         )
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .height(40.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            AAWordmark(
-                color = colors.ink,
-                fontSize = 31.sp,
-                lineHeight = 40.sp,
-            )
-        }
         RoundLucideButton(
             icon = Lucide.Search,
             iconColor = icon,
@@ -687,35 +760,196 @@ private fun HomeHeader(onProfile: () -> Unit, onSearch: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun QuickEntries(
-    onDevicesClick: () -> Unit,
-    onTerminalClick: () -> Unit,
-    onFilesClick: () -> Unit,
+private fun CodexDeviceChipsRow(
+    devices: List<AgentDevice>,
+    selectedDeviceId: String?,
+    onSelectDevice: (String?) -> Unit,
+    onManageDevices: () -> Unit,
+    onLongPressDevice: (AgentDevice) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
+    val colors = LocalAAColors.current
+    val darkMode = colors.canvas == Color(0xFF09090B)
+    val haptic = LocalHapticFeedback.current
+
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .height(76.dp),
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // 全部
+        val allSelected = selectedDeviceId == null
+        val allBg = when {
+            allSelected && darkMode -> Color(0xFF27272A)
+            allSelected -> Color(0xFFE5E5EA)
+            else -> Color.Transparent
+        }
+        val allText = when {
+            allSelected && darkMode -> Color(0xFFFAFAFA)
+            allSelected -> Color(0xFF1C1C1E)
+            else -> colors.muted
+        }
+        val allBorder = when {
+            allSelected -> Color.Transparent
+            darkMode -> Color(0xFF27272A)
+            else -> Color(0xFFE5E5EA)
+        }
+
+        Box(
+            modifier = Modifier
+                .height(34.dp)
+                .clip(RoundedCornerShape(17.dp))
+                .background(allBg)
+                .border(1.dp, allBorder, RoundedCornerShape(17.dp))
+                .clickable {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onSelectDevice(null)
+                }
+                .padding(horizontal = 14.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = stringResource(R.string.common_all),
+                color = allText,
+                fontSize = 13.sp,
+                fontWeight = if (allSelected) FontWeight.Bold else FontWeight.Medium,
+            )
+        }
+
+        // 各设备（在线优先排在前面，对标 Codex）
+        val sortedDevices = remember(devices) {
+            devices.sortedWith(compareByDescending<AgentDevice> { it.online }.thenBy { it.name.lowercase() })
+        }
+        sortedDevices.forEach { device ->
+            val isSelected = selectedDeviceId == device.id
+            val bg = when {
+                isSelected && darkMode -> Color(0xFF27272A)
+                isSelected -> Color(0xFFE5E5EA)
+                else -> Color.Transparent
+            }
+            val text = when {
+                isSelected && darkMode -> Color(0xFFFAFAFA)
+                isSelected -> Color(0xFF1C1C1E)
+                else -> colors.inkSoft
+            }
+            val border = when {
+                isSelected -> Color.Transparent
+                darkMode -> Color(0xFF27272A)
+                else -> Color(0xFFE5E5EA)
+            }
+            val statusDot = if (device.online) Color(0xFF10B981) else Color(0xFFA1A1AA)
+
+            Row(
+                modifier = Modifier
+                    .height(34.dp)
+                    .clip(RoundedCornerShape(17.dp))
+                    .background(bg)
+                    .border(1.dp, border, RoundedCornerShape(17.dp))
+                    .combinedClickable(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onSelectDevice(device.id)
+                        },
+                        onLongClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onLongPressDevice(device)
+                        },
+                    )
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(statusDot),
+                )
+                Icon(
+                    imageVector = Lucide.Monitor,
+                    contentDescription = null,
+                    tint = text,
+                    modifier = Modifier.size(13.dp),
+                )
+                Text(
+                    text = device.name,
+                    color = text,
+                    fontSize = 13.sp,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 1,
+                )
+            }
+        }
+
+        // 管理设备
+        Box(
+            modifier = Modifier
+                .height(34.dp)
+                .clip(RoundedCornerShape(17.dp))
+                .clickable {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onManageDevices()
+                }
+                .padding(horizontal = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Lucide.SlidersHorizontal,
+                contentDescription = stringResource(R.string.devices_title),
+                tint = colors.faint,
+                modifier = Modifier.size(15.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun CodexBottomBar(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = LocalAAColors.current
+    val darkMode = colors.canvas == Color(0xFF09090B)
+    val surface = if (darkMode) Color(0xFF1C1C1E) else Color(0xFFF7F7F8)
+    val border = if (darkMode) Color(0xFF2C2C2E) else Color(0xFFE5E5EA)
+    val text = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF8E8E93)
+    val iconTint = if (darkMode) Color(0xFFE4E4E7) else Color(0xFF1C1C1E)
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(50.dp)
+            .shadow(16.dp, RoundedCornerShape(25.dp), ambientColor = Color(0x12000000), spotColor = Color(0x12000000))
+            .clip(RoundedCornerShape(25.dp))
+            .background(surface)
+            .border(1.dp, border, RoundedCornerShape(25.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        QuickEntryCard(
-            title = stringResource(R.string.devices_title),
-            icon = Lucide.Monitor,
-            modifier = Modifier.weight(1f),
-            onClick = onDevicesClick,
+        Icon(
+            imageVector = Lucide.Plus,
+            contentDescription = null,
+            tint = iconTint,
+            modifier = Modifier.size(19.dp),
         )
-        QuickEntryCard(
-            title = stringResource(R.string.common_terminal),
-            icon = Lucide.Terminal,
+        Text(
+            text = stringResource(R.string.home_ask_codex_placeholder),
+            color = text,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Normal,
             modifier = Modifier.weight(1f),
-            onClick = onTerminalClick,
         )
-        QuickEntryCard(
-            title = stringResource(R.string.common_files),
-            icon = Lucide.Folder,
-            modifier = Modifier.weight(1f),
-            onClick = onFilesClick,
+        Icon(
+            imageVector = Lucide.Mic,
+            contentDescription = null,
+            tint = iconTint,
+            modifier = Modifier.size(18.dp),
         )
     }
 }

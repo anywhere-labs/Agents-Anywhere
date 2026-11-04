@@ -67,6 +67,7 @@ import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.Circle
 import com.composables.icons.lucide.CircleCheck
+import com.composables.icons.lucide.Ellipsis
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.valentinilk.shimmer.shimmer
@@ -485,12 +486,31 @@ internal fun DeviceRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Icon(
-            imageVector = Lucide.ChevronRight,
-            contentDescription = null,
-            tint = chevron,
-            modifier = Modifier.size(20.dp),
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .clickable { onLongClick() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Lucide.Ellipsis,
+                    contentDescription = stringResource(R.string.device_detail_device_actions),
+                    tint = meta,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            Icon(
+                imageVector = Lucide.ChevronRight,
+                contentDescription = null,
+                tint = chevron,
+                modifier = Modifier.size(18.dp),
+            )
+        }
     }
 }
 

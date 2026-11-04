@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
@@ -47,6 +48,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -184,6 +188,8 @@ fun SessionDetailScreen(
     terminalPool: RemoteTerminalPool,
     composerDraftStore: SessionComposerDraftStore,
     onSessionChanged: (AgentSession) -> Unit = {},
+    onBack: () -> Unit = { navigate(AppDestination.Sessions) },
+    onRenameSession: (suspend (String, String) -> Result<AgentSession>)? = null,
 ) {
     var planningCreation by remember(sessionId, preparedSession?.localSessionId) { mutableStateOf(false) }
     var planningBusy by remember(sessionId) { mutableStateOf(false) }
@@ -245,6 +251,10 @@ fun SessionDetailScreen(
     var modelCatalogRefreshKey by remember(sessionId) { mutableStateOf<String?>(null) }
     var permissionCatalogRefreshKey by remember(sessionId) { mutableStateOf<String?>(null) }
     val refetchInFlight = remember(sessionId) { AtomicBoolean(false) }
+    var showRenameDialog by remember(sessionId) { mutableStateOf(false) }
+    var renameDraft by remember(sessionId) { mutableStateOf("") }
+    var renameBusy by remember(sessionId) { mutableStateOf(false) }
+    var renameError by remember(sessionId) { mutableStateOf<String?>(null) }
     val olderInFlight = remember(sessionId) { AtomicBoolean(false) }
     val remoteTerminal = remember(sessionId, terminalPool) { terminalPool.forSession(sessionId) }
 
@@ -421,16 +431,14 @@ fun SessionDetailScreen(
 
         fun downloadAndOpenLocally() {
             scope.launch {
-                filesController.downloadFile(session.connectorId, root, trimmed)
-                    .onSuccess { bytes ->
+                val name = trimmed.substringAfterLast('/').substringAfterLast('\\').ifBlank { "download" }
+                val target = withContext(Dispatchers.IO) {
+                    java.io.File(context.cacheDir, "open-${System.currentTimeMillis()}-$name")
+                }
+                filesController.downloadFile(session.connectorId, root, trimmed, target)
+                    .onSuccess { downloaded ->
                         runCatching {
-                            val name = trimmed.substringAfterLast('/').substringAfterLast('\\')
-                            val target = withContext(Dispatchers.IO) {
-                                cacheDownloadedAttachment(context.cacheDir, com.agentsanywhere.app.feature.sessiondetail.DownloadedAttachment(
-                                    fileId = session.id, name = name, mediaType = "", size = bytes.size.toLong(), sha256 = "", bytes = bytes,
-                                ))
-                            }
-                            val uri = FileProvider.getUriForFile(context, "${context.packageName}.attachments", target)
+                            val uri = FileProvider.getUriForFile(context, "${context.packageName}.attachments", downloaded.file)
                             val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
                                 ?: "application/octet-stream"
                             context.startActivity(Intent(Intent.ACTION_VIEW).apply {
@@ -1195,7 +1203,7 @@ fun SessionDetailScreen(
         if (pagerState.currentPage == 1) {
             scope.launch { pagerState.animateScrollToPage(0) }
         } else {
-            navigate(AppDestination.Sessions)
+            onBack()
         }
     }
 
@@ -1732,8 +1740,14 @@ fun SessionDetailScreen(
     )
     val replyTarget = state.session?.runtimeLabel?.takeIf { it.isNotBlank() }
         ?: stringResource(R.string.session_agent_fallback)
+    val targetDeviceName = state.session?.deviceName ?: initialSession?.deviceName
+    val workOnDevicePlaceholder = if (!targetDeviceName.isNullOrBlank()) {
+        stringResource(R.string.session_work_on_device, targetDeviceName)
+    } else {
+        stringResource(R.string.session_reply_to, replyTarget)
+    }
     val placeholder = when {
-        isPreparedSession -> stringResource(R.string.session_reply_to, replyTarget)
+        isPreparedSession -> workOnDevicePlaceholder
         !takeoverEnabled -> stringResource(R.string.session_read_only_placeholder)
         state.session != null && !connectorOnline -> stringResource(R.string.session_device_offline_placeholder)
         blockingNotices.isNotEmpty() -> stringResource(R.string.session_waiting_approval_placeholder)
@@ -1750,7 +1764,7 @@ fun SessionDetailScreen(
         runtimeStatus == SessionRuntimeStatus.Error -> stringResource(R.string.session_error_placeholder)
         runtimeStatus == SessionRuntimeStatus.Disconnected -> stringResource(R.string.session_device_offline_placeholder)
         !canUseSendMessage && !canUseCommands -> stringResource(R.string.session_send_unavailable)
-        inputEnabled -> stringResource(R.string.session_reply_to, replyTarget)
+        inputEnabled -> workOnDevicePlaceholder
         else -> stringResource(R.string.session_send_unavailable)
     }
     val density = LocalDensity.current
@@ -1951,9 +1965,16 @@ fun SessionDetailScreen(
                         )
                         SessionDetailHeader(
                             title = state.session?.title ?: stringResource(R.string.session_title_fallback),
+                            deviceName = state.session?.deviceName ?: initialSession?.deviceName,
                             darkMode = darkMode,
-                            onLeftClick = ::openRuntimeSettings,
-                            onRightClick = { scope.launch { pagerState.animateScrollToPage(1) } },
+                            onBack = onBack,
+                            onTitleClick = ::openRuntimeSettings,
+                            onRename = {
+                                renameDraft = state.session?.title.orEmpty()
+                                renameError = null
+                                showRenameDialog = true
+                            },
+                            onMore = { scope.launch { pagerState.animateScrollToPage(1) } },
                             modifier = Modifier.align(Alignment.TopCenter),
                         )
                         if (previewImage == null) {
@@ -2021,6 +2042,136 @@ fun SessionDetailScreen(
             onDismiss = { if (!shareBusy) pendingShareItemIds = null },
             onConfirm = ::createShare,
         )
+    }
+
+    if (showRenameDialog) {
+        val currentTitle = state.session?.title ?: ""
+        Dialog(
+            onDismissRequest = { if (!renameBusy) showRenameDialog = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable { if (!renameBusy) showRenameDialog = false }
+                    .padding(horizontal = 28.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(colors.raisedSurface)
+                        .border(1.dp, colors.border, RoundedCornerShape(20.dp))
+                        .clickable(enabled = false) {}
+                        .padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.home_rename_session),
+                        color = colors.ink,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    BasicTextField(
+                        value = renameDraft,
+                        onValueChange = {
+                            renameDraft = it
+                            renameError = null
+                        },
+                        enabled = !renameBusy,
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(46.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (darkMode) Color(0xFF1C1C1E) else Color(0xFFF2F2F7))
+                            .border(1.dp, colors.border, RoundedCornerShape(12.dp))
+                            .padding(horizontal = 14.dp),
+                        textStyle = TextStyle(
+                            color = colors.ink,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                        ),
+                        cursorBrush = SolidColor(colors.ink),
+                        decorationBox = { inner ->
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) {
+                                inner()
+                            }
+                        },
+                    )
+                    renameError?.let { err ->
+                        Text(
+                            text = err,
+                            color = colors.errorText,
+                            fontSize = 12.sp,
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(42.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (darkMode) Color(0xFF27272A) else Color(0xFFE5E5EA))
+                                .clickable(enabled = !renameBusy) { showRenameDialog = false },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = stringResource(R.string.common_cancel),
+                                color = colors.ink,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(42.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (darkMode) Color(0xFFE4E4E7) else Color(0xFF18181B))
+                                .clickable(enabled = !renameBusy && renameDraft.isNotBlank()) {
+                                    val newTitle = renameDraft.trim()
+                                    val sId = state.session?.id ?: return@clickable
+                                    if (newTitle == currentTitle || newTitle.isBlank()) {
+                                        showRenameDialog = false
+                                        return@clickable
+                                    }
+                                    renameBusy = true
+                                    renameError = null
+                                    scope.launch {
+                                        val fn = onRenameSession
+                                        if (fn != null) {
+                                            fn(sId, newTitle)
+                                                .onSuccess { updated ->
+                                                    onSessionChanged(updated)
+                                                    showRenameDialog = false
+                                                }
+                                                .onFailure {
+                                                    renameError = it.message ?: context.getString(R.string.home_rename_failed)
+                                                }
+                                        } else {
+                                            showRenameDialog = false
+                                        }
+                                        renameBusy = false
+                                    }
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = if (renameBusy) stringResource(R.string.common_saving) else stringResource(R.string.common_save),
+                                color = if (darkMode) Color(0xFF18181B) else Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 
     if (showRuntimeSettings) {
@@ -2564,5 +2715,5 @@ private fun uniqueGalleryFile(directory: File, displayName: String): File {
     }
 }
 
-private const val MAX_ATTACHMENT_FILES = 6
-private const val MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+private const val MAX_ATTACHMENT_FILES = 50
+private const val MAX_ATTACHMENT_BYTES = 2048L * 1024L * 1024L

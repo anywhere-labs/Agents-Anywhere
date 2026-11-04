@@ -129,6 +129,7 @@ fun DeviceDetailScreen(
                         .onSuccess {
                             confirmAction = null
                             actionError = null
+                            navigate(backDestination)
                         }
                         .onFailure { error ->
                             actionError = error.message ?: context.getString(R.string.device_detail_delete_failed)

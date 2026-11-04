@@ -165,6 +165,7 @@ class ApiClient(
         serverUrl: String,
         path: String,
         authorizationToken: String? = null,
+        readTimeoutSeconds: Long? = null,
     ): JSONObject {
         return requestJson(
             serverUrl = serverUrl,
@@ -172,6 +173,7 @@ class ApiClient(
             method = "DELETE",
             bodyText = null,
             authorizationToken = authorizationToken,
+            readTimeoutSeconds = readTimeoutSeconds,
         )
     }
 
@@ -407,8 +409,9 @@ class ApiClient(
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         val EMPTY_JSON_BODY = ByteArray(0).toRequestBody(JSON_MEDIA_TYPE)
         val JSON_HTTP_CLIENT: OkHttpClient = OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
             .build()
         val DOWNLOAD_HTTP_CLIENT: OkHttpClient = JSON_HTTP_CLIENT.newBuilder()
             .readTimeout(60, TimeUnit.SECONDS)

@@ -167,7 +167,7 @@ internal fun DeviceActionsSheet(
                 if (device.online) {
                     AABottomSheetItem(icon = Lucide.KeyRound, text = stringResource(R.string.common_revoke), onClick = onRevokeDevice)
                 }
-                AABottomSheetItem(icon = Lucide.Trash2, text = stringResource(R.string.common_delete), danger = true, onClick = onDeleteDevice)
+                AABottomSheetItem(icon = Lucide.Trash2, text = stringResource(R.string.device_actions_unbind_and_delete), danger = true, onClick = onDeleteDevice)
             }
         }
     }

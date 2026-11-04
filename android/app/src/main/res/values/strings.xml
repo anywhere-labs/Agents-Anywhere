@@ -37,6 +37,7 @@
     <string name="common_user_id">User ID</string>
     <string name="common_working">Working...</string>
     <string name="common_delete">Delete</string>
+    <string name="common_more">More</string>
     <string name="common_setup">Setup</string>
     <string name="common_revoke">Revoke</string>
     <string name="common_enable">Enable</string>
@@ -231,7 +232,8 @@
     <string name="device_actions_rename_failed">Could not rename device.</string>
     <string name="device_actions_rename_device">Rename device</string>
     <string name="device_actions_rename">Rename</string>
-    <string name="device_confirm_delete_device_title">Delete this device?</string>
+    <string name="device_actions_unbind_and_delete">Unpair and delete device</string>
+    <string name="device_confirm_delete_device_title">Unpair and delete this device?</string>
     <string name="device_confirm_delete_device_body">This removes the device and deletes all server records tied to it, including its sessions, workspaces, runtime configurations, and connector token. To bring it back you\'ll need to pair it again.</string>
     <string name="device_confirm_deleting">Deleting...</string>
     <string name="device_confirm_retry_delete">Retry delete</string>
@@ -401,6 +403,8 @@
     <string name="session_agent_fallback">Agent</string>
     <string name="session_device_offline_placeholder">Device is offline. You can\'t chat right now.</string>
     <string name="session_reply_to">Reply to %1$s</string>
+    <string name="session_work_on_device">Work on %1$s</string>
+    <string name="home_ask_codex_placeholder">Ask Agent</string>
     <string name="session_read_only_placeholder">Read-only mode - turn on takeover to send messages</string>
     <string name="session_runtime_model_loading">Loading model…</string>
     <string name="session_runtime_permission_loading">Loading permission…</string>

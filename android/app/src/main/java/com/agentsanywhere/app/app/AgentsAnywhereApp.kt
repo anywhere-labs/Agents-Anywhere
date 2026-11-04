@@ -6,6 +6,7 @@ import android.net.NetworkCapabilities
 import android.net.Network
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -46,6 +47,7 @@ import com.agentsanywhere.app.feature.realtime.SessionRealtimeController
 import com.agentsanywhere.app.feature.sessions.SessionsController
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.feature.sessions.NewSessionCreateOutcome
+import com.agentsanywhere.app.feature.sessions.HomeStateCache
 import com.agentsanywhere.app.feature.sessions.NewSessionDraft
 import com.agentsanywhere.app.feature.sessions.NewSessionPreferenceStore
 import com.agentsanywhere.app.feature.sessions.projectHasActiveSessions
@@ -102,15 +104,18 @@ fun AgentsAnywhereApp(
 ) {
     val context = LocalContext.current
     val sessionStore = remember(context) { AuthSessionStore(context) }
-    var destinationName by rememberSaveable {
+    var backStack by rememberSaveable {
         mutableStateOf(
-            if (sessionStore.hasAuthSession()) {
-                AppDestination.Sessions.name
-            } else {
-                AppDestination.LoginMethods.name
-            },
+            listOf(
+                if (sessionStore.hasAuthSession()) {
+                    AppDestination.Sessions.name
+                } else {
+                    AppDestination.LoginMethods.name
+                },
+            ),
         )
     }
+    val destinationName = backStack.lastOrNull() ?: AppDestination.Sessions.name
     var pendingMobileLoginQr by remember { mutableStateOf<MobileLoginQrPayload?>(null) }
     var selectedSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     var initialNewSessionProjectId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -192,7 +197,9 @@ fun AgentsAnywhereApp(
         if (!hasAuthSession) return@LaunchedEffect
         preparedSessionDraft = null
         selectedSessionId = id
-        destinationName = AppDestination.SessionDetail.name
+        if (backStack.lastOrNull() != AppDestination.SessionDetail.name) {
+            backStack = backStack + AppDestination.SessionDetail.name
+        }
         onNotificationConsumed()
     }
 
@@ -204,14 +211,21 @@ fun AgentsAnywhereApp(
     LaunchedEffect(updatesAllowed, updateServerUrl) {
         appUpdateViewModel.syncSession(updatesAllowed)
     }
+    val homeStateCache = remember(context) { HomeStateCache(context) }
     var sessionsState by remember(sessionsController) {
+        val cached = if (hasAuthSession) homeStateCache.load(sessionStore.readUserId()) else null
         mutableStateOf(
-            if (hasAuthSession) {
+            cached ?: if (hasAuthSession) {
                 SessionsState(isLoading = true)
             } else {
                 SessionsState()
             },
         )
+    }
+    LaunchedEffect(sessionsState, hasAuthSession) {
+        if (hasAuthSession && sessionsState.hasLoaded) {
+            homeStateCache.save(sessionStore.readUserId(), sessionsState)
+        }
     }
     val nextOrderExpiry = sessionsState.sessions.map { it.optimisticTopUntil }.filter { it > 0L }.minOrNull()
     LaunchedEffect(nextOrderExpiry) {
@@ -290,7 +304,7 @@ fun AgentsAnywhereApp(
         selectedDeviceId = null
         pendingMobileLoginQr = null
         webLoginViewModel.resetForSignedOutEntry()
-        destinationName = AppDestination.LoginMethods.name
+        backStack = listOf(AppDestination.LoginMethods.name)
     }
 
     LaunchedEffect(unauthorizedTokens) {
@@ -435,6 +449,13 @@ fun AgentsAnywhereApp(
         }
         if (destination == AppDestination.LoginMethods) {
             webLoginViewModel.returnToHostChoice()
+            backStack = listOf(AppDestination.LoginMethods.name)
+        } else if (destination == AppDestination.Sessions) {
+            backStack = listOf(AppDestination.Sessions.name)
+        } else {
+            if (backStack.lastOrNull() != destination.name) {
+                backStack = backStack + destination.name
+            }
         }
         if (
             destination == AppDestination.ServerSetup &&
@@ -454,7 +475,23 @@ fun AgentsAnywhereApp(
         ) {
             deviceSetupReturnDestinationName = destinationName
         }
-        destinationName = destination.name
+    }
+
+    val navigateUp: () -> Unit = {
+        if (backStack.size > 1) {
+            val popped = backStack.last()
+            backStack = backStack.dropLast(1)
+            if (popped == AppDestination.SessionDetail.name) {
+                preparedSessionDraft = null
+            }
+            if (popped == AppDestination.DeviceDetail.name) {
+                selectedDeviceId = null
+            }
+        }
+    }
+
+    BackHandler(enabled = backStack.size > 1) {
+        navigateUp()
     }
 
     val realtimeServerUrl = sessionStore.readServerUrl()
@@ -571,6 +608,7 @@ fun AgentsAnywhereApp(
         webLoginViewModel = webLoginViewModel,
         appUpdateViewModel = appUpdateViewModel,
         navigate = navigate,
+        navigateUp = navigateUp,
         onRefreshSessions = {
             if (!hasAuthSession || isRefreshingSessions) return@AgentsAnywhereNavHost
             scope.launch {
@@ -594,7 +632,7 @@ fun AgentsAnywhereApp(
         onOpenSession = { session ->
             preparedSessionDraft = null
             selectedSessionId = session.id
-            destinationName = AppDestination.SessionDetail.name
+            navigate(AppDestination.SessionDetail)
             if (session.unread) {
                 val request = sessionsState.beginSessionRequest(listOf(session.id))
                 sessionsState = request.state
@@ -616,7 +654,7 @@ fun AgentsAnywhereApp(
         onOpenDevice = { device ->
             deviceDetailReturnDestinationName = destinationName
             selectedDeviceId = device.id
-            destinationName = AppDestination.DeviceDetail.name
+            navigate(AppDestination.DeviceDetail)
         },
         onHomeTabSelected = { tab ->
             selectedHomeTabName = tab.name
@@ -650,19 +688,19 @@ fun AgentsAnywhereApp(
                 Result.failure(IllegalStateException("Sign in again to delete this device."))
             } else {
                 devicesController.deleteDevice(connectorId)
+                    .recoverCatching { error ->
+                        val is404 = (error as? com.agentsanywhere.app.api.ApiException)?.statusCode == 404 ||
+                            error.message?.contains("not found", ignoreCase = true) == true ||
+                            error.message?.contains("404") == true
+                        if (is404) {
+                            Unit
+                        } else {
+                            throw error
+                        }
+                    }
                     .onSuccess {
                         sessionsState = sessionsState.withDeletedDevice(connectorId)
                         if (selectedDeviceId == connectorId) selectedDeviceId = null
-                        destinationName = AppDestination.Devices.name
-                    }
-                    .onFailure { error ->
-                        // 404 = 设备已在别处删除（僵尸条目）：同样从本地列表清除，
-                        // 否则用户面对一个永远删不掉的幽灵设备。
-                        if ((error as? com.agentsanywhere.app.api.ApiException)?.statusCode == 404) {
-                            sessionsState = sessionsState.withDeletedDevice(connectorId)
-                            if (selectedDeviceId == connectorId) selectedDeviceId = null
-                            destinationName = AppDestination.Devices.name
-                        }
                     }
             }
         },
@@ -851,7 +889,7 @@ fun AgentsAnywhereApp(
         },
         onNewSessionInProject = { project ->
             initialNewSessionProjectId = project.id
-            destinationName = AppDestination.NewSession.name
+            navigate(AppDestination.NewSession)
         },
         onCreateSession = { draft ->
             if (!hasAuthSession) {
@@ -886,7 +924,7 @@ fun AgentsAnywhereApp(
         onPrepareSession = { draft ->
             preparedSessionDraft = draft
             selectedSessionId = null
-            destinationName = AppDestination.SessionDetail.name
+            navigate(AppDestination.SessionDetail)
         },
         onPreparedSessionCreated = { session ->
             sessionsState = sessionsState.withPatchedSession(session)
@@ -922,7 +960,7 @@ fun AgentsAnywhereApp(
         },
         onMobileLoginQrRequested = { payload ->
             pendingMobileLoginQr = payload
-            destinationName = AppDestination.QrWaiting.name
+            navigate(AppDestination.QrWaiting)
         },
     )
     com.agentsanywhere.app.ui.screens.home.RuntimeWorkflowDialog(sessionsController.workflows) {
@@ -930,7 +968,7 @@ fun AgentsAnywhereApp(
             sessionsState = sessionsState.withPatchedSession(session)
             preparedSessionDraft = null
             selectedSessionId = session.id
-            destinationName = AppDestination.SessionDetail.name
+            navigate(AppDestination.SessionDetail)
         }
     }
     AnnouncementGate(

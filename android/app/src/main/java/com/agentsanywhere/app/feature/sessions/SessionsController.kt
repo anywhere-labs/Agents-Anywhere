@@ -24,6 +24,8 @@ import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.model.AgentSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.security.MessageDigest
@@ -65,31 +67,44 @@ class SessionsController(
 
         return withContext(Dispatchers.IO) {
             runCatching {
-                val activePage = sessionsApi.listSessions(
-                    serverUrl = serverUrl,
-                    authorizationToken = accessToken,
-                    archived = false,
-                )
-                val archivedPage = sessionsApi.listSessions(
-                    serverUrl = serverUrl,
-                    authorizationToken = accessToken,
-                    archived = true,
-                )
-                val devices = devicesApi.listDevices(
-                    serverUrl = serverUrl,
-                    authorizationToken = accessToken,
-                )
-                val projects = sessionsApi.listProjects(
-                    serverUrl = serverUrl,
-                    authorizationToken = accessToken,
-                )
-                toState(
-                    remoteSessions = activePage.sessions + archivedPage.sessions,
-                    remoteDevices = devices,
-                    remoteProjects = projects.projects,
-                    activePage = activePage.pageInfo(),
-                    archivedPage = archivedPage.pageInfo(),
-                )
+                coroutineScope {
+                    val activeDeferred = async {
+                        sessionsApi.listSessions(
+                            serverUrl = serverUrl,
+                            authorizationToken = accessToken,
+                            archived = false,
+                        )
+                    }
+                    val devicesDeferred = async {
+                        devicesApi.listDevices(
+                            serverUrl = serverUrl,
+                            authorizationToken = accessToken,
+                        )
+                    }
+                    val projectsDeferred = async {
+                        sessionsApi.listProjects(
+                            serverUrl = serverUrl,
+                            authorizationToken = accessToken,
+                        )
+                    }
+
+                    val activePage = activeDeferred.await()
+                    val devices = devicesDeferred.await()
+                    val projects = projectsDeferred.await()
+
+                    val emptyArchivedPage = com.agentsanywhere.app.api.RemoteSessionPageInfo(
+                        hasMore = false,
+                        nextCursor = null,
+                    )
+
+                    toState(
+                        remoteSessions = activePage.sessions,
+                        remoteDevices = devices,
+                        remoteProjects = projects.projects,
+                        activePage = activePage.pageInfo(),
+                        archivedPage = emptyArchivedPage,
+                    )
+                }
             }.recoverCatching { error ->
                 if (error is CancellationException || error is ApiException) throw error
                 throw IllegalStateException(error.message ?: "Could not load sessions.", error)
@@ -850,8 +865,8 @@ private fun Throwable.asCreateFailure(): Throwable {
     }
 }
 
-private const val MAX_CREATE_ATTACHMENTS = 10
-private const val MAX_CREATE_ATTACHMENT_BYTES = 25 * 1024 * 1024
+private const val MAX_CREATE_ATTACHMENTS = 50
+private const val MAX_CREATE_ATTACHMENT_BYTES = Int.MAX_VALUE
 
 internal fun normalizeSessionIds(ids: List<String>): List<String> {
     return ids.distinct()

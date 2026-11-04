@@ -166,6 +166,7 @@ class FilesApi(
             return base.removeSuffix("/api/v2") + downloadUrl
         }
         return base + "/" + downloadUrl.trimStart('/')
+    }
 
     fun createPreviewToken(
         serverUrl: String,

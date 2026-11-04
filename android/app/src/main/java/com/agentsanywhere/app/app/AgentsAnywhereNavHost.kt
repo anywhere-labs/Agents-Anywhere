@@ -99,6 +99,7 @@ internal fun AgentsAnywhereNavHost(
     webLoginViewModel: WebLoginViewModel,
     appUpdateViewModel: AppUpdateViewModel,
     navigate: (AppDestination) -> Unit,
+    navigateUp: () -> Unit = { navigate(AppDestination.Sessions) },
     onRefreshSessions: () -> Unit,
     onLoadMoreSessions: (Boolean) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
@@ -312,6 +313,8 @@ internal fun AgentsAnywhereNavHost(
                     onOpenDevice = onOpenDevice,
                     deviceAgentPreviews = deviceAgentPreviews,
                     onPairDevice = { navigate(AppDestination.DeviceSetup) },
+                    onRenameDevice = onRenameDevice,
+                    onDeleteDevice = onDeleteDevice,
                 )
                 AppDestination.NewSession, AppDestination.NewProject -> androidx.compose.runtime.key(serverUrl, userId, destination) { NewSessionScreen(
                     navigate = navigate,
@@ -353,6 +356,8 @@ internal fun AgentsAnywhereNavHost(
                     terminalPool = remoteTerminalPool,
                     composerDraftStore = sessionComposerDraftStore,
                     onSessionChanged = onSessionChanged,
+                    onBack = navigateUp,
+                    onRenameSession = onRenameSession,
                 )
                 AppDestination.DeviceDetail -> DeviceDetailScreen(
                     navigate = navigate,
@@ -373,7 +378,7 @@ internal fun AgentsAnywhereNavHost(
                     isRefreshing = isRefreshingSessions,
                     onRefresh = onRefreshSessions,
                     onOpenDevice = onOpenDevice,
-                    onBack = { navigate(AppDestination.Sessions) },
+                    onBack = navigateUp,
                     agentPreviews = deviceAgentPreviews,
                     onAddDevice = { navigate(AppDestination.DeviceSetup) },
                     onRenameDevice = onRenameDevice,
@@ -413,7 +418,7 @@ internal fun AgentsAnywhereNavHost(
                 AppDestination.Search -> androidx.compose.runtime.key(serverUrl, userId) {
                     com.agentsanywhere.app.ui.screens.home.SearchScreen(
                         sessions = sessionsState.sessions + sessionsState.archivedSessions,
-                        onBack = { navigate(AppDestination.Sessions) },
+                        onBack = navigateUp,
                         onOpenSession = onOpenSession,
                     )
                 }
@@ -423,7 +428,7 @@ internal fun AgentsAnywhereNavHost(
                         onLoadPage = onLoadArchivedPage,
                         onRestoreSession = { onSetSessionArchived(it, false) },
                         onRestoreProject = onRestoreProject,
-                        onBack = { navigate(AppDestination.Sessions) },
+                        onBack = navigateUp,
                     )
                 }
             }

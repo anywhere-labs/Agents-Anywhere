@@ -134,6 +134,7 @@ internal fun HomeProjectList(
     onSessionLongPress: (AgentSession, Rect) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
 ) {
+    val colors = LocalAAColors.current
     var pinnedExpanded by remember { mutableStateOf(true) }
     var filterAnchor by remember { mutableStateOf<Rect?>(null) }
     val projectsExpanded = projectPreferences.projectsExpanded
@@ -173,80 +174,66 @@ internal fun HomeProjectList(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 96.dp),
     ) {
-        if (pinnedProjects.isNotEmpty() || pinnedSessions.isNotEmpty()) {
-            item("project-pinned-title") {
-                HomeListSectionHeader(
-                    label = stringResource(R.string.home_pinned),
-                    expanded = pinnedExpanded,
-                    onClick = { pinnedExpanded = !pinnedExpanded },
+        item("projects-title") {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = stringResource(R.string.home_projects),
+                    color = colors.ink,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
                 )
-            }
-            if (pinnedExpanded) {
-                items(pinnedProjects, key = { "pinned-project-${it.id}" }) { project ->
-                    HomeProjectTreeItem(
-                        project = project,
-                        agentLabel = listOfNotNull(deviceContextLabel(devices, project.connectorId).takeIf(String::isNotBlank), agentLabel).joinToString(" · ").ifBlank { project.connectorId },
-                        sessions = sessionsByProject[project.id].orEmpty(),
-                        expanded = project.id in expandedProjectIds,
-                        loading = project.id in loadingProjectIds,
-                        onExpandedChange = { onProjectExpandedChange(project, it) },
-                        onMenu = onProjectMenu,
-                        error = projectErrors[project.id],
-                        onRetry = { onRetryProject(project.id) },
-                        onNewSession = { onNewSession(project) },
-                        onSessionLongPress = onSessionLongPress,
-                        onOpenSession = onOpenSession,
-                    )
-                }
-                items(pinnedSessions, key = { "pinned-session-${it.id}" }) { session ->
-                    HomeProjectSessionRow(
-                        session = session,
-                        inset = false,
-                        contextLabel = deviceContextLabel(devices, session.connectorId, session.deviceName),
-                        onClick = { onOpenSession(session) },
-                        onLongPress = { onSessionLongPress(session, it) },
+                if (hasProjectsInOtherStatuses || filtersActive) {
+                    HomeProjectFilterButton(
+                        expanded = filterAnchor != null,
+                        active = filtersActive,
+                        onClick = { filterAnchor = it },
                     )
                 }
             }
         }
 
-        item("projects-title") {
-            HomeListSectionHeader(
-                label = stringResource(R.string.home_projects),
-                expanded = projectsExpanded,
-                onClick = projectPreferences::toggleSection,
-                onFilter = { filterAnchor = it },
-                filterExpanded = filterAnchor != null,
-                filterActive = filtersActive,
-                onCreate = onCreateProject,
-            )
+        if (pinnedSessions.isNotEmpty()) {
+            items(pinnedSessions, key = { "pinned-session-${it.id}" }) { session ->
+                HomeProjectSessionRow(
+                    session = session,
+                    inset = false,
+                    contextLabel = deviceContextLabel(devices, session.connectorId, session.deviceName),
+                    onClick = { onOpenSession(session) },
+                    onLongPress = { onSessionLongPress(session, it) },
+                )
+            }
         }
-        if (projectsExpanded) {
-            if (regularProjects.isEmpty()) {
-                item("projects-empty") {
-                    HomeProjectEmptyText(stringResource(
-                        if (deviceAgentFilter.active && loadingProjectIds.isNotEmpty()) R.string.home_project_filter_loading
-                        else if (deviceAgentFilter.active) R.string.home_project_filter_empty
-                        else R.string.home_no_projects,
-                    ))
-                }
-            } else {
-                items(regularProjects, key = { "project-${it.id}" }) { project ->
-                    HomeProjectTreeItem(
-                        project = project,
-                        agentLabel = listOfNotNull(deviceContextLabel(devices, project.connectorId).takeIf(String::isNotBlank), agentLabel).joinToString(" · ").ifBlank { project.connectorId },
-                        sessions = sessionsByProject[project.id].orEmpty(),
-                        expanded = project.id in expandedProjectIds,
-                        loading = project.id in loadingProjectIds,
-                        onExpandedChange = { onProjectExpandedChange(project, it) },
-                        onMenu = onProjectMenu,
-                        error = projectErrors[project.id],
-                        onRetry = { onRetryProject(project.id) },
-                        onNewSession = { onNewSession(project) },
-                        onSessionLongPress = onSessionLongPress,
-                        onOpenSession = onOpenSession,
-                    )
-                }
+
+        if (ordered.isEmpty()) {
+            item("projects-empty") {
+                HomeProjectEmptyText(stringResource(
+                    if (deviceAgentFilter.active && loadingProjectIds.isNotEmpty()) R.string.home_project_filter_loading
+                    else if (deviceAgentFilter.active) R.string.home_project_filter_empty
+                    else R.string.home_no_projects,
+                ))
+            }
+        } else {
+            items(ordered, key = { "project-${it.id}" }) { project ->
+                HomeProjectTreeItem(
+                    project = project,
+                    agentLabel = listOfNotNull(deviceContextLabel(devices, project.connectorId).takeIf(String::isNotBlank), agentLabel).joinToString(" · ").ifBlank { project.connectorId },
+                    sessions = sessionsByProject[project.id].orEmpty(),
+                    expanded = project.id in expandedProjectIds,
+                    loading = project.id in loadingProjectIds,
+                    onExpandedChange = { onProjectExpandedChange(project, it) },
+                    onMenu = onProjectMenu,
+                    error = projectErrors[project.id],
+                    onRetry = { onRetryProject(project.id) },
+                    onNewSession = { onNewSession(project) },
+                    onSessionLongPress = onSessionLongPress,
+                    onOpenSession = onOpenSession,
+                )
             }
         }
     }
@@ -382,12 +369,7 @@ private fun HomeProjectRow(
             modifier = Modifier.size(21.dp),
         )
         Column(modifier = Modifier.weight(1f)) {
-            val count = if (sessions.isNotEmpty()) {
-                sessions.size
-            } else {
-                maxOf(0, project.sidebarSessionCounts?.active ?: project.activeSessionCount)
-            }
-            val displayName = formatProjectDisplayName(project.name, count)
+            val displayName = project.name.replace(Regex("""\s*\(\d+\)$"""), "").trim()
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -412,12 +394,17 @@ private fun HomeProjectRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        HomeProjectIconButton(Lucide.Ellipsis, stringResource(R.string.home_project_options)) { anchor ->
-            onMenu(HomeProjectActionMenu(project, bounds, anchorBounds = anchor, expanded = expanded))
-        }
+        Icon(
+            imageVector = Lucide.ChevronDown,
+            contentDescription = null,
+            tint = colors.faint,
+            modifier = Modifier
+                .size(18.dp)
+                .graphicsLayer { rotationZ = if (expanded) 180f else 0f },
+        )
         Box(
             modifier = Modifier
-                .size(38.dp)
+                .size(36.dp)
                 .clip(CircleShape)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
@@ -430,7 +417,7 @@ private fun HomeProjectRow(
                 imageVector = Lucide.SquarePen,
                 contentDescription = stringResource(R.string.home_new_session_in_project, project.name),
                 tint = colors.faint,
-                modifier = Modifier.size(19.dp),
+                modifier = Modifier.size(18.dp),
             )
         }
     }

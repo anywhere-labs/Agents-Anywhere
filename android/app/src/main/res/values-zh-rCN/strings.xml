@@ -37,6 +37,7 @@
     <string name="common_user_id">用户 ID</string>
     <string name="common_working">处理中...</string>
     <string name="common_delete">删除</string>
+    <string name="common_more">更多</string>
     <string name="common_setup">设置</string>
     <string name="common_revoke">撤销</string>
     <string name="common_enable">开启</string>
@@ -230,7 +231,8 @@
     <string name="device_actions_rename_failed">无法重命名设备。</string>
     <string name="device_actions_rename_device">重命名设备</string>
     <string name="device_actions_rename">重命名</string>
-    <string name="device_confirm_delete_device_title">删除这台设备？</string>
+    <string name="device_actions_unbind_and_delete">解绑并删除设备</string>
+    <string name="device_confirm_delete_device_title">解绑并删除这台设备？</string>
     <string name="device_confirm_delete_device_body">这会移除设备，并删除服务端所有关联记录，包括会话、工作区、已关联的 agent、运行时设置和连接器令牌。之后需要重新配对才能恢复。</string>
     <string name="device_confirm_deleting">删除中...</string>
     <string name="device_confirm_retry_delete">重试删除</string>
@@ -400,6 +402,8 @@
     <string name="session_agent_fallback">Agent</string>
     <string name="session_device_offline_placeholder">设备已离线，暂时不能聊天。</string>
     <string name="session_reply_to">回复 %1$s</string>
+    <string name="session_work_on_device">在 %1$s 上工作</string>
+    <string name="home_ask_codex_placeholder">问问 Agent</string>
     <string name="session_read_only_placeholder">只读模式-开启接管后可发送消息</string>
     <string name="session_runtime_model_loading">正在加载模型…</string>
     <string name="session_runtime_permission_loading">正在加载权限…</string>

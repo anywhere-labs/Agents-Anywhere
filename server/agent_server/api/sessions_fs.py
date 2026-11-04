@@ -42,8 +42,8 @@ from agent_server.services.thumbnails import (
 router = APIRouter(prefix="/sessions", tags=["session-files"])
 
 
-MAX_UPLOAD_FILES_PER_REQUEST = 5
-MAX_UPLOAD_FILE_BYTES = 25 * 1024 * 1024  # 25 MiB
+MAX_UPLOAD_FILES_PER_REQUEST = 50
+MAX_UPLOAD_FILE_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB (no size limit)
 
 _BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
 

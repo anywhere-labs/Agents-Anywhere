@@ -278,7 +278,6 @@ internal fun SessionAgentFilesScreen(
         previewLoading = false
     }
 
-    val context = LocalContext.current
     fun openExternalFile(file: FileEntry) {
         val current = session ?: return
         val root = current.cwd?.takeIf { it.isNotBlank() } ?: "~"
@@ -295,19 +294,14 @@ internal fun SessionAgentFilesScreen(
                         if (opened) return@launch
                     }
             }
-            filesController.downloadFile(current.connectorId, targetRoot, trimmed)
-                .onSuccess { bytes ->
+            val name = trimmed.substringAfterLast('/').substringAfterLast('\\').ifBlank { "download" }
+            val target = withContext(Dispatchers.IO) {
+                java.io.File(context.cacheDir, "open-${System.currentTimeMillis()}-$name")
+            }
+            filesController.downloadFile(current.connectorId, targetRoot, trimmed, target)
+                .onSuccess { downloaded ->
                     runCatching {
-                        val name = trimmed.substringAfterLast('/').substringAfterLast('\\')
-                        val target = withContext(Dispatchers.IO) {
-                            cacheDownloadedAttachment(
-                                context.cacheDir,
-                                DownloadedAttachment(
-                                    fileId = current.id, name = name, mediaType = "", size = bytes.size.toLong(), sha256 = "", bytes = bytes,
-                                )
-                            )
-                        }
-                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.attachments", target)
+                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.attachments", downloaded.file)
                         val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
                             ?: "application/octet-stream"
                         context.startActivity(Intent(Intent.ACTION_VIEW).apply {
@@ -549,19 +543,14 @@ internal fun DeviceFilesContent(
                         if (opened) return@launch
                     }
             }
-            controller.downloadFile(current.id, root, trimmed)
-                .onSuccess { bytes ->
+            val name = trimmed.substringAfterLast('/').substringAfterLast('\\').ifBlank { "download" }
+            val target = withContext(Dispatchers.IO) {
+                java.io.File(context.cacheDir, "open-${System.currentTimeMillis()}-$name")
+            }
+            controller.downloadFile(current.id, root, trimmed, target)
+                .onSuccess { downloaded ->
                     runCatching {
-                        val name = trimmed.substringAfterLast('/').substringAfterLast('\\')
-                        val target = withContext(Dispatchers.IO) {
-                            cacheDownloadedAttachment(
-                                context.cacheDir,
-                                DownloadedAttachment(
-                                    fileId = current.id, name = name, mediaType = "", size = bytes.size.toLong(), sha256 = "", bytes = bytes,
-                                )
-                            )
-                        }
-                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.attachments", target)
+                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.attachments", downloaded.file)
                         val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
                             ?: "application/octet-stream"
                         context.startActivity(Intent(Intent.ACTION_VIEW).apply {

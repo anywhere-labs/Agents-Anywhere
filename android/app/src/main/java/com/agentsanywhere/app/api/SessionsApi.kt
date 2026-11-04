@@ -1014,8 +1014,8 @@ class SessionsApi(
 
     private companion object {
         const val CREATE_AND_START_READ_TIMEOUT_SECONDS = 75L
-        const val MAX_ATTACHMENT_DOWNLOAD_BYTES = 25L * 1024L * 1024L
-        const val MAX_ATTACHMENT_DOWNLOAD_BASE64_CHARS = 34_952_536
+        const val MAX_ATTACHMENT_DOWNLOAD_BYTES = 2048L * 1024L * 1024L
+        const val MAX_ATTACHMENT_DOWNLOAD_BASE64_CHARS = Int.MAX_VALUE
     }
 
 }

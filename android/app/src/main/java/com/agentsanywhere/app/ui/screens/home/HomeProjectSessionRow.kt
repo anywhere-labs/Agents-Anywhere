@@ -50,17 +50,19 @@ internal fun HomeProjectSessionRow(
                         onLongPress(bounds)
                     },
                 )
-            }.padding(start = if (inset) 18.dp else 0.dp, end = 10.dp),
+            }.padding(start = if (inset) 28.dp else 4.dp, end = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SessionAgentIcon(runtime = session.runtime, runtimeType = session.runtimeType)
+        if (!inset) {
+            SessionAgentIcon(runtime = session.runtime, runtimeType = session.runtimeType)
+        }
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = session.title,
                 color = LocalAAColors.current.inkSoft,
                 fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
+                fontWeight = FontWeight.Normal,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
