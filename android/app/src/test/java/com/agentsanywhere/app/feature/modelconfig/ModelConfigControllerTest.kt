@@ -82,26 +82,24 @@ class ModelConfigControllerTest {
     }
 
     @Test
-    fun switchNowAndRetryTargetTheRightRuntimes() = withServer { controller, requests ->
+    fun retryTargetsTheRightRuntimes() = withServer { controller, requests ->
         runBlocking {
-            controller.switchNow("dev 1", "codex").getOrThrow()
             controller.retryChannel().getOrThrow()
             controller.retryChannel("dev 1", "codex").getOrThrow()
             controller.channel().getOrThrow()
         }
 
-        assertEquals(listOf("POST", "POST", "POST", "GET"), requests.map { it.method })
+        assertEquals(listOf("POST", "POST", "GET"), requests.map { it.method })
         assertEquals(
             listOf(
-                "/api/v2/model-config/channel/runtimes/dev%201/codex/switch-now",
                 "/api/v2/model-config/channel/retry",
                 "/api/v2/model-config/channel/retry",
                 "/api/v2/model-config/channel",
             ),
             requests.map { it.path },
         )
-        assertEquals(0, JSONObject(requests[1].body).length())
-        val one = JSONObject(requests[2].body)
+        assertEquals(0, JSONObject(requests[0].body).length())
+        val one = JSONObject(requests[1].body)
         assertEquals("dev 1", one.getString("connectorId"))
         assertEquals("codex", one.getString("runtimeId"))
     }
@@ -120,6 +118,67 @@ class ModelConfigControllerTest {
         assertTrue(runBlocking { controller.unlinkTokens() }.getOrThrow())
         assertEquals("DELETE", requests.single().method)
         assertEquals("/api/v2/integrations/tokens/link", requests.single().path)
+    }
+
+    private val createdProfile = """
+        {"id":"mpr_1","name":"Gate","source":"manual","state":"active","revision":1,"keyHint":"sk-…1",
+         "offers":[{"format":"openai_chat","baseUrl":"https://gate.example/v1","models":[{"id":"gpt-5"}]}]}
+    """.trimIndent()
+
+    @Test
+    fun automaticProfilesSendOnlyTheAddress() = withServer(
+        respond = { MockResponse().setResponseCode(201).setBody(createdProfile) },
+    ) { controller, requests ->
+        val draft = ManualProfileDraft(name = " Gate ", apiKey = " sk-1 ", baseUrl = " https://gate.example/v1 ")
+        runBlocking { controller.createProfile(draft) }.getOrThrow()
+
+        val request = requests.single()
+        assertEquals("POST", request.method)
+        assertEquals("/api/v2/model-profiles", request.path)
+        val body = JSONObject(request.body)
+        assertEquals(setOf("name", "apiKey", "baseUrl"), body.keys().asSequence().toSet())
+        assertEquals("Gate", body.getString("name"))
+        assertEquals("sk-1", body.getString("apiKey"))
+        assertEquals("https://gate.example/v1", body.getString("baseUrl"))
+    }
+
+    @Test
+    fun manualProfilesSendTheOffersWithoutAnAddress() = withServer(
+        respond = { MockResponse().setResponseCode(201).setBody(createdProfile) },
+    ) { controller, requests ->
+        val draft = ManualProfileDraft(name = "Gate", apiKey = "sk-1", baseUrl = "https://gate.example/v1")
+            .toManual()
+            .withOffer("anthropic") { it.copy(enabled = true, models = "claude\nhaiku") }
+        runBlocking { controller.createProfile(draft) }.getOrThrow()
+
+        val body = JSONObject(requests.single().body)
+        assertEquals(setOf("name", "apiKey", "offers"), body.keys().asSequence().toSet())
+        val offers = body.getJSONArray("offers")
+        assertEquals(2, offers.length())
+        val chat = offers.getJSONObject(0)
+        assertEquals("openai_chat", chat.getString("format"))
+        assertEquals("https://gate.example/v1", chat.getString("baseUrl"))
+        assertEquals(0, chat.getJSONArray("models").length())
+        val anthropic = offers.getJSONObject(1)
+        assertEquals("anthropic", anthropic.getString("format"))
+        assertEquals("https://gate.example", anthropic.getString("baseUrl"))
+        assertEquals("claude", anthropic.getJSONArray("models").getJSONObject(0).getString("id"))
+    }
+
+    @Test
+    fun detectionFailuresKeepTheirCode() = withServer(
+        respond = {
+            MockResponse().setResponseCode(422)
+                .setBody("""{"detail":{"code":"gateway_unreachable","message":"Could not reach it."}}""")
+        },
+    ) { controller, _ ->
+        val draft = ManualProfileDraft(name = "Gate", apiKey = "sk-1", baseUrl = "https://gate.example/v1")
+        val error = runBlocking { controller.createProfile(draft) }.exceptionOrNull()
+        val code = modelConfigErrorCode(error!!)
+        assertEquals("gateway_unreachable", code)
+        assertTrue(code in GATEWAY_MANUAL_FALLBACK_CODES)
+        assertFalse("gateway_key_rejected" in GATEWAY_MANUAL_FALLBACK_CODES)
+        assertTrue("gateway_key_rejected" in GATEWAY_ERROR_CODES)
     }
 
     @Test

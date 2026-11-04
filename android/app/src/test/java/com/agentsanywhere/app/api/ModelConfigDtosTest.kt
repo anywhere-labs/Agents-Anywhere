@@ -127,7 +127,6 @@ class ModelConfigDtosTest {
         assertNull(codex.override)
         assertEquals("tokens", codex.desired)
         assertEquals("native", codex.actual)
-        assertEquals(2, codex.runningSessions)
         val claude = channel.runtimes[1]
         assertEquals("mpr_1", claude.override)
         assertEquals("verifying", claude.step)
@@ -147,7 +146,6 @@ class ModelConfigDtosTest {
         assertEquals("hibernating", channel.runtimes[0].state)
         assertEquals("pending", channel.runtimes[1].state)
         assertNull(channel.runtimes[1].desired)
-        assertEquals(0, channel.runtimes[1].runningSessions)
 
         val fresh = JSONObject("""{"channel":"native","revision":0,"switch":null,"runtimes":[]}""").toModelChannelState()
         assertNull(fresh.switch)

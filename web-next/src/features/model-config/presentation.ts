@@ -2,6 +2,7 @@ import type {
   DeviceRuntimeView,
   ModelConnectionState,
   ModelPreferences,
+  ModelProtocol,
   ModelSpec,
   RuntimeMaturity,
 } from "@/features/dashboard/types"
@@ -34,6 +35,15 @@ export function parseModelIds(text: string): string[] {
     if (id) seen.add(id)
   }
   return [...seen]
+}
+
+/** Detection failures after which the protocols can still be entered by hand. */
+export const MANUAL_PROTOCOL_CODES = ["gateway_address_not_allowed", "gateway_unreachable", "gateway_protocols_unknown"]
+
+/** A protocol's address from the one entered: Anthropic clients add `/v1` themselves. */
+export function protocolBaseUrl(address: string, protocol: ModelProtocol): string {
+  const url = address.trim().replace(/\/+$/, "")
+  return protocol === "anthropic" ? url.replace(/\/v1$/, "") : url
 }
 
 // Tokens Anywhere models and usage.

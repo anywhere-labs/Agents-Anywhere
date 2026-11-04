@@ -204,8 +204,8 @@ fun ModelConfigScreen(
                         creating = false
                         notify(context.getString(R.string.model_config_profile_saved))
                     }
-                    .onFailure(notifyError)
             },
+            onError = notifyError,
         )
     }
 }

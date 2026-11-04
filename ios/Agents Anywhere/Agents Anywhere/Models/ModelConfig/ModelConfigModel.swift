@@ -187,9 +187,18 @@ final class ModelConfigModel {
         }
     }
 
-    /// Returns the error to show in the form, or nil once the profile is saved.
-    func createProfile(_ draft: ModelProfileDraft) async -> String? {
-        guard draft.isValid, !isCreatingProfile else { return String(localized: "That did not finish. Try again later.") }
+    /// A save the form shows inline; `code` is the Server's error code, if any.
+    struct ProfileSaveFailure: Hashable {
+        let message: String
+        let code: String?
+    }
+
+    /// Returns what to show in the form, or nil once the profile is saved.
+    /// Without offers the Server detects them first, which can take a while.
+    func createProfile(_ draft: ModelProfileDraft) async -> ProfileSaveFailure? {
+        guard draft.isValid, !isCreatingProfile else {
+            return ProfileSaveFailure(message: String(localized: "That did not finish. Try again later."), code: nil)
+        }
         isCreatingProfile = true
         defer { isCreatingProfile = false }
         do {
@@ -197,7 +206,7 @@ final class ModelConfigModel {
             feedback = .success(String(localized: "Profile saved"))
             return nil
         } catch {
-            return ModelConfigErrorText.text(error)
+            return ProfileSaveFailure(message: ModelConfigErrorText.text(error), code: (error as? HTTPError)?.serverCode)
         }
     }
 

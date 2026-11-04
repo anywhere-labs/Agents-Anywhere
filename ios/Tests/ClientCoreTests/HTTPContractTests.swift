@@ -275,6 +275,38 @@ nonisolated private final class InterceptingURLProtocol: URLProtocol, @unchecked
         #expect(requests[2].httpBody == nil && requests[6].httpBody == nil && requests[9].httpBody == nil && requests[10].httpBody == nil)
     }
 
+    @Test func profileCreationSendsEitherTheAddressOrTheOffers() async throws {
+        let session = session(); defer { session.invalidateAndCancel() }
+        let api = V2APIClient(serverURL: URL(string: "https://example.test")!, tokenProvider: StaticAuthTokenProvider(token: "test-token"), urlSession: session)
+        InterceptingURLProtocol.state.reset(try [
+            .response(422, fixtureData("modelGatewayError")), .response(201, fixtureData("modelProfile")),
+        ])
+        let repository = V2DashboardRepository(service: .init(connectorAPI: api.connectors, projectAPI: api.projects,
+            sessionAPI: api.sessions, realtimeAPI: api.realtime))
+        let model = ModelConfigModel(api: api.modelConfig, dashboard: repository)
+        var draft = ModelProfileDraft()
+        draft.name = "Gateway"; draft.apiKey = "sk-test"; draft.baseURL = "https://gateway.example/v1"
+        let failure = try #require(await model.createProfile(draft))
+        #expect(failure.code == "gateway_unreachable")
+        #expect(failure.message == String(localized: "The server could not reach this address. Check the address."))
+        let turnedManual = draft.fallBackToManual(after: failure.code)
+        #expect(turnedManual)
+        #expect(await model.createProfile(draft) == nil)
+
+        let requests = InterceptingURLProtocol.state.requests
+        #expect(requests.count == 2, "A failed detection is not retried")
+        let bodies = try fixtureObject("requests")
+        let detect = try JSONDecoder().decode(JSONValue.self, from: #require(requests.first?.httpBody))
+        let backend = try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: bodies["detectModelProfile"]!))
+        #expect(detect == backend)
+        let manual = try JSONDecoder().decode(JSONValue.self, from: #require(requests.last?.httpBody))
+        #expect(manual["baseUrl"] == nil && manual["offers"]?.configArray?.first?["format"] == .string("openai_chat"))
+        #expect(manual["offers"]?.configArray?.first?["baseUrl"] == .string("https://gateway.example/v1"))
+        for request in requests {
+            #expect(request.httpMethod == "POST" && request.url?.path == "/api/v2/model-profiles")
+        }
+    }
+
     private func query(_ request: URLRequest) -> [String: String] {
         Dictionary(uniqueKeysWithValues: URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!.map { ($0.name, $0.value ?? "") })
     }

@@ -125,12 +125,18 @@ nonisolated enum ModelConfigErrorText {
         case "device_offline": String(localized: "The device is offline.")
         case "key_not_kept": String(localized: "Tokens Anywhere did not keep this instance's key, so it cannot be fetched again. Ask its operator to set TOKENS_SECRETS_KEY, then unlink and link again.")
         case "models_required": String(localized: "This runtime needs at least one imported model.")
+        case "gateway_address_not_allowed": String(localized: "This address is on a private network, which the server does not call, so it can't be detected.")
+        case "gateway_unreachable": String(localized: "The server could not reach this address. Check the address.")
+        case "gateway_key_rejected": String(localized: "The model service refused this key. Check it and try again.")
+        case "gateway_protocols_unknown": String(localized: "Couldn't detect any supported protocol at this address. Check the address.")
         default: nil
         }
     }
 }
 
 /// The add-profile form. The key is write-only: it is sent once and never shown.
+/// The Server detects the protocols and models from the address; only when it
+/// cannot does the form switch to entering them by hand.
 nonisolated struct ModelProfileDraft: Hashable {
     struct Offer: Hashable {
         var enabled = false
@@ -138,8 +144,16 @@ nonisolated struct ModelProfileDraft: Hashable {
         var models = ""
     }
 
+    /// Detection failures after which the protocols can still be entered by hand.
+    static let manualFallbackCodes: Set<String> = [
+        "gateway_address_not_allowed", "gateway_unreachable", "gateway_protocols_unknown",
+    ]
+
     var name = ""
     var apiKey = ""
+    /// The address the Server detects from; unused once the form is manual.
+    var baseURL = ""
+    var isManual = false
     var offers: [V2ModelProtocol: Offer] = [.openaiChat: Offer(enabled: true)]
 
     func offer(_ format: V2ModelProtocol) -> Offer { offers[format] ?? Offer() }
@@ -147,21 +161,43 @@ nonisolated struct ModelProfileDraft: Hashable {
     var chosen: [V2ModelProtocol] { V2ModelProtocol.allCases.filter { offer($0).enabled } }
 
     var isValid: Bool {
-        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !chosen.isEmpty
-            && chosen.allSatisfy { Self.isHTTPURL(offer($0).baseURL) }
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        guard isManual else { return Self.isHTTPURL(baseURL) }
+        return !chosen.isEmpty && chosen.allSatisfy { Self.isHTTPURL(offer($0).baseURL) }
     }
 
     var request: V2ModelProfileCreateRequest {
-        .init(
-            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-            apiKey: apiKey.trimmingCharacters(in: .whitespacesAndNewlines),
-            offers: chosen.map { format in
-                let value = offer(format)
-                return V2ModelOffer(format: format.rawValue, baseUrl: value.baseURL.trimmingCharacters(in: .whitespacesAndNewlines),
-                    models: ModelConfigPresentation.parseModelIDs(value.models).map { V2ModelSpec(id: $0) })
-            })
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isManual else {
+            return .init(name: name, apiKey: apiKey, baseUrl: baseURL.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return .init(name: name, apiKey: apiKey, offers: chosen.map { format in
+            let value = offer(format)
+            return V2ModelOffer(format: format.rawValue, baseUrl: value.baseURL.trimmingCharacters(in: .whitespacesAndNewlines),
+                models: ModelConfigPresentation.parseModelIDs(value.models).map { V2ModelSpec(id: $0) })
+        })
+    }
+
+    /// After a failed detection the form turns manual, with each protocol's
+    /// address taken from the entered one; returns whether it did.
+    @discardableResult
+    mutating func fallBackToManual(after code: String?) -> Bool {
+        guard !isManual, let code, Self.manualFallbackCodes.contains(code) else { return false }
+        for format in V2ModelProtocol.allCases {
+            offers[format, default: .init()].baseURL = Self.protocolBaseURL(baseURL, for: format)
+        }
+        isManual = true
+        return true
+    }
+
+    /// A protocol's address from the one entered: Anthropic clients add `/v1` themselves.
+    static func protocolBaseURL(_ address: String, for format: V2ModelProtocol) -> String {
+        var url = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        while url.hasSuffix("/") { url.removeLast() }
+        if format == .anthropic, url.hasSuffix("/v1") { url.removeLast(3) }
+        return url
     }
 
     static func isHTTPURL(_ text: String) -> Bool {

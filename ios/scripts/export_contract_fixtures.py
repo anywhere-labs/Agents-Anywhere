@@ -122,6 +122,7 @@ def fixtures() -> dict:
     result["tokensLinkStart"] = {"startUrl": "https://example.test/api/v2/integrations/tokens/start?ticket=test"}
     result["tokensUnlink"] = {"revoked": True}
     result["modelConfigError"] = {"detail": {"code": "profile_in_use", "message": "devices still use this profile"}}
+    result["modelGatewayError"] = {"detail": {"code": "gateway_unreachable", "message": "the gateway did not answer"}}
     result["createdSession"] = {"session": session.model_dump(mode="json"), "connectorResult": {"ok": True},
         "attachments": [{key: result["upload"]["attachments"][0][key] for key in ("fileId", "name", "mediaType", "size", "sha256")}], "serverTime": NOW}
     requests = {
@@ -139,6 +140,7 @@ def fixtures() -> dict:
         "ticket": p.ProtocolWsTicketRequest(clientId="client", scope=p.ProtocolWsTicketScope(sessionId="session")),
         "readText": m.FsReadTextRequest(path="test.txt"),
         "createModelProfile": mc.ManualProfileRequest(name="Gateway", apiKey="sk-test", offers=[mc.Offer(format="openai_chat", baseUrl="https://gateway.example/v1", models=[mc.ModelSpec(id="gpt-test")])]),
+        "detectModelProfile": mc.ManualProfileRequest(name="Gateway", apiKey="sk-test", baseUrl="https://gateway.example/v1"),
     }
     result["requests"] = {key: value.model_dump(mode="json", by_alias=True, exclude_none=True) for key, value in requests.items()}
     result["requests"]["createProject"].pop("attachMatchingSessions", None)

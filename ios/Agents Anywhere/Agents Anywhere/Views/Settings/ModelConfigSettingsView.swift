@@ -263,7 +263,17 @@ private struct ModelProfileEditorSheet: View {
                 } header: {
                     Text(String(localized: "Name"))
                 } footer: {
-                    Text(String(localized: "Enter the service's key and the protocols, addresses and models it offers."))
+                    Text(String(localized: "Enter the model service's address and key. Saving detects the protocols and models it supports."))
+                }
+                // Once detection fails, each protocol takes its own address below.
+                if !draft.isManual {
+                    Section {
+                        TextField(String(localized: "https://api.example.com/v1"), text: $draft.baseURL)
+                            .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .accessibilityLabel(String(localized: "Address"))
+                    } header: {
+                        Text(String(localized: "Address"))
+                    }
                 }
                 Section {
                     // Write-only: no reveal control, and the key is never shown again.
@@ -274,17 +284,24 @@ private struct ModelProfileEditorSheet: View {
                 } footer: {
                     Text(String(localized: "Never shown again after saving; only its first and last characters are kept to recognize it."))
                 }
-                ForEach(V2ModelProtocol.allCases, id: \.self) { format in
-                    offerSection(format)
-                }
                 if let error {
                     Section { Text(error).font(.footnote).foregroundStyle(.red) }
+                }
+                if draft.isManual {
+                    Section {
+                        Text(String(localized: "You can also pick the protocols and enter the models yourself:"))
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    ForEach(V2ModelProtocol.allCases, id: \.self) { format in
+                        offerSection(format)
+                    }
                 }
             }
             .disabled(model.isCreatingProfile)
             .navigationTitle(String(localized: "Add profile")).navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 SheetEditorToolbar(saveTitle: String(localized: "Save"), isWorking: model.isCreatingProfile,
+                    workingTitle: draft.isManual ? nil : String(localized: "Detecting…"),
                     saveDisabled: !draft.isValid,
                     onCancel: { dismiss() },
                     onSave: { Task { await save() } })
@@ -301,7 +318,7 @@ private struct ModelProfileEditorSheet: View {
                 set: { draft.offers[format, default: .init()].enabled = $0 }))
                 .tint(.green)
             if draft.offer(format).enabled {
-                TextField(String(localized: "https://example.com/v1"), text: Binding(
+                TextField(String(localized: "https://api.example.com/v1"), text: Binding(
                     get: { draft.offer(format).baseURL },
                     set: { draft.offers[format, default: .init()].baseURL = $0 }))
                     .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -317,7 +334,10 @@ private struct ModelProfileEditorSheet: View {
     }
 
     private func save() async {
-        error = await model.createProfile(draft)
-        if error == nil { dismiss() }
+        error = nil
+        guard let failure = await model.createProfile(draft) else { dismiss(); return }
+        error = failure.message
+        // An address the Server cannot detect from turns the form manual; a refused key does not.
+        draft.fallBackToManual(after: failure.code)
     }
 }

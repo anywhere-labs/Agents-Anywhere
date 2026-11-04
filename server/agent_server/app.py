@@ -55,6 +55,10 @@ from agent_server.infra.db.migrations import (
     upgrade_database,
 )
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
+from agent_server.infra.model_gateway_probe import (
+    GatewayProber,
+    private_gateways_allowed,
+)
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
@@ -257,6 +261,7 @@ def create_app(
     app.state.terminal_stream_hub = TerminalStreamHub(app.state.redis)
     app.state.tokens_access_cache = TokensAccessCache(app.state.redis)
     app.state.tokens_client_factory = TokensClient
+    app.state.gateway_prober = GatewayProber(allow_private=private_gateways_allowed())
     app.state.timeline_broker = TimelineBroker(
         app.state.redis,
         event_workers=process_settings.event_workers,

@@ -111,3 +111,11 @@ test("channel: a profile is referenced while current, chosen or in use", () => {
   assert.equal(channel.channelReferenced({ ...state, channel: "mpr_2" }, "mpr_2"), true)
   assert.equal(channel.channelUsers(state, "mpr_1"), 1)
 })
+
+test("model config: protocols entered by hand start from the detected address", () => {
+  assert.equal(presentation.protocolBaseUrl(" https://relay.example/v1/ ", "openai_chat"), "https://relay.example/v1")
+  assert.equal(presentation.protocolBaseUrl("https://relay.example/v1", "anthropic"), "https://relay.example")
+  assert.equal(presentation.protocolBaseUrl("https://relay.example/api/anthropic", "anthropic"), "https://relay.example/api/anthropic")
+  assert.ok(presentation.MANUAL_PROTOCOL_CODES.includes("gateway_unreachable"))
+  assert.ok(!presentation.MANUAL_PROTOCOL_CODES.includes("gateway_key_rejected"))
+})

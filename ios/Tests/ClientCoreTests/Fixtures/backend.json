@@ -740,6 +740,12 @@
       "message": "devices still use this profile"
     }
   },
+  "modelGatewayError": {
+    "detail": {
+      "code": "gateway_unreachable",
+      "message": "the gateway did not answer"
+    }
+  },
   "modelProfile": {
     "etag": "1",
     "id": "mpr_test",
@@ -998,6 +1004,11 @@
       "selections": {
         "model": "sel_model"
       }
+    },
+    "detectModelProfile": {
+      "apiKey": "sk-test",
+      "baseUrl": "https://gateway.example/v1",
+      "name": "Gateway"
     },
     "followChannel": {
       "channel": null

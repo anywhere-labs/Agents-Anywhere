@@ -2865,6 +2865,24 @@
         }
       }
     },
+    "Couldn't detect any supported protocol at this address. Check the address.": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.errors.gateway_protocols_unknown. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't detect any supported protocol at this address. Check the address."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有识别出这个地址支持的协议，请检查地址。"
+          }
+        }
+      }
+    },
     "Couldn't read the Tokens Anywhere account right now.": {
       "comment": "Shared with Web: pages.settings.modelConfigs.account.loadFailed. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -3212,6 +3230,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "详情"
+          }
+        }
+      }
+    },
+    "Detecting…": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.detecting. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Detecting…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在识别…"
           }
         }
       }
@@ -3735,20 +3771,20 @@
         }
       }
     },
-    "Enter the service's key and the protocols, addresses and models it offers.": {
+    "Enter the model service's address and key. Saving detects the protocols and models it supports.": {
       "comment": "Shared with Web: pages.settings.modelConfigs.addProfileDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Enter the service's key and the protocols, addresses and models it offers."
+            "value": "Enter the model service's address and key. Saving detects the protocols and models it supports."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "填写模型服务的 Key，以及它支持的协议、地址和模型。"
+            "value": "填写模型服务的地址和 Key，保存时会自动识别它支持的协议和模型。"
           }
         }
       }
@@ -8059,6 +8095,24 @@
         }
       }
     },
+    "The model service refused this key. Check it and try again.": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.errors.gateway_key_rejected. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The model service refused this key. Check it and try again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型服务拒绝了这个 Key，请检查后重试。"
+          }
+        }
+      }
+    },
     "The number is outside the allowed range.": {
       "extractionState": "manual",
       "localizations": {
@@ -8310,6 +8364,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "无法连接到服务器。"
+          }
+        }
+      }
+    },
+    "The server could not reach this address. Check the address.": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.errors.gateway_unreachable. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The server could not reach this address. Check the address."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "服务器连不上这个地址，请检查地址。"
           }
         }
       }
@@ -8704,6 +8776,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "这不是有效的 Agents Anywhere 登录二维码。"
+          }
+        }
+      }
+    },
+    "This address is on a private network, which the server does not call, so it can't be detected.": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.errors.gateway_address_not_allowed. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This address is on a private network, which the server does not call, so it can't be detected."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这个地址在内网，服务器不会访问，无法自动识别。"
           }
         }
       }
@@ -9757,6 +9847,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "网络已断开，仍可查看缓存内容。"
+          }
+        }
+      }
+    },
+    "You can also pick the protocols and enter the models yourself:": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.manualProtocols. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You can also pick the protocols and enter the models yourself:"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "也可以手动选择协议并填写模型："
           }
         }
       }
@@ -11508,20 +11616,20 @@
         }
       }
     },
-    "https://example.com/v1": {
+    "https://api.example.com/v1": {
       "comment": "Shared with Web: pages.settings.modelConfigs.baseUrlPlaceholder. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "https://example.com/v1"
+            "value": "https://api.example.com/v1"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "https://example.com/v1"
+            "value": "https://api.example.com/v1"
           }
         }
       }

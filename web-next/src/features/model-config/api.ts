@@ -40,7 +40,8 @@ export type TokensAdminSettings = {
   secretConfigured: boolean;
 };
 
-export type ManualProfileInput = { name: string; apiKey: string; offers: ModelOffer[] };
+/** With just `baseUrl` the server asks the gateway which protocols and models it has. */
+export type ManualProfileInput = { name: string; apiKey: string } & ({ baseUrl: string } | { offers: ModelOffer[] });
 
 /** Model profiles and the Tokens Anywhere link. Keys go in and never come back. */
 export class ModelConfigApi {
@@ -57,7 +58,7 @@ export class ModelConfigApi {
   updateProfile(
     token: string,
     profile: Pick<ModelProfile, "id" | "etag">,
-    patch: Partial<ManualProfileInput>,
+    patch: Partial<{ name: string; apiKey: string; offers: ModelOffer[] }>,
   ): Promise<ModelProfile> {
     return this.client.patch<ModelProfile>(`/model-profiles/${encodeURIComponent(profile.id)}`, patch, {
       token,

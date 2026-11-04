@@ -505,10 +505,32 @@ nonisolated struct V2LossyArray<Element: Decodable>: Decodable {
 
 // MARK: - Requests and responses
 
+/// Either `baseUrl`, and the Server detects the protocols and models, or
+/// `offers` spelled out by hand; the Server refuses both at once.
 nonisolated struct V2ModelProfileCreateRequest: Encodable, Hashable {
     let name: String
     let apiKey: String
-    let offers: [V2ModelOffer]
+    let baseUrl: String?
+    let offers: [V2ModelOffer]?
+
+    init(name: String, apiKey: String, baseUrl: String) {
+        self.name = name; self.apiKey = apiKey; self.baseUrl = baseUrl; offers = nil
+    }
+
+    init(name: String, apiKey: String, offers: [V2ModelOffer]) {
+        self.name = name; self.apiKey = apiKey; baseUrl = nil; self.offers = offers
+    }
+
+    private enum CodingKeys: String, CodingKey { case name, apiKey, baseUrl, offers }
+
+    /// Leaves the unused form out instead of sending it as null.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encode(apiKey, forKey: .apiKey)
+        try container.encodeIfPresent(baseUrl, forKey: .baseUrl)
+        try container.encodeIfPresent(offers, forKey: .offers)
+    }
 }
 
 nonisolated struct V2TokensLinkStart: Decodable, Hashable {

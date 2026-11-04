@@ -14,22 +14,31 @@ import org.json.JSONObject
 class ModelConfigApi(
     private val client: ApiClient = ApiClient(),
 ) {
+    /**
+     * Creates a manual profile from either [baseUrl], whose protocols and models the Server
+     * detects (failing with a `gateway_*` code), or the [offers] the user entered.
+     */
     fun createProfile(
         serverUrl: String,
         authorizationToken: String,
         name: String,
         apiKey: String,
-        offers: List<ModelOffer>,
+        offers: List<ModelOffer>? = null,
+        baseUrl: String? = null,
     ): ModelProfile {
+        require((offers == null) != (baseUrl == null)) { "Give either offers or baseUrl." }
         val body = JSONObject()
             .put("name", name)
             .put("apiKey", apiKey)
-            .put("offers", JSONArray().apply { offers.forEach { put(it.toJson()) } })
+        if (offers != null) body.put("offers", JSONArray().apply { offers.forEach { put(it.toJson()) } })
+        if (baseUrl != null) body.put("baseUrl", baseUrl)
         return client.postJson(
             serverUrl = serverUrl,
             path = "/model-profiles",
             body = body,
             authorizationToken = authorizationToken,
+            // Detection calls the gateway and can take about 15 seconds.
+            readTimeoutSeconds = if (baseUrl != null) DETECT_READ_TIMEOUT_SECONDS else null,
         ).toModelProfile()
     }
 
@@ -193,5 +202,9 @@ class ModelConfigApi(
             body = JSONObject().put("allowInterrupt", allowInterrupt),
             authorizationToken = authorizationToken,
         )
+    }
+
+    private companion object {
+        const val DETECT_READ_TIMEOUT_SECONDS = 45L
     }
 }

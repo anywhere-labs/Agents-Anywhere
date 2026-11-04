@@ -19,8 +19,13 @@ class ModelConfigController(
     private val api: ModelConfigApi,
     private val sessionStore: AuthSessionReader,
 ) {
+    /** Automatic drafts send only the address; the Server detects the protocols and models. */
     suspend fun createProfile(draft: ManualProfileDraft): Result<ModelProfile> = call { server, token ->
-        api.createProfile(server, token, draft.name.trim(), draft.apiKey.trim(), draft.toOffers())
+        if (draft.manual) {
+            api.createProfile(server, token, draft.name.trim(), draft.apiKey.trim(), offers = draft.toOffers())
+        } else {
+            api.createProfile(server, token, draft.name.trim(), draft.apiKey.trim(), baseUrl = draft.baseUrl.trim())
+        }
     }
 
     suspend fun deleteProfile(profileId: String): Result<Unit> = call { server, token ->

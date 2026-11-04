@@ -69,7 +69,6 @@ class ModelConfigStateTest {
         override: String? = null,
         desired: String? = "tokens",
         actual: String? = "native",
-        runningSessions: Int = 0,
     ) = ChannelRuntime(
         connectorId = connectorId,
         runtimeId = id,
@@ -80,7 +79,6 @@ class ModelConfigStateTest {
         step = null,
         reason = null,
         message = null,
-        runningSessions = runningSessions,
         updatedAt = null,
     )
 
@@ -120,7 +118,7 @@ class ModelConfigStateTest {
     @Test
     fun channelStateTones() {
         assertEquals(ModelStatusTone.Ok, channelStateTone("applied"))
-        listOf("pending", "waiting_idle", "waiting_online", "switching", "restoring").forEach {
+        listOf("pending", "waiting_online", "switching", "restoring").forEach {
             assertEquals(ModelStatusTone.Progress, channelStateTone(it))
         }
         assertEquals(ModelStatusTone.Warning, channelStateTone("restored"))
@@ -159,7 +157,7 @@ class ModelConfigStateTest {
     fun runningProgressCountsFinishedRuntimesAndWaitingReasons() {
         val progress = channel(
             item("a", "applied", actual = "tokens"),
-            item("b", "waiting_idle", runningSessions = 2),
+            item("b", "pending"),
             item("c", "waiting_online"),
             item("d", "switching"),
             item("e", "restored"),
@@ -172,7 +170,6 @@ class ModelConfigStateTest {
         assertEquals(2, progress.finished)
         assertEquals(1, progress.applied)
         assertEquals(1, progress.restored)
-        assertEquals(1, progress.waitingIdle)
         assertEquals(1, progress.waitingOnline)
     }
 
@@ -213,7 +210,7 @@ class ModelConfigStateTest {
         val state = channel(
             item("pi", "applied", connectorId = "laptop"),
             item("codex", "unsupported", connectorId = "desk"),
-            item("claude", "waiting_idle", connectorId = "desk", runningSessions = 1),
+            item("claude", "pending", connectorId = "desk"),
             item("dsh", "failed", connectorId = "laptop"),
             item("gone", "pending", connectorId = "unknown"),
             item("own", "unsupported", connectorId = "laptop"),
@@ -236,7 +233,6 @@ class ModelConfigStateTest {
         assertEquals(listOf("codex", "own"), groups.unsupported.map { it.item.runtimeId })
 
         val claude = groups.devices[0].rows.single()
-        assertTrue(claude.canSwitchNow)
         assertFalse(claude.canRetry)
         assertTrue(claude.canOverride)
         assertTrue(claude.needsNativeGlobalConfirmation("tokens"))
@@ -263,8 +259,35 @@ class ModelConfigStateTest {
     }
 
     @Test
-    fun manualProfileNeedsANameKeyAndHttpAddressForEveryChosenProtocol() {
+    fun automaticProfileNeedsANameKeyAndHttpAddress() {
         val empty = ManualProfileDraft()
+        assertFalse(empty.manual)
+        assertFalse(empty.valid)
+        val draft = empty.copy(name = "Gate", apiKey = "sk-1", baseUrl = " https://gate.example/v1 ")
+        assertTrue(draft.valid)
+        assertFalse(draft.copy(baseUrl = "gate.example").valid)
+        assertFalse(draft.copy(apiKey = " ").valid)
+        assertFalse(draft.copy(name = "").valid)
+    }
+
+    @Test
+    fun switchingToManualFillsEachProtocolsAddressFromTheEnteredOne() {
+        val manual = ManualProfileDraft(name = "Gate", apiKey = "sk-1", baseUrl = " https://gate.example/v1/ ").toManual()
+        assertTrue(manual.manual)
+        assertEquals(listOf("openai_chat"), manual.chosenProtocols)
+        assertEquals("https://gate.example/v1", manual.offers.getValue("openai_responses").baseUrl)
+        assertEquals("https://gate.example/v1", manual.offers.getValue("openai_chat").baseUrl)
+        assertEquals("https://gate.example", manual.offers.getValue("anthropic").baseUrl)
+        assertTrue(manual.valid)
+
+        assertEquals("https://gate.example/anthropic", protocolBaseUrl("anthropic", "https://gate.example/anthropic/"))
+        assertEquals("https://gate.example/api", protocolBaseUrl("anthropic", "https://gate.example/api/v1"))
+        assertEquals("https://gate.example/api/v1", protocolBaseUrl("openai_chat", "https://gate.example/api/v1/"))
+    }
+
+    @Test
+    fun manualProfileNeedsANameKeyAndHttpAddressForEveryChosenProtocol() {
+        val empty = ManualProfileDraft(manual = true)
         assertEquals(listOf("openai_chat"), empty.chosenProtocols)
         assertFalse(empty.valid)
 

@@ -92,6 +92,9 @@ import Testing
         #expect(ModelConfigErrorText.text(unknown) == String(localized: "That did not finish. Try again later."))
         #expect(ModelConfigErrorText.text(code: "secret_required") != nil)
         #expect(ModelConfigErrorText.text(code: "channel_in_use") != nil && ModelConfigErrorText.text(code: "runtime_switching") != nil)
+        for code in ["gateway_address_not_allowed", "gateway_unreachable", "gateway_key_rejected", "gateway_protocols_unknown"] {
+            #expect(ModelConfigErrorText.text(code: code) != nil, "\(code) reads as user text")
+        }
     }
 
     @Test func presentationFollowsDeclaredValues() {
@@ -103,8 +106,64 @@ import Testing
         #expect(ModelConfigPresentation.parseModelIDs(" a, b\nb\r\n\n c ,") == ["a", "b", "c"])
     }
 
+    @Test func profileDraftSendsOnlyTheAddressForTheServerToDetect() throws {
+        var draft = ModelProfileDraft()
+        #expect(!draft.isManual && !draft.isValid)
+        draft.name = " Gateway "; draft.apiKey = " sk-test "
+        #expect(!draft.isValid, "Detection needs an address")
+        draft.baseURL = "gateway.example/v1"
+        #expect(!draft.isValid)
+        draft.baseURL = " https://gateway.example/v1 "
+        #expect(draft.isValid, "Protocols are not chosen before detection")
+        draft.offers[.openaiChat]?.enabled = false
+        #expect(draft.isValid)
+        let encoded = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(draft.request))
+        let backend = try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: (try fixtureObject("requests"))["detectModelProfile"]!))
+        #expect(encoded == backend, "No offers, not even as null")
+    }
+
+    @Test func onlyAnAddressTheServerCannotDetectFromTurnsTheDraftManual() throws {
+        var draft = ModelProfileDraft()
+        draft.name = "Gateway"; draft.apiKey = "sk-test"; draft.baseURL = " https://gateway.example/v1/ "
+        let afterKey = draft.fallBackToManual(after: "gateway_key_rejected")
+        #expect(!afterKey && !draft.isManual, "A refused key keeps detecting")
+        let afterNothing = draft.fallBackToManual(after: nil), afterOther = draft.fallBackToManual(after: "profile_changed")
+        #expect(!afterNothing && !afterOther && !draft.isManual)
+        let afterUnreachable = draft.fallBackToManual(after: "gateway_unreachable")
+        #expect(afterUnreachable && draft.isManual)
+        #expect(draft.offer(.openaiResponses).baseURL == "https://gateway.example/v1")
+        #expect(draft.offer(.openaiChat).baseURL == "https://gateway.example/v1")
+        #expect(draft.offer(.anthropic).baseURL == "https://gateway.example")
+        #expect(draft.chosen == [.openaiChat], "Prefilling chooses no protocol")
+        #expect(draft.isValid)
+        let encoded = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(draft.request))
+        #expect(encoded["baseUrl"] == nil && encoded["offers"]?.configArray?.count == 1)
+        #expect(encoded["offers"]?.configArray?.first?["baseUrl"] == .string("https://gateway.example/v1"))
+        draft.offers[.openaiChat]?.baseURL = "https://edited.example/v1"
+        let again = draft.fallBackToManual(after: "gateway_protocols_unknown")
+        #expect(!again, "A manual draft keeps what was entered")
+        #expect(draft.offer(.openaiChat).baseURL == "https://edited.example/v1")
+        for code in ["gateway_address_not_allowed", "gateway_protocols_unknown"] {
+            var other = ModelProfileDraft()
+            other.baseURL = "http://10.0.0.2:8080"
+            let turnedManual = other.fallBackToManual(after: code)
+            #expect(turnedManual && other.offer(.anthropic).baseURL == "http://10.0.0.2:8080")
+        }
+    }
+
+    @Test func anthropicAddressDropsTheVersionTheClientAdds() {
+        let address = "  https://gateway.example/api/v1//  "
+        #expect(ModelProfileDraft.protocolBaseURL(address, for: .openaiResponses) == "https://gateway.example/api/v1")
+        #expect(ModelProfileDraft.protocolBaseURL(address, for: .openaiChat) == "https://gateway.example/api/v1")
+        #expect(ModelProfileDraft.protocolBaseURL(address, for: .anthropic) == "https://gateway.example/api")
+        #expect(ModelProfileDraft.protocolBaseURL("https://gateway.example/v1beta", for: .anthropic) == "https://gateway.example/v1beta")
+        #expect(ModelProfileDraft.protocolBaseURL("https://gateway.example", for: .anthropic) == "https://gateway.example")
+        #expect(ModelProfileDraft.protocolBaseURL("", for: .anthropic) == "")
+    }
+
     @Test func manualProfileDraftNeedsANameKeyAndHTTPAddresses() throws {
         var draft = ModelProfileDraft()
+        draft.isManual = true
         #expect(!draft.isValid)
         draft.name = " Gateway "; draft.apiKey = " sk-test "
         draft.offers[.openaiChat]?.baseURL = "ftp://gateway.example"
@@ -114,6 +173,7 @@ import Testing
         #expect(draft.isValid)
         let encoded = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(draft.request))
         let backend = try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: (try fixtureObject("requests"))["createModelProfile"]!))
+        #expect(encoded["baseUrl"] == nil, "No address beside the offers, not even as null")
         #expect(encoded["name"] == backend["name"] && encoded["apiKey"] == backend["apiKey"])
         let offer = encoded["offers"]?.configArray?.first, backendOffer = backend["offers"]?.configArray?.first
         #expect(offer?["format"] == backendOffer?["format"])

@@ -212,21 +212,39 @@ data class OfferDraft(
     val models: String = "",
 )
 
-/** The add-profile form. The key is sent once and never read back. */
+/**
+ * The add-profile form. The key is sent once and never read back.
+ *
+ * In automatic mode the user gives only the address and the Server detects the
+ * protocols and models; [manual] mode lists them per protocol, as before.
+ */
 data class ManualProfileDraft(
     val name: String = "",
     val apiKey: String = "",
+    val baseUrl: String = "",
+    val manual: Boolean = false,
     val offers: Map<String, OfferDraft> = MODEL_PROTOCOLS.associateWith { OfferDraft(enabled = it == "openai_chat") },
 ) {
     val chosenProtocols: List<String>
         get() = MODEL_PROTOCOLS.filter { offers[it]?.enabled == true }
 
     val valid: Boolean
-        get() = name.isNotBlank() && apiKey.isNotBlank() && chosenProtocols.isNotEmpty() &&
-            chosenProtocols.all { HTTP_URL.matches(offers[it]?.baseUrl?.trim().orEmpty()) }
+        get() = name.isNotBlank() && apiKey.isNotBlank() && if (manual) {
+            chosenProtocols.isNotEmpty() && chosenProtocols.all { HTTP_URL.matches(offers[it]?.baseUrl?.trim().orEmpty()) }
+        } else {
+            HTTP_URL.matches(baseUrl.trim())
+        }
 
     fun withOffer(protocol: String, transform: (OfferDraft) -> OfferDraft): ManualProfileDraft =
         copy(offers = offers + (protocol to transform(offers[protocol] ?: OfferDraft())))
+
+    /** Switches to manual mode, filling each protocol's empty address from the one entered. */
+    fun toManual(): ManualProfileDraft = copy(
+        manual = true,
+        offers = offers.mapValues { (protocol, offer) ->
+            if (offer.baseUrl.isBlank()) offer.copy(baseUrl = protocolBaseUrl(protocol, baseUrl)) else offer
+        },
+    )
 
     fun toOffers(): List<ModelOffer> = chosenProtocols.map { protocol ->
         val draft = offers.getValue(protocol)
@@ -241,6 +259,21 @@ data class ManualProfileDraft(
         val HTTP_URL = Regex("^https?://\\S+$")
     }
 }
+
+/**
+ * A protocol's address guessed from the one the user entered: OpenAI protocols use it as is,
+ * Anthropic's clients add `/v1` themselves, so a trailing `/v1` is dropped.
+ */
+fun protocolBaseUrl(protocol: String, address: String): String {
+    val base = address.trim().trimEnd('/')
+    return if (protocol == "anthropic") base.removeSuffix("/v1").trimEnd('/') else base
+}
+
+/** Detection failed for a reason the user can work around by entering the protocols and models. */
+val GATEWAY_MANUAL_FALLBACK_CODES = setOf("gateway_address_not_allowed", "gateway_unreachable", "gateway_protocols_unknown")
+
+/** Detection errors shown inside the add-profile form instead of as a toast. */
+val GATEWAY_ERROR_CODES = GATEWAY_MANUAL_FALLBACK_CODES + "gateway_key_rejected"
 
 /** The Server's stable error code, used to pick localized text. */
 fun modelConfigErrorCode(error: Throwable): String? = (error as? ApiException)?.errorCode

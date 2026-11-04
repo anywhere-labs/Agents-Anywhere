@@ -1828,13 +1828,13 @@
         "profilesTitle": "Model profiles",
         "profilesDescription": "A model service's address, key and models.",
         "addProfile": "Add profile",
-        "addProfileDescription": "Enter the service's key and the protocols, addresses and models it offers.",
+        "addProfileDescription": "Enter the model service's address and key. Saving detects the protocols and models it supports.",
         "noProfiles": "No model profiles yet.",
         "profileName": "Name",
         "apiKey": "API key",
         "apiKeyWriteOnly": "Never shown again after saving; only its first and last characters are kept to recognize it.",
         "baseUrl": "Address",
-        "baseUrlPlaceholder": "https://example.com/v1",
+        "baseUrlPlaceholder": "https://api.example.com/v1",
         "models": "Models",
         "modelsPlaceholder": "One model ID per line; optional",
         "profileSaved": "Profile saved",
@@ -1895,7 +1895,11 @@
           "key_not_kept": "Tokens Anywhere did not keep this instance's key, so it cannot be fetched again. Ask its operator to set TOKENS_SECRETS_KEY, then unlink and link again.",
           "channel_not_found": "This channel no longer exists. Refresh and try again.",
           "channel_in_use": "Runtimes still want or use the Tokens Anywhere channel. Switch to another channel first.",
-          "runtime_switching": "This runtime is switching channels. Try again shortly."
+          "runtime_switching": "This runtime is switching channels. Try again shortly.",
+          "gateway_address_not_allowed": "This address is on a private network, which the server does not call, so it can't be detected.",
+          "gateway_unreachable": "The server could not reach this address. Check the address.",
+          "gateway_key_rejected": "The model service refused this key. Check it and try again.",
+          "gateway_protocols_unknown": "Couldn't detect any supported protocol at this address. Check the address."
         },
         "interruptTitle": "Tasks are running",
         "interruptDescription": "Continuing restarts the affected runtimes and interrupts their running tasks.",
@@ -2048,7 +2052,9 @@
           "rollback_failed": "Restoring the previous configuration also failed",
           "superseded": "Replaced by a newer switch",
           "unknown": "Cannot switch right now"
-        }
+        },
+        "detecting": "Detecting…",
+        "manualProtocols": "You can also pick the protocols and enter the models yourself:"
       },
       "modelConfigsTitle": "Model channels",
       "channelSwitchTitle": "Channel switching"

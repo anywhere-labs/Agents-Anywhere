@@ -40,7 +40,7 @@ import { useWorkspace } from "@/components/workspace-context"
 import type { DeviceRuntimeView, ModelChannel, ModelChannelState, ModelConfigOverview, ModelProfile, ModelProtocol } from "@/features/dashboard/types"
 import { modelConfigApi } from "@/features/model-config/api"
 import { NATIVE_CHANNEL, TOKENS_CHANNEL, channelReferenced, channelUsers, tokensWanted } from "@/features/model-config/channel"
-import { parseModelIds } from "@/features/model-config/presentation"
+import { MANUAL_PROTOCOL_CODES, parseModelIds, protocolBaseUrl } from "@/features/model-config/presentation"
 import { isApiError } from "@/lib/api/errors"
 import { cn } from "@/lib/utils"
 
@@ -693,10 +693,16 @@ function ProfileRow({
 
 type OfferDraft = { enabled: boolean; baseUrl: string; models: string }
 
+const HTTP_URL = /^https?:\/\/\S+$/
+
 function ProfileDialog({ token, onClose, errorText }: { token: string; onClose: () => void; errorText: (error: unknown) => string }) {
   const t = useTranslations("pages.settings.modelConfigs")
   const [name, setName] = React.useState("")
   const [apiKey, setApiKey] = React.useState("")
+  const [baseUrl, setBaseUrl] = React.useState("")
+  // The server detects the protocols from the address; only when it cannot are they entered by hand.
+  const [manual, setManual] = React.useState(false)
+  const [failure, setFailure] = React.useState<string | null>(null)
   const [offers, setOffers] = React.useState<Record<ModelProtocol, OfferDraft>>({
     openai_responses: { enabled: false, baseUrl: "", models: "" },
     openai_chat: { enabled: true, baseUrl: "", models: "" },
@@ -705,33 +711,46 @@ function ProfileDialog({ token, onClose, errorText }: { token: string; onClose: 
   const [saving, setSaving] = React.useState(false)
   const changed = useModelConfigChanged()
   const chosen = PROTOCOLS.filter((protocol) => offers[protocol].enabled)
-  const valid = name.trim() && apiKey.trim() && chosen.length > 0
-    && chosen.every((protocol) => /^https?:\/\/\S+$/.test(offers[protocol].baseUrl.trim()))
+  const valid = name.trim() && apiKey.trim() && (manual
+    ? chosen.length > 0 && chosen.every((protocol) => HTTP_URL.test(offers[protocol].baseUrl.trim()))
+    : HTTP_URL.test(baseUrl.trim()))
 
   const save = async () => {
     setSaving(true)
+    setFailure(null)
     try {
-      await modelConfigApi.createProfile(token, {
-        name: name.trim(),
-        apiKey: apiKey.trim(),
-        offers: chosen.map((protocol) => ({
-          format: protocol,
-          baseUrl: offers[protocol].baseUrl.trim(),
-          models: parseModelIds(offers[protocol].models).map((id) => ({ id })),
-        })),
-      })
+      await modelConfigApi.createProfile(token, manual
+        ? {
+            name: name.trim(),
+            apiKey: apiKey.trim(),
+            offers: chosen.map((protocol) => ({
+              format: protocol,
+              baseUrl: offers[protocol].baseUrl.trim(),
+              models: parseModelIds(offers[protocol].models).map((id) => ({ id })),
+            })),
+          }
+        : { name: name.trim(), apiKey: apiKey.trim(), baseUrl: baseUrl.trim() })
       toast.success(t("profileSaved"))
       changed()
       onClose()
     } catch (error) {
-      toast.error(errorText(error))
+      const code = isApiError(error) ? error.code : undefined
+      if (!manual && code && MANUAL_PROTOCOL_CODES.includes(code)) {
+        setOffers((current) => {
+          const next = { ...current }
+          for (const protocol of PROTOCOLS) next[protocol] = { ...current[protocol], baseUrl: protocolBaseUrl(baseUrl, protocol) }
+          return next
+        })
+        setManual(true)
+      }
+      setFailure(errorText(error))
     } finally {
       setSaving(false)
     }
   }
 
   return (
-    <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
+    <Dialog open onOpenChange={(open) => { if (!open && !saving) onClose() }}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{t("addProfile")}</DialogTitle>
@@ -740,8 +759,22 @@ function ProfileDialog({ token, onClose, errorText }: { token: string; onClose: 
         <FieldGroup className="max-h-[60vh] gap-4 overflow-y-auto">
           <Field>
             <FieldLabel htmlFor="model-profile-name">{t("profileName")}</FieldLabel>
-            <Input id="model-profile-name" value={name} maxLength={64} onChange={(event) => setName(event.currentTarget.value)} />
+            <Input id="model-profile-name" value={name} maxLength={64} disabled={saving} onChange={(event) => setName(event.currentTarget.value)} />
           </Field>
+          {manual ? null : (
+            <Field>
+              <FieldLabel htmlFor="model-profile-url">{t("baseUrl")}</FieldLabel>
+              <Input
+                id="model-profile-url"
+                value={baseUrl}
+                placeholder={t("baseUrlPlaceholder")}
+                inputMode="url"
+                spellCheck={false}
+                disabled={saving}
+                onChange={(event) => setBaseUrl(event.currentTarget.value)}
+              />
+            </Field>
+          )}
           <Field>
             <FieldLabel htmlFor="model-profile-key">{t("apiKey")}</FieldLabel>
             <Input
@@ -750,13 +783,16 @@ function ProfileDialog({ token, onClose, errorText }: { token: string; onClose: 
               value={apiKey}
               autoComplete="new-password"
               spellCheck={false}
+              disabled={saving}
               data-1p-ignore
               data-lpignore="true"
               onChange={(event) => setApiKey(event.currentTarget.value)}
             />
             <FieldDescription>{t("apiKeyWriteOnly")}</FieldDescription>
           </Field>
-          {PROTOCOLS.map((protocol) => (
+          {failure ? <Alert variant="destructive"><AlertDescription>{failure}</AlertDescription></Alert> : null}
+          {manual ? <p className="text-sm text-muted-foreground">{t("manualProtocols")}</p> : null}
+          {manual ? PROTOCOLS.map((protocol) => (
             <div key={protocol} className="flex flex-col gap-3 rounded-md border border-border p-3">
               <label className="flex items-center gap-2 text-sm font-medium">
                 <Checkbox
@@ -792,11 +828,14 @@ function ProfileDialog({ token, onClose, errorText }: { token: string; onClose: 
                 </>
               ) : null}
             </div>
-          ))}
+          )) : null}
         </FieldGroup>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>{t("cancel")}</Button>
-          <Button onClick={() => void save()} disabled={!valid || saving}>{saving ? <Spinner /> : null}{t("save")}</Button>
+          <Button variant="outline" onClick={onClose} disabled={saving}>{t("cancel")}</Button>
+          <Button onClick={() => void save()} disabled={!valid || saving}>
+            {saving ? <Spinner /> : null}
+            {saving && !manual ? t("detecting") : t("save")}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

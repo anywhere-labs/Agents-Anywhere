@@ -40,11 +40,33 @@
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/model-profiles` | 返回 `{secretConfigured, profiles, assignments, channel}` |
-| POST | `/model-profiles` | 手动配置：`{name, apiKey, offers: [{format, baseUrl, models: [{id, name?}]}]}`，每种协议最多一个 offer；返回 201 |
+| POST | `/model-profiles` | 手动配置：`{name, apiKey, baseUrl}` 由 Server 自动识别协议和模型（见「自动识别」），或 `{name, apiKey, offers: [{format, baseUrl, models: [{id, name?}]}]}` 直接给出，每种协议最多一个 offer；两种写法只能二选一；返回 201 |
 | PATCH | `/model-profiles/{id}` | 需要 `If-Match: <etag>`；改了地址的 host 必须同时提供新 `apiKey`；Tokens 配置只读 |
 | DELETE | `/model-profiles/{id}` | 是当前渠道、被某个 Runtime 指定或仍有 Runtime 在用时返回 409 `profile_in_use` |
 
 `format` 为 `openai_responses`、`openai_chat` 或 `anthropic`。
+
+### 自动识别
+
+只给 `baseUrl` 时，Server 在保存前访问这个地址，判断它支持哪些协议、有哪些模型，再按得到的 `offers` 保存。识别不调用模型，不产生费用：
+
+- 地址带不带 `/v1` 都可以。OpenAI 协议使用 `…/v1`（地址带有其他路径时先试原地址，再试加 `/v1`），Anthropic 协议使用去掉 `/v1` 的地址，与 `ANTHROPIC_BASE_URL` 的约定一致。
+- 协议：向 `chat/completions`、`responses` 和 Anthropic 的 `/v1/messages` 各发一个空请求体。返回 400、422 或 429 且响应是 JSON，说明这个路由存在；404、405、非 JSON 响应（例如网关的网页）说明不支持。
+- 模型：读取 `GET …/models`（OpenAI）和 `GET …/v1/models`（Anthropic）的 `data[].id`；Anthropic 列表为空时沿用 OpenAI 列表。列表读不到时保存空模型列表，与手动留空相同。
+- 每次请求最长 15 秒，所有请求并发执行；不跟随重定向，响应超过 2 MB 视为无效。
+
+Server 先解析地址的主机名，所有解析结果都必须是公网地址，再直接连接这个已核对的 IP（HTTPS 仍按主机名校验证书），防止 Server 被用来访问内网。设置 `AGENT_SERVER_ALLOW_PRIVATE_MODEL_GATEWAYS=1` 后允许内网地址，适合模型网关和 Server 在同一内网的自托管部署。识别请求不使用 `HTTP(S)_PROXY`。
+
+识别失败时返回 422，`detail.code` 为：
+
+| code | 含义 | 客户端处理 |
+| --- | --- | --- |
+| `gateway_address_not_allowed` | 地址解析到内网，Server 不访问 | 改为手动选择协议 |
+| `gateway_unreachable` | 所有请求都没有响应 | 改为手动选择协议 |
+| `gateway_key_rejected` | 网关拒绝了 Key（401、403） | 提示检查 Key |
+| `gateway_protocols_unknown` | 有响应，但没有识别出任何协议 | 改为手动选择协议 |
+
+已知限制：识别只能确认网关提供某个协议的路由，不能确认每个模型都能走这个协议；Responses 和 Chat Completions 使用同一份模型列表。
 
 `assignments` 是各 Runtime 实际在用的 AA 渠道记录（`actual` 不是 `native` 的 Runtime 各一条）：`{connectorId, runtimeId, profileId, offerFormat, createdRuntime, status, appliedAt, modelConnectionStatus}`，`status` 为 `applied`、`modified`（之后手动改过连接）或 `outdated`（渠道的模型或 Key 已变化，等待重新写入）。切换进度只看渠道状态。
 

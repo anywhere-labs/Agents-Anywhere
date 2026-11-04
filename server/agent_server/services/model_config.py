@@ -30,8 +30,17 @@ from agent_server.core.model_config import (
     origin_host,
     written_digest,
 )
+from agent_server.core.model_discovery import (
+    discovered_offers,
+    discovery_requests,
+    gateway_bases,
+)
 from agent_server.core.secret_fields import secret_hint
 from agent_server.core.utc import utc_now
+from agent_server.infra.model_gateway_probe import (
+    GatewayAddressNotAllowedError,
+    GatewayProber,
+)
 from agent_server.infra.repositories.model_config import ModelProfileInUseError
 from agent_server.infra.secret_box import SecretBox, SecretBoxUnavailableError
 from agent_server.infra.timeline_broker import TimelineBroker
@@ -56,6 +65,20 @@ class ModelConfigNotFoundError(ModelConfigError):
 
 class ModelConfigConflictError(ModelConfigError):
     status_code = 409
+
+
+class ModelGatewayError(ModelConfigError):
+    """The gateway could not tell which protocols it speaks; offers can be given by hand."""
+
+    status_code = 422
+
+
+GATEWAY_MESSAGES = {
+    "gateway_address_not_allowed": "the address is on a private network, which this server does not call",
+    "gateway_unreachable": "the gateway did not answer",
+    "gateway_key_rejected": "the gateway refused the key",
+    "gateway_protocols_unknown": "the gateway answered none of the supported protocols",
+}
 
 
 class ModelConfigInvalidError(ModelConfigError):
@@ -100,8 +123,10 @@ class ModelConfigService:
         broker: TimelineBroker | None = None,
         tokens_key: TokensKeyProvider | None = None,
         secret_box: Callable[[], SecretBox] = SecretBox,
+        prober: GatewayProber | None = None,
     ) -> None:
         self._store = store
+        self._prober = prober or GatewayProber()
         self._runtimes = runtimes
         self._broker = broker
         self._tokens_key = tokens_key
@@ -155,6 +180,10 @@ class ModelConfigService:
 
     async def create_manual_profile(self, request: ManualProfileRequest, *, user_id: str) -> dict[str, Any]:
         box = self._box()
+        offers = request.offers
+        if offers is None:
+            assert request.baseUrl is not None
+            offers = await self.discover_offers(request.baseUrl, request.apiKey)
         profile_id = f"mpr_{secrets.token_urlsafe(12)}"
         key_ref = {"hint": secret_hint(request.apiKey)}
         now = utc_now()
@@ -164,9 +193,9 @@ class ModelConfigService:
                 "user_id": user_id,
                 "source": "manual",
                 "name": request.name,
-                "origin_host": origin_host(request.offers),
-                "offers_json": json.dumps([offer.model_dump(mode="json") for offer in request.offers]),
-                "catalog_digest": catalog_digest(request.offers, {"hint": key_ref["hint"], "id": _digest(request.apiKey)}),
+                "origin_host": origin_host(offers),
+                "offers_json": json.dumps([offer.model_dump(mode="json") for offer in offers]),
+                "catalog_digest": catalog_digest(offers, {"hint": key_ref["hint"], "id": _digest(request.apiKey)}),
                 "key_ref_json": json.dumps(key_ref),
                 "secret_ciphertext": box.seal(request.apiKey, context=f"model-profile:{profile_id}"),
                 "state": "active",
@@ -177,6 +206,18 @@ class ModelConfigService:
         )
         await self._publish(user_id)
         return self._public_profile(row)
+
+    async def discover_offers(self, base_url: str, api_key: str) -> list[Offer]:
+        """The protocols and models a gateway answers for, without calling a model."""
+        bases = gateway_bases(base_url)
+        try:
+            responses = await self._prober.run(discovery_requests(bases, api_key))
+        except GatewayAddressNotAllowedError as exc:
+            raise ModelGatewayError("gateway_address_not_allowed", GATEWAY_MESSAGES["gateway_address_not_allowed"]) from exc
+        discovery = discovered_offers(bases, responses)
+        if discovery.failure is not None:
+            raise ModelGatewayError(discovery.failure, GATEWAY_MESSAGES[discovery.failure])
+        return discovery.offers
 
     async def save_tokens_profile(
         self,

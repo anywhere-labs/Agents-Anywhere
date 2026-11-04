@@ -175,5 +175,9 @@ private fun knownErrorRes(code: String?): Int? = when (code) {
     "device_offline" -> R.string.model_config_error_device_offline
     "models_required" -> R.string.model_config_error_models_required
     "key_not_kept" -> R.string.model_config_error_key_not_kept
+    "gateway_address_not_allowed" -> R.string.model_config_error_gateway_address_not_allowed
+    "gateway_unreachable" -> R.string.model_config_error_gateway_unreachable
+    "gateway_key_rejected" -> R.string.model_config_error_gateway_key_rejected
+    "gateway_protocols_unknown" -> R.string.model_config_error_gateway_protocols_unknown
     else -> null
 }

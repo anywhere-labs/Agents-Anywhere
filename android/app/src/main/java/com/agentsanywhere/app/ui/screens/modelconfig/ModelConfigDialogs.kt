@@ -35,23 +35,35 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.feature.modelconfig.GATEWAY_ERROR_CODES
+import com.agentsanywhere.app.feature.modelconfig.GATEWAY_MANUAL_FALLBACK_CODES
 import com.agentsanywhere.app.feature.modelconfig.MODEL_PROTOCOLS
 import com.agentsanywhere.app.feature.modelconfig.ManualProfileDraft
+import com.agentsanywhere.app.feature.modelconfig.modelConfigErrorCode
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.screens.profile.ProfileDialog
 import com.agentsanywhere.app.ui.screens.profile.ProfileDialogButton
 import kotlinx.coroutines.launch
 
-/** Adds a manual profile. The key field is write-only: it is never filled from the Server. */
+/**
+ * Adds a manual profile. The key field is write-only: it is never filled from the Server.
+ *
+ * Saving first asks the Server to detect the protocols and models at the address. When it
+ * cannot, the form switches to entering them per protocol. [onSave] errors without a detection
+ * code go to [onError]; detection errors show in the form.
+ */
 @Composable
 internal fun ProfileFormDialog(
     onDismiss: () -> Unit,
-    onSave: suspend (ManualProfileDraft) -> Unit,
+    onSave: suspend (ManualProfileDraft) -> Result<*>,
+    onError: (Throwable) -> Unit,
 ) {
     val colors = LocalAAColors.current
     val scope = rememberCoroutineScope()
     var draft by remember { mutableStateOf(ManualProfileDraft()) }
     var saving by remember { mutableStateOf(false) }
+    var errorCode by remember { mutableStateOf<String?>(null) }
+    val editable = !saving
     ProfileDialog(title = stringResource(R.string.model_config_add_profile), onDismiss = { if (!saving) onDismiss() }) {
         Column(
             modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
@@ -59,39 +71,69 @@ internal fun ProfileFormDialog(
         ) {
             MutedText(stringResource(R.string.model_config_add_profile_description))
             FieldLabel(stringResource(R.string.model_config_profile_name))
-            FormField(value = draft.name, placeholder = "", onValueChange = { draft = draft.copy(name = it.take(64)) })
+            FormField(value = draft.name, placeholder = "", enabled = editable, onValueChange = { draft = draft.copy(name = it.take(64)) })
+            if (!draft.manual) {
+                FieldLabel(stringResource(R.string.model_config_address))
+                FormField(
+                    value = draft.baseUrl,
+                    placeholder = stringResource(R.string.model_config_detect_address_placeholder),
+                    keyboardType = KeyboardType.Uri,
+                    enabled = editable,
+                    onValueChange = { draft = draft.copy(baseUrl = it) },
+                )
+            }
             FieldLabel(stringResource(R.string.model_config_api_key))
-            FormField(value = draft.apiKey, placeholder = "", secret = true, onValueChange = { draft = draft.copy(apiKey = it) })
+            FormField(
+                value = draft.apiKey,
+                placeholder = "",
+                secret = true,
+                enabled = editable,
+                onValueChange = { draft = draft.copy(apiKey = it) },
+            )
             MutedText(stringResource(R.string.model_config_api_key_write_only))
-            MODEL_PROTOCOLS.forEach { protocol ->
-                val offer = draft.offers[protocol] ?: return@forEach
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .border(1.dp, colors.border, RoundedCornerShape(12.dp))
-                        .padding(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    CheckRow(
-                        label = protocolLabel(protocol),
-                        checked = offer.enabled,
-                        onCheckedChange = { checked -> draft = draft.withOffer(protocol) { it.copy(enabled = checked) } },
-                    )
-                    if (offer.enabled) {
-                        FormField(
-                            value = offer.baseUrl,
-                            placeholder = stringResource(R.string.model_config_base_url_placeholder),
-                            keyboardType = KeyboardType.Uri,
-                            onValueChange = { value -> draft = draft.withOffer(protocol) { it.copy(baseUrl = value) } },
+            errorCode?.let { code ->
+                Text(
+                    stringResource(modelConfigErrorRes(code)),
+                    color = colors.errorText,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                )
+            }
+            if (draft.manual) {
+                MutedText(stringResource(R.string.model_config_manual_fallback_hint))
+                MODEL_PROTOCOLS.forEach { protocol ->
+                    val offer = draft.offers[protocol] ?: return@forEach
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .border(1.dp, colors.border, RoundedCornerShape(12.dp))
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        CheckRow(
+                            label = protocolLabel(protocol),
+                            checked = offer.enabled,
+                            enabled = editable,
+                            onCheckedChange = { checked -> draft = draft.withOffer(protocol) { it.copy(enabled = checked) } },
                         )
-                        FormField(
-                            value = offer.models,
-                            placeholder = stringResource(R.string.model_config_models_placeholder),
-                            singleLine = false,
-                            monospace = true,
-                            onValueChange = { value -> draft = draft.withOffer(protocol) { it.copy(models = value) } },
-                        )
+                        if (offer.enabled) {
+                            FormField(
+                                value = offer.baseUrl,
+                                placeholder = stringResource(R.string.model_config_base_url_placeholder),
+                                keyboardType = KeyboardType.Uri,
+                                enabled = editable,
+                                onValueChange = { value -> draft = draft.withOffer(protocol) { it.copy(baseUrl = value) } },
+                            )
+                            FormField(
+                                value = offer.models,
+                                placeholder = stringResource(R.string.model_config_models_placeholder),
+                                singleLine = false,
+                                monospace = true,
+                                enabled = editable,
+                                onValueChange = { value -> draft = draft.withOffer(protocol) { it.copy(models = value) } },
+                            )
+                        }
                     }
                 }
             }
@@ -104,15 +146,34 @@ internal fun ProfileFormDialog(
                 onClick = onDismiss,
             )
             ProfileDialogButton(
-                label = stringResource(if (saving) R.string.common_saving else R.string.common_save),
+                label = stringResource(
+                    when {
+                        !saving -> R.string.common_save
+                        draft.manual -> R.string.common_saving
+                        else -> R.string.model_config_detecting
+                    },
+                ),
                 primary = true,
                 enabled = draft.valid && !saving,
+                loading = saving,
                 modifier = Modifier.weight(1f),
                 onClick = {
                     saving = true
+                    errorCode = null
+                    val submitted = draft
                     scope.launch {
                         try {
-                            onSave(draft)
+                            onSave(submitted).onFailure { error ->
+                                val code = modelConfigErrorCode(error)
+                                when {
+                                    code !in GATEWAY_ERROR_CODES -> onError(error)
+                                    !submitted.manual && code in GATEWAY_MANUAL_FALLBACK_CODES -> {
+                                        errorCode = code
+                                        draft = draft.toManual()
+                                    }
+                                    else -> errorCode = code
+                                }
+                            }
                         } finally {
                             saving = false
                         }
@@ -198,9 +259,9 @@ private fun FieldLabel(text: String) {
 }
 
 @Composable
-private fun CheckRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+private fun CheckRow(label: String, checked: Boolean, enabled: Boolean = true, onCheckedChange: (Boolean) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Checkbox(checked = checked, onCheckedChange = onCheckedChange)
+        Checkbox(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
         Text(label, color = LocalAAColors.current.ink, fontSize = 13.5.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium)
     }
 }
@@ -213,6 +274,7 @@ internal fun FormField(
     singleLine: Boolean = true,
     monospace: Boolean = false,
     keyboardType: KeyboardType = KeyboardType.Text,
+    enabled: Boolean = true,
     onValueChange: (String) -> Unit,
 ) {
     val colors = LocalAAColors.current
@@ -220,6 +282,7 @@ internal fun FormField(
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
+        enabled = enabled,
         singleLine = singleLine,
         minLines = if (singleLine) 1 else 3,
         textStyle = TextStyle(color = colors.ink, fontSize = 14.sp, fontFamily = family),

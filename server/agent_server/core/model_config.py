@@ -17,11 +17,12 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from agent_server.core.model_connection import ModelProtocol
 
 MAX_RUNTIME_MODELS = 64
+MAX_OFFER_MODELS = 256
 GATEWAY_KEY = "apiKey"
 GATEWAY_URL = "baseUrl"
 GATEWAY_PROTOCOL = "protocol"
@@ -51,18 +52,23 @@ class Offer(BaseModel):
 
     format: ModelProtocol
     baseUrl: str = Field(min_length=1, max_length=2048)
-    models: list[ModelSpec] = Field(default_factory=list, max_length=256)
+    models: list[ModelSpec] = Field(default_factory=list, max_length=MAX_OFFER_MODELS)
 
     @field_validator("baseUrl")
     @classmethod
     def _http_url(cls, value: str) -> str:
-        value = value.strip().rstrip("/")
-        parsed = urlsplit(value)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("baseUrl must be an absolute HTTP or HTTPS URL")
-        if parsed.username or parsed.password or parsed.query or parsed.fragment:
-            raise ValueError("baseUrl must not carry credentials, a query or a fragment")
-        return value
+        return gateway_url(value)
+
+
+def gateway_url(value: str) -> str:
+    """A gateway address without its trailing slash, or ValueError."""
+    value = value.strip().rstrip("/")
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("baseUrl must be an absolute HTTP or HTTPS URL")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("baseUrl must not carry credentials, a query or a fragment")
+    return value
 
 
 class ModelPreferences(BaseModel):
@@ -108,19 +114,37 @@ def effective_offers(offers: list[Offer], preferences: ModelPreferences | None) 
 
 
 class ManualProfileRequest(BaseModel):
+    """A model service entered by hand.
+
+    Either ``baseUrl``, and the server asks the gateway which protocols and
+    models it has, or ``offers`` spelled out for gateways it cannot reach.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=64)
     apiKey: str = Field(min_length=1, max_length=8192, pattern=r"^[^\u0000\r\n]+$")
-    offers: list[Offer] = Field(min_length=1, max_length=3)
+    baseUrl: str | None = Field(default=None, min_length=1, max_length=2048)
+    offers: list[Offer] | None = Field(default=None, min_length=1, max_length=3)
+
+    @field_validator("baseUrl")
+    @classmethod
+    def _http_url(cls, value: str | None) -> str | None:
+        return None if value is None else gateway_url(value)
 
     @field_validator("offers")
     @classmethod
-    def _one_offer_per_format(cls, value: list[Offer]) -> list[Offer]:
-        formats = [offer.format for offer in value]
+    def _one_offer_per_format(cls, value: list[Offer] | None) -> list[Offer] | None:
+        formats = [offer.format for offer in value or []]
         if len(formats) != len(set(formats)):
             raise ValueError("each protocol may appear only once")
         return value
+
+    @model_validator(mode="after")
+    def _address_or_offers(self) -> ManualProfileRequest:
+        if (self.baseUrl is None) == (self.offers is None):
+            raise ValueError("give either baseUrl or offers")
+        return self
 
 
 class ProfilePatchRequest(BaseModel):

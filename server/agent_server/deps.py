@@ -151,7 +151,9 @@ def _channel_runtime(state: Any) -> tuple[ChannelWakeIndex, ChannelDriver]:
 
 def tokens_link_service_for(state: Any) -> TokensLinkService:
     broker = getattr(state, "timeline_broker", None)
-    model_config = ModelConfigService(state.store, state.device_runtime_service, broker=broker)
+    model_config = ModelConfigService(
+        state.store, state.device_runtime_service, broker=broker, prober=getattr(state, "gateway_prober", None)
+    )
     tokens = TokensLinkService(
         state.store,
         model_config,
