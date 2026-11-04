@@ -2,7 +2,7 @@ import Foundation
 import Observation
 
 nonisolated enum TokensAccountTab: Hashable, CaseIterable {
-    case models, usage, devices
+    case account, models, runtimes
 }
 
 /// The linked Tokens Anywhere account page: who it is, its balance, which of
@@ -16,6 +16,8 @@ final class TokensAccountModel {
     private(set) var infoFailed = false
     /// The open tab; nil until the page first shows, then it picks one.
     var tab: TokensAccountTab?
+    /// The account the page last loaded, so coming back to it keeps unsaved edits.
+    var loadedKey: String?
 
     // MARK: Models
 
@@ -64,7 +66,7 @@ final class TokensAccountModel {
     func reset() {
         models = []; groups = []; saved = .empty; draft = .empty; pushed = nil; usageLoading = false
         info = nil; infoFailed = false; tab = nil; usage = nil; usageFailed = false; usageModel = nil
-        openGroups = nil
+        openGroups = nil; loadedKey = nil
         infoRequest += 1; usageRequest += 1
     }
 

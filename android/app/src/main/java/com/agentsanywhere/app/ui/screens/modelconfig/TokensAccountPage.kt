@@ -36,6 +36,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -136,11 +137,14 @@ internal fun TokensAccountPage(
     onNotice: (String) -> Unit,
     onError: (Throwable) -> Unit,
     action: @Composable () -> Unit,
-    header: @Composable () -> Unit = {},
+    header: @Composable () -> Unit,
+    connection: @Composable () -> Unit,
+    protocolAddresses: @Composable () -> Unit,
+    runtimes: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var tab by remember { mutableStateOf(TokensAccountTab.Models) }
+    var tab by rememberSaveable { mutableStateOf(TokensAccountTab.Account) }
     var info by remember { mutableStateOf<RemoteTokensAccount?>(null) }
     var infoFailed by remember { mutableStateOf(false) }
     var infoVersion by remember { mutableIntStateOf(0) }
@@ -218,23 +222,11 @@ internal fun TokensAccountPage(
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             header()
-            AccountCard(
-                name = info?.label ?: tokens.link?.accountLabel.orEmpty(),
-                email = info?.email ?: tokens.link?.accountEmail,
-                consoleUrl = info?.consoleUrl,
-                onOpen = ::open,
-            )
-            BalanceCard(
-                info = info,
-                failed = infoFailed,
-                onRetry = { infoVersion += 1 },
-                onViewUsage = { tab = TokensAccountTab.Usage },
-                onOpen = ::open,
-            )
             Segmented(
                 options = listOf(
-                    TokensAccountTab.Models to stringResource(R.string.model_config_account_tab_models),
-                    TokensAccountTab.Usage to stringResource(R.string.model_config_account_tab_usage),
+                    TokensAccountTab.Account to stringResource(R.string.model_config_account_tab_account),
+                    TokensAccountTab.Models to stringResource(R.string.model_config_account_tab_models_connection),
+                    TokensAccountTab.Runtimes to stringResource(R.string.model_config_runtimes_title),
                 ),
                 selected = tab,
                 onSelect = { tab = it },
@@ -243,18 +235,37 @@ internal fun TokensAccountPage(
                 role = Role.Tab,
             )
             when (tab) {
-                TokensAccountTab.Models -> ModelsTab(
-                    models = models,
-                    groups = groups,
-                    draft = draft,
-                    enabledCount = enabledCount,
-                    canRestore = !saving && !applying && !samePreferences(savedClean, ModelPreferences.EMPTY),
-                    syncing = syncing,
-                    onSync = onSync,
-                    onRestore = { save(ModelPreferences.EMPTY) },
-                    onDraft = { draft = it(draft) },
-                )
-                TokensAccountTab.Usage -> UsageTab(controller = controller, detailsUrl = info?.usageUrl, onOpen = ::open)
+                TokensAccountTab.Account -> {
+                    AccountCard(
+                        name = info?.label ?: tokens.link?.accountLabel.orEmpty(),
+                        email = info?.email ?: tokens.link?.accountEmail,
+                        consoleUrl = info?.consoleUrl,
+                        onOpen = ::open,
+                    )
+                    BalanceCard(
+                        info = info,
+                        failed = infoFailed,
+                        onRetry = { infoVersion += 1 },
+                        onOpen = ::open,
+                    )
+                    UsageTab(controller = controller, detailsUrl = info?.usageUrl, onOpen = ::open)
+                }
+                TokensAccountTab.Models -> {
+                    connection()
+                    ModelsTab(
+                        models = models,
+                        groups = groups,
+                        draft = draft,
+                        enabledCount = enabledCount,
+                        canRestore = !saving && !applying && !samePreferences(savedClean, ModelPreferences.EMPTY),
+                        syncing = syncing,
+                        onSync = onSync,
+                        onRestore = { save(ModelPreferences.EMPTY) },
+                        onDraft = { draft = it(draft) },
+                    )
+                    protocolAddresses()
+                }
+                TokensAccountTab.Runtimes -> runtimes()
             }
         }
     }
@@ -298,55 +309,51 @@ private fun BalanceCard(
     info: RemoteTokensAccount?,
     failed: Boolean,
     onRetry: () -> Unit,
-    onViewUsage: () -> Unit,
     onOpen: (String?) -> Unit,
 ) {
     val colors = LocalAAColors.current
     ProfileCard {
-        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                MutedText(stringResource(R.string.model_config_account_balance))
-                when {
-                    info != null -> {
-                        Text(
-                            formatYuan(amountUnits(info.balance.balance)),
-                            color = colors.ink,
-                            fontSize = 24.sp,
-                            lineHeight = 30.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        MutedText(
-                            stringResource(
-                                R.string.model_config_account_balance_detail,
-                                formatYuan(amountUnits(info.balance.available)),
-                                formatYuan(amountUnits(info.balance.bonus)),
-                            ),
-                        )
-                    }
-                    failed -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            stringResource(R.string.model_config_account_load_failed),
-                            color = colors.muted,
-                            fontSize = 13.sp,
-                            modifier = Modifier.weight(1f),
-                        )
-                        SmallButton(label = stringResource(R.string.common_retry), icon = Lucide.RefreshCw, onClick = onRetry)
-                    }
-                    else -> CircularProgressIndicator(
-                        color = colors.muted,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.padding(vertical = 6.dp).size(20.dp),
-                    )
-                }
-            }
-            ActionRow {
-                SmallButton(label = stringResource(R.string.model_config_account_view_usage), onClick = onViewUsage)
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                MutedText(stringResource(R.string.model_config_account_balance), Modifier.weight(1f))
                 SmallButton(
                     label = stringResource(R.string.model_config_account_top_up),
                     icon = Lucide.ExternalLink,
                     primary = true,
                     enabled = info?.billingUrl != null,
                     onClick = { onOpen(info?.billingUrl) },
+                )
+            }
+            when {
+                info != null -> {
+                    Text(
+                        formatYuan(amountUnits(info.balance.balance)),
+                        color = colors.ink,
+                        fontSize = 26.sp,
+                        lineHeight = 32.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    MutedText(
+                        stringResource(
+                            R.string.model_config_account_balance_detail,
+                            formatYuan(amountUnits(info.balance.available)),
+                            formatYuan(amountUnits(info.balance.bonus)),
+                        ),
+                    )
+                }
+                failed -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        stringResource(R.string.model_config_account_load_failed),
+                        color = colors.muted,
+                        fontSize = 13.sp,
+                        modifier = Modifier.weight(1f),
+                    )
+                    SmallButton(label = stringResource(R.string.common_retry), icon = Lucide.RefreshCw, onClick = onRetry)
+                }
+                else -> CircularProgressIndicator(
+                    color = colors.muted,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.padding(vertical = 6.dp).size(20.dp),
                 )
             }
         }
@@ -388,25 +395,13 @@ private fun ModelsTab(
     var renaming by remember { mutableStateOf<TokensModel?>(null) }
     val disabled = draft.disabled.toSet()
 
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(
-                pluralStringResource(R.plurals.model_config_account_models_summary, models.size, models.size, enabledCount),
-                color = LocalAAColors.current.ink,
-                fontSize = 13.sp,
-                lineHeight = 18.sp,
-            )
-            MutedText(stringResource(R.string.model_config_account_models_hint))
-        }
-        ActionRow {
-            SmallButton(
-                label = stringResource(R.string.model_config_account_restore_defaults),
-                icon = Lucide.RotateCcw,
-                enabled = canRestore,
-                onClick = onRestore,
-            )
-            refresh()
-        }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Section(
+            title = stringResource(R.string.model_config_account_tab_models),
+            description = stringResource(R.string.model_config_account_enabled_count, enabledCount, models.size) +
+                " · " + stringResource(R.string.model_config_account_models_hint),
+            action = refresh,
+        ) {}
         ProfileCard {
             groups.forEachIndexed { index, group ->
                 if (index > 0) RowDivider()
@@ -433,6 +428,13 @@ private fun ModelsTab(
                     }
                 }
             }
+        }
+        if (canRestore) {
+            SmallButton(
+                label = stringResource(R.string.model_config_account_restore_defaults),
+                icon = Lucide.RotateCcw,
+                onClick = onRestore,
+            )
         }
     }
 
@@ -618,7 +620,14 @@ private fun UsageTab(controller: ModelConfigController, detailsUrl: String?, onO
     val allModels = stringResource(R.string.model_config_account_all_models)
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                stringResource(R.string.model_config_account_tab_usage),
+                color = colors.ink,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+            )
             SmallButton(label = stringResource(R.string.model_config_account_refresh),
                 loading = usage == null && !failed, enabled = usage != null || failed,
                 onClick = { attempt += 1 })

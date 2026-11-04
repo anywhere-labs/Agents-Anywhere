@@ -263,6 +263,7 @@
       }
     },
     "%lld need attention": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.status.failed. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -1378,6 +1379,7 @@
       }
     },
     "All models": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.allModels. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -3077,12 +3079,13 @@
       }
     },
     "Daily cost": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.dailyCost. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Daily cost"
+            "value": "Daily spending"
           }
         },
         "zh-Hans": {
@@ -4052,6 +4055,7 @@
       }
     },
     "In effect on %lld runtimes": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.status.done. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -4073,9 +4077,21 @@
           }
         },
         "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已在 %lld 个 Runtime 生效"
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已在 %lld 个 Runtime 生效"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已在 %lld 个 Runtime 生效"
+                }
+              }
+            }
           }
         }
       }
@@ -7592,6 +7608,7 @@
       }
     },
     "Switching %lld/%lld runtimes": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.status.running. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -9433,18 +9450,19 @@
       }
     },
     "Unknown model": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.unknownModel. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Unknown model"
+            "value": "Unspecified model"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "未知模型"
+            "value": "未标明模型"
           }
         }
       }
@@ -11885,6 +11903,7 @@
       }
     },
     "pages.settings.modelConfigs.channel.link": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.channel.link. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -22260,6 +22279,7 @@
       }
     },
     "pages.settings.modelConfigs.signOut": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.signOut. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -22413,18 +22433,19 @@
       }
     },
     "Copy address": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.copy. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Copy address"
+            "value": "Copy"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "复制地址"
+            "value": "复制"
           }
         }
       }
@@ -22578,6 +22599,1350 @@
           "stringUnit": {
             "state": "translated",
             "value": "本次等待 %lld 秒后重试。"
+          }
+        }
+      }
+    },
+    "%@ has no separate instance managed by AA. Using %@ rewrites its own global settings, which also affects anything using it outside AA.": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.details.nativeGlobalDescription. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ has no separate instance managed by AA. Using %2$@ rewrites its own global settings, which also affects anything using it outside AA."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%1$@」没有 AA 管理的独立实例。使用「%2$@」会改写它自身的全局配置，也会影响不经过 AA 使用它的地方。"
+          }
+        }
+      }
+    },
+    "%lld / %lld enabled": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.enabledCount. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld / %2$lld enabled"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已启用 %1$lld / %2$lld"
+          }
+        }
+      }
+    },
+    "%lld devices offline, switch when back online": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.status.waitingOnline. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld device offline, switches when back online"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld devices offline, switch when back online"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld 台设备离线，上线后切换"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld 台设备离线，上线后切换"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld failed and went back to the previous channel": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.status.restored. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld failed and went back to the previous channel"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 个切换失败，已恢复原渠道"
+          }
+        }
+      }
+    },
+    "%lld runtimes not supported": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.details.unsupported. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld runtime not supported"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld runtimes not supported"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld 个 Runtime 不支持"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld 个 Runtime 不支持"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld/%lld in effect": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.status.attention. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld/%2$lld in effect"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld/%2$lld 已生效"
+          }
+        }
+      }
+    },
+    "Channel for %@": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.details.channelFor. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Channel for %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 使用的渠道"
+          }
+        }
+      }
+    },
+    "Runtimes on Tokens Anywhere restart and switch to %@; those running tasks switch once the tasks finish. When all have switched, the account is signed out and this instance's access is revoked.": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.signOutDescription. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtimes on Tokens Anywhere restart and switch to %@; those running tasks switch once the tasks finish. When all have switched, the account is signed out and this instance's access is revoked."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用 Tokens Anywhere 的 Runtime 会重启并改用「%@」，有任务在运行的会等任务结束再切换。全部切换完成后退出账户，并撤销本实例的授权。"
+          }
+        }
+      }
+    },
+    "Using %@": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.details.using. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Using %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前使用「%@」"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.account.protocolAddresses": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.protocolAddresses. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show address for each protocol"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看各协议地址"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.account.tabAccount": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.tabAccount. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Account"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "账户"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.account.tabModelsConnection": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.tabModelsConnection. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Models & connection"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型与连接"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.account.title": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.account.title. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tokens Anywhere account"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tokens Anywhere 账户"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.channel.description": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.channel.description. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Link a Tokens Anywhere account, then apply the Tokens Anywhere channel to give the runtimes on every device the models Tokens Anywhere provides."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "链接 Tokens Anywhere 账户后，可以应用 Tokens Anywhere 渠道，各设备的 Runtime 会自动接入 Tokens Anywhere 提供的模型。"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.channels.anywhere": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.channels.anywhere. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tokens Anywhere"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tokens Anywhere"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.channels.connection": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.channels.connection. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connection"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连接"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.channels.detached": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.channels.detached. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disconnected"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已断开"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.channels.manual": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.channels.manual. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model services"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型服务"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.current.description": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.current.description. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apply this channel immediately to runtimes without a channel of their own. Running tasks will be interrupted."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "立即应用此渠道，运行中的任务会被中断。没有单独指定渠道的 Runtime 都会使用它。"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.current.inUse": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.current.inUse. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applied"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已应用"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.current.makeCurrent": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.current.makeCurrent. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apply"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "应用"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.current.native": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.current.native. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Device's own configuration"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备自带配置"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.current.switched": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.current.switched. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Channel applied. Runtimes are switching."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "渠道已应用，各 Runtime 正在切换。"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.deleteInUse": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.deleteInUse. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This profile is applied, chosen for a runtime, or in use, so it cannot be deleted."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这份配置已被应用、被某个 Runtime 指定或仍在使用，不能删除。"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.details.follow": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.details.follow. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Follow applied channel"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "跟随已应用渠道"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.details.nativeGlobalConfirm": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.details.nativeGlobalConfirm. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Change settings"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "确认修改"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.details.nativeGlobalTitle": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.details.nativeGlobalTitle. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Change the runtime's own global settings?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "修改 Runtime 自身的全局配置？"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.details.offline": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.details.offline. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Offline"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "离线"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.details.online": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.details.online. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Online"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在线"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.interruptContinue": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.interruptContinue. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Interrupt and continue"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "中断并继续"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.interruptDescription": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.interruptDescription. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continuing restarts the affected runtimes and interrupts their running tasks."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "继续会重启相关 Runtime，正在运行的任务会被中断。"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.interruptTitle": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.interruptTitle. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tasks are running"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "有任务正在运行"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.native.description": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.native.description. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No model connection is written; runtimes use their own model settings on the device."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不写入模型连接，Runtime 使用设备上它自己的模型配置。"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.reason.confirmation_required": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.reason.confirmation_required. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Changes its own global settings; choose a channel for it and confirm"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "会修改它自身的全局配置，需要单独指定并确认"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.reason.connector_upgrade_required": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.reason.connector_upgrade_required. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Upgrade the Connector to synchronize channels safely"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请升级 Connector 后同步渠道"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.reason.device_offline": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.reason.device_offline. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Device offline"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备离线"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.reason.format_unsupported": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.reason.format_unsupported. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No protocol in common"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有共同支持的协议"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.reason.mode_unsupported": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.reason.mode_unsupported. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Its current mode takes no model connection"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前模式不能使用模型连接"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.reason.model_connection_unsupported": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.reason.model_connection_unsupported. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Takes no model connection"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不支持模型连接"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.reason.model_unavailable": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.reason.model_unavailable. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The chosen model is not on this channel"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所选模型不在这个渠道里"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.reason.models_required": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.reason.models_required. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Needs at least one imported model"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要至少导入一个模型"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.reason.not_installed": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.reason.not_installed. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not installed on the device"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备上没有安装"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.reason.probe_failed": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.reason.probe_failed. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The test call to the model failed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "试调用模型没有成功"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.reason.profile_unavailable": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.reason.profile_unavailable. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The channel is no longer available"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "渠道已不可用"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.reason.rollback_failed": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.reason.rollback_failed. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restoring the previous configuration also failed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复原配置也没有成功"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.reason.start_failed": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.reason.start_failed. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The runtime did not start"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime 没能启动"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.reason.superseded": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.reason.superseded. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replaced by a newer switch"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已被更新的切换取代"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.reason.unknown": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.reason.unknown. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cannot switch right now"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂时不能切换"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.reason.validate_failed": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.reason.validate_failed. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The new configuration did not validate"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新配置没有通过校验"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.reason.verify_failed": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.reason.verify_failed. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The runtime reported a different connection"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime 回报的连接与目标不一致"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.reason.verify_timeout": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.reason.verify_timeout. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verification timed out"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "核实超时"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.relink": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.relink. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Link again"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新链接"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.relinkSoon": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.relinkSoon. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The authorization is almost a year old. Link again soon."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "授权即将满一年，请尽快重新链接。"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.rotateDescription": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.rotateDescription. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Creates a new key in Tokens Anywhere and writes it to every runtime that uses it; the old key stops working at once."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在 Tokens Anywhere 生成新的 Key，并写入所有用它的 Runtime；旧 Key 立即失效。"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.runtimes.attention": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.runtimes.attention. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some runtimes need attention"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "有 Runtime 需要处理"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.runtimes.switching": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.runtimes.switching. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switching"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在切换"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.runtimes.title": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.runtimes.title. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtimes"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.signOutTitle": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.signOutTitle. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign out of the Tokens Anywhere account?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "退出 Tokens Anywhere 账户？"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.signingOut": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.signingOut. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switching runtimes, then signing out"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在切换 Runtime，完成后退出"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.state.applied": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.state.applied. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In effect"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已生效"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.state.failed": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.state.failed. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switch failed, needs attention"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "切换失败，需要处理"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.state.pending": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.state.pending. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Queued"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "排队中"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.state.restored": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.state.restored. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switch failed, back on the previous channel"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "切换失败，已恢复原渠道"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.state.restoring": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.state.restoring. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restoring the previous configuration"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在恢复原配置"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.state.switching": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.state.switching. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switching"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "切换中"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.state.unsupported": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.state.unsupported. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not supported"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不支持"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.state.waiting_online": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.state.waiting_online. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Device offline, switches when back online"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备离线，上线后切换"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.status.none": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.status.none. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No runtimes use this channel yet."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "还没有 Runtime 使用这个渠道。"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.step.activating": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.step.activating. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "writing"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写入"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.step.preparing": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.step.preparing. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "preparing"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "准备"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.step.verifying": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.step.verifying. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "verifying"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "核实"
+          }
+        }
+      }
+    },
+    "pages.settings.modelConfigs.tokensReauth": {
+      "comment": "Shared with Web: pages.settings.modelConfigs.tokensReauth. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The authorization expired. Link again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "授权已失效，请重新链接。"
           }
         }
       }

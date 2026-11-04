@@ -14,7 +14,7 @@ import kotlin.math.abs
 
 // The linked Tokens Anywhere account: its models, the names runtimes see and what it has spent.
 
-enum class TokensAccountTab { Models, Usage }
+enum class TokensAccountTab { Account, Models, Runtimes }
 
 data class TokensModel(
     val id: String,

@@ -37,6 +37,7 @@
 
 - Web 和 Desktop 的模型渠道页改为开放式分区，移除导航、账户、余额和用量的嵌套卡片，用留白、分隔线和数字层级呈现信息；各渠道的 Runtime 列表固定展示所选渠道，不再提供渠道切换下拉框，渠道按钮与状态统一使用「应用／已应用」，渠道名称完整显示为「Tokens Anywhere」，移除左侧所有渠道和「添加配置」前的图标；设置侧栏分为上方的设置项和下方的「模型」分组，「模型渠道」移到「模型」分组中。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 
+- Android 和 iOS 的「模型渠道」改为与 Web 和 Desktop 相同的结构和文字：首页只列出各渠道，标出「已应用」和使用它的 Runtime 数量，点进渠道后再「应用」、查看配置和它的 Runtime；Tokens Anywhere 按「账户／模型与连接／Runtime」分页，不再把所有 Runtime 和按钮堆在同一页。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 模型渠道仅列出支持模型连接配置的 Runtime，DSH 等不支持此能力的 Runtime 不再出现在列表或切换进度中。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 修复旧配置待更新或新发现的 Runtime 因缺少切换任务而一直显示「排队中」的问题，重启服务或刷新模型渠道后可自动继续切换。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - Android 和 iOS 可在 Tokens Anywhere 账户中退出，待使用它的 Runtime 切离渠道后解除绑定；连接区域集中显示地址、协议和密钥轮换，地址可复制，用量支持主动刷新并自动清除失效的模型筛选；四端移除用量页底部的账户统计说明。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
@@ -49,7 +50,7 @@
 
   [#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)
 - 链接 Anywhere 账户后，账户卡片按页签展示：
-  - Web 和 Desktop 的「Runtime」页签显示使用 Anywhere 渠道的 Runtime、切换进度和渠道选择；
+  - 「Runtime」页签显示使用 Anywhere 渠道的 Runtime 和切换进度；
   - 「账户」显示账户和余额、跳转充值，以及整个 Tokens Anywhere 账户近 7 天或 30 天的花费、请求数、输入／输出／缓存 Tokens、每日花费图表和按模型汇总，支持按模型筛选和切换每日花费表格；
   - 「模型与连接」显示可复制的地址、Key 提示与「轮换 Key」，按厂商列出 Tokens Anywhere 的模型，可以关闭单个模型或整组、给模型改名（只影响 Agents Anywhere），保存后使用 Anywhere 渠道的 Runtime 自动重新写入；还可以展开查看各协议地址。Web 和 Desktop 不再显示「恢复默认」按钮。
 

@@ -20,16 +20,12 @@ struct ModelConfigSettingsView: View {
     }
 }
 
+/// 「模型渠道」, as on the desktop: every channel in a list, each opening its
+/// own page, so the list stays short however many runtimes there are.
 private struct ModelConfigPage: View {
     @StateObject private var storage: StableViewModel<ModelConfigModel>
     @State private var linker = TokensLinkCoordinator()
     @State private var creating = false
-    @State private var confirmingOverride: PendingChannelOverride?
-    @State private var deleting: V2ModelProfile?
-    @State private var exitRequested = false
-    @State private var confirmingExit = false
-    @State private var rotating: V2ModelProfile?
-    @Environment(\.scenePhase) private var scenePhase
 
     init(services: V2ClientServices) {
         _storage = StateObject(wrappedValue: StableViewModel {
@@ -41,221 +37,121 @@ private struct ModelConfigPage: View {
 
     var body: some View {
         List {
-            if let feedback = model.feedback { feedbackSection(feedback) }
+            ModelConfigFeedbackSection(model: model)
             if let overview = model.overview {
-                if !overview.secretConfigured {
+                if !overview.secretConfigured { SecretMissingSection() }
+                Section {
+                    channelLink(V2ModelChannel.native)
+                    if overview.tokens?.available == true { channelLink(V2ModelChannel.tokens) }
+                }
+                // The active Tokens profile belongs to the Tokens Anywhere channel.
+                let listed = overview.profiles.filter { !($0.isTokens && $0.isActive) }
+                let enabled = listed.filter(\.isActive)
+                let detached = listed.filter { !$0.isActive }
+                if !enabled.isEmpty {
                     Section {
-                        Label(String(localized: "The server has no AGENT_SERVER_SECRET (at least 32 characters) yet. Ask an administrator to set it before saving keys or linking Tokens Anywhere."),
-                            appSymbol: "exclamationmark.triangle")
-                            .font(.footnote).foregroundStyle(.secondary)
+                        ForEach(enabled) { profile in channelLink(profile.id) }
+                    } header: {
+                        Text(String(localized: "pages.settings.modelConfigs.channels.manual"))
                     }
                 }
-                if let channel = model.channel {
-                    CurrentChannelSections(model: model, state: channel,
-                        confirmingOverride: $confirmingOverride)
+                if !detached.isEmpty {
+                    Section {
+                        ForEach(detached) { profile in channelLink(profile.id) }
+                    } header: {
+                        Text(String(localized: "pages.settings.modelConfigs.channels.detached"))
+                    }
                 }
-                if let tokens = overview.tokens, tokens.available {
-                    TokensChannelSection(model: model, tokens: tokens, linker: linker, onExit: { confirmingExit = true }, onRotate: { rotating = $0 })
+                Section {
+                    Button {
+                        creating = true
+                    } label: {
+                        Label(String(localized: "Add profile"), appSymbol: "plus")
+                    }
+                    .disabled(!overview.secretConfigured || !model.canWrite)
                 }
-                profilesSection(overview)
             } else {
                 Section {
                     HStack { Spacer(); ProgressView(); Spacer() }.padding(.vertical, 24)
                 }
             }
         }
-        // The browser sheet covers this page, so leaving it open is not a reason
-        // to cancel; the next snapshot that shows the link closes it.
-        .onChange(of: model.overview?.tokens?.link) { _, link in linker.observe(link) }
         // Reading the state also lets the Server resume switches waiting for this moment.
         .task { await model.refreshChannel() }
-        .safeAreaInset(edge: .bottom) {
-            if showsAccount && model.account.tab == .models && model.account.changes > 0 {
-                TokensPendingBar(model: model)
-            }
-        }
-        // A push with new saved model choices replaces what the page started from.
-        .onChange(of: model.overview?.activeTokensProfile, initial: true) { _, profile in
-            model.account.reconcile(profile: profile)
-        }
-        .onChange(of: showsAccount, initial: true) { _, shows in
-            if !shows { model.account.tab = nil }
-            else if model.account.tab == nil { model.account.tab = .models }
-        }
-        // Back from topping up in the browser, the balance should already show it.
-        .task(id: accountKey) {
-            model.account.reset()
-            if showsAccount { model.account.reconcile(profile: model.overview?.activeTokensProfile) }
-            if showsAccount { model.account.tab = .models }
-            if accountKey != nil { await model.account.loadInfo() }
-        }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active && showsAccount { Task { await model.account.loadInfo() } }
-        }
-        .task(id: usageKey) {
-            if usageKey != nil { await model.account.loadUsage() }
-        }
-        .task(id: exitRequested) {
-            if exitRequested { await model.exitTokens(); exitRequested = false }
-        }
-        .alert(String(localized: "Sign out of Tokens Anywhere?"), isPresented: $confirmingExit) {
-            Button(String(localized: "Cancel"), role: .cancel) {}
-            Button(String(localized: "pages.settings.modelConfigs.signOut"), role: .destructive) { exitRequested = true }
-        } message: {
-            Text(String(localized: "Runtimes using Tokens Anywhere will restart and interrupt running tasks. Offline devices must reconnect before this account can be signed out. Other selected channels are kept."))
-        }
         .sheet(isPresented: $creating) { ModelProfileEditorSheet(model: model) }
-        .alert(String(localized: "Delete profile"), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
-            Button(String(localized: "Cancel"), role: .cancel) { deleting = nil }
-            Button(String(localized: "Delete profile"), role: .destructive) {
-                guard let profile = deleting else { return }
-                deleting = nil
-                Task { await model.deleteProfile(profile) }
-            }
-        } message: { Text(deleting?.name ?? "") }
-        .alert(String(localized: "Rotate key"), isPresented: Binding(get: { rotating != nil }, set: { if !$0 { rotating = nil } })) {
-            Button(String(localized: "Cancel"), role: .cancel) { rotating = nil }
-            Button(String(localized: "Rotate key"), role: .destructive) {
-                guard let profile = rotating else { return }
-                rotating = nil
-                Task { await model.rotateKey(profile) }
-            }
-        } message: {
-            Text(String(localized: "Creates a new key in Tokens Anywhere and writes it to every runtime that uses it; the old key stops working at once."))
-        }
-        .alert(String(localized: "Tasks are running"), isPresented: Binding(
-            get: { model.pendingInterrupt != nil }, set: { if !$0 { model.pendingInterrupt = nil } }
-        )) {
-            Button(String(localized: "Cancel"), role: .cancel) { model.pendingInterrupt = nil }
-            Button(String(localized: "Interrupt and continue"), role: .destructive) {
-                Task { await model.resumeInterrupted() }
-            }
-        } message: {
-            Text(String(localized: "Continuing restarts the affected runtimes and interrupts their running tasks."))
-        }
-        .alert(String(localized: "Change its own global settings?"), isPresented: Binding(
-            get: { confirmingOverride != nil }, set: { if !$0 { confirmingOverride = nil } }
-        ), presenting: confirmingOverride) { pending in
-            Button(String(localized: "Cancel"), role: .cancel) { confirmingOverride = nil }
-            Button(String(localized: "Confirm and switch")) {
-                confirmingOverride = nil
-                Task { await model.setRuntimeChannel(pending.row, channel: pending.channel, confirmNativeGlobal: true) }
-            }
-        } message: { pending in
-            Text(String(localized: "\(pending.row.runtimeName) keeps its model connection in its own global settings, so this also affects using it outside AA."))
-        }
     }
 
-    /// The linked account's page is showing.
-    private var showsAccount: Bool {
-        model.overview?.tokens?.available == true && model.overview?.tokens?.link?.isLinked == true && model.exitedLink != model.tokens?.link
-    }
-
-    /// Changes when another account's page shows; nil while none does.
-    private var accountKey: String? {
-        guard showsAccount, let link = model.overview?.tokens?.link else { return nil }
-        return "\(link.account.id)#\(link.linkedAt ?? "")"
-    }
-
-    /// Changes when the usage tab opens or its period changes; nil while it is closed.
-    private var usageKey: String? {
-        guard let account = accountKey, model.account.tab == .usage else { return nil }
-        return "\(account)#\(model.account.usageDays)"
-    }
-
-
-    // MARK: Feedback
-
-    private func feedbackSection(_ feedback: ModelConfigFeedback) -> some View {
-        Section {
-            HStack(alignment: .top, spacing: 10) {
-                switch feedback {
-                case .success: AppSymbol("checkmark.circle", size: 16).foregroundStyle(.green)
-                case .warning: AppSymbol("exclamationmark.triangle", size: 16).foregroundStyle(.orange)
-                case .error: AppSymbol("exclamationmark.circle", size: 16).foregroundStyle(.red)
-                }
-                Text(feedback.message).font(.footnote).frame(maxWidth: .infinity, alignment: .leading)
-                Button { model.feedback = nil } label: { AppSymbol("xmark", size: 14).foregroundStyle(.secondary) }
-                    .buttonStyle(.plain).accessibilityLabel(String(localized: "Close"))
-            }
-        }
-        .task(id: feedback) {
-            do { try await Task.sleep(for: .seconds(6)) } catch { return }
-            if model.feedback == feedback { model.feedback = nil }
+    private func channelLink(_ id: String) -> some View {
+        NavigationLink {
+            ChannelDetailView(model: model, channelId: id, linker: linker)
+        } label: {
+            ChannelListRow(model: model, channelId: id)
         }
     }
+}
 
-    // MARK: Profiles
+/// A channel in the list: its name, whether it is applied, and how many runtimes should use it.
+private struct ChannelListRow: View {
+    let model: ModelConfigModel
+    let channelId: String
 
-    private func profilesSection(_ overview: V2ModelConfigOverview) -> some View {
-        Section {
-            if overview.profiles.allSatisfy({ $0.isTokens && $0.isActive }) {
-                Text(String(localized: "No model profiles yet.")).font(.subheadline).foregroundStyle(.secondary)
+    var body: some View {
+        let progress = ChannelPresentation.progress(model.channelRows(channelId))
+        HStack(spacing: 8) {
+            Text(verbatim: model.channelLabel(channelId)).lineLimit(1)
+            if model.isCurrentChannel(channelId) {
+                ModelStatusBadge(title: String(localized: "pages.settings.modelConfigs.current.inUse"), tone: .ok)
             }
-            ForEach(overview.profiles.filter { !($0.isTokens && $0.isActive) }) { profile in profileRow(profile) }
-            Button {
-                creating = true
-            } label: {
-                Label(String(localized: "Add profile"), appSymbol: "plus")
-            }
-            .disabled(!overview.secretConfigured || !model.canWrite)
-        } header: {
-            Text(String(localized: "Model profiles"))
-        } footer: {
-            Text(String(localized: "A model service's address, key and models."))
-        }
-    }
-
-    private func profileRow(_ profile: V2ModelProfile) -> some View {
-        let busy = model.busyProfileID == profile.id
-        let canDelete = profile.source == "manual" || !profile.isActive
-        let channel = profile.isTokens ? V2ModelChannel.tokens : profile.id
-        let current = model.isCurrentChannel(channel)
-        let canBeCurrent = !current && profile.isActive && model.channelOptions.contains { $0.id == channel }
-        return HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(profile.name).font(.body.weight(.semibold))
-                    // The Tokens profile is already named after its source.
-                    let source = ModelConfigPresentation.sourceLabel(profile.source)
-                    if source != profile.name { ModelStatusBadge(title: source, tone: .neutral) }
-                    if current { ModelStatusBadge(title: String(localized: "In use"), tone: .ok) }
-                    if !profile.isActive { ModelStatusBadge(title: String(localized: "Unlinked"), tone: .warning) }
-                }
-                ModelProfileDetails(profile: profile, usedBy: model.runtimeCount(using: channel))
-            }
-            Spacer(minLength: 0)
-            if busy { ProgressView() }
-            Menu {
-                if canBeCurrent {
-                    Button(String(localized: "Set as current channel"), systemImage: "checkmark.circle") {
-                        Task { await model.setChannel(channel) }
+            Spacer(minLength: 8)
+            if progress.phase != .none {
+                HStack(spacing: 5) {
+                    if progress.phase == .running {
+                        ProgressView().controlSize(.mini)
+                            .accessibilityLabel(Text(String(localized: "pages.settings.modelConfigs.runtimes.switching")))
                     }
-                    .disabled(model.channelBusyKey != nil || !model.canWrite)
+                    if progress.phase == .attention {
+                        Circle().fill(.orange).frame(width: 8, height: 8)
+                            .accessibilityLabel(Text(String(localized: "pages.settings.modelConfigs.runtimes.attention")))
+                    }
+                    Text(verbatim: "\(progress.total)").font(.subheadline).foregroundStyle(.secondary).monospacedDigit()
                 }
-                if profile.isTokens && profile.isActive {
-                    Button(String(localized: "Rotate key"), systemImage: "key") { rotating = profile }
-                        .disabled(!model.canWrite)
-                }
-                if canDelete {
-                    Divider()
-                    Button(String(localized: "Delete profile"), systemImage: "trash", role: .destructive) { deleting = profile }
-                        .disabled(model.isInUse(profile) || !model.canWrite)
-                }
-            } label: {
-                AppSymbol("ellipsis", size: 18).foregroundStyle(.secondary)
-                    .frame(width: 36, height: 44).contentShape(.rect)
             }
-            .buttonStyle(.plain).disabled(model.busyProfileID != nil)
-            .accessibilityLabel(Text(profile.name))
         }
-        .swipeActions(edge: .trailing) {
-            if canBeCurrent && model.canWrite && model.channelBusyKey == nil {
-                Button(String(localized: "Set as current channel")) {
-                    Task { await model.setChannel(channel) }
+    }
+}
+
+/// The last action's outcome; it goes away on its own.
+struct ModelConfigFeedbackSection: View {
+    let model: ModelConfigModel
+
+    var body: some View {
+        if let feedback = model.feedback {
+            Section {
+                HStack(alignment: .top, spacing: 10) {
+                    switch feedback {
+                    case .success: AppSymbol("checkmark.circle", size: 16).foregroundStyle(.green)
+                    case .warning: AppSymbol("exclamationmark.triangle", size: 16).foregroundStyle(.orange)
+                    case .error: AppSymbol("exclamationmark.circle", size: 16).foregroundStyle(.red)
+                    }
+                    Text(feedback.message).font(.footnote).frame(maxWidth: .infinity, alignment: .leading)
+                    Button { model.feedback = nil } label: { AppSymbol("xmark", size: 14).foregroundStyle(.secondary) }
+                        .buttonStyle(.plain).accessibilityLabel(String(localized: "Close"))
                 }
-                .tint(.accentColor)
             }
+            .task(id: feedback) {
+                do { try await Task.sleep(for: .seconds(6)) } catch { return }
+                if model.feedback == feedback { model.feedback = nil }
+            }
+        }
+    }
+}
+
+struct SecretMissingSection: View {
+    var body: some View {
+        Section {
+            Label(String(localized: "The server has no AGENT_SERVER_SECRET (at least 32 characters) yet. Ask an administrator to set it before saving keys or linking Tokens Anywhere."),
+                appSymbol: "exclamationmark.triangle")
+                .font(.footnote).foregroundStyle(.secondary)
         }
     }
 }

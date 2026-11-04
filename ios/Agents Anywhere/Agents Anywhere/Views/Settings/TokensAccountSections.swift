@@ -2,53 +2,90 @@ import Charts
 import SwiftUI
 import UIKit
 
-/// The linked Tokens Anywhere account: who it is, its balance, which of its
-/// models runtimes get and under which names, what it has spent, and the
-/// runtimes using it. Ported from the Web account page.
-struct TokensAccountSections<Devices: View, Unlink: View>: View {
+/// The linked Tokens Anywhere account, in the desktop's three tabs: the
+/// account with its balance and usage; models and the connection runtimes
+/// use; and the runtimes on the channel.
+struct TokensAccountSections<Header: View, Runtimes: View>: View {
     let model: ModelConfigModel
     let tokens: V2TokensLinkStatus
     let onRotate: (V2ModelProfile) -> Void
-    @ViewBuilder let devices: () -> Devices
-    @ViewBuilder let unlink: () -> Unlink
+    @ViewBuilder let header: () -> Header
+    @ViewBuilder let runtimes: () -> Runtimes
     @Environment(\.openURL) private var openURL
 
     private var account: TokensAccountModel { model.account }
 
     var body: some View {
-        accountSection
         Section {
-            Picker(String(localized: "Anywhere account"), selection: Binding(
-                get: { account.tab ?? .models },
+            header()
+        } header: {
+            HStack(spacing: 6) {
+                Text(String(localized: "pages.settings.modelConfigs.account.title"))
+                RuntimeMaturityBadge(maturity: V2RuntimeMaturity.beta.rawValue)
+            }
+        } footer: {
+            if model.tokensSwitching {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini)
+                    Text(String(localized: "Applying changes to runtimes…"))
+                }
+            }
+        }
+        Section {
+            Picker(String(localized: "pages.settings.modelConfigs.account.title"), selection: Binding(
+                get: { account.tab ?? .account },
                 set: { account.tab = $0 })) {
-                Text(String(localized: "pages.settings.modelConfigs.account.tabModels")).tag(TokensAccountTab.models)
-                Text(String(localized: "pages.settings.modelConfigs.account.tabUsage")).tag(TokensAccountTab.usage)
-                Text(String(localized: "pages.settings.modelConfigs.account.tabDevices")).tag(TokensAccountTab.devices)
+                Text(String(localized: "pages.settings.modelConfigs.account.tabAccount")).tag(TokensAccountTab.account)
+                Text(String(localized: "pages.settings.modelConfigs.account.tabModelsConnection")).tag(TokensAccountTab.models)
+                Text(String(localized: "pages.settings.modelConfigs.runtimes.title")).tag(TokensAccountTab.runtimes)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .listRowInsets(EdgeInsets())
             .listRowBackground(Color.clear)
         }
-        switch account.tab ?? .models {
+        switch account.tab ?? .account {
+        case .account:
+            accountSection
+            TokensUsageTab(account: account)
         case .models:
-            if let profile = model.overview?.activeTokensProfile {
-                Section {
-                    LabeledContent(String(localized: "Address")) { Text(verbatim: profile.originHost).textSelection(.enabled) }
-                    CopyAddressButton(address: profile.originHost)
-                    if let hint = profile.keyHint { LabeledContent(String(localized: "API key")) { Text(verbatim: hint) } }
-                    Text(String(localized: "Used by \(model.runtimeCount(using: V2ModelChannel.tokens)) runtimes"))
-                    Button(String(localized: "Rotate key")) { onRotate(profile) }
-                        .disabled(model.busyProfileID != nil || model.exitBusy || !model.canWrite)
-                    ForEach(profile.offers, id: \.format) { offer in
-                        LabeledContent(ModelConfigPresentation.protocolLabel(offer.format)) { Text(verbatim: offer.baseUrl).textSelection(.enabled) }
-                        CopyAddressButton(address: offer.baseUrl)
-                    }
-                } header: { Text(String(localized: "Connection")) }
-            }
+            if let profile = model.overview?.activeTokensProfile { connectionSection(profile) }
             TokensModelsTab(model: model)
-        case .usage: TokensUsageTab(account: account)
-        case .devices: devices()
+        case .runtimes:
+            runtimes()
+        }
+    }
+
+    /// Where runtimes reach the account and with which key.
+    private func connectionSection(_ profile: V2ModelProfile) -> some View {
+        Section {
+            LabeledContent(String(localized: "Address")) { Text(verbatim: profile.originHost).textSelection(.enabled) }
+            CopyAddressButton(address: profile.originHost)
+            // Only the ends of the key are kept, so there is nothing to copy.
+            if let hint = profile.keyHint { LabeledContent(String(localized: "API key")) { Text(verbatim: hint).monospaced() } }
+            LabeledContent(String(localized: "Usage")) {
+                let count = model.runtimeCount(using: V2ModelChannel.tokens)
+                Text(count > 0 ? String(localized: "Used by \(count)") : String(localized: "Not in use"))
+            }
+            Button {
+                onRotate(profile)
+            } label: {
+                Label(String(localized: "Rotate key"), appSymbol: "key")
+            }
+            .disabled(model.busyProfileID != nil || model.exitBusy || !model.canWrite)
+            if !profile.offers.isEmpty {
+                DisclosureGroup(String(localized: "pages.settings.modelConfigs.account.protocolAddresses")) {
+                    ForEach(profile.offers, id: \.format) { offer in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(ModelConfigPresentation.protocolLabel(offer.format)).font(.footnote).foregroundStyle(.secondary)
+                            Text(verbatim: offer.baseUrl).font(.footnote.monospaced()).textSelection(.enabled)
+                            CopyAddressButton(address: offer.baseUrl)
+                        }
+                    }
+                }
+            }
+        } header: {
+            Text(String(localized: "pages.settings.modelConfigs.channels.connection"))
         }
     }
 
@@ -86,26 +123,27 @@ struct TokensAccountSections<Devices: View, Unlink: View>: View {
                 Spacer(minLength: 0)
             }
             balanceRow(info)
-            unlink()
-        } header: {
-            HStack(spacing: 6) {
-                Text(String(localized: "Anywhere account"))
-                RuntimeMaturityBadge(maturity: V2RuntimeMaturity.beta.rawValue)
-            }
-        } footer: {
-            if model.tokensSwitching {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.mini)
-                    Text(String(localized: "Applying changes to runtimes…"))
-                }
-            }
         }
     }
 
     private func balanceRow(_ info: V2TokensAccountInfo?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(String(localized: "pages.settings.modelConfigs.account.balance")).font(.footnote).foregroundStyle(.secondary)
+                HStack {
+                    Text(String(localized: "pages.settings.modelConfigs.account.balance")).font(.footnote).foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    Button {
+                        if let info { open(info.links.billing) }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(String(localized: "Top up"))
+                            AppSymbol("arrow.up.right.square", size: 14)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(info == nil)
+                }
                 if let info {
                     Text(verbatim: TokensAccountPresentation.formatYuan(TokensAccountPresentation.amountUnits(info.balance.balance)))
                         .font(.title2.weight(.semibold)).monospacedDigit()
@@ -127,21 +165,6 @@ struct TokensAccountSections<Devices: View, Unlink: View>: View {
                     ProgressView().padding(.vertical, 6)
                 }
             }
-            HStack(spacing: 10) {
-                Button(String(localized: "View usage")) { account.tab = .usage }
-                    .buttonStyle(.bordered)
-                Button {
-                    if let info { open(info.links.billing) }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(String(localized: "Top up"))
-                        AppSymbol("arrow.up.right.square", size: 14)
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(info == nil)
-            }
-            .controlSize(.small)
         }
         .padding(.vertical, 2)
     }
@@ -172,20 +195,21 @@ private struct TokensModelsTab: View {
             }
         } else {
             Section {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(String(localized: "Set up by Tokens Anywhere: \(account.models.count) models, \(account.enabledCount) turned on."))
-                        .font(.subheadline)
-                    HStack(spacing: 16) {
-                        Button {
-                            Task { await account.restoreDefaults() }
-                        } label: {
-                            Label(String(localized: "Restore defaults"), appSymbol: "arrow.counterclockwise")
-                        }
-                        .disabled(locked || account.isDefault)
-                        refreshButton
+                HStack(spacing: 16) {
+                    Text(String(localized: "\(account.enabledCount) / \(account.models.count) enabled"))
+                        .font(.subheadline).foregroundStyle(.secondary).monospacedDigit()
+                    Spacer(minLength: 8)
+                    Button {
+                        Task { await account.restoreDefaults() }
+                    } label: {
+                        Label(String(localized: "Restore defaults"), appSymbol: "arrow.counterclockwise")
                     }
-                    .buttonStyle(.borderless).font(.subheadline)
+                    .disabled(locked || account.isDefault)
+                    refreshButton
                 }
+                .buttonStyle(.borderless).font(.subheadline)
+            } header: {
+                Text(String(localized: "pages.settings.modelConfigs.account.tabModels"))
             } footer: {
                 Text(String(localized: "Turning models off or renaming them only affects Agents Anywhere, and applies to every runtime using Tokens Anywhere."))
             }
@@ -366,6 +390,8 @@ private struct TokensUsageTab: View {
                 }
             }
             .disabled(account.usageLoading)
+        } header: {
+            Text(String(localized: "pages.settings.modelConfigs.account.tabUsage"))
         }
         Section {
             if account.usageFailed {

@@ -76,47 +76,50 @@ fun ModelConfigOverview.channelOptions(): List<ChannelOption> = buildList {
     profiles.filter { it.isManual && it.isActive }.forEach { add(ChannelOption(it.id, ChannelKind.Manual, it)) }
 }
 
-enum class ChannelPhase { Idle, Running, Done, Attention }
+enum class ChannelPhase { None, Running, Done, Attention }
 
-/** How far the latest switch got, counted over the runtimes taking part (not the unsupported ones). */
+/** Counts behind one channel's status line, over the runtimes that should use it. */
 data class ChannelProgress(
     val phase: ChannelPhase,
+    /** Runtimes taking part: every one that can use the channel it should. */
     val total: Int,
-    /** Reached an end state: applied, restored or failed. */
-    val finished: Int,
     val applied: Int,
+    val unfinished: Int,
+    /** Devices that are offline with runtimes waiting on them. */
+    val offlineDevices: Int,
     val restored: Int,
     val failed: Int,
-    val waitingOnline: Int,
+    val unsupported: Int,
 )
 
-fun ModelChannelState.progress(): ChannelProgress {
-    val taking = runtimes.filter { it.state != "unsupported" }
-    val applied = taking.count { it.state == "applied" }
+fun channelProgress(rows: List<ChannelRuntime>): ChannelProgress {
+    val taking = rows.filter { it.state != "unsupported" }
     val restored = taking.count { it.state == "restored" }
     val failed = taking.count { it.state == "failed" }
-    val phase = when (switch?.state) {
-        "running" -> ChannelPhase.Running
-        "attention" -> ChannelPhase.Attention
-        "done" -> ChannelPhase.Done
-        // Before the first switch, or a state this client does not know: read the runtimes.
-        else -> when {
-            taking.any { it.state in CHANNEL_IN_PROGRESS } -> ChannelPhase.Running
-            restored + failed > 0 -> ChannelPhase.Attention
-            applied > 0 -> ChannelPhase.Done
-            else -> ChannelPhase.Idle
-        }
-    }
+    val unfinished = taking.count { it.state in CHANNEL_IN_PROGRESS }
     return ChannelProgress(
-        phase = phase,
+        phase = when {
+            taking.isEmpty() -> ChannelPhase.None
+            restored + failed > 0 -> ChannelPhase.Attention
+            unfinished > 0 -> ChannelPhase.Running
+            else -> ChannelPhase.Done
+        },
         total = taking.size,
-        finished = applied + restored + failed,
-        applied = applied,
+        applied = taking.count { it.state == "applied" },
+        unfinished = unfinished,
+        offlineDevices = taking.filter { it.state == "waiting_online" }.map { it.connectorId }.toSet().size,
         restored = restored,
         failed = failed,
-        waitingOnline = taking.count { it.state == "waiting_online" },
+        unsupported = rows.size - taking.size,
     )
 }
+
+/** Runtimes that should use [channel]: following it as the applied one, or chosen for it. */
+fun ModelChannelState?.rowsFor(channel: String): List<ChannelRuntime> =
+    this?.runtimes.orEmpty().filter { it.desired == channel }
+
+/** Runtimes actually on [channel] right now. */
+fun ModelChannelState.usersOf(channel: String): Int = runtimes.count { it.actual == channel }
 
 /** Runtimes that should use [channel] are still being switched to it. */
 fun ModelChannelState.updating(channel: String): Boolean =

@@ -34,23 +34,26 @@ nonisolated struct ChannelDeviceGroup: Identifiable, Hashable {
     let connectorId: String
     let name: String
     let rows: [ChannelRuntimeRow]
+    /// nil while the device's presence is unknown.
+    var online: Bool? = nil
 
     var id: String { connectorId }
 }
 
-/// How far the last switch got, counted over the runtimes that take part.
-nonisolated struct ChannelSummary: Hashable {
-    enum Phase: Hashable { case idle, running, done, attention }
+/// Counts behind one channel's status line, over the runtimes that should use it.
+nonisolated struct ChannelProgress: Hashable {
+    enum Phase: Hashable { case none, running, done, attention }
 
     let phase: Phase
-    /// Runtimes that can use a channel (everything but `unsupported`).
+    /// Runtimes taking part: every one that can use the channel it should.
     let total: Int
-    /// Runtimes that reached an end state: applied, restored or failed.
-    let finished: Int
     let applied: Int
-    let waitingOnline: Int
+    let unfinished: Int
+    /// Devices that are offline with runtimes waiting on them.
+    let offlineDevices: Int
     let restored: Int
     let failed: Int
+    let unsupported: Int
 }
 
 /// Labels and decisions for the current channel and its switch. Everything
@@ -58,8 +61,8 @@ nonisolated struct ChannelSummary: Hashable {
 nonisolated enum ChannelPresentation {
     static func label(_ channel: String, profiles: [V2ModelProfile]) -> String {
         switch channel {
-        case V2ModelChannel.native: String(localized: "Device's own configuration")
-        case V2ModelChannel.tokens: String(localized: "Anywhere")
+        case V2ModelChannel.native: String(localized: "pages.settings.modelConfigs.current.native")
+        case V2ModelChannel.tokens: String(localized: "pages.settings.modelConfigs.channels.anywhere")
         default: profiles.first { $0.id == channel }?.name ?? channel
         }
     }
@@ -81,30 +84,39 @@ nonisolated enum ChannelPresentation {
         return options
     }
 
-    static func summary(_ state: V2ModelChannelState) -> ChannelSummary {
-        let taking = state.runtimes.filter { $0.state != "unsupported" }
+    /// Runtimes that should use `channel`: following it as the applied one, or chosen for it.
+    static func rows(_ state: V2ModelChannelState?, for channel: String) -> [V2ChannelRuntime] {
+        state?.runtimes.filter { $0.desired == channel } ?? []
+    }
+
+    static func progress(_ rows: [V2ChannelRuntime]) -> ChannelProgress {
+        let taking = rows.filter { $0.state != "unsupported" }
         func count(_ value: String) -> Int { taking.filter { $0.state == value }.count }
-        let phase: ChannelSummary.Phase = switch state.progress?.state {
-        case "running": .running
-        case "done": .done
-        case "attention": .attention
-        default: .idle
-        }
-        let applied = count("applied"), restored = count("restored"), failed = count("failed")
-        return .init(phase: phase, total: taking.count, finished: applied + restored + failed, applied: applied,
-            waitingOnline: count("waiting_online"), restored: restored, failed: failed)
+        let restored = count("restored"), failed = count("failed")
+        let unfinished = taking.filter { isInProgress($0.state) }.count
+        let phase: ChannelProgress.Phase = taking.isEmpty ? .none
+            : restored + failed > 0 ? .attention
+            : unfinished > 0 ? .running : .done
+        return .init(phase: phase, total: taking.count, applied: count("applied"), unfinished: unfinished,
+            offlineDevices: Set(taking.filter { $0.state == "waiting_online" }.map(\.connectorId)).count,
+            restored: restored, failed: failed, unsupported: rows.count - taking.count)
     }
 
     /// Runtimes grouped by device in the dashboard's device order, and the
     /// runtimes that take no model connection, listed apart.
     static func groups(_ state: V2ModelChannelState, runtimes: [V2DeviceRuntime], connectors: [V2Connector])
         -> (devices: [ChannelDeviceGroup], unsupported: [ChannelRuntimeRow]) {
+        groups(state.runtimes, runtimes: runtimes, connectors: connectors)
+    }
+
+    static func groups(_ entries: [V2ChannelRuntime], runtimes: [V2DeviceRuntime], connectors: [V2Connector])
+        -> (devices: [ChannelDeviceGroup], unsupported: [ChannelRuntimeRow]) {
         let known = Dictionary(runtimes.map { ($0.target.key, $0) }, uniquingKeysWith: { first, _ in first })
         let names = Dictionary(connectors.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
         var supported: [String: [ChannelRuntimeRow]] = [:]
         var order: [String] = connectors.map(\.id)
         var unsupported: [ChannelRuntimeRow] = []
-        for entry in state.runtimes {
+        for entry in entries {
             let runtime = known[entry.id]
             let row = ChannelRuntimeRow(entry: entry,
                 runtimeName: runtime?.sessionDisplayName ?? entry.runtimeId,
@@ -119,30 +131,35 @@ nonisolated enum ChannelPresentation {
         }
         let devices = order.compactMap { id -> ChannelDeviceGroup? in
             guard let rows = supported[id], !rows.isEmpty else { return nil }
-            return ChannelDeviceGroup(connectorId: id, name: names[id] ?? id, rows: rows)
+            let presence = connectors.first { $0.id == id }?.status
+            return ChannelDeviceGroup(connectorId: id, name: names[id] ?? id, rows: rows,
+                online: presence == .online ? true : presence == .offline ? false : nil)
         }
         return (devices, unsupported)
     }
 
+    /// The state as the desktop names it; switching also says which step.
     static func stateLabel(_ entry: V2ChannelRuntime) -> String {
-        switch entry.state {
-        case "applied": String(localized: "In effect")
-        case "pending": String(localized: "Queued")
-        case "waiting_online": String(localized: "Switches when online")
-        case "switching": entry.step.flatMap(stepLabel).map { String(localized: "Switching · \($0)") } ?? String(localized: "Switching")
-        case "restoring": String(localized: "Restoring")
-        case "restored": String(localized: "Switch failed, restored")
-        case "failed": String(localized: "Needs attention")
-        case "unsupported": String(localized: "Not supported")
+        let label: String = switch entry.state {
+        case "applied": String(localized: "pages.settings.modelConfigs.state.applied")
+        case "pending": String(localized: "pages.settings.modelConfigs.state.pending")
+        case "waiting_online": String(localized: "pages.settings.modelConfigs.state.waiting_online")
+        case "switching": String(localized: "pages.settings.modelConfigs.state.switching")
+        case "restoring": String(localized: "pages.settings.modelConfigs.state.restoring")
+        case "restored": String(localized: "pages.settings.modelConfigs.state.restored")
+        case "failed": String(localized: "pages.settings.modelConfigs.state.failed")
+        case "unsupported": String(localized: "pages.settings.modelConfigs.state.unsupported")
         default: entry.state
         }
+        guard entry.state == "switching", let step = entry.step.flatMap(stepLabel) else { return label }
+        return "\(label) · \(step)"
     }
 
     static func stepLabel(_ step: String) -> String? {
         switch step {
-        case "preparing": String(localized: "Preparing")
-        case "activating": String(localized: "Activating")
-        case "verifying": String(localized: "Verifying")
+        case "preparing": String(localized: "pages.settings.modelConfigs.step.preparing")
+        case "activating": String(localized: "pages.settings.modelConfigs.step.activating")
+        case "verifying": String(localized: "pages.settings.modelConfigs.step.verifying")
         default: nil
         }
     }
@@ -162,32 +179,32 @@ nonisolated enum ChannelPresentation {
         ["pending", "waiting_online", "switching", "restoring"].contains(state)
     }
 
-    /// The reason in the user's language; the Server's message when it is a
-    /// reason this client does not know.
+    /// Why a runtime cannot switch or failed to, as on the desktop: only for those two.
     static func reasonText(_ entry: V2ChannelRuntime) -> String? {
-        guard let reason = entry.reason, !reason.isEmpty else { return entry.message }
-        return knownReason(reason) ?? entry.message ?? String(localized: "Cannot switch right now")
+        guard entry.state == "unsupported" || entry.state == "restored" || entry.state == "failed",
+              let reason = entry.reason, !reason.isEmpty else { return nil }
+        return knownReason(reason) ?? String(localized: "pages.settings.modelConfigs.reason.unknown")
     }
 
     static func knownReason(_ reason: String) -> String? {
         switch reason {
-        case "model_connection_unsupported": String(localized: "Takes no model connection")
-        case "not_installed": String(localized: "Not installed on the device")
-        case "format_unsupported": String(localized: "No protocol in common")
-        case "mode_unsupported": String(localized: "No mode that takes a model connection")
-        case "models_required": String(localized: "Needs at least one model")
-        case "model_unavailable": String(localized: "Its chosen model is not in this channel")
-        case "confirmation_required": String(localized: "Changes its own global settings; choose a channel for it to confirm")
-        case "connector_upgrade_required": String(localized: "Upgrade the Connector to synchronize channels safely")
-        case "profile_unavailable": String(localized: "The channel's profile is no longer available")
-        case "validate_failed": String(localized: "The runtime rejected the configuration")
-        case "start_failed": String(localized: "The runtime did not start")
-        case "verify_failed": String(localized: "The runtime reported a different connection")
-        case "probe_failed": String(localized: "The test call to the model failed")
-        case "verify_timeout": String(localized: "The runtime did not confirm in time")
-        case "device_offline": String(localized: "Device offline")
-        case "rollback_failed": String(localized: "Restoring the previous configuration failed")
-        case "superseded": String(localized: "Replaced by a newer switch")
+        case "model_connection_unsupported": String(localized: "pages.settings.modelConfigs.reason.model_connection_unsupported")
+        case "not_installed": String(localized: "pages.settings.modelConfigs.reason.not_installed")
+        case "format_unsupported": String(localized: "pages.settings.modelConfigs.reason.format_unsupported")
+        case "mode_unsupported": String(localized: "pages.settings.modelConfigs.reason.mode_unsupported")
+        case "models_required": String(localized: "pages.settings.modelConfigs.reason.models_required")
+        case "model_unavailable": String(localized: "pages.settings.modelConfigs.reason.model_unavailable")
+        case "confirmation_required": String(localized: "pages.settings.modelConfigs.reason.confirmation_required")
+        case "connector_upgrade_required": String(localized: "pages.settings.modelConfigs.reason.connector_upgrade_required")
+        case "profile_unavailable": String(localized: "pages.settings.modelConfigs.reason.profile_unavailable")
+        case "validate_failed": String(localized: "pages.settings.modelConfigs.reason.validate_failed")
+        case "start_failed": String(localized: "pages.settings.modelConfigs.reason.start_failed")
+        case "verify_failed": String(localized: "pages.settings.modelConfigs.reason.verify_failed")
+        case "probe_failed": String(localized: "pages.settings.modelConfigs.reason.probe_failed")
+        case "verify_timeout": String(localized: "pages.settings.modelConfigs.reason.verify_timeout")
+        case "device_offline": String(localized: "pages.settings.modelConfigs.reason.device_offline")
+        case "rollback_failed": String(localized: "pages.settings.modelConfigs.reason.rollback_failed")
+        case "superseded": String(localized: "pages.settings.modelConfigs.reason.superseded")
         default: nil
         }
     }

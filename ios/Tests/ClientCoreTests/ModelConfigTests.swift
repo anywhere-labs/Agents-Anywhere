@@ -74,7 +74,8 @@ import Testing
         repository.apply(try decode(object, as: V2DashboardSnapshot.self))
         #expect(repository.runtimes.count == 2 && repository.modelConfig != nil)
         let model = ModelConfigModel(api: .init(transport: transport), dashboard: repository)
-        let groups = model.channelGroups
+        let channel = try #require(model.channel)
+        let groups = ChannelPresentation.groups(channel, runtimes: repository.runtimes, connectors: repository.connectors)
         #expect(groups.devices.map(\.name) == ["Mac"])
         #expect(groups.devices.first?.rows.map(\.runtimeName) == ["Gateway", "rti_global"])
         #expect(groups.unsupported.map(\.runtimeName) == ["Work"])
@@ -308,7 +309,7 @@ import Testing
         #expect(state.runtimes.map(\.runtimeId) == ["a", "b"])
         #expect(state.runtimes[0].state == "hibernating" && state.runtimes[0].runningSessions == 0)
         #expect(ChannelPresentation.stateLabel(state.runtimes[0]) == "hibernating")
-        #expect(ChannelPresentation.stateLabel(entry("x", "switching")) == String(localized: "Switching"))
+        #expect(ChannelPresentation.stateLabel(entry("x", "switching")) == String(localized: "pages.settings.modelConfigs.state.switching"))
         #expect(ChannelPresentation.tone("hibernating") == .neutral)
         // A runtime the Server reports with nothing else stays where it is.
         #expect(state.runtimes[1].actual == "native" && state.runtimes[1].desired == "native" && state.runtimes[1].state == "unsupported")
@@ -316,7 +317,7 @@ import Testing
 
         let never: V2ModelChannelState = try decode(["channel": "native", "revision": 0, "switch": NSNull(), "runtimes": "?"])
         #expect(never.progress == nil && never.runtimes.isEmpty)
-        #expect(ChannelPresentation.summary(never).phase == .idle)
+        #expect(ChannelPresentation.progress(never.runtimes).phase == .none)
         var object = try fixtureObject("dashboard")
         var config = object["modelConfig"] as! [String: Any]
         config["channel"] = "tokens"
@@ -325,17 +326,18 @@ import Testing
         #expect(odd.modelConfig?.channel == nil && odd.modelConfig?.profiles.count == 2)
     }
 
-    @Test func summaryCountsOnlyRuntimesThatTakePart() {
-        let state = V2ModelChannelState(channel: "tokens", revision: 4, progress: .init(revision: 4, state: "running"), runtimes: [
-            entry("a", "applied", actual: "tokens"), entry("b", "waiting_idle"), entry("c", "waiting_online"),
-            entry("d", "switching"), entry("e", "restored", reason: "verify_failed"), entry("f", "unsupported", reason: "model_connection_unsupported"),
+    @Test func progressCountsTheRuntimesOfOneChannel() {
+        let state = V2ModelChannelState(channel: "tokens", revision: 4, runtimes: [
+            entry("a", "applied", actual: "tokens"), entry("b", "pending"), entry("c", "waiting_online"),
+            entry("d", "switching"), entry("f", "unsupported", reason: "model_connection_unsupported"),
         ])
-        let summary = ChannelPresentation.summary(state)
-        #expect(summary == ChannelSummary(phase: .running, total: 5, finished: 2, applied: 1, waitingIdle: 1, waitingOnline: 1, restored: 1, failed: 0))
-        let attention = V2ModelChannelState(channel: "tokens", revision: 4, progress: .init(revision: 4, state: "attention"),
-            runtimes: [entry("a", "failed", reason: "rollback_failed"), entry("b", "restored")])
-        #expect(ChannelPresentation.summary(attention).phase == .attention && ChannelPresentation.summary(attention).failed == 1)
-        #expect(ChannelPresentation.summary(.init(channel: "native", revision: 1, progress: .init(revision: 1, state: "done"))).phase == .done)
+        let progress = ChannelPresentation.progress(ChannelPresentation.rows(state, for: "tokens"))
+        #expect(progress == ChannelProgress(phase: .running, total: 4, applied: 1, unfinished: 3, offlineDevices: 1,
+            restored: 0, failed: 0, unsupported: 1))
+        let attention = ChannelPresentation.progress([entry("a", "failed", reason: "rollback_failed"), entry("b", "restored"), entry("c", "pending")])
+        #expect(attention.phase == .attention && attention.failed == 1 && attention.restored == 1)
+        #expect(ChannelPresentation.progress([entry("a", "applied")]).phase == .done)
+        #expect(ChannelPresentation.rows(state, for: "mpr_other").isEmpty && ChannelPresentation.rows(nil, for: "tokens").isEmpty)
     }
 
     @Test func runtimesGroupByDeviceAndCapability() throws {
@@ -357,10 +359,10 @@ import Testing
         #expect(global.needsGlobalConfirmation(for: "tokens") && !global.needsGlobalConfirmation(for: nil)
             && !global.needsGlobalConfirmation(for: V2ModelChannel.native))
         #expect(groups.unsupported.map(\.runtimeName) == ["Work", "gone"])
-        #expect(ChannelPresentation.reasonText(state.runtimes[0]) == String(localized: "Takes no model connection"))
+        #expect(ChannelPresentation.reasonText(state.runtimes[0]) == String(localized: "pages.settings.modelConfigs.reason.model_connection_unsupported"))
         let unknown = V2ChannelRuntime(connectorId: "c", runtimeId: "r", desired: "tokens", actual: "native", state: "failed",
             reason: "mystery", message: "custom")
-        #expect(ChannelPresentation.reasonText(unknown) == "custom")
+        #expect(ChannelPresentation.reasonText(unknown) == String(localized: "pages.settings.modelConfigs.reason.unknown"))
         #expect(ChannelPresentation.reasonText(entry("x", "applied")) == nil)
     }
 
@@ -378,7 +380,7 @@ import Testing
         object["modelConfig"] = config
         let unlinked = try #require(try decode(object, as: V2DashboardSnapshot.self).modelConfig)
         #expect(ChannelPresentation.options(overview: unlinked, current: "native").map(\.id) == ["native", "mpr_test"])
-        #expect(ChannelPresentation.label("native", profiles: []) == String(localized: "Device's own configuration"))
+        #expect(ChannelPresentation.label("native", profiles: []) == String(localized: "pages.settings.modelConfigs.current.native"))
     }
 
     @Test func writesShowTheirAnswerUntilANewerPush() async throws {
@@ -414,9 +416,11 @@ import Testing
 
     @Test func runtimeActionsTargetOneRuntime() async throws {
         let transport = TestHTTPTransport()
-        let model = ModelConfigModel(api: .init(transport: transport), dashboard: try repository(transport))
+        let dashboard = try repository(transport)
+        let model = ModelConfigModel(api: .init(transport: transport), dashboard: dashboard)
         transport.respond = { _ in try self.channelData("mpr_test", revision: 6) }
-        let rows = model.channelGroups.devices.flatMap(\.rows)
+        let channel = try #require(model.channel)
+        let rows = ChannelPresentation.groups(channel, runtimes: dashboard.runtimes, connectors: dashboard.connectors).devices.flatMap(\.rows)
         let gateway = try #require(rows.first { $0.entry.runtimeId == "rti_gateway" })
         let restored = try #require(rows.first { $0.entry.runtimeId == "rti_global" })
         #expect(restored.canRetry && !restored.canSwitchNow && restored.entry.override == "tokens")

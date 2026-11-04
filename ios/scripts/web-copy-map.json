@@ -7,6 +7,13 @@
         "size": "@"
       }
     },
+    "%@ has no separate instance managed by AA. Using %@ rewrites its own global settings, which also affects anything using it outside AA.": {
+      "source": "pages.settings.modelConfigs.details.nativeGlobalDescription",
+      "arguments": {
+        "runtime": "@",
+        "channel": "@"
+      }
+    },
     "%@ is online. You can now choose which agents to configure and start on this device, or finish without adding any.": {
       "source": "dashboard.pairDevice.successDescription",
       "arguments": {
@@ -25,11 +32,44 @@
         "name": "@"
       }
     },
+    "%lld / %lld enabled": {
+      "source": "pages.settings.modelConfigs.account.enabledCount",
+      "arguments": {
+        "enabled": "lld",
+        "total": "lld"
+      }
+    },
+    "%lld devices offline, switch when back online": {
+      "source": "pages.settings.modelConfigs.status.waitingOnline",
+      "arguments": {
+        "count": "lld"
+      },
+      "plural": "count"
+    },
+    "%lld failed and went back to the previous channel": {
+      "source": "pages.settings.modelConfigs.status.restored",
+      "arguments": {
+        "count": "lld"
+      }
+    },
     "%lld models": {
       "source": "pages.settings.modelConfigs.modelCount",
       "arguments": {
         "count": "lld"
       }
+    },
+    "%lld need attention": {
+      "source": "pages.settings.modelConfigs.status.failed",
+      "arguments": {
+        "count": "lld"
+      }
+    },
+    "%lld runtimes not supported": {
+      "source": "pages.settings.modelConfigs.details.unsupported",
+      "arguments": {
+        "count": "lld"
+      },
+      "plural": "count"
     },
     "%lld selected": {
       "source": "dashboard.device.selectedCount",
@@ -52,6 +92,13 @@
       },
       "plural": "count"
     },
+    "%lld/%lld in effect": {
+      "source": "pages.settings.modelConfigs.status.attention",
+      "arguments": {
+        "applied": "lld",
+        "total": "lld"
+      }
+    },
     "A model service's address, key and models.": "pages.settings.modelConfigs.profilesDescription",
     "API key": "pages.settings.modelConfigs.apiKey",
     "Account": "pages.settings.account",
@@ -67,6 +114,7 @@
     "Agent 操作未完成": "dashboard.device.runtimeActionFailed",
     "Agent 类型": "dashboard.session.runtimeType",
     "All": "dashboard.device.all",
+    "All models": "pages.settings.modelConfigs.account.allModels",
     "All projects": "pages.settings.archivedAllProjects",
     "Always use the dark appearance.": "pages.settings.darkDescription",
     "Always use the light appearance.": "pages.settings.lightDescription",
@@ -96,6 +144,12 @@
     },
     "Beta": "runtimeMaturity.beta",
     "Cancel": "common.cancel",
+    "Channel for %@": {
+      "source": "pages.settings.modelConfigs.details.channelFor",
+      "arguments": {
+        "runtime": "@"
+      }
+    },
     "Choose an image smaller than 8 MB.": "pages.settings.avatarTooLarge",
     "Choose how to connect %@ to your account.": {
       "source": "dashboard.pairDevice.methodDescription",
@@ -116,6 +170,7 @@
     "Confirm password": "pages.settings.confirmPassword",
     "Continuing restarts the affected runtimes and interrupts their running tasks.": "pages.settings.modelConfigs.interruptDescription",
     "Copied": "common.copied",
+    "Copy address": "pages.settings.modelConfigs.account.copy",
     "Copy device ID": "dashboard.actions.copyDeviceId",
     "Copy path": "dashboard.panels.files.copyPath",
     "Copy session ID": "dashboard.actions.copySessionId",
@@ -126,6 +181,7 @@
     "Create project": "dashboard.projects.create",
     "Creates a new key in Tokens Anywhere and writes it to every runtime that uses it; the old key stops working at once.": "pages.settings.modelConfigs.rotateDescription",
     "Custom model": "dashboard.new.model",
+    "Daily cost": "pages.settings.modelConfigs.account.dailyCost",
     "Dark": "pages.settings.dark",
     "Delete": "common.delete",
     "Delete device": "dashboard.device.deleteDevice",
@@ -149,6 +205,13 @@
     "Got it": "announcement.acknowledge",
     "Hide": "pages.settings.modelConfigs.hideModels",
     "Home 目录": "dashboard.workspacePicker.home",
+    "In effect on %lld runtimes": {
+      "source": "pages.settings.modelConfigs.status.done",
+      "arguments": {
+        "count": "lld"
+      },
+      "plural": "count"
+    },
     "Instance name": "dashboard.device.runtimeName",
     "Interrupt and continue": "pages.settings.modelConfigs.interruptContinue",
     "Keep at least one model.": "pages.settings.modelConfigs.account.needOneModel",
@@ -247,6 +310,12 @@
         "name": "@"
       }
     },
+    "Runtimes on Tokens Anywhere restart and switch to %@; those running tasks switch once the tasks finish. When all have switched, the account is signed out and this instance's access is revoked.": {
+      "source": "pages.settings.modelConfigs.signOutDescription",
+      "arguments": {
+        "channel": "@"
+      }
+    },
     "Save": "common.save",
     "Save and apply": "pages.settings.modelConfigs.account.saveApply",
     "Saved. Applying to the runtimes using Tokens Anywhere.": "pages.settings.modelConfigs.account.saved",
@@ -268,6 +337,13 @@
     "Show models and addresses": "pages.settings.modelConfigs.showModels",
     "Sign out": "common.actions.signOut",
     "Sign out?": "common.signOut.title",
+    "Switching %lld/%lld runtimes": {
+      "source": "pages.settings.modelConfigs.status.running",
+      "arguments": {
+        "applied": "lld",
+        "total": "lld"
+      }
+    },
     "Sync the Tokens Anywhere models first.": "pages.settings.modelConfigs.errors.tokens_not_synced",
     "System": "pages.settings.autoDescription",
     "Tasks are running": "pages.settings.modelConfigs.interruptTitle",
@@ -329,6 +405,7 @@
     },
     "Turning models off or renaming them only affects Agents Anywhere, and applies to every runtime using Tokens Anywhere.": "pages.settings.modelConfigs.account.modelsHint",
     "Unable to Load Files": "dashboard.workspacePicker.loadFailed",
+    "Unknown model": "pages.settings.modelConfigs.account.unknownModel",
     "Unlinked": "pages.settings.modelConfigs.unlinked",
     "Unpin": "dashboard.actions.unpin",
     "Untitled session": "pages.settings.archivedUntitled",
@@ -338,6 +415,12 @@
       "source": "pages.settings.modelConfigs.usedBy",
       "arguments": {
         "count": "lld"
+      }
+    },
+    "Using %@": {
+      "source": "pages.settings.modelConfigs.details.using",
+      "arguments": {
+        "name": "@"
       }
     },
     "Value": "dashboard.device.environmentValue",
@@ -399,13 +482,78 @@
     "pages.settings.modelConfigs.account.discard": "pages.settings.modelConfigs.account.discard",
     "pages.settings.modelConfigs.account.image": "pages.settings.modelConfigs.account.image",
     "pages.settings.modelConfigs.account.otherVendor": "pages.settings.modelConfigs.account.otherVendor",
+    "pages.settings.modelConfigs.account.protocolAddresses": "pages.settings.modelConfigs.account.protocolAddresses",
     "pages.settings.modelConfigs.account.refresh": "pages.settings.modelConfigs.account.refresh",
     "pages.settings.modelConfigs.account.rename": "pages.settings.modelConfigs.account.rename",
     "pages.settings.modelConfigs.account.requests": "pages.settings.modelConfigs.account.requests",
     "pages.settings.modelConfigs.account.savedNoRuntimes": "pages.settings.modelConfigs.account.savedNoRuntimes",
+    "pages.settings.modelConfigs.account.tabAccount": "pages.settings.modelConfigs.account.tabAccount",
     "pages.settings.modelConfigs.account.tabModels": "pages.settings.modelConfigs.account.tabModels",
+    "pages.settings.modelConfigs.account.tabModelsConnection": "pages.settings.modelConfigs.account.tabModelsConnection",
     "pages.settings.modelConfigs.account.tabUsage": "pages.settings.modelConfigs.account.tabUsage",
+    "pages.settings.modelConfigs.account.title": "pages.settings.modelConfigs.account.title",
     "pages.settings.modelConfigs.account.tokens": "pages.settings.modelConfigs.account.tokens",
+    "pages.settings.modelConfigs.channel.description": "pages.settings.modelConfigs.channel.description",
+    "pages.settings.modelConfigs.channel.link": "pages.settings.modelConfigs.channel.link",
+    "pages.settings.modelConfigs.channels.anywhere": "pages.settings.modelConfigs.channels.anywhere",
+    "pages.settings.modelConfigs.channels.connection": "pages.settings.modelConfigs.channels.connection",
+    "pages.settings.modelConfigs.channels.detached": "pages.settings.modelConfigs.channels.detached",
+    "pages.settings.modelConfigs.channels.manual": "pages.settings.modelConfigs.channels.manual",
+    "pages.settings.modelConfigs.current.description": "pages.settings.modelConfigs.current.description",
+    "pages.settings.modelConfigs.current.inUse": "pages.settings.modelConfigs.current.inUse",
+    "pages.settings.modelConfigs.current.makeCurrent": "pages.settings.modelConfigs.current.makeCurrent",
+    "pages.settings.modelConfigs.current.native": "pages.settings.modelConfigs.current.native",
+    "pages.settings.modelConfigs.current.switched": "pages.settings.modelConfigs.current.switched",
+    "pages.settings.modelConfigs.deleteInUse": "pages.settings.modelConfigs.deleteInUse",
+    "pages.settings.modelConfigs.details.follow": "pages.settings.modelConfigs.details.follow",
+    "pages.settings.modelConfigs.details.nativeGlobalConfirm": "pages.settings.modelConfigs.details.nativeGlobalConfirm",
+    "pages.settings.modelConfigs.details.nativeGlobalTitle": "pages.settings.modelConfigs.details.nativeGlobalTitle",
+    "pages.settings.modelConfigs.details.offline": "pages.settings.modelConfigs.details.offline",
+    "pages.settings.modelConfigs.details.online": "pages.settings.modelConfigs.details.online",
+    "pages.settings.modelConfigs.interruptContinue": "pages.settings.modelConfigs.interruptContinue",
+    "pages.settings.modelConfigs.interruptDescription": "pages.settings.modelConfigs.interruptDescription",
+    "pages.settings.modelConfigs.interruptTitle": "pages.settings.modelConfigs.interruptTitle",
+    "pages.settings.modelConfigs.native.description": "pages.settings.modelConfigs.native.description",
+    "pages.settings.modelConfigs.reason.confirmation_required": "pages.settings.modelConfigs.reason.confirmation_required",
+    "pages.settings.modelConfigs.reason.connector_upgrade_required": "pages.settings.modelConfigs.reason.connector_upgrade_required",
+    "pages.settings.modelConfigs.reason.device_offline": "pages.settings.modelConfigs.reason.device_offline",
+    "pages.settings.modelConfigs.reason.format_unsupported": "pages.settings.modelConfigs.reason.format_unsupported",
+    "pages.settings.modelConfigs.reason.mode_unsupported": "pages.settings.modelConfigs.reason.mode_unsupported",
+    "pages.settings.modelConfigs.reason.model_connection_unsupported": "pages.settings.modelConfigs.reason.model_connection_unsupported",
+    "pages.settings.modelConfigs.reason.model_unavailable": "pages.settings.modelConfigs.reason.model_unavailable",
+    "pages.settings.modelConfigs.reason.models_required": "pages.settings.modelConfigs.reason.models_required",
+    "pages.settings.modelConfigs.reason.not_installed": "pages.settings.modelConfigs.reason.not_installed",
+    "pages.settings.modelConfigs.reason.probe_failed": "pages.settings.modelConfigs.reason.probe_failed",
+    "pages.settings.modelConfigs.reason.profile_unavailable": "pages.settings.modelConfigs.reason.profile_unavailable",
+    "pages.settings.modelConfigs.reason.rollback_failed": "pages.settings.modelConfigs.reason.rollback_failed",
+    "pages.settings.modelConfigs.reason.start_failed": "pages.settings.modelConfigs.reason.start_failed",
+    "pages.settings.modelConfigs.reason.superseded": "pages.settings.modelConfigs.reason.superseded",
+    "pages.settings.modelConfigs.reason.unknown": "pages.settings.modelConfigs.reason.unknown",
+    "pages.settings.modelConfigs.reason.validate_failed": "pages.settings.modelConfigs.reason.validate_failed",
+    "pages.settings.modelConfigs.reason.verify_failed": "pages.settings.modelConfigs.reason.verify_failed",
+    "pages.settings.modelConfigs.reason.verify_timeout": "pages.settings.modelConfigs.reason.verify_timeout",
+    "pages.settings.modelConfigs.relink": "pages.settings.modelConfigs.relink",
+    "pages.settings.modelConfigs.relinkSoon": "pages.settings.modelConfigs.relinkSoon",
+    "pages.settings.modelConfigs.rotateDescription": "pages.settings.modelConfigs.rotateDescription",
+    "pages.settings.modelConfigs.runtimes.attention": "pages.settings.modelConfigs.runtimes.attention",
+    "pages.settings.modelConfigs.runtimes.switching": "pages.settings.modelConfigs.runtimes.switching",
+    "pages.settings.modelConfigs.runtimes.title": "pages.settings.modelConfigs.runtimes.title",
+    "pages.settings.modelConfigs.signOut": "pages.settings.modelConfigs.signOut",
+    "pages.settings.modelConfigs.signOutTitle": "pages.settings.modelConfigs.signOutTitle",
+    "pages.settings.modelConfigs.signingOut": "pages.settings.modelConfigs.signingOut",
+    "pages.settings.modelConfigs.state.applied": "pages.settings.modelConfigs.state.applied",
+    "pages.settings.modelConfigs.state.failed": "pages.settings.modelConfigs.state.failed",
+    "pages.settings.modelConfigs.state.pending": "pages.settings.modelConfigs.state.pending",
+    "pages.settings.modelConfigs.state.restored": "pages.settings.modelConfigs.state.restored",
+    "pages.settings.modelConfigs.state.restoring": "pages.settings.modelConfigs.state.restoring",
+    "pages.settings.modelConfigs.state.switching": "pages.settings.modelConfigs.state.switching",
+    "pages.settings.modelConfigs.state.unsupported": "pages.settings.modelConfigs.state.unsupported",
+    "pages.settings.modelConfigs.state.waiting_online": "pages.settings.modelConfigs.state.waiting_online",
+    "pages.settings.modelConfigs.status.none": "pages.settings.modelConfigs.status.none",
+    "pages.settings.modelConfigs.step.activating": "pages.settings.modelConfigs.step.activating",
+    "pages.settings.modelConfigs.step.preparing": "pages.settings.modelConfigs.step.preparing",
+    "pages.settings.modelConfigs.step.verifying": "pages.settings.modelConfigs.step.verifying",
+    "pages.settings.modelConfigs.tokensReauth": "pages.settings.modelConfigs.tokensReauth",
     "上一级目录": "common.parent",
     "下载": "dashboard.panels.files.download",
     "为命令行设备命名": "dashboard.pairDevice.nameTitle",

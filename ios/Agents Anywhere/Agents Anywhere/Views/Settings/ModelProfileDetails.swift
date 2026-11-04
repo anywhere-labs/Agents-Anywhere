@@ -6,7 +6,13 @@ import SwiftUI
 struct ModelProfileDetails: View {
     let profile: V2ModelProfile
     let usedBy: Int
-    @State private var expanded = false
+    @State private var expanded: Bool
+
+    init(profile: V2ModelProfile, usedBy: Int, expanded: Bool = false) {
+        self.profile = profile
+        self.usedBy = usedBy
+        _expanded = State(initialValue: expanded)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {

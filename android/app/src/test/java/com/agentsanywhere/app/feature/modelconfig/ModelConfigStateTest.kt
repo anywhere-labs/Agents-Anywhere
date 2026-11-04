@@ -154,38 +154,46 @@ class ModelConfigStateTest {
     }
 
     @Test
-    fun runningProgressCountsFinishedRuntimesAndWaitingReasons() {
-        val progress = channel(
-            item("a", "applied", actual = "tokens"),
-            item("b", "pending"),
-            item("c", "waiting_online"),
-            item("d", "switching"),
-            item("e", "restored"),
-            item("f", "unsupported"),
-            switch = "running",
-        ).progress()
+    fun progressCountsTheRuntimesOfOneChannel() {
+        val progress = channelProgress(
+            listOf(
+                item("a", "applied", actual = "tokens"),
+                item("b", "pending"),
+                item("c", "waiting_online"),
+                item("d", "switching"),
+                item("e", "unsupported"),
+            ),
+        )
 
         assertEquals(ChannelPhase.Running, progress.phase)
-        assertEquals(5, progress.total)
-        assertEquals(2, progress.finished)
+        assertEquals(4, progress.total)
         assertEquals(1, progress.applied)
-        assertEquals(1, progress.restored)
-        assertEquals(1, progress.waitingOnline)
+        assertEquals(3, progress.unfinished)
+        assertEquals(1, progress.offlineDevices)
+        assertEquals(1, progress.unsupported)
     }
 
     @Test
-    fun progressPhaseFollowsTheServerThenTheRuntimes() {
-        assertEquals(ChannelPhase.Done, channel(item("a", "applied"), switch = "done").progress().phase)
-        val attention = channel(item("a", "applied"), item("b", "restored"), item("c", "failed"), switch = "attention").progress()
+    fun progressPhaseReadsTheRuntimes() {
+        assertEquals(ChannelPhase.Done, channelProgress(listOf(item("a", "applied"))).phase)
+        val attention = channelProgress(listOf(item("a", "applied"), item("b", "restored"), item("c", "failed"), item("d", "pending")))
         assertEquals(ChannelPhase.Attention, attention.phase)
         assertEquals(1, attention.restored)
         assertEquals(1, attention.failed)
-        // Never switched, or a switch state this client does not know.
-        assertEquals(ChannelPhase.Done, channel(item("a", "applied")).progress().phase)
-        assertEquals(ChannelPhase.Running, channel(item("a", "pending"), switch = "later").progress().phase)
-        assertEquals(ChannelPhase.Attention, channel(item("a", "failed")).progress().phase)
-        assertEquals(ChannelPhase.Idle, channel(item("a", "unsupported")).progress().phase)
-        assertEquals(0, channel().progress().total)
+        assertEquals(ChannelPhase.None, channelProgress(listOf(item("a", "unsupported"))).phase)
+        assertEquals(0, channelProgress(emptyList()).total)
+    }
+
+    @Test
+    fun aChannelListsTheRuntimesThatShouldUseIt() {
+        val state = channel(
+            item("a", "applied", desired = "tokens", actual = "tokens"),
+            item("b", "switching", desired = "mpr_1", actual = "tokens"),
+        )
+        assertEquals(listOf("a"), state.rowsFor("tokens").map { it.runtimeId })
+        assertEquals(listOf("b"), state.rowsFor("mpr_1").map { it.runtimeId })
+        assertEquals(2, state.usersOf("tokens"))
+        assertEquals(emptyList<String>(), (null as ModelChannelState?).rowsFor("tokens").map { it.runtimeId })
     }
 
     @Test

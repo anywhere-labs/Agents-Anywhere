@@ -12,7 +12,18 @@ final class ModelConfigModel {
     private(set) var exitedLink: V2TokensLink?
     var exitBusy: Bool { [.switching, .waiting, .offline].contains(exitPhase) }
 
-    /// Owned by the page task, so leaving the page cancels the unfinished exit.
+    @ObservationIgnored private var exitTask: Task<Void, Never>?
+
+    /// Starts signing out in the background: looking at another channel, or
+    /// leaving the page, does not stop it. It stops when the account changes.
+    func startExit() {
+        guard exitTask == nil else { return }
+        exitTask = Task { [weak self] in
+            await self?.exitTokens()
+            self?.exitTask = nil
+        }
+    }
+
     func exitTokens() async {
         guard !exitBusy, let link = tokens?.link else { return }
         exitPhase = .switching
@@ -127,22 +138,19 @@ final class ModelConfigModel {
         return ChannelPresentation.options(overview: overview, current: channel?.channel)
     }
 
-    var channelSummary: ChannelSummary? { channel.map(ChannelPresentation.summary) }
+    /// Runtimes that should use `id`: following it as the applied channel, or chosen for it.
+    func channelRows(_ id: String) -> [V2ChannelRuntime] { ChannelPresentation.rows(channel, for: id) }
 
-    var channelGroups: (devices: [ChannelDeviceGroup], unsupported: [ChannelRuntimeRow]) {
-        guard let channel else { return ([], []) }
-        return ChannelPresentation.groups(channel, runtimes: dashboard.runtimes, connectors: dashboard.connectors)
-    }
-
-    /// Runtimes that want or use the Anywhere channel, for the account page.
-    var tokensRuntimes: [ChannelRuntimeRow] {
-        channelGroups.devices.flatMap(\.rows).filter {
-            $0.entry.desired == V2ModelChannel.tokens || $0.entry.actual == V2ModelChannel.tokens
-        }
+    func channelGroups(for id: String) -> (devices: [ChannelDeviceGroup], unsupported: [ChannelRuntimeRow]) {
+        ChannelPresentation.groups(channelRows(id), runtimes: dashboard.runtimes, connectors: dashboard.connectors)
     }
 
     /// A runtime is still switching to or from Anywhere.
-    var tokensSwitching: Bool { tokensRuntimes.contains { ChannelPresentation.isInProgress($0.entry.state) } }
+    var tokensSwitching: Bool {
+        channel?.runtimes.contains {
+            ($0.desired == V2ModelChannel.tokens || $0.actual == V2ModelChannel.tokens) && ChannelPresentation.isInProgress($0.state)
+        } ?? false
+    }
 
     /// Current, chosen for a runtime, or in use; such a profile cannot be deleted.
     func isInUse(_ profile: V2ModelProfile) -> Bool {
@@ -172,7 +180,9 @@ final class ModelConfigModel {
 
     func setChannel(_ channel: String) async {
         guard channel != self.channel?.channel else { return }
-        await performChannel(Self.globalChannelKey) { try await api.setChannel(channel) }
+        if await performChannel(Self.globalChannelKey, { try await api.setChannel(channel) }) {
+            feedback = .success(String(localized: "pages.settings.modelConfigs.current.switched"))
+        }
     }
 
     /// nil follows the current channel again.
@@ -196,11 +206,18 @@ final class ModelConfigModel {
         answered = AnsweredChannel(state: state, base: pushed)
     }
 
-    private func performChannel(_ key: String, _ body: () async throws -> V2ModelChannelState) async {
-        guard channelBusyKey == nil else { return }
+    @discardableResult
+    private func performChannel(_ key: String, _ body: () async throws -> V2ModelChannelState) async -> Bool {
+        guard channelBusyKey == nil else { return false }
         channelBusyKey = key
         defer { channelBusyKey = nil }
-        do { adopt(try await body()) } catch { feedback = .error(ModelConfigErrorText.text(error)) }
+        do {
+            adopt(try await body())
+            return true
+        } catch {
+            feedback = .error(ModelConfigErrorText.text(error))
+            return false
+        }
     }
 
     // MARK: Profiles and Tokens Anywhere
