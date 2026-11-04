@@ -1964,7 +1964,20 @@
           "enabledCount": "{enabled} / {total} enabled",
           "anthropicProtocol": "Anthropic protocol",
           "period": "Period",
-          "requestCount": "{count, plural, one {# request} other {# requests}}"
+          "requestCount": "{count, plural, one {# request} other {# requests}}",
+          "modelFilter": "Model",
+          "allModels": "All models",
+          "unknownModel": "Unspecified model",
+          "tokenDetail": "Input {input} · Output {output} · Cache {cache}",
+          "dailyCost": "Daily spending",
+          "tableView": "Table",
+          "chartView": "Chart",
+          "date": "Date",
+          "byModel": "By model",
+          "otherModels": "Other models",
+          "inputTokens": "Input",
+          "outputTokens": "Output",
+          "cacheTokens": "Cache"
         },
         "channel": {
           "link": "Link account",

@@ -1794,7 +1794,20 @@
           "enabledCount": "已启用 {enabled} / {total}",
           "anthropicProtocol": "Anthropic 协议",
           "period": "时间范围",
-          "requestCount": "{count} 次"
+          "requestCount": "{count} 次",
+          "modelFilter": "模型",
+          "allModels": "全部模型",
+          "unknownModel": "未标明模型",
+          "tokenDetail": "输入 {input} · 输出 {output} · 缓存 {cache}",
+          "dailyCost": "每日花费",
+          "tableView": "表格",
+          "chartView": "图表",
+          "date": "日期",
+          "byModel": "按模型",
+          "otherModels": "其他模型",
+          "inputTokens": "输入",
+          "outputTokens": "输出",
+          "cacheTokens": "缓存"
         },
         "channel": {
           "link": "链接账户",

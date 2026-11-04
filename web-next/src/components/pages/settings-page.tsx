@@ -613,8 +613,9 @@ export function SettingsPage() {
         <PageHeader title={t(activeNavItem.labelKey)} />
       </div>
 
-      <div className="flex min-h-0 flex-1 overflow-hidden px-5 py-5 sm:px-8 sm:py-6">
-        <ScrollArea className="h-full min-h-0 min-w-0 flex-1" viewportProps={{ className: "pb-8" }}>
+      {/* The padding sits inside the scroll area so its scrollbar runs along the window edge. */}
+      <div className="flex min-h-0 flex-1 overflow-hidden pt-5 sm:pt-6">
+        <ScrollArea className="h-full min-h-0 min-w-0 flex-1" viewportProps={{ className: "px-5 pb-13 sm:px-8 sm:pb-14" }}>
           {tab === "account" && (
             loadingMe ? (
               <LoadingState className="h-full" />

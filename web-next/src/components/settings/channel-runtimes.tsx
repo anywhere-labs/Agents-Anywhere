@@ -227,6 +227,9 @@ export function ChannelMark({ channel, channelId }: { channel: ModelChannelState
   )
 }
 
+// Being worked on now; a runtime waiting for its device to come online is not.
+const IN_PROGRESS = new Set<ChannelRuntimeState["state"]>(["pending", "switching", "restoring"])
+
 const rowKey = (row: { connectorId: string; runtimeId: string }) => `${row.connectorId}/${row.runtimeId}`
 
 export function runtimeStateText(row: ChannelRuntimeState, t: Translate): string {
@@ -268,7 +271,9 @@ function RuntimeRow({
         <span className="truncate font-medium" title={name}>
           {name}{device ? <span className="font-normal text-muted-foreground"> · {device}</span> : null}
         </span>
-        <span className={cn("text-xs text-muted-foreground", failed && "text-amber-700 dark:text-amber-400")} title={row.message ?? undefined}>
+        <span className={cn("flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground", failed && "text-amber-700 dark:text-amber-400")} title={row.message ?? undefined}>
+          {/* The text already says what is under way. */}
+          {IN_PROGRESS.has(row.state) ? <Spinner className="size-3 shrink-0" role={undefined} aria-hidden /> : null}
           {[runtimeStateText(row, t), reason, row.state !== "applied" ? t("details.using", { name: channelName(row.actual) }) : null]
             .filter(Boolean).join(" · ")}
         </span>

@@ -2,8 +2,8 @@
 
 import * as React from "react"
 import { Check, ChevronRight, Copy, ExternalLink, Pencil, RefreshCw, X } from "lucide-react"
-import { useTranslations } from "next-intl"
-import { Area, AreaChart } from "recharts"
+import { useLocale, useTranslations } from "next-intl"
+import { Bar, BarChart, CartesianGrid, LabelList, XAxis, YAxis } from "recharts"
 import { toast } from "sonner"
 
 import { SettingsSection } from "@/components/settings/settings-section"
@@ -16,7 +16,9 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
+import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { formatCompactNumber, formatShortDate } from "@/features/admin-usage/report-helpers"
 import type { ModelPreferences, ModelProfile } from "@/features/dashboard/types"
 import { modelConfigApi, type TokensAccount as TokensAccountInfo, type TokensUsage } from "@/features/model-config/api"
@@ -30,6 +32,7 @@ import {
   tokensModels,
   vendorGroups,
   type TokensModel,
+  type UsageSummary,
 } from "@/features/model-config/presentation"
 import { copyText } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
@@ -110,45 +113,46 @@ export function TokensAccount({
           <Separator />
         </div>
         <TabsContent value="account" className="flex flex-col gap-8">
-          <div className="grid gap-6 sm:grid-cols-2 sm:gap-10">
-            <div className="flex min-w-0 items-start gap-3 py-2">
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium uppercase">
-                {name.slice(0, 1) || "?"}
-              </span>
-              <div className="flex min-w-0 flex-col gap-0.5">
-                <span className="truncate text-sm font-medium" title={name}>{name}</span>
-                {account?.email && account.email !== name ? (
-                  <span className="truncate text-xs text-muted-foreground" title={account.email}>{account.email}</span>
-                ) : null}
-                {info ? <ExternalTextLink onClick={() => void openExternal(info.links.console)}>{t("account.moreInfo")}</ExternalTextLink> : null}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="flex min-w-0 flex-col justify-between gap-4 rounded-xl border border-border p-5">
+              <div className="flex min-w-0 items-center gap-3">
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium uppercase">
+                  {name.slice(0, 1) || "?"}
+                </span>
+                <div className="flex min-w-0 flex-col gap-0.5">
+                  <span className="truncate text-sm font-medium" title={name}>{name}</span>
+                  {account?.email && account.email !== name ? (
+                    <span className="truncate text-xs text-muted-foreground" title={account.email}>{account.email}</span>
+                  ) : null}
+                </div>
               </div>
+              {info ? <ExternalTextLink onClick={() => void openExternal(info.links.console)}>{t("account.moreInfo")}</ExternalTextLink> : null}
             </div>
-            <div className="flex min-w-0 flex-col gap-4 py-2">
-              <div className="flex flex-col gap-0.5">
+            <div className="flex min-w-0 flex-col gap-1 rounded-xl border border-border p-5">
+              <div className="flex items-start justify-between gap-2">
                 <span className="text-xs text-muted-foreground">{t("account.balance")}</span>
-                {info ? (
-                  <>
-                    <span className="text-3xl font-semibold tracking-tight tabular-nums">{formatYuan(amountUnits(info.balance.balance))}</span>
-                    <span className="text-xs text-muted-foreground tabular-nums">
-                      {t("account.balanceDetail", {
-                        available: formatYuan(amountUnits(info.balance.available)),
-                        bonus: formatYuan(amountUnits(info.balance.bonus)),
-                      })}
-                    </span>
-                  </>
-                ) : infoFailed ? (
-                  <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                    {t("account.loadFailed")}
-                    <Button size="sm" variant="ghost" onClick={loadInfo}><RefreshCw data-icon="inline-start" />{t("retry")}</Button>
-                  </span>
-                ) : <Spinner className="my-2" />}
+                <Button size="sm" disabled={!info} onClick={() => info && void openExternal(info.links.billing)}>
+                  {t("account.topUp")}<ExternalLink data-icon="inline-end" />
+                </Button>
               </div>
-              <Button size="sm" className="w-fit" disabled={!info} onClick={() => info && void openExternal(info.links.billing)}>
-                {t("account.topUp")}<ExternalLink data-icon="inline-end" />
-              </Button>
+              {info ? (
+                <>
+                  <span className="text-3xl font-semibold tracking-tight tabular-nums">{formatYuan(amountUnits(info.balance.balance))}</span>
+                  <span className="text-xs text-muted-foreground tabular-nums">
+                    {t("account.balanceDetail", {
+                      available: formatYuan(amountUnits(info.balance.available)),
+                      bonus: formatYuan(amountUnits(info.balance.bonus)),
+                    })}
+                  </span>
+                </>
+              ) : infoFailed ? (
+                <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                  {t("account.loadFailed")}
+                  <Button size="sm" variant="ghost" onClick={loadInfo}><RefreshCw data-icon="inline-start" />{t("retry")}</Button>
+                </span>
+              ) : <Spinner className="my-2" />}
             </div>
           </div>
-          <Separator />
           {tab === "account" ? <UsageBlock token={token} detailsUrl={info?.links.usage ?? null} /> : null}
         </TabsContent>
         {/* Kept mounted so unsaved model changes survive a look at the account page. */}
@@ -501,65 +505,119 @@ function ModelRow({
 
 function UsageBlock({ token, detailsUrl }: { token: string; detailsUrl: string | null }) {
   const t = useTranslations("pages.settings.modelConfigs")
+  const locale = useLocale()
   const [days, setDays] = React.useState(7)
+  const [model, setModel] = React.useState<string | null>(null)
+  const [asTable, setAsTable] = React.useState(false)
+  const [revision, setRevision] = React.useState(0)
   const [usage, setUsage] = React.useState<TokensUsage | null>(null)
   const [failed, setFailed] = React.useState(false)
+  const load = () => setRevision((value) => value + 1)
 
-  const load = React.useCallback(() => {
+  React.useEffect(() => {
+    let active = true
     setFailed(false)
     setUsage(null)
-    modelConfigApi.tokensUsage(token, days).then(setUsage).catch(() => setFailed(true))
-  }, [token, days])
-  React.useEffect(load, [load])
+    modelConfigApi.tokensUsage(token, days).then((value) => {
+      if (active) setUsage(value)
+    }).catch(() => { if (active) setFailed(true) })
+    return () => { active = false }
+  }, [token, days, revision])
 
-  const summary = usage ? summarizeUsage(usage, null) : null
-  const chartConfig: ChartConfig = { cost: { label: t("account.cost"), color: "var(--chart-1)" } }
+  const all = usage ? summarizeUsage(usage, null) : null
+  // Keep the filter valid when changing the period or refreshing the model list.
+  const selectedModel = model !== null && all?.models.some((row) => row.model === model) ? model : null
+  const summary = usage ? summarizeUsage(usage, selectedModel) : null
+  const number = (value: number) => formatCompactNumber(value, locale)
+  const modelName = (value: string) => value || t("account.unknownModel")
 
   return (
     <AccountBlock
       title={t("account.tabUsage")}
-      action={(
-        <>
-          <NativeSelect size="sm" aria-label={t("account.period")} value={String(days)} onChange={(event) => setDays(Number(event.target.value))}>
-            <NativeSelectOption value="7">{t("account.days7")}</NativeSelectOption>
-            <NativeSelectOption value="30">{t("account.days30")}</NativeSelectOption>
-          </NativeSelect>
-          {detailsUrl ? (
-            <Button size="sm" variant="ghost" onClick={() => void openExternal(detailsUrl)}>
-              {t("account.usageDetails")}<ExternalLink data-icon="inline-end" />
-            </Button>
-          ) : null}
-        </>
-      )}
+      action={detailsUrl ? (
+        <Button size="sm" variant="ghost" onClick={() => void openExternal(detailsUrl)}>
+          {t("account.usageDetails")}<ExternalLink data-icon="inline-end" />
+        </Button>
+      ) : null}
     >
-      <div className="flex flex-col gap-5 py-2">
+      <div className="flex min-w-0 flex-col gap-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            spacing={0}
+            aria-label={t("account.period")}
+            value={String(days)}
+            onValueChange={(value) => { if (value) setDays(Number(value)) }}
+          >
+            <ToggleGroupItem value="7">{t("account.days7")}</ToggleGroupItem>
+            <ToggleGroupItem value="30">{t("account.days30")}</ToggleGroupItem>
+          </ToggleGroup>
+          <NativeSelect size="sm" aria-label={t("account.modelFilter")} value={JSON.stringify(selectedModel)} onChange={(event) => setModel(JSON.parse(event.target.value) as string | null)} disabled={!all}>
+            <NativeSelectOption value="null">{t("account.allModels")}</NativeSelectOption>
+            {all?.models.map((row) => <NativeSelectOption key={row.model} value={JSON.stringify(row.model)}>{modelName(row.model)}</NativeSelectOption>)}
+          </NativeSelect>
+          <Button size="sm" variant="outline" className="ml-auto" onClick={load} disabled={!usage && !failed}>
+            {!usage && !failed ? <Spinner /> : <RefreshCw data-icon="inline-start" />}{t("account.refresh")}
+          </Button>
+        </div>
         {failed ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <div className="flex items-center gap-2 rounded-xl border border-border p-5 text-sm text-muted-foreground">
             {t("account.usageFailed")}
             <Button size="sm" variant="ghost" onClick={load}><RefreshCw data-icon="inline-start" />{t("retry")}</Button>
           </div>
         ) : !summary ? (
-          <div className="flex justify-center py-6"><Spinner /></div>
+          <div className="flex h-72 items-center justify-center rounded-xl border border-border"><Spinner /></div>
         ) : (
           <>
-            <div className="grid grid-cols-1 gap-5 min-[400px]:grid-cols-3 sm:gap-8">
+            <div className="grid grid-cols-1 gap-4 min-[480px]:grid-cols-3">
               <Stat label={t("account.cost")} value={formatYuan(summary.cost)} />
               <Stat label={t("account.requests")} value={t("account.requestCount", { count: summary.requests })} />
-              <Stat label={t("account.tokens")} value={formatCompactNumber(summary.tokens)} />
+              <Stat label={t("account.tokens")} value={number(summary.tokens)} detail={t("account.tokenDetail", {
+                input: number(summary.inputTokens), output: number(summary.outputTokens), cache: number(summary.cacheTokens),
+              })} />
             </div>
-            {summary.cost === 0 ? (
-              <p className="text-xs text-muted-foreground">{t("account.noUsage")}</p>
-            ) : (
-              <ChartContainer config={chartConfig} className="aspect-auto h-16 w-full">
-                <AreaChart data={summary.daily.map((row) => ({ date: row.date, cost: row.cost / 10_000 }))} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
-                  <ChartTooltip
-                    cursor={false}
-                    content={<ChartTooltipContent labelFormatter={(_, items) => formatShortDate(String(items[0]?.payload?.date ?? ""))} formatter={(value) => formatYuan(Math.round(Number(value) * 10_000))} />}
-                  />
-                  <Area dataKey="cost" type="monotone" stroke="var(--color-cost)" fill="var(--color-cost)" fillOpacity={0.15} strokeWidth={1.5} />
-                </AreaChart>
-              </ChartContainer>
-            )}
+            <UsageCard
+              title={t("account.dailyCost")}
+              action={summary.cost > 0 ? (
+                <Button size="sm" variant="ghost" aria-pressed={asTable} onClick={() => setAsTable((value) => !value)}>
+                  {t(asTable ? "account.chartView" : "account.tableView")}
+                </Button>
+              ) : null}
+            >
+              {asTable && summary.cost > 0 ? (
+                <Table>
+                  <TableCaption className="sr-only">{t("account.dailyCost")}</TableCaption>
+                  <TableHeader><TableRow><TableHead>{t("account.date")}</TableHead><TableHead className="text-right">{t("account.cost")}</TableHead></TableRow></TableHeader>
+                  <TableBody>{summary.daily.map((row) => (
+                    <TableRow key={row.date}><TableCell>{row.date}</TableCell><TableCell className="text-right tabular-nums">{formatYuan(row.cost)}</TableCell></TableRow>
+                  ))}</TableBody>
+                </Table>
+              ) : (
+                <DailyCostChart summary={summary} modelName={modelName} t={t} />
+              )}
+            </UsageCard>
+            <UsageCard title={t("account.byModel")}>
+              {summary.models.length ? (
+                <Table>
+                  <TableCaption className="sr-only">{t("account.byModel")}</TableCaption>
+                  <TableHeader><TableRow>
+                    <TableHead>{t("account.modelFilter")}</TableHead>
+                    {["cost", "requests", "inputTokens", "outputTokens", "cacheTokens"].map((key) => <TableHead key={key} className="text-right">{t(`account.${key}`)}</TableHead>)}
+                  </TableRow></TableHeader>
+                  <TableBody>{summary.models.map((row) => (
+                    <TableRow key={row.model}>
+                      <TableCell className="max-w-64 truncate" title={modelName(row.model)}>{modelName(row.model)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{formatYuan(row.cost)}</TableCell>
+                      {[row.requests, row.inputTokens, row.outputTokens, row.cacheTokens].map((value, index) => <TableCell key={index} className="text-right tabular-nums" title={value.toLocaleString(locale)}>{number(value)}</TableCell>)}
+                    </TableRow>
+                  ))}</TableBody>
+                </Table>
+              ) : (
+                <p className="py-6 text-center text-sm text-muted-foreground">{t("account.noUsage")}</p>
+              )}
+            </UsageCard>
           </>
         )}
       </div>
@@ -567,11 +625,100 @@ function UsageBlock({ token, detailsUrl }: { token: string; detailsUrl: string |
   )
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+// The models with their own color; the rest share one bar segment.
+const SERIES = 5
+const yuan = (units: number) => units / 10_000
+
+/** Cost per day stacked by model, with the total above each bar and a legend of what each model spent. */
+function DailyCostChart({ summary, modelName, t }: { summary: UsageSummary; modelName: (model: string) => string; t: Translate }) {
+  const shown = summary.models.filter((row) => row.cost > 0)
+  const own = shown.slice(0, SERIES)
+  const rest = shown.slice(SERIES)
+  const series = [
+    ...own.map((row, index) => ({ key: `m${index}`, label: modelName(row.model), color: `var(--chart-${index + 1})`, cost: row.cost, models: [row.model] })),
+    ...(rest.length ? [{ key: "other", label: t("account.otherModels"), color: "var(--muted-foreground)", cost: rest.reduce((sum, row) => sum + row.cost, 0), models: rest.map((row) => row.model) }] : []),
+  ]
+  const config: ChartConfig = Object.fromEntries(series.map((item) => [item.key, { label: item.label, color: item.color }]))
+  const data = summary.daily.map((day) => ({
+    date: day.date,
+    total: yuan(day.cost),
+    ...Object.fromEntries(series.map((item) => [item.key, yuan(item.models.reduce((sum, model) => sum + (day.byModel[model] ?? 0), 0))])),
+  }))
+  // Totals above every bar crowd a month; then they stay in the tooltip.
+  const labelled = summary.daily.filter((day) => day.cost > 0).length <= 10
+  const money = (value: unknown) => formatYuan(Math.round(Number(value) * 10_000))
+
   return (
-    <div className="flex min-w-0 flex-col gap-1.5">
+    <div className="flex flex-col gap-4">
+      <div className="relative">
+        <ChartContainer config={config} className="aspect-auto h-60 w-full" aria-label={t("account.dailyCost")}>
+          <BarChart accessibilityLayer data={data} margin={{ top: 24, right: 4, bottom: 0, left: 0 }}>
+            <CartesianGrid vertical={false} />
+            <XAxis dataKey="date" tickLine={false} axisLine={false} tickFormatter={formatShortDate} minTickGap={24} />
+            <YAxis tickLine={false} axisLine={false} width={64} domain={[0, (max: number) => (max > 0 ? max : 1)]} tickFormatter={money} />
+            {series.length ? (
+              <ChartTooltip
+                cursor={{ fill: "var(--muted)", opacity: 0.4 }}
+                content={(
+                  <ChartTooltipContent
+                    labelFormatter={(_, items) => String(items[0]?.payload?.date ?? "")}
+                    formatter={(value, key) => Number(value) > 0 ? (
+                      <div className="flex w-full items-center gap-2">
+                        <span className="size-2.5 shrink-0 rounded-[2px]" style={{ background: `var(--color-${key})` }} />
+                        <span className="text-muted-foreground">{config[String(key)]?.label}</span>
+                        <span className="ml-auto pl-4 font-mono font-medium text-foreground tabular-nums">{money(value)}</span>
+                      </div>
+                    ) : null}
+                  />
+                )}
+              />
+            ) : null}
+            {series.length ? series.map((item, index) => (
+              <Bar key={item.key} dataKey={item.key} stackId="cost" fill={`var(--color-${item.key})`} maxBarSize={32} isAnimationActive={false} radius={index === series.length - 1 ? [4, 4, 0, 0] : 0}>
+                {labelled && index === series.length - 1 ? (
+                  <LabelList dataKey="total" position="top" offset={8} className="fill-foreground" fontSize={12} formatter={(value: unknown) => (Number(value) > 0 ? money(value) : "")} />
+                ) : null}
+              </Bar>
+            )) : <Bar dataKey="total" isAnimationActive={false} />}
+          </BarChart>
+        </ChartContainer>
+        {series.length ? null : (
+          <p className="pointer-events-none absolute inset-0 flex items-center justify-center pb-6 pl-16 text-sm text-muted-foreground">{t("account.noUsage")}</p>
+        )}
+      </div>
+      {series.length ? (
+        <ul className="flex flex-wrap gap-x-5 gap-y-2 text-sm">
+          {series.map((item) => (
+            <li key={item.key} className="flex min-w-0 items-center gap-2">
+              <span className="size-2.5 shrink-0 rounded-[2px]" style={{ background: item.color }} />
+              <span className="truncate" title={item.label}>{item.label}</span>
+              <span className="text-muted-foreground tabular-nums">{formatYuan(item.cost)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  )
+}
+
+function UsageCard({ title, action, children }: { title: React.ReactNode; action?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <section className="flex min-w-0 flex-col gap-3 rounded-xl border border-border p-5">
+      <div className="flex min-h-8 items-center justify-between gap-2">
+        <h4 className="text-sm font-medium">{title}</h4>
+        {action}
+      </div>
+      {children}
+    </section>
+  )
+}
+
+function Stat({ label, value, detail }: { label: string; value: string; detail?: string }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5 rounded-xl border border-border p-5">
       <span className="text-xs text-muted-foreground">{label}</span>
-      <span className="truncate text-xl font-semibold tracking-tight tabular-nums" title={value}>{value}</span>
+      <span className="truncate text-2xl font-semibold tracking-tight tabular-nums" title={value}>{value}</span>
+      {detail ? <span className="text-xs text-muted-foreground tabular-nums">{detail}</span> : null}
     </div>
   )
 }

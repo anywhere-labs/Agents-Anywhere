@@ -183,12 +183,15 @@ type UsageRow = {
   amountCharged: string
 }
 
-export type UsageSummary = {
+type TokenBreakdown = { inputTokens: number; outputTokens: number; cacheTokens: number }
+
+export type UsageSummary = TokenBreakdown & {
   cost: number
   requests: number
   tokens: number
-  daily: { date: string; cost: number }[]
-  models: { model: string; requests: number; tokens: number; cost: number }[]
+  /** Every day of the period; `byModel` splits the day's cost by model. */
+  daily: { date: string; cost: number; byModel: Record<string, number> }[]
+  models: (TokenBreakdown & { model: string; requests: number; tokens: number; cost: number })[]
 }
 
 const rowTokens = (row: UsageRow) =>
@@ -208,9 +211,12 @@ function datesBetween(from: string, to: string): string[] {
 
 /** Totals, cost per day (every day, quiet ones as zero) and per model, most spent first. */
 export function summarizeUsage(usage: { from: string; to: string; items: UsageRow[] }, model: string | null): UsageSummary {
-  const rows = usage.items.filter((row) => model === null || row.model === model)
-  const perDay = new Map(datesBetween(usage.from, usage.to).map((date) => [date, 0]))
-  const perModel = new Map<string, { model: string; requests: number; tokens: number; cost: number }>()
+  const rows = usage.items.filter((row) => model === null || (row.model ?? "") === model)
+  const perDay = new Map(datesBetween(usage.from, usage.to).map((date) => [date, { cost: 0, byModel: {} as Record<string, number> }]))
+  const perModel = new Map<string, UsageSummary["models"][number]>()
+  let inputTokens = 0
+  let outputTokens = 0
+  let cacheTokens = 0
   let cost = 0
   let requests = 0
   let tokens = 0
@@ -219,9 +225,19 @@ export function summarizeUsage(usage: { from: string; to: string; items: UsageRo
     cost += units
     requests += row.requests ?? 0
     tokens += rowTokens(row)
-    perDay.set(row.date, (perDay.get(row.date) ?? 0) + units)
     const key = row.model ?? ""
-    const entry = perModel.get(key) ?? { model: key, requests: 0, tokens: 0, cost: 0 }
+    const day = perDay.get(row.date) ?? { cost: 0, byModel: {} }
+    day.cost += units
+    day.byModel[key] = (day.byModel[key] ?? 0) + units
+    perDay.set(row.date, day)
+    const entry = perModel.get(key) ?? { model: key, requests: 0, tokens: 0, cost: 0, inputTokens: 0, outputTokens: 0, cacheTokens: 0 }
+    const cache = (row.cacheReadTokens ?? 0) + (row.cacheWrite5mTokens ?? 0) + (row.cacheWrite1hTokens ?? 0)
+    inputTokens += row.inputTokens ?? 0
+    outputTokens += row.outputTokens ?? 0
+    cacheTokens += cache
+    entry.inputTokens += row.inputTokens ?? 0
+    entry.outputTokens += row.outputTokens ?? 0
+    entry.cacheTokens += cache
     entry.requests += row.requests ?? 0
     entry.tokens += rowTokens(row)
     entry.cost += units
@@ -231,7 +247,10 @@ export function summarizeUsage(usage: { from: string; to: string; items: UsageRo
     cost,
     requests,
     tokens,
-    daily: [...perDay.entries()].map(([date, units]) => ({ date, cost: units })),
+    inputTokens,
+    outputTokens,
+    cacheTokens,
+    daily: [...perDay.entries()].map(([date, day]) => ({ date, ...day })),
     models: [...perModel.values()].sort((a, b) => b.cost - a.cost || b.requests - a.requests),
   }
 }

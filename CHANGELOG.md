@@ -50,7 +50,7 @@
   [#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)
 - 链接 Anywhere 账户后，账户卡片按页签展示：
   - Web 和 Desktop 的「Runtime」页签显示使用 Anywhere 渠道的 Runtime、切换进度和渠道选择；
-  - 「账户」显示账户和余额、跳转充值，以及整个 Tokens Anywhere 账户近 7 天或 30 天的花费、请求数、Tokens 和趋势；
+  - 「账户」显示账户和余额、跳转充值，以及整个 Tokens Anywhere 账户近 7 天或 30 天的花费、请求数、输入／输出／缓存 Tokens、每日花费图表和按模型汇总，支持按模型筛选和切换每日花费表格；
   - 「模型与连接」显示可复制的地址、Key 提示与「轮换 Key」，按厂商列出 Tokens Anywhere 的模型，可以关闭单个模型或整组、给模型改名（只影响 Agents Anywhere），保存后使用 Anywhere 渠道的 Runtime 自动重新写入；还可以展开查看各协议地址。Web 和 Desktop 不再显示「恢复默认」按钮。
 
   [#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)

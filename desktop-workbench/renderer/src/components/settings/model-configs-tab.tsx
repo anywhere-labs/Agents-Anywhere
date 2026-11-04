@@ -39,7 +39,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { useWorkspace } from "@/components/workspace-context"
 import type { DeviceRuntimeView, ModelChannel, ModelChannelState, ModelConfigOverview, ModelProfile, ModelProtocol } from "@/features/dashboard/types"
 import { modelConfigApi } from "@/features/model-config/api"
-import { NATIVE_CHANNEL, TOKENS_CHANNEL, channelReferenced, channelUsers, tokensWanted } from "@/features/model-config/channel"
+import { NATIVE_CHANNEL, TOKENS_CHANNEL, channelReferenced, channelRows, channelUsers, tokensWanted } from "@/features/model-config/channel"
 import { MANUAL_PROTOCOL_CODES, parseModelIds, protocolBaseUrl } from "@/features/model-config/presentation"
 import { isApiError } from "@/lib/api/errors"
 import { cn } from "@/lib/utils"
@@ -329,7 +329,11 @@ function ModelChannels({
               />
             </SettingsSection>
           ) : null}
-          {channel && !(current === TOKENS_CHANNEL && modelConfig.tokens?.link?.status === "linked") ? runtimesOf(current) : null}
+          {/* With no runtime on the device's own or a custom configuration, "Apply" above is all the page needs. */}
+          {channel
+            && !(current === TOKENS_CHANNEL && modelConfig.tokens?.link?.status === "linked")
+            && (current === TOKENS_CHANNEL || channelRows(channel, current).length > 0)
+            ? runtimesOf(current) : null}
         </section>
       </div>
       {creating ? <ProfileDialog token={token} onClose={onCloseCreate} errorText={errorText} /> : null}
