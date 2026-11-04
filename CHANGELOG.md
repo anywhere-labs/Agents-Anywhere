@@ -27,7 +27,7 @@
 
 ### 会话创建与消息交付
 
-- Desktop 在准备本机 Connector 环境时一并准备 Pi 适配器及依赖，支持查看安装输出、取消与失败重试，兼容已有缓存，首次创建 Pi 会话不再临时下载适配器。（[#518](https://github.com/anywhere-labs/Agents-Anywhere/pull/518)）
+- Desktop 在准备本机 Connector 环境时一并准备 Pi 适配器及依赖，支持查看安装输出、取消与失败重试；已有缓存有效时直接启动，不再每次弹出依赖准备窗口，首次创建 Pi 会话不再临时下载适配器。（[#518](https://github.com/anywhere-labs/Agents-Anywhere/pull/518)、[#527](https://github.com/anywhere-labs/Agents-Anywhere/pull/527)）
 
 - Connector 重连恢复期间，Web 与 Desktop 会等待 Agent 就绪后再允许创建会话，显示 Agent 启动、模型加载和空目录状态，加载失败时可查看原因并重试，且仍可切换设备与 Agent；运行时启动不再等待所有历史会话的能力刷新。（[#518](https://github.com/anywhere-labs/Agents-Anywhere/pull/518)、[#523](https://github.com/anywhere-labs/Agents-Anywhere/pull/523)）
 
@@ -63,6 +63,8 @@
 - DSH 上传很长的会话历史时，同一设备上 Codex、Claude 等其他会话的实时消息不再排队等它传完。（[#525](https://github.com/anywhere-labs/Agents-Anywhere/pull/525)）
 - DSH 会话流式输出时，连续的回复更新改为约每 0.25 秒提交一次，Server 的请求量和写入量明显下降。（[#525](https://github.com/anywhere-labs/Agents-Anywhere/pull/525)）
 - 被 Server 拒收的 DSH 会话改为按退避时间重试，不再每次有新变化就整段重新上传；DSH 同步重连或重建后也会记得这些会话，不会马上再传一遍。（[#525](https://github.com/anywhere-labs/Agents-Anywhere/pull/525)）
+- DSH 0.2.2 的实验性 Computer Use 请求控制应用时，授权提问重新出现在 AA 里，可以在手机上选择允许或拒绝；这类提问只能从给出的选项中选择。（[#538](https://github.com/anywhere-labs/Agents-Anywhere/pull/538)）
+- 在 DSH 0.2.2 上安装 DSH 插件时，不再提示 Cordis、Schemastery 版本不满足。（[#538](https://github.com/anywhere-labs/Agents-Anywhere/pull/538)）
 
 ### Android
 

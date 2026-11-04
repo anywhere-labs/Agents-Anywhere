@@ -5,7 +5,7 @@
 ## 流程与分工
 
 1. 官方工具调用 `ctx.userQuestions.ask()`，Agent 暂停等待。插件在 Host 内订阅官方 Typert Gateway 的 `$events`，接收 `user-questions/request`。它是普通事件消费者，不覆盖官方问答服务或替换官方 UI 的回答者。
-2. 插件过滤不可见会话；普通问答和 `plan-review` 转换为平台 `interactionType: input_request` 的 notice。权限请求转换为 `interactionType: approval`。等待状态使用现有 `waiting_approval`。
+2. 插件过滤不可见会话；普通问答、`plan-review` 和 `approval` 意图的问题转换为平台 `interactionType: input_request` 的 notice。权限请求转换为 `interactionType: approval`。等待状态使用现有 `waiting_approval`。
 3. DSH Connector 通过已有 `RuntimeHost.notice_upsert()` 发布问题，前端复用原来的问答组件。没有接管时仍遵守平台只读规则。
 4. 平台原有 `/sessions/{sessionId}/runtime/notices/{noticeId}/respond` 调用 `interaction.respond`。Python 仅转发到插件 `session.respondInteraction`，所有原生解释、校验和等待管理都在插件。
 5. 插件检查会话归属、问题是否仍等待、答案完整性，再使用官方 Connection 的公开进程内 Fetch carrier 向 Gateway `$events/result` 回答。这个 Fetch 不访问网络。官方工具收到答案后产生普通工具结果，Agent 继续执行，结果沿已有 Timeline 流同步。
@@ -21,10 +21,10 @@
 | `id`、`question`、`header` | 原 ID、`prompt`、`header` | 保留问题 ID |
 | `options[].label/description` | `options[].id/label/description` | 按内部 `o_0` 等 ID 还原原始 label |
 | `multiSelect`（工具入参为 `multi_select`） | `multiple` | 单选最多一个；多选可选多个 |
-| 自由输入 | `allowCustom: true`、`customText` | 转为 DSH `custom` |
+| 自由输入 | `allowCustom: true`、`customText`；`approval` 意图为 `allowCustom: false` | 转为 DSH `custom` |
 | 回答集合 | `{answers: {[questionId]: {optionIds, customText?}}}` | 转为 DSH `{answers: [{id, selected, custom?}]}` |
 
-每个问题都必须回答。单选可以选一个选项或填写自定义答案，二者不能同时提交；多选可以同时提交选项和自填内容。不支持逐题跳过。缺失答案、重复/未知选项及错误类型会被拒绝，问题保留等待，供用户修正。
+每个问题都必须回答。单选可以选一个选项或填写自定义答案，二者不能同时提交；多选可以同时提交选项和自填内容。`approval` 意图的问题只能从给出的选项中选一个，提交自填内容会被拒绝，因为 DSH 把自填答案当作拒绝处理。不支持逐题跳过。缺失答案、重复/未知选项及错误类型会被拒绝，问题保留等待，供用户修正。
 
 “取消”取消整组问答，向官方 Gateway 提交 `UserQuestionError / ASK_CANCELLED`；不是伪造一条普通用户消息，也不是自动选择默认选项。后续 Agent 如何处理工具取消遵循官方行为。
 
@@ -44,6 +44,7 @@
 |---|---|
 | `user-questions/request` 普通问题 | 单选、多选、自由输入、选项说明，复用 `inputRequest` 表单 |
 | `user-questions/request` 的 `plan-review` 意图 | 完整计划正文、批准选项、修改意见和整组取消，复用同一表单 |
+| `user-questions/request` 的 `approval` 意图（DSH 0.2.2 起，例如实验性 Computer Use 的应用授权） | 和 0.2.1 一样按普通单选题显示，选项就是 DSH 给出的允许、拒绝和可选的始终允许，不提供自填答案；其他不认识的意图仍留给 DSH 官方界面 |
 | `approval/request` | 复用通用审批卡片，允许一次或拒绝，不修改持久权限策略 |
 
 当前核对的 DSH Remote allowlist 中，需要回答的 waterfall 事件就是上述问答和审批两类。`exit_plan_mode` 的计划审阅沿用问答意图；其他设置、登录、插件和命令等 emit 事件不属于这两类可作答交互。本适配不把它们伪装成审批请求。未知事件或不支持的意图交回原生客户端。`session.interaction.approval` 是平台已有的通用交互门控能力，同时控制问答和审批提交。

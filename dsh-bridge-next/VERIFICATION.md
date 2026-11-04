@@ -1,5 +1,31 @@
 # DSH Bridge Next 验证记录
 
+## DSH 0.2.2-rc.1 测试基线（2026-11-04）
+
+`@deepseek-ai/dsh-*` 开发依赖从 `0.2.1-rc.2` 升到 `0.2.2-rc.1`；Cordis 对齐 0.2.2 线（`cordis` 4.1.0，`cordis-plugin-group`、`cordis-plugin-include`、`cordis-plugin-loader` 1.1.0），`schemastery` 升到 3.19.0。Cordis 与 Schemastery 的 peer 从 `~4.0.4`、`~3.18.4` 放宽为 `~4.0.4 || ~4.1.0`、`~3.18.4 || ~3.19.0`，否则在 0.2.2 profile 中安装会提示 peer 不满足。DSH 0.2.2 仍只按 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*` peer 判断插件兼容性（预发布版本参与匹配），Typert peer `>=0.2.0-rc.1 <0.3.0-0` 不变，`0.2.2-rc.1` 在范围内。新增开发依赖 `@deepseek-ai/dsh-util-file-drag`（`dsh-client-ui-primitives` 的类型声明引用它，但只把它列在自己的 devDependencies 里）和 `@deepseek-ai/dsh-tool-executor-native`（测试夹具使用）。
+
+只升依赖、不改其他文件时：
+
+- Client 类型检查有 2 处错误：一是 `Cannot find module '@deepseek-ai/dsh-util-file-drag'`；二是 `@shikijs/types` 用到 `Symbol.dispose`，因为 0.2.2 的 `dsh-client-ui-primitives` 类型新引用了 `@shikijs/langs/typescript`。补上开发依赖，并在 `tsconfig.client.json` 的 `lib` 中加入 `ESNext.Disposable` 后通过。
+- 224 项测试中 13 项失败，都是 Agent 收到消息后没有进展。0.2.2 把工具执行从 AgentLoop 中拆成按作用域选择的执行器插件；夹具没有加载执行器时，回合直接以 `The selected tool executor is unavailable. Load an executor in this composition before running the agent.` 结束。`tests/fixtures/agent-runtime.ts` 在 `dsh-tools` 旁加载 `dsh-tool-executor-native` 后恢复。官方 0.2.2 组合自带 `tool-executor-native`（见下方 `--dump-config`），插件 `src/**` 无需改动。
+
+修正后（含下面 approval 意图的两项新测试）：本机 Node 22.23.3（CI 为 22.23.2）上 `corepack yarn check`（typecheck、build、check:build、test）exit 0，226 项全部通过，没有跳过，包括需要 PostgreSQL 的探针；Node 24.14.0 上 `corepack yarn test` 同样 226 项全部通过。在全新临时 `DSH_HOME` 中，用官方 `@deepseek-ai/dsh@0.2.2-rc.1` 执行 `dsh plugin --profile aa-022-smoke add "link:$PWD"` 成功，`--dump-config` 包含 `agents-anywhere-bridge-next` 配置行；除 pnpm 对 `link:` 依赖的通用 peer 提示外没有报错。
+
+`0.2.2-rc.1` 于 2026-11-04 发布。Yarn 默认的最短发布时间（`npmMinimalAgeGate`，24 小时）会隔离刚发布的版本，CI 的 DSH plugin job 已设置 `YARN_NPM_MINIMAL_AGE_GATE=0`；发布后 24 小时内在本地安装需要同样设置。
+
+对照 0.2.2 发布说明核对过、无需改动的部分：
+
+- 模型选择走官方 SessionController 的 `selectModel`，不依赖已被禁止的 `agent/request` 改路由。
+- 会话投影只用 `snapshot(session, keys)` 和 `restore`，没有用到弃用的 `stateOf`、`cachedSnapshot`。
+- 子 Agent 仍按 `header.origin === 'subagent'` 隐藏。0.2.2 起普通分支不再被标成子 Agent，会照常同步到 AA。
+- 原生 Plan 服务的 `get`、`set` 接口不变；PTC 子调用事件名不变；会话日志格式迁移包与 0.2.1 相同，没有新增迁移。
+- 图片数量和大小上限读取 DSH 的 `imageLimits`，0.2.2 把单张上限提高到 50 MiB 后自动生效。
+- DSH 0.2.2 要求 Node.js 24.9 及以上；插件 `engines` 仍兼容 Node 22，供 0.2.0、0.2.1 使用。
+
+需要适配的行为变化：0.2.2 的提问新增 `approval` 意图，实验性 Computer Use（`@deepseek-ai/dsh-cua`）的应用授权改用这种意图提问（0.2.1 是普通单选题）。插件原先把不认识的意图留给官方客户端，这类授权就不会出现在 AA 里。现在插件按 DSH 文档允许的方式，把它当普通单选题显示：选项就是 DSH 给出的允许、拒绝和可选的始终允许，`allowCustom: false`。Computer Use 把任何自填答案都当作拒绝，并记住这次拒绝，所以插件拒收这类问题的自填内容。其他不认识的意图仍留给官方客户端。单元测试覆盖表单与校验；集成测试用官方 `userQuestions.ask()` 提出 approval 问题，确认 AA 收到单选题、自填内容被拒、选择后 `ask()` 得到原始选项。
+
+未做：DSH Desktop、Windows、手机端实机验收；Computer Use 授权的实机表现。
+
 ## DSH 0.2.1-rc.2 测试基线（2026-10-21）
 
 `@deepseek-ai/dsh-*` 开发依赖从 `0.2.0-rc.2` 升到 `0.2.1-rc.2`；Cordis 插件对齐 0.2.1 线（`cordis-plugin-group` 1.0.5、`cordis-plugin-include` 1.0.10、`cordis-plugin-loader` 1.0.6）；新增 `@deepseek-ai/dsh-api-remote-access`；删除 `@deepseek-ai/dsh-invariants`（0.2.1 线没有发布版本，仓库内零引用）。peer 范围 `>=0.2.0-rc.1 <0.3.0-0` 不变，但自动化检查只覆盖 `0.2.1-rc.2`，范围内其他版本只做声明。安装时 `@deepseek-ai/dsh-working-directory` 的 peer 未满足提示来自官方 `dsh-api-session-controller`，不影响检查。

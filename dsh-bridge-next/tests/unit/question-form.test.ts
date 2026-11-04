@@ -50,3 +50,39 @@ test('plan review preserves the full plan and maps the declared approval option 
   assert.throws(() => new QuestionForm([{ ...plan, intent: { kind: 'plan-review', approve: '不是选项' } }]))
   assert.throws(() => new QuestionForm([{ ...plan, multiSelect: true }]))
 })
+
+test('approval questions keep their offered actions as a plain single choice and refuse free text', () => {
+  const access = { id: 'cua-app-access', question: 'Allow computer use to control Safari?', detail: 'Task access applies to Safari.',
+    options: [{ label: 'Allow for this session' }, { label: 'Deny' }, { label: 'Always allow' }],
+    intent: { kind: 'approval', approve: 'Allow for this session', reject: 'Deny', always: 'Always allow',
+      subject: { name: 'Safari', icon: 'https://example.invalid/safari.png' }, display: { question: { en: 'Allow computer use to control Safari?' } } } }
+  const form = new QuestionForm([access])
+  assert.equal(form.hasPlanReview, false)
+  const input = form.input()
+  assert.deepEqual({ ...input.uiSchema.questions[0] }, {
+    id: 'cua-app-access', prompt: 'Allow computer use to control Safari?\n\nTask access applies to Safari.', multiple: false, allowCustom: false,
+    options: [{ id: 'o_0', label: 'Allow for this session' }, { id: 'o_1', label: 'Deny' }, { id: 'o_2', label: 'Always allow' }],
+  })
+  assert.deepEqual(Object.keys(input.schema.properties.answers.properties['cua-app-access']!.properties), ['optionIds'])
+  assert.deepEqual(form.answer({ answers: { 'cua-app-access': { optionIds: ['o_2'] } } }), { answers: [{ id: 'cua-app-access', selected: ['Always allow'] }] })
+  // DSH treats any free text as a refusal, so an approval accepts exactly one offered action.
+  for (const answer of [{ customText: '允许' }, { optionIds: ['o_0'], customText: '允许' }, {}, { optionIds: ['o_0', 'o_1'] }]) {
+    assert.throws(() => form.answer({ answers: { 'cua-app-access': answer } }))
+  }
+  // Ordinary questions next to it keep their free-text answers.
+  const mixed = new QuestionForm([access, questions[2]])
+  assert.equal(mixed.input().uiSchema.questions[1]?.allowCustom, true)
+  assert.deepEqual(mixed.answer({ answers: { 'cua-app-access': { optionIds: ['o_1'] }, notes: { customText: '简洁' } } }).answers,
+    [{ id: 'cua-app-access', selected: ['Deny'] }, { id: 'notes', selected: [], custom: '简洁' }])
+  // Without the persistent grant, two actions cover the options.
+  const twoActions = { ...access, options: access.options.slice(0, 2), intent: { kind: 'approval', approve: 'Allow for this session', reject: 'Deny' } }
+  assert.equal(new QuestionForm([twoActions]).input().uiSchema.questions[0]?.options.length, 2)
+  // Malformed approvals stay with the official DSH clients.
+  for (const intent of [
+    { kind: 'approval', approve: 'Allow for this session', reject: 'Allow for this session', always: 'Always allow' },
+    { kind: 'approval', approve: 'Allow for this session', reject: 'Deny' },
+    { kind: 'approval', approve: 'Allow', reject: 'Deny', always: 'Always allow' },
+    { kind: 'approval', reject: 'Deny', always: 'Always allow' },
+  ]) assert.throws(() => new QuestionForm([{ ...access, intent }]))
+  assert.throws(() => new QuestionForm([{ ...access, multiSelect: true }]))
+})
