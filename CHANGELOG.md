@@ -101,6 +101,8 @@
 - 上传同步数据时连接偶尔中断或 Server 短暂返回 5xx，会先自动重试，不再立即中断并重新同步全部会话。（[#511](https://github.com/anywhere-labs/Agents-Anywhere/pull/511)）
 
 ### Web 与 Desktop 界面
+
+- 新建会话输入框下方不再显示模型加载时返回的原始错误提示，保留模型状态和重试入口。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - Anywhere 账户支持一键「切换账号」，授权后新 Key 按切换流程写入各设备，保留模型配置、Runtime 和会话，忙碌或离线设备会在空闲上线后自动完成。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 
 - Tokens Anywhere 可以用 Agents Anywhere 账号登录：Web 会先显示「登录 Tokens Anywhere」确认页，确认后才向 Tokens Anywhere 提供名称、邮箱和头像，选「取消」则不提供任何信息。部署者设置 `AGENT_SERVER_TOKENS_ANYWHERE_CLIENT_SECRET` 和 `AGENT_SERVER_TOKENS_ANYWHERE_REDIRECT_URI` 后开启。（[#470](https://github.com/anywhere-labs/Agents-Anywhere/pull/470)）

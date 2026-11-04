@@ -1238,11 +1238,6 @@ export function TaskComposer() {
               {creating ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
             </Button>
           </div>
-          {showCatalogStatus && catalogFailure && !runtimeStarting ? (
-            <p role="alert" className="px-5 pb-3 text-sm text-destructive">
-              {errorText(catalogFailure, t("modelCatalogLoadFailed"))}
-            </p>
-          ) : null}
         </div>
 
         <div className="mt-3">
