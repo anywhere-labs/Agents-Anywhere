@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from connector.runtime_protocol import (
     RuntimeAttachment,
@@ -12,6 +12,7 @@ from connector.runtime_protocol import (
     RuntimeSessionStateCache,
     RuntimeUnsupportedError,
     SessionSourceObservation,
+    SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
@@ -50,6 +51,35 @@ class CodexTurnActions:
     pending_messages: PendingClientMessageRegistry
     list_model_catalog: Callable[[str | None, int], Awaitable[Any]] | None = None
     list_permission_catalog: Callable[[str | None, int], Awaitable[Any]] | None = None
+
+    async def reconcile_history_state(self, state: SessionState | None) -> SessionState | None:
+        """Publish native completion evidence to the state and active-turn caches."""
+        if state is None:
+            return None
+        session_id = state.session_id
+        cached = self.session_states.get(session_id)
+        if (state == cached or state.status != "idle"
+                or state.metadata.get("source") != "codex.thread_history.state"):
+            return state
+        turn_id = self.active_turn_ids.pop(session_id, None)
+        await self.close_blocking_notices_for_interrupted_session(session_id)
+        state = await self.session_states.update(
+            session_id=session_id, external_session_id=state.external_session_id,
+            status="idle", selections=state.selections, metadata=state.metadata,
+        )
+        if turn_id:
+            native_status = state.metadata.get("native_status")
+            outcome: Literal["completed", "failed", "interrupted"] = "interrupted"
+            if native_status == "completed":
+                outcome = "completed"
+            elif native_status == "failed":
+                outcome = "failed"
+            await self.host.session_turn_ended(
+                session_id=session_id, runtime="codex", external_session_id=state.external_session_id,
+                turn_id=turn_id, outcome=outcome,
+                metadata={"source": "codex.thread_history.reconciled"},
+            )
+        return state
 
     async def start_turn(
         self,
