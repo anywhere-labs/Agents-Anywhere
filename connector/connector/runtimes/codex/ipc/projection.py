@@ -292,11 +292,17 @@ class CodexIpcSessionProjector:
 
     async def _project_detached(self, thread: FollowedThread) -> None:
         session_id = self.session_id_for(thread.thread_id)
-        if self.session_states.get(session_id) is None:
+        cached = self.session_states.get(session_id)
+        if cached is None:
             # Never seen through IPC; nothing to downgrade.
             return
+        if cached.status in ACTIVE_STATUSES and not str(cached.metadata.get("source", "")).startswith(IPC_SOURCE):
+            # A late disconnect from the previous owner cannot end our new SDK turn.
+            return
         await self._sync_notices(session_id, thread, [])
-        self._active_turns.pop(session_id, None)
+        previous_turn = self._active_turns.pop(session_id, None)
+        if self.active_turn_ids is not None and self.active_turn_ids.get(session_id) == previous_turn:
+            self.active_turn_ids.pop(session_id, None)
         self._timeline_items.pop(session_id, None)
         await self.session_states.update(
             session_id=session_id,
@@ -305,6 +311,8 @@ class CodexIpcSessionProjector:
             metadata={
                 "source": IPC_SOURCE,
                 "attachment": "none",
+                "turn_id": None,
+                "notice_id": None,
                 "ipc": {
                     "ownerClientId": None,
                     "revision": None,

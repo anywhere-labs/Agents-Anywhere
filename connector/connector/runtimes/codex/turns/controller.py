@@ -12,6 +12,7 @@ from connector.runtime_protocol import (
     RuntimePermissionCatalog,
     RuntimeSessionSourceStateCache,
     RuntimeSessionStateCache,
+    SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
@@ -115,6 +116,9 @@ class CodexTurnController:
             attachments=attachments,
             client_message_id=client_message_id,
         )
+
+    async def reconcile_history_state(self, state: SessionState | None) -> SessionState | None:
+        return await self.actions.reconcile_history_state(state)
 
     async def start_turn(
         self,
