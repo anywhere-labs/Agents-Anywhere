@@ -333,7 +333,11 @@ internal fun MessageList(
 
     LaunchedEffect(reading, listState) {
         for (ignored in reading.changes) {
+            // Layout callbacks can arrive before the new lazy item has been placed.
+            // Wait for that placement frame, then coalesce bursts into one correction.
             withFrameNanos { }
+            withFrameNanos { }
+            while (reading.changes.tryReceive().isSuccess) Unit
             reading.settle(listState)
         }
     }
