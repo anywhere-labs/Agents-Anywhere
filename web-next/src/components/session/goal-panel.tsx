@@ -66,7 +66,7 @@ export function GoalPanel({ goals }: { goals: GoalController }) {
     if (await goals.execute("edit", text.trim())) setEditing(false);
   };
   return (
-    <>
+    <div className="mx-auto w-full min-w-0 max-w-[calc(48rem+2rem)] px-4">
       {g && (
         <div
           className="flex min-w-0 items-center gap-2 py-2 text-sm"
@@ -76,7 +76,7 @@ export function GoalPanel({ goals }: { goals: GoalController }) {
           <span className="shrink-0">{t("status", { status: g.status })}</span>
           <Button
             variant="ghost"
-            className="min-w-0 flex-1 justify-start"
+            className="min-w-0 flex-1 shrink justify-start"
             disabled={goals.busy || !actions.includes("edit")}
             onClick={() => {
               setText(g.objective);
@@ -240,6 +240,6 @@ export function GoalPanel({ goals }: { goals: GoalController }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </>
+    </div>
   );
 }
