@@ -8,7 +8,7 @@
 
 ### 升级须知
 
-- 这是接口更新：Server、Web、Desktop、Android、iOS、Connector 和 DSH 插件的版本号都是 2.2.0。2.1.0 客户端仍可登录并使用既有会话；统一 Plan、Pi，以及需要新 Connector 或 DSH 插件的行为要一起升级到 2.2.0。
+- 这是接口更新：Server、Web、Desktop、Android、iOS、Connector 和 DSH 插件的版本号都是 2.2.0。2.1.0 客户端仍可登录并使用既有会话；统一 Plan、Pi，以及需要新 Connector 或 DSH 插件的行为要一起升级到 2.2.0。（[#546](https://github.com/anywhere-labs/Agents-Anywhere/pull/546)）
 - Pi 优先复用本机兼容安装的模型、认证和配置；已有受管模型网关配置保持隔离，用户也可明确选择受管环境。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 - Pi 接入需要 Server 执行 `v2_45` 数据库迁移，并配套更新 Connector 和使用此功能的客户端。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 - 统一 Plan 需要 Server 执行 `v2_46` 数据库迁移，并配套更新 Connector、客户端和 DSH Bridge；DSH 还需组合原生 Plan 插件。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
