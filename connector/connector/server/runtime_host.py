@@ -86,11 +86,12 @@ class ConnectorRuntimeHost(RuntimeHostClient):
 
     async def publish_runtime_snapshot(
         self, runtime: str, session_id: str, meta: dict[str, Any], items: Iterable[dict[str, Any]],
-        *, runtime_id: str | None = None, on_progress: UploadProgress | None = None,
+        *, runtime_id: str | None = None, on_progress: UploadProgress | None = None, ordered: bool = True,
     ) -> None:
         if self._ingest_snapshot is None:
             raise RuntimeError("Snapshot ingestion is unavailable")
-        await self._ingest_snapshot(runtime, runtime_id or runtime, session_id, meta, items, on_progress=on_progress)
+        kwargs = {} if ordered else {"ordered": False}
+        await self._ingest_snapshot(runtime, runtime_id or runtime, session_id, meta, items, on_progress=on_progress, **kwargs)
 
     async def publish_runtime_notifications(
         self, runtime: str, notifications: list[dict[str, Any]], *, runtime_id: str | None = None,

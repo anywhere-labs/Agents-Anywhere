@@ -64,6 +64,8 @@ class DshRuntime(AgentRuntime):
         self._restart_task: asyncio.Task[None] | None = None
         self._sync: SyncRelay | None = None
         self._relay_restart_task: asyncio.Task[None] | None = None
+        # Sessions whose history the backend refused, shared by every relay.
+        self._quarantined: dict[str, Any] = {}
         self._sync_mode = "events"
 
     @property
@@ -79,7 +81,7 @@ class DshRuntime(AgentRuntime):
             if self._sync is not None:
                 await self._sync.close()
             if not self._stopping and self._client is not None and self.sync_mode == "events":
-                self._sync = SyncRelay(self._client, self.host, on_exit=self._relay_exited)
+                self._sync = SyncRelay(self._client, self.host, on_exit=self._relay_exited, quarantined=self._quarantined)
                 self._sync.start()
 
     @property
@@ -507,7 +509,7 @@ class DshRuntime(AgentRuntime):
                 await self.host.runtime_health_update("starting", phase={
                     "code": "syncing", "message": "正在同步 DSH 会话…", "retryable": True,
                 })
-                self._sync = SyncRelay(client, self.host, on_exit=self._relay_exited)
+                self._sync = SyncRelay(client, self.host, on_exit=self._relay_exited, quarantined=self._quarantined)
                 self._sync.start()
             else:
                 with suppress(Exception):
@@ -574,11 +576,13 @@ class DshRuntime(AgentRuntime):
             client = self._client
             if self._stopping or self._sync is not failed or client is None or not client.connected:
                 return
+            # Its quarantine retries now belong to the replacement.
+            await failed.close()
             with suppress(Exception):
                 await self.host.runtime_health_update("starting", phase={
                     "code": "sync_interrupted", "message": "DSH 会话同步中断，正在重试…", "retryable": True,
                 })
-            self._sync = SyncRelay(client, self.host, on_exit=self._relay_exited)
+            self._sync = SyncRelay(client, self.host, on_exit=self._relay_exited, quarantined=self._quarantined)
             self._sync.start()
 
     async def _handle_exit(self, error: BaseException | None) -> None:

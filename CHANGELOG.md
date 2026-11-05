@@ -59,7 +59,14 @@
 ### DSH 同步
 
 - 首次同步大量或很长的会话时，即使有 Agent 正在持续输出，也不再因事件积压反复从头同步、一直停在「正在同步 DSH 会话…」；积压过多时只重新校准占用最多的那个会话。（[#511](https://github.com/anywhere-labs/Agents-Anywhere/pull/511)）
-- 上传同步数据时连接偶尔中断或 Server 短暂返回 5xx，会先自动重试，不再立即中断并重新同步全部会话。（[#511](https://github.com/anywhere-labs/Agents-Anywhere/pull/511)）
+- 上传同步数据（包括会话的完整历史）时连接偶尔中断或 Server 短暂返回 5xx，会先自动重试，不再立即中断并重新同步全部会话。（[#511](https://github.com/anywhere-labs/Agents-Anywhere/pull/511)、[#525](https://github.com/anywhere-labs/Agents-Anywhere/pull/525)）
+- 较长的 DSH 会话（历史在 45 MiB 以内）重新同步时一次提交完，Server 只改写有变化的消息，不再先删掉后半段历史再重新写入；同步中途出错，其他设备上也不会只剩前半段历史。（[#525](https://github.com/anywhere-labs/Agents-Anywhere/pull/525)）
+- 代理拒收过大的同步请求（413）时，Connector 会自动缩小分页重新上传，很长的 DSH 会话不再因此停止同步。（[#525](https://github.com/anywhere-labs/Agents-Anywhere/pull/525)）
+- DSH 上传很长的会话历史时，同一设备上 Codex、Claude 等其他会话的实时消息不再排队等它传完。（[#525](https://github.com/anywhere-labs/Agents-Anywhere/pull/525)）
+- DSH 会话流式输出时，连续的回复更新改为约每 0.25 秒提交一次，Server 的请求量和写入量明显下降。（[#525](https://github.com/anywhere-labs/Agents-Anywhere/pull/525)）
+- 被 Server 拒收的 DSH 会话改为按退避时间重试，不再每次有新变化就整段重新上传；DSH 同步重连或重建后也会记得这些会话，不会马上再传一遍。（[#525](https://github.com/anywhere-labs/Agents-Anywhere/pull/525)）
+- DSH 0.2.2 的实验性 Computer Use 请求控制应用时，授权提问重新出现在 AA 里并以中文显示，可以在手机上选择允许或拒绝；这类提问只能从给出的选项中选择。（[#538](https://github.com/anywhere-labs/Agents-Anywhere/pull/538)、[#540](https://github.com/anywhere-labs/Agents-Anywhere/pull/540)）
+- 在 DSH 0.2.2 上安装 DSH 插件时，不再提示 Cordis、Schemastery 版本不满足。（[#538](https://github.com/anywhere-labs/Agents-Anywhere/pull/538)）
 
 ### Android
 
