@@ -2,13 +2,17 @@
 
 按版本记录用户能感知到的变化，最新版本在最前，每项一句话。接口变化、各端最低配套版本、数据库迁移和安装包记录见各版本的[发布说明](docs/releases/)。
 
-## 未发布
+## 2.2.0（日期待定）
+
+[发布说明](docs/releases/2.2.0.md) · [与 2.1.0 的差异](https://github.com/anywhere-labs/Agents-Anywhere/compare/v2.1.0...main)
 
 ### 升级须知
 
+- 这是接口更新：Server、Web、Desktop、Android、iOS、Connector 和 DSH 插件的版本号都是 2.2.0。2.1.0 客户端仍可登录并使用既有会话；统一 Plan、Pi，以及需要新 Connector 或 DSH 插件的行为要一起升级到 2.2.0。
 - Pi 优先复用本机兼容安装的模型、认证和配置；已有受管模型网关配置保持隔离，用户也可明确选择受管环境。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 - Pi 接入需要 Server 执行 `v2_45` 数据库迁移，并配套更新 Connector 和使用此功能的客户端。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 - 统一 Plan 需要 Server 执行 `v2_46` 数据库迁移，并配套更新 Connector、客户端和 DSH Bridge；DSH 还需组合原生 Plan 插件。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- 用 Agents Anywhere 账号登录 Tokens Anywhere（[#470](https://github.com/anywhere-labs/Agents-Anywhere/pull/470)）和一键链接 Tokens Anywhere（[#510](https://github.com/anywhere-labs/Agents-Anywhere/issues/510)）仍未进入主线，不在这次切分里。
 
 ### 统一 Plan
 
@@ -27,7 +31,7 @@
 
 ### 会话创建与消息交付
 
-- Desktop 在准备本机 Connector 环境时一并准备 Pi 适配器及依赖，支持查看安装输出、取消与失败重试；已有缓存有效时直接启动，不再每次弹出依赖准备窗口，首次创建 Pi 会话不再临时下载适配器。（[#518](https://github.com/anywhere-labs/Agents-Anywhere/pull/518)、[#527](https://github.com/anywhere-labs/Agents-Anywhere/pull/527)）
+- Desktop 准备本机 Connector 时，依赖安装与启动分开进行：安装过程单独显示进度，时间较长不再被误报为连接超时，取消或启动超时会停掉对应进程；同时准备 Pi 适配器及依赖，已有缓存有效时直接启动，不再每次弹出依赖准备窗口，首次创建 Pi 会话不再临时下载适配器。（[#460](https://github.com/anywhere-labs/Agents-Anywhere/pull/460)、[#518](https://github.com/anywhere-labs/Agents-Anywhere/pull/518)、[#527](https://github.com/anywhere-labs/Agents-Anywhere/pull/527)）
 
 - Connector 重连恢复期间，Web 与 Desktop 会等待 Agent 就绪后再允许创建会话，显示 Agent 启动、模型加载和空目录状态，加载失败时可查看原因并重试，且仍可切换设备与 Agent；运行时启动不再等待所有历史会话的能力刷新。（[#518](https://github.com/anywhere-labs/Agents-Anywhere/pull/518)、[#523](https://github.com/anywhere-labs/Agents-Anywhere/pull/523)）
 
@@ -65,6 +69,10 @@
 - 被 Server 拒收的 DSH 会话改为按退避时间重试，不再每次有新变化就整段重新上传；DSH 同步重连或重建后也会记得这些会话，不会马上再传一遍。（[#525](https://github.com/anywhere-labs/Agents-Anywhere/pull/525)）
 - DSH 0.2.2 的实验性 Computer Use 请求控制应用时，授权提问重新出现在 AA 里并以中文显示，可以在手机上选择允许或拒绝；这类提问只能从给出的选项中选择。（[#538](https://github.com/anywhere-labs/Agents-Anywhere/pull/538)、[#540](https://github.com/anywhere-labs/Agents-Anywhere/pull/540)）
 - 在 DSH 0.2.2 上安装 DSH 插件时，不再提示 Cordis、Schemastery 版本不满足。（[#538](https://github.com/anywhere-labs/Agents-Anywhere/pull/538)）
+
+### Web 与 Desktop 界面
+
+- Web 对话里已经选中文字时，右键打开浏览器自带菜单；没有选中文字时仍可复制文本、item ID 和 item JSON。（[#416](https://github.com/anywhere-labs/Agents-Anywhere/pull/416)）
 
 ### Android
 
