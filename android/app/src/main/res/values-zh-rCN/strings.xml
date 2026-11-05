@@ -724,4 +724,6 @@
     <string name="agent_reminder_add">添加 Agent</string>
     <string name="agent_reminder_later">稍后添加</string>
     <string name="agent_reminder_skip">暂不配置，继续</string>
+    <string name="session_markdown_image">图片</string>
+    <string name="session_markdown_image_failed">图片加载失败。</string>
 </resources>
