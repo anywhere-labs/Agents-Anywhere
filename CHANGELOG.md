@@ -68,6 +68,8 @@
 
 ### Android
 
+- Android 会话可以显示 Markdown 图片和 HTML 图片，支持点击放大、双指缩放与加载失败后重试。
+
 - 修复开启接管后输入框有时仍提示「当前运行时状态下不可发送消息」、需要重新进入会话才能发送的问题。（[#519](https://github.com/anywhere-labs/Agents-Anywhere/pull/519)）
 
 - Android 可以直接添加和管理 Agent，不必再去桌面端操作：

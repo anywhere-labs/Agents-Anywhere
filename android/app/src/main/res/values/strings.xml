@@ -726,4 +726,6 @@
     <string name="agent_reminder_add">Add Agent</string>
     <string name="agent_reminder_later">Later</string>
     <string name="agent_reminder_skip">Continue without setup</string>
+    <string name="session_markdown_image">Image</string>
+    <string name="session_markdown_image_failed">Could not load image.</string>
 </resources>
