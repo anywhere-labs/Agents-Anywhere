@@ -200,3 +200,24 @@ GitHub Actions 手动运行 `CI` 时，可选 `scope=server`，只执行 Server 
 手动运行还可选 `server_mode=affected`，只执行公共检查和相关用例，用于快速诊断。
 该模式的 job 名称为 `Server affected diagnostics`，不冒充必需的完整 `Server tests` 检查；
 PR/push 仍执行带全量兜底的影子对照。JSON 报告目录是隐藏目录，上传步骤明确包含该目录。
+
+## 并行 PR 的数据库迁移
+
+迁移是一条线性链：每个 `v2_N` 只有一个 `down_revision`，Server 启动时要求数据库正好处于 `CURRENT_SCHEMA_REVISION`。并行开发的 PR 都会取「现有最大值 + 1」，所以**编号只有合入 `main` 后才算确定**。先合入的 PR 保留编号，后合入的改号；已合入 `main` 的迁移不能改。
+
+撞号有两个容易忽略的地方：
+
+- **冲突出现得晚。** 两个 PR 各自和 `main` 比较都能合并，CI 也都能通过。前一个合入后，后一个才会在迁移文件、版本常量、测试和文档上同时冲突。
+- **Alembic 只比较 revision ID，不比较内容。** 开发库跑过一个分支的 `v2_N` 后，切到另一个同号分支不会再执行它的 DDL，启动时的版本检查还能通过，缺失的表或索引要到运行时才暴露。所以切换到同号的另一个分支时，要换一个新的本地库。
+
+后合入的 PR 按下面的步骤处理：
+
+1. 合并最新的 `main`。迁移文件冲突时保留 `main` 的版本，不要合并两边的内容，也不要二选一丢掉自己的迁移。
+2. 把自己的迁移改为新的最大编号，同时修改文件名、文档字符串里的 `Revision ID` 和 `Revises`、`revision`、`down_revision`。
+3. `CURRENT_SCHEMA_REVISION` 和 `CURRENT_SCHEMA_VERSION` 不是选 `main` 或选自己，而是设成新编号。`docs/upgrading.md` 里的当前 revision 同理。
+4. 用 `git grep -n 'v2_N'` 找出其余引用并逐条判断：测试名、加载迁移的测试、代码注释、`docs/api/`、CHANGELOG 的「升级须知」要跟着改；指向 `main` 上同号迁移的引用不要动。
+5. 如果迁移在无版本数据库的判定逻辑（`server/agent_server/infra/db/migrations.py`）里加了分支，同步其中的 revision 和前后顺序。
+6. 检查 git 报不出来的问题：迁移是否依赖或影响 `main` 新增的表和字段；回填或汇总类迁移，还要确认 `main` 没有新增绕过它的写入路径。
+7. 运行 `tests/test_database_migrations.py` 和相关测试，确认能从 `main` 的最新 revision 升级，并能降级回去。
+
+叠加 PR 也适用这些规则：基础 PR 改号后，依赖它的迁移要同步修改 `down_revision`；叠加 PR 合进基础分支时，要重新核对编号是否仍然接在 `main` 之后。
