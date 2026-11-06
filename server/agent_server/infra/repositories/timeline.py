@@ -28,6 +28,7 @@ from agent_server.core.utc import utc_now
 from agent_server.infra.db import sessions as sessions_t
 from agent_server.infra.db import timeline_items as timeline_items_t
 from agent_server.infra.db.schema import session_runtime_event_receipts
+from agent_server.infra.db.engine import read_connection
 from agent_server.infra.repositories.store_support import session_revision_fenced
 
 
@@ -100,7 +101,7 @@ class TimelineRepositoryMixin:
         return end - count + 1, end
 
     async def get_max_timeline_order_seq(self, session_id: str) -> int:
-        async with self._timeline_lock(session_id), self._engine.connect() as conn:
+        async with self._timeline_lock(session_id), read_connection(self._engine) as conn:
             return await self._max_timeline_order_seq(conn, session_id)
 
     async def persist_buffered_timeline_items(
@@ -484,7 +485,7 @@ class TimelineRepositoryMixin:
         )
 
     async def get_timeline_reset_seq(self, session_id: str) -> int:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(sessions_t.c.timeline_reset_seq).where(
@@ -701,7 +702,7 @@ class TimelineRepositoryMixin:
         """Serialize concurrent writers for one session timeline."""
 
         lock_key = session_timeline_lock_key(session_id)
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             await conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": lock_key})
             try:
                 yield

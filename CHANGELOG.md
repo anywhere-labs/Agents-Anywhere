@@ -7,6 +7,7 @@
 ### 升级须知
 
 - Codex、Claude Code 统一目标模式需要 Server 执行 `v2_47` 数据库迁移，并配套更新 Connector 和客户端。（[#539](https://github.com/anywhere-labs/Agents-Anywhere/pull/539)）
+- Server 读数据库时不再给每次查询额外开启并回滚事务，从连接池取连接时的检查也只需一次往返，数据库往返和回滚数明显减少；升级后数据库统计里的提交数会上升、回滚数接近零，按提交与回滚比例设置的监控需要相应调整。（PR_LINK）
 
 ### Codex 与 Claude
 

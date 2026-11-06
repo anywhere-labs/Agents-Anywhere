@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from agent_server.infra.repositories.email_accounts import EmailAccountRepositoryMixin
 from agent_server.infra.repositories.store_support import *
+from agent_server.infra.db.engine import read_connection
 
 
 class UserRepositoryMixin(EmailAccountRepositoryMixin):
@@ -54,7 +55,7 @@ class UserRepositoryMixin(EmailAccountRepositoryMixin):
         normalized = (user_id or "").strip().lower()
         if not normalized:
             return None
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(users_t).where(users_t.c.id == normalized)
@@ -71,7 +72,7 @@ class UserRepositoryMixin(EmailAccountRepositoryMixin):
         normalized = (user_id or "").strip().lower()
         if not normalized:
             return None
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(users_t.c.password_hash, users_t.c.disabled).where(users_t.c.id == normalized)
@@ -86,7 +87,7 @@ class UserRepositoryMixin(EmailAccountRepositoryMixin):
         normalized = (user_id or "").strip().lower()
         if not normalized:
             return None
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(users_t).where(users_t.c.id == normalized)
@@ -104,7 +105,7 @@ class UserRepositoryMixin(EmailAccountRepositoryMixin):
         subject = (subject or "").strip()
         if not provider or not subject:
             return None
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(users_t)
@@ -210,7 +211,7 @@ class UserRepositoryMixin(EmailAccountRepositoryMixin):
         normalized = (user_id or "").strip().lower()
         if not normalized:
             return False
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(select(users_t.c.id).where(users_t.c.id == normalized))
             ).first()
@@ -219,7 +220,7 @@ class UserRepositoryMixin(EmailAccountRepositoryMixin):
 
     async def get_user(self, user_id: str) -> UserView:
         normalized = (user_id or "").strip().lower()
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(select(users_t).where(users_t.c.id == normalized))
             ).mappings().first()
@@ -229,7 +230,7 @@ class UserRepositoryMixin(EmailAccountRepositoryMixin):
 
 
     async def count_users(self) -> int:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (await conn.execute(select(func.count()).select_from(users_t))).first()
         return int(row[0]) if row else 0
 
@@ -238,7 +239,7 @@ class UserRepositoryMixin(EmailAccountRepositoryMixin):
         query = select(func.count()).select_from(users_t).where(users_t.c.role == ADMIN_ROLE)
         if active_only:
             query = query.where(users_t.c.disabled == 0)
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (await conn.execute(query)).first()
         return int(row[0]) if row else 0
 
@@ -251,7 +252,7 @@ class UserRepositoryMixin(EmailAccountRepositoryMixin):
             query = query.offset(offset)
         if limit is not None:
             query = query.limit(limit)
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (await conn.execute(query)).mappings().all()
         return [_user_from_row(row) for row in rows]
 
@@ -354,7 +355,7 @@ class UserRepositoryMixin(EmailAccountRepositoryMixin):
 
     async def mobile_login_token_status(self, *, token: str) -> dict[str, Any] | None:
         token_hash = _mobile_login_token_hash(token)
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(mobile_login_tokens_t).where(mobile_login_tokens_t.c.token_hash == token_hash)

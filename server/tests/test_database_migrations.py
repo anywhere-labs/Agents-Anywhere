@@ -2138,6 +2138,7 @@ def test_postgres_pool_settings_are_configurable(monkeypatch) -> None:
         assert engine.pool._timeout == 4.5
         assert engine.pool._recycle == 600
         assert engine.pool._pre_ping is True
+        assert engine.dialect.do_ping.__name__ == "_ping_outside_transaction"
     finally:
         asyncio.run(engine.dispose())
 
