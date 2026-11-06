@@ -431,3 +431,20 @@ test('source Connector normalizes [::1] in child NO_PROXY and no_proxy without m
     await h.close()
   }
 })
+
+test('source Connector takes its proxy from the setting, not from an inherited value', async () => {
+  const previous = process.env['AA_CONNECTOR_PROXY']
+  process.env['AA_CONNECTOR_PROXY'] = 'http://inherited:1'
+  try {
+    for (const [connectorProxy, expected] of [['direct', 'direct'], ['http://127.0.0.1:7890', 'http://127.0.0.1:7890'], ['', undefined]] as const) {
+      const h = await fixture('normal', { ...DEFAULT_CONNECTOR_SETTINGS, connectorProxy })
+      try {
+        await h.connector.start(binding, 'https://api.example.test', new AbortController().signal)
+        assert.equal(h.childEnv?.['AA_CONNECTOR_PROXY'], expected)
+      } finally { await h.close() }
+    }
+  } finally {
+    if (previous === undefined) delete process.env['AA_CONNECTOR_PROXY']
+    else process.env['AA_CONNECTOR_PROXY'] = previous
+  }
+})

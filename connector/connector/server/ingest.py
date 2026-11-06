@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable, Iterable
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from typing import Any
 
 import httpx
@@ -40,6 +41,14 @@ SNAPSHOT_PAGE_RETRY_BACKOFF_SECONDS = 0.5
 # retry one dropped connection fails the whole DSH feed and forces a resync.
 SYNC_BATCH_RETRIES = 3
 SYNC_BATCH_RETRY_BACKOFF_SECONDS = 1.0
+# Upload timeouts. The read timeout has to outlast the upload itself: a local
+# proxy accepts the whole body at once and forwards it at its own pace, so the
+# client finishes writing and starts waiting for an answer that cannot arrive
+# until the proxy is done. It therefore grows with the body, assuming the slowest
+# link worth waiting for. Writes and connects still fail on a real stall.
+UPLOAD_CONNECT_SECONDS = 15
+UPLOAD_STALL_SECONDS = 60
+UPLOAD_SLOWEST_BYTES_PER_SECOND = 64 * 1024
 
 AccessTokenProvider = Callable[[bool], Awaitable[str]]
 HttpClientGetter = Callable[[], httpx.AsyncClient | None]
@@ -185,6 +194,7 @@ class ConnectorIngestClient:
             try:
                 await self._send_with_auth(
                     lambda token: self._post_snapshot_body(client, token, snapshot, start, end, first, on_progress), token,
+                    size=snapshot.page_size(start, end, first=first),
                 )
                 return
             except ConnectorNetworkError as exc:
@@ -211,7 +221,7 @@ class ConnectorIngestClient:
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Content-Length": str(size)},
             # The Server answers only after parsing and applying the whole page;
             # a page given up too early is uploaded again.
-            content=stream(), timeout=httpx.Timeout(60, read=60 + 60 * size / SNAPSHOT_PAGE_BYTES),
+            content=stream(), timeout=upload_timeout(size),
         )
 
     async def flush_loop(self) -> None:
@@ -302,13 +312,19 @@ class ConnectorIngestClient:
         owned = client is None
         if client is None:
             client = self._http_client_factory(60)
+        encoded = json.dumps(
+            {"notifications": notifications}, ensure_ascii=False, separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8", UTF8_REPLACE_LONE_SURROGATES)
         try:
-            await self._send_with_auth(lambda token: self._post_ingest_batch(client, token, notifications, on_progress=on_progress), token)
+            await self._send_with_auth(
+                lambda token: self._post_ingest_batch(client, token, encoded, on_progress=on_progress), token, size=len(encoded),
+            )
         finally:
             if owned:
                 await client.aclose()
 
-    async def _send_with_auth(self, send, token):
+    async def _send_with_auth(self, send, token, *, size: int):
+        started = time.monotonic()
         try:
             response = await send(token)
             if getattr(response, "status_code", None) == 401:
@@ -317,7 +333,12 @@ class ConnectorIngestClient:
                 if getattr(response, "status_code", None) == 401:
                     raise ConnectorAuthenticationError("connector credential no longer valid")
         except httpx.RequestError as exc:
-            raise ConnectorNetworkError(f"backend ingest request failed: {exc}") from exc
+            # httpx timeouts have an empty message, so the type is what tells them
+            # from a dropped connection; the size and time show which limit it hit.
+            raise ConnectorNetworkError(
+                f"backend ingest request failed: {type(exc).__name__}: {exc} "
+                f"(body {size} bytes, after {time.monotonic() - started:.1f}s)"
+            ) from exc
         status = getattr(response, "status_code", 200)
         if status in {408, 429} or status >= 500:
             raise ConnectorNetworkError(f"backend ingest temporarily unavailable: HTTP {status}")
@@ -329,12 +350,11 @@ class ConnectorIngestClient:
         self,
         client: httpx.AsyncClient,
         access_token: str,
-        notifications: list[dict[str, Any]],
+        encoded: bytes,
         *, on_progress: UploadProgress | None = None,
     ) -> httpx.Response:
+        content: bytes | AsyncIterator[bytes] = encoded
         if on_progress is not None:
-            encoded = json.dumps({"notifications": notifications}, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8", UTF8_REPLACE_LONE_SURROGATES)
-
             async def body():
                 for offset in range(0, len(encoded), UPLOAD_CHUNK_BYTES):
                     chunk = encoded[offset:offset + UPLOAD_CHUNK_BYTES]
@@ -343,18 +363,22 @@ class ConnectorIngestClient:
                     # This is liveness only; cloud acceptance still gates ACK/save.
                     await on_progress(len(chunk))
 
-            return await client.post(
-                api_v2_url(self._server_url, "/connector/ingest"),
-                headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json", "Content-Length": str(len(encoded))},
-                content=body(),
-                timeout=60,
-            )
+            content = body()
         return await client.post(
             api_v2_url(self._server_url, "/connector/ingest"),
-            headers={"Authorization": f"Bearer {access_token}"},
-            json={"notifications": notifications},
-            timeout=60,
+            headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json", "Content-Length": str(len(encoded))},
+            content=content,
+            timeout=upload_timeout(len(encoded)),
         )
+
+
+def upload_timeout(size: int) -> httpx.Timeout:
+    """Timeouts for a request body of ``size`` bytes; see ``UPLOAD_SLOWEST_BYTES_PER_SECOND``."""
+    return httpx.Timeout(
+        UPLOAD_STALL_SECONDS,
+        connect=UPLOAD_CONNECT_SECONDS,
+        read=UPLOAD_STALL_SECONDS + size / UPLOAD_SLOWEST_BYTES_PER_SECOND,
+    )
 
 
 def _too_large(error: Exception) -> bool:

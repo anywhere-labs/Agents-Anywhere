@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from sqlalchemy import func
 
-from sqlalchemy import case, literal_column
+from sqlalchemy import JSON, case, cast, literal_column
 from pydantic import BaseModel
 
 from agent_server.infra.repositories.store_support import *
 from agent_server.infra.repositories.projects import _clean_workspace_path
 from agent_server.core.models import ConnectorSessionResolution
+from agent_server.infra.db.engine import read_connection
 
 
 SESSION_CURSOR_VERSION = 1
@@ -19,15 +22,6 @@ _SESSION_INVENTORY_UPDATE_CHUNK_SIZE = 4_000
 # because runtimes keep re-announcing the title of their own thread file.
 TITLE_SOURCE_CONNECTOR = "connector"
 TITLE_SOURCE_USER = "user"
-
-
-class _LatestTimelineMetadata(BaseModel):
-    """Read already-validated metadata without rebuilding the message body."""
-
-    orderSeq: int
-    createdAt: str
-    updatedAt: str
-    completedAt: str | None = None
 
 
 def _normalized_source_availability(value: Any) -> str:
@@ -215,6 +209,26 @@ def _session_sort_at(latest_item: Any) -> Any:
     )
 
 
+def _latest_item_at(latest_item: Any) -> Any:
+    """Return the newest item's activity time without shipping its body.
+
+    Session lists only need the time fields of each session's newest item.
+    Reading ``payload_json`` itself moved complete tool output, often large,
+    from PostgreSQL into Python for every listed session on every read.
+    """
+
+    payload = cast(latest_item.c.payload_json, JSON)
+
+    def field(name: str) -> Any:
+        return func.nullif(payload[name].as_string(), "")
+
+    return func.coalesce(field("updatedAt"), field("completedAt"), field("createdAt"))
+
+
+def _has_title(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
 def _session_view_query(latest_item: tuple[Any, Any] | None = None) -> Any:
     if latest_item is None:
         latest_item = _latest_timeline_item_source()
@@ -228,7 +242,7 @@ def _session_view_query(latest_item: tuple[Any, Any] | None = None) -> Any:
         latest_source.c.item_time.label("latest_item_time"),
         latest_source.c.order_seq.label("latest_item_order_seq"),
         latest_source.c.updated_seq.label("latest_item_updated_seq"),
-        latest_source.c.payload_json.label("latest_item_payload_json"),
+        _latest_item_at(latest_source).label("latest_item_at"),
         session_sort_at,
     ).select_from(
         sessions_t.join(
@@ -251,7 +265,7 @@ def _session_view_query(latest_item: tuple[Any, Any] | None = None) -> Any:
 
 class SessionRepositoryMixin:
     async def get_session_runtime(self, session_id: str) -> str | None:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(sessions_t.c.runtime).where(sessions_t.c.id == session_id)
@@ -388,7 +402,7 @@ class SessionRepositoryMixin:
     ) -> SessionView:
         identity = _runtime_identity(runtime, runtime_id)
         canonical_session_id = session_id
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             existing = (
                 await conn.execute(
                     select(sessions_t.c.id).where(sessions_t.c.id == session_id)
@@ -616,7 +630,7 @@ class SessionRepositoryMixin:
         runtime_id: str | None = None,
     ) -> str:
         identity = _runtime_identity(runtime, runtime_id) if runtime is not None else None
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             explicit_query = select(
                 sessions_t.c.id,
                 sessions_t.c.origin,
@@ -678,7 +692,7 @@ class SessionRepositoryMixin:
         external-session match, otherwise the explicit row.
         """
 
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             explicit = (
                 await conn.execute(
                     select(
@@ -781,9 +795,9 @@ class SessionRepositoryMixin:
                 sessions_t.c.id.desc(),
             )
         )
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (await conn.execute(query)).mappings().all()
-        return [await self._session_from_row(row) for row in rows]
+        return await self._sessions_from_rows(rows)
 
     async def list_sessions_page(
         self,
@@ -848,10 +862,10 @@ class SessionRepositoryMixin:
                     ),
                 )
             )
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (await conn.execute(query)).mappings().all()
         page_rows = rows[:limit]
-        sessions = [await self._session_from_row(row) for row in page_rows]
+        sessions = await self._sessions_from_rows(page_rows)
         has_more = len(rows) > limit
         next_cursor = _encode_session_cursor(page_rows[-1]) if has_more and page_rows else None
         return sessions, has_more, next_cursor
@@ -904,7 +918,7 @@ class SessionRepositoryMixin:
     ) -> list[str]:
         now = utc_now()
         changed: list[str] = []
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (
                 await conn.execute(
                     select(
@@ -1287,9 +1301,9 @@ class SessionRepositoryMixin:
         )
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (await conn.execute(query)).mappings().all()
-        return [await self._session_from_row(row) for row in rows]
+        return await self._sessions_from_rows(rows)
 
     async def list_sessions_for_connector(
         self,
@@ -1303,9 +1317,9 @@ class SessionRepositoryMixin:
             )
             .order_by(sessions_t.c.created_at.desc())
         )
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (await conn.execute(query)).mappings().all()
-        return [await self._session_from_row(row) for row in rows]
+        return await self._sessions_from_rows(rows)
 
 
     async def get_session_user_id(self, session_id: str) -> str:
@@ -1313,7 +1327,7 @@ class SessionRepositoryMixin:
         query = select(connectors_t.c.user_id).select_from(
             sessions_t.join(connectors_t, sessions_t.c.connector_id == connectors_t.c.id)
         ).where(sessions_t.c.id == session_id, connectors_t.c.revoked == 0)
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (await conn.execute(query)).first()
         if row is None:
             raise KeyError(session_id)
@@ -1326,7 +1340,7 @@ class SessionRepositoryMixin:
         )
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (await conn.execute(query)).mappings().first()
         if row is None:
             raise KeyError(session_id)
@@ -1355,7 +1369,7 @@ class SessionRepositoryMixin:
         )
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (await conn.execute(query)).mappings().first()
         if row is None:
             raise KeyError(session_id)
@@ -1389,7 +1403,7 @@ class SessionRepositoryMixin:
 
 
     async def session_owned_by_connector(self, session_id: str, connector_id: str) -> bool:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(sessions_t.c.id)
@@ -1405,7 +1419,7 @@ class SessionRepositoryMixin:
 
 
     async def get_session_seq(self, session_id: str) -> int:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(sessions_t.c.seq).where(sessions_t.c.id == session_id)
@@ -1514,13 +1528,13 @@ class SessionRepositoryMixin:
                 _session_view_query()
                 .where(sessions_t.c.id.in_(owned_ids))
             )
-            async with self._engine.connect() as conn:
+            async with read_connection(self._engine) as conn:
                 view_rows = (await conn.execute(view_query)).mappings().all()
-            by_id = {row["id"]: row for row in view_rows}
-            for sid in ordered:
-                row = by_id.get(sid)
-                if row is not None:
-                    sessions.append(await self._session_from_row(row))
+            by_id = {
+                session.id: session
+                for session in await self._sessions_from_rows(view_rows)
+            }
+            sessions = [by_id[sid] for sid in ordered if sid in by_id]
         not_found = [sid for sid in ordered if sid not in owned_ids]
         return sessions, not_found
 
@@ -1541,7 +1555,7 @@ class SessionRepositoryMixin:
                 connectors_t.c.user_id == user_id,
                 connectors_t.c.revoked == 0,
             )
-            async with self._engine.connect() as conn:
+            async with read_connection(self._engine) as conn:
                 owned = (await conn.execute(conn_query)).first()
             if owned is None:
                 raise KeyError(connector_id)
@@ -1580,9 +1594,9 @@ class SessionRepositoryMixin:
             _session_view_query()
             .where(sessions_t.c.id.in_(target_ids))
         )
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             view_rows = (await conn.execute(view_query)).mappings().all()
-        return [await self._session_from_row(row) for row in view_rows]
+        return await self._sessions_from_rows(view_rows)
 
 
     async def rename_session(
@@ -1672,9 +1686,9 @@ class SessionRepositoryMixin:
                 _session_view_query()
                 .where(sessions_t.c.id.in_(owned_ids))
             )
-            async with self._engine.connect() as conn:
+            async with read_connection(self._engine) as conn:
                 view_rows = (await conn.execute(view_query)).mappings().all()
-            by_id = {str(row["id"]): await self._session_from_row(row) for row in view_rows}
+            by_id = {session.id: session for session in await self._sessions_from_rows(view_rows)}
             sessions = [by_id[sid] for sid in ordered if sid in by_id]
 
         not_found = [sid for sid in ordered if sid not in owned_ids]
@@ -1701,7 +1715,7 @@ class SessionRepositoryMixin:
         )
         if user_id is not None:
             statement = statement.where(connectors_t.c.user_id == user_id)
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (await conn.execute(statement)).all()
         owned_ids = {str(row.id) for row in rows}
         return [session_id for session_id in ordered if session_id in owned_ids]
@@ -1864,7 +1878,7 @@ class SessionRepositoryMixin:
             .order_by(timeline_items_t.c.order_seq.asc(), timeline_items_t.c.updated_seq.asc())
             .limit(1)
         )
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (await conn.execute(query)).first()
         if row is None:
             return None
@@ -1888,23 +1902,87 @@ class SessionRepositoryMixin:
             )
 
 
-    async def _session_from_row(self, row: Any) -> SessionView:
-        session_id = row["id"]
-        latest_payload = row.get("latest_item_payload_json")
-        latest = (
-            _LatestTimelineMetadata.model_validate_json(latest_payload)
-            if latest_payload
-            else None
+    async def _derive_titles_from_first_user_messages(
+        self, session_ids: list[str]
+    ) -> dict[str, str]:
+        """Derive and lock in titles for many untitled sessions in two round trips.
+
+        A list read used to issue one query per untitled session, so sessions
+        that never received a user message re-ran that query on every read.
+        """
+
+        first_user_message = (
+            select(timeline_items_t.c.payload_json)
+            .where(
+                timeline_items_t.c.session_id == sessions_t.c.id,
+                timeline_items_t.c.type == "message",
+                timeline_items_t.c.role == "user",
+            )
+            .order_by(timeline_items_t.c.order_seq.asc(), timeline_items_t.c.updated_seq.asc())
+            .limit(1)
+            .scalar_subquery()
         )
+        query = select(sessions_t.c.id, first_user_message.label("payload_json")).where(
+            sessions_t.c.id.in_(session_ids)
+        )
+        async with read_connection(self._engine) as conn:
+            rows = (await conn.execute(query)).all()
+        derived: dict[str, str] = {}
+        for session_id, payload_json in rows:
+            if payload_json is None:
+                continue
+            payload = _json_loads(payload_json)
+            if not isinstance(payload, dict):
+                continue
+            text = _message_text(payload.get("content"))
+            title = _truncate_title(text) if text else None
+            if title:
+                derived[str(session_id)] = title
+        if derived:
+            async with self._engine.begin() as conn:
+                for session_id, title in derived.items():
+                    await conn.execute(
+                        sessions_t.update()
+                        .where(
+                            sessions_t.c.id == session_id,
+                            sessions_t.c.title.is_(None) | (sessions_t.c.title == ""),
+                        )
+                        .values(title=title)
+                    )
+        return derived
+
+    async def _sessions_from_rows(self, rows: Sequence[Any]) -> list[SessionView]:
+        untitled = [str(row["id"]) for row in rows if not _has_title(row["title"])]
+        derived = (
+            await self._derive_titles_from_first_user_messages(untitled)
+            if untitled
+            else {}
+        )
+        return [
+            await self._session_from_row(row, derived_titles=derived)
+            for row in rows
+        ]
+
+    async def _session_from_row(
+        self,
+        row: Any,
+        *,
+        derived_titles: dict[str, str] | None = None,
+    ) -> SessionView:
+        session_id = row["id"]
         runtime = row["runtime"]
         runtime_id = row["runtime_id"]
         title = row["title"]
-        if not (isinstance(title, str) and title.strip()):
-            derived = await self._derive_title_from_first_user_message(session_id)
-            if derived:
-                title = derived
-                await self._lock_in_derived_title(session_id, derived)
-        last_item_at = (latest.updatedAt or latest.completedAt or latest.createdAt) if latest else None
+        if not _has_title(title):
+            if derived_titles is not None:
+                title = derived_titles.get(str(session_id), title)
+            else:
+                derived = await self._derive_title_from_first_user_message(session_id)
+                if derived:
+                    title = derived
+                    await self._lock_in_derived_title(session_id, derived)
+        has_latest = row.get("latest_item_order_seq") is not None
+        last_item_at = row.get("latest_item_at") if has_latest else None
         sort_at = row.get("session_sort_at") or last_item_at or row["last_activity_at"] or row["created_at"]
         last_read_seq = int(row["last_read_seq"] or 0)
         latest_turn_end_seq = int(row["latest_turn_end_seq"] or 0)
@@ -1942,7 +2020,7 @@ class SessionRepositoryMixin:
             sourceObservedAt=row["source_observed_at"],
             lastActivityAt=row["last_activity_at"],
             lastItemAt=last_item_at,
-            lastItemOrderSeq=latest.orderSeq if latest else None,
+            lastItemOrderSeq=int(row["latest_item_order_seq"]) if has_latest else None,
             sortAt=sort_at,
             updatedSeq=updated_seq,
         )

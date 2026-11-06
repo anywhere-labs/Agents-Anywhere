@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -35,16 +36,17 @@ def test_connector_cli_starts_without_unix_pwd_module() -> None:
     "failure", ["winerror", "timeout", "exit", "empty", "unrelated"]
 )
 def test_invalid_codex_falls_back_to_sdk(monkeypatch, configured, failure):
-    monkeypatch.setattr(binary, "find_executable_on_path", lambda *_: "codex.cmd")
+    monkeypatch.setattr(binary, "find_executable_on_path", lambda *_: "codex.exe")
 
     def run(command, **kwargs):
-        assert command == ["codex.cmd", "--version"]
+        assert command == ["codex.exe", "--version"]
         assert kwargs["env"] == {"PATH": "example"}
         assert kwargs["timeout"] == 5.0
         if failure == "winerror":
             raise OSError(193, "%1 is not a valid Win32 application")
         if failure == "timeout":
             raise subprocess.TimeoutExpired(command, 5)
+        kwargs["stdout"].write(b"node 1.2.3" if failure == "unrelated" else b"")
         return subprocess.CompletedProcess(
             command,
             1 if failure == "exit" else 0,
@@ -57,7 +59,7 @@ def test_invalid_codex_falls_back_to_sdk(monkeypatch, configured, failure):
         "prefer_system",
         {"PATH": "example"},
         binary.LoginShellPathResult(None, None),
-        configured_path="codex.cmd" if configured else None,
+        configured_path="codex.exe" if configured else None,
     )
     assert selection.source == "sdk_bundled"
     assert selection.codex_bin is None
@@ -67,16 +69,12 @@ def test_invalid_codex_falls_back_to_sdk(monkeypatch, configured, failure):
 @pytest.mark.parametrize("configured", [False, True])
 def test_valid_codex_is_used(monkeypatch, configured):
     monkeypatch.setattr(binary, "find_executable_on_path", lambda *_: "codex.exe")
-    monkeypatch.setattr(
-        binary.subprocess,
-        "run",
-        lambda *a, **kw: subprocess.CompletedProcess(
-            a[0],
-            0,
-            stdout="codex-cli 0.144.4\n",
-            stderr="",
-        ),
-    )
+
+    def run(command, **kwargs):
+        kwargs["stdout"].write(b"codex-cli 0.144.4\n")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(binary.subprocess, "run", run)
     selection = binary.select_codex_runtime_binary(
         "prefer_system",
         {},
@@ -85,6 +83,31 @@ def test_valid_codex_is_used(monkeypatch, configured):
     )
     assert selection.source == ("configured" if configured else "system")
     assert selection.codex_bin == "codex.exe"
+
+
+def test_version_probe_does_not_start_pipe_reader_threads(monkeypatch):
+    monkeypatch.setattr(
+        binary, "codex_launch_command",
+        lambda *_: [sys.executable, "-c", "print('codex-cli 0.144.4')"],
+    )
+    monkeypatch.setattr(
+        threading.Thread, "start",
+        lambda *_: pytest.fail("version probing must not start reader threads"),
+    )
+    assert binary.codex_version_error(sys.executable, {}) is None
+
+
+def test_version_probe_times_out_without_pipe_capture(monkeypatch):
+    monkeypatch.setattr(
+        binary, "codex_launch_command",
+        lambda *_: [sys.executable, "-c", "import time; time.sleep(60)"],
+    )
+    run = subprocess.run
+    monkeypatch.setattr(
+        binary.subprocess, "run",
+        lambda command, **kwargs: run(command, **{**kwargs, "timeout": 0.1}),
+    )
+    assert "timed out" in binary.codex_version_error(sys.executable, {})
 
 
 def test_disabled_system_codex_does_not_probe(monkeypatch):
@@ -162,6 +185,7 @@ def test_windows_scripts_use_same_launcher_for_probe_and_sdk(
         commands.append(command)
         assert command[0] == str(powershell)
         assert kwargs["env"]["PATH"] == str(directory)
+        kwargs["stdout"].write(b"codex-cli 0.144.4\n")
         return subprocess.CompletedProcess(
             command, 0, stdout="codex-cli 0.144.4\n", stderr=""
         )

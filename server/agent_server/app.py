@@ -245,6 +245,9 @@ def create_app(
     app.state.terminal_stream_hub = TerminalStreamHub(app.state.redis)
     app.state.timeline_broker = TimelineBroker(
         app.state.redis,
+        dashboard_min_interval_seconds=float(
+            os.getenv("AGENT_SERVER_DASHBOARD_MIN_INTERVAL_SECONDS", "2")
+        ),
         event_workers=process_settings.event_workers,
         event_threshold_bytes=int(os.getenv("AGENT_SERVER_EVENT_THRESHOLD_BYTES", str(256 * 1024))),
         event_queue_items=int(os.getenv("AGENT_SERVER_EVENT_QUEUE_ITEMS", "32")),
