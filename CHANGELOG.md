@@ -9,6 +9,10 @@
 - Connector 现在遵守系统代理的例外列表，并在只设置了 `NO_PROXY` 时继续使用系统代理：同一台设备连接服务器的路径可能因此改变（走代理改为直连，或反过来），不符合预期时可在「Connector 网络」里指定。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
 - Codex、Claude Code 统一目标模式需要 Server 执行 `v2_47` 数据库迁移，并配套更新 Connector 和客户端。（[#539](https://github.com/anywhere-labs/Agents-Anywhere/pull/539)）
 
+### 会话创建与消息交付
+
+- 会话很多或多个会话同时运行时，会话列表的实时刷新不再拖慢 Server 数据库：同一用户的连续变化最多每 2 秒合并推送一次，部署者可用 `AGENT_SERVER_DASHBOARD_MIN_INTERVAL_SECONDS` 调整。（[#552](https://github.com/anywhere-labs/Agents-Anywhere/pull/552)）
+
 ### Codex 与 Claude
 
 - Web、Desktop、Android 和 iOS 可用 `/goal` 设置目标，在输入区上方编辑、暂停、恢复或清除；停止时阻止自动续跑，完成结果留在会话历史中，长目标栏与输入框保持同宽并自动截断正文。（[#539](https://github.com/anywhere-labs/Agents-Anywhere/pull/539)）
