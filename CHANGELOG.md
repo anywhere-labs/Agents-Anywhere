@@ -25,6 +25,8 @@
 - `NO_PROXY` 里出现 `[::1]` 或写法有误的条目时，Connector 不再启动失败。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
 - Windows 和 macOS 上 Connector 改用系统证书库校验服务器证书，不再因为 Python 自带或读到的证书过期而报「certificate has expired」；证书被拒时日志会说明可能是本机证书库的问题。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
 - Intel Mac 首次准备 Connector 环境时不再因为缺少预编译包而长时间卡在编译 `cryptography`。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
+- 本机 Connector 持续无响应时自动重建后台并恢复连接，短暂故障或主动停止时不会自动重启。（[#522](https://github.com/anywhere-labs/Agents-Anywhere/pull/522)）
+- Codex 版本检测不再阻塞发现和配置验证期间的心跳与本机控制，并避免 Windows 管道读取线程卡住导致检测超时失效。（[#522](https://github.com/anywhere-labs/Agents-Anywhere/pull/522)）
 
 ### DSH 同步
 
@@ -180,7 +182,6 @@
 
 ### Desktop
 
-- 本机 Connector 持续无响应时自动重建后台并恢复连接，短暂故障或主动停止时不会自动重启。（[#522](https://github.com/anywhere-labs/Agents-Anywhere/pull/522)）
 - 把本地文件夹拖进侧栏就能创建项目。重复目录、普通文件和一次拖入多项时会给出提示；拖拽结束或窗口失焦时，提示自动消失。（[#82](https://github.com/anywhere-labs/Agents-Anywhere/pull/82)）
 - Connector 启动失败时显示真实原因，可以复制错误信息、打开日志目录。（[#294](https://github.com/anywhere-labs/Agents-Anywhere/pull/294)）
 - 依赖下载失败时，可以在启动弹窗里切换 PyPI 镜像或 Python 下载镜像、重试，或者「清空缓存并重试」；所选镜像缺少的包会自动从官方 PyPI 补齐。（[#450](https://github.com/anywhere-labs/Agents-Anywhere/pull/450)）
@@ -191,7 +192,6 @@
 
 ### 本机连接、所有权与日志
 
-- Codex 版本检测不再阻塞发现和配置验证期间的心跳与本机控制，并避免 Windows 管道读取线程卡住导致检测超时失效。（[#522](https://github.com/anywhere-labs/Agents-Anywhere/pull/522)）
 - 本机控制和 DSH 桥接改用 MeshCall：Router 意外退出后自动重启；状态和日志断线后接着上次的位置继续，不需要重启 Connector。（[#353](https://github.com/anywhere-labs/Agents-Anywhere/pull/353)）
 - 启动、停止、重启和保存配置按顺序执行，有操作正在进行时新操作直接拒绝；取消配对后，旧流程不会再保存凭据或自动连接。（[#353](https://github.com/anywhere-labs/Agents-Anywhere/pull/353)）
 - 插件管理锁和机器记录锁改为随机端口加连接核实，修复 Windows 保留端口导致的启动失败。（[#329](https://github.com/anywhere-labs/Agents-Anywhere/pull/329)、[#330](https://github.com/anywhere-labs/Agents-Anywhere/pull/330)）
