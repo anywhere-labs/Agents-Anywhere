@@ -83,7 +83,7 @@
 - Pi 优先复用本机兼容安装的模型、认证和配置；已有受管模型网关配置保持隔离，用户也可明确选择受管环境。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 - Pi 接入需要 Server 执行 `v2_45` 数据库迁移，并配套更新 Connector 和使用此功能的客户端。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 - 统一 Plan 需要 Server 执行 `v2_46` 数据库迁移，并配套更新 Connector、客户端和 DSH Bridge；DSH 还需组合原生 Plan 插件。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
-- 用 Agents Anywhere 账号登录 Tokens Anywhere（[#470](https://github.com/anywhere-labs/Agents-Anywhere/pull/470)）和一键链接 Tokens Anywhere（[#510](https://github.com/anywhere-labs/Agents-Anywhere/issues/510)）仍未进入主线，不在这次切分里。
+- 用 Agents Anywhere 账号登录 Tokens Anywhere 已进入主线（[#571](https://github.com/anywhere-labs/Agents-Anywhere/pull/571) 取代了未合并的 [#470](https://github.com/anywhere-labs/Agents-Anywhere/pull/470)）。一键链接里的授权、申请 Key、模型渠道和断开也已进入主线（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)、[#571](https://github.com/anywhere-labs/Agents-Anywhere/pull/571)）；[#510](https://github.com/anywhere-labs/Agents-Anywhere/issues/510) 仍打开：嵌入控制台还没有，Tokens Anywhere 地址也还没有内置的云端默认值。
 
 ### 统一 Plan
 
