@@ -750,4 +750,6 @@
     <string name="goal_resume_title">Resume this goal?</string>
     <string name="goal_operation_failed">The goal operation failed.</string>
     <string name="goal_state_unavailable">The current goal state is unavailable. Refresh to check.</string>
+    <string name="session_markdown_image">Image</string>
+    <string name="session_markdown_image_failed">Could not load image.</string>
 </resources>

@@ -85,3 +85,10 @@ Android 会话列表在最新位置自动跟随生成；上翻或展开思维链
 
 相关 Compose 真机回归位于 `app/src/androidTest/.../MessageListScrollFollowTest.kt`，验证可见文字行的像素坐标、
 分组状态及代码输出滚动；构建和 JVM 单测通过仍不等同于真实 DSH/Connector/Server 的流式链路验收。
+
+## 会话图片
+
+会话中的 Markdown 图片（`![描述](https://example.com/image.png)`）和 HTML 图片
+（`<img src="https://example.com/image.png" alt="描述">`）会直接显示，支持 HTTP、HTTPS
+和内嵌的 `data:image/` 地址。点击图片可全屏查看并双指缩放，加载失败可重试。
+图片地址需要手机可访问；工作设备上的本地路径不会作为手机文件读取。

@@ -748,4 +748,6 @@
     <string name="goal_resume_title">恢复此目标？</string>
     <string name="goal_operation_failed">目标操作失败。</string>
     <string name="goal_state_unavailable">当前目标状态不可用，请刷新核对。</string>
+    <string name="session_markdown_image">图片</string>
+    <string name="session_markdown_image_failed">图片加载失败。</string>
 </resources>
