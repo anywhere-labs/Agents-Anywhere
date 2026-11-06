@@ -11,6 +11,9 @@
 - Server 执行 `v2_48` 数据库迁移：删除时间线表上不再使用的大索引，并为设备列表查询补上索引；已经手工调整过这两个索引的数据库执行后不变，请在停止 Server 和 worker 的维护窗口里运行，细节见[升级指南](docs/upgrading.md)。（[#553](https://github.com/anywhere-labs/Agents-Anywhere/pull/553)）
 - Server 读数据库时不再给每次查询额外开启并回滚事务，从连接池取连接时的检查也只需一次往返，数据库往返和回滚数明显减少；升级后数据库统计里的提交数会上升、回滚数接近零，按提交与回滚比例设置的监控需要相应调整。（[#559](https://github.com/anywhere-labs/Agents-Anywhere/pull/559)）
 - Server 执行 `v2_49` 数据库迁移：新增会话扫描记录，不重写已有会话；`sourceAvailabilityUpdatedAt` 改为来源状态最后一次写入的时间，详见[升级指南](docs/upgrading.md)。（[#557](https://github.com/anywhere-labs/Agents-Anywhere/pull/557)）
+- 配置管理需要 Server 执行 `v2_50`、`v2_51` 和 `v2_52` 数据库迁移，升级前须停止旧 Server 进程，并配套更新 Server、Connector 和各客户端，旧 Connector 会保留原配置并提示升级；保存手动填写的 Key、链接 Tokens Anywhere 之前，部署者要把 `AGENT_SERVER_SECRET` 设为至少 32 个字符。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 链接 Tokens Anywhere 需要设置 `AGENT_SERVER_TOKENS_URL`（或由管理员在实例设置中填写 Tokens Anywhere 地址），并用 `AGENT_SERVER_PUBLIC_ORIGIN` 指定实例对外的地址；Tokens Anywhere 一侧要设置 `TOKENS_SECRETS_KEY`，否则 AA 拿不回托管 Key。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- Runtime 配置中的模型网关 Key 改为只写，接口和实时快照不再返回已保存的 Key；旧版客户端编辑这类配置时需要重新填写 Key。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 
 ### 会话创建与消息交付
 
@@ -24,6 +27,7 @@
 - Web、Desktop、Android 和 iOS 可用 `/goal` 设置目标，在输入区上方编辑、暂停、恢复或清除；停止时阻止自动续跑，完成结果留在会话历史中，长目标栏与输入框保持同宽并自动截断正文。（[#539](https://github.com/anywhere-labs/Agents-Anywhere/pull/539)）
 - 在 Codex App 或 IDE 窗口里处理审批后，Agents Anywhere 里的会话不再一直显示「等待批准」。（[#532](https://github.com/anywhere-labs/Agents-Anywhere/pull/532)）
 - Claude 工具结果里的图片（例如读取截图）不再以原文同步到云端，会话中改为显示 `[Image omitted: image/png, 1.2 MB]` 这样的摘要，不再显示一大段乱码；含大量截图的历史会话不再因请求过大（413）而每轮同步失败。（[#548](https://github.com/anywhere-labs/Agents-Anywhere/pull/548)）
+- 本机模式的 Pi 不能使用模型网关，切换到 AA 渠道时会另建一个受管 Pi 实例，本机 Pi 及其历史不受影响。接入模型网关后恢复 Codex 已有会话时，继续使用会话原来的模型。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 
 ### 本机连接
 
@@ -49,6 +53,23 @@
 ### 本机连接、所有权与日志
 
 - 管理员删除用户时，会先删除该用户的设备及其项目和会话，不再留下无主设备；用户项目里还有会话时返回冲突提示，不再报服务器错误。（[#550](https://github.com/anywhere-labs/Agents-Anywhere/pull/550)）
+
+### Web 与 Desktop 界面
+
+- Tokens Anywhere 可以用 Agents Anywhere 账号登录：Web 会先显示「登录 Tokens Anywhere」确认页，确认后才向 Tokens Anywhere 提供名称、邮箱和头像，选「取消」则不提供任何信息。部署者设置 `AGENT_SERVER_TOKENS_ANYWHERE_CLIENT_SECRET` 和 `AGENT_SERVER_TOKENS_ANYWHERE_REDIRECT_URI` 后开启。（[#571](https://github.com/anywhere-labs/Agents-Anywhere/pull/571)）
+- 侧边栏新增 Tokens Anywhere 入口，介绍页可以直接前往获取 API 密钥；不需要时可以在页面上或「设置 → 外观」里隐藏。实例设置了 Tokens Anywhere 地址后才会出现这个入口，自部署实例不需要重新构建。（[#571](https://github.com/anywhere-labs/Agents-Anywhere/pull/571)、[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 「设置 → 模型渠道」可以选择默认渠道，也可以手动添加模型服务；保存时自动识别协议和模型，不调用模型。地址在内网、连不上或识别不出协议时可以改为手动选择，部署者也可以设置 `AGENT_SERVER_ALLOW_PRIVATE_MODEL_GATEWAYS=1` 允许识别内网地址。离线期间多次切换会在上线后追到最终渠道。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 管理员可以在「管理 → 常规」里填写或清空 Tokens Anywhere 地址；已有账户链接时地址会锁定，全部断开后才能修改。Anywhere 账户用「退出」结束链接：使用该渠道的 Runtime 先切回默认渠道，全部完成后再撤销授权。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- Beta 和实验性的 Runtime 会在状态旁显示「Beta」「实验性」标记。模型网关的 Key 保存后只保留开头和结尾几位；不改 Key 时可以留空，更换地址时需要重新填写。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 新建会话输入框下方不再显示模型加载时返回的原始错误提示，保留模型状态和重试入口。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+
+### Android
+
+- Android 的「模型渠道」与 Web、Desktop 相同：首页列出渠道和「已应用」，点进渠道后再应用、查看配置和 Runtime；Tokens Anywhere 按「账户／模型与连接／Runtime」分页，可以退出账户。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+
+### iOS
+
+- iOS 的「模型渠道」与 Web、Desktop 相同：首页列出渠道和「已应用」，点进渠道后再应用、查看配置和 Runtime；Tokens Anywhere 按「账户／模型与连接／Runtime」分页，可以退出账户。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 
 ## 2.2.0（日期待定）
 

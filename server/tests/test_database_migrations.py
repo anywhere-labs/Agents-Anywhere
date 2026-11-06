@@ -276,6 +276,9 @@ def test_v2_0_database_upgrades_through_current_revision(fresh_database_url) -> 
         ("v2_32", "v2_33"),
         ("v2_47", "v2_48"),
         ("v2_48", "v2_49"),
+        ("v2_49", "v2_50"),
+        ("v2_50", "v2_51"),
+        ("v2_51", "v2_52"),
     ],
 )
 def test_every_adjacent_schema_upgrade(tmp_path,
@@ -1016,9 +1019,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_49() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_49"
-    assert CURRENT_SCHEMA_VERSION == "2.49"
+def test_current_schema_version_is_v2_52() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_52"
+    assert CURRENT_SCHEMA_VERSION == "2.52"
 
 
 def test_v2_49_tracks_inventory_scans_without_rewriting_sessions(

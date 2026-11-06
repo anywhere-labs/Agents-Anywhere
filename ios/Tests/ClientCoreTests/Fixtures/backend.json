@@ -47,6 +47,7 @@
     "oauthEnabled": false,
     "oauthProviderLabel": null,
     "oauthRegistrationOpen": false,
+    "passwordResetEnabled": false,
     "registrationOpen": true,
     "serverTime": "2026-09-05T12:00:00Z",
     "setupTokenExpiresAt": null
@@ -230,6 +231,156 @@
         "userId": "account"
       }
     ],
+    "modelConfig": {
+      "assignments": [
+        {
+          "appliedAt": "2026-09-05T12:00:00Z",
+          "connectorId": "device",
+          "createdRuntime": false,
+          "error": null,
+          "modelConnectionStatus": {
+            "externalOwner": null,
+            "mode": null,
+            "protocol": null,
+            "reason": null,
+            "scope": null,
+            "state": "saved_pending"
+          },
+          "offerFormat": "openai_chat",
+          "profileId": "mpr_test",
+          "runtimeId": "rti_gateway",
+          "status": "applied"
+        }
+      ],
+      "channel": {
+        "channel": "mpr_test",
+        "revision": 3,
+        "runtimes": [
+          {
+            "actual": "native",
+            "connectorId": "device",
+            "desired": "mpr_test",
+            "message": null,
+            "override": null,
+            "reason": "model_connection_unsupported",
+            "runningSessions": 0,
+            "runtimeId": "rti_work",
+            "state": "unsupported",
+            "step": null,
+            "updatedAt": "2026-09-05T12:00:00Z"
+          },
+          {
+            "actual": "mpr_test",
+            "connectorId": "device",
+            "desired": "mpr_test",
+            "message": null,
+            "override": null,
+            "reason": null,
+            "runningSessions": 0,
+            "runtimeId": "rti_gateway",
+            "state": "applied",
+            "step": null,
+            "updatedAt": "2026-09-05T12:00:00Z"
+          },
+          {
+            "actual": "native",
+            "connectorId": "device",
+            "desired": "tokens",
+            "message": "runtime did not confirm in time",
+            "override": "tokens",
+            "reason": "verify_timeout",
+            "runningSessions": 0,
+            "runtimeId": "rti_global",
+            "state": "restored",
+            "step": null,
+            "updatedAt": "2026-09-05T12:00:00Z"
+          }
+        ],
+        "switch": {
+          "finishedAt": "2026-09-05T12:00:00Z",
+          "revision": 3,
+          "startedAt": "2026-09-05T12:00:00Z",
+          "state": "attention"
+        }
+      },
+      "profiles": [
+        {
+          "etag": "1",
+          "id": "mpr_test",
+          "keyHint": "sk-gate…1234",
+          "name": "Gateway",
+          "offers": [
+            {
+              "baseUrl": "https://gateway.example/v1",
+              "format": "openai_chat",
+              "models": [
+                {
+                  "efforts": [
+                    "high"
+                  ],
+                  "id": "gpt-test",
+                  "input": [
+                    "text"
+                  ],
+                  "name": "GPT Test"
+                }
+              ]
+            }
+          ],
+          "originHost": "gateway.example",
+          "source": "manual",
+          "state": "active",
+          "strategyName": null,
+          "updatedAt": "2026-09-05T12:00:00Z"
+        },
+        {
+          "etag": "1",
+          "id": "mpr_tokens",
+          "keyHint": "sk-tok…abcd",
+          "name": "Tokens Anywhere",
+          "offers": [
+            {
+              "baseUrl": "https://gateway.example/v1",
+              "format": "openai_chat",
+              "models": [
+                {
+                  "efforts": [
+                    "high"
+                  ],
+                  "id": "gpt-test",
+                  "input": [
+                    "text"
+                  ],
+                  "name": "GPT Test"
+                }
+              ]
+            }
+          ],
+          "originHost": "gateway.example",
+          "source": "tokens",
+          "state": "active",
+          "strategyName": "default",
+          "updatedAt": "2026-09-05T12:00:00Z"
+        }
+      ],
+      "secretConfigured": true,
+      "tokens": {
+        "available": true,
+        "link": {
+          "account": {
+            "displayName": "Test",
+            "email": "test@example.com",
+            "id": "acct"
+          },
+          "issuer": "https://tokens.example",
+          "linkedAt": "2026-09-05T12:00:00Z",
+          "relinkSoon": false,
+          "status": "linked"
+        },
+        "secretConfigured": true,
+        "tokensUrl": "https://tokens.example"
+      }
+    },
     "projects": [
       {
         "activeSessionCount": 1,
@@ -248,6 +399,144 @@
         "updatedAt": "2026-09-05T12:00:00Z",
         "userId": "account",
         "workspacePath": "/workspace"
+      }
+    ],
+    "runtimes": [
+      {
+        "active": true,
+        "available": true,
+        "capabilities": {},
+        "config": {},
+        "configured": true,
+        "connectorId": "device",
+        "createdAt": "2026-09-05T12:00:00Z",
+        "defaults": {},
+        "discovery": {},
+        "displayName": "Work",
+        "error": null,
+        "lastDiscoveredAt": "2026-09-05T12:00:00Z",
+        "managedBy": null,
+        "maturity": null,
+        "metadata": {},
+        "modelConnection": null,
+        "modelConnectionReport": null,
+        "modelConnectionStatus": null,
+        "name": "Work",
+        "phase": null,
+        "present": true,
+        "reason": null,
+        "runtimeId": "rti_work",
+        "runtimeType": "claude",
+        "schema": {
+          "properties": {},
+          "type": "object"
+        },
+        "secretFields": {},
+        "status": "running",
+        "typeDisplayName": "Claude",
+        "uiSchema": {},
+        "updatedAt": "2026-09-05T12:00:00Z"
+      },
+      {
+        "active": true,
+        "available": true,
+        "capabilities": {},
+        "config": {
+          "modelGateway": {
+            "baseUrl": "https://gateway.example/v1",
+            "protocol": "openai_chat"
+          }
+        },
+        "configured": true,
+        "connectorId": "device",
+        "createdAt": "2026-09-05T12:00:00Z",
+        "defaults": {},
+        "discovery": {},
+        "displayName": "Gateway",
+        "error": null,
+        "lastDiscoveredAt": "2026-09-05T12:00:00Z",
+        "managedBy": "model-config",
+        "maturity": "beta",
+        "metadata": {},
+        "modelConnection": {
+          "apply": "restart",
+          "catalog": {
+            "auto": false,
+            "manual": true
+          },
+          "configField": "modelGateway",
+          "maturity": "beta",
+          "modeField": null,
+          "modelsField": "customModels",
+          "modes": [
+            {
+              "id": "gateway",
+              "reason": null,
+              "supported": true
+            }
+          ],
+          "protocols": [
+            "openai_responses",
+            "openai_chat"
+          ],
+          "scope": "instance"
+        },
+        "modelConnectionReport": null,
+        "modelConnectionStatus": {
+          "externalOwner": null,
+          "mode": null,
+          "protocol": null,
+          "reason": null,
+          "scope": null,
+          "state": "saved_pending"
+        },
+        "name": "Gateway",
+        "phase": null,
+        "present": true,
+        "reason": null,
+        "runtimeId": "rti_gateway",
+        "runtimeType": "pi",
+        "schema": {
+          "properties": {
+            "modelGateway": {
+              "properties": {
+                "apiKey": {
+                  "type": "string"
+                },
+                "baseUrl": {
+                  "type": "string"
+                },
+                "protocol": {
+                  "enum": [
+                    "openai_responses",
+                    "openai_chat"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "baseUrl",
+                "apiKey"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "secretFields": {
+          "modelGateway.apiKey": {
+            "hint": "sk-gate…1234",
+            "set": true
+          }
+        },
+        "status": "running",
+        "typeDisplayName": "Pi",
+        "uiSchema": {
+          "modelGateway": {
+            "component": "modelGateway"
+          }
+        },
+        "updatedAt": "2026-09-05T12:00:00Z"
       }
     ],
     "serverTime": "2026-09-05T12:00:00Z",
@@ -372,6 +661,7 @@
           "default": false,
           "description": null,
           "displayName": "Model",
+          "group": null,
           "id": "model",
           "metadata": {},
           "reasoningItems": [
@@ -392,6 +682,98 @@
       "runtime": "claude"
     },
     "serverTime": "2026-09-05T12:00:00Z"
+  },
+  "modelChannel": {
+    "channel": "mpr_test",
+    "revision": 3,
+    "runtimes": [
+      {
+        "actual": "native",
+        "connectorId": "device",
+        "desired": "mpr_test",
+        "message": null,
+        "override": null,
+        "reason": "model_connection_unsupported",
+        "runningSessions": 0,
+        "runtimeId": "rti_work",
+        "state": "unsupported",
+        "step": null,
+        "updatedAt": "2026-09-05T12:00:00Z"
+      },
+      {
+        "actual": "mpr_test",
+        "connectorId": "device",
+        "desired": "mpr_test",
+        "message": null,
+        "override": null,
+        "reason": null,
+        "runningSessions": 0,
+        "runtimeId": "rti_gateway",
+        "state": "applied",
+        "step": null,
+        "updatedAt": "2026-09-05T12:00:00Z"
+      },
+      {
+        "actual": "native",
+        "connectorId": "device",
+        "desired": "tokens",
+        "message": "runtime did not confirm in time",
+        "override": "tokens",
+        "reason": "verify_timeout",
+        "runningSessions": 0,
+        "runtimeId": "rti_global",
+        "state": "restored",
+        "step": null,
+        "updatedAt": "2026-09-05T12:00:00Z"
+      }
+    ],
+    "switch": {
+      "finishedAt": "2026-09-05T12:00:00Z",
+      "revision": 3,
+      "startedAt": "2026-09-05T12:00:00Z",
+      "state": "attention"
+    }
+  },
+  "modelConfigError": {
+    "detail": {
+      "code": "profile_in_use",
+      "message": "devices still use this profile"
+    }
+  },
+  "modelGatewayError": {
+    "detail": {
+      "code": "gateway_unreachable",
+      "message": "the gateway did not answer"
+    }
+  },
+  "modelProfile": {
+    "etag": "1",
+    "id": "mpr_test",
+    "keyHint": "sk-gate…1234",
+    "name": "Gateway",
+    "offers": [
+      {
+        "baseUrl": "https://gateway.example/v1",
+        "format": "openai_chat",
+        "models": [
+          {
+            "efforts": [
+              "high"
+            ],
+            "id": "gpt-test",
+            "input": [
+              "text"
+            ],
+            "name": "GPT Test"
+          }
+        ]
+      }
+    ],
+    "originHost": "gateway.example",
+    "source": "manual",
+    "state": "active",
+    "strategyName": null,
+    "updatedAt": "2026-09-05T12:00:00Z"
   },
   "notices": {
     "notices": [
@@ -578,6 +960,27 @@
       "command": "plan",
       "raw": "/plan task"
     },
+    "confirmRuntimeChannel": {
+      "channel": "tokens",
+      "confirmNativeGlobal": true
+    },
+    "createModelProfile": {
+      "apiKey": "sk-test",
+      "name": "Gateway",
+      "offers": [
+        {
+          "baseUrl": "https://gateway.example/v1",
+          "format": "openai_chat",
+          "models": [
+            {
+              "efforts": [],
+              "id": "gpt-test",
+              "input": []
+            }
+          ]
+        }
+      ]
+    },
     "createProject": {
       "connectorId": "device",
       "manuallyCreated": true,
@@ -602,6 +1005,14 @@
         "model": "sel_model"
       }
     },
+    "detectModelProfile": {
+      "apiKey": "sk-test",
+      "baseUrl": "https://gateway.example/v1",
+      "name": "Gateway"
+    },
+    "followChannel": {
+      "channel": null
+    },
     "message": {
       "attachments": [],
       "clientMessageId": "client",
@@ -623,10 +1034,18 @@
     "renameRuntime": {
       "name": "Work"
     },
+    "retryAll": {},
+    "retryRuntime": {
+      "connectorId": "device",
+      "runtimeId": "rti_gateway"
+    },
     "selection": {
       "selections": {
         "effort": null
       }
+    },
+    "setChannel": {
+      "channel": "tokens"
     },
     "steer": {
       "attachments": [],
@@ -642,6 +1061,14 @@
     }
   },
   "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v2/admin/integrations/tokens"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v2/admin/integrations/tokens"
+    },
     {
       "method": "POST",
       "path": "/api/v2/auth/change-password"
@@ -689,6 +1116,10 @@
     {
       "method": "POST",
       "path": "/api/v2/auth/mobile-login/qr"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/auth/mobile-login/refresh"
     },
     {
       "method": "POST",
@@ -852,6 +1283,82 @@
     },
     {
       "method": "GET",
+      "path": "/api/v2/integrations/tokens"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/integrations/tokens/account"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/integrations/tokens/callback"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v2/integrations/tokens/link"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/integrations/tokens/link"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v2/integrations/tokens/models"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/integrations/tokens/start"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/integrations/tokens/sync"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/integrations/tokens/usage"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/model-config/channel"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v2/model-config/channel"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/model-config/channel/retry"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v2/model-config/channel/runtimes/{connector_id}/{runtime_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/model-config/channel/runtimes/{connector_id}/{runtime_id}/switch-now"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/model-profiles"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/model-profiles"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v2/model-profiles/{profile_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v2/model-profiles/{profile_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/model-profiles/{profile_id}/rotate-key"
+    },
+    {
+      "method": "GET",
       "path": "/api/v2/projects"
     },
     {
@@ -892,6 +1399,10 @@
     },
     {
       "method": "GET",
+      "path": "/api/v2/sessions/list"
+    },
+    {
+      "method": "GET",
       "path": "/api/v2/sessions/local/{session_id}/{file_id}"
     },
     {
@@ -913,6 +1424,10 @@
     {
       "method": "GET",
       "path": "/api/v2/sessions/{session_id}/attachments/{file_id}/open"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/sessions/{session_id}/attachments/{file_id}/thumb"
     },
     {
       "method": "GET",
@@ -1031,8 +1546,14 @@
     "displayName": "Work",
     "error": null,
     "lastDiscoveredAt": "2026-09-05T12:00:00Z",
+    "managedBy": null,
+    "maturity": null,
     "metadata": {},
+    "modelConnection": null,
+    "modelConnectionReport": null,
+    "modelConnectionStatus": null,
     "name": "Work",
+    "phase": null,
     "present": true,
     "reason": null,
     "runtimeId": "rti_work",
@@ -1041,6 +1562,7 @@
       "properties": {},
       "type": "object"
     },
+    "secretFields": {},
     "status": "running",
     "typeDisplayName": "Claude",
     "uiSchema": {},
@@ -1062,8 +1584,10 @@
         "implementationType": "claude_sdk",
         "instancePolicy": "multiple",
         "lastDiscoveredAt": "2026-09-05T12:00:00Z",
+        "maturity": null,
         "maxInstances": 3,
         "metadata": {},
+        "modelConnection": null,
         "present": true,
         "reason": null,
         "recommendationRank": 1,
@@ -1095,8 +1619,14 @@
         "displayName": "Work",
         "error": null,
         "lastDiscoveredAt": "2026-09-05T12:00:00Z",
+        "managedBy": null,
+        "maturity": null,
         "metadata": {},
+        "modelConnection": null,
+        "modelConnectionReport": null,
+        "modelConnectionStatus": null,
         "name": "Work",
+        "phase": null,
         "present": true,
         "reason": null,
         "runtimeId": "rti_work",
@@ -1105,6 +1635,7 @@
           "properties": {},
           "type": "object"
         },
+        "secretFields": {},
         "status": "running",
         "typeDisplayName": "Claude",
         "uiSchema": {},
@@ -1229,6 +1760,7 @@
             "default": false,
             "description": null,
             "displayName": "Model",
+            "group": null,
             "id": "model",
             "metadata": {},
             "reasoningItems": [
@@ -1536,6 +2068,12 @@
     "serverTime": "2026-09-05T12:00:00Z",
     "sessionId": "session"
   },
+  "tokensLinkStart": {
+    "startUrl": "https://example.test/api/v2/integrations/tokens/start?ticket=test"
+  },
+  "tokensUnlink": {
+    "revoked": true
+  },
   "upload": {
     "attachments": [
       {
@@ -1547,7 +2085,8 @@
         "openUrl": "/api/v2/sessions/session/attachments/file/open",
         "sessionId": "session",
         "sha256": "hash",
-        "size": 5
+        "size": 5,
+        "thumbnailUrl": ""
       }
     ],
     "serverTime": "2026-09-05T12:00:00Z"

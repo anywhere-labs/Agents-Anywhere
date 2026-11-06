@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from connector.runtime_protocol.errors import RuntimeUnsupportedError
+from connector.runtime_protocol.model_connection import ModelConnectionStatus
 from connector.runtime_protocol.models import (
     PreparedSessionTimelineSync,
     RuntimeAttachment,
@@ -55,6 +56,15 @@ class AgentRuntime(ABC):
     async def start(self) -> None:
         pass
 
+    def model_connection_status(self) -> ModelConnectionStatus | None:
+        """What this instance did with its model connection, when only it knows.
+
+        Adapters that hand the connection to another process while starting
+        report the outcome here; otherwise the provider's report from the
+        config is used.
+        """
+        return None
+
     async def execute_workflow(self, request: RuntimeWorkflowRequest) -> RuntimeWorkflowResult:
         """Control-plane operation: never queue behind an engine/UI continuation."""
         raise RuntimeUnsupportedError(request.operation)
@@ -67,6 +77,15 @@ class AgentRuntime(ABC):
 
     async def stop(self) -> None:
         pass
+
+    async def apply_model_setting(self, config: RuntimeConfig) -> bool:
+        """Take a config whose only change is the ``model`` setting, without restarting.
+
+        The setting only decides what new sessions use, so a runtime that can
+        swap it in place returns True and republishes its model catalog.
+        Returning False lets the supervisor restart the runtime as usual.
+        """
+        return False
 
     async def get_config(self) -> RuntimeConfig:
         raise RuntimeUnsupportedError("get_config")

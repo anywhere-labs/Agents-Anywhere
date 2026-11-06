@@ -1,0 +1,9 @@
+{
+  "configDigest": null,
+  "probe": {
+    "code": "not_configured",
+    "state": "skipped"
+  },
+  "runtime": "codex",
+  "runtimeId": "codex"
+}

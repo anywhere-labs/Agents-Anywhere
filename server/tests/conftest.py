@@ -80,6 +80,9 @@ _API_ROOTS = (
     "/connectors",
     "/dashboard",
     "/health",
+    "/integrations",
+    "/model-config",
+    "/model-profiles",
     "/oauth",
     "/pairing",
     "/projects",
@@ -195,3 +198,9 @@ def fresh_database_url() -> Iterator[str]:
         asyncio.run(
             _run_maintenance(maintenance, f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
         )
+
+
+@pytest.fixture
+def server_secret(monkeypatch):
+    """A Server secret long enough for the secret box."""
+    monkeypatch.setenv("AGENT_SERVER_SECRET", "test-server-secret-0123456789abcdef")

@@ -502,6 +502,13 @@ class DeviceRuntimeRepository(
         config: dict[str, Any],
     ) -> dict[str, Any]: ...
 
+    async def set_device_runtime_model_connection(
+        self,
+        connector_id: str,
+        runtime_id: str,
+        report: dict[str, Any] | None,
+    ) -> dict[str, Any]: ...
+
     async def set_device_runtime_status(
         self,
         connector_id: str,

@@ -62,6 +62,18 @@ def error_payload(exc: BaseException) -> dict[str, Any]:
     }
 
 
+def only_model_setting_changed(left: RuntimeConfig | None, right: RuntimeConfig) -> bool:
+    """Whether the configs differ only in the ``model`` setting new sessions use."""
+    if left is None or left.runtime != right.runtime:
+        return False
+    before, after = dict(left.values), dict(right.values)
+    if before.get("model") == after.get("model"):
+        return False
+    before.pop("model", None)
+    after.pop("model", None)
+    return before == after
+
+
 def same_effective_config(left: RuntimeConfig | None, right: RuntimeConfig) -> bool:
     if left is None:
         return False

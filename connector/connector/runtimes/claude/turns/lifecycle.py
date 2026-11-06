@@ -400,6 +400,9 @@ class ClaudeTurnRunner:
             emitted_final_assistant_content = False
             stream_accumulator = ClaudeStreamAccumulator()
             async for message in receive_response_messages(client):
+                retry_item = self.timeline.retry_item_for_message(session, turn_id, message)
+                if retry_item is not None:
+                    await self.notifications.timeline_activity.timeline_item_upsert(retry_item)
                 goal_port = getattr(self.host, "_goal_port", None)
                 if goal_port is not None:
                     goal_port.observe_message(session.session_id, message)
@@ -821,6 +824,9 @@ class ClaudeTurnRunner:
         update_state: bool = True,
     ) -> None:
         reason = terminal.reason or execution.interrupt_reason
+        retry_item = self.timeline.finish_retry(session, execution.turn_id, terminal.status)
+        if retry_item is not None:
+            await self.notifications.timeline_activity.timeline_item_upsert(retry_item)
         if terminal.status == "failed":
             metadata = {
                 "source": "claude.turn.failed",

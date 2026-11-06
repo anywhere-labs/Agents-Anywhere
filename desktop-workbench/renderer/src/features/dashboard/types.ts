@@ -75,9 +75,163 @@ export type DeviceRuntimeView = {
   error: Record<string, unknown> | null;
   /** Step inside a non-error status, e.g. syncing while starting. Informational only. */
   phase?: Record<string, unknown> | null;
+  /** Declared by the runtime adapter; shown beside the status, never instead of it. */
+  maturity?: RuntimeMaturity | null;
+  /** How the runtime takes a model connection; absent when it takes none. */
+  modelConnection?: ModelConnectionCapability | null;
+  modelConnectionStatus?: ModelConnectionStatus | null;
+  /** Saved write-only values by config path; the values themselves are never sent. */
+  secretFields?: Record<string, { set?: boolean; hint?: string | null }>;
+  /** Set on instances another feature created, such as `model-config`. */
+  managedBy?: string | null;
   lastDiscoveredAt: string;
   createdAt?: string;
   updatedAt: string;
+};
+
+export type RuntimeMaturity = "experimental" | "beta" | "stable";
+export type ModelProtocol = "openai_responses" | "openai_chat" | "anthropic";
+export type ModelConnectionScope = "instance" | "session" | "native_global";
+
+export type ModelConnectionCapability = {
+  maturity: RuntimeMaturity;
+  configField: string;
+  modelsField: string | null;
+  protocols: ModelProtocol[];
+  modes: { id: string; supported: boolean; reason: string | null }[];
+  modeField?: string | null;
+  /** Config field holding the model new sessions use, `{modelId, effortId?}`; absent when the runtime takes none. */
+  modelField?: string | null;
+  scope: ModelConnectionScope;
+  catalog: { auto: boolean; manual: boolean };
+  apply: "immediate" | "new_session" | "restart";
+};
+
+export type ModelConnectionState =
+  | "not_configured"
+  | "saved_pending"
+  | "applied"
+  | "failed"
+  | "managed_externally";
+
+export type ModelConnectionStatus = {
+  state: ModelConnectionState;
+  protocol?: ModelProtocol | null;
+  scope?: ModelConnectionScope | null;
+  mode?: string | null;
+  reason?: string | null;
+  externalOwner?: string | null;
+};
+
+export type ModelSpec = {
+  id: string;
+  name?: string | null;
+  efforts?: string[];
+  input?: ("text" | "image")[];
+  vendor?: string | null;
+  contextWindow?: number | null;
+  maxOutputTokens?: number | null;
+};
+/** Models turned off, and names shown in place of the model's own; Agents Anywhere only. */
+export type ModelPreferences = { disabled: string[]; names: Record<string, string> };
+export type ModelOffer = { format: ModelProtocol; baseUrl: string; models: ModelSpec[] };
+
+export type ModelProfile = {
+  id: string;
+  source: "tokens" | "manual";
+  name: string;
+  originHost: string;
+  offers: ModelOffer[];
+  preferences?: ModelPreferences;
+  keyHint: string | null;
+  strategyName: string | null;
+  state: "active" | "detached";
+  etag: string;
+  updatedAt: string;
+};
+
+export type ModelAssignmentStatus = "applied" | "modified" | "outdated";
+
+/** The channel a runtime actually uses, recorded once AA wrote it. */
+export type ModelAssignment = {
+  connectorId: string;
+  runtimeId: string;
+  profileId: string;
+  offerFormat: ModelProtocol;
+  createdRuntime: boolean;
+  status: ModelAssignmentStatus;
+  error?: { code?: string; message?: string } | null;
+  appliedAt: string | null;
+  modelConnectionStatus: ModelConnectionStatus | null;
+};
+
+export type TokensLinkStatus = {
+  available: boolean;
+  tokensUrl: string | null;
+  secretConfigured: boolean;
+  link: {
+    status: "linked" | "reauth_required";
+    issuer: string;
+    account: { id: string; displayName: string | null; email: string | null };
+    linkedAt: string;
+    relinkSoon: boolean;
+  } | null;
+};
+
+/** `native` (the device's own configuration), `tokens` (Anywhere) or a manual profile ID. */
+export type ModelChannel = "native" | "tokens" | (string & {});
+
+export type ChannelRuntimeStateName =
+  | "applied"
+  | "pending"
+  | "waiting_online"
+  | "switching"
+  | "restoring"
+  | "restored"
+  | "failed"
+  | "unsupported";
+
+/** One runtime's place in the switch to the channel it should use. */
+export type ChannelRuntimeState = {
+  connectorId: string;
+  runtimeId: string;
+  /** Set when this runtime does not follow the current channel. */
+  override: ModelChannel | null;
+  desired: ModelChannel;
+  /** The channel in use; changes only after the new one is verified. */
+  actual: ModelChannel;
+  state: ChannelRuntimeStateName;
+  step?: "preparing" | "activating" | "verifying" | null;
+  reason?: string | null;
+  message?: string | null;
+  updatedAt?: string | null;
+  desiredGeneration?: number;
+  appliedGeneration?: number | null;
+  observedAt?: string | null;
+  retryAt?: string | null;
+};
+
+export type ModelChannelSwitch = {
+  revision: number;
+  state: "running" | "done" | "attention";
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+
+/** The current channel and how far every runtime got switching to it. */
+export type ModelChannelState = {
+  channel: ModelChannel;
+  revision: number;
+  switch: ModelChannelSwitch | null;
+  runtimes: ChannelRuntimeState[];
+};
+
+export type ModelConfigOverview = {
+  secretConfigured: boolean;
+  profiles: ModelProfile[];
+  assignments: ModelAssignment[];
+  channel?: ModelChannelState;
+  tokens?: TokensLinkStatus;
 };
 
 export type RuntimeInstancePolicy = "single" | "multiple";
@@ -101,6 +255,8 @@ export type RuntimeTypeView = {
   metadata: Record<string, unknown>;
   instancePolicy: RuntimeInstancePolicy;
   maxInstances: number | null;
+  maturity?: RuntimeMaturity | null;
+  modelConnection?: ModelConnectionCapability | null;
   lastDiscoveredAt: string;
   createdAt: string;
   updatedAt: string;
@@ -263,6 +419,8 @@ export type DashboardSnapshotMessage = {
   sessions: SessionView[];
   /** Live runtime instances, so device pages do not need a second source of truth. */
   runtimes?: DeviceRuntimeView[];
+  /** Model profiles, where they are applied, and the Tokens Anywhere link; never keys. */
+  modelConfig?: ModelConfigOverview;
   sessionPages: {
     active: SessionPageInfo;
     archived: SessionPageInfo;

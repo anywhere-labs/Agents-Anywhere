@@ -155,6 +155,11 @@ trailing delivery, and every Dashboard socket of that user on the worker shares 
 snapshot build. A client therefore sees the latest state at most one interval late
 and never misses the final change of a burst.
 
+The snapshot also carries the owned runtime instances (`runtimes`) and the model
+configuration overview (`modelConfig`: profiles, where they are applied and the
+Tokens Anywhere link). Neither contains API keys or tokens; see
+[Model configuration API](./model-config.md).
+
 Each snapshot contains the complete owned project and session metadata inventories,
 including both active and archived sessions. `sessionPages` reports no more pages.
 Web and iOS group, filter and sort these sessions locally. Expanding a project,
