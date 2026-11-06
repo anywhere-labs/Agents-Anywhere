@@ -68,6 +68,8 @@ API key 形如 `mk_<id>_<随机 hex>`，Router 按 id 查表并比对 SHA-256。
 - 快照页流可取消（调用取消即中止）；`captureId` 让被取消的旧流无法污染下一次捕获。提交被永久拒绝时返回 `accepted:false` 并给出隔离原因 `history_too_large` / `history_rejected`。
 - 隔离、退避重捕（30 s 起，超大 5 min 起，上限 30 min）、健康上报（`starting/syncing → running`）、单会话失败隔离与 1.0 相同。
 - 不再有上传进度续期：一次 ingest 调用就是一个慢请求，连接由 MeshCall keepalive 维持。
+- 流式草稿限速：只含 `status: running` 条目更新（`timeline.itemUpsert`）的批次连续出现时，Connector 照常立即落库，但要到距这次提交开始满 0.25 s 才返回，插件在等待期间合并后续的流式片段；单独一个这样的批次和其他批次不等待。返回仍然表示已 ingest。
+- 隔离状态由 Runtime 持有，重新订阅或重建同步流后仍然有效，未到期的重捕照常按时请求 `refreshSync`。到期前插件再提交同一会话的快照，Connector 不暂存、不上传，直接返回 `accepted:false` 和原来的隔离原因。
 
 ## 操作类型（`operations[]`）
 
