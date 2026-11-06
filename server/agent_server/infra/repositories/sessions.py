@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from agent_server.infra.repositories.store_support import *
 from agent_server.infra.repositories.projects import _clean_workspace_path
 from agent_server.core.models import ConnectorSessionResolution
+from agent_server.infra.db.engine import read_connection
 
 
 SESSION_CURSOR_VERSION = 1
@@ -264,7 +265,7 @@ def _session_view_query(latest_item: tuple[Any, Any] | None = None) -> Any:
 
 class SessionRepositoryMixin:
     async def get_session_runtime(self, session_id: str) -> str | None:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(sessions_t.c.runtime).where(sessions_t.c.id == session_id)
@@ -401,7 +402,7 @@ class SessionRepositoryMixin:
     ) -> SessionView:
         identity = _runtime_identity(runtime, runtime_id)
         canonical_session_id = session_id
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             existing = (
                 await conn.execute(
                     select(sessions_t.c.id).where(sessions_t.c.id == session_id)
@@ -629,7 +630,7 @@ class SessionRepositoryMixin:
         runtime_id: str | None = None,
     ) -> str:
         identity = _runtime_identity(runtime, runtime_id) if runtime is not None else None
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             explicit_query = select(
                 sessions_t.c.id,
                 sessions_t.c.origin,
@@ -691,7 +692,7 @@ class SessionRepositoryMixin:
         external-session match, otherwise the explicit row.
         """
 
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             explicit = (
                 await conn.execute(
                     select(
@@ -794,7 +795,7 @@ class SessionRepositoryMixin:
                 sessions_t.c.id.desc(),
             )
         )
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (await conn.execute(query)).mappings().all()
         return await self._sessions_from_rows(rows)
 
@@ -861,7 +862,7 @@ class SessionRepositoryMixin:
                     ),
                 )
             )
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (await conn.execute(query)).mappings().all()
         page_rows = rows[:limit]
         sessions = await self._sessions_from_rows(page_rows)
@@ -917,7 +918,7 @@ class SessionRepositoryMixin:
     ) -> list[str]:
         now = utc_now()
         changed: list[str] = []
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (
                 await conn.execute(
                     select(
@@ -1300,7 +1301,7 @@ class SessionRepositoryMixin:
         )
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (await conn.execute(query)).mappings().all()
         return await self._sessions_from_rows(rows)
 
@@ -1316,7 +1317,7 @@ class SessionRepositoryMixin:
             )
             .order_by(sessions_t.c.created_at.desc())
         )
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (await conn.execute(query)).mappings().all()
         return await self._sessions_from_rows(rows)
 
@@ -1326,7 +1327,7 @@ class SessionRepositoryMixin:
         query = select(connectors_t.c.user_id).select_from(
             sessions_t.join(connectors_t, sessions_t.c.connector_id == connectors_t.c.id)
         ).where(sessions_t.c.id == session_id, connectors_t.c.revoked == 0)
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (await conn.execute(query)).first()
         if row is None:
             raise KeyError(session_id)
@@ -1339,7 +1340,7 @@ class SessionRepositoryMixin:
         )
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (await conn.execute(query)).mappings().first()
         if row is None:
             raise KeyError(session_id)
@@ -1368,7 +1369,7 @@ class SessionRepositoryMixin:
         )
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (await conn.execute(query)).mappings().first()
         if row is None:
             raise KeyError(session_id)
@@ -1402,7 +1403,7 @@ class SessionRepositoryMixin:
 
 
     async def session_owned_by_connector(self, session_id: str, connector_id: str) -> bool:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(sessions_t.c.id)
@@ -1418,7 +1419,7 @@ class SessionRepositoryMixin:
 
 
     async def get_session_seq(self, session_id: str) -> int:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(sessions_t.c.seq).where(sessions_t.c.id == session_id)
@@ -1527,7 +1528,7 @@ class SessionRepositoryMixin:
                 _session_view_query()
                 .where(sessions_t.c.id.in_(owned_ids))
             )
-            async with self._engine.connect() as conn:
+            async with read_connection(self._engine) as conn:
                 view_rows = (await conn.execute(view_query)).mappings().all()
             by_id = {
                 session.id: session
@@ -1554,7 +1555,7 @@ class SessionRepositoryMixin:
                 connectors_t.c.user_id == user_id,
                 connectors_t.c.revoked == 0,
             )
-            async with self._engine.connect() as conn:
+            async with read_connection(self._engine) as conn:
                 owned = (await conn.execute(conn_query)).first()
             if owned is None:
                 raise KeyError(connector_id)
@@ -1593,7 +1594,7 @@ class SessionRepositoryMixin:
             _session_view_query()
             .where(sessions_t.c.id.in_(target_ids))
         )
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             view_rows = (await conn.execute(view_query)).mappings().all()
         return await self._sessions_from_rows(view_rows)
 
@@ -1685,7 +1686,7 @@ class SessionRepositoryMixin:
                 _session_view_query()
                 .where(sessions_t.c.id.in_(owned_ids))
             )
-            async with self._engine.connect() as conn:
+            async with read_connection(self._engine) as conn:
                 view_rows = (await conn.execute(view_query)).mappings().all()
             by_id = {session.id: session for session in await self._sessions_from_rows(view_rows)}
             sessions = [by_id[sid] for sid in ordered if sid in by_id]
@@ -1714,7 +1715,7 @@ class SessionRepositoryMixin:
         )
         if user_id is not None:
             statement = statement.where(connectors_t.c.user_id == user_id)
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (await conn.execute(statement)).all()
         owned_ids = {str(row.id) for row in rows}
         return [session_id for session_id in ordered if session_id in owned_ids]
@@ -1877,7 +1878,7 @@ class SessionRepositoryMixin:
             .order_by(timeline_items_t.c.order_seq.asc(), timeline_items_t.c.updated_seq.asc())
             .limit(1)
         )
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (await conn.execute(query)).first()
         if row is None:
             return None
@@ -1924,7 +1925,7 @@ class SessionRepositoryMixin:
         query = select(sessions_t.c.id, first_user_message.label("payload_json")).where(
             sessions_t.c.id.in_(session_ids)
         )
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (await conn.execute(query)).all()
         derived: dict[str, str] = {}
         for session_id, payload_json in rows:
