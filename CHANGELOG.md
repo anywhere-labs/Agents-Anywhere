@@ -57,6 +57,8 @@
   - 设备和会话的文件浏览里点开文档同样进入预览页，文本文件预览页右上角也可以下载、分享或用其他应用打开。
   - Word 和 PowerPoint 97-2003（`.doc`、`.ppt`）只显示文字内容，`.docx`、`.pptx`、`.xlsx` 为简化排版；Markdown 中引用工作设备上的图片会一并显示。
 
+  [#567](https://github.com/anywhere-labs/Agents-Anywhere/pull/567)
+
 ## 2.2.0（日期待定）
 
 [发布说明](docs/releases/2.2.0.md) · [与 2.1.0 的差异](https://github.com/anywhere-labs/Agents-Anywhere/compare/v2.1.0...main)
