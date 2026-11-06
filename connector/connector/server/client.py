@@ -184,6 +184,7 @@ class BackendRpcClient:
                         close_reason,
                         self.config.reconnect_seconds,
                     )
+                    await self._egress.discard_route()
                     await asyncio.sleep(self.config.reconnect_seconds)
                 except ConnectorNetworkError as exc:
                     logger.warning(
@@ -191,6 +192,7 @@ class BackendRpcClient:
                         exc,
                         self.config.reconnect_seconds,
                     )
+                    await self._egress.discard_route()
                     await asyncio.sleep(self.config.reconnect_seconds)
                 except OSError as exc:
                     logger.warning(
@@ -198,6 +200,7 @@ class BackendRpcClient:
                         certificate_hint(exc, self.config.server_url) or exc,
                         self.config.reconnect_seconds,
                     )
+                    await self._egress.discard_route()
                     await asyncio.sleep(self.config.reconnect_seconds)
                 except Exception:
                     if ingest_flush_task.done():
@@ -206,6 +209,7 @@ class BackendRpcClient:
                         "connector loop failed; reconnecting in {}s",
                         self.config.reconnect_seconds,
                     )
+                    await self._egress.discard_route()
                     await asyncio.sleep(self.config.reconnect_seconds)
         finally:
             relay_tasks = [task for _, task in self._terminal_relay_tasks.values()]

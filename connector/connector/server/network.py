@@ -69,6 +69,9 @@ class NetworkEgress:
         self.server_url = server_url
         self.configured = configured
         self._current: Egress | None = None
+        # The client of a Connector lives as long as its run loop, so one transport
+        # is all this needs to track.
+        self._transport: _EgressTransport | None = None
 
     @property
     def current(self) -> Egress:
@@ -78,7 +81,20 @@ class NetworkEgress:
         self._store(await asyncio.to_thread(self._resolve))
 
     def http_client(self, timeout: httpx.Timeout | float) -> httpx.AsyncClient:
-        return httpx.AsyncClient(timeout=timeout, trust_env=False, transport=_EgressTransport(self))
+        self._transport = _EgressTransport(self)
+        return httpx.AsyncClient(timeout=timeout, trust_env=False, transport=self._transport)
+
+    async def discard_route(self) -> None:
+        """Retire the current pool so later requests open fresh connections.
+
+        A link that goes away without a FIN or RST leaves sockets in the pool that the
+        peer has already forgotten: the pool still hands them out, and a request that
+        gets one blocks until the read timeout. Reconnecting on the pool that just
+        failed can turn one dropped connection into minutes of failed attempts.
+        Requests already in flight finish on the route they started on.
+        """
+        if self._transport is not None:
+            await self._transport.discard_route()
 
     def websocket_options(self, url: str) -> dict[str, Any]:
         """Keyword arguments for ``websockets.connect``; ``ssl`` is only valid for wss."""
@@ -175,6 +191,13 @@ class _EgressTransport(httpx.AsyncBaseTransport):
         self._retired.clear()
         self._route = None
         await asyncio.gather(*(route.transport.aclose() for route in routes), return_exceptions=True)
+
+    async def discard_route(self) -> None:
+        """Put the current pool aside; the next request starts a new one."""
+        previous, self._route = self._route, None
+        if previous is not None:
+            self._retired.add(previous)
+            await self._close_if_idle(previous)
 
     async def _current_route(self) -> _Route:
         egress = self._egress.current

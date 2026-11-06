@@ -337,6 +337,54 @@ def test_ingest_survives_a_route_change_during_its_token_refresh(
     asyncio.run(scenario())
 
 
+def test_discarding_the_route_opens_a_fresh_pool(pools: list[FakeTransport]) -> None:
+    # A connection that dies without a FIN or RST stays in the pool as a socket the peer
+    # has forgotten, so the next attempt must not be handed one of them.
+    async def scenario() -> None:
+        egress = NetworkEgress(SERVER)
+        client = egress.http_client(5)
+        await client.get(f"{SERVER}/a")
+        old = pools[0]
+
+        await egress.discard_route()
+        assert old.closed is True, "an idle pool is closed right away"
+
+        await client.get(f"{SERVER}/b")
+        assert len(pools) == 2
+        assert [request.url.path for request in pools[1].requests] == ["/b"]
+        await client.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_discarding_keeps_a_request_in_flight_and_closes_the_pool_when_idle(pools: list[FakeTransport]) -> None:
+    # The client is never closed: an upload can hold it across a token refresh, and a
+    # closed client raises there, which is not a network error the loop would retry.
+    async def scenario() -> None:
+        egress = NetworkEgress(SERVER)
+        client = egress.http_client(5)
+        await client.get(f"{SERVER}/a")
+        old = pools[0]
+        old.gate = asyncio.Event()
+        slow = asyncio.create_task(client.get(f"{SERVER}/slow"))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        await egress.discard_route()
+        assert old.closed is False, "a pool still carrying a request is kept"
+
+        assert (await client.get(f"{SERVER}/b")).status_code == 200
+        assert old.closed is False
+        assert pools[1].requests[-1].url.path == "/b"
+
+        old.gate.set()
+        assert (await slow).status_code == 200
+        assert old.closed is True, "the pool closes once the request finishes"
+        await client.aclose()
+
+    asyncio.run(scenario())
+
+
 def test_an_https_proxy_is_checked_with_the_shared_trust_store(pools: list[FakeTransport]) -> None:
     async def scenario() -> None:
         client = NetworkEgress(SERVER, "https://proxy.test:443").http_client(5)
