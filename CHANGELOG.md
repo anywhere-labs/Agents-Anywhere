@@ -68,6 +68,7 @@
 ### Android
 
 - Android 的「模型渠道」与 Web、Desktop 相同：首页列出渠道和「已应用」，点进渠道后再应用、查看配置和 Runtime；Tokens Anywhere 按「账户／模型与连接／Runtime」分页，可以退出账户。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- Android 客户端在内置浏览器里登录依赖视口单位（`vh`/`dvh`）的 OIDC 提供方（已在使用中的自建 Authentik）时不再白屏：视口高度修正现在对身份提供方页面同样生效。
 
 ### iOS
 
