@@ -1,0 +1,13 @@
+{
+  "plural": [
+    {
+      "name": "devices_agents_online",
+      "value": [
+        {
+          "quantity": "other",
+          "value": "%d 个 Agent 在线"
+        }
+      ]
+    }
+  ]
+}

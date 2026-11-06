@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "Agents Anywhere HarmonyOS client"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "Agents Anywhere"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "Agents Anywhere"
+    }
+  ]
+}

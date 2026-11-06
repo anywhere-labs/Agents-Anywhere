@@ -1,0 +1,40 @@
+{
+  "app": {
+    "products": [
+      {
+        "name": "default",
+        /*
+         * Minimum supported OS is HarmonyOS NEXT 5.0.0 (API 12). The local
+         * toolchain ships the 6.1.0 (API 23) SDK, so the compiler does not
+         * reject newer-only APIs on its own: every API used by this module is
+         * checked against the API 12 availability notes by hand.
+         */
+        "compatibleSdkVersion": "5.0.0(12)",
+        "targetSdkVersion": "6.1.0(23)",
+        "runtimeOS": "HarmonyOS"
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}

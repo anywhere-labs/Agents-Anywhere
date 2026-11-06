@@ -16,6 +16,7 @@
 | Connector 走哪条网络、代理与证书排查 | [Connector 网络](connector-network.md) |
 | 接入无图形界面的机器 | [Connector](../connector/README.md) |
 | Android 构建 | [Android](../android/README.md) |
+| HarmonyOS 构建 | [HarmonyOS](../harmony/README.md) |
 | 架构和 API | [Server 架构](server-architecture.md)、[API](api/README.md) |
 | 使用统一原生 Plan、流式卡片和执行确认 | [Plan 使用与 API](api/planning.md)；[设计与实施计划](runtime-protocol/unified-plan-implementation-plan.md) |
 | 使用 Codex、Claude Code 目标模式 | [Goal 使用、API 与持久化](api/goals.md) |

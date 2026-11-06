@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# Agents Anywhere HarmonyOS build entry point.
+#
+# Mirrors hvigorw.bat: resolves the hvigor bundled with the local DevEco Studio
+# installation instead of downloading it, so the build stays reproducible
+# offline and pinned to the same build system the IDE uses.
+#
+# Set DEVECO_HOME to override the installation directory.
+#
+# Usage:
+#   ./hvigorw assembleHap
+#   ./hvigorw clean
+# ---------------------------------------------------------------------------
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ -z "${DEVECO_HOME:-}" ]]; then
+  for candidate in \
+    "/Applications/DevEco-Studio.app/Contents" \
+    "$HOME/Applications/DevEco-Studio.app/Contents" \
+    "/opt/deveco-studio" \
+    "$HOME/deveco-studio"; do
+    if [[ -f "$candidate/tools/hvigor/bin/hvigorw.js" ]]; then
+      DEVECO_HOME="$candidate"
+      break
+    fi
+  done
+fi
+
+if [[ -z "${DEVECO_HOME:-}" ]]; then
+  echo "ERROR: DevEco Studio was not found." >&2
+  echo "Set DEVECO_HOME to the DevEco Studio installation directory and retry." >&2
+  exit 1
+fi
+
+export DEVECO_SDK_HOME="${DEVECO_SDK_HOME:-$DEVECO_HOME/sdk}"
+
+HVIGOR_JS="$DEVECO_HOME/tools/hvigor/bin/hvigorw.js"
+if [[ ! -f "$HVIGOR_JS" ]]; then
+  echo "ERROR: hvigor was not found at \"$HVIGOR_JS\"." >&2
+  exit 1
+fi
+
+NODE_EXE="$DEVECO_HOME/tools/node/bin/node"
+if [[ ! -x "$NODE_EXE" ]]; then
+  NODE_EXE="$(command -v node)"
+fi
+
+exec "$NODE_EXE" "$HVIGOR_JS" "$@"
