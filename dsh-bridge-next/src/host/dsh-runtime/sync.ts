@@ -475,6 +475,15 @@ export class SyncFeed {
             sourceObservedAt: new Date(change.event.time).toISOString(),
             outcome: change.event.data.reason.kind === 'error' ? 'failed'
               : ['aborted', 'interrupted'].includes(change.event.data.reason.kind) ? 'interrupted' : 'completed',
+            // The Connector turns a failed turn into a visible notice and a settled
+            // timeline message; without the reason the user only sees silence.
+            ...(change.event.data.reason.kind === 'error' ? {
+              failure: {
+                message: change.event.data.reason.error?.message ?? null,
+                code: change.event.data.reason.error?.code ?? null,
+                seq: Number(change.event.seq),
+              },
+            } : {}),
           }])
           if (['turn/start', 'turn/end', 'approval/asked', 'approval/decided', 'model/selection', 'request/header',
             'permission/preset', 'sandbox/mode', 'approval/policy', 'agent-preset/selected'].includes(change.event.type)) statuses.add(id)
