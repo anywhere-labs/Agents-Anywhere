@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 
-from agent_server.core.models import TimelineItemIn
 from test_backend_mvp import (
     _create_extra_session,
     create_connector_and_session,
     dashboard_ws_ticket,
     make_client,
 )
+
+from agent_server.core.models import TimelineItemIn
 
 
 def test_inventory_and_push_include_all_owned_active_and_archived_sessions(tmp_path):
@@ -154,8 +155,9 @@ def test_inventory_projects_the_newest_timeline_item_of_each_session(tmp_path):
 
 
 def test_unchanged_source_fast_path_preserves_seq_archive_and_scan_order(tmp_path):
-    from agent_server.infra.db import sessions as sessions_t
     from sqlalchemy import select
+
+    from agent_server.infra.db import sessions as sessions_t
 
     client = make_client(tmp_path)
     connector_id, _, session_id, _ = create_connector_and_session(client)
@@ -169,22 +171,89 @@ def test_unchanged_source_fast_path_preserves_seq_archive_and_scan_order(tmp_pat
         # Repeated observations must not re-archive a session the user restored.
         from sqlalchemy import update
         async with store.engine.begin() as conn:
-            await conn.execute(update(sessions_t).where(sessions_t.c.id == session_id).values(archived=0, source_scan_token="current-scan"))
+            await conn.execute(update(sessions_t).where(sessions_t.c.id == session_id).values(archived=0, source_changed_seq=-1))
         observation = {"connector_id": connector_id, "runtime": first.runtime, "runtime_id": first.runtimeId,
             "availability": "archived", "reason": "archive", "observation_origin": "inventory"}
         assert await store.refresh_unchanged_session_source(session_id, observed_at="2026-09-11T00:00:00Z", **observation)
         async with store.engine.connect() as conn:
             row = (await conn.execute(select(sessions_t).where(sessions_t.c.id == session_id))).mappings().one()
-        assert row["source_scan_token"] == "current-scan"
+        assert row["source_changed_seq"] == -1
         assert row["source_state_at"] == "2026-09-11T00:00:01Z"
         assert row["updated_seq"] == initial_seq and row["archived"] == 0
         assert await store.refresh_unchanged_session_source(session_id, observed_at="2026-09-11T00:00:02Z", **observation)
         async with store.engine.connect() as conn:
             row = (await conn.execute(select(sessions_t).where(sessions_t.c.id == session_id))).mappings().one()
-        assert row["source_scan_token"] is None
+        assert row["source_changed_seq"] not in (None, -1)
         assert row["source_state_at"] == "2026-09-11T00:00:02Z"
         assert row["updated_seq"] == initial_seq and row["archived"] == 0
         observation["reason"] = "changed reason"
         assert not await store.refresh_unchanged_session_source(session_id, observed_at="2026-09-11T00:00:03Z", **observation)
 
     asyncio.run(run())
+
+
+def test_inventory_derives_untitled_session_titles_in_constant_queries(tmp_path):
+    """Untitled sessions must not cost one extra query each on every list read.
+
+    Sessions that never received a user message stay untitled, so a per-row
+    derivation re-ran for them on every Dashboard snapshot.
+    """
+    from sqlalchemy import event
+
+    with make_client(tmp_path) as client:
+        connector_id, _, first_id, headers = create_connector_and_session(client)
+        store = client.app.state.store
+
+        async def seed() -> tuple[str, list[str]]:
+            project_id = (await store.get_session(first_id)).projectId
+            untitled = [
+                (
+                    await store.create_session(
+                        connector_id=connector_id,
+                        project_id=project_id,
+                        runtime="codex",
+                        external_session_id=f"untitled-{index}",
+                        title=None,
+                        cwd="/repo",
+                    )
+                ).id
+                for index in range(12)
+            ]
+            prompted = untitled[0]
+            user_message = _timeline_item(
+                prompted, "tl_user_prompt", order_seq=1, item_time="2026-01-01T00:00:00Z"
+            ).model_copy(
+                update={
+                    "role": "user",
+                    "content": {"text": "Fix the flaky build", "format": "markdown"},
+                }
+            )
+            await store.sync_timeline_items(session_id=prompted, items=[user_message])
+            return prompted, untitled
+
+        prompted, untitled = asyncio.run(seed())
+        user_id = client.get("/auth/me", headers=headers).json()["userId"]
+        statements: list[str] = []
+
+        def record(_conn, _cursor, statement, *_args) -> None:
+            statements.append(statement)
+
+        sync_engine = store.engine.sync_engine
+        event.listen(sync_engine, "before_cursor_execute", record)
+        try:
+            first = asyncio.run(store.list_session_inventory(user_id=user_id))
+            first_count = len(statements)
+            statements.clear()
+            second = asyncio.run(store.list_session_inventory(user_id=user_id))
+            second_count = len(statements)
+        finally:
+            event.remove(sync_engine, "before_cursor_execute", record)
+
+        titles = {session.id: session.title for session in first}
+        assert titles[prompted] == "Fix the flaky build"
+        assert all(not titles[session_id] for session_id in untitled[1:])
+        assert {session.id: session.title for session in second} == titles
+        # One inventory read, one batched title lookup and, the first time
+        # only, one transaction that stores the derived title.
+        assert first_count <= 6
+        assert second_count <= 3

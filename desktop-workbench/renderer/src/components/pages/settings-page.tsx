@@ -91,6 +91,12 @@ const AVATAR_OUTPUT_SIZE = 256
 const AVATAR_MAX_FILE_SIZE = 8 * 1024 * 1024
 
 const SYNC_INTERVAL_OPTIONS = [15, 30, 60, 300] as const
+type ConnectorProxyMode = "system" | "direct" | "custom"
+
+function isConnectorProxyUrl(value: string): boolean {
+  return /^(?:https?|socks5h?):\/\/[^\s/]+/i.test(value.trim())
+}
+
 function AccountTab({
   me,
   token,
@@ -269,6 +275,9 @@ function DesktopTab() {
     uvPypiIndexUrl: "",
     uvPythonInstallMirror: "",
   })
+  const [proxyMode, setProxyMode] = React.useState<ConnectorProxyMode>("system")
+  const [proxyUrl, setProxyUrl] = React.useState("")
+  const proxyUrlInvalid = proxyMode === "custom" && proxyUrl.trim() !== "" && !isConnectorProxyUrl(proxyUrl)
   const connectorId = binding?.connectorId ?? state?.connectorId ?? null
   const serverUrl = binding?.serverUrl || state?.serverUrl || null
   const serverConnector = connectors.find((connector) => connector.id === connectorId)
@@ -303,6 +312,12 @@ function DesktopTab() {
       uvPythonInstallMirror: state?.uvPythonInstallMirror ?? "",
     })
   }, [state?.uvPath, state?.pythonPath, state?.uvPypiIndexUrl, state?.uvPythonInstallMirror])
+
+  React.useEffect(() => {
+    const saved = state?.connectorProxy ?? ""
+    setProxyMode(saved === "direct" ? "direct" : saved ? "custom" : "system")
+    setProxyUrl(saved === "direct" ? "" : saved)
+  }, [state?.connectorProxy])
 
   const loadConnectorConfig = React.useCallback(async () => {
     const bridge = getDesktopWorkbenchBridge()
@@ -483,6 +498,52 @@ function DesktopTab() {
             <span className="w-36 shrink-0 text-sm text-muted-foreground">{t("desktopResolvedPythonPath")}</span>
             <span className="code-mono min-w-0 truncate text-sm">{state?.resolvedPythonPath || t("desktopPythonChosenByUv")}</span>
           </div>
+          <Field orientation="horizontal" className="border-t border-border py-4">
+            <FieldContent>
+              <span className="text-sm font-medium">{t("desktopConnectorProxy")}</span>
+              <span className="text-xs text-muted-foreground">{t("desktopConnectorProxyDescription")}</span>
+            </FieldContent>
+            <Select
+              value={proxyMode}
+              onValueChange={(value) => {
+                const mode = value as ConnectorProxyMode
+                setProxyMode(mode)
+                // A custom proxy is saved once its address has been typed.
+                if (mode === "system") void saveSettings({ connectorProxy: "" })
+                if (mode === "direct") void saveSettings({ connectorProxy: "direct" })
+              }}
+              disabled={busy}
+            >
+              <SelectTrigger className="min-w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectGroup>
+                  <SelectItem value="system">{t("desktopConnectorProxySystem")}</SelectItem>
+                  <SelectItem value="direct">{t("desktopConnectorProxyDirect")}</SelectItem>
+                  <SelectItem value="custom">{t("desktopConnectorProxyCustom")}</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
+          {proxyMode === "custom" ? (
+            <Field className="pb-4">
+              <Input
+                value={proxyUrl}
+                placeholder="http://127.0.0.1:7890"
+                aria-label={t("desktopConnectorProxyCustom")}
+                aria-invalid={proxyUrlInvalid}
+                onChange={(event) => setProxyUrl(event.currentTarget.value)}
+                onBlur={(event) => {
+                  const value = event.currentTarget.value.trim()
+                  if (isConnectorProxyUrl(value) && value !== state?.connectorProxy) void saveSettings({ connectorProxy: value })
+                }}
+              />
+              <span className={proxyUrlInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>
+                {t(proxyUrlInvalid ? "desktopConnectorProxyInvalid" : "desktopConnectorProxyCustomDescription")}
+              </span>
+            </Field>
+          ) : null}
           <Field orientation="horizontal" className="border-t border-border py-4">
             <FieldContent>
               <span className="text-sm font-medium">{t("desktopUvPypiIndexUrl")}</span>

@@ -635,3 +635,112 @@ def test_late_connector_sync_cannot_recreate_projects_after_device_deletion(
             )
 
     asyncio.run(sync())
+
+
+def create_member(client, headers, name="member"):
+    email = f"{name}@example.com"
+    created = client.post(
+        "/admin/users",
+        headers=headers,
+        json={"email": email, "displayName": name, "password": "secret", "role": "member"},
+    )
+    assert created.status_code == 201, created.text
+    login = client.post("/auth/login", json={"email": email, "password": "secret"})
+    assert login.status_code == 200, login.text
+    return created.json()["userId"], {"Authorization": f"Bearer {login.json()['accessToken']}"}
+
+
+def count_rows(store, table, column, value):
+    async def count():
+        async with store.engine.connect() as conn:
+            return len((await conn.execute(select(table).where(column == value))).all())
+
+    return asyncio.run(count())
+
+
+def test_admin_user_deletion_removes_devices_projects_and_sessions(api):
+    client, headers = api
+    member, member_headers = create_member(client, headers)
+    device = create_device(client, member_headers)
+    legacy = create_device(client, member_headers, "Legacy")
+    project = create_project(client, member_headers, device, "Busy")
+    session = add_session(client, device, project, "busy")
+    owner_device = create_device(client, headers, "Owner device")
+    owner_project = create_project(client, headers, owner_device, "Owner")
+    owner_session = add_session(client, owner_device, owner_project, "owner")
+    store = client.app.state.store
+    saved = asyncio.run(add_related_data(store, device, session))
+
+    async def revoke_legacy():
+        async with store.engine.begin() as conn:
+            await conn.execute(update(connectors).where(connectors.c.id == legacy).values(revoked=1))
+
+    asyncio.run(revoke_legacy())
+
+    response = client.delete(f"/admin/users/{member}", headers=headers)
+
+    assert response.status_code == 204, response.text
+    assert count_rows(store, connectors, connectors.c.user_id, member) == 0
+    assert count_rows(store, projects, projects.c.user_id, member) == 0
+    assert count_rows(store, sessions, sessions.c.id, session) == 0
+    assert count_rows(store, db.users, db.users.c.id, member) == 0
+    assert not asyncio.run(store.files.exists(session, saved["fileId"]))
+    assert client.get(f"/sessions/{owner_session}/meta", headers=headers).status_code == 200
+    assert client.get(f"/connectors/{owner_device}", headers=headers).status_code == 200
+
+
+def test_admin_user_deletion_retries_after_failed_device_cleanup(api, monkeypatch):
+    client, headers = api
+    member, member_headers = create_member(client, headers)
+    device = create_device(client, member_headers)
+    project = create_project(client, member_headers, device, "Retry")
+    session = add_session(client, device, project, "retry")
+    store = client.app.state.store
+    asyncio.run(add_related_data(store, device, session))
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            store.files,
+            "delete_session",
+            AsyncMock(side_effect=OSError("storage unavailable")),
+        )
+        response = client.delete(f"/admin/users/{member}", headers=headers)
+    assert response.status_code == 503, response.text
+    # The user stays until its devices are gone; the device waits for recovery.
+    assert count_rows(store, db.users, db.users.c.id, member) == 1
+    assert asyncio.run(store.pending_connector_deletions()) == [(device, member)]
+
+    assert client.delete(f"/admin/users/{member}", headers=headers).status_code == 204
+    assert count_rows(store, connectors, connectors.c.id, device) == 0
+    assert count_rows(store, db.users, db.users.c.id, member) == 0
+
+
+def test_admin_user_deletion_reports_conflict_for_foreign_session_in_users_project(api):
+    client, headers = api
+    member, _ = create_member(client, headers)
+    owner_device = create_device(client, headers, "Owner device")
+    store = client.app.state.store
+
+    async def insert_foreign_project():
+        now = utc_now()
+        async with store.engine.begin() as conn:
+            await conn.execute(
+                insert(projects).values(
+                    id="foreign-project",
+                    user_id=member,
+                    connector_id=owner_device,
+                    name="Foreign",
+                    workspace_path="/work/foreign",
+                    workspace_key="/work/foreign",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+
+    asyncio.run(insert_foreign_project())
+    add_session(client, owner_device, "foreign-project", "foreign")
+
+    response = client.delete(f"/admin/users/{member}", headers=headers)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "user still has sessions"
+    assert count_rows(store, db.users, db.users.c.id, member) == 1
