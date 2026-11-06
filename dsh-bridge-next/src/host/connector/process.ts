@@ -7,6 +7,7 @@ import { Mesh, MeshCallError, Router } from 'meshcall'
 import type { ResolvedConfig } from '../config.js'
 import type { BoundDevice } from '../account/binding.js'
 import { writeJson } from '../storage/files.js'
+import { guardMeshCallResults } from '../meshcall-guard.js'
 import { DEFAULT_CONNECTOR_SETTINGS, type ConnectorSettings } from '../../contracts/connector.js'
 import type { RuntimeLogPage, RuntimeLogQuery } from '../../contracts/logs.js'
 import { ControlServiceClient, type ConnectorState as ControlState } from '../generated/connector-control.js'
@@ -420,6 +421,7 @@ export class SourceConnector implements ConnectorProcess {
     const ready = this.ready!
     const router = new Router(ready.endpoint)
     const rpcLogger = new RuntimeRpcLogger(this.diagnostics)
+    guardMeshCallResults()
     const mesh = new Mesh(router, { token: ready.key, peerId: `dsh-plugin-${ready.instanceId}`, logger: rpcLogger })
     const connecting = mesh.connect()
     let timer: ReturnType<typeof setTimeout> | undefined

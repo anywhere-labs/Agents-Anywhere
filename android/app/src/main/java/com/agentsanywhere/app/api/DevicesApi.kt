@@ -114,6 +114,68 @@ class DevicesApi(
         ).toRemoteDeviceRuntimeList(deviceId)
     }
 
+    fun listDeviceRuntimeTypes(
+        serverUrl: String,
+        authorizationToken: String,
+        deviceId: String,
+    ): RemoteRuntimeTypeList {
+        return client.getJson(
+            serverUrl = serverUrl,
+            path = "/connectors/${deviceId.urlEncode()}/runtime-types",
+            authorizationToken = authorizationToken,
+        ).toRemoteRuntimeTypeList(deviceId)
+    }
+
+    /** Asks the Connector to report its runtime types again, e.g. after installing an Agent. */
+    fun discoverDeviceRuntimeTypes(
+        serverUrl: String,
+        authorizationToken: String,
+        deviceId: String,
+    ): RemoteRuntimeTypeList {
+        return client.postJson(
+            serverUrl = serverUrl,
+            path = "/connectors/${deviceId.urlEncode()}/runtime-types/discover",
+            authorizationToken = authorizationToken,
+        ).toRemoteRuntimeTypeList(deviceId)
+    }
+
+    fun createDeviceRuntime(
+        serverUrl: String,
+        authorizationToken: String,
+        deviceId: String,
+        runtimeType: String,
+        name: String,
+        config: Map<String, Any?>,
+        active: Boolean,
+    ): RemoteDeviceRuntime {
+        val body = JSONObject()
+            .put("runtimeType", runtimeType)
+            .put("name", name)
+            .put("config", config.toJsonObject())
+            .put("active", active)
+        return client.postJson(
+            serverUrl = serverUrl,
+            path = "/connectors/${deviceId.urlEncode()}/runtimes",
+            body = body,
+            authorizationToken = authorizationToken,
+        ).toRemoteDeviceRuntime(deviceId)
+    }
+
+    fun renameDeviceRuntime(
+        serverUrl: String,
+        authorizationToken: String,
+        deviceId: String,
+        runtimeId: String,
+        name: String,
+    ): RemoteDeviceRuntime {
+        return client.patchJson(
+            serverUrl = serverUrl,
+            path = "/connectors/${deviceId.urlEncode()}/runtimes/${runtimeId.urlEncode()}",
+            body = JSONObject().put("name", name),
+            authorizationToken = authorizationToken,
+        ).toRemoteDeviceRuntime(deviceId)
+    }
+
     fun putDeviceRuntimeConfig(
         serverUrl: String,
         authorizationToken: String,
@@ -233,6 +295,43 @@ class DevicesApi(
         )
     }
 
+    internal fun parseRuntimeTypeList(value: JSONObject, fallbackConnectorId: String): RemoteRuntimeTypeList =
+        value.toRemoteRuntimeTypeList(fallbackConnectorId)
+
+    private fun JSONObject.toRemoteRuntimeTypeList(
+        fallbackConnectorId: String,
+    ): RemoteRuntimeTypeList {
+        val connectorId = optString("connectorId", fallbackConnectorId).ifBlank { fallbackConnectorId }
+        return RemoteRuntimeTypeList(
+            connectorId = connectorId,
+            runtimeTypes = optJSONArray("runtimeTypes")
+                .toObjectList { toRemoteRuntimeType(connectorId) }
+                .filter { it.runtimeType.isValidRuntimeType() },
+        )
+    }
+
+    private fun JSONObject.toRemoteRuntimeType(connectorId: String): RemoteRuntimeType {
+        val runtimeType = optString("runtimeType")
+        // The same schema also travels inside the type's config schema descriptor.
+        val descriptor = optJSONObject("configSchema")
+        return RemoteRuntimeType(
+            connectorId = connectorId,
+            runtimeType = runtimeType,
+            displayName = optNullableString("displayName") ?: runtimeType,
+            description = optNullableString("description"),
+            present = optBoolean("present", false),
+            available = optBoolean("available", true),
+            reason = optNullableString("reason"),
+            recommended = optBoolean("recommended", false),
+            recommendationRank = optNullableInt("recommendationRank"),
+            schema = (optJSONObject("schema") ?: descriptor?.optJSONObject("schema"))?.toMap(),
+            uiSchema = (optJSONObject("uiSchema") ?: descriptor?.optJSONObject("uiSchema")).toMap(),
+            defaults = (optJSONObject("defaults") ?: descriptor?.optJSONObject("defaults")).toMap(),
+            instancePolicy = optString("instancePolicy", "single").ifBlank { "single" },
+            maxInstances = optNullableInt("maxInstances"),
+        )
+    }
+
     private fun JSONObject.toRemoteDeviceRuntimeList(
         fallbackConnectorId: String,
     ): RemoteDeviceRuntimeList {
@@ -267,6 +366,7 @@ class DevicesApi(
             runtimeId = runtimeId,
             runtimeType = runtimeType,
             displayName = displayName,
+            typeDisplayName = optNullableString("typeDisplayName"),
             present = optBoolean("present", false),
             configured = optBoolean("configured", false),
             active = optBoolean("active", false),
@@ -275,6 +375,7 @@ class DevicesApi(
             metadata = optJSONObject("metadata").toMap(),
             schema = optJSONObject("schema")?.toMap(),
             uiSchema = optJSONObject("uiSchema").toMap(),
+            defaults = optJSONObject("defaults").toMap(),
             config = optJSONObject("config")?.toMap(),
             error = optJSONObject("error")?.toMap(),
             phase = optJSONObject("phase")?.toMap(),
@@ -311,6 +412,7 @@ class DevicesApi(
             allowed = optBoolean("allowed", true),
             unavailableReason = optNullableString("unavailableReason"),
             parameters = optJSONObject("parameters").toMap(),
+            metadata = optJSONObject("metadata").toMap(),
             runtimeId = optNullableString("runtimeId"),
             runtimeType = optNullableString("runtimeType") ?: optNullableString("runtime"),
         )

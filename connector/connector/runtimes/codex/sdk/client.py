@@ -4,9 +4,10 @@ import asyncio
 import errno
 import hashlib
 import importlib
+import inspect
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, TypeVar
 
 from openai_codex import JsonRpcError, MethodNotFoundError, TransportClosedError
@@ -129,6 +130,14 @@ class CodexThreadTurnsListResponse(BaseModel):
     next_cursor: str | None = Field(default=None, alias="nextCursor")
 
 
+class CodexPlanningResumeResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+    thread: dict[str, Any]
+    model: str
+    reasoning_effort: str | None = Field(default=None, alias="reasoningEffort")
+    collaboration_mode: dict | None = Field(default=None, alias="collaborationMode")
+
+
 class CodexSettingsUpdateResponse(BaseModel):
     """``thread/settings/update`` and ``turn/settings/update`` answer ``{}``."""
 
@@ -179,6 +188,8 @@ class CodexSdkClient:
         self._resume_locks: dict[str, asyncio.Lock] = {}
         self._announced_turns: set[tuple[str, str]] = set()
         self._stopping = False
+        self._planning_modes: dict[str, dict] = {}
+        self._thread_settings: dict[str, dict] = {}
 
     async def start(self, handler: NotificationHandler) -> None:
         self._stopping = False
@@ -387,6 +398,8 @@ class CodexSdkClient:
     def _clear_native_ownership(self) -> None:
         self._generation += 1
         self._loaded_thread_ids.clear()
+        self._planning_modes.clear()
+        self._thread_settings.clear()
         self._threads.clear()
         self._turns.clear()
         self._announced_turns.clear()
@@ -540,6 +553,8 @@ class CodexSdkClient:
                 )
             )
             thread_id = id_of(started.thread)
+            if thread_id:
+                self._thread_settings[thread_id] = {"model": getattr(started, "model", request.model), "reasoning_effort": getattr(started, "reasoning_effort", None)}
             if generation != self._generation:
                 raise RuntimeError("Codex disconnected while starting the thread")
             thread = codex_async_thread(self._sdk, self._client, thread_id)
@@ -580,6 +595,14 @@ class CodexSdkClient:
         return CodexThreadResult(thread_id=thread_id, payload=payload)
 
     async def start_turn(self, request: CodexStartTurnRequest) -> CodexTurnResult:
+        if request.thread_id in self._planning_modes:
+            collaboration = self._planning_modes[request.thread_id]
+            settings = dict(collaboration.get("settings") or {})
+            if request.model is not None:
+                settings["model"] = request.model
+            if request.effort is not None:
+                settings["reasoning_effort"] = request.effort
+            request = replace(request, collaboration_mode={**collaboration, "settings": settings})
         await ensure_codex_initialized(self._client)
         low_level_client = codex_low_level_client(self._client)
         if low_level_client is not None:
@@ -711,14 +734,15 @@ class CodexSdkClient:
             return
         generation = self._generation
         try:
-            resumed = await thread_resume(
-                request.thread_id,
-                codex_permission_params(
-                    codex_thread_resume_params(request, self._model_gateway),
-                    request.sandbox,
-                    "sandbox",
-                ),
+            params = codex_permission_params(
+                codex_thread_resume_params(request, self._model_gateway),
+                request.sandbox,
+                "sandbox",
             )
+            if getattr(low_level_client, "_sync", None) is not None:
+                resumed = await low_level_client.request("thread/resume", params, response_model=CodexPlanningResumeResponse)
+            else:
+                resumed = await thread_resume(request.thread_id, params)
         except JsonRpcError as exc:
             if exc.code == -32600 and "already has an active writer" in exc.message:
                 raise RuntimeConflictError(
@@ -727,14 +751,35 @@ class CodexSdkClient:
                     "本次消息尚未发送。"
                 ) from exc
             raise
-        thread_id = id_of(resumed.thread)
+        thread_id = resumed.thread.get("id") if isinstance(resumed.thread, dict) else id_of(resumed.thread)
         if generation != self._generation or thread_id != request.thread_id:
             raise RuntimeError("Codex thread resume identity or connection changed")
+        collaboration = getattr(resumed, "collaboration_mode", None)
+        if collaboration is not None:
+            self._planning_modes[request.thread_id] = collaboration.model_dump(mode="json") if hasattr(collaboration, "model_dump") else dict(collaboration)
+        self._thread_settings[request.thread_id] = {"model": getattr(resumed, "model", request.model), "reasoning_effort": getattr(resumed, "reasoning_effort", None)}
         thread = codex_async_thread(self._sdk, self._client, thread_id)
         if thread is not None:
             self._remember_thread(thread)
         if thread_id is not None:
             self._loaded_thread_ids.add(thread_id)
+
+    async def planning_settings(self, thread_id: str) -> dict:
+        await ensure_codex_initialized(self._client)
+        low = codex_low_level_client(self._client)
+        if low is None:
+            raise RuntimeInvalidRequestError("Native planning settings are unavailable")
+        await self._resume_thread(low, CodexResumeThreadRequest(thread_id=thread_id))
+        return self._thread_settings.get(thread_id, {})
+
+    async def set_collaboration_mode(self, thread_id: str, collaboration: dict) -> None:
+        await ensure_codex_initialized(self._client)
+        low = codex_low_level_client(self._client)
+        if low is None:
+            raise RuntimeInvalidRequestError("Native Plan controls require the Codex app-server interface")
+        await self._resume_thread(low, CodexResumeThreadRequest(thread_id=thread_id))
+        await low.request("thread/settings/update", {"threadId": thread_id, "collaborationMode": collaboration}, response_model=CodexSettingsUpdateResponse)
+        self._planning_modes[thread_id] = collaboration
 
     def thread_loaded(self, thread_id: str) -> bool:
         """Whether this app-server generation started or resumed ``thread_id``.
@@ -859,9 +904,7 @@ class CodexSdkClient:
             return await low_level_client.turn_start(
                 request.thread_id,
                 codex_turn_user_input_wire(request),
-                params=codex_permission_params(
-                    codex_turn_start_params(request), request.sandbox, "sandboxPolicy"
-                ),
+                params=codex_turn_start_payload(request),
             )
         except Exception as exc:
             if soft_codex_unavailable_reason(str(exc)) != "thread_not_found":
@@ -871,9 +914,7 @@ class CodexSdkClient:
             return await low_level_client.turn_start(
                 request.thread_id,
                 codex_turn_user_input_wire(request),
-                params=codex_permission_params(
-                    codex_turn_start_params(request), request.sandbox, "sandboxPolicy"
-                ),
+                params=codex_turn_start_payload(request),
             )
 
     async def force_thread_resume_for_turn(
@@ -1236,6 +1277,11 @@ class CodexSdkClient:
             raise asyncio.CancelledError
 
     async def _emit(self, message: CodexNotificationMessage) -> None:
+        event = message if isinstance(message, CodexSdkEvent) else CodexSdkEvent.from_message(message)
+        if event.event_type == "thread/settings/updated" and event.thread_id:
+            collaboration = event.params.get("threadSettings", {}).get("collaborationMode")
+            if isinstance(collaboration, dict):
+                self._planning_modes[event.thread_id] = collaboration
         if self._stopping:
             return
         method, thread_id, turn_id = turn_identity(message)
@@ -1375,6 +1421,8 @@ def _sdk_config(sdk: Any, config: RuntimeConfig) -> Any:
         )
         if command[0] != binary_selection.codex_bin:
             launch_options["launch_args_override"] = tuple(command)
+    if "experimental_api" in inspect.signature(config_cls).parameters:
+        launch_options["experimental_api"] = True
     return config_cls(
         **launch_options,
         codex_bin=binary_selection.codex_bin,
@@ -1559,7 +1607,7 @@ def codex_turn_start_params(request: CodexStartTurnRequest) -> TurnStartParams:
         request.approval_policy,
         request.approvals_reviewer,
     )
-    return TurnStartParams(
+    params = TurnStartParams(
         approvalPolicy=approval_policy,
         approvalsReviewer=approvals_reviewer,
         clientUserMessageId=request.client_message_id,
@@ -1569,6 +1617,16 @@ def codex_turn_start_params(request: CodexStartTurnRequest) -> TurnStartParams:
         sandboxPolicy=codex_turn_sandbox_policy(request.sandbox),
         threadId=request.thread_id,
     )
+    return params
+
+
+def codex_turn_start_payload(request: CodexStartTurnRequest) -> dict[str, Any]:
+    """turn/start params with the permission profile and native Plan mode applied."""
+
+    payload = codex_permission_params(codex_turn_start_params(request), request.sandbox, "sandboxPolicy")
+    if request.collaboration_mode is not None:
+        payload["collaborationMode"] = request.collaboration_mode
+    return payload
 
 
 def codex_turn_user_input(request: CodexStartTurnRequest) -> list[UserInput]:

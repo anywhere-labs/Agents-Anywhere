@@ -14,14 +14,16 @@ struct CommandSuggestionPanel: View {
         return intent.command
     }
     private var query: String { slashQuery ?? "" }
-    private var suggestions: [V2RuntimeCommand] { chat.commands.filter { $0.matches(query) } }
+    private var suggestions: [V2RuntimeCommand] { chat.offeredCommands.filter { $0.matches(query) } }
+    /// Why native commands cannot run, unless /plan still gives the menu something to offer.
+    private var unavailableReason: String? { chat.planningUsable ? nil : chat.commandsUnavailableReason }
     private var isVisible: Bool {
-        guard chat.offersCommands, draft.attachments.isEmpty || forced else { return false }
+        guard chat.offersCommands || chat.planningUsable, draft.attachments.isEmpty || forced else { return false }
         if forced { return true }
         guard slashQuery != nil, dismissedFor != draft.text else { return false }
         // Typing "/" explains why commands cannot run; longer text stays a message.
-        if chat.commandsUnavailableReason != nil { return draft.text.trimmingCharacters(in: .whitespaces) == "/" }
-        return !suggestions.isEmpty || (chat.commands.isEmpty && (chat.isLoadingCommands || chat.commandsError != nil))
+        if unavailableReason != nil { return draft.text.trimmingCharacters(in: .whitespaces) == "/" }
+        return !suggestions.isEmpty || (chat.offeredCommands.isEmpty && (chat.isLoadingCommands || chat.commandsError != nil))
     }
 
     var body: some View {
@@ -48,14 +50,14 @@ struct CommandSuggestionPanel: View {
     }
 
     @ViewBuilder private var content: some View {
-        if let reason = chat.commandsUnavailableReason {
+        if let reason = unavailableReason {
             message(reason, symbol: "info.circle")
-        } else if chat.commands.isEmpty && chat.isLoadingCommands {
+        } else if chat.offeredCommands.isEmpty && chat.isLoadingCommands {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text(String(localized: "正在读取指令…")).font(.subheadline).foregroundStyle(.secondary)
             }.padding(.horizontal, 16).padding(.vertical, 8)
-        } else if chat.commands.isEmpty, chat.commandsError != nil {
+        } else if chat.offeredCommands.isEmpty, chat.commandsError != nil {
             VStack(alignment: .leading, spacing: 4) {
                 message(String(localized: "无法读取指令。"), symbol: "exclamationmark.circle")
                 Button(String(localized: "重试")) { Task { await chat.loadCommands(force: true) } }
@@ -84,6 +86,16 @@ struct CommandSuggestionPanel: View {
         .accessibilityElement(children: .combine)
     }
 
+    /// AA's own commands carry translated text; native commands keep the runtime's text.
+    private func localizedDescription(_ command: V2RuntimeCommand) -> String? {
+        switch command.id {
+        case "compact": String(localized: "压缩会话上下文。")
+        case "kill-chatgpt": String(localized: "退出 ChatGPT / Codex 桌面应用，让它的会话改由 Connector 自己的 app-server 运行。")
+        case "open-in-codex-app": String(localized: "在正在运行的 Codex 桌面应用中打开此会话，并从那里继续跟随。")
+        default: command.description ?? (command.title == command.id ? nil : command.title)
+        }
+    }
+
     private func row(_ command: V2RuntimeCommand) -> some View {
         let block = chat.commandBlock(command)
         return Button {
@@ -97,7 +109,7 @@ struct CommandSuggestionPanel: View {
                         Text(hint).font(.footnote.monospaced()).foregroundStyle(.tertiary).lineLimit(1)
                     }
                 }
-                let detail = block.map { chat.commandBlockMessage(command, $0) } ?? command.description ?? (command.title == command.id ? nil : command.title)
+                let detail = block.map { chat.commandBlockMessage(command, $0) } ?? localizedDescription(command)
                 if let detail, !detail.isEmpty {
                     Text(detail).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
                 }

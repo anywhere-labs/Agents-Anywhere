@@ -33,7 +33,10 @@ from agent_server.api import (
     oauth,
     pairing,
     projects,
+    runtime_workflows,
     service,
+    session_planning,
+    session_goals,
     sessions,
     sessions_fs,
     sessions_terminal,
@@ -61,7 +64,7 @@ from agent_server.services.connector_rpc import ConnectorServiceError
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_runtimes import DeviceRuntimeService
 from agent_server.services.effective_capabilities import (
-    publish_connector_session_capabilities,
+    ConnectorCapabilityRefresh,
 )
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.setup_tokens import SetupTokenService
@@ -91,12 +94,7 @@ async def _connector_presence_watchdog(app: FastAPI) -> None:
                     connection.connector_id,
                     connection.connection_id,
                 )
-            await publish_connector_session_capabilities(
-                app.state.store,
-                app.state.rpc,
-                app.state.timeline_broker,
-                connection.connector_id,
-            )
+            app.state.capability_refresh.request(connection.connector_id)
             await publish_dashboard_changed(
                 app.state.store,
                 app.state.timeline_broker,
@@ -127,6 +125,7 @@ def create_app(
         presence_task: asyncio.Task[None] | None = None
         deletion_task: asyncio.Task[None] | None = None
         usage_task: asyncio.Task[None] | None = None
+        goal_task: asyncio.Task[None] | None = None
         try:
             logger.info(
                 "server concurrency pid={} workers={} event_workers={}",
@@ -146,11 +145,19 @@ def create_app(
             presence_task = asyncio.create_task(_connector_presence_watchdog(app))
             deletion_task = asyncio.create_task(app.state.connector_deletion_recovery.run())
             usage_task = asyncio.create_task(app.state.usage_maintenance.run())
+            from agent_server.services.goal.outbox import run_goal_outbox
+
+            goal_task = asyncio.create_task(
+                run_goal_outbox(app.state.store, app.state.timeline_broker)
+            )
             # Generate the bootstrap token early so operators see it in logs.
             if await app.state.store.count_users() == 0:
                 await SetupTokenService(app.state.setup_token, app.state.redis).snapshot()
             yield
         finally:
+            if goal_task is not None:
+                goal_task.cancel()
+                await asyncio.gather(goal_task, return_exceptions=True)
             if usage_task is not None:
                 usage_task.cancel()
                 await asyncio.gather(usage_task, return_exceptions=True)
@@ -168,6 +175,7 @@ def create_app(
                 await app.state.usage_recorder.close()
             except Exception:  # noqa: BLE001 - shutdown must continue
                 logger.exception("failed to flush usage events on shutdown")
+            await app.state.capability_refresh.close()
             try:
                 await app.state.rpc.close()
             finally:
@@ -188,7 +196,7 @@ def create_app(
                                 finally:
                                     await app.state.store.close()
 
-    app = FastAPI(title="Agent Server", version="2.1.0", lifespan=lifespan)
+    app = FastAPI(title="Agent Server", version="2.2.0", lifespan=lifespan)
     app.add_exception_handler(
         ConnectorServiceError,
         error_handlers.connector_service_error_handler,
@@ -241,6 +249,9 @@ def create_app(
         event_threshold_bytes=int(os.getenv("AGENT_SERVER_EVENT_THRESHOLD_BYTES", str(256 * 1024))),
         event_queue_items=int(os.getenv("AGENT_SERVER_EVENT_QUEUE_ITEMS", "32")),
         event_queue_bytes=int(os.getenv("AGENT_SERVER_EVENT_QUEUE_BYTES", str(32 * 1024 * 1024))),
+    )
+    app.state.capability_refresh = ConnectorCapabilityRefresh(
+        app.state.store, app.state.rpc, app.state.timeline_broker,
     )
     app.state.timeline_write_buffer = TimelineWriteBuffer(
         app.state.store,
@@ -370,6 +381,7 @@ def create_app(
     app.include_router(connectors.router, prefix=API_V2_PREFIX)
     app.include_router(connector_files.router, prefix=API_V2_PREFIX)
     app.include_router(connector_runtimes.router, prefix=API_V2_PREFIX)
+    app.include_router(runtime_workflows.router, prefix=API_V2_PREFIX)
     app.include_router(connector_shell.router, prefix=API_V2_PREFIX)
     app.include_router(connector_terminal.router, prefix=API_V2_PREFIX)
     app.include_router(client_ws.router, prefix=API_V2_PREFIX)
@@ -378,6 +390,8 @@ def create_app(
     app.include_router(pairing.router, prefix=API_V2_PREFIX)
     app.include_router(projects.router, prefix=API_V2_PREFIX)
     app.include_router(sessions.router, prefix=API_V2_PREFIX)
+    app.include_router(session_planning.router, prefix=API_V2_PREFIX)
+    app.include_router(session_goals.router, prefix=API_V2_PREFIX)
     app.include_router(sessions_fs.router, prefix=API_V2_PREFIX)
     app.include_router(sessions_terminal.router, prefix=API_V2_PREFIX)
 

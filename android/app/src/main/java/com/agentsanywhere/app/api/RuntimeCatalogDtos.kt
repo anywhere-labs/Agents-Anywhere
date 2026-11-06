@@ -26,6 +26,7 @@ data class RemoteRuntimeCapability(
     val parameters: Map<String, Any?>,
     val runtimeId: String? = null,
     val runtimeType: String? = runtime,
+    val metadata: Map<String, Any?> = emptyMap(),
 ) {
     val usable: Boolean
         get() = supported && available && allowed

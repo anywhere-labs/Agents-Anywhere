@@ -32,6 +32,8 @@ data class RemoteSessionEventEnvelope(
 )
 
 data class RemoteSessionEventPayload(
+    val goal: RemoteGoalState? = null,
+    val planning: RemotePlanningState? = null,
     val session: RemoteSession? = null,
     val item: RemoteTimelineItem? = null,
     val items: List<RemoteTimelineItem> = emptyList(),

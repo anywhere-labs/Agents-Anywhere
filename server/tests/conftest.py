@@ -124,8 +124,17 @@ async def _truncate(url: str) -> None:
 
     conn = await asyncpg.connect(url)
     try:
+        # Fail with the blocking backend IDs instead of waiting indefinitely on
+        # a transaction leaked by a previous test.
+        await conn.execute("SET lock_timeout = '10s'")
         try:
             await conn.execute(_truncate_sql())
+        except asyncpg.LockNotAvailableError as exc:
+            blockers = await conn.fetch(
+                "SELECT pid, state, wait_event_type FROM pg_stat_activity "
+                "WHERE datname = current_database() AND pid <> pg_backend_pid()"
+            )
+            raise RuntimeError(f"Test database cleanup blocked; backends={list(blockers)}") from exc
         except asyncpg.UndefinedTableError:
             # Tables may not exist yet on the very first run; create_app()
             # migrates the database and subsequent invocations will succeed.

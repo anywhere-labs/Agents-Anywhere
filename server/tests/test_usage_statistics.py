@@ -42,7 +42,7 @@ def _load_migration(name: str) -> Any:
     return module
 
 
-_V2_45 = _load_migration("v2_45")
+_V2_48 = _load_migration("v2_48")
 
 
 def _events(client, **filters: Any) -> list[dict[str, Any]]:
@@ -270,7 +270,7 @@ def _rollup_rows(client) -> dict[str, list[tuple]]:
         async with client.app.state.store.engine.connect() as conn:
             return {
                 table: sorted(tuple(row) for row in (await conn.execute(text(f"SELECT * FROM {table}"))).all())
-                for table in _V2_45.TABLES
+                for table in _V2_48.TABLES
             }
 
     return asyncio.run(read())
@@ -283,14 +283,14 @@ def _rebuilt_rollup_rows(client) -> dict[str, list[tuple]]:
     async def rebuild() -> dict[str, list[tuple]]:
         async with client.app.state.store.engine.connect() as conn:
             transaction = await conn.begin()
-            for table in _V2_45.TABLES:
+            for table in _V2_48.TABLES:
                 await conn.execute(text(f"DELETE FROM {table}"))
             params = {"message": EVENT_MESSAGE_SENT, "viewed": EVENT_SESSION_VIEWED, "online": EVENT_CONNECTOR_ONLINE}
-            for statement in _V2_45.BACKFILL:
+            for statement in _V2_48.BACKFILL:
                 await conn.execute(text(statement), params)
             rows = {
                 table: sorted(tuple(row) for row in (await conn.execute(text(f"SELECT * FROM {table}"))).all())
-                for table in _V2_45.TABLES
+                for table in _V2_48.TABLES
             }
             await transaction.rollback()
             return rows

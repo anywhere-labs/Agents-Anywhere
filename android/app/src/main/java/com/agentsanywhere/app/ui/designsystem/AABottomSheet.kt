@@ -4,6 +4,7 @@
  */
 package com.agentsanywhere.app.ui.designsystem
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -44,6 +45,7 @@ import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.CircleAlert
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.X
+import kotlinx.coroutines.launch
 
 @Immutable
 data class AABottomSheetColors(
@@ -76,7 +78,10 @@ object AABottomSheetDefaults {
     }
 }
 
-/** Shared native sheet: one surface, header, dismissal policy and scrollable content area. */
+/**
+ * Shared native sheet: one surface, header, dismissal policy and scrollable content area.
+ * Without [dismissOnGesture], only the close button leaves, so its caller can ask first.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AABottomSheet(
@@ -84,11 +89,13 @@ fun AABottomSheet(
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
     dismissEnabled: Boolean = true,
+    dismissOnGesture: Boolean = true,
     onBack: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = AABottomSheetDefaults.colors()
-    val canDismiss by rememberUpdatedState(dismissEnabled)
+    val scope = rememberCoroutineScope()
+    val canDismiss by rememberUpdatedState(dismissEnabled && dismissOnGesture)
     val sheetState = rememberModalBottomSheetState(
         skipPartiallyExpanded = true,
         confirmValueChange = { it != SheetValue.Hidden || canDismiss },
@@ -104,7 +111,19 @@ fun AABottomSheet(
         tonalElevation = 0.dp,
         scrimColor = colors.scrim,
         dragHandle = null,
+        // Material hides the sheet on Back before asking, so a sheet that must stay would
+        // leave an invisible window over the screen. Back is handled below instead.
+        properties = ModalBottomSheetProperties(shouldDismissOnBackPress = false),
     ) {
+        BackHandler {
+            when {
+                !dismissEnabled -> Unit
+                dismissOnGesture -> scope.launch { sheetState.hide() }.invokeOnCompletion {
+                    if (!sheetState.isVisible) onDismissRequest()
+                }
+                else -> onDismissRequest()
+            }
+        }
         AABottomSheetContent(title, onDismissRequest, dismissEnabled, onBack, content = content)
     }
 }

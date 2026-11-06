@@ -45,6 +45,7 @@ from connector.runtime_protocol import (
     ArtifactTimelineItem,
     CommandToolContent,
     CompactMarkerContent,
+    ImageArtifactContent,
     InputRequestValidationError,
     MarkdownMessageContent,
     MarkerTimelineItem,
@@ -139,6 +140,9 @@ from connector.runtimes.codex.timeline.projection import (
     CodexTimelineProjection,
     timeline_item_from_projection,
     timeline_projection_from_raw,
+)
+from connector.runtimes.codex.timeline.typed_events import (
+    timeline_projection_from_thread_item,
 )
 
 
@@ -295,8 +299,8 @@ def test_codex_timeline_native_item_classes_are_explicitly_mapped() -> None:
     )
     assert codex_timeline_item_class("contextCompaction") is CodexContextCompactionItem
     assert issubclass(CodexContextCompactionItem, MarkerTimelineItem)
-    assert codex_timeline_item_class("ImageViewThreadItem") is CodexImageViewItem
-    assert issubclass(CodexImageViewItem, MarkerTimelineItem)
+    assert codex_timeline_item_class("imageView") is CodexImageViewItem
+    assert issubclass(CodexImageViewItem, ArtifactTimelineItem)
     assert codex_timeline_item_class("fileChange") is CodexFileChangeItem
     assert codex_timeline_item_class("turnStart") is CodexTurnStartItem
     assert codex_timeline_item_class("turnEnd") is CodexTurnEndItem
@@ -319,7 +323,7 @@ def test_codex_timeline_items_extend_protocol_parent_classes() -> None:
     assert issubclass(CodexWebSearchItem, CodexToolTimelineItem)
     assert issubclass(CodexFileChangeItem, CodexArtifactTimelineItem)
     assert issubclass(CodexContextCompactionItem, CodexMarkerTimelineItem)
-    assert issubclass(CodexImageViewItem, CodexMarkerTimelineItem)
+    assert issubclass(CodexImageViewItem, CodexArtifactTimelineItem)
     assert issubclass(CodexReasoningItem, CodexSystemTimelineItem)
     assert issubclass(CodexUnknownItem, CodexSystemTimelineItem)
     assert issubclass(CodexTurnStartItem, CodexTurnStartTimelineItem)
@@ -406,29 +410,63 @@ def test_codex_projection_maps_context_compaction_to_compact_content() -> None:
     assert platform_item.source["rawType"] == "contextCompaction"
 
 
-def test_codex_projection_maps_image_view_to_marker_content() -> None:
-    projection = CodexTimelineProjection(
-        native_id="image_view_1",
-        raw_type="ImageViewThreadItem",
-        status="completed",
-    )
+IMAGE_VIEW_RAW_ITEM = {
+    "type": "imageView",
+    "id": "call_image_view_1",
+    "path": "/tmp/invoice-pages/page-1.png",
+}
 
+
+def image_view_platform_item(projection: CodexTimelineProjection, event: str):
     item = timeline_item_from_projection(
-        projection=projection,
+        projection=projection.with_turn_position(0),
         external_session_id="thread_1",
         fallback_index=0,
-        event="item/completed",
+        event=event,
     )
-    platform_item = item.to_platform_item(session_id="sess_1", order_seq=0)
+    return item, item.to_platform_item(session_id="sess_1", order_seq=0)
+
+
+def test_codex_projection_maps_raw_image_view_to_image_artifact() -> None:
+    projection = timeline_projection_from_raw(
+        {**IMAGE_VIEW_RAW_ITEM, "turnId": "turn_1"}
+    )
+
+    item, platform_item = image_view_platform_item(projection, "thread/read")
 
     assert isinstance(item, CodexImageViewItem)
-    assert item.type == "marker"
+    assert isinstance(item.content, ImageArtifactContent)
+    assert platform_item.type == "artifact"
     assert platform_item.content == {
-        "kind": "system",
-        "label": "查看图片",
-        "state": "completed",
+        "kind": "image",
+        "path": "/tmp/invoice-pages/page-1.png",
+        "mediaType": "image/png",
     }
-    assert platform_item.source["rawType"] == "ImageViewThreadItem"
+    assert platform_item.source["rawType"] == "imageView"
+    assert platform_item.source["itemId"] == "call_image_view_1"
+
+
+def test_codex_sdk_image_view_matches_raw_image_view_identity() -> None:
+    raw_projection = timeline_projection_from_raw(
+        {**IMAGE_VIEW_RAW_ITEM, "turnId": "turn_1"}
+    )
+    sdk_projection = timeline_projection_from_thread_item(
+        item=ThreadItem.model_validate(IMAGE_VIEW_RAW_ITEM),
+        turn_id="turn_1",
+        event_status="completed",
+    )
+    assert sdk_projection is not None
+
+    _, raw_item = image_view_platform_item(raw_projection, "thread/read")
+    sdk_item, platform_item = image_view_platform_item(
+        sdk_projection, "item/completed"
+    )
+
+    assert isinstance(sdk_item, CodexImageViewItem)
+    assert platform_item.type == "artifact"
+    assert platform_item.content == raw_item.content
+    assert platform_item.id == raw_item.id
+    assert platform_item.source["derivedKey"] == raw_item.source["derivedKey"]
 
 
 class FakeCodexClient:

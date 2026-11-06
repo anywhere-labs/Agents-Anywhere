@@ -250,7 +250,11 @@ class ConnectorIngestRepository(DashboardEventRepository, Protocol):
         connector_id: str,
     ) -> list[SessionView]: ...
 
+from agent_server.services.planning.ports import PlanningRepository
+
+
 class ConnectorNotificationRepository(
+    PlanningRepository,
     CatalogRepository,
     SessionStateRepository,
     TimelineEffectRepository,
@@ -358,6 +362,8 @@ class ConnectorNotificationRepository(
         session_id: str,
         source_observed_at: str | None = None,
         mark_read_on_change: bool = False,
+        source_event_id: str | None = None,
+        source_event_digest: str | None = None,
     ) -> SessionView: ...
 
     async def update_connector_preferences(
@@ -507,6 +513,9 @@ class SessionRunRepository(
     ProjectLookupRepository,
     Protocol,
 ):
+    async def reserve_planning_creation(self, connector_id: str, runtime_id: str, operation_id: str, fingerprint: str) -> dict | None: ...
+    async def save_planning_creation(self, connector_id: str, runtime_id: str, operation_id: str, payload: dict) -> None: ...
+
     async def get_protocol_capabilities(
         self,
         connector_id: str,
@@ -538,6 +547,7 @@ class SessionRunRepository(
         name: str,
         data: bytes,
         media_type: str | None = None,
+        file_id: str | None = None,
     ) -> dict[str, Any]: ...
 
     async def read_uploaded_file(

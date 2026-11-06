@@ -139,6 +139,8 @@ fun AgentsAnywhereApp(
     val sessionsController = remember(context, sessionStore, apiClient) {
         SessionsController(
             sessionsApi = SessionsApi(apiClient),
+            workflowApi = com.agentsanywhere.app.api.RuntimeWorkflowApi(apiClient),
+            workflowReferences = com.agentsanywhere.app.feature.sessions.RuntimeWorkflowReferenceStore(context),
             devicesApi = DevicesApi(apiClient),
             filesApi = FilesApi(apiClient),
             sessionStore = sessionStore,
@@ -180,6 +182,7 @@ fun AgentsAnywhereApp(
     }
     val currentDestination = AppDestination.valueOf(destinationName)
     val hasAuthSession = sessionStore.hasAuthSession()
+    LaunchedEffect(hasAuthSession, sessionStore.readServerUrl(), sessionStore.readUserId()) { if (hasAuthSession) sessionsController.workflows.restore() else sessionsController.workflows.clear() }
     val updateServerUrl = sessionStore.readServerUrl()
     val updatesAllowed = hasAuthSession && updateServerUrl.isNotBlank() && currentDestination !in setOf(
         AppDestination.LoginMethods, AppDestination.ServerSetup, AppDestination.QrLogin, AppDestination.QrWaiting,
@@ -661,20 +664,7 @@ fun AgentsAnywhereApp(
                 devicesController.listDeviceRuntimes(connectorId)
             }
         },
-        onSetDeviceRuntimeActive = { connectorId, runtime, active ->
-            if (!hasAuthSession) {
-                Result.failure(IllegalStateException("Sign in again to update this runtime."))
-            } else {
-                devicesController.setDeviceRuntimeActive(connectorId, runtime, active)
-            }
-        },
-        onDeleteDeviceRuntimeConfig = { connectorId, runtime ->
-            if (!hasAuthSession) {
-                Result.failure(IllegalStateException("Sign in again to delete runtime configuration."))
-            } else {
-                devicesController.deleteDeviceRuntimeConfig(connectorId, runtime)
-            }
-        },
+        deviceAgents = devicesController,
         onBulkSetSessionsArchived = { ids, archived ->
             if (!hasAuthSession) {
                 Result.failure(IllegalStateException("Sign in again to update sessions."))
@@ -873,6 +863,7 @@ fun AgentsAnywhereApp(
         onLoadNewSessionRuntimeCapabilities = { connectorId, runtime ->
             sessionsController.loadNewSessionRuntimeCapabilities(connectorId, runtime)
         },
+        onPrepareRuntimeWorkspace = { connector, runtime, project -> sessionsController.prepareRuntimeWorkspace(connector, runtime, project) },
         onLoadNewSessionModelCatalog = { connectorId, runtime ->
             sessionsController.loadNewSessionModelCatalog(connectorId, runtime)
         },
@@ -887,6 +878,14 @@ fun AgentsAnywhereApp(
             destinationName = AppDestination.QrWaiting.name
         },
     )
+    com.agentsanywhere.app.ui.screens.home.RuntimeWorkflowDialog(sessionsController.workflows) {
+        sessionsController.openAcceptedWorkflow(sessionsState.devices).onSuccess { session ->
+            sessionsState = sessionsState.withPatchedSession(session)
+            preparedSessionDraft = null
+            selectedSessionId = session.id
+            destinationName = AppDestination.SessionDetail.name
+        }
+    }
     AnnouncementGate(
         api = announcementsApi,
         serverUrl = updateServerUrl.ifBlank { AppConfig.OFFICIAL_SERVER_URL },

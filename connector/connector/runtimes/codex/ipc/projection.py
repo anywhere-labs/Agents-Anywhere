@@ -50,6 +50,7 @@ from connector.runtimes.codex.ipc.timeline import (
 )
 from connector.runtimes.codex.notifications.notices import CodexNoticeHandler
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
+from connector.runtimes.codex.timeline.order import is_append_only, timeline_order
 
 IPC_SOURCE = "codex.ipc"
 STATE_SOURCE_KEYS = (
@@ -132,6 +133,8 @@ class CodexIpcSessionProjector:
         if not touches_state and not touches_history:
             return
         if thread.state is not None and thread.status == "following":
+            from connector.runtimes.codex.planning import observe_ipc_plan
+            await observe_ipc_plan(self.host, self.session_id_for(thread.thread_id), thread)
             if touches_state:
                 await self._project_state(thread)
             if touches_history and self.timeline is not None:
@@ -261,7 +264,11 @@ class CodexIpcSessionProjector:
             transport="ipc",
         )
         known = self._timeline_items.get(session_id)
-        if full or known is None:
+        if (
+            full
+            or known is None
+            or not is_append_only(timeline_order(known.values()), timeline_order(items))
+        ):
             await self.host.timeline_sync(
                 session_id=session_id,
                 runtime="codex",
@@ -280,8 +287,8 @@ class CodexIpcSessionProjector:
                 and previous.status == item.status
             ):
                 continue
-            known[item.id] = item
             await self.host.timeline_item_upsert(item)
+            known[item.id] = item
 
     async def _project_detached(self, thread: FollowedThread) -> None:
         session_id = self.session_id_for(thread.thread_id)

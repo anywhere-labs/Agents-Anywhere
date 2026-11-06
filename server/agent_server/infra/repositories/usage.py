@@ -670,7 +670,7 @@ _ROLLUP_SOURCE_COLUMNS = (
 async def _add_to_rollups(conn: AsyncConnection, events: Sequence[Mapping[str, Any]]) -> None:
     """Add newly inserted events to the hourly rollups.
 
-    The rules match the backfill in migration v2_45. Rows are upserted in key
+    The rules match the backfill in migration v2_48. Rows are upserted in key
     order so concurrent flushes lock rollup rows in the same order.
     """
 

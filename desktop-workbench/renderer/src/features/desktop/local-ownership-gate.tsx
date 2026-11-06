@@ -44,10 +44,11 @@ export function LocalOwnershipGate({ children }: { children: ReactNode }) {
   }, [])
 
   const backendUnavailable = state?.recovery?.kind === "backendStopped"
-  const preparing = !backendUnavailable && (environment?.status === "preparing" || environment?.status === "checking")
+  const checking = !backendUnavailable && environment?.status === "checking"
+  const preparing = !backendUnavailable && environment?.status === "preparing"
   const environmentFailure = !backendUnavailable && (environment?.status === "failed" || environment?.status === "cancelled")
-  if (state?.status === "owned" && !preparing && !environmentFailure) return children
-  if (!preparing && !environmentFailure && (!state || state.status === "checking" || state.status === "preparing")) {
+  if (state?.status === "owned" && !checking && !preparing && !environmentFailure) return children
+  if (!preparing && !environmentFailure && (checking || !state || state.status === "checking" || state.status === "preparing")) {
     return <LoadingState className="min-h-screen bg-background" label={environment?.status === "ready" ? t("startingRpc") : state?.status === "preparing" ? t("preparing") : t("checkingConnector")} />
   }
 

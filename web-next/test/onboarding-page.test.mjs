@@ -55,6 +55,7 @@ async function click(container, label) {
 }
 
 function mockDevice(t, initialRuntimes = []) {
+  t.mock.method(dashboardApi, 'listConnectors', async () => ({ connectors: [{ id: 'conn_demo' }] }))
   let runtimes = [...initialRuntimes]
   const types = ['Codex', 'Claude'].map(name => ({
     runtimeType: name.toLowerCase(), displayName: name, present: true, available: true,
@@ -142,6 +143,9 @@ test('phone dialog runs download and QR confirmation before advancing to complet
   await until(() => container.querySelector('[data-slide="welcome"]'))
   await click(container, '下一页')
   await click(container, '下一步')
+  await until(() => document.querySelector('[role="dialog"]')?.textContent.includes('添加 Agent 后开始使用'))
+  await click(document.querySelector('[role="dialog"]'), '暂不配置，继续')
+  await until(() => container.querySelector('[data-slide="phone"]'))
   await click(container, '连接手机')
   const dialog = document.querySelector('[role="dialog"]')
   assert.match(dialog.textContent, /下载移动端 App/)
@@ -166,13 +170,13 @@ test('skipping requires confirmation, and continuing the guide restores the skip
   await until(() => container.querySelector('[data-slide="welcome"]'))
   await click(container, '跳过引导')
   assert.equal(container.querySelector('[data-slide="complete"]'), null)
-  assert.match(document.querySelector('[role="dialog"]').textContent, /略过设备与 Agent 的配置引导/)
+  assert.match(document.querySelector('[role="dialog"]').textContent, /你还没有添加任何 Agent/)
   await click(document.querySelector('[role="dialog"]'), '继续引导')
   assert.ok(container.querySelector('[data-slide="welcome"]'))
   assert.equal(document.activeElement.textContent, '跳过引导')
   assert.equal(window.sessionStorage.getItem('agents-anywhere.onboarding:user1:conn_demo:abcdefghijklmnop'), null)
   await click(container, '跳过引导')
-  await click(document.querySelector('[role="dialog"]'), '确认跳过')
+  await click(document.querySelector('[role="dialog"]'), '暂不配置，继续')
   assert.ok(container.querySelector('[data-slide="complete"]'))
   assert.equal(create.mock.callCount(), 0)
   assert.equal(qr.mock.callCount(), 0)
@@ -222,4 +226,20 @@ test('onboarding slide buttons keep the shared pill shape', async (t) => {
     assert.match(button.className, /rounded-full/, `Not a pill button: ${button.textContent}`)
     assert.doesNotMatch(button.className, /rounded-lg/)
   }
+})
+
+
+test('an empty-device reminder returns to setup, then permits explicit continuation', async t => {
+  mockDevice(t)
+  const container = await render(t, h(PluginOnboardingPage))
+  await until(() => container.querySelector('[data-slide="welcome"]'))
+  await click(container, '跳过引导')
+  await until(() => document.querySelector('[role="dialog"]')?.textContent.includes('你还没有添加任何 Agent'))
+  await click(document.querySelector('[role="dialog"]'), '添加 Agent')
+  await until(() => container.querySelector('[data-slide="device"]'))
+  await until(() => container.textContent.includes('可添加'))
+  await click(container, '下一步')
+  await until(() => document.querySelector('[role="dialog"]')?.textContent.includes('你还没有添加任何 Agent'))
+  await click(document.querySelector('[role="dialog"]'), '暂不配置，继续')
+  await until(() => container.querySelector('[data-slide="phone"]'))
 })
