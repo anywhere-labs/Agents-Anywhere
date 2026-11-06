@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from typing import Any
@@ -138,6 +139,10 @@ class BackendRpcClient:
         )
         self._runtime_sync_task: asyncio.Task[None] | None = None
 
+    def _reconnect_delay(self) -> float:
+        """Stop connectors dropped together from reconnecting in lockstep."""
+        return self.config.reconnect_seconds * random.uniform(1, 2)
+
     async def run_forever(self) -> None:
         self._http_client = self._new_http_client(timeout=60)
         ingest_flush_task = asyncio.create_task(self._ingest.flush_loop())
@@ -176,34 +181,34 @@ class BackendRpcClient:
                             "connector credential no longer valid"
                         )
                     logger.warning(
-                        "backend websocket closed code={} reason={!r}; reconnecting in {}s",
+                        "backend websocket closed code={} reason={!r}; reconnecting in at least {}s",
                         close_code,
                         close_reason,
                         self.config.reconnect_seconds,
                     )
-                    await asyncio.sleep(self.config.reconnect_seconds)
+                    await asyncio.sleep(self._reconnect_delay())
                 except ConnectorNetworkError as exc:
                     logger.warning(
-                        "connector backend network unavailable error={}; reconnecting in {}s",
+                        "connector backend network unavailable error={}; reconnecting in at least {}s",
                         exc,
                         self.config.reconnect_seconds,
                     )
-                    await asyncio.sleep(self.config.reconnect_seconds)
+                    await asyncio.sleep(self._reconnect_delay())
                 except OSError as exc:
                     logger.warning(
-                        "connector backend connection failed error={}; reconnecting in {}s",
+                        "connector backend connection failed error={}; reconnecting in at least {}s",
                         exc,
                         self.config.reconnect_seconds,
                     )
-                    await asyncio.sleep(self.config.reconnect_seconds)
+                    await asyncio.sleep(self._reconnect_delay())
                 except Exception:
                     if ingest_flush_task.done():
                         raise
                     logger.exception(
-                        "connector loop failed; reconnecting in {}s",
+                        "connector loop failed; reconnecting in at least {}s",
                         self.config.reconnect_seconds,
                     )
-                    await asyncio.sleep(self.config.reconnect_seconds)
+                    await asyncio.sleep(self._reconnect_delay())
         finally:
             relay_tasks = [task for _, task in self._terminal_relay_tasks.values()]
             for task in relay_tasks:
