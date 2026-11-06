@@ -25,6 +25,8 @@
 - `NO_PROXY` 里出现 `[::1]` 或写法有误的条目时，Connector 不再启动失败。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
 - Windows 和 macOS 上 Connector 改用系统证书库校验服务器证书，不再因为 Python 自带或读到的证书过期而报「certificate has expired」；证书被拒时日志会说明可能是本机证书库的问题。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
 - Intel Mac 首次准备 Connector 环境时不再因为缺少预编译包而长时间卡在编译 `cryptography`。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
+- 本机 Connector 持续无响应时自动重建后台并恢复连接，短暂故障或主动停止时不会自动重启。（[#522](https://github.com/anywhere-labs/Agents-Anywhere/pull/522)）
+- Codex 版本检测不再阻塞发现和配置验证期间的心跳与本机控制，并避免 Windows 管道读取线程卡住导致检测超时失效。（[#522](https://github.com/anywhere-labs/Agents-Anywhere/pull/522)）
 
 ### DSH 同步
 
