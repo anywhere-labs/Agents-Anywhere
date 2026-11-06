@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from agent_server.core.oauth_clients import first_party_oauth_client
 from agent_server.infra.repositories.store_support import *
+from agent_server.infra.db.engine import read_connection
 
 
 class OAuthRepositoryMixin:
     async def list_oauth_clients(self) -> list[OAuthClientView]:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (
                 await conn.execute(select(oauth_clients_t).order_by(oauth_clients_t.c.created_at.asc()))
             ).mappings().all()
@@ -36,7 +37,7 @@ class OAuthRepositoryMixin:
 
 
     async def get_oauth_client(self, client_id: str) -> OAuthClientView:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(select(oauth_clients_t).where(oauth_clients_t.c.id == client_id))
             ).mappings().first()

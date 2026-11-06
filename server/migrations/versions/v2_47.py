@@ -1,10 +1,9 @@
-"""Model connection reports, model configuration and Tokens Anywhere links.
+"""Durable unified goal state, operation journal and event outbox.
 
 Revision ID: v2_47
 Revises: v2_46
 """
 
-import sqlalchemy as sa
 from alembic import op
 
 revision = "v2_47"
@@ -13,135 +12,73 @@ branch_labels = None
 depends_on = None
 
 
-def upgrade() -> None:
-    # What the runtime adapter last reported about the saved model connection,
-    # with a digest of the connection it was started with.
-    op.add_column("device_runtimes", sa.Column("model_connection_json", sa.Text()))
-    # Set on instances the model configuration created (e.g. a managed Pi),
-    # so it reuses them instead of creating another.
-    op.add_column("device_runtimes", sa.Column("managed_by", sa.Text()))
-    op.create_table(
-        "tokens_links",
-        sa.Column(
-            "user_id",
-            sa.Text(),
-            sa.ForeignKey("users.id", ondelete="CASCADE"),
-            primary_key=True,
-        ),
-        sa.Column("issuer", sa.Text(), nullable=False),
-        sa.Column("account_json", sa.Text(), nullable=False),
-        sa.Column("status", sa.Text(), nullable=False),
-        sa.Column("refresh_token_ciphertext", sa.Text()),
-        sa.Column("linked_at", sa.Text(), nullable=False),
-        sa.Column("refreshed_at", sa.Text()),
-        sa.Column("issued_at", sa.Text(), nullable=False),
-        # Progress of the one-click setup that came with this link.
-        sa.Column("quick_setup_json", sa.Text()),
+def upgrade():
+    op.execute(
+        """
+CREATE TABLE session_goals (
+ session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+ goal_id TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('active','paused','blocked','usageLimited','budgetLimited','complete','failed','cleared','replaced')),
+ source_revision BIGINT NOT NULL CHECK(source_revision >= 0), payload TEXT NOT NULL,
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL, ended_at TEXT,
+ PRIMARY KEY(session_id,goal_id),
+ CHECK ((status IN ('complete','failed','cleared','replaced')) = (ended_at IS NOT NULL))
+)
+"""
     )
-    op.create_table(
-        "tokens_link_states",
-        sa.Column("state_hash", sa.Text(), primary_key=True),
-        sa.Column(
-            "user_id",
-            sa.Text(),
-            sa.ForeignKey("users.id", ondelete="CASCADE"),
-            nullable=False,
-        ),
-        sa.Column("ticket_hash", sa.Text(), nullable=False, unique=True),
-        sa.Column("browser_hash", sa.Text()),
-        sa.Column("code_verifier_ciphertext", sa.Text(), nullable=False),
-        sa.Column("issuer", sa.Text(), nullable=False),
-        sa.Column("redirect_uri", sa.Text(), nullable=False),
-        sa.Column("created_at", sa.Text(), nullable=False),
-        sa.Column("expires_at", sa.Text(), nullable=False),
-        sa.Column("consumed_at", sa.Text()),
-        # The runtimes to set up once the link completes.
-        sa.Column("quick_setup_json", sa.Text()),
+    op.execute(
+        "CREATE INDEX ix_goal_history ON session_goals(session_id,created_at,goal_id)"
     )
-    op.create_table(
-        "model_profiles",
-        sa.Column("id", sa.Text(), primary_key=True),
-        sa.Column(
-            "user_id",
-            sa.Text(),
-            sa.ForeignKey("users.id", ondelete="CASCADE"),
-            nullable=False,
-        ),
-        sa.Column("source", sa.Text(), nullable=False),
-        sa.Column("name", sa.Text(), nullable=False),
-        sa.Column("origin_host", sa.Text(), nullable=False),
-        sa.Column("offers_json", sa.Text(), nullable=False),
-        sa.Column("catalog_digest", sa.Text(), nullable=False),
-        sa.Column("key_ref_json", sa.Text(), nullable=False),
-        sa.Column("secret_ciphertext", sa.Text()),
-        # Which models runtimes get and under which names (Tokens profile).
-        sa.Column("preferences_json", sa.Text()),
-        sa.Column("state", sa.Text(), nullable=False),
-        sa.Column("etag", sa.Integer(), nullable=False),
-        sa.Column("created_at", sa.Text(), nullable=False),
-        sa.Column("updated_at", sa.Text(), nullable=False),
+    op.execute(
+        "CREATE UNIQUE INDEX ux_goal_current ON session_goals(session_id) WHERE ended_at IS NULL"
     )
-    op.create_index("idx_model_profiles_user_id", "model_profiles", ["user_id"])
-    op.create_table(
-        "runtime_model_assignments",
-        sa.Column("connector_id", sa.Text(), nullable=False),
-        sa.Column("runtime_id", sa.Text(), nullable=False),
-        sa.Column(
-            "profile_id",
-            sa.Text(),
-            sa.ForeignKey("model_profiles.id", ondelete="RESTRICT"),
-            nullable=False,
-        ),
-        sa.Column("offer_format", sa.Text(), nullable=False),
-        sa.Column("created_runtime", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("applied_digest", sa.Text(), nullable=False),
-        sa.Column("applied_catalog_digest", sa.Text(), nullable=False),
-        sa.Column("imported_model_ids_json", sa.Text(), nullable=False),
-        sa.Column("previous_gateway_ciphertext", sa.Text()),
-        sa.Column("status", sa.Text(), nullable=False),
-        sa.Column("error_json", sa.Text()),
-        sa.Column("applied_at", sa.Text()),
-        sa.Column("updated_at", sa.Text(), nullable=False),
-        sa.PrimaryKeyConstraint("connector_id", "runtime_id"),
-        sa.ForeignKeyConstraint(
-            ["connector_id", "runtime_id"],
-            ["device_runtimes.connector_id", "device_runtimes.runtime_id"],
-            ondelete="CASCADE",
-        ),
+    op.execute(
+        """
+CREATE TABLE session_goal_state (
+ session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+ current_goal_id TEXT, last_outcome_goal_id TEXT, revision BIGINT NOT NULL DEFAULT 0 CHECK(revision >= 0),
+ binding_generation BIGINT NOT NULL DEFAULT 0 CHECK(binding_generation >= 0), source_epoch TEXT,
+ source_revision BIGINT NOT NULL DEFAULT 0 CHECK(source_revision >= 0), payload TEXT NOT NULL,
+ observed_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ FOREIGN KEY(session_id,current_goal_id) REFERENCES session_goals(session_id,goal_id),
+ FOREIGN KEY(session_id,last_outcome_goal_id) REFERENCES session_goals(session_id,goal_id)
+)
+"""
     )
-    op.create_index(
-        "idx_runtime_model_assignments_profile_id",
-        "runtime_model_assignments",
-        ["profile_id"],
+    op.execute(
+        """
+CREATE TABLE goal_operations (
+ session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, operation_id TEXT NOT NULL,
+ fingerprint TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('set','edit','pause','resume','clear')),
+ expected_revision BIGINT NOT NULL CHECK(expected_revision >= 0), binding_generation BIGINT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('reserved','dispatched','confirmed','rejected','unknown')),
+ request_payload TEXT NOT NULL, result_payload TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT,
+ PRIMARY KEY(session_id,operation_id)
+)
+"""
     )
-    op.create_table(
-        "model_config_operations",
-        sa.Column("id", sa.Text(), primary_key=True),
-        sa.Column(
-            "user_id",
-            sa.Text(),
-            sa.ForeignKey("users.id", ondelete="CASCADE"),
-            nullable=False,
-        ),
-        sa.Column("kind", sa.Text(), nullable=False),
-        sa.Column("idempotency_key", sa.Text(), nullable=False),
-        sa.Column("request_digest", sa.Text(), nullable=False),
-        sa.Column("targets_json", sa.Text(), nullable=False),
-        sa.Column("lease_until", sa.Text(), nullable=False),
-        sa.Column("result_json", sa.Text()),
-        sa.Column("created_at", sa.Text(), nullable=False),
-        sa.Column("finished_at", sa.Text()),
-        sa.UniqueConstraint("user_id", "idempotency_key"),
+    op.execute(
+        "CREATE INDEX ix_goal_operations_pending ON goal_operations(session_id,created_at) WHERE state IN ('reserved','dispatched','unknown')"
+    )
+    op.execute(
+        """
+CREATE TABLE goal_event_outbox (
+ event_id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+ state_revision BIGINT NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL,
+ attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT NOT NULL, claim_owner TEXT, claim_until TEXT, delivered_at TEXT,
+ UNIQUE(session_id,state_revision,kind)
+)
+"""
+    )
+    op.execute(
+        "CREATE INDEX ix_goal_outbox_pending ON goal_event_outbox(next_attempt_at,created_at) WHERE delivered_at IS NULL"
     )
 
 
-def downgrade() -> None:
-    op.drop_table("model_config_operations")
-    op.drop_index("idx_runtime_model_assignments_profile_id", "runtime_model_assignments")
-    op.drop_table("runtime_model_assignments")
-    op.drop_index("idx_model_profiles_user_id", "model_profiles")
-    op.drop_table("model_profiles")
-    op.drop_table("tokens_link_states")
-    op.drop_table("tokens_links")
-    op.drop_column("device_runtimes", "managed_by")
-    op.drop_column("device_runtimes", "model_connection_json")
+def downgrade():
+    for name in (
+        "goal_event_outbox",
+        "goal_operations",
+        "session_goal_state",
+        "session_goals",
+    ):
+        op.drop_table(name)

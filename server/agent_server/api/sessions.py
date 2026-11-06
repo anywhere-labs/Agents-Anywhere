@@ -995,6 +995,7 @@ async def session_snapshot(
         previous_state=runtime_state,
     )
     return ProtocolSessionSnapshotResponse(
+        goalState=await db.read_goal(session_id),
         session=session.model_dump(mode="json"),
         state=(
             runtime_state.model_dump(mode="json")
@@ -1314,7 +1315,6 @@ async def execute_session_command(
         raise HTTPException(status_code=404, detail="session not found") from None
     if payload.command == "plan":
         from uuid import uuid4
-
         from agent_server.core.capabilities import SESSION_PLANNING
         from agent_server.core.planning.commands import parse_plan_command
         from agent_server.core.planning.models import PlanningRequest

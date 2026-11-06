@@ -61,6 +61,14 @@ class ConnectorDeletionRepository(DashboardEventRepository, Protocol):
     async def delete_connector(self, connector_id: str, *, user_id: str) -> list[str]: ...
 
 
+class UserDeletionRepository(ConnectorDeletionRepository, Protocol):
+    async def ensure_user_deletable(self, user_id: str) -> None: ...
+
+    async def list_user_connector_ids(self, user_id: str) -> list[str]: ...
+
+    async def delete_user(self, user_id: str) -> None: ...
+
+
 class ProjectLookupRepository(Protocol):
     async def get_project(
         self,

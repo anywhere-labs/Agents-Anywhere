@@ -170,7 +170,7 @@ def main():
     signal.signal(signal.SIGTERM, interrupted)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--mode", choices=["full", "affected", "shadow", "verify"], default="shadow"
+        "--mode", choices=["full", "affected", "shadow", "verify"], default="verify"
     )
     parser.add_argument(
         "--base", help="PR base ref; missing/unsupported inputs fall back to full"

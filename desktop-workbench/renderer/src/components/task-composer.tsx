@@ -8,7 +8,7 @@ import { creationConfigurationDefaults } from "@/features/dashboard/runtime-form
 
 import * as React from "react"
 import { parsePlanningCommand } from "@/features/planning/commands"
-import { Monitor, ChevronDown, ArrowUp, Loader2, Check } from "lucide-react"
+import { X, Monitor, ChevronDown, ArrowUp, Loader2, Check } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -152,6 +152,8 @@ export function TaskComposer() {
   } = useWorkspace()
   const t = useTranslations("dashboard.new")
   const tPlanning = useTranslations("planning")
+  const tGoal = useTranslations("goal")
+  const [goalCreation,setGoalCreation]=React.useState(Boolean(creationEditorDraft?.request.goalIntent))
   const errorText = useRuntimeErrorText()
   const tCommon = useTranslations("common")
   const tWorkspace = useTranslations("dashboard.workspacePicker")
@@ -804,13 +806,19 @@ export function TaskComposer() {
       if (attachments.length) { toast.error(tPlanning("attachmentTask")); return }
       setPlanningCreation(planIntent.command === "enter_plan"); setPrompt(""); return
     }
-    const usePlanning = planningCreation || planIntent?.command === "submit_task"
+    const rawGoal=capabilityIsUsable(runtimeCapabilities,"session.goal",selectedRuntimeScope) && /^\/goal(?:\s|$)/.test(prompt.trimStart())
+    if(rawGoal && !prompt.trimStart().slice(5).trim()){setGoalCreation(true);setPlanningCreation(false);setPrompt("");return}
+    const useGoal=goalCreation || rawGoal
+    const goalObjective=rawGoal?prompt.trimStart().slice(5).trim():prompt.trim()
+    const usePlanning = !useGoal && (planningCreation || planIntent?.command === "submit_task")
 
     if (!authSession?.accessToken || !selectedConnector || !selectedRuntime || !workspace?.path || creatingRef.current) return
     if (recoveryTargetUnavailable || workspace.connectorId !== selectedConnector.id) return
     if (!prompt.trim() && attachments.length === 0) return
     if (!capabilitiesReady || catalogsLoading || (needsPreparation && preparation.operation?.state.phase !== "ready")) return
     // Prepared-workspace creation does not carry a planning intent yet; refuse instead of silently dropping it.
+    if (useGoal && needsPreparation) { toast.error(tGoal("workspaceUnsupported")); return }
+    if (useGoal && !goalObjective) return
     if (usePlanning && needsPreparation) { toast.error(tPlanning("workspaceUnsupported")); return }
     if (requiresModelSelection && !selectedModelSelection) return
     if (requiresPermissionSelection && !selectedPermissionSelection) return
@@ -936,7 +944,8 @@ export function TaskComposer() {
         modelId: selectedModel, reasoningId: selectedReasoning, permissionMode: selectedPermissionMode,
         request: {
           ...createBody,
-          content: planIntent ? planIntent.content ?? "" : usePlanning ? prompt : messageText,
+          content: useGoal ? goalObjective : planIntent ? planIntent.content ?? "" : usePlanning ? prompt : messageText,
+          ...(useGoal ? { goalIntent: { mode: "goal" as const, operationId: clientMessageId } } : {}),
           ...(usePlanning ? { planningIntent: { mode: "plan" as const, operationId: clientMessageId } } : {}),
           selections, clientMessageId,
         },
@@ -1056,6 +1065,7 @@ export function TaskComposer() {
               </div>
             ) : null}
             {recoveryTargetUnavailable ? <p role="alert" className="text-sm text-destructive">{t("restoredTargetUnavailable")}</p> : null}
+            {goalCreation && <Badge variant="outline">{tGoal("title")}<Button type="button" size="icon-sm" variant="ghost" aria-label={tGoal("clearMode")} onClick={()=>setGoalCreation(false)}><X/></Button></Badge>}
             {planningCreation && <Badge variant="outline">{tPlanning("creationIntent")}</Badge>}
             <AttachmentPreviewList attachments={attachments} onRemove={remove} />
             {attachmentError ? <p role="alert" className="text-xs text-destructive">{attachmentError}</p> : null}
@@ -1238,6 +1248,11 @@ export function TaskComposer() {
               {creating ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
             </Button>
           </div>
+          {showCatalogStatus && catalogFailure && !runtimeStarting ? (
+            <p role="alert" className="px-5 pb-3 text-sm text-destructive">
+              {errorText(catalogFailure, t("modelCatalogLoadFailed"))}
+            </p>
+          ) : null}
         </div>
 
         <div className="mt-3">

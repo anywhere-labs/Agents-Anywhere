@@ -21,8 +21,8 @@ from sqlalchemy.pool import NullPool
 from agent_server.infra.db.engine import resolve_db_url
 
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_49"
-CURRENT_SCHEMA_VERSION = "2.49"
+CURRENT_SCHEMA_REVISION = "v2_52"
+CURRENT_SCHEMA_VERSION = "2.52"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -279,6 +279,53 @@ def _classify_sync(connection) -> UnversionedDatabase:
                 }
                 if not (planning_tables.issubset(tables) and all(required.issubset(_column_names(inspector, table)) for table, required in columns.items())):
                     return UnversionedDatabase("unknown")
+            goal_columns = {
+                "session_goals": {
+                    "session_id",
+                    "goal_id",
+                    "status",
+                    "source_revision",
+                    "payload",
+                    "ended_at",
+                },
+                "session_goal_state": {
+                    "session_id",
+                    "current_goal_id",
+                    "last_outcome_goal_id",
+                    "revision",
+                    "binding_generation",
+                    "source_epoch",
+                    "source_revision",
+                    "payload",
+                },
+                "goal_operations": {
+                    "session_id",
+                    "operation_id",
+                    "fingerprint",
+                    "state",
+                    "request_payload",
+                    "result_payload",
+                },
+                "goal_event_outbox": {
+                    "event_id",
+                    "session_id",
+                    "state_revision",
+                    "kind",
+                    "payload",
+                    "claim_owner",
+                    "claim_until",
+                    "delivered_at",
+                },
+            }
+            goal_layout = bool(set(goal_columns) & tables)
+            if goal_layout and not (
+                set(goal_columns).issubset(tables)
+                and all(
+                    required.issubset(_column_names(inspector, table))
+                    for table, required in goal_columns.items()
+                )
+            ):
+                return UnversionedDatabase("unknown")
             if runtime_instance_layout:
                 if (
                     "app_releases" in tables
@@ -473,24 +520,44 @@ def _classify_sync(connection) -> UnversionedDatabase:
                 if revision != "v2_45":
                     return UnversionedDatabase("unknown")
                 revision = "v2_46"
-            # v2_47 adds model configuration on top of the planning layout.
-            if {"model_profiles", "tokens_links"} & tables:
+            if goal_layout:
                 if revision != "v2_46":
                     return UnversionedDatabase("unknown")
                 revision = "v2_47"
-            # v2_48 replaces per-runtime operations with model channels.
-            if "runtime_channel_switches" in tables:
-                if revision != "v2_47":
-                    return UnversionedDatabase("unknown")
-                revision = "v2_48"
-            if "runtime_channel_sync" in tables:
-                required = {"channel_sync_outbox", "channel_device_fences", "channel_rotation_intents", "channel_device_gates"}
-                if (revision != "v2_48" or not required.issubset(tables)
-                    or "connection_revision" not in _column_names(inspector, "model_profiles")
-                    or not {"target_generation", "lease_owner", "lease_epoch", "plan_ciphertext"}.issubset(
-                        _column_names(inspector, "runtime_channel_switches"))):
+            if "session_inventory_scans" in tables:
+                if revision != "v2_47" or "source_changed_seq" not in session_columns:
                     return UnversionedDatabase("unknown")
                 revision = "v2_49"
+            # v2_50 adds model configuration after main's goal and inventory revisions.
+            if {"model_profiles", "tokens_links"} & tables:
+                if revision != "v2_49":
+                    return UnversionedDatabase("unknown")
+                revision = "v2_50"
+            # v2_51 replaces per-runtime operations with model channels.
+            if "runtime_channel_switches" in tables:
+                if revision != "v2_50":
+                    return UnversionedDatabase("unknown")
+                revision = "v2_51"
+            if "runtime_channel_sync" in tables:
+                required = {
+                    "channel_sync_outbox",
+                    "channel_device_fences",
+                    "channel_rotation_intents",
+                    "channel_device_gates",
+                }
+                if (
+                    revision != "v2_51"
+                    or not required.issubset(tables)
+                    or "connection_revision" not in _column_names(inspector, "model_profiles")
+                    or not {
+                        "target_generation",
+                        "lease_owner",
+                        "lease_epoch",
+                        "plan_ciphertext",
+                    }.issubset(_column_names(inspector, "runtime_channel_switches"))
+                ):
+                    return UnversionedDatabase("unknown")
+                revision = "v2_52"
             return UnversionedDatabase("v2", revision)
         if "approvals" in tables:
             if {"presence_instance_id", "presence_connection_id"}.issubset(

@@ -35,6 +35,10 @@ from connector.runtimes.claude.timeline.agent_calls import (
     claude_agent_call_content,
     complete_claude_agent_call_content,
 )
+from connector.runtimes.claude.timeline.inline_media import (
+    omitted_media_summary,
+    without_inline_media,
+)
 
 CLAUDE_INTERRUPTED_REQUEST_MARKERS = frozenset(
     {
@@ -404,7 +408,9 @@ def message_tool_blocks(message: Any) -> tuple[ClaudeToolBlock, ...]:
     parent_tool_use_id = _string(
         _extract(message, "parent_tool_use_id", "parentToolUseId")
     )
-    result_metadata = _mapping(_extract(message, "tool_use_result", "toolUseResult"))
+    result_metadata = _mapping(
+        without_inline_media(_extract(message, "tool_use_result", "toolUseResult"))
+    )
     blocks: list[ClaudeToolBlock] = []
     for block in content:
         block_type = _block_type(block)
@@ -429,7 +435,9 @@ def message_tool_blocks(message: Any) -> tuple[ClaudeToolBlock, ...]:
                     block_type="tool_result",
                     tool_use_id=_string(_extract(block, "tool_use_id", "toolUseId"))
                     or _stable_id("tool", repr(block)),
-                    tool_result=_extract(block, "content", "result", "toolResult"),
+                    tool_result=without_inline_media(
+                        _extract(block, "content", "result", "toolResult")
+                    ),
                     is_error=_extract(block, "is_error", "isError") is True,
                     parent_tool_use_id=parent_tool_use_id,
                     tool_result_metadata=result_metadata,
@@ -826,6 +834,9 @@ def _result_text(result: Any) -> str:
     text = _content_text(result)
     if text:
         return text
+    media = omitted_media_summary(result)
+    if media:
+        return media
     if result is None:
         return ""
     return json.dumps(result, ensure_ascii=False, sort_keys=True, default=str)

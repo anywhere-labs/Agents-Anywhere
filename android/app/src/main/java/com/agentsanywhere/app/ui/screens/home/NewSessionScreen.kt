@@ -706,6 +706,7 @@ fun NewSessionScreen(
                 runtimeName = runtime.name,
                 selections = runtimeSelection.selections,
                 attachmentsEnabled = runtimeSelection.canUseAttachments,
+                goalsEnabled = runtimeSelection.capabilities.data?.find("session.goal",runtime.id,runtime.type)?.usable == true,
                 preparedWorkspace = preparedRuntimeWorkspace,
             ),
         )

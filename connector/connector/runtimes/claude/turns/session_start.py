@@ -43,6 +43,17 @@ class ClaudeSessionStartHandler:
             "idle",
             metadata={"source": "claude.create_and_start_session"},
         )
+        session.selections = dict(selections or {})
+        host = self.actions.runner.host
+        goal_result = await host.prepare_goal_creation(
+            session_id,
+            session.external_session_id,
+            content,
+            attachments,
+            client_message_id or session_id,
+        )
+        if goal_result is not None:
+            return goal_result
         result = await self.actions.start_turn(
             session_id=session_id,
             external_session_id=session.external_session_id,

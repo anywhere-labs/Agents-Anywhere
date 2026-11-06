@@ -508,6 +508,7 @@ export type SessionCreateAndStartRequest = {
   runtimeId?: string;
   title?: string;
   cwd?: string;
+  goalIntent?: { mode: "goal"; operationId: string };
   planningIntent?: { mode: "plan"; operationId: string };
   content: string;
   selections?: Record<string, string | null>;

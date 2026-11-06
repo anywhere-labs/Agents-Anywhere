@@ -1177,6 +1177,15 @@ private fun TimelineMessageRow(
     noticeResponseErrors: Map<String, String> = emptyMap(),
     onRespondNotice: (RuntimeNotice, RuntimeNoticeAction, Map<String, Any?>?) -> Unit = { _, _, _ -> },
 ) {
+    if(message.contentKind=="goal") {
+        val goal=runCatching { org.json.JSONObject(message.rawContent).optJSONObject("goal") }.getOrNull()
+        val status=goal?.optString("status")
+        if(status=="complete" || status=="failed") {
+            val title=if(status=="failed") stringResource(R.string.goal_failed) else if(goal?.has("timeUsedSeconds")==true && !goal.isNull("timeUsedSeconds")) stringResource(R.string.goal_achieved,goal.optLong("timeUsedSeconds").toString()) else stringResource(R.string.goal_achieved_unknown_time)
+            Text(title,style=androidx.compose.material3.MaterialTheme.typography.labelSmall)
+        }
+        return
+    }
     when (message.kind) {
         TimelineMessageKind.Reasoning -> ReasoningSection(
             message = message,

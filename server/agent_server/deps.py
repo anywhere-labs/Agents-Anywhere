@@ -283,17 +283,5 @@ def require_admin(user: UserView = Depends(current_user)) -> UserView:
 
 
 def get_runtime_workflow_service(conn: HTTPConnection):
-    from agent_server.services.runtime_workflows import (
-        RuntimeWorkflowService,
-        WorkflowError,
-    )
-    channels = model_channel_service_for(conn.app.state)
-
-    async def prepare_channel(connector_id: str, runtime_id: str, *, user_id: str) -> str:
-        try:
-            return await channels.prepare_runtime(connector_id, runtime_id, user_id=user_id)
-        except (TokensLinkError, ModelConfigError, DeviceRuntimeError) as exc:
-            raise WorkflowError(exc.code, str(exc), exc.status_code) from exc
-
-    return RuntimeWorkflowService(conn.app.state.store, conn.app.state.rpc, conn.app.state.device_runtime_service,
-        prepare_model_channel=prepare_channel, model_channel_catalog=channels.channel_catalog)
+    from agent_server.services.runtime_workflows import RuntimeWorkflowService
+    return RuntimeWorkflowService(conn.app.state.store, conn.app.state.rpc, conn.app.state.device_runtime_service)

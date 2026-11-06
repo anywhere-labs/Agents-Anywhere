@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises'
 import { OAUTH_CLIENT_ID, type AccountProfile } from '../../contracts/index.js'
 import type { MobileLoginStatus } from '../../contracts/mobile.js'
 
@@ -43,10 +44,38 @@ export class ApiError extends Error {
   }
 }
 
+const RETRY_DELAYS_MS = [500, 1_500]
+/** The request never left: repeating it cannot do anything twice. */
+const NOT_SENT = new Set(['ECONNREFUSED', 'EAI_AGAIN', 'ENOTFOUND', 'EHOSTUNREACH', 'ENETUNREACH', 'UND_ERR_CONNECT_TIMEOUT'])
+/** The connection failed at an unknown point, so the request may have been processed. */
+const MAYBE_SENT = new Set(['ECONNRESET', 'EPIPE', 'ETIMEDOUT', 'UND_ERR_SOCKET', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT'])
+
+function canRetry(error: unknown, method: string | undefined): boolean {
+  const cause = (error as { cause?: { code?: unknown, message?: unknown } } | null)?.cause
+  const code = typeof cause?.code === 'string' ? cause.code : ''
+  if (NOT_SENT.has(code)) return true
+  // ECONNRESET during the TLS handshake also means nothing was sent.
+  if (code === 'ECONNRESET' && typeof cause?.message === 'string' && cause.message.includes('before secure TLS connection')) return true
+  // An authorization code works once and a registration creates a device: only reads repeat.
+  return (method === undefined || method === 'GET') && MAYBE_SENT.has(code)
+}
+
 export class AccountApi {
   constructor(readonly baseUrl: string, private readonly fetcher: typeof fetch = fetch) {}
 
   private async request<T>(path: string, options: RequestInit, signal?: AbortSignal): Promise<T> {
+    for (let attempt = 0; ; attempt += 1) {
+      try { return await this.attempt<T>(path, options, signal) }
+      catch (error) {
+        signal?.throwIfAborted()
+        const wait = RETRY_DELAYS_MS[attempt]
+        if (wait === undefined || !canRetry(error, options.method)) throw error
+        await delay(wait, undefined, signal ? { signal } : {})
+      }
+    }
+  }
+
+  private async attempt<T>(path: string, options: RequestInit, signal?: AbortSignal): Promise<T> {
     const timeout = AbortSignal.timeout(20_000)
     try {
       const response = await this.fetcher(`${this.baseUrl}/api/v2${path}`, {

@@ -37,6 +37,7 @@ from agent_server.api import (
     runtime_workflows,
     service,
     session_planning,
+    session_goals,
     sessions,
     sessions_fs,
     sessions_terminal,
@@ -135,6 +136,7 @@ def create_app(
         deletion_task: asyncio.Task[None] | None = None
         usage_task: asyncio.Task[None] | None = None
         tokens_task: asyncio.Task[None] | None = None
+        goal_task: asyncio.Task[None] | None = None
         try:
             logger.info(
                 "server concurrency pid={} workers={} event_workers={}",
@@ -160,6 +162,11 @@ def create_app(
             app.state.channel_reconciler = ChannelReconciler(app.state.store,
                 model_channel_service_for(app.state), app.state.redis, tokens_link_service_for(app.state))
             await app.state.channel_reconciler.start()
+            from agent_server.services.goal.outbox import run_goal_outbox
+
+            goal_task = asyncio.create_task(
+                run_goal_outbox(app.state.store, app.state.timeline_broker)
+            )
             # Generate the bootstrap token early so operators see it in logs.
             if await app.state.store.count_users() == 0:
                 await SetupTokenService(app.state.setup_token, app.state.redis).snapshot()
@@ -174,6 +181,9 @@ def create_app(
             driver = getattr(app.state, "channel_driver", None)
             if driver is not None:
                 await driver.close()
+            if goal_task is not None:
+                goal_task.cancel()
+                await asyncio.gather(goal_task, return_exceptions=True)
             if usage_task is not None:
                 usage_task.cancel()
                 await asyncio.gather(usage_task, return_exceptions=True)
@@ -212,7 +222,7 @@ def create_app(
                                 finally:
                                     await app.state.store.close()
 
-    app = FastAPI(title="Agent Server", version="2.1.0", lifespan=lifespan)
+    app = FastAPI(title="Agent Server", version="2.2.0", lifespan=lifespan)
     app.add_exception_handler(
         ConnectorServiceError,
         error_handlers.connector_service_error_handler,
@@ -264,6 +274,9 @@ def create_app(
     app.state.gateway_prober = GatewayProber(allow_private=private_gateways_allowed())
     app.state.timeline_broker = TimelineBroker(
         app.state.redis,
+        dashboard_min_interval_seconds=float(
+            os.getenv("AGENT_SERVER_DASHBOARD_MIN_INTERVAL_SECONDS", "2")
+        ),
         event_workers=process_settings.event_workers,
         event_threshold_bytes=int(os.getenv("AGENT_SERVER_EVENT_THRESHOLD_BYTES", str(256 * 1024))),
         event_queue_items=int(os.getenv("AGENT_SERVER_EVENT_QUEUE_ITEMS", "32")),
@@ -412,6 +425,7 @@ def create_app(
     app.include_router(projects.router, prefix=API_V2_PREFIX)
     app.include_router(sessions.router, prefix=API_V2_PREFIX)
     app.include_router(session_planning.router, prefix=API_V2_PREFIX)
+    app.include_router(session_goals.router, prefix=API_V2_PREFIX)
     app.include_router(sessions_fs.router, prefix=API_V2_PREFIX)
     app.include_router(sessions_terminal.router, prefix=API_V2_PREFIX)
 

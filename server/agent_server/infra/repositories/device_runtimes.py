@@ -22,6 +22,7 @@ from agent_server.infra.db import device_runtimes as device_runtimes_t
 from agent_server.infra.db import retired_device_runtimes as retired_runtimes_t
 from agent_server.infra.db import sessions as sessions_t
 from agent_server.infra.repositories.channel_reconciliation import channel_connection
+from agent_server.infra.db.engine import read_connection
 
 _CONTROL_V2_DESCRIPTOR_KEY = "__runtimeControlV2Descriptor"
 
@@ -38,14 +39,14 @@ def _json_loads(value: str | None) -> Any:
 
 class DeviceRuntimeRepositoryMixin:
     async def runtime_session_ids(self, connector_id: str, runtime_id: str) -> list[str]:
-        async with channel_connection(self) as conn:
+        async with read_connection(self._engine) as conn:
             return list((await conn.execute(select(sessions_t.c.id).where(
                 sessions_t.c.connector_id == connector_id, sessions_t.c.runtime_id == runtime_id,
             ))).scalars())
 
     async def get_unconfigured_runtime_ids(self, connector_id: str) -> set[str]:
         """Ingress denylist, including identities permanently retired by deletion."""
-        async with channel_connection(self) as conn:
+        async with read_connection(self._engine) as conn:
             result = await conn.execute(
                 select(device_runtimes_t.c.runtime_id).where(
                     device_runtimes_t.c.connector_id == connector_id,
@@ -191,7 +192,7 @@ class DeviceRuntimeRepositoryMixin:
         )
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
-        async with channel_connection(self) as conn:
+        async with read_connection(self._engine) as conn:
             rows = (await conn.execute(query)).mappings().all()
             if not rows and not await self._connector_exists(
                 conn, connector_id, user_id=user_id
@@ -217,7 +218,7 @@ class DeviceRuntimeRepositoryMixin:
         )
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
-        async with channel_connection(self) as conn:
+        async with read_connection(self._engine) as conn:
             row = (await conn.execute(query)).mappings().first()
         if row is None:
             raise KeyError(runtime_type)
@@ -395,7 +396,7 @@ class DeviceRuntimeRepositoryMixin:
         query = query.order_by(
             device_runtimes_t.c.name_key, device_runtimes_t.c.runtime_id
         )
-        async with channel_connection(self) as conn:
+        async with read_connection(self._engine) as conn:
             rows = (await conn.execute(query)).mappings().all()
             if not rows and not await self._connector_exists(
                 conn, connector_id, user_id=user_id
@@ -423,7 +424,7 @@ class DeviceRuntimeRepositoryMixin:
             )
             .order_by(device_runtimes_t.c.name_key, device_runtimes_t.c.runtime_id)
         )
-        async with channel_connection(self) as conn:
+        async with read_connection(self._engine) as conn:
             rows = (await conn.execute(query)).mappings().all()
         return [_runtime_row(row) for row in rows]
 
@@ -441,7 +442,7 @@ class DeviceRuntimeRepositoryMixin:
         )
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
-        async with channel_connection(self) as conn:
+        async with read_connection(self._engine) as conn:
             row = (await conn.execute(query)).mappings().first()
         if row is None:
             raise KeyError(runtime_id)

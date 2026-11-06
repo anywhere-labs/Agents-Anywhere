@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -100,8 +101,9 @@ class CodexProvider(RuntimeProvider):
 
         sdk = self._sdk_checker()
         self._discovered_sdk = sdk
-        runtime_environment, shell_path = codex_runtime_environment(None)
-        binary_selection = select_codex_runtime_binary(
+        runtime_environment, shell_path = await asyncio.to_thread(codex_runtime_environment, None)
+        binary_selection = await asyncio.to_thread(
+            select_codex_runtime_binary,
             "prefer_system",
             runtime_environment,
             shell_path,
@@ -217,11 +219,13 @@ class CodexProvider(RuntimeProvider):
         binary_mode = provider_config.runtime_binary_mode_for_system_preference(
             use_system_codex
         )
-        runtime_environment, shell_path = codex_runtime_environment(
+        runtime_environment, shell_path = await asyncio.to_thread(
+            codex_runtime_environment,
             raw_values.get("environment"),
             codex_home=codex_home,
         )
-        binary_selection = select_codex_runtime_binary(
+        binary_selection = await asyncio.to_thread(
+            select_codex_runtime_binary,
             binary_mode,
             runtime_environment,
             shell_path,
@@ -278,7 +282,12 @@ class CodexProvider(RuntimeProvider):
         )
         from connector.planning.infrastructure.binding import bind_planning
         from connector.runtimes.codex.planning import CodexPlanningPort
-        return bind_planning(runtime, host, CodexPlanningPort(runtime))
+
+        bind_planning(runtime, host, CodexPlanningPort(runtime))
+        from connector.goals.binding import bind_goals
+        from connector.runtimes.codex.goals import CodexGoalPort
+
+        return bind_goals(runtime, host, CodexGoalPort(runtime))
 
     def resource_claims(
         self,

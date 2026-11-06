@@ -44,6 +44,8 @@ final class NewSessionModel {
     private(set) var isValid = true
     private(set) var creationUncertain = false
     private(set) var network = V2NetworkStatus()
+    var goalCreation = false
+    var goalUsable: Bool { prepared?.capabilities.allows("session.goal") == true }
     var planningCreation = false
     var error: String?
     @ObservationIgnored var onStaged: ((NewSessionSubmission) async -> Void)?
@@ -360,12 +362,16 @@ final class NewSessionModel {
     }
 
     func create(text: String) async -> V2SessionMeta? {
-        let intent = V2PlanningCommand.parse(text)
+        let trimmed=text.trimmingCharacters(in:.whitespacesAndNewlines)
+        let rawGoal=goalUsable && trimmed.range(of:"^/goal(?:\\s|$)",options:.regularExpression) != nil
+        if rawGoal && String(trimmed.dropFirst(5)).trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {goalCreation=true;planningCreation=false;draft.text="";saveDraft();return nil}
+        let useGoal=goalCreation || rawGoal
+        let intent = useGoal ? nil : V2PlanningCommand.parse(text)
         if let intent, intent.command != "submit_task" {
             guard draft.attachments.isEmpty else { error = String(localized: "请填写附件对应的规划任务。"); return nil }
             planningCreation = intent.command == "enter_plan"; draft.text = ""; saveDraft(); return nil
         }
-        let usePlanning = planningCreation || intent?.command == "submit_task"
+        let usePlanning = !useGoal && (planningCreation || intent?.command == "submit_task")
         guard canCreate, let runtime else { return nil }
         draft.text = text
         guard draft.canAttemptSend else { return nil }
@@ -403,7 +409,7 @@ final class NewSessionModel {
             return nil
         }
         let submission = NewSessionSubmission(project: project, runtime: runtime, text: text, attachments: files)
-        draft.clear(); saveDraft()
+        if !useGoal {draft.clear(); saveDraft()}
         var completed = false
         defer {
             if !completed, isValid {
@@ -471,11 +477,13 @@ final class NewSessionModel {
             } else {
             response = try await creation.createAndStart(connectorId: connectorID, projectId: project.id, runtime: runtime.runtimeType,
                 runtimeId: runtime.id, title: nil, cwd: project.workspacePath,
-                content: usePlanning && intent == nil ? "/plan " + text : text, selections: settings.selections, attachments: files.map(\.local),
+                content: useGoal && !rawGoal ? "/goal " + text : usePlanning && intent == nil ? "/plan " + text : text, selections: settings.selections, attachments: files.map(\.local),
                 clientMessageId: submission.pending.id)
             }
             guard isValid else { return nil }
             completed = true
+            if useGoal && draft.text==text {draft.clear();saveDraft()}
+            goalCreation = false
             planningCreation = false
             onBound?(submission, response)
             return response.session

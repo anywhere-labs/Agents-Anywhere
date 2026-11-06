@@ -216,6 +216,7 @@ function SystemCard({ token, session, item }: { token: string; session: SessionV
   if (item.content.code === "model_request_retry") return <ModelRetryMarker item={item} />
   if (kind === "reasoning") return <ReasoningEntry token={token} session={session} item={item} />
   if (kind === "compact") return <CompactMarker item={item} />
+  if (kind === "goal") return <GoalTimelineOutcome item={item} />
   const text = textOf(item.content.text) || textOf(item.content.message) || textOf(item.content.rawText)
   const failed = item.status === "failed" || kind === "error"
   const title = text ? `${kind}: ${text}` : `${kind}: ${item.status}`
@@ -251,6 +252,7 @@ function ModelRetryMarker({ item }: { item: TimelineItem }) {
 
 function MarkerCard({ item }: { item: TimelineItem }) {
   const kind = textOf(item.content.kind) || "system"
+  if (kind === "goal") return <GoalTimelineOutcome item={item} />
   if (kind === "compact") return <CompactMarker item={item} />
 
   const label = textOf(item.content.label) || textOf(item.content.title) || kind
@@ -494,4 +496,16 @@ function systemDetail(content: TimelineItem["content"]): Record<string, unknown>
   delete detail.message
   delete detail.rawText
   return detail
+}
+
+function GoalTimelineOutcome({ item }: { item: TimelineItem }) {
+  const t = useTranslations("goal")
+  const goal = item.content.goal as { status?: string; timeUsedSeconds?: number } | undefined
+  if (!goal || !["complete", "failed"].includes(goal.status ?? "")) return null
+  const label = goal.status === "complete"
+    ? goal.timeUsedSeconds == null
+      ? t("achievedUnknownTime")
+      : t("achieved", { time: new Intl.NumberFormat().format(goal.timeUsedSeconds) + t("secondsUnit") })
+    : t("failed")
+  return <div role="status" className="py-1 text-xs text-muted-foreground">{label}</div>
 }
