@@ -10,6 +10,7 @@ import { RpcLogOutput } from './log-output.js'
 import { readRuntimeLogPage } from './log-reader.js'
 import { SyncServiceClient, type CheckpointResult, type SnapshotPage, type SnapshotRequest, type SnapshotResult, type SyncBatch as WireBatch } from '../generated/dsh-sync.js'
 import { acquireManagerLock } from '../storage/files.js'
+import { guardMeshCallResults } from '../meshcall-guard.js'
 import { BridgeService } from './bridge-service.js'
 import { quietDiagnostics, type RuntimeDiagnostics } from './diagnostics.js'
 import type { SessionReader } from './router.js'
@@ -178,6 +179,7 @@ export class BridgeConnection {
     if (!rendezvous || this.closed) return
     const router = new Router('unixPath' in rendezvous.endpoint ? { unixPath: rendezvous.endpoint.unixPath } : { pipe: rendezvous.endpoint.pipe })
     const rpcLogger = new RuntimeRpcLogger(this.diagnostics)
+    guardMeshCallResults()
     const mesh = new Mesh(router, { token: rendezvous.key, peerId: `dsh-bridge-${randomUUID()}`, logger: rpcLogger })
     mesh.mount(this.service, { instanceId: `dsh-bridge-${randomUUID()}` })
     let server: RunningServer
