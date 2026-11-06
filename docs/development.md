@@ -99,15 +99,23 @@ Server 测试应使用隔离测试环境，不要把生产数据库 URL 带入�
 ### CI 入口与缓存
 
 `.github/workflows/ci.yml` 按路径选择 Connector、Server、DSH 插件、Web 和 Desktop
-检查。Connector 改动同时触发 Server 与插件；Server 改动同时触发插件；契约、
-工作流和公共 action 的改动触发全部检查。
+检查。Connector 通用代码改动同时触发 Server、插件和三平台 ACP；Server 改动同时触发插件。
+ACP/Pi 受管验证脚本仅触发三平台 ACP，原生 Pi 验证脚本由独立 Pi compatibility 工作流覆盖。
+`setup-yarn` 改动触发 Web、Desktop 和插件；`dsh-bridge.yml` 改动触发插件，
+`pi-compat.yml` 由自身的 PR 工作流验证。主 CI、未知工作流、其他公共 action 和契约改动仍触发全部检查。
 
 公共 `setup-yarn` action 仅缓存下载归档，按项目、Node、平台及依赖声明区分，
 不缓存 `node_modules` 或 lockfile；缓存命中后仍执行安装，从当前清单解析依赖。
 Python 环境在检查前准备一次，Server 中预装当前 Connector，之后以 `--no-sync`
 运行检查；DSH 集成探针通过 `UV_NO_SYNC=true` 复用已准备的两个环境。
 CI 的一次性 PostgreSQL 使用 tmpfs，减少每个用例清表的磁盘开销；不修改生产数据库
-配置。pytest 保留外层硬超时，并输出慢项，Server 另外打印用例名用于定位等待。
+配置。pytest 保留外层硬超时，并输出慢项及分阶段耗时。
+
+三平台 ACP 保留完整传输、进程清理和 Pi 场景验证。Pi 的 8 个受管场景通过
+`verify-pi-managed.py --scenario all` 在同一进程内顺序执行，仅共用依赖缓存；
+每个场景独立创建工作目录、会话和本地模型服务，失败立即结束并清理运行时与服务。
+本地服务直接绑定回环地址，不执行反向 DNS 查询；日志显示模块导入、服务绑定、
+运行时准备、每个场景及整个批次的耗时。
 
 DSH 的 PR/push 检查统一在 CI 中执行。独立 `dsh-bridge.yml` 使用当前
 `dsh-bridge-next/`，仅负责手动验包和既有 `dsh-bridge-v<包版本>` release 发布：
@@ -159,12 +167,15 @@ uv run python -m scripts.check_tests --mode shadow --base origin/main --workers 
 Connector、工作流和依赖配置等变化均回退全量。共享测试 helper 变化同样回退全量。
 基线失效时不把“没有数据”视为“没有测试需要运行”。
 
-CI 目前使用影子模式，依赖采集最多双 worker，全量验证默认四 worker，完整检查仍决定通过与否；第一次运行回退全量。
-后续从成功运行恢复 `.testmondata`，环境或依赖变化由 testmon 再校验。
-PR 缓存受 GitHub 分支作用域限制，不能作为其他 PR 的共享基线；main 上的成功
-运行可提供后续 PR 的初始基线。影子期会多执行相关检查，这个额外耗时用于验证
-选择效果，不能把快速阶段耗时当成整个 CI 的完成时间。
+PR/push 的 `Server tests` 默认只执行一次 `verify`：四 worker 全量验证，
+不采集 testmon 依赖，不运行额外的公共检查或选测阶段，也不恢复/保存 testmon 缓存。
+修改工作流、冷缓存或依赖变化都不会把常规检查切换为双 worker 覆盖采集。
+完整测试结果仍决定检查是否通过。
 
+基线采集与选测对照仅通过手动 `CI` 入口执行（建议 `scope=server`），
+使用独立检查名 `Server test diagnostics`；它们不替代 PR 的 `Server tests`。
+诊断模式仍会恢复成功运行的 `.testmondata`；缓存受 GitHub 分支作用域限制，
+PR 的缓存不能作为其他 PR 的共享基线。
 每次运行在 `server/.test-results/` 保存 `summary.json` 和分阶段 JSON：包含每条
 用例的 setup/call/teardown 耗时、实际结果、快速阶段与全量耗时及漏选失败列表。
 CI 将摘要显示在 Actions Summary，并上传 `server-test-report` artifact。
@@ -173,13 +184,13 @@ CI 将摘要显示在 Actions Summary，并上传 `server-test-report` artifact�
 `.testmondata*` 和报告目录均不提交，业务版本号不受此检查影响。
 
 GitHub Actions 手动运行 `CI` 时，可选 `scope=server`，只执行 Server 检查；
-用 `server_workers=1/2/4` 比较同一提交的并行效果，`server_mode=full/shadow/verify`
-选择完整运行或影子对照。手动运行互不取消，PR/push 仍会取消旧检查。
+用 `server_workers=1/2/4` 比较同一提交的并行效果，`server_mode=verify` 为默认全量验证，
+`full/shadow/affected` 用于基线采集、影子对照或快速诊断。手动运行互不取消，PR/push 仍会取消旧检查。
 先用 full 生成成功基线，再用 shadow 和 `server_sample_change=true` 测量
 真实函数修改的选择效果。该选项仅在一次性 CI checkout 中给公告读取函数加上
 不改变返回值的 `.strip()` 调用，不生成提交、不修改远程源码。
 
-`verify` 执行不采集依赖的全量检查，用于与原串行 CI 比较；`full` 执行全量并采集依赖基线。
+`verify` 执行不采集依赖的全量检查，也是本地运行器的默认模式；`full` 执行全量并采集依赖基线。
 已有有效基线的 shadow 阶段只为受影响用例采集依赖，随后全量验证不重复开启覆盖跟踪，
 避免同一轮重复采集拖慢检查；冷启动和回退全量仍采集完整基线。
 

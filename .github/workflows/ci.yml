@@ -24,10 +24,10 @@ on:
         options: ['4', '2', '1']
         default: '4'
       server_mode:
-        description: Full, shadow, verification, or affected diagnostics
+        description: Full verification (default), or optional dependency recording/selection diagnostics
         type: choice
-        options: [full, shadow, verify, affected]
-        default: full
+        options: [verify, full, shadow, affected]
+        default: verify
       server_sample_change:
         description: Benchmark a harmless announcement function edit in this checkout
         type: boolean
@@ -58,6 +58,7 @@ jobs:
     outputs:
       plugin: ${{ steps.paths.outputs.plugin }}
       connector: ${{ steps.paths.outputs.connector }}
+      acp: ${{ steps.paths.outputs.acp }}
       server: ${{ steps.paths.outputs.server }}
       web: ${{ steps.paths.outputs.web }}
       desktop: ${{ steps.paths.outputs.desktop }}
@@ -73,6 +74,7 @@ jobs:
         run: |
           plugin=false
           connector=false
+          acp=false
           server=false
           web=false
           desktop=false
@@ -81,6 +83,7 @@ jobs:
             echo "::notice::$1; running every check"
             plugin=true
             connector=true
+            acp=true
             server=true
             web=true
             desktop=true
@@ -101,13 +104,25 @@ jobs:
             git diff --name-only --no-renames "$BASE_SHA" "$GITHUB_SHA" > "$RUNNER_TEMP/changed-paths"
             while IFS= read -r path; do
               case "$path" in
+                .github/workflows/pi-compat.yml)
+                  # Its own PR workflow verifies native Pi compatibility.
+                  [[ -f "$path" ]] || run_everything "independent workflow removed: $path"
+                  ;;
+                .github/workflows/dsh-bridge.yml) plugin=true ;;
+                .github/actions/setup-yarn/action.yml)
+                  plugin=true; web=true; desktop=true ;;
                 .github/workflows/*|.github/actions/*|contracts/*)
                   run_everything "shared file changed: $path"
                   ;;
                 dsh-bridge-next/*) plugin=true ;;
                 # Plugin integration tests run the Connector's DSH probe and the
                 # Server tests import the Connector package.
-                connector/*) connector=true; server=true; plugin=true ;;
+                connector/scripts/verify-acp-runtime.py|connector/scripts/verify-acp-processes.py|connector/scripts/verify-acp-generic-boundary.py|connector/scripts/verify-pi-managed.py)
+                  acp=true ;;
+                connector/scripts/verify-pi-native.py)
+                  # Verified by the separate Pi compatibility workflow.
+                  ;;
+                connector/*) connector=true; acp=true; server=true; plugin=true ;;
                 server/*) server=true; plugin=true ;;
                 web-next/*) web=true ;;
                 desktop-workbench/*) desktop=true ;;
@@ -115,7 +130,7 @@ jobs:
             done < "$RUNNER_TEMP/changed-paths"
           fi
 
-          for scope in plugin connector server web desktop; do
+          for scope in plugin connector acp server web desktop; do
             echo "$scope=${!scope}" >> "$GITHUB_OUTPUT"
             echo "$scope: ${!scope}"
           done
@@ -204,7 +219,7 @@ jobs:
   acp:
     name: ACP coordination (${{ matrix.os }})
     needs: changes
-    if: needs.changes.outputs.connector == 'true'
+    if: needs.changes.outputs.acp == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
@@ -235,12 +250,10 @@ jobs:
         working-directory: connector
         shell: bash
         run: |
-          for scenario in allow deny readonly attachment steer slow reasoning interrupt; do
-            uv run python scripts/verify-pi-managed.py --scenario "$scenario" --cache-root "$RUNNER_TEMP/aa-pi-runtime-checks"
-          done
+          uv run --no-sync python scripts/verify-pi-managed.py --scenario all --cache-root "$RUNNER_TEMP/aa-pi-runtime-checks"
 
   server:
-    name: ${{ github.event_name == 'workflow_dispatch' && inputs.server_mode == 'affected' && 'Server affected diagnostics' || 'Server tests' }}
+    name: ${{ github.event_name == 'workflow_dispatch' && inputs.server_mode != 'verify' && 'Server test diagnostics' || 'Server tests' }}
     needs: changes
     if: needs.changes.outputs.server == 'true'
     runs-on: ubuntu-latest
@@ -287,6 +300,7 @@ jobs:
         working-directory: server
         run: uv run --no-sync python -m scripts.export_workflow_schemas --check
       - name: Restore test dependency baseline
+        if: github.event_name == 'workflow_dispatch' && inputs.server_mode != 'verify'
         uses: actions/cache/restore@v4
         with:
           path: server/.testmondata*
@@ -306,11 +320,11 @@ jobs:
           path.write_text(source.replace(before, before + '.strip()', 1))
           print('Benchmark only: harmless announcement function edit in disposable CI checkout')
           PYTHON
-      - name: Test Server with selection shadow
+      - name: Test Server
         working-directory: server
         env:
           CHECK_BASE: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.pull_request.base.sha || github.event.before }}
-        run: uv run --no-sync python -m scripts.check_tests --mode "${{ inputs.server_mode || 'shadow' }}" --workers "${{ inputs.server_workers || '4' }}" --base "$CHECK_BASE"
+        run: uv run --no-sync python -m scripts.check_tests --mode "${{ inputs.server_mode || 'verify' }}" --workers "${{ inputs.server_workers || '4' }}" --base "$CHECK_BASE"
       - name: Publish Server timing and selection report
         if: always()
         uses: actions/upload-artifact@v4
@@ -329,7 +343,7 @@ jobs:
           if path.exists():
               data = json.loads(path.read_text())
               with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
-                  out.write('## Server test selection shadow\n\n')
+                  out.write('## Server test report\n\n')
                   out.write(f"Fallback: {data['fallback'] or 'none'}\n\n")
                   out.write('| Stage | Workers | Tests executed | Seconds | Exit |\n|---|---:|---:|---:|---:|\n')
                   for stage in data['stages']:
@@ -339,7 +353,7 @@ jobs:
                       out.write(f"\nFast path reduction: {data['time_reduction_percent']}%; missed failing tests: {len(data['missed_failures'])}\n")
           PYTHON
       - name: Save successful test dependency baseline
-        if: success()
+        if: success() && github.event_name == 'workflow_dispatch' && inputs.server_mode != 'verify'
         uses: actions/cache/save@v4
         with:
           path: server/.testmondata*
