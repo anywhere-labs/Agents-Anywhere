@@ -1,9 +1,11 @@
 """Build the admin usage report from recorded usage events.
 
-Events are stored with UTC hour buckets. The repository maps every bucket onto
-the local day of the requested timezone and aggregates per day in SQL, so the
-rows it returns grow with the number of days (and, for rolling windows, active
-user-days) rather than with the number of events. Whole-hour timezones map
+Events are stored with UTC hour buckets and summed into hourly rollups as they
+are written. The repository maps every rollup hour onto the local day of the
+requested timezone and aggregates per day in SQL, so the work grows with
+distinct users, sessions and connectors per hour rather than with the number
+of events, and the rows returned grow with the number of days (and, for
+rolling windows, active user-days). Whole-hour timezones map
 exactly; timezones with a 30 or 45 minute offset attribute the edge hour to the
 day its UTC hour starts in, so day boundaries can be off by up to that offset.
 """

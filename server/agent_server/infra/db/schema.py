@@ -560,6 +560,71 @@ usage_events = Table(
 )
 
 
+# Hourly rollups of `usage_events`, updated in the same transaction as every
+# event insert so they stay exact however late an event arrives. The report
+# reads these instead of scanning raw events; only duration percentiles still
+# need the raw rows. Absent optional keys are stored as "" so they can be part
+# of the primary key. Rows keyed by user cascade on user deletion, matching the
+# raw events whose `user_id` becomes NULL.
+usage_hourly_counts = Table(
+    "usage_hourly_counts",
+    metadata,
+    Column("hour_bucket", Text, nullable=False),
+    Column("event_type", Text, nullable=False),
+    Column("runtime_type", Text, nullable=False, server_default=""),
+    Column("outcome", Text, nullable=False, server_default=""),
+    Column("count", BigInteger, nullable=False),
+    Column("duration_sum", BigInteger, nullable=False),
+    PrimaryKeyConstraint("hour_bucket", "event_type", "runtime_type", "outcome"),
+)
+
+usage_hourly_users = Table(
+    "usage_hourly_users",
+    metadata,
+    Column("hour_bucket", Text, nullable=False),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("messages", BigInteger, nullable=False),
+    PrimaryKeyConstraint("hour_bucket", "user_id"),
+)
+
+usage_hourly_sessions = Table(
+    "usage_hourly_sessions",
+    metadata,
+    Column("hour_bucket", Text, nullable=False),
+    Column("session_id", Text, nullable=False),
+    Column("messages", BigInteger, nullable=False),
+    Column("views", BigInteger, nullable=False),
+    PrimaryKeyConstraint("hour_bucket", "session_id"),
+)
+
+usage_hourly_runtime_sessions = Table(
+    "usage_hourly_runtime_sessions",
+    metadata,
+    Column("hour_bucket", Text, nullable=False),
+    Column("runtime_type", Text, nullable=False),
+    Column("session_id", Text, nullable=False),
+    PrimaryKeyConstraint("hour_bucket", "runtime_type", "session_id"),
+)
+
+usage_hourly_runtime_users = Table(
+    "usage_hourly_runtime_users",
+    metadata,
+    Column("hour_bucket", Text, nullable=False),
+    Column("runtime_type", Text, nullable=False),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    PrimaryKeyConstraint("hour_bucket", "runtime_type", "user_id"),
+)
+
+usage_hourly_connectors = Table(
+    "usage_hourly_connectors",
+    metadata,
+    Column("hour_bucket", Text, nullable=False),
+    Column("connector_id", Text, nullable=False),
+    Column("device_os", Text),
+    PrimaryKeyConstraint("hour_bucket", "connector_id"),
+)
+
+
 # Daily stock metrics (users, devices, configured runtimes) captured once per
 # UTC day by the usage maintenance loop. Flow metrics live in `usage_events`.
 usage_inventory_snapshots = Table(

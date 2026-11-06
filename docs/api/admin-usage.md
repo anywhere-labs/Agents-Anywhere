@@ -49,7 +49,31 @@ deleted; `user_id` is set to `NULL` when the user is deleted.
 Writes are buffered in memory and flushed once per second
 (`AGENT_SERVER_USAGE_FLUSH_INTERVAL_SECONDS`); a failed write is logged and never
 fails the user's request. Rows older than `AGENT_SERVER_USAGE_RETENTION_DAYS`
-(default 400) are pruned by the maintenance loop.
+(default 400) are pruned by the maintenance loop, together with the rollups
+below.
+
+### Hourly rollups
+
+The report does not scan raw events. Every flush also adds the events it
+actually inserted (after the `dedupe_key` check) to hourly rollup tables in the
+same transaction, so the rollups always match `usage_events`, including events
+that arrive late for an hour that has already passed (approval events carry the
+Connector's notice timestamps):
+
+| Table | Key | Values |
+| --- | --- | --- |
+| `usage_hourly_counts` | hour, event type, runtime type, outcome | event count, `duration_ms` sum |
+| `usage_hourly_users` | hour, user | messages (a row exists for any event of the user) |
+| `usage_hourly_sessions` | hour, session | messages, views |
+| `usage_hourly_runtime_sessions` | hour, runtime type, session | sessions that received a message for the runtime |
+| `usage_hourly_runtime_users` | hour, runtime type, user | users who sent such a message |
+| `usage_hourly_connectors` | hour, connector | highest `device_os` of its `connector.online` events |
+
+Missing runtime types and outcomes are stored as `""`. Rows keyed by user are
+deleted with the user, matching the raw events whose `user_id` becomes `NULL`.
+Duration percentiles cannot be rolled up exactly and still read `approval.resolved`
+/ `turn.ended` rows through `idx_usage_events_type_hour`. Migration `v2_45`
+creates the tables and fills them from the events recorded before it.
 
 ### Inventory snapshots
 
@@ -65,9 +89,8 @@ reported in `devices.inventoryAsOf` (`"live"` or the snapshot date).
 
 ### Timezone handling
 
-Events are grouped per UTC hour in SQL, then each hour is mapped onto the local
-day and hour of `tz` with PostgreSQL's `AT TIME ZONE` and aggregated per local
-day in the same query, so the Server receives per-day totals (and, for the
+The hourly rollups are mapped onto the local day and hour of `tz` with
+PostgreSQL's `AT TIME ZONE` and aggregated per local day in the same query, so the Server receives per-day totals (and, for the
 rolling windows, one row per user and active day) rather than per-event or
 per-hour detail. Whole-hour timezones map exactly. Timezones with a 30/45-minute
 offset attribute an edge hour to the day in which its UTC hour starts, so a day
