@@ -350,6 +350,12 @@ def test_an_https_proxy_is_checked_with_the_shared_trust_store(pools: list[FakeT
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("proxy", [None, "http://p:1", "https://p:1", "socks5://p:1", "socks5h://p:1", "http://user:secret@p:1"])
+def test_every_proxy_scheme_builds_a_real_connection_pool(proxy: str | None) -> None:
+    # Not the fake: httpcore validates these arguments itself and raises when building.
+    assert network._Route(Egress(proxy, "config")).transport is not None
+
+
 def test_config_round_trips_proxy(tmp_path) -> None:
     base = {"serverUrl": SERVER, "connectorId": "c", "connectorToken": "t"}
     assert ConnectorConfig.from_mapping(base).proxy is None

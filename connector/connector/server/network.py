@@ -106,10 +106,16 @@ class _Route:
     def __init__(self, egress: Egress) -> None:
         self.egress = egress
         self.active = 0
-        # Without its own context an HTTPS proxy is checked against httpx's default
-        # store, so one trusted only by the system would work for WebSockets alone.
-        proxy = httpx.Proxy(egress.proxy, ssl_context=tls_context()) if egress.proxy else None
-        self.transport = httpx.AsyncHTTPTransport(verify=tls_context(), trust_env=False, proxy=proxy)
+        self.transport = httpx.AsyncHTTPTransport(verify=tls_context(), trust_env=False, proxy=_httpx_proxy(egress.proxy))
+
+
+def _httpx_proxy(url: str | None) -> httpx.Proxy | None:
+    if url is None:
+        return None
+    # Without its own context an HTTPS proxy is checked against httpx's default store,
+    # so one trusted only by the system would work for WebSockets alone. httpcore
+    # refuses a context for any other scheme.
+    return httpx.Proxy(url, ssl_context=tls_context() if url.startswith("https://") else None)
 
 
 class _RouteStream(httpx.AsyncByteStream):
