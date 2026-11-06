@@ -39,6 +39,10 @@
 - 连不上服务器时，DSH 插件会重发当前批次并在恢复后继续，不再断开同步后重新扫描全部会话。（[#551](https://github.com/anywhere-labs/Agents-Anywhere/pull/551)）
 - Connector 忙碌或同步流被重建时，DSH 不再因 Agents Anywhere 插件的连接调用被取消或超时而整个退出（`Call was cancelled`、`Call deadline exceeded`）。（[#547](https://github.com/anywhere-labs/Agents-Anywhere/pull/547)）
 
+### 本机连接、所有权与日志
+
+- 管理员删除用户时，会先删除该用户的设备及其项目和会话，不再留下无主设备；用户项目里还有会话时返回冲突提示，不再报服务器错误。（[#550](https://github.com/anywhere-labs/Agents-Anywhere/pull/550)）
+
 ## 2.2.0（日期待定）
 
 [发布说明](docs/releases/2.2.0.md) · [与 2.1.0 的差异](https://github.com/anywhere-labs/Agents-Anywhere/compare/v2.1.0...main)
