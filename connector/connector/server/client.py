@@ -58,6 +58,10 @@ from connector.server.urls import (
 )
 
 INGEST_ONLY_NOTIFICATION_METHODS = frozenset({"timeline.sync"})
+
+# The persistent pool also carries attachment-sized uploads and downloads, so
+# its timeout stays generous; a dead link is dropped instead of waited out.
+PERSISTENT_CLIENT_TIMEOUT_SECONDS = 60
 SYNC_STATE_FLUSH_INTERVAL_SECONDS = 1.0
 
 
@@ -139,7 +143,9 @@ class BackendRpcClient:
         self._runtime_sync_task: asyncio.Task[None] | None = None
 
     async def run_forever(self) -> None:
-        self._http_client = self._new_http_client(timeout=60)
+        self._http_client = self._new_http_client(
+            timeout=PERSISTENT_CLIENT_TIMEOUT_SECONDS
+        )
         ingest_flush_task = asyncio.create_task(self._ingest.flush_loop())
         sync_state_flush_task = asyncio.create_task(self._sync_state_flush_loop())
         try:
@@ -181,6 +187,7 @@ class BackendRpcClient:
                         close_reason,
                         self.config.reconnect_seconds,
                     )
+                    await self._discard_http_client()
                     await asyncio.sleep(self.config.reconnect_seconds)
                 except ConnectorNetworkError as exc:
                     logger.warning(
@@ -188,6 +195,7 @@ class BackendRpcClient:
                         exc,
                         self.config.reconnect_seconds,
                     )
+                    await self._discard_http_client()
                     await asyncio.sleep(self.config.reconnect_seconds)
                 except OSError as exc:
                     logger.warning(
@@ -195,6 +203,7 @@ class BackendRpcClient:
                         exc,
                         self.config.reconnect_seconds,
                     )
+                    await self._discard_http_client()
                     await asyncio.sleep(self.config.reconnect_seconds)
                 except Exception:
                     if ingest_flush_task.done():
@@ -203,6 +212,7 @@ class BackendRpcClient:
                         "connector loop failed; reconnecting in {}s",
                         self.config.reconnect_seconds,
                     )
+                    await self._discard_http_client()
                     await asyncio.sleep(self.config.reconnect_seconds)
         finally:
             relay_tasks = [task for _, task in self._terminal_relay_tasks.values()]
@@ -520,6 +530,22 @@ class BackendRpcClient:
 
     def _get_http_client(self) -> httpx.AsyncClient | None:
         return self._http_client
+
+    async def _discard_http_client(self) -> None:
+        """Replace the pooled connections before the next attempt.
+
+        A link that goes away silently sends no FIN or RST, so the pool keeps
+        handing out sockets the peer has already forgotten; a request queued on
+        one of them blocks until the read timeout expires. Reconnecting on a
+        fresh pool keeps that dead link from becoming a multi-minute outage.
+        """
+        stale, self._http_client = self._http_client, None
+        if stale is not None:
+            with suppress(Exception):
+                await stale.aclose()
+        self._http_client = self._new_http_client(
+            timeout=PERSISTENT_CLIENT_TIMEOUT_SECONDS
+        )
 
     def _new_http_client(self, timeout: httpx.Timeout | float) -> httpx.AsyncClient:
         return httpx.AsyncClient(
