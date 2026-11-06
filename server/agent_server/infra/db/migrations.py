@@ -21,8 +21,8 @@ from sqlalchemy.pool import NullPool
 from agent_server.infra.db.engine import resolve_db_url
 
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_52"
-CURRENT_SCHEMA_VERSION = "2.52"
+CURRENT_SCHEMA_REVISION = "v2_53"
+CURRENT_SCHEMA_VERSION = "2.53"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -558,6 +558,19 @@ def _classify_sync(connection) -> UnversionedDatabase:
                 ):
                     return UnversionedDatabase("unknown")
                 revision = "v2_52"
+            # v2_53 adds hourly usage rollups on top of the channel schema.
+            hourly_tables = {
+                "usage_hourly_counts",
+                "usage_hourly_users",
+                "usage_hourly_sessions",
+                "usage_hourly_runtime_sessions",
+                "usage_hourly_runtime_users",
+                "usage_hourly_connectors",
+            }
+            if hourly_tables & tables:
+                if revision != "v2_52" or not hourly_tables.issubset(tables):
+                    return UnversionedDatabase("unknown")
+                revision = "v2_53"
             return UnversionedDatabase("v2", revision)
         if "approvals" in tables:
             if {"presence_instance_id", "presence_connection_id"}.issubset(
