@@ -28,6 +28,8 @@ dev = [
     "httpx>=0.28.1",
     "psycopg[binary]>=3.2",
     "pytest>=9.0.3",
+    "pytest-testmon>=2.2,<3",
+    "pytest-xdist>=3.8,<4",
     "ruff>=0.15.13",
 ]
 
