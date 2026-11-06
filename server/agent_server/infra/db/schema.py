@@ -51,6 +51,7 @@ connectors = Table(
     # preferences (e.g. ~/.claude/settings.json fields). Read-only from the
     # backend's perspective; the daemon owns the write loop.
     Column("user_preferences", Text),
+    Index("idx_connectors_user_revoked", "user_id", "revoked"),
 )
 
 
@@ -507,7 +508,6 @@ timeline_items = Table(
         "session_id",
         "order_seq",
     ),
-    Index("idx_timeline_items_item_time_type_role", "item_time", "type", "role"),
 )
 
 
