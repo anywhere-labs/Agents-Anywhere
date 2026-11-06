@@ -134,9 +134,9 @@ class CodexIpcSessionProjector:
             return
         if thread.state is not None and thread.status == "following":
             from connector.runtimes.codex.planning import observe_ipc_plan
-            await observe_ipc_plan(self.host, self.session_id_for(thread.thread_id), thread)
-            if touches_state:
+            if touches_state or self.session_id_for(thread.thread_id) not in self._published_meta:
                 await self._project_state(thread)
+            await observe_ipc_plan(self.host, self.session_id_for(thread.thread_id), thread)
             if touches_history and self.timeline is not None:
                 await self._project_timeline(thread, full=event.kind == "snapshot")
             return
@@ -151,21 +151,26 @@ class CodexIpcSessionProjector:
         ordering_time = codex_sessions.thread_ordering_time(dict(state))
         meta_key = (title, cwd, ordering_time, thread.owner_client_id)
         if self._published_meta.get(session_id) != meta_key:
-            await self.host.session_meta_upsert(
-                session_id=session_id,
-                runtime="codex",
-                external_session_id=thread.thread_id,
-                title=title,
-                cwd=cwd,
-                ordering_time=ordering_time,
-                metadata={
-                    "source": IPC_SOURCE,
-                    "attachment": "ipc",
-                    "owner_client_id": thread.owner_client_id,
-                    "originator": state.get("originator"),
-                    "thread_source": state.get("source"),
+            # Plan publication can use a separate HTTP request. Confirm the
+            # session binding before emitting plans, rather than racing a queued
+            # WebSocket metadata notification against durable plan ingestion.
+            await self.host.publish_runtime_notifications("codex", [{
+                "method": "session.meta.upsert",
+                "params": {
+                    "sessionId": session_id,
+                    "externalSessionId": thread.thread_id,
+                    "title": title,
+                    "cwd": cwd,
+                    "orderingTime": ordering_time,
+                    "metadata": {
+                        "source": IPC_SOURCE,
+                        "attachment": "ipc",
+                        "owner_client_id": thread.owner_client_id,
+                        "originator": state.get("originator"),
+                        "thread_source": state.get("source"),
+                    },
                 },
-            )
+            }])
             self._published_meta[session_id] = meta_key
 
         pending = _pending_requests(state)

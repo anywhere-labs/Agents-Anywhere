@@ -1,5 +1,9 @@
 package com.agentsanywhere.app.api
 
+import com.agentsanywhere.app.model.ModelConnectionCapability
+import com.agentsanywhere.app.model.ModelConnectionStatus
+import com.agentsanywhere.app.model.SecretFieldState
+
 data class RemoteDevice(
     val id: String,
     val name: String,
@@ -43,6 +47,14 @@ data class RemoteDeviceRuntime(
     val phase: Map<String, Any?>? = null,
     val lastDiscoveredAt: String?,
     val updatedAt: String?,
+    /** "experimental", "beta" or "stable"; null when the Server does not say. */
+    val maturity: String? = null,
+    val modelConnection: ModelConnectionCapability? = null,
+    val modelConnectionStatus: ModelConnectionStatus? = null,
+    /** Write-only values left out of [config], by path such as `modelGateway.apiKey`. */
+    val secretFields: Map<String, SecretFieldState> = emptyMap(),
+    /** "model-config" when the model configuration created this instance. */
+    val managedBy: String? = null,
 ) {
     val name: String
         get() = displayName

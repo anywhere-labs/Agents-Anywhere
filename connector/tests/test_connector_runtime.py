@@ -999,7 +999,7 @@ def test_connector_runtime_publishes_named_instance_status_scope() -> None:
             },
         )
 
-        assert set(discovered) == {"runtimeTypes"}
+        assert set(discovered) == {"runtimeTypes", "features"}
         status_scopes = [
             message["params"]
             for message in websocket.messages
@@ -3281,7 +3281,8 @@ async def _exercise_agent_runtime_discovery() -> None:
 
     inventory = await client.dispatch("runtime.discover", {})
 
-    assert set(inventory) == {"runtimeTypes"}
+    assert set(inventory) == {"runtimeTypes", "features"}
+    assert inventory["features"] == ["switchFence", "modelProbe", "channelReconcileFence"]
     assert len(inventory["runtimeTypes"]) == 1
     descriptor = inventory["runtimeTypes"][0]
     assert descriptor["runtimeType"] == "codex"

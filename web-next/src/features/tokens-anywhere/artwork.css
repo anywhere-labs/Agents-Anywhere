@@ -1,0 +1,55 @@
+.hero-terminal-stage {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: clamp(16px, 4vw, 42px);
+  background: #303030;
+  clip-path: polygon(
+    12px 0,
+    calc(100% - 12px) 0,
+    calc(100% - 12px) 12px,
+    100% 12px,
+    100% calc(100% - 12px),
+    calc(100% - 12px) calc(100% - 12px),
+    calc(100% - 12px) 100%,
+    12px 100%,
+    12px calc(100% - 12px),
+    0 calc(100% - 12px),
+    0 12px,
+    12px 12px
+  );
+}
+
+.hero-terminal-stage::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(circle at 40.48% 59.89%, #383838 0%, transparent 36%),
+    radial-gradient(circle at 51.43% 67.74%, #4a4a4a 0%, transparent 34%),
+    radial-gradient(circle at 63.74% 40.67%, #a0a0a0 0%, transparent 38%),
+    linear-gradient(123.518deg, #101010, #202020);
+  transform: scale(1.15613);
+}
+
+.hero-mesh-background {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.hero-terminal-window {
+  --foreground: #eeeeee;
+  --border: #333333;
+  --muted: #222222;
+  color: var(--foreground);
+}
+
+/* The source site's global scrollbar rules, scoped to the copied component. */
+.hero-terminal-stage,
+.hero-terminal-stage * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}

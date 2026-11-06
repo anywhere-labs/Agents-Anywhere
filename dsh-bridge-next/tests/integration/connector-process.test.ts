@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { LocalRouter, Mesh, MeshCallError, Router, mutates, query, service, stream, z } from 'meshcall'
+import { DeadlineExceededError, LocalRouter, Mesh, MeshCallError, Router, mutates, query, service, stream, z } from 'meshcall'
 import { ConnectorOwnershipError, SourceConnector } from '../../src/host/connector/process.js'
 import { readJson } from '../../src/host/storage/files.js'
 import { DEFAULT_CONNECTOR_SETTINGS, type ConnectorSettings } from '../../src/contracts/connector.js'
@@ -430,4 +430,39 @@ test('source Connector normalizes [::1] in child NO_PROXY and no_proxy without m
     else process.env['no_proxy'] = previousNoProxyLower
     await h.close()
   }
+})
+
+test('source Connector takes its proxy from the setting, not from an inherited value', async () => {
+  const previous = process.env['AA_CONNECTOR_PROXY']
+  process.env['AA_CONNECTOR_PROXY'] = 'http://inherited:1'
+  try {
+    for (const [connectorProxy, expected] of [['direct', 'direct'], ['http://127.0.0.1:7890', 'http://127.0.0.1:7890'], ['', undefined]] as const) {
+      const h = await fixture('normal', { ...DEFAULT_CONNECTOR_SETTINGS, connectorProxy })
+      try {
+        await h.connector.start(binding, 'https://api.example.test', new AbortController().signal)
+        assert.equal(h.childEnv?.['AA_CONNECTOR_PROXY'], expected)
+      } finally { await h.close() }
+    }
+  } finally {
+    if (previous === undefined) delete process.env['AA_CONNECTOR_PROXY']
+    else process.env['AA_CONNECTOR_PROXY'] = previous
+  }
+})
+
+test('a slow answer during startup does not count as an unhealthy Connector', async () => {
+  const h = await fixture()
+  try {
+    await h.connector.start(binding, 'https://api.example.test', new AbortController().signal)
+    const connector = h.connector as unknown as { control: { getState: unknown } }
+    const original = connector.control.getState
+    // What the device reported in #468: the runtime loop was busy for over 15 s, then came online.
+    connector.control.getState = async () => { throw new DeadlineExceededError('Call deadline exceeded') }
+    await h.connector.assertHealthy()
+    assert.equal(h.connector.running, true)
+    // Any other failure of the health check still counts.
+    connector.control.getState = async () => { throw new Error('control channel broken') }
+    await assert.rejects(h.connector.assertHealthy(), /control channel broken/)
+    connector.control.getState = original
+    await h.connector.assertHealthy()
+  } finally { await h.close() }
 })

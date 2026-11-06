@@ -45,6 +45,7 @@ from agent_server.infra.db import usage_hourly_runtime_sessions as runtime_sessi
 from agent_server.infra.db import usage_hourly_runtime_users as runtime_users_t
 from agent_server.infra.db import usage_hourly_sessions as hourly_sessions_t
 from agent_server.infra.db import usage_hourly_users as hourly_users_t
+from agent_server.infra.db.engine import read_connection
 from agent_server.infra.repositories.store_support import *
 
 
@@ -88,7 +89,7 @@ class UsageRepositoryMixin:
     async def latest_usage_event_at(
         self, *, session_id: str, event_type: str
     ) -> str | None:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(usage_events_t.c.occurred_at)
@@ -103,7 +104,7 @@ class UsageRepositoryMixin:
         return str(row[0]) if row is not None else None
 
     async def usage_first_event_date(self) -> str | None:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(select(func.min(usage_events_t.c.hour_bucket)))
             ).first()
@@ -119,7 +120,7 @@ class UsageRepositoryMixin:
             .where(_hour_range(hourly_counts_t, start_hour, end_hour))
             .subquery(),
         )
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (
                 await conn.execute(
                     select(
@@ -165,7 +166,7 @@ class UsageRepositoryMixin:
         )
         local = _with_local_time(timezone, hourly)
         in_range = and_(local.c.hour_bucket >= start_hour, local.c.hour_bucket < end_hour)
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (
                 await conn.execute(
                     select(
@@ -226,7 +227,7 @@ class UsageRepositoryMixin:
         )
         messaged = per_session.c.messages > 0
         viewed = per_session.c.views > 0
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (
                 await conn.execute(
                     select(
@@ -270,7 +271,7 @@ class UsageRepositoryMixin:
             .group_by(runtime_users_t.c.runtime_type)
             .subquery()
         )
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (
                 await conn.execute(
                     # A runtime with users always has sessions in the same hours.
@@ -303,7 +304,7 @@ class UsageRepositoryMixin:
             .subquery()
         )
         local = _with_local_time(timezone, hourly)
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (
                 await conn.execute(
                     select(
@@ -355,7 +356,7 @@ class UsageRepositoryMixin:
             .subquery(),
         )
         duration = events.c.duration_ms
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (
                 await conn.execute(
                     select(
@@ -390,7 +391,7 @@ class UsageRepositoryMixin:
         ]
 
     async def count_active_usage_users(self, *, since: str) -> int:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(func.count(func.distinct(usage_events_t.c.user_id))).where(
@@ -407,7 +408,7 @@ class UsageRepositoryMixin:
     async def users_created_between(
         self, *, start: str, end: str
     ) -> list[tuple[str, str]]:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (
                 await conn.execute(
                     select(users_t.c.id, users_t.c.created_at).where(
@@ -427,7 +428,7 @@ class UsageRepositoryMixin:
             aggregate_order_by(display_name, runtime_types.updated_at.desc()),
             type_=ARRAY(Text),
         )[1]
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (
                 await conn.execute(
                     select(runtime_types.runtime_type, latest)
@@ -438,7 +439,7 @@ class UsageRepositoryMixin:
         return {str(runtime_type): str(name) for runtime_type, name in rows}
 
     async def active_connector_ids(self) -> list[str]:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (
                 await conn.execute(
                     select(connectors_t.c.id).where(connectors_t.c.revoked == 0)
@@ -447,7 +448,7 @@ class UsageRepositoryMixin:
         return [str(row[0]) for row in rows]
 
     async def count_active_runs(self) -> int:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(func.count()).select_from(session_active_runs_t)
@@ -461,7 +462,7 @@ class UsageRepositoryMixin:
         seen_7d = _shift_iso(now, days=-7)
         seen_30d = _shift_iso(now, days=-30)
         active = connectors_t.c.revoked == 0
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             users_total = (
                 await conn.execute(select(func.count()).select_from(users_t))
             ).scalar_one()
@@ -557,7 +558,7 @@ class UsageRepositoryMixin:
         return rows
 
     async def usage_inventory_snapshot_exists(self, snapshot_date: str) -> bool:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(usage_inventory_snapshots_t.c.metric_key)
@@ -596,7 +597,7 @@ class UsageRepositoryMixin:
     async def usage_inventory_snapshots(
         self, *, from_date: str, to_date: str
     ) -> list[InventorySnapshotRow]:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (
                 await conn.execute(
                     select(
@@ -670,7 +671,7 @@ _ROLLUP_SOURCE_COLUMNS = (
 async def _add_to_rollups(conn: AsyncConnection, events: Sequence[Mapping[str, Any]]) -> None:
     """Add newly inserted events to the hourly rollups.
 
-    The rules match the backfill in migration v2_48. Rows are upserted in key
+    The rules match the backfill in migration v2_53. Rows are upserted in key
     order so concurrent flushes lock rollup rows in the same order.
     """
 

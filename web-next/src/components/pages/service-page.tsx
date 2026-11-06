@@ -17,6 +17,7 @@ import { toast } from "sonner"
 import { useAuth } from "@/components/auth/auth-context"
 import { PageHeader } from "@/components/pages/page-header"
 import { ServiceEmailCard } from "@/components/pages/service-email-card"
+import { ServiceTokensCard } from "@/components/pages/service-tokens-card"
 import { LoadingState } from "@/components/loading-state"
 import { Button } from "@/components/ui/button"
 import {
@@ -356,40 +357,43 @@ export function ServicePage({ section }: { section: AdminServiceSection }) {
         </PageHeader>
 
         {page === "general" ? (
-          <Card>
-            <CardHeader>
-              <CardTitle>{t("access")}</CardTitle>
-              <CardDescription>{t("accessDescription")}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <FieldGroup>
-                <SettingSwitchField
-                  label={t("openRegistration")}
-                  description={t("openRegistrationDescription")}
-                  checked={settings.registrationOpen}
-                  disabled={!isAdmin || togglePending === "registrationOpen"}
-                  pending={togglePending === "registrationOpen"}
-                  onCheckedChange={(value) => void handleSettingToggle("registrationOpen", value)}
-                />
-                <SettingSwitchField
-                  label={t("oauthRegistration")}
-                  description={t("oauthRegistrationDescription")}
-                  checked={settings.oauthRegistrationOpen}
-                  disabled={!isAdmin || togglePending === "oauthRegistrationOpen"}
-                  pending={togglePending === "oauthRegistrationOpen"}
-                  onCheckedChange={(value) => void handleSettingToggle("oauthRegistrationOpen", value)}
-                />
-                <SettingSwitchField
-                  label={t("passwordReset")}
-                  description={settings.email.enabled ? t("passwordResetDescription") : t("passwordResetNeedsEmail")}
-                  checked={settings.passwordResetEnabled === true}
-                  disabled={!isAdmin || togglePending === "passwordResetEnabled"}
-                  pending={togglePending === "passwordResetEnabled"}
-                  onCheckedChange={(value) => void handleSettingToggle("passwordResetEnabled", value)}
-                />
-              </FieldGroup>
-            </CardContent>
-          </Card>
+          <>
+            <Card>
+              <CardHeader>
+                <CardTitle>{t("access")}</CardTitle>
+                <CardDescription>{t("accessDescription")}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <FieldGroup>
+                  <SettingSwitchField
+                    label={t("openRegistration")}
+                    description={t("openRegistrationDescription")}
+                    checked={settings.registrationOpen}
+                    disabled={!isAdmin || togglePending === "registrationOpen"}
+                    pending={togglePending === "registrationOpen"}
+                    onCheckedChange={(value) => void handleSettingToggle("registrationOpen", value)}
+                  />
+                  <SettingSwitchField
+                    label={t("oauthRegistration")}
+                    description={t("oauthRegistrationDescription")}
+                    checked={settings.oauthRegistrationOpen}
+                    disabled={!isAdmin || togglePending === "oauthRegistrationOpen"}
+                    pending={togglePending === "oauthRegistrationOpen"}
+                    onCheckedChange={(value) => void handleSettingToggle("oauthRegistrationOpen", value)}
+                  />
+                  <SettingSwitchField
+                    label={t("passwordReset")}
+                    description={settings.email.enabled ? t("passwordResetDescription") : t("passwordResetNeedsEmail")}
+                    checked={settings.passwordResetEnabled === true}
+                    disabled={!isAdmin || togglePending === "passwordResetEnabled"}
+                    pending={togglePending === "passwordResetEnabled"}
+                    onCheckedChange={(value) => void handleSettingToggle("passwordResetEnabled", value)}
+                  />
+                </FieldGroup>
+              </CardContent>
+            </Card>
+            <ServiceTokensCard token={session?.accessToken ?? ""} isAdmin={isAdmin} />
+          </>
         ) : page === "auth" ? (
           <>
             <OAuthProviderCard

@@ -62,6 +62,14 @@ class ConnectorDeletionRepository(DashboardEventRepository, Protocol):
     async def delete_connector(self, connector_id: str, *, user_id: str) -> list[str]: ...
 
 
+class UserDeletionRepository(ConnectorDeletionRepository, Protocol):
+    async def ensure_user_deletable(self, user_id: str) -> None: ...
+
+    async def list_user_connector_ids(self, user_id: str) -> list[str]: ...
+
+    async def delete_user(self, user_id: str) -> None: ...
+
+
 class ProjectLookupRepository(Protocol):
     async def get_project(
         self,
@@ -493,6 +501,13 @@ class DeviceRuntimeRepository(
         connector_id: str,
         runtime_id: str,
         config: dict[str, Any],
+    ) -> dict[str, Any]: ...
+
+    async def set_device_runtime_model_connection(
+        self,
+        connector_id: str,
+        runtime_id: str,
+        report: dict[str, Any] | None,
     ) -> dict[str, Any]: ...
 
     async def set_device_runtime_status(

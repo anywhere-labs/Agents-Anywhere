@@ -19,6 +19,13 @@ from connector.runtime_protocol import (
     RuntimeTypeDescriptor,
 )
 from connector.runtime_protocol.errors import RuntimeInvalidRequestError
+from connector.runtime_protocol.model_connection import (
+    ModelConnectionCapability,
+    ModelConnectionMode,
+    ModelConnectionStatus,
+    ModelConnectionUnsupportedError,
+    applied_status,
+)
 from connector.runtimes.custom_models import (
     custom_models_schema,
     normalize_custom_models,
@@ -26,6 +33,10 @@ from connector.runtimes.custom_models import (
 from connector.runtimes.model_gateway import (
     model_gateway_from_config,
     model_gateway_schema,
+)
+from connector.runtimes.runtime_model import (
+    runtime_model_from_config,
+    runtime_model_schema,
 )
 
 from ...domain.definitions import AcpError, LaunchDefinition
@@ -45,6 +56,27 @@ from .native_runtime import NativePiRuntime
 from .profile import PI_PROFILE
 from .runtime import ManagedPiRuntime
 from .settings import prepare_settings, private_json
+
+LOCAL_MODE_REASON = "本机模式使用 Pi 自己的模型配置，不能同时填写模型网关；要用网关请切换到 AA 受管环境。"
+
+# Only the AA-managed environment takes a model connection: it writes a private
+# models.json for the gateway. Local Pi keeps its own models and credentials.
+MODEL_CONNECTION = ModelConnectionCapability(
+    maturity="beta",
+    protocols=("openai_chat",),
+    scope="instance",
+    apply="restart",
+    catalog_auto=True,
+    catalog_manual=True,
+    mode_field="executionMode",
+    # Local Pi has no runtime-level catalog to choose from; only managed takes it.
+    model_field="model",
+    modes=(
+        ModelConnectionMode("managed", True),
+        ModelConnectionMode("local", False, LOCAL_MODE_REASON),
+        ModelConnectionMode("auto", False, LOCAL_MODE_REASON),
+    ),
+)
 
 
 def source_changed(previous: dict | None, current: dict) -> bool:
@@ -101,6 +133,7 @@ class PiProvider(RuntimeProvider):
                     },
                     "modelGateway": model_gateway_schema(),
                     "customModels": custom_models_schema(),
+                    "model": runtime_model_schema(),
                 },
             },
             ui_schema={
@@ -127,6 +160,8 @@ class PiProvider(RuntimeProvider):
             available=True,
             implementation_type="acp-stdio",
             instance_policy="multiple",
+            maturity="beta",
+            model_connection=MODEL_CONNECTION,
             config_schema=await self.get_config_schema(),
             capabilities={
                 "workspacePreparation": True,
@@ -145,11 +180,17 @@ class PiProvider(RuntimeProvider):
         schema = await self.get_config_schema()
         errors = list(Draft202012Validator(schema.schema).iter_errors(dict(values)))
         if errors:
-            raise RuntimeInvalidRequestError(errors[0].message)
+            # jsonschema quotes the offending value, which may be the API key.
+            error = errors[0]
+            location = "/".join(str(part) for part in error.absolute_path) or "配置"
+            raise RuntimeInvalidRequestError(f"{location} 不符合 {error.validator} 规则")
         normalized = {**schema.defaults, **values}
         # Old saved gateway configurations retain their isolated source.
         if "executionMode" not in values and values.get("modelGateway"):
             normalized["executionMode"] = "managed"
+        # A connection the chosen mode would not use is rejected, not ignored.
+        if normalized.get("modelGateway") and normalized["executionMode"] != "managed":
+            raise ModelConnectionUnsupportedError(LOCAL_MODE_REASON)
         if normalized.get("modelGateway"):
             normalized["modelGateway"] = model_gateway_from_config(
                 normalized["modelGateway"]
@@ -163,6 +204,10 @@ class PiProvider(RuntimeProvider):
         normalized["customModels"] = normalize_custom_models(
             normalized.get("customModels")
         )
+        if normalized.get("model") is not None and normalized["executionMode"] != "managed":
+            raise ModelConnectionUnsupportedError(LOCAL_MODE_REASON)
+        if (model := runtime_model_from_config(normalized)) is not None:
+            normalized["model"] = model.to_config_values()
         return RuntimeConfig(
             runtime="pi",
             revision=1,
@@ -170,6 +215,14 @@ class PiProvider(RuntimeProvider):
             schema=schema.schema,
             ui_schema=schema.ui_schema,
         )
+
+    @property
+    def model_connection(self) -> ModelConnectionCapability:
+        return MODEL_CONNECTION
+
+    def model_connection_status(self, config) -> ModelConnectionStatus:
+        mode = config.values.get("executionMode")
+        return applied_status(MODEL_CONNECTION, config.values, mode=mode)
 
     async def create_runtime(self, config, host):
         config = replace(
@@ -306,7 +359,7 @@ class PiProvider(RuntimeProvider):
             **(
                 {"history_roots": history_directories(dict(config.values), agent_dir)}
                 if not managed
-                else {}
+                else {"settings_dir": agent_dir}
             ),
         )
         if managed:

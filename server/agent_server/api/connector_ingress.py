@@ -5,7 +5,7 @@ import base64
 import hashlib
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -44,6 +44,7 @@ from agent_server.deps import (
     get_store,
     get_timeline_broker,
     get_timeline_write_buffer,
+    model_channel_service_for,
 )
 from agent_server.infra.connector_rpc import (
     ConnectorConnection,
@@ -563,6 +564,7 @@ async def connector_ws(
         async with db.connector_lifecycle(connector_id):
             await _require_active_connector(auth_header, db)
             connection = await manager.register(connector_id, websocket, ready=False)
+            await db.set_channel_device_gate(connector_id, connection.connection_id)
             ingest_service = ConnectorIngestService(
                 db, ConnectorNotificationService(
                     db, realtime, timeline_write_buffer,
@@ -571,6 +573,7 @@ async def connector_ws(
                 timeline_broker, runtime_service, manager,
                 websocket.app.state.session_runtime_state_cache,
                 websocket.app.state.capability_refresh,
+                runtime_event=model_channel_service_for(websocket.app.state).runtime_event,
             )
             notification_pump = _ConnectorNotificationPump(
                 connector_id, ingest_service,
@@ -685,6 +688,8 @@ async def connector_ws(
                 connector_id,
                 connection,
                 reason=discovery_reason or "runtime.recovery",
+                on_discovered=model_channel_service_for(websocket.app.state).connector_discovered,
+                on_ready=model_channel_service_for(websocket.app.state).connector_event,
             ),
             name=f"runtime-discovery-complete-{connection.connection_id}",
         )
@@ -793,6 +798,8 @@ async def _complete_runtime_discovery(
     connection: ConnectorConnection,
     *,
     reason: str,
+    on_discovered: Callable[[str], Awaitable[None]] | None = None,
+    on_ready: Callable[[str], Awaitable[None]] | None = None,
 ) -> None:
     try:
         await runtime_service.publish_discovery(connector_id, reason)
@@ -814,6 +821,14 @@ async def _complete_runtime_discovery(
             connection.connection_id,
         )
 
+    async def open_gate() -> None:
+        # Targets first: a runtime that must move stays closed once the gate opens.
+        if on_discovered is not None:
+            await on_discovered(connector_id)
+        await runtime_service._store.clear_channel_device_gate(connector_id, connection.connection_id)
+
+    if not await _retry_while_current(runtime_service, connector_id, connection, open_gate):
+        return
     try:
         await runtime_service.reconcile_active(
             connector_id,
@@ -837,6 +852,32 @@ async def _complete_runtime_discovery(
             connector_id,
             connection.connection_id,
         )
+    # Last: a drive skips a gated device, and would mistake a runtime that
+    # reconcile_active has yet to start for one whose configuration drifted.
+    if on_ready is not None:
+        await _retry_while_current(runtime_service, connector_id, connection, lambda: on_ready(connector_id))
+
+
+async def _retry_while_current(
+    runtime_service: DeviceRuntimeService,
+    connector_id: str,
+    connection: ConnectorConnection,
+    step: Callable[[], Awaitable[None]],
+) -> bool:
+    """Retry a durable reconciliation step; False once another connection took over."""
+    delay = 2.0
+    while True:
+        try:
+            if not await runtime_service._manager.is_connection_id_current(connector_id, connection.connection_id):
+                return False
+            await step()
+            return True
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - retry the owned connection's durable reconciliation
+            logger.exception("model channel discovery reconciliation failed connector_id={}", connector_id)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 30.0)
 
 
 def _connector_device_os(value: str | None) -> str | None:

@@ -726,6 +726,14 @@
     <string name="agent_reminder_add">Add Agent</string>
     <string name="agent_reminder_later">Later</string>
     <string name="agent_reminder_skip">Continue without setup</string>
+    <string name="session_model_retry_busy">The model service is busy. Retrying.</string>
+    <string name="session_model_retry_unavailable">The model service is temporarily unavailable. Retrying.</string>
+    <string name="session_model_retry_attempt">Retry %1$d.</string>
+    <string name="session_model_retry_progress">Retry %1$d of %2$d.</string>
+    <string name="session_model_retry_delay">Waiting %1$d seconds before this retry.</string>
+    <string name="session_model_retry_completed">Retry finished. The model responded.</string>
+    <string name="session_model_retry_interrupted">Model request retry cancelled.</string>
+    <string name="session_model_retry_failed">The model request failed after retrying.</string>
     <string name="goal_title">Goal</string>
     <string name="goal_active">Pursuing goal</string>
     <string name="goal_paused">Paused goal</string>

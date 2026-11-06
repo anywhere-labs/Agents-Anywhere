@@ -10,6 +10,7 @@ from connector.runtime_protocol.instance_models import (
     RuntimeInstanceSpec,
     RuntimeSourceKey,
 )
+from connector.runtime_protocol.model_connection import ModelConnectionStatus
 from connector.runtime_protocol.models import (
     PreparedSessionTimelineSync,
     RuntimeAttachment,
@@ -537,6 +538,10 @@ class RuntimeInstance(AgentRuntime):
     def planning(self):
         return self.native_runtime.planning
 
+
+    def model_connection_status(self) -> ModelConnectionStatus | None:
+        return self.native_runtime.model_connection_status()
+
     @property
     def sync_mode(self) -> str:
         return self.native_runtime.sync_mode
@@ -567,6 +572,9 @@ class RuntimeInstance(AgentRuntime):
         if self.planning is not None:
             await self.planning.close()
         await self.native_runtime.stop()
+
+    async def apply_model_setting(self, config: RuntimeConfig) -> bool:
+        return await self.native_runtime.apply_model_setting(config)
 
     async def get_config(self) -> RuntimeConfig:
         return runtime_config_for_instance(

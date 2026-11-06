@@ -621,6 +621,7 @@ class OAuthTokenResponse(BaseModel):
 
 
 class OAuthAuthorizeRequest(BaseModel):
+    approved: bool = True
     response_type: str
     client_id: str
     redirect_uri: str

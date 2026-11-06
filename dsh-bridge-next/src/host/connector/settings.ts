@@ -25,6 +25,11 @@ export function validateConnectorSettings(value: unknown): ConnectorSettings {
   if (settings.uvPath && !isAbsolute(settings.uvPath)) throw new Error('请填写 uv 可执行文件的绝对路径，或留空自动查找。')
   if (!PYPI_MIRRORS.some(mirror => mirror.url === settings.uvPypiIndexUrl)) throw new Error('请选择列表中的 PyPI 镜像。')
   if (!PYTHON_MIRRORS.some(mirror => mirror.url === settings.uvPythonInstallMirror)) throw new Error('请选择列表中的 Python 下载镜像。')
+  if (typeof settings.connectorProxy !== 'string') throw new Error('代理地址无效，请填写完整地址，例如 http://127.0.0.1:7890。')
+  settings.connectorProxy = settings.connectorProxy.trim()
+  if (settings.connectorProxy && settings.connectorProxy !== 'direct' && !/^(?:https?|socks5h?):\/\/[^\s/]+/i.test(settings.connectorProxy)) {
+    throw new Error('代理地址无效，请填写完整地址，例如 http://127.0.0.1:7890。')
+  }
   if (!Number.isInteger(settings.syncIntervalSeconds) || settings.syncIntervalSeconds < 1 || settings.syncIntervalSeconds > 3600) {
     throw new Error('同步间隔必须是 1–3600 之间的整数。')
   }

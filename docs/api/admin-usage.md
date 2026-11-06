@@ -72,7 +72,7 @@ Connector's notice timestamps):
 Missing runtime types and outcomes are stored as `""`. Rows keyed by user are
 deleted with the user, matching the raw events whose `user_id` becomes `NULL`.
 Duration percentiles cannot be rolled up exactly and still read `approval.resolved`
-/ `turn.ended` rows through `idx_usage_events_type_hour`. Migration `v2_48`
+/ `turn.ended` rows through `idx_usage_events_type_hour`. Migration `v2_53`
 creates the tables and fills them from the events recorded before it.
 
 ### Inventory snapshots

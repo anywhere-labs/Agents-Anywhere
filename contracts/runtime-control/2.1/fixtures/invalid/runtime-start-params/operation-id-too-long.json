@@ -1,0 +1,11 @@
+{
+  "config": {
+    "codexHome": "/home/agent/.codex-work"
+  },
+  "configRevision": 1787654321000,
+  "name": "Work Codex",
+  "operationId": "ooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo",
+  "runtime": "codex",
+  "runtimeId": "rti_codex_work_01",
+  "switchRevision": 12
+}

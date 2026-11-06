@@ -5,6 +5,8 @@ import binascii
 import hashlib
 import json
 import re
+from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
@@ -114,11 +116,21 @@ class SessionRunService:
         device_runtimes: DeviceRuntimeService,
         *,
         usage_recorder: UsageRecorder | NullUsageRecorder | None = None,
+        prepare_model_channel: Callable[..., Awaitable[str]] | None = None,
+        admit_runtime: Callable[..., AbstractAsyncContextManager[None]] | None = None,
     ) -> None:
         self._store = store
         self._manager = manager
         self._device_runtimes = device_runtimes
         self._usage = usage_recorder or NullUsageRecorder()
+        self._prepare_model_channel = prepare_model_channel
+        self._admit_runtime = admit_runtime
+
+    def _admitted(self, connector_id: str, runtime_id: str, *, user_id: str) -> AbstractAsyncContextManager[None]:
+        """Keep a model channel switch from restarting the runtime under this request."""
+        if self._admit_runtime is None:
+            return nullcontext()
+        return self._admit_runtime(connector_id, runtime_id, user_id=user_id)
 
     async def create_session(
         self,
@@ -210,6 +222,22 @@ class SessionRunService:
         )
         payload.cwd = project_cwd
         runtime_id = _request_runtime_id(payload)
+        if self._prepare_model_channel is not None:
+            runtime_id = await self._prepare_model_channel(payload.connectorId, runtime_id, user_id=user_id)
+            payload.runtimeId = runtime_id
+        async with self._admitted(payload.connectorId, runtime_id, user_id=user_id):
+            return await self._create_and_start_admitted(
+                payload, user_id=user_id, runtime_id=runtime_id, project_id=project_id,
+            )
+
+    async def _create_and_start_admitted(
+        self,
+        payload: SessionCreateAndStartRequest,
+        *,
+        user_id: str,
+        runtime_id: str,
+        project_id: str | None,
+    ) -> dict[str, Any]:
         await self._require_runtime_instance(
             payload.connectorId,
             payload.runtime,
@@ -595,6 +623,17 @@ class SessionRunService:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
         if not await self._manager.is_online(session.connectorId):
             raise SessionRunConflictError("connector is offline")
+        async with self._admitted(session.connectorId, _session_runtime_id(session), user_id=user_id):
+            return await self._send_message_admitted(session, payload, user_id=user_id)
+
+    async def _send_message_admitted(
+        self,
+        session: SessionView,
+        payload: MessageCreateRequest,
+        *,
+        user_id: str,
+    ) -> RpcResponsePayload:
+        session_id = session.id
         await self._ensure_session_runtime_running(session, user_id=user_id)
         from agent_server.core.planning.commands import parse_plan_command
         intent = parse_plan_command(payload.content)

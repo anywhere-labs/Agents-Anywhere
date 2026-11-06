@@ -283,6 +283,16 @@ class DevicesApi(
 
     internal fun parseDevice(value: JSONObject): RemoteDevice = value.toRemoteDevice()
 
+    /** One runtime from the dashboard snapshot, or null when its identity is not valid. */
+    internal fun parseDeviceRuntime(value: JSONObject): RemoteDeviceRuntime? {
+        val connectorId = value.optString("connectorId")
+        if (connectorId.isBlank()) return null
+        return value.toRemoteDeviceRuntime(connectorId).takeIf { runtime ->
+            runtime.runtimeType.isValidRuntimeType() &&
+                runtime.runtimeId.isValidRuntimeInstanceId(runtime.runtimeType)
+        }
+    }
+
     private fun JSONObject.toRemoteDevice(): RemoteDevice {
         return RemoteDevice(
             id = getString("id"),
@@ -381,6 +391,11 @@ class DevicesApi(
             phase = optJSONObject("phase")?.toMap(),
             lastDiscoveredAt = optNullableString("lastDiscoveredAt"),
             updatedAt = optNullableString("updatedAt"),
+            maturity = optNullableString("maturity"),
+            modelConnection = optJSONObject("modelConnection")?.toModelConnectionCapability(),
+            modelConnectionStatus = optJSONObject("modelConnectionStatus")?.toModelConnectionStatus(),
+            secretFields = optJSONObject("secretFields").toSecretFields(),
+            managedBy = optNullableString("managedBy"),
         )
     }
 
