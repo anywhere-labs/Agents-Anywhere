@@ -274,6 +274,8 @@ def test_v2_0_database_upgrades_through_current_revision(fresh_database_url) -> 
         ("v2_30", "v2_31"),
         ("v2_31", "v2_32"),
         ("v2_32", "v2_33"),
+        ("v2_47", "v2_48"),
+        ("v2_48", "v2_49"),
     ],
 )
 def test_every_adjacent_schema_upgrade(tmp_path,
@@ -1014,9 +1016,165 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_47() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_47"
-    assert CURRENT_SCHEMA_VERSION == "2.47"
+def test_current_schema_version_is_v2_49() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_49"
+    assert CURRENT_SCHEMA_VERSION == "2.49"
+
+
+def test_v2_49_tracks_inventory_scans_without_rewriting_sessions(
+    fresh_database_url,
+) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_48")
+    engine = create_engine(_sync_url(url))
+    now = "2026-11-06T00:00:00Z"
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO connectors "
+                    "(id, user_id, name, status, token_hash, token_prefix, revoked, created_at, updated_at) "
+                    "VALUES ('conn_scan', 'user_scan', 'Scan', 'offline', 'hash', 'cxt_', 0, :now, :now)"
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO sessions "
+                    "(id, connector_id, runtime, runtime_id, status, takeover, seq, updated_seq, created_at, updated_at) "
+                    "VALUES (:id, 'conn_scan', 'codex', 'codex', 'idle', 0, 0, 0, :now, :now)"
+                ),
+                {"id": "sess_existing", "now": now},
+            )
+            before = connection.execute(
+                text("SELECT ctid::text FROM sessions WHERE id = 'sess_existing'")
+            ).scalar_one()
+
+        upgrade_database(db_url=url, revision="v2_49")
+
+        with engine.begin() as connection:
+            existing = connection.execute(
+                text(
+                    "SELECT ctid::text, source_changed_seq FROM sessions "
+                    "WHERE id = 'sess_existing'"
+                )
+            ).one()
+            assert existing == (before, None)
+            connection.execute(
+                text(
+                    "INSERT INTO sessions "
+                    "(id, connector_id, runtime, runtime_id, status, takeover, seq, updated_seq, created_at, updated_at) "
+                    "VALUES (:id, 'conn_scan', 'codex', 'codex', 'idle', 0, 0, 0, :now, :now)"
+                ),
+                {"id": "sess_new", "now": now},
+            )
+            assert connection.execute(
+                text("SELECT source_changed_seq FROM sessions WHERE id = 'sess_new'")
+            ).scalar_one() is not None
+            connection.execute(
+                text(
+                    "INSERT INTO session_inventory_scans "
+                    "VALUES ('conn_scan', 'codex', 'codex', 'token', 1, :now)"
+                ),
+                {"now": now},
+            )
+            connection.execute(text("DELETE FROM sessions"))
+            connection.execute(text("DELETE FROM connectors"))
+            assert connection.execute(
+                text("SELECT count(*) FROM session_inventory_scans")
+            ).scalar_one() == 0
+
+        command.downgrade(_alembic_config(url), "v2_48")
+
+        with engine.connect() as connection:
+            assert connection.execute(
+                text(
+                    "SELECT to_regclass('session_inventory_scans'), "
+                    "to_regclass('session_source_change_seq')"
+                )
+            ).one() == (None, None)
+    finally:
+        engine.dispose()
+
+
+def _index_names(url: str, table: str) -> set[str]:
+    engine = create_engine(_sync_url(url))
+    try:
+        with engine.connect() as connection:
+            return {
+                row[0]
+                for row in connection.execute(
+                    text("SELECT indexname FROM pg_indexes WHERE tablename = :table"),
+                    {"table": table},
+                )
+            }
+    finally:
+        engine.dispose()
+
+
+def test_v2_48_aligns_timeline_and_connector_indexes(fresh_database_url) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_47")
+    assert "idx_timeline_items_item_time_type_role" in _index_names(
+        url, "timeline_items"
+    )
+    assert "idx_connectors_user_revoked" not in _index_names(url, "connectors")
+
+    upgrade_database(db_url=url, revision="v2_48")
+
+    timeline_indexes = _index_names(url, "timeline_items")
+    assert "idx_timeline_items_item_time_type_role" not in timeline_indexes
+    assert {
+        "idx_timeline_items_session_updated_seq",
+        "idx_timeline_items_session_latest",
+        "idx_timeline_items_session_order_seq",
+    }.issubset(timeline_indexes)
+    assert "idx_connectors_user_revoked" in _index_names(url, "connectors")
+    engine = create_engine(_sync_url(url))
+    try:
+        with engine.connect() as connection:
+            definition = connection.execute(
+                text(
+                    "SELECT indexdef FROM pg_indexes "
+                    "WHERE indexname = 'idx_connectors_user_revoked'"
+                )
+            ).scalar_one()
+        assert "(user_id, revoked)" in definition
+    finally:
+        engine.dispose()
+
+    config = _alembic_config(url)
+    command.downgrade(config, "v2_47")
+    assert "idx_timeline_items_item_time_type_role" in _index_names(
+        url, "timeline_items"
+    )
+    assert "idx_connectors_user_revoked" not in _index_names(url, "connectors")
+
+
+def test_v2_48_is_a_no_op_on_a_hand_aligned_database(fresh_database_url) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_47")
+    engine = create_engine(_sync_url(url))
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text("DROP INDEX idx_timeline_items_item_time_type_role")
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX idx_connectors_user_revoked "
+                    "ON connectors (user_id, revoked)"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=url, revision="v2_48")
+
+    assert "idx_timeline_items_item_time_type_role" not in _index_names(
+        url, "timeline_items"
+    )
+    assert "idx_connectors_user_revoked" in _index_names(url, "connectors")
 
 
 def _insert_required(connection, table: str, values: dict) -> None:
@@ -2138,6 +2296,7 @@ def test_postgres_pool_settings_are_configurable(monkeypatch) -> None:
         assert engine.pool._timeout == 4.5
         assert engine.pool._recycle == 600
         assert engine.pool._pre_ping is True
+        assert engine.dialect.do_ping.__name__ == "_ping_outside_transaction"
     finally:
         asyncio.run(engine.dispose())
 

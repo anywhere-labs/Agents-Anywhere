@@ -44,7 +44,7 @@ def test_source_fast_update_rechecks_after_a_concurrent_commit(
                             source_state_reason="changed",
                             source_state_at="2026-09-11T00:00:03Z",
                             archived=1,
-                            source_scan_token="new-scan",
+                            source_changed_seq=-1,
                         )
                     )
                 task = asyncio.create_task(
@@ -98,7 +98,7 @@ def test_source_fast_update_rechecks_after_a_concurrent_commit(
         else:
             assert row["source_state"] == "archived" and row["archived"] == 1
             assert row["source_state_at"] == "2026-09-11T00:00:03Z"
-            assert row["source_scan_token"] == "new-scan"
+            assert row["source_changed_seq"] == -1
             assert row["updated_seq"] == original.updatedSeq
         await store.close()
 

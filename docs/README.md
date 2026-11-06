@@ -13,6 +13,7 @@
 | 源码运行与 headless 验证 | [开发指南](development.md) |
 | Desktop 开发、打包、签名 | [Desktop Workbench](../desktop-workbench/README.md) |
 | Desktop 环境准备与故障恢复 | [Connector 环境](desktop-connector-environment.md) |
+| Connector 走哪条网络、代理与证书排查 | [Connector 网络](connector-network.md) |
 | 接入无图形界面的机器 | [Connector](../connector/README.md) |
 | Android 构建 | [Android](../android/README.md) |
 | 架构和 API | [Server 架构](server-architecture.md)、[API](api/README.md) |

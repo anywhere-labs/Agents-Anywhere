@@ -146,7 +146,14 @@ The current dashboard WebSocket sends:
 dashboard.snapshot
 ```
 
-on connect, and sends another full snapshot when a debounced `dashboard.changed` invalidation arrives.
+on connect, and sends another full snapshot when a `dashboard.changed` invalidation arrives.
+
+Invalidations are throttled per user on each Server worker. The first change after a
+quiet period is delivered at once; further changes within
+`AGENT_SERVER_DASHBOARD_MIN_INTERVAL_SECONDS` (default 2 seconds) collapse into one
+trailing delivery, and every Dashboard socket of that user on the worker shares one
+snapshot build. A client therefore sees the latest state at most one interval late
+and never misses the final change of a burst.
 
 Each snapshot contains the complete owned project and session metadata inventories,
 including both active and archived sessions. `sessionPages` reports no more pages.
