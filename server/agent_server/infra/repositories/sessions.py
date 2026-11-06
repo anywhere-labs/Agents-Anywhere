@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from sqlalchemy import func
 
-from sqlalchemy import case, literal_column
+from sqlalchemy import Text, case, literal, literal_column
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from pydantic import BaseModel
 
+from agent_server.infra.db.schema import session_source_change_seq
 from agent_server.infra.repositories.store_support import *
 from agent_server.infra.repositories.projects import _clean_workspace_path
 from agent_server.core.models import ConnectorSessionResolution
@@ -14,6 +16,7 @@ from agent_server.core.models import ConnectorSessionResolution
 
 SESSION_CURSOR_VERSION = 1
 _SESSION_INVENTORY_UPDATE_CHUNK_SIZE = 4_000
+_SESSION_INVENTORY_MISSING_REASON = "not returned by complete inventory"
 
 # Title provenance. A title a user typed must survive every later connector sync,
 # because runtimes keep re-announcing the title of their own thread file.
@@ -45,6 +48,15 @@ def _normalized_source_availability(value: Any) -> str:
     }:
         return value
     return "unknown"
+
+
+def _next_source_change_seq() -> Any:
+    return func.nextval(session_source_change_seq.name)
+
+
+def _source_changed_since(changed_seq: int | None, started_seq: int) -> bool:
+    """Whether a source write followed the start of an inventory scan."""
+    return changed_seq is not None and changed_seq >= started_seq
 
 
 def _source_archive_update(
@@ -574,7 +586,7 @@ class SessionRepositoryMixin:
                 if source_state is not None:
                     values["source_state"] = source_state
                     values["source_state_at"] = now
-                    values["source_scan_token"] = None
+                    values["source_changed_seq"] = _next_source_change_seq()
                     values.update(
                         _source_archive_update(
                             current.source_state,
@@ -881,16 +893,40 @@ class SessionRepositoryMixin:
         runtime_id: str,
         scan_token: str,
     ) -> None:
+        """Record one scan row instead of stamping every session of the runtime.
+
+        ``started_seq`` orders the scan against source writes: a session whose
+        ``source_changed_seq`` is at or above it moved after the scan began, so
+        the scan's older observation must not overwrite it. A notification left
+        over from a deleted connector inserts nothing.
+        """
+        columns = (
+            "connector_id",
+            "runtime",
+            "runtime_id",
+            "scan_token",
+            "started_seq",
+            "started_at",
+        )
+        statement = pg_insert(session_inventory_scans_t).from_select(
+            columns,
+            select(
+                connectors_t.c.id,
+                literal(runtime, Text),
+                literal(runtime_id, Text),
+                literal(scan_token, Text),
+                _next_source_change_seq(),
+                literal(utc_now(), Text),
+            ).where(connectors_t.c.id == connector_id),
+        )
+        statement = statement.on_conflict_do_update(
+            index_elements=columns[:3],
+            set_={
+                column: getattr(statement.excluded, column) for column in columns[3:]
+            },
+        )
         async with self._engine.begin() as conn:
-            await conn.execute(
-                update(sessions_t)
-                .where(
-                    sessions_t.c.connector_id == connector_id,
-                    sessions_t.c.runtime == runtime,
-                    sessions_t.c.runtime_id == runtime_id,
-                )
-                .values(source_scan_token=scan_token)
-            )
+            await conn.execute(statement)
 
     async def complete_session_inventory(
         self,
@@ -902,18 +938,36 @@ class SessionRepositoryMixin:
         *,
         complete: bool,
     ) -> list[str]:
+        """Apply one scan, writing only the rows the scan actually changes.
+
+        A row whose state, reason and origin all match the observation is left
+        alone, so ``source_state_at`` records the last write rather than the last
+        scan that confirmed the row.
+        """
         now = utc_now()
         changed: list[str] = []
+        scan_key = (
+            session_inventory_scans_t.c.connector_id == connector_id,
+            session_inventory_scans_t.c.runtime == runtime,
+            session_inventory_scans_t.c.runtime_id == runtime_id,
+            session_inventory_scans_t.c.scan_token == scan_token,
+        )
         async with self._engine.connect() as conn:
+            started_seq = await conn.scalar(
+                select(session_inventory_scans_t.c.started_seq).where(*scan_key)
+            )
+            if started_seq is None:
+                # A newer scan replaced this one, or a retry already finished it.
+                return changed
             rows = (
                 await conn.execute(
                     select(
                         sessions_t.c.id,
                         sessions_t.c.external_session_id,
                         sessions_t.c.source_state,
-                        sessions_t.c.source_scan_token,
-                        sessions_t.c.archived,
-                        sessions_t.c.dsh_archive_legacy,
+                        sessions_t.c.source_state_reason,
+                        sessions_t.c.source_observation_origin,
+                        sessions_t.c.source_changed_seq,
                     ).where(
                         sessions_t.c.connector_id == connector_id,
                         sessions_t.c.runtime == runtime,
@@ -929,88 +983,78 @@ class SessionRepositoryMixin:
             if row["external_session_id"] is not None
         }
         observed_ids: set[str] = set()
-        unchanged_observations: dict[str, dict[str, Any]] = {}
+        detail_updates: dict[str, dict[str, Any]] = {}
         for entry in entries:
             row = by_id.get(str(entry["session_id"]))
             external_session_id = entry.get("external_session_id")
             if row is None and external_session_id is not None:
                 row = by_external_id.get(external_session_id)
-            if row is None or row["source_scan_token"] != scan_token:
+            if row is None or _source_changed_since(
+                row["source_changed_seq"], started_seq
+            ):
                 continue
             session_id = str(row["id"])
             observed_ids.add(session_id)
-            source_state = str(entry["source_state"])
-            if row["source_state"] != source_state:
+            if row["source_state"] != str(entry["source_state"]):
                 if await self._complete_session_inventory_observation(
                     session_id=session_id,
-                    scan_token=scan_token,
+                    started_seq=started_seq,
                     entry=entry,
                     now=now,
                 ):
                     changed.append(session_id)
-            else:
-                unchanged_observations[session_id] = entry
+            elif (
+                row["source_state_reason"] != entry.get("reason")
+                or row["source_observation_origin"] != "inventory"
+            ):
+                detail_updates[session_id] = entry
 
-        await self._complete_unchanged_session_inventory_observations(
-            observations=unchanged_observations,
-            scan_token=scan_token,
+        await self._update_session_inventory_details(
+            observations=detail_updates,
+            started_seq=started_seq,
             now=now,
         )
 
-        remaining_rows = [
-            row
-            for row in rows
-            if row["source_scan_token"] == scan_token
-            and str(row["id"]) not in observed_ids
-        ]
         if complete:
-            unchanged_missing_ids: list[str] = []
-            for row in remaining_rows:
+            stale_missing_ids: list[str] = []
+            for row in rows:
                 session_id = str(row["id"])
-                if row["source_state"] == "missing":
-                    unchanged_missing_ids.append(session_id)
-                elif await self._complete_session_inventory_missing(
-                    session_id=session_id,
-                    scan_token=scan_token,
-                    now=now,
+                if session_id in observed_ids or _source_changed_since(
+                    row["source_changed_seq"], started_seq
                 ):
-                    changed.append(session_id)
-            if unchanged_missing_ids:
-                async with self._engine.begin() as conn:
-                    await conn.execute(
-                        update(sessions_t)
-                        .where(
-                            sessions_t.c.id.in_(unchanged_missing_ids),
-                            sessions_t.c.source_scan_token == scan_token,
-                        )
-                        .values(
-                            source_state_at=now,
-                            source_state_reason=(
-                                "not returned by complete inventory"
-                            ),
-                            source_observation_origin="inventory",
-                            source_scan_token=None,
-                        )
-                    )
-        elif remaining_rows:
-            async with self._engine.begin() as conn:
-                await conn.execute(
-                    update(sessions_t)
-                    .where(
-                        sessions_t.c.id.in_(
-                            [str(row["id"]) for row in remaining_rows]
-                        ),
-                        sessions_t.c.source_scan_token == scan_token,
-                    )
-                    .values(source_scan_token=None)
+                    continue
+                if row["source_state"] != "missing":
+                    if await self._complete_session_inventory_missing(
+                        session_id=session_id,
+                        started_seq=started_seq,
+                        now=now,
+                    ):
+                        changed.append(session_id)
+                elif (
+                    row["source_state_reason"] != _SESSION_INVENTORY_MISSING_REASON
+                    or row["source_observation_origin"] != "inventory"
+                ):
+                    stale_missing_ids.append(session_id)
+            if stale_missing_ids:
+                await self._update_session_inventory_details(
+                    observations={
+                        session_id: {"reason": _SESSION_INVENTORY_MISSING_REASON}
+                        for session_id in stale_missing_ids
+                    },
+                    started_seq=started_seq,
+                    now=now,
                 )
+        async with self._engine.begin() as conn:
+            # Finished last, so a retried batch can repeat an interrupted scan
+            # but not a completed one.
+            await conn.execute(delete(session_inventory_scans_t).where(*scan_key))
         return changed
 
-    async def _complete_unchanged_session_inventory_observations(
+    async def _update_session_inventory_details(
         self,
         *,
         observations: dict[str, dict[str, Any]],
-        scan_token: str,
+        started_seq: int,
         now: str,
     ) -> None:
         """Batch diagnostic observation fields that do not advance revision."""
@@ -1045,7 +1089,10 @@ class SessionRepositoryMixin:
                     update(sessions_t)
                     .where(
                         sessions_t.c.id.in_(chunk),
-                        sessions_t.c.source_scan_token == scan_token,
+                        or_(
+                            sessions_t.c.source_changed_seq.is_(None),
+                            sessions_t.c.source_changed_seq < started_seq,
+                        ),
                     )
                     .values(
                         source_state_at=case(
@@ -1059,7 +1106,6 @@ class SessionRepositoryMixin:
                             else_=sessions_t.c.source_state_reason,
                         ),
                         source_observation_origin="inventory",
-                        source_scan_token=None,
                     )
                 )
 
@@ -1067,7 +1113,7 @@ class SessionRepositoryMixin:
         self,
         *,
         session_id: str,
-        scan_token: str,
+        started_seq: int,
         entry: dict[str, Any],
         now: str,
     ) -> bool:
@@ -1077,7 +1123,7 @@ class SessionRepositoryMixin:
                     await conn.execute(
                         select(
                             sessions_t.c.source_state,
-                            sessions_t.c.source_scan_token,
+                            sessions_t.c.source_changed_seq,
                             sessions_t.c.archived,
                             sessions_t.c.dsh_archive_legacy,
                         )
@@ -1085,7 +1131,9 @@ class SessionRepositoryMixin:
                         .with_for_update()
                     )
                 ).first()
-                if row is None or row.source_scan_token != scan_token:
+                if row is None or _source_changed_since(
+                    row.source_changed_seq, started_seq
+                ):
                     return False
                 source_state = str(entry["source_state"])
                 values: dict[str, Any] = {
@@ -1093,7 +1141,6 @@ class SessionRepositoryMixin:
                     "source_state_at": entry.get("observed_at") or now,
                     "source_state_reason": entry.get("reason"),
                     "source_observation_origin": "inventory",
-                    "source_scan_token": None,
                 }
                 values.update(
                     _source_archive_update(
@@ -1108,10 +1155,7 @@ class SessionRepositoryMixin:
                     await self._bump_session(conn, session_id)
                 await conn.execute(
                     update(sessions_t)
-                    .where(
-                        sessions_t.c.id == session_id,
-                        sessions_t.c.source_scan_token == scan_token,
-                    )
+                    .where(sessions_t.c.id == session_id)
                     .values(**values)
                 )
             if changed:
@@ -1127,7 +1171,7 @@ class SessionRepositoryMixin:
         self,
         *,
         session_id: str,
-        scan_token: str,
+        started_seq: int,
         now: str,
     ) -> bool:
         async with self.session_revision_fence(session_id):
@@ -1136,29 +1180,27 @@ class SessionRepositoryMixin:
                     await conn.execute(
                         select(
                             sessions_t.c.source_state,
-                            sessions_t.c.source_scan_token,
+                            sessions_t.c.source_changed_seq,
                         )
                         .where(sessions_t.c.id == session_id)
                         .with_for_update()
                     )
                 ).first()
-                if row is None or row.source_scan_token != scan_token:
+                if row is None or _source_changed_since(
+                    row.source_changed_seq, started_seq
+                ):
                     return False
                 changed = row.source_state != "missing"
                 if changed:
                     await self._bump_session(conn, session_id)
                 await conn.execute(
                     update(sessions_t)
-                    .where(
-                        sessions_t.c.id == session_id,
-                        sessions_t.c.source_scan_token == scan_token,
-                    )
+                    .where(sessions_t.c.id == session_id)
                     .values(
                         source_state="missing",
                         source_state_at=now,
-                        source_state_reason="not returned by complete inventory",
+                        source_state_reason=_SESSION_INVENTORY_MISSING_REASON,
                         source_observation_origin="inventory",
-                        source_scan_token=None,
                     )
                 )
             if changed:
@@ -1194,7 +1236,10 @@ class SessionRepositoryMixin:
                 sessions_t.c.source_observation_origin == observation_origin,
             ).values(
                 source_state_at=case((stale, sessions_t.c.source_state_at), else_=observed),
-                source_scan_token=case((stale, sessions_t.c.source_scan_token), else_=None),
+                source_changed_seq=case(
+                    (stale, sessions_t.c.source_changed_seq),
+                    else_=_next_source_change_seq(),
+                ),
             ))
             return result.rowcount == 1
 
@@ -1240,7 +1285,7 @@ class SessionRepositoryMixin:
                     "source_state_at": effective_observed_at,
                     "source_state_reason": reason,
                     "source_observation_origin": observation_origin,
-                    "source_scan_token": None,
+                    "source_changed_seq": _next_source_change_seq(),
                 }
                 values.update(
                     _source_archive_update(
@@ -1784,7 +1829,7 @@ class SessionRepositoryMixin:
         if source_state is not None:
             values["source_state"] = source_state
             values["source_state_at"] = utc_now()
-            values["source_scan_token"] = None
+            values["source_changed_seq"] = _next_source_change_seq()
         async with self._engine.begin() as conn:
             row = (
                 await conn.execute(

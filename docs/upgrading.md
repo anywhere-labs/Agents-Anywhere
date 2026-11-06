@@ -2,7 +2,7 @@
 
 ## 先区分三个版本
 
-本次产品版本为 **2.2.0**；当前源码中的数据库 revision 为 **`v2_47`**，schema version 为 **`2.47`**。各端的 PATCH 版本可以不同，数据库 revision 独立编号，不能用来推断兼容性，见[版本号规则](versioning.md)。
+本次产品版本为 **2.2.0**；当前源码中的数据库 revision 为 **`v2_48`**，schema version 为 **`2.48`**。各端的 PATCH 版本可以不同，数据库 revision 独立编号，不能用来推断兼容性，见[版本号规则](versioning.md)。
 
 `main` 现在承载 v2。本文所说的 **v1 / 旧主线** 指主线切换前的实现，源代码提交为 `6c47e419`，不再指当前 `main`。早期 [main-to-v2 文档](migrations/main-to-v2/README.md)保留作历史参考。
 
@@ -20,7 +20,7 @@
    uv run python -m agent_server.infra.db.migrations current --verbose
    ```
 
-   以上命令使用该环境的 `AGENT_SERVER_DB_URL`。当前目标应为 `v2_47`；以后升级时，以待部署源码的 `CURRENT_SCHEMA_REVISION` 为准。
+   以上命令使用该环境的 `AGENT_SERVER_DB_URL`。当前目标应为 `v2_48`；以后升级时，以待部署源码的 `CURRENT_SCHEMA_REVISION` 为准。
 4. 启动同一版本的 Server/Web，检查 `/api/v2/health/ready`，再恢复入口流量和 Connector。验证账号登录、设备连接、会话恢复、消息、审批、文件和终端。
 5. 使用 [README 下载表](../README.md#下载与入口)升级客户端。从 2.1.0 起，Desktop（macOS、Windows）和 Android 的「立即更新」会从官网下载最新安装包。2.2.0 的安装包尚未记录，见[发布说明](releases/2.2.0.md)。
 
@@ -50,6 +50,13 @@ AOF 每秒同步仍存在最后未同步区间的数据丢失窗口。完整的 
 - 部署记录保留提交、镜像、安装包和验证结果，不包含凭据。
 
 这是运维验收清单；源码主线合并和安装包发布并不证明某个生产实例已经完成上述迁移。
+
+## 会话清单扫描（`v2_48`）
+
+`v2_48` 新增一张记录进行中扫描的小表 `session_inventory_scans`，并给 `sessions` 增加可空列 `source_changed_seq`。这两步都不会重写 `sessions` 表，已有行保持 `NULL`。迁移后，内容没有变化的清单扫描不再改写 `sessions` 行，旧版 Connector 无须升级也能受益。
+
+- 接口字段 `sourceAvailabilityUpdatedAt` 现在表示来源状态最后一次写入的时间，不再随每次扫描刷新。
+- `source_scan_token` 列保留到后续版本再删除，以便回滚到上一版 Server；新版 Server 不再读写它。
 
 ## 统一目标模式
 
