@@ -27,6 +27,7 @@ from agent_server.core.timeline import (
 from agent_server.core.utc import utc_now
 from agent_server.infra.db import sessions as sessions_t
 from agent_server.infra.db import timeline_items as timeline_items_t
+from agent_server.infra.db.engine import read_connection
 from agent_server.infra.db.schema import session_runtime_event_receipts
 from agent_server.infra.repositories.store_support import session_revision_fenced
 
@@ -478,7 +479,7 @@ class TimelineRepositoryMixin:
         )
 
     async def get_timeline_reset_seq(self, session_id: str) -> int:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(sessions_t.c.timeline_reset_seq).where(

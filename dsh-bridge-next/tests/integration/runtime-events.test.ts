@@ -9,7 +9,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { SessionId, type Session } from '@deepseek-ai/dsh-session'
 import { createAssistantMessage, createToolResultMessage, createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
-import { LocalRouter, Mesh, Router } from 'meshcall'
+import { LocalRouter, Mesh, MeshCallError, Router } from 'meshcall'
 import { bridgePath, nativeRuntime } from '../fixtures/native-runtime.js'
 import { corruptHistory } from '../fixtures/corrupt-history.js'
 import { mountAgents, TextAdapter, initialSelections } from '../fixtures/agent-runtime.js'
@@ -326,6 +326,27 @@ test('changes that outpace a slow startup scan recalibrate the noisiest session 
     assert.equal(last.request.meta.title, 'title 10499', 'the recalibration captures the final state')
     assert.ok(!diagnostics.some(entry => entry.event === 'sync.failed'))
   } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
+
+test('an unreachable Server retries the same batch and keeps the feed; any other failure still ends it', { timeout: 30_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-batch-retry-'))
+  const fixture = await nativeRuntime(home)
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  let unavailable = 2
+  const stream = follow(native, { onBatch: () => {
+    if (unavailable > 0) { unavailable -= 1; throw new MeshCallError('backend_unavailable', 'backend ingest request failed', { retryable: true }) }
+  } })
+  const refused = follow(native, { onBatch: () => { throw new MeshCallError('INVALID_PARAMS', 'refused') } })
+  try {
+    await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'inventory completes after the Server returns')
+    assert.deepEqual(stream.errors, [])
+    const [first, second, third] = stream.batches
+    assert.equal(first!.batchSeq, second!.batchSeq, 'the failed batch goes out again')
+    assert.equal(first!.batchSeq, third!.batchSeq)
+    assert.deepEqual(first!.operations, third!.operations)
+    await until(() => refused.errors.length === 1, 'a refused batch ends the feed')
+    assert.equal(refused.batches.length, 1)
+  } finally { stream.feed.close(); refused.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })
 
 test('new native drafts sync once after their first real user message, including attachment-only messages', { timeout: 30_000 }, async () => {

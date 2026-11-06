@@ -45,9 +45,12 @@ export function parseRendezvous(text: string): Rendezvous | undefined {
 export class ConnectorSync implements SyncTransport {
   constructor(private readonly client: SyncServiceClient, private readonly subscriptionId: string) {}
 
-  async ingestBatch(batch: WireBatch, signal: AbortSignal): Promise<void> {
-    // The key lets the Router dedupe a retried delivery of the same batch.
-    await this.client.ingestBatch(batch, { signal, idempotencyKey: `dsh-${batch.subscriptionId}-${batch.batchSeq}`.slice(0, 128) })
+  async ingestBatch(batch: WireBatch, signal: AbortSignal, attempt = 0): Promise<void> {
+    // The key lets the Router dedupe a redelivery of a batch whose answer was lost.
+    // A batch the Connector answered with a failure needs a new key to run again;
+    // the Connector's batch sequence still acknowledges one it already applied.
+    const key = `dsh-${batch.subscriptionId}-${batch.batchSeq}`.slice(0, 120)
+    await this.client.ingestBatch(batch, { signal, idempotencyKey: attempt ? `${key}-${attempt}` : key })
   }
 
   async loadCheckpoint(externalSessionId: string): Promise<Record<string, unknown> | null> {

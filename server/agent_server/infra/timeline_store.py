@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from agent_server.core.models import TimelineItem
 from agent_server.infra.db import timeline_items
+from agent_server.infra.db.engine import read_connection
 
 
 def _json_dumps(value: Any) -> str:
@@ -81,7 +82,7 @@ class SqlTimelineStore:
         self, session_id: str, *, limit: int = 100,
     ) -> tuple[list[TimelineItem], bool]:
         """Probe IDs first; caller holds the session revision fence."""
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             ids = (await conn.execute(
                 select(timeline_items.c.id)
                 .where(timeline_items.c.session_id == session_id)
@@ -111,7 +112,7 @@ class SqlTimelineStore:
             )
 
     async def latest_item(self, session_id: str) -> TimelineItem | None:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     timeline_items.select()
@@ -210,7 +211,7 @@ class SqlTimelineStore:
     async def list_since(
         self, session_id: str, *, after_seq: int, limit: int
     ) -> tuple[list[TimelineItem], bool]:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (
                 await conn.execute(
                     timeline_items.select()
@@ -227,7 +228,7 @@ class SqlTimelineStore:
         return items, has_more
 
     async def list_latest(self, session_id: str, *, limit: int) -> tuple[list[TimelineItem], bool]:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (
                 await conn.execute(
                     timeline_items.select()
@@ -248,7 +249,7 @@ class SqlTimelineStore:
     async def list_before_order_seq(
         self, session_id: str, *, before_order_seq: int, limit: int
     ) -> tuple[list[TimelineItem], bool]:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (
                 await conn.execute(
                     timeline_items.select()
@@ -284,7 +285,7 @@ class SqlTimelineStore:
         if conn is not None:
             yield conn
             return
-        async with self._engine.connect() as own:
+        async with read_connection(self._engine) as own:
             yield own
 
     def _row_values(self, item: TimelineItem) -> dict[str, Any]:
