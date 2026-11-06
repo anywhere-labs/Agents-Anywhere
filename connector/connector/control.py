@@ -7,8 +7,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-import httpx
-
 from connector.core.config import ConnectorConfig
 from connector.core.control_config import (
     config_from_params,
@@ -25,6 +23,7 @@ from connector.core.runtime_owner import (
 from connector.logging import logger
 from connector.server.auth import ConnectorAuthenticationError
 from connector.server.client import BackendRpcClient
+from connector.server.network import open_http_client
 from connector.server.pairing import (
     poll_pairing,
     resolve_pair_server_url,
@@ -285,7 +284,7 @@ class ConnectorController:
         self, server_url: str, *, timeout: float, poll_interval: float, generation: int,
     ) -> None:
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with await open_http_client(server_url, 30) as client:
                 pairing = await start_pairing(client, server_url, timeout)
                 if not self._pairing_current(generation):
                     return
