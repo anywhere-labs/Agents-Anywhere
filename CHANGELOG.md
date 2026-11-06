@@ -7,6 +7,11 @@
 ### 升级须知
 
 - Codex、Claude Code 统一目标模式需要 Server 执行 `v2_47` 数据库迁移，并配套更新 Connector 和客户端。（[#539](https://github.com/anywhere-labs/Agents-Anywhere/pull/539)）
+- 新 Connector 的远程控制优先使用 MeshCall；链路未建立或请求确定未分发时安全回退 WebSocket，授权续期失败时保留在途调用并让后续操作使用备用通道；旧 Connector 固定使用原通道。请先更新 Server，并使用 `python -m agent_server.main` 或开发指南中的配套配置启动；反向代理需允许设备控制连接的 WebSocket 升级以启用 Mesh。原有多进程和跨 Server 实例调用继续可用，大文件控制请求不再中断后续操作，普通客户端连接保留原消息接收上限，无需开启粘性会话。（[#441](https://github.com/anywhere-labs/Agents-Anywhere/pull/441)）
+
+### 会话创建与消息交付
+
+- 设备控制授权自动更新时，先接通新链路并保留旧链路中的请求，避免长命令因正常轮换、替代链路短暂断开或状态响应异常误报连接失败；单次操作超时不再让在线设备及其他在途操作一起失败，授权接入或链路发布等待超时后也不会一直占用凭据变更通道。（[#441](https://github.com/anywhere-labs/Agents-Anywhere/pull/441)）
 
 ### Codex 与 Claude
 
@@ -15,6 +20,10 @@
 ### DSH 同步
 
 - Connector 忙碌或同步流被重建时，DSH 不再因 Agents Anywhere 插件的连接调用被取消或超时而整个退出（`Call was cancelled`、`Call deadline exceeded`）。（[#547](https://github.com/anywhere-labs/Agents-Anywhere/pull/547)）
+
+### 本机连接、所有权与日志
+
+- 优化在线设备的授权校验，减少空闲设备以及文件、终端操作造成的数据库请求，修复大量设备同时校验时反复查库的问题，并减少设备同时上线或重连时的控制链路检查开销；文件与终端的正常快速操作不再逐次刷屏日志，慢操作、业务拒绝和异常仍可追踪；修复启动、停止与链路轮换重叠时仍执行新操作、残留连接或后台线程，以及协调服务异常时退出卡住的问题。（[#441](https://github.com/anywhere-labs/Agents-Anywhere/pull/441)）
 
 ## 2.2.0（日期待定）
 

@@ -423,8 +423,7 @@ SERVER_COMMAND=(
   "AGENT_SERVER_PUBLIC_ORIGIN=${SERVER_PUBLIC_ORIGIN}"
   "AGENT_SERVER_CORS_ORIGINS=${SERVER_CORS_ORIGINS}"
   "LOGURU_LEVEL=${LOGURU_LEVEL:-INFO}"
-  uv run uvicorn agent_server.app:create_app
-  --factory
+  uv run python -m agent_server.main
   --host "${SERVER_HOST}"
   --port "${SERVER_PORT}"
 )

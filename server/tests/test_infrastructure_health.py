@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
 
@@ -69,3 +70,20 @@ def test_readiness_rejects_a_dead_subscription_even_when_redis_pings(tmp_path) -
     assert response.status_code == 503
     assert response.json()["checks"]["realtime"]["status"] == "error"
     assert client.get("/api/v2/health/live").status_code == 200
+
+
+def test_router_failure_does_not_remove_healthy_websocket_control_from_readiness(tmp_path) -> None:
+    client = TestClient(create_app())
+    client.app.state.connector_mesh.router_url = "ws://unavailable.invalid"
+    client.app.state.connector_mesh.health = AsyncMock(side_effect=ConnectionError("Router unavailable"))
+    response = client.get("/api/v2/health/ready")
+    assert response.status_code == 200 and response.json()["status"] == "ready"
+    assert response.json()["checks"]["mesh"]["status"] == "error"
+    assert client.get("/api/v2/health/mesh").status_code == 503
+
+
+def test_credential_subscription_failure_still_fails_readiness(tmp_path) -> None:
+    client = TestClient(create_app())
+    client.app.state.connector_mesh.credentials.healthy = False
+    response = client.get("/api/v2/health/ready")
+    assert response.status_code == 503 and response.json()["checks"]["realtime"]["status"] == "error"

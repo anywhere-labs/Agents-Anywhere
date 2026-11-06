@@ -65,7 +65,8 @@ async def serve_host(
     events = ControlEvents()
     logs = open_log_hub(runtime_owner.system_home() / ".agents-anywhere" / "logs")
     controller = ConnectorController(config_path=config_path, notifier=events.notify)
-    log_sink = install_rpc_log_sink(logs.notify, level="DEBUG" if debug else "INFO", remove_default_sink=True)
+    log_sink = install_rpc_log_sink(logs.notify, batch_notifier=logs.notify_batch, on_stopped=logs.close,
+                                   level="DEBUG" if debug else "INFO", remove_default_sink=True)
     hub = LocalHub()
     set_local_hub(hub)
     try:
@@ -84,4 +85,3 @@ async def serve_host(
                 await hub.stop()
             finally:
                 await log_sink.close()
-                logs.close()

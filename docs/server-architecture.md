@@ -73,10 +73,23 @@ requirements for high-frequency ingestion.
 2. The accepting Server instance claims the Connector lease through the RPC
    manager. Redis rejects a second live owner in distributed deployments.
 3. SQL records connection metadata without storing the lease owner.
-4. Requests targeting another instance are routed through Redis Pub/Sub to the
-   lease owner.
+4. Control requests use the domain services in
+   [Connector Control 1.0](../contracts/connector-control/1.0/README.md) over the
+   MeshCall Router serving the current link. The original Redis presence lease
+   still identifies the base connection owner. A separate expiring Mesh route
+   identifies the serving Router/worker; cross-Router requests use the existing
+   Redis request/response channel before the target worker calls MeshCall.
+   Bootstrap proxy grants are shared through Redis; Router credentials are
+   minted locally by the worker accepting the serving WebSocket. No sticky
+   load-balancer routing or deployment-wide Router singleton is required.
 5. Heartbeats refresh the lease. Disconnect or timeout releases it.
 6. API responses merge durable Connector data with live presence status.
+
+Transport adapters delegate to existing domain handlers. Project creation and
+native inventory synchronization are outside this transport change; it adds no
+client UI, public business API or database schema changes.
+See [control transport parity](connector-control-transport.md) for the method
+inventory, cancellation boundaries, flow diagrams and reproducible probes.
 
 ## Database Versions
 

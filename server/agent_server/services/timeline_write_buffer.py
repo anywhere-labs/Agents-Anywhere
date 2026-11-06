@@ -23,6 +23,7 @@ from agent_server.core.timeline import (
     timeline_order_seq_in_range,
 )
 from agent_server.core.utc import utc_now
+from agent_server.infra.connector_control_log import control_log
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.timeline_broker import TimelineBroker, timeline_envelope_message
 from agent_server.services.connector_presence import (
@@ -591,6 +592,7 @@ class TimelineWriteBuffer:
         return await self._sequences.live_head(session_id)
 
     async def _flush_locked(self, session_id: str) -> None:
+        started_at = time.monotonic()
         snapshot = await self._pending_snapshot(session_id)
         if (
             not snapshot.items
@@ -605,6 +607,12 @@ class TimelineWriteBuffer:
             source_observed_at=snapshot.source_observed_at,
             mark_read_on_change=snapshot.mark_read_on_change,
         )
+        elapsed_ms = (time.monotonic() - started_at) * 1000
+        if result.items:
+            # This is after the database call, separate from ingress and RPC return.
+            control_log("timeline.persisted", level="INFO" if elapsed_ms >= 100 else "DEBUG",
+                        phase="items_committed", sessionId=session_id, itemCount=len(result.items),
+                        updatedSeq=max(item.updatedSeq or 0 for item in result.items), elapsedMs=elapsed_ms)
         if result.reordered:
             # Clients already hold these items at their pending position, and
             # the lane cached it too; both must re-read the stored timeline.

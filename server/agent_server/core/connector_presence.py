@@ -8,3 +8,5 @@ class ConnectorLease:
     instance_id: str
     connection_id: str
     ready: bool = True
+    mesh_capable: bool = False
+    control_fallback_capable: bool = False
