@@ -1925,7 +1925,7 @@ class SessionRepositoryMixin:
         query = select(sessions_t.c.id, first_user_message.label("payload_json")).where(
             sessions_t.c.id.in_(session_ids)
         )
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (await conn.execute(query)).all()
         derived: dict[str, str] = {}
         for session_id, payload_json in rows:
