@@ -187,6 +187,24 @@ export class RuntimeRouter {
         }
         return { ok: true, result: { state: await this.request('getSessionState', params, signal) } }
       }
+      case 'setSessionArchived': {
+        const native = this.reader.native
+        if (!native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Native session archive is unavailable.')
+        if (typeof params.archived !== 'boolean') throw new BridgeError('INVALID_PARAMS', 'An archive state is required.')
+        // Restoring always addresses a session availability checks still reject as archived.
+        const id = await this.resolve(params, signal, true)
+        try {
+          await native.setArchived(id, params.archived)
+        } catch (error) {
+          const failure = publicError(error)
+          return { ok: false, code: failure.code === 'SESSION_ACTIVE' ? 'session_active' : failure.code, message: failure.message,
+            sessionId: sessionId(this.namespace, id), externalSessionId: id, archived: params.archived,
+            result: { sourceState: await native.source.state(id).catch(() => undefined) } }
+        }
+        // The native archive is already durable; a state read must not turn it into a failure.
+        return { ok: true, sessionId: sessionId(this.namespace, id), externalSessionId: id, archived: params.archived,
+          sourceState: await native.source.state(id).catch(() => undefined) }
+      }
       case 'interruptSession': {
         if (!this.reader.native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Interrupt is unavailable.')
         const id = await this.resolve(params, signal)

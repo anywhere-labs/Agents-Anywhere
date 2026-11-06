@@ -19,6 +19,7 @@ from connector.runtime_protocol import (
     RuntimeConfig,
     RuntimeConflictError,
     RuntimeIdentity,
+    RuntimeInvalidRequestError,
     RuntimeModelCatalog,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
@@ -69,6 +70,7 @@ from connector.runtimes.codex.ipc import deeplink as ipc_deeplink
 from connector.runtimes.codex.lifecycle.runtime_lifecycle import CodexRuntimeLifecycle
 from connector.runtimes.codex.notifications import CodexNotificationProjector
 from connector.runtimes.codex.notifications.projector import notification_event
+from connector.runtimes.codex.runtime_helpers import soft_codex_unavailable_reason
 from connector.runtimes.codex.sdk.runtime_client import (
     CodexCompactResult,
     CodexModelListResult,
@@ -1048,6 +1050,89 @@ class CodexRuntime(AgentRuntime):
             selections=selections,
         )
 
+    async def update_session_archive(
+        self,
+        session_id: str,
+        *,
+        external_session_id: str | None = None,
+        archived: bool,
+    ) -> dict[str, Any]:
+        """Mirror AA archive state into the Codex app-server thread list.
+
+        Best-effort by contract: expected misses (unknown native id, runtime not
+        started, a turn still in flight, an older app-server without archive)
+        are reported in the result object instead of raising. A restore also
+        tells the running Codex App to re-read the thread.
+        """
+
+        thread_id = external_session_id
+        if thread_id is None:
+            state = self._session_states.get(session_id)
+            thread_id = state.external_session_id if state is not None else None
+        result: dict[str, Any] = {
+            "sessionId": session_id,
+            "externalSessionId": thread_id,
+            "archived": archived,
+            "native": True,
+        }
+        if thread_id is None:
+            return {
+                **result,
+                "supported": False,
+                "status": "unsupported",
+                "reason": "native_session_unknown",
+            }
+        if self.client is None or not self._lifecycle.started:
+            return {
+                **result,
+                "supported": True,
+                "status": "skipped",
+                "reason": "runtime_not_running",
+            }
+        if _codex_session_is_running(
+            session_id,
+            self._active_turn_ids,
+            self._session_states.get(session_id),
+        ):
+            return {
+                **result,
+                "supported": True,
+                "status": "skipped",
+                "reason": "session_running",
+            }
+        try:
+            await self.client.set_thread_archived(thread_id, archived=archived)
+        except RuntimeInvalidRequestError:
+            return {
+                **result,
+                "supported": False,
+                "status": "unsupported",
+                "reason": "unsupported",
+            }
+        except Exception as exc:  # noqa: BLE001 - native archive must never fail the RPC
+            reason = _codex_archive_failure_reason(exc)
+            logger.info(
+                "codex native archive failed thread={} archived={} reason={} error={}",
+                thread_id,
+                archived,
+                reason,
+                exc,
+            )
+            return {
+                **result,
+                "supported": True,
+                "status": "failed",
+                "reason": reason,
+            }
+        if not archived and self.ipc_owner is not None:
+            await self.ipc_owner.announce_thread_unarchived(thread_id)
+        return {
+            **result,
+            "supported": True,
+            "status": "archived" if archived else "restored",
+            "reason": None,
+        }
+
     async def list_commands(
         self,
         session_id: str,
@@ -1217,3 +1302,34 @@ class CodexRuntime(AgentRuntime):
 def _followed(follower: Any, thread_id: str) -> bool:
     thread = follower.get(thread_id)
     return thread is not None and thread.status == "following"
+
+
+_ARCHIVE_RUNNING_STATUSES = frozenset({"running", "stopping", "waiting_approval"})
+
+
+def _codex_session_is_running(
+    session_id: str,
+    active_turn_ids: Mapping[str, str],
+    state: SessionState | None,
+) -> bool:
+    """Whether a native archive would race with an in-flight Codex turn."""
+
+    if session_id in active_turn_ids:
+        return True
+    return state is not None and state.status in _ARCHIVE_RUNNING_STATUSES
+
+
+def _codex_archive_failure_reason(exc: Exception) -> str:
+    """Stable short reason for a failed native archive request."""
+
+    soft_reason = soft_codex_unavailable_reason(str(exc))
+    if soft_reason is not None:
+        return soft_reason
+    if isinstance(exc, RuntimeConflictError):
+        return "session_locked"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    message = str(exc).lower()
+    if "active writer" in message or "locked" in message:
+        return "session_locked"
+    return "native_error"

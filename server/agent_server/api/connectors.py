@@ -37,6 +37,7 @@ from agent_server.services.connector_presence import (
     with_effective_session_connector_statuses,
 )
 from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.native_archive import sync_native_session_archive
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
@@ -261,6 +262,7 @@ async def archive_all_device_sessions(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await sync_native_session_archive(manager, sessions, payload.archived)
     return ArchiveAllResponse(
         sessions=await with_effective_session_connector_statuses(manager, sessions),
         affected=len(sessions),

@@ -398,6 +398,8 @@ class SyncRelay:
                     observed_at=params.get("observedAt"), observation_origin=params.get("observationOrigin", "event")),
             ))
         elif method == "session.turnEnded":
+            if params.get("outcome") == "failed":
+                await self._publish_turn_failure(params)
             await self.host.session_turn_ended(
                 session_id=params["sessionId"], runtime="dsh", external_session_id=params.get("externalSessionId"),
                 turn_id=params.get("turnId"), outcome=params.get("outcome", "completed"), metadata=params.get("metadata"),
@@ -420,6 +422,42 @@ class SyncRelay:
                 await self._report_health("running")
         else:
             raise ValueError(f"Unsupported runtime notification: {method}")
+
+    async def _publish_turn_failure(self, params: dict[str, Any]) -> None:
+        """Surface a failed turn as a notice and a settled timeline message.
+
+        A failed turn used to leave the session idle with no answer and no
+        explanation. Both artefacts are best-effort: a rejected notice must
+        not stop ``session.turnEnded`` from settling the turn.
+        """
+        from connector.runtimes.dsh import notices as failure_notices
+
+        failure = params.get("failure")
+        if not isinstance(failure, Mapping):
+            failure = {}
+        session_id = params.get("sessionId")
+        if not isinstance(session_id, str) or not session_id:
+            return
+        external_session_id = params.get("externalSessionId")
+        turn_id = params.get("turnId") if isinstance(params.get("turnId"), str) else None
+        try:
+            await self.host.notice_upsert(failure_notices.turn_failure_notice(
+                session_id=session_id,
+                external_session_id=external_session_id,
+                failure=failure,
+                turn_id=turn_id,
+            ))
+        except Exception as error:  # noqa: BLE001 - the turn must still settle
+            logger.warning("DSH turn failure notice rejected error_type={}", type(error).__name__)
+        try:
+            await self.host.timeline_item_upsert(failure_notices.turn_failure_item(
+                session_id=session_id,
+                external_session_id=external_session_id,
+                failure=failure,
+                turn_id=turn_id,
+            ))
+        except Exception as error:  # noqa: BLE001 - the turn must still settle
+            logger.warning("DSH turn failure timeline item rejected error_type={}", type(error).__name__)
 
     async def run(self) -> None:
         try:

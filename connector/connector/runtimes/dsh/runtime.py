@@ -210,6 +210,55 @@ class DshRuntime(AgentRuntime):
             result=_object(result.get("result") or {}),
         )
 
+    async def update_session_archive(
+        self, session_id: str, *, external_session_id: str | None = None, archived: bool,
+    ) -> dict[str, Any]:
+        """Mirror an AA archive/unarchive in the DSH client's own history list.
+
+        Best effort by contract: an older Bridge without the method, an
+        unavailable Bridge and a session that is still running are reported in
+        the result object instead of raised, so the Server's archive call cannot
+        fail because the native list could not follow.
+        """
+        if not isinstance(session_id, str) or not session_id:
+            raise RuntimeInvalidRequestError("sessionId is required")
+        if not isinstance(archived, bool):
+            raise RuntimeInvalidRequestError("archived must be a boolean")
+        if external_session_id is not None and not (
+            isinstance(external_session_id, str) and external_session_id
+        ):
+            raise RuntimeInvalidRequestError("externalSessionId must be a non-empty string")
+        params = {**_session_params(session_id, external_session_id), "archived": archived}
+        try:
+            await self._ensure_client()
+            if self._client is None:
+                return _archive_result(session_id, external_session_id, archived, status="skipped", reason="bridge_unavailable")
+            payload = _object(await self._client.request("setSessionArchived", params))
+        except BridgeRpcError as exc:
+            return _archive_result(
+                session_id, external_session_id, archived, **_archive_failure(exc.bridge_code),
+            )
+        except (BridgeUnavailableError, RuntimeUnavailableError):
+            return _archive_result(session_id, external_session_id, archived, status="skipped", reason="bridge_unavailable")
+        except Exception as exc:  # noqa: BLE001 - the native mirror never fails the AA archive API
+            logger.warning(
+                "DSH native archive failed session={} error_type={}",
+                session_id, type(exc).__name__,
+            )
+            return _archive_result(session_id, external_session_id, archived, status="failed", reason="request_failed")
+        if payload.get("ok") is not True:
+            code = payload.get("code")
+            if isinstance(code, str) and code:
+                return _archive_result(session_id, external_session_id, archived, **_archive_failure(code))
+            return _archive_result(session_id, external_session_id, archived, status="failed", reason="invalid_response")
+        native_id = payload.get("externalSessionId")
+        return _archive_result(
+            session_id,
+            native_id if isinstance(native_id, str) and native_id else external_session_id,
+            archived,
+            status="archived" if archived else "restored",
+        )
+
     async def list_sessions(
         self,
         limit: int = 100,
@@ -671,3 +720,35 @@ def _session_params(session_id: str, external_session_id: str | None) -> dict[st
     if external_session_id is not None:
         params["externalSessionId"] = external_session_id
     return params
+
+
+def _archive_result(
+    session_id: str,
+    external_session_id: str | None,
+    archived: bool,
+    *,
+    supported: bool = True,
+    status: str,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    """The Connector RPC result for one native archive attempt (``session.archive``)."""
+    return {
+        "sessionId": session_id,
+        "externalSessionId": external_session_id,
+        "archived": archived,
+        "native": True,
+        "supported": supported,
+        "status": status,
+        "reason": reason,
+    }
+
+
+def _archive_failure(code: str) -> dict[str, Any]:
+    """Classify a Bridge failure code without raising; unknown codes are failures."""
+    normalized = code.upper()
+    if normalized in {"METHOD_NOT_FOUND", "UNSUPPORTED_OPERATION"}:
+        # An older plugin: DSH has a native archive list, this Bridge cannot write it.
+        return {"supported": False, "status": "unsupported", "reason": "bridge_upgrade_required"}
+    if normalized == "SESSION_ACTIVE":
+        return {"status": "skipped", "reason": "session_active"}
+    return {"status": "failed", "reason": code.lower() or "unknown"}

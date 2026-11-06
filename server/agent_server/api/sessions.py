@@ -112,6 +112,7 @@ from agent_server.services.effective_capabilities import (
     read_session_capability_facts,
 )
 from agent_server.services.event_recovery import EventRecoveryService
+from agent_server.services.native_archive import sync_native_session_archive
 from agent_server.services.session_meta_projection import (
     project_session_meta_for_dashboard,
 )
@@ -546,6 +547,8 @@ async def patch_session_meta(
         session_id=session.id,
         reason="session.updated",
     )
+    if payload.archived is not None:
+        await sync_native_session_archive(manager, [session], payload.archived)
     return SessionResponse(
         session=await with_effective_session_connector_status(manager, session),
         serverTime=utc_now(),
@@ -582,6 +585,7 @@ async def set_sessions_archived(
             session_id=session.id,
             reason=reason,
         )
+    await sync_native_session_archive(manager, sessions, archived)
     return BulkArchiveResponse(
         sessions=await with_effective_session_connector_statuses(manager, sessions),
         notFound=not_found,

@@ -44,6 +44,7 @@ API key 形如 `mk_<id>_<随机 hex>`，Router 按 id 查表并比对 SHA-256。
 | `getPlanning` | 原生 Plan 服务存在性与当前／待生效模式，只读 |
 | `setPlanning` | 设置原生规划选择，返回 committed／queued／cancelled／noop |
 | `createAndStartSession`、`startTurn`、`interruptSession`、`updateSelections`、`respondInteraction`、`executeCommand` | 变更 |
+| `setSessionArchived` | 在 DSH 自己的历史列表里归档／恢复一个会话；活动会话返回 `ok:false`、`code:"session_active"` |
 | `refreshSync` | 要求重新捕获一个会话 |
 | `sync` | server stream：先发 `{kind:"subscribed", projectionVersion, checkpointVersion?}`，调用保持打开期间通过 `Sync.ingestBatch` 回传批次 |
 

@@ -465,14 +465,31 @@ class CodexIpcOwnerService:
         task.add_done_callback(self._publish_tasks.discard)
 
     async def _announce_new_thread(self, thread_id: str, status: str) -> None:
+        if not await self.announce_thread_unarchived(thread_id):
+            return
+        logger.info("codex ipc new thread announced to codex app thread={} status={}", thread_id, status)
+
+    async def announce_thread_unarchived(self, thread_id: str) -> bool:
+        """Tell the Codex App that a thread is visible again.
+
+        The App loads its thread list once at startup; the ``thread-unarchived``
+        broadcast makes it re-read a thread that AA restored natively, the same
+        way the App learns about its own new threads. Failures are logged only:
+        the App re-reads its history on the next restart anyway.
+        """
+
         try:
             await self.client.broadcast(
                 "thread-unarchived", {"hostId": self.host_id, "conversationId": thread_id}
             )
         except Exception as exc:  # noqa: BLE001 - the App still sees it after a restart
-            logger.warning("codex ipc new thread announce failed thread={} error={}", thread_id, exc)
-            return
-        logger.info("codex ipc new thread announced to codex app thread={} status={}", thread_id, status)
+            logger.warning(
+                "codex ipc thread unarchived announce failed thread={} error={}",
+                thread_id,
+                exc,
+            )
+            return False
+        return True
 
     # -- queued follow-ups ----------------------------------------------------
 

@@ -29,6 +29,7 @@ from agent_server.services.connector_presence import (
     with_effective_session_connector_statuses,
 )
 from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.native_archive import sync_native_session_archive
 from agent_server.services.session_meta_projection import (
     project_session_meta_for_dashboard,
 )
@@ -225,6 +226,7 @@ async def archive_all_project_sessions(
             else "project.sessions.unarchived"
         ),
     )
+    await sync_native_session_archive(manager, sessions, payload.archived)
     return ArchiveAllResponse(
         sessions=await with_effective_session_connector_statuses(manager, sessions),
         affected=len(sessions),

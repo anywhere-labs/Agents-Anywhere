@@ -9,6 +9,7 @@
 - Pi 优先复用本机兼容安装的模型、认证和配置；已有受管模型网关配置保持隔离，用户也可明确选择受管环境。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 - Pi 接入需要 Server 执行 `v2_45` 数据库迁移，并配套更新 Connector 和使用此功能的客户端。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 - 统一 Plan 需要 Server 执行 `v2_46` 数据库迁移，并配套更新 Connector、客户端和 DSH Bridge；DSH 还需组合原生 Plan 插件。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- 原生会话归档同步需要同时升级 Server 和对应设备的 Connector；DSH 还需要更新 DSH 插件。只升级其中一端时会自动跳过原生同步，AA 里的归档操作不受影响。
 
 ### 统一 Plan
 
@@ -54,10 +55,14 @@
 
 - Connector 上报的时间线条目序号超出范围时只拒绝这条上报，同批其他消息照常保存，不再让整个会话之后的消息都存不进数据库；升级前已经积压的条目会按原顺序排到时间线末尾保存，持续写入失败的会话也不再每秒重试刷屏日志。（[#464](https://github.com/anywhere-labs/Agents-Anywhere/pull/464)）
 
+- 在 AA 里归档或恢复 Codex、Claude Code 会话时，对应的原生会话列表也会一起归档或恢复：归档后 `codex resume`、Codex App 和 `claude --resume` 不再列出该会话，恢复后重新出现。原生运行时正在执行、或原生历史暂时无法写入时会跳过原生同步，AA 里的归档操作照常成功。
+- 升级前已经在 AA 里归档的会话，会在设备 Connector 上线后自动补做一次原生归档，不需要重新归档；AA 未归档的会话不会被反向归档。
+
 ### DSH 同步
 
 - 首次同步大量或很长的会话时，即使有 Agent 正在持续输出，也不再因事件积压反复从头同步、一直停在「正在同步 DSH 会话…」；积压过多时只重新校准占用最多的那个会话。（[#511](https://github.com/anywhere-labs/Agents-Anywhere/pull/511)）
 - 上传同步数据时连接偶尔中断或 Server 短暂返回 5xx，会先自动重试，不再立即中断并重新同步全部会话。（[#511](https://github.com/anywhere-labs/Agents-Anywhere/pull/511)）
+- 在 AA 里归档或恢复 DSH 会话时，DSH 自己的历史列表也会同步归档或恢复；DSH 侧仍在运行的会话保持原状、不做原生归档，AA 里的归档照常生效。
 
 ### Android
 

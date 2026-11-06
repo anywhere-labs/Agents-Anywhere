@@ -23,6 +23,7 @@ from connector.runtime_protocol import (
     SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtimes.claude.archive import set_transcript_archived
 from connector.runtimes.claude.catalogs.reader import ClaudeCatalogReader
 from connector.runtimes.claude.domain.capabilities import (
     ClaudeCapabilityContext,
@@ -338,6 +339,55 @@ class ClaudeRuntime(AgentRuntime):
             external_session_id=external_session_id,
             selections=selections,
         )
+
+    async def update_session_archive(
+        self,
+        session_id: str,
+        *,
+        external_session_id: str | None = None,
+        archived: bool,
+    ) -> dict[str, Any]:
+        """Mirror AA archive state into Claude Code's native transcript tree.
+
+        Claude Code has no archive API; AA reversibly moves the native transcript
+        between ``projects`` and ``projects-archived`` in the Claude config
+        directory, so the session disappears from / reappears in the CLI history.
+        Expected misses are reported in the result object instead of raising.
+        """
+
+        thread_id = external_session_id
+        if thread_id is None:
+            state = self._session_states.get(session_id)
+            thread_id = state.external_session_id if state is not None else None
+        result: dict[str, Any] = {
+            "sessionId": session_id,
+            "externalSessionId": thread_id,
+            "archived": archived,
+        }
+        if thread_id is None:
+            return {
+                **result,
+                "native": False,
+                "supported": False,
+                "status": "unsupported",
+                "reason": "native_session_unknown",
+            }
+        if claude_state_has_active_execution(self._session_states.get(session_id)):
+            return {
+                **result,
+                "native": False,
+                "supported": True,
+                "status": "skipped",
+                "reason": "session_running",
+            }
+        return {
+            **result,
+            **await set_transcript_archived(
+                self.config,
+                thread_id,
+                archived=archived,
+            ),
+        }
 
     async def interrupt_session(
         self,

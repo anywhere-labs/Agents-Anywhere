@@ -69,6 +69,7 @@ from agent_server.services.device_runtimes import (
 from agent_server.services.effective_capabilities import (
     ConnectorCapabilityRefresh,
 )
+from agent_server.services.native_archive import backfill_connector_native_archive
 from agent_server.services.runtime_ingress import (
     notification_runtime_id,
     runtime_notification_is_allowed,
@@ -80,6 +81,33 @@ router = APIRouter(tags=["connector-ingress"])
 
 
 DEFAULT_NOTIFICATION_CONCURRENCY = 4
+
+
+# Fire-and-forget tasks must be referenced until they finish, otherwise the
+# event loop may garbage-collect a half-run reconciliation.
+native_archive_backfill_tasks: set[asyncio.Task[None]] = set()
+
+
+def native_archive_backfill_enabled() -> bool:
+    """Whether a Connector connect reconciles its previously archived sessions."""
+    raw = os.environ.get("AGENT_SERVER_NATIVE_ARCHIVE_BACKFILL", "1")
+    return raw.strip().lower() not in {"0", "false", "off", "no"}
+
+
+def schedule_native_archive_backfill(
+    db: Store,
+    manager: ConnectorRpcManager,
+    connector_id: str,
+) -> None:
+    """Kick off the one-time native archive backfill for a Connector."""
+    if not native_archive_backfill_enabled():
+        return
+    task = asyncio.create_task(
+        backfill_connector_native_archive(db, manager, connector_id),
+        name=f"native-archive-backfill-{connector_id}",
+    )
+    native_archive_backfill_tasks.add(task)
+    task.add_done_callback(native_archive_backfill_tasks.discard)
 
 
 @dataclass(slots=True)
@@ -685,6 +713,8 @@ async def connector_ws(
                 connector_id,
                 connection,
                 reason=discovery_reason or "runtime.recovery",
+                db=db,
+                manager=manager,
             ),
             name=f"runtime-discovery-complete-{connection.connection_id}",
         )
@@ -793,6 +823,8 @@ async def _complete_runtime_discovery(
     connection: ConnectorConnection,
     *,
     reason: str,
+    db: Store,
+    manager: ConnectorRpcManager,
 ) -> None:
     try:
         await runtime_service.publish_discovery(connector_id, reason)
@@ -837,6 +869,10 @@ async def _complete_runtime_discovery(
             connector_id,
             connection.connection_id,
         )
+
+    # Only now are the configured runtimes running, so an archive RPC can reach
+    # them; reconciling earlier would mark every archived session as skipped.
+    schedule_native_archive_backfill(db, manager, connector_id)
 
 
 def _connector_device_os(value: str | None) -> str | None:

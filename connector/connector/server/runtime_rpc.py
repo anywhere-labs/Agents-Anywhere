@@ -9,6 +9,7 @@ from connector.runtime_protocol import (
     RuntimeInvalidRequestError,
     RuntimeScope,
     RuntimeSupervisor,
+    RuntimeUnsupportedError,
 )
 from connector.runtime_protocol.instance_binding import runtime_config_for_instance
 from connector.runtime_protocol.workflows import RuntimeWorkflowRequest
@@ -85,6 +86,7 @@ class RuntimeRpcHandler:
         "session.state",
         "session.capabilities",
         "session.notices",
+        "session.archive",
         "session.selections.update",
         "session.commands",
         "session.command.execute",
@@ -262,6 +264,32 @@ class RuntimeRpcHandler:
                 runtime,
                 await read_session_notices(runtime, params),
             )
+        if method == "session.archive":
+            runtime = self._resolve_agent_runtime(params)
+            session_id = params.get("sessionId")
+            if not isinstance(session_id, str) or not session_id:
+                raise RuntimeInvalidRequestError("sessionId is required")
+            archived = params.get("archived")
+            if not isinstance(archived, bool):
+                raise RuntimeInvalidRequestError(
+                    "archived is required and must be a boolean"
+                )
+            external_session_id = params.get("externalSessionId")
+            if external_session_id is not None and not isinstance(
+                external_session_id, str
+            ):
+                raise RuntimeInvalidRequestError(
+                    "externalSessionId must be a string"
+                )
+            return self._runtime_result(
+                runtime,
+                await self._dispatch_session_archive(
+                    runtime,
+                    session_id,
+                    external_session_id or None,
+                    archived,
+                ),
+            )
         if method == "session.selections.update":
             runtime = self._resolve_agent_runtime(params)
             return self._runtime_result(
@@ -342,6 +370,37 @@ class RuntimeRpcHandler:
 
     def _parse_config_params(self, params: dict[str, Any]) -> RuntimeConfigParams:
         return RuntimeConfigParams.parse(params)
+
+    async def _dispatch_session_archive(
+        self,
+        runtime: AgentRuntime,
+        session_id: str,
+        external_session_id: str | None,
+        archived: bool,
+    ) -> dict[str, Any]:
+        """Mirror one AA archive/unarchive into the runtime's native store.
+
+        Native archive sync is best-effort by contract: a runtime without a
+        native archive concept is reported as ``unsupported`` in the result
+        object instead of failing the whole RPC.
+        """
+
+        try:
+            return await runtime.update_session_archive(
+                session_id,
+                external_session_id=external_session_id,
+                archived=archived,
+            )
+        except RuntimeUnsupportedError:
+            return {
+                "sessionId": session_id,
+                "externalSessionId": external_session_id,
+                "archived": archived,
+                "native": False,
+                "supported": False,
+                "status": "unsupported",
+                "reason": "unsupported",
+            }
 
     def _resolve_agent_runtime(self, params: dict[str, Any]) -> AgentRuntime:
         scope = scoped_runtime(params)

@@ -150,6 +150,12 @@ class CodexRawThreadReadResponse(BaseModel):
     thread: dict[str, Any]
 
 
+class CodexThreadArchiveResponse(BaseModel):
+    """``thread/archive`` and ``thread/unarchive`` answer ``{}``."""
+
+    model_config = ConfigDict(extra="allow")
+
+
 class CodexSdkClient:
     """Adapter from the Codex SDK client shape to the runtime client protocol.
 
@@ -850,6 +856,44 @@ class CodexSdkClient:
         await ensure_codex_initialized(self._client)
         request = getattr(codex_low_level_client(self._client), "request", None)
         return request if callable(request) else None
+
+    async def set_thread_archived(self, thread_id: str, archived: bool) -> None:
+        """Archive or restore one Codex thread in the app-server's own history.
+
+        Side effects:
+        - sends ``thread/archive`` / ``thread/unarchive`` to the Codex app-server
+
+        Older app-server builds lack the method; that becomes
+        ``RuntimeInvalidRequestError`` so the runtime reports ``supported=false``
+        instead of a failed native operation. A closed transport is recovered
+        like reads do (recreate the app-server, retry once); archive and
+        unarchive are idempotent, so replaying the request is safe.
+        """
+
+        method = "thread/archive" if archived else "thread/unarchive"
+
+        async def write(client: Any) -> Any:
+            await ensure_codex_initialized(client)
+            low_level_client = codex_low_level_client(client)
+            request = getattr(low_level_client, "request", None)
+            if not callable(request):
+                raise RuntimeInvalidRequestError(
+                    "Codex SDK client does not expose raw request() for thread archive"
+                )
+            try:
+                return await request(
+                    method,
+                    {"threadId": thread_id},
+                    response_model=CodexThreadArchiveResponse,
+                )
+            except JsonRpcError as exc:
+                if codex_method_unsupported(exc):
+                    raise RuntimeInvalidRequestError(
+                        "Codex app-server does not support native archive"
+                    ) from exc
+                raise
+
+        await self.call_read_with_recovery(method, write)
 
     def _observe_command_thread(self, thread_id: str) -> None:
         if self._command_notifications:

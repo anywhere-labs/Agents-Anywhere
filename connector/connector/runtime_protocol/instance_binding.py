@@ -504,6 +504,18 @@ class RuntimeInstance(AgentRuntime):
     async def update_session_configuration(self, session_id: str, values: Mapping[str, Any]) -> dict[str, Any]:
         return await self.native_runtime.update_session_configuration(session_id, values)
 
+    async def update_session_archive(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+        archived: bool = False,
+    ) -> dict[str, Any]:
+        return await self.native_runtime.update_session_archive(
+            session_id,
+            external_session_id=external_session_id,
+            archived=archived,
+        )
+
     @property
     def planning(self):
         return self.native_runtime.planning

@@ -3,7 +3,7 @@ import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { SessionPromptRequest } from '@deepseek-ai/dsh-api-session-controller'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionLogSnapshot, SessionRecord } from '@deepseek-ai/dsh-session-query'
-import type {} from '@deepseek-ai/dsh-workspace'
+import { WorkspaceActiveSessionError, WorkspaceUnknownSessionError } from '@deepseek-ai/dsh-workspace'
 import type {} from '@deepseek-ai/dsh-storage-domain'
 import type {} from '@deepseek-ai/dsh-permission-presets'
 import { realpath, stat } from 'node:fs/promises'
@@ -343,6 +343,24 @@ export class NativeRuntime {
       finally { this.emit({ type: 'status', id }) }
       return this.configuration.state(id)
     })
+  }
+
+  /** Archive or restore one session in DSH's own history list. */
+  async setArchived(id: SessionId, archived: boolean): Promise<{ archived: boolean }> {
+    try {
+      if (archived) await this.ctx.workspaceRegistry.archiveSession(id)
+      else await this.ctx.workspaceRegistry.unarchiveSession(id)
+    } catch (error) {
+      // Only expected refusals become Bridge failures; storage faults propagate.
+      if (error instanceof WorkspaceActiveSessionError) {
+        throw new BridgeError('SESSION_ACTIVE', 'The session is running in DSH; stop it before archiving.')
+      }
+      if (error instanceof WorkspaceUnknownSessionError) {
+        throw new BridgeError('SESSION_NOT_FOUND', 'The DSH session no longer exists.')
+      }
+      throw error
+    }
+    return { archived }
   }
 
   /** Hold admission only; no operation waits for an Agent turn to finish. */

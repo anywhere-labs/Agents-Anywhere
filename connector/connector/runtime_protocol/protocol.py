@@ -61,6 +61,23 @@ class AgentRuntime(ABC):
     async def update_session_configuration(self, session_id: str, values: Mapping[str, Any]) -> dict[str, Any]:
         raise RuntimeUnsupportedError("update_session_configuration")
 
+    async def update_session_archive(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+        archived: bool = False,
+    ) -> dict[str, Any]:
+        """Mirror an AA archive/unarchive into the native runtime, best-effort.
+
+        Runtimes that support native archiving return a result object shaped
+        ``{sessionId, externalSessionId, archived, native, supported, status,
+        reason}``; an expected failure is reported in that object instead of
+        raising. Runtimes without any native archive concept keep the default,
+        which the Connector RPC layer turns into ``supported=false``.
+        """
+
+        raise RuntimeUnsupportedError("update_session_archive")
+
     async def stop(self) -> None:
         pass
 

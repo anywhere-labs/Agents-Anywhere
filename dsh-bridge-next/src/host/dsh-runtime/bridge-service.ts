@@ -152,6 +152,9 @@ export class BridgeService {
   @mutates({ description: 'Interrupt the running turn of a session.', request: payload, response: payload, inject: [callScope] })
   async interruptSession(request: Payload, call: CallScope, context: RpcContext): Promise<Payload> { return this.forward('interruptSession', request, call, context) }
 
+  @mutates({ description: 'Archive or restore a session in the DSH client history.', request: payload, response: payload, inject: [callScope] })
+  async setSessionArchived(request: Payload, call: CallScope, context: RpcContext): Promise<Payload> { return this.forward('setSessionArchived', request, call, context) }
+
   @mutates({ description: 'Change model, effort or permission selections of a session.', request: payload, response: payload, inject: [callScope] })
   async updateSelections(request: Payload, call: CallScope, context: RpcContext): Promise<Payload> { return this.forward('updateSelections', request, call, context) }
 
