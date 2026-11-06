@@ -22,6 +22,7 @@ import socket
 import ssl
 import sys
 import urllib.request
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -60,7 +61,8 @@ class NetworkEgress:
 
     ``refresh`` re-reads the settings off the event loop, because the macOS bypass
     check can do a DNS lookup; each backend reconnect calls it, so a proxy switched
-    on or off is picked up without restarting the Connector.
+    on or off is picked up without restarting the Connector. HTTP clients follow the
+    change on their own, see ``_EgressTransport``.
     """
 
     def __init__(self, server_url: str, configured: str | None = None) -> None:
@@ -72,16 +74,11 @@ class NetworkEgress:
     def current(self) -> Egress:
         return self._current if self._current is not None else self._store(self._resolve())
 
-    async def refresh(self) -> bool:
-        """Resolve again; true when the route changed from a previously known one."""
-        previous = self._current
-        current = self._store(await asyncio.to_thread(self._resolve))
-        return previous is not None and current != previous
+    async def refresh(self) -> None:
+        self._store(await asyncio.to_thread(self._resolve))
 
     def http_client(self, timeout: httpx.Timeout | float) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            timeout=timeout, trust_env=False, proxy=self.current.proxy, verify=tls_context(),
-        )
+        return httpx.AsyncClient(timeout=timeout, trust_env=False, transport=_EgressTransport(self))
 
     def websocket_options(self, url: str) -> dict[str, Any]:
         """Keyword arguments for ``websockets.connect``; ``ssl`` is only valid for wss."""
@@ -101,6 +98,91 @@ class NetworkEgress:
             logger.info("connector egress server={} {}", self.server_url, egress)
         self._current = egress
         return egress
+
+
+class _Route:
+    """One connection pool, on one route to the Server."""
+
+    def __init__(self, egress: Egress) -> None:
+        self.egress = egress
+        self.active = 0
+        # Without its own context an HTTPS proxy is checked against httpx's default
+        # store, so one trusted only by the system would work for WebSockets alone.
+        proxy = httpx.Proxy(egress.proxy, ssl_context=tls_context()) if egress.proxy else None
+        self.transport = httpx.AsyncHTTPTransport(verify=tls_context(), trust_env=False, proxy=proxy)
+
+
+class _RouteStream(httpx.AsyncByteStream):
+    """A response body; the request holds its route until the body is closed."""
+
+    def __init__(self, stream: httpx.AsyncByteStream, on_close: Callable[[], Awaitable[None]]) -> None:
+        self._stream = stream
+        self._on_close = on_close
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        async for chunk in self._stream:
+            yield chunk
+
+    async def aclose(self) -> None:
+        try:
+            await self._stream.aclose()
+        finally:
+            await self._on_close()
+
+
+class _EgressTransport(httpx.AsyncBaseTransport):
+    """Sends each request on the current route, and lets a client outlive a route change.
+
+    Code that holds a client across awaits, such as an upload that refreshes its token
+    and sends again, must never find it closed: that error is not a network failure and
+    would stop the task. So the client stays and only what is under it changes. A request
+    in progress finishes on the route it started on, which is closed once it is idle.
+    """
+
+    def __init__(self, egress: NetworkEgress) -> None:
+        self._egress = egress
+        self._route: _Route | None = None
+        self._retired: set[_Route] = set()
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        route = await self._current_route()
+        route.active += 1
+        released = False
+
+        async def release() -> None:
+            nonlocal released
+            if not released:
+                released = True
+                route.active -= 1
+                await self._close_if_idle(route)
+
+        try:
+            response = await route.transport.handle_async_request(request)
+        except BaseException:
+            await release()
+            raise
+        response.stream = _RouteStream(response.stream, release)
+        return response
+
+    async def aclose(self) -> None:
+        routes = [*self._retired, *([self._route] if self._route else [])]
+        self._retired.clear()
+        self._route = None
+        await asyncio.gather(*(route.transport.aclose() for route in routes), return_exceptions=True)
+
+    async def _current_route(self) -> _Route:
+        egress = self._egress.current
+        if self._route is None or self._route.egress != egress:
+            previous, self._route = self._route, _Route(egress)
+            if previous is not None:
+                self._retired.add(previous)
+                await self._close_if_idle(previous)
+        return self._route
+
+    async def _close_if_idle(self, route: _Route) -> None:
+        if route in self._retired and route.active == 0:
+            self._retired.discard(route)
+            await route.transport.aclose()
 
 
 async def open_http_client(server_url: str, timeout: httpx.Timeout | float) -> httpx.AsyncClient:

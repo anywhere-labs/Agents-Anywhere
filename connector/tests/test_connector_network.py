@@ -5,12 +5,14 @@ import os
 import socket
 import ssl
 from collections.abc import Iterator
+from typing import ClassVar
 
 import httpx
 import pytest
 
 from connector.core.config import ConnectorConfig
 from connector.server import network
+from connector.server.ingest import ConnectorIngestClient
 from connector.server.network import (
     Egress,
     NetworkEgress,
@@ -198,9 +200,7 @@ def test_clients_share_one_route(monkeypatch: pytest.MonkeyPatch) -> None:
     assert isinstance(options["ssl"], ssl.SSLContext)
     assert "proxy_ssl" not in options
     assert "ssl" not in egress.websocket_options("ws://web.example.com/ws")
-    client = egress.http_client(5)
-    assert client._trust_env is False
-    assert len(client._mounts) == 1 and next(iter(client._mounts.values())) is not None
+    assert egress.http_client(5)._trust_env is False
 
 
 def test_https_proxy_gets_its_own_tls_options(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -208,14 +208,144 @@ def test_https_proxy_gets_its_own_tls_options(monkeypatch: pytest.MonkeyPatch) -
     assert isinstance(egress.websocket_options("wss://web.example.com/ws")["proxy_ssl"], ssl.SSLContext)
 
 
-def test_refresh_reports_a_route_change(monkeypatch: pytest.MonkeyPatch) -> None:
+class FakeTransport(httpx.AsyncBaseTransport):
+    """Stands in for one connection pool, and records what it was built with."""
+
+    built: ClassVar[list[FakeTransport]] = []
+
+    def __init__(self, *, verify: object, trust_env: bool, proxy: httpx.Proxy | None) -> None:
+        self.verify, self.trust_env, self.proxy = verify, trust_env, proxy
+        self.requests: list[httpx.Request] = []
+        self.closed = False
+        self.gate: asyncio.Event | None = None
+        self.statuses: list[int] = []
+        FakeTransport.built.append(self)
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        assert not self.closed, "a request reached a closed pool"
+        self.requests.append(request)
+        if self.gate is not None:
+            await self.gate.wait()
+        # A stream, as a real pool returns: a response built with its content is never closed.
+        body = httpx.ByteStream(b'{"accepted": 1, "rejected": []}')
+        return httpx.Response(self.statuses.pop(0) if self.statuses else 200, stream=body)
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+@pytest.fixture
+def pools(monkeypatch: pytest.MonkeyPatch) -> list[FakeTransport]:
+    FakeTransport.built.clear()
+    monkeypatch.setattr(network.httpx, "AsyncHTTPTransport", FakeTransport)
+    return FakeTransport.built
+
+
+def test_a_route_change_keeps_clients_usable_and_finishes_requests_in_progress(
+    monkeypatch: pytest.MonkeyPatch, pools: list[FakeTransport],
+) -> None:
     async def scenario() -> None:
         egress = NetworkEgress(SERVER)
-        assert await egress.refresh() is False
-        assert await egress.refresh() is False
+        await egress.refresh()
+        client = egress.http_client(5)
+        assert (await client.get(f"{SERVER}/a")).status_code == 200
+        old = pools[0]
+        assert old.proxy is None
+        old.gate = asyncio.Event()
+        slow = asyncio.create_task(client.get(f"{SERVER}/slow"))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
         system(monkeypatch, LOCAL)
-        assert await egress.refresh() is True
-        assert egress.current.proxy == "http://127.0.0.1:7890"
+        await egress.refresh()
+        # The same client, on the new route, while the old request is still running.
+        assert (await client.get(f"{SERVER}/b")).status_code == 200
+        new = pools[1]
+        assert new.proxy is not None and str(new.proxy.url) == "http://127.0.0.1:7890"
+        assert [request.url.path for request in new.requests] == ["/b"]
+        assert old.closed is False
+
+        old.gate.set()
+        assert (await slow).status_code == 200
+        assert old.closed is True, "the old route closes once it is idle"
+        assert new.closed is False
+        await client.aclose()
+        assert new.closed is True
+
+    asyncio.run(scenario())
+
+
+def test_a_route_change_closes_an_idle_route_at_once(monkeypatch: pytest.MonkeyPatch, pools: list[FakeTransport]) -> None:
+    async def scenario() -> None:
+        egress = NetworkEgress(SERVER)
+        client = egress.http_client(5)
+        await client.get(f"{SERVER}/a")
+        system(monkeypatch, LOCAL)
+        await egress.refresh()
+        await client.get(f"{SERVER}/b")
+        assert pools[0].closed is True
+        await client.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_a_failed_request_releases_its_route(monkeypatch: pytest.MonkeyPatch, pools: list[FakeTransport]) -> None:
+    async def scenario() -> None:
+        egress = NetworkEgress(SERVER)
+        client = egress.http_client(5)
+        await client.get(f"{SERVER}/a")
+        old = pools[0]
+
+        async def refuse(_request: httpx.Request) -> httpx.Response:
+            system(monkeypatch, LOCAL)
+            await egress.refresh()
+            raise httpx.ConnectError("proxy went away")
+
+        monkeypatch.setattr(old, "handle_async_request", refuse)
+        with pytest.raises(httpx.ConnectError):
+            await client.get(f"{SERVER}/b")
+        await client.get(f"{SERVER}/c")
+        assert old.closed is True
+        await client.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_ingest_survives_a_route_change_during_its_token_refresh(
+    monkeypatch: pytest.MonkeyPatch, pools: list[FakeTransport],
+) -> None:
+    # The upload holds its client across the refresh, then sends again. With a closed
+    # client that is a RuntimeError, which ends the flush loop and the Connector with it.
+    async def scenario() -> None:
+        egress = NetworkEgress(SERVER)
+        client = egress.http_client(5)
+
+        async def token(force: bool) -> str:
+            if force:
+                system(monkeypatch, LOCAL)
+                await egress.refresh()
+                return "fresh"
+            return "stale"
+
+        ingest = ConnectorIngestClient(SERVER, token, lambda: client, lambda timeout: client)
+        await client.get(f"{SERVER}/warm")
+        pools[0].statuses.append(401)
+        await ingest._post_batch([{"method": "m", "params": {}}])
+        assert [request.headers["authorization"] for request in pools[1].requests] == ["Bearer fresh"]
+        await client.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_an_https_proxy_is_checked_with_the_shared_trust_store(pools: list[FakeTransport]) -> None:
+    async def scenario() -> None:
+        client = NetworkEgress(SERVER, "https://proxy.test:443").http_client(5)
+        await client.get(f"{SERVER}/a")
+        assert pools[0].proxy is not None
+        assert pools[0].proxy.ssl_context is tls_context()
+        assert pools[0].verify is tls_context()
+        assert pools[0].trust_env is False
+        await client.aclose()
 
     asyncio.run(scenario())
 

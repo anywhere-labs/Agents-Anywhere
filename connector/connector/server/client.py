@@ -248,7 +248,8 @@ class BackendRpcClient:
                 self._http_client = None
 
     async def run_once(self) -> None:
-        await self._refresh_egress()
+        # A proxy changed in the system settings applies from this connection on.
+        await self._egress.refresh()
         access_token = await self.ensure_access_token(force=True)
         websocket_url = build_ws_url(
             self.config.server_url, api_v2_path("/connector/ws")
@@ -527,13 +528,6 @@ class BackendRpcClient:
 
     def _new_http_client(self, timeout: httpx.Timeout | float) -> httpx.AsyncClient:
         return self._egress.http_client(timeout)
-
-    async def _refresh_egress(self) -> None:
-        """Pick up a proxy changed in the system settings since the last connection."""
-        if not await self._egress.refresh() or self._http_client is None:
-            return
-        previous, self._http_client = self._http_client, self._new_http_client(timeout=60)
-        await previous.aclose()
 
 
 def _is_auth_close(exc: ConnectionClosed) -> bool:
