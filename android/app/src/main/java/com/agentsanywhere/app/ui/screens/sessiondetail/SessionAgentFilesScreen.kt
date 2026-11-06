@@ -77,7 +77,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.zIndex
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.feature.files.FilePreviewTarget
 import com.agentsanywhere.app.feature.files.canonicalRemotePaths
+import com.agentsanywhere.app.feature.files.opensInFilePreview
 import com.agentsanywhere.app.feature.files.displayRemotePath
 import com.agentsanywhere.app.feature.files.FileEntry
 import com.agentsanywhere.app.feature.files.fileNameFromRemotePath
@@ -101,6 +103,7 @@ import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.ui.designsystem.AuthErrorNotice
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.agentsanywhere.app.ui.screens.files.RemoteFilePreviewDialog
 import com.composables.icons.lucide.Braces
 import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.ChevronLeft
@@ -108,6 +111,7 @@ import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.ChevronUp
 import com.composables.icons.lucide.Copy
+import com.composables.icons.lucide.Download
 import com.composables.icons.lucide.FileCode
 import com.composables.icons.lucide.FileText
 import com.composables.icons.lucide.Folder
@@ -153,6 +157,7 @@ internal fun SessionAgentFilesScreen(
     var searchQuery by remember(session?.id) { mutableStateOf("") }
     var searchResult by remember(session?.id) { mutableStateOf(SoraFileSearchResult()) }
     var pushView by remember(session?.id) { mutableStateOf(PushView.Files) }
+    var previewTarget by remember(session?.id) { mutableStateOf<FilePreviewTarget?>(null) }
     val searchController = remember(selectedFile?.path) { SoraFileSearchController() }
     val noWorkspaceMessage = stringResource(R.string.files_session_no_workspace)
     val loadFilesFailedMessage = stringResource(R.string.files_load_failed)
@@ -161,6 +166,16 @@ internal fun SessionAgentFilesScreen(
 
     DisposableEffect(Unit) {
         onDispose { onTerminalVerticalDragChange(false) }
+    }
+
+    fun openPreview(path: String) {
+        val current = session ?: return
+        val filePath = normalizeRemotePath(path)
+        previewTarget = FilePreviewTarget(
+            connectorId = current.connectorId,
+            root = remoteRootForPath(targetPath = filePath, deviceOs = deviceOs, fallbackRoot = current.cwd),
+            path = filePath,
+        )
     }
 
     fun load(path: String) {
@@ -263,7 +278,15 @@ internal fun SessionAgentFilesScreen(
                 root = requestRoot,
                 path = filePath,
             )
-                .onSuccess { preview = it }
+                .onSuccess { text ->
+                    if (text.binary) {
+                        // Binary files get the preview page with Download / Share / Open with.
+                        selectedFile = null
+                        openPreview(filePath)
+                    } else {
+                        preview = text
+                    }
+                }
                 .onFailure { failure -> previewError = failure.message ?: openFileFailedMessage }
         }
         previewLoading = false
@@ -317,8 +340,12 @@ internal fun SessionAgentFilesScreen(
                     onOpenDirectory = { load(it) },
                     onOpenFile = {
                         openActionPath = null
-                        selectedFile = it
-                        searchOpen = false
+                        if (opensInFilePreview(it.name)) {
+                            openPreview(it.path)
+                        } else {
+                            selectedFile = it
+                            searchOpen = false
+                        }
                     },
                 )
             } else {
@@ -347,9 +374,17 @@ internal fun SessionAgentFilesScreen(
                     onToggleSearch = { searchOpen = !searchOpen },
                     onSearchQueryChange = { searchQuery = it },
                     onSearchResult = { searchResult = it },
+                    onOpenActions = { openPreview(file.path) },
                 )
             }
         }
+    }
+    previewTarget?.let { target ->
+        RemoteFilePreviewDialog(
+            target = target,
+            filesController = filesController,
+            onDismiss = { previewTarget = null },
+        )
     }
 }
 
@@ -375,6 +410,7 @@ internal fun DeviceFilesContent(
     var searchOpen by remember(device?.id) { mutableStateOf(false) }
     var searchQuery by remember(device?.id) { mutableStateOf("") }
     var searchResult by remember(device?.id) { mutableStateOf(SoraFileSearchResult()) }
+    var previewTarget by remember(device?.id) { mutableStateOf<FilePreviewTarget?>(null) }
     val searchController = remember(selectedFile?.path) { SoraFileSearchController() }
     val deviceOfflineMessage = stringResource(R.string.files_device_offline)
     val selectDeviceMessage = stringResource(R.string.files_select_device)
@@ -382,6 +418,20 @@ internal fun DeviceFilesContent(
     val openFileFailedMessage = stringResource(R.string.files_open_failed)
     val deviceOs = device?.deviceOs
     val isWindowsDevice = isWindowsDeviceOs(deviceOs)
+
+    fun openPreview(path: String) {
+        val current = device ?: return
+        val filePath = normalizeRemotePath(path)
+        previewTarget = FilePreviewTarget(
+            connectorId = current.id,
+            root = remoteRootForPath(
+                targetPath = filePath,
+                deviceOs = deviceOs,
+                fallbackRoot = resolvedRoot?.takeIf { it.isNotBlank() } ?: "~",
+            ),
+            path = filePath,
+        )
+    }
 
     fun load(path: String) {
         val current = device ?: return
@@ -473,7 +523,14 @@ internal fun DeviceFilesContent(
                 root = requestRoot,
                 path = filePath,
             )
-                .onSuccess { preview = it }
+                .onSuccess { text ->
+                    if (text.binary) {
+                        selectedFile = null
+                        openPreview(filePath)
+                    } else {
+                        preview = text
+                    }
+                }
                 .onFailure { failure -> previewError = failure.message ?: openFileFailedMessage }
         }
         previewLoading = false
@@ -496,8 +553,12 @@ internal fun DeviceFilesContent(
                 onOpenDirectory = { load(it) },
                 onOpenFile = {
                     openActionPath = null
-                    selectedFile = it
-                    searchOpen = false
+                    if (opensInFilePreview(it.name)) {
+                        openPreview(it.path)
+                    } else {
+                        selectedFile = it
+                        searchOpen = false
+                    }
                 },
             )
         } else {
@@ -526,8 +587,16 @@ internal fun DeviceFilesContent(
                 onToggleSearch = { searchOpen = !searchOpen },
                 onSearchQueryChange = { searchQuery = it },
                 onSearchResult = { searchResult = it },
+                onOpenActions = { openPreview(file.path) },
             )
         }
+    }
+    previewTarget?.let { target ->
+        RemoteFilePreviewDialog(
+            target = target,
+            filesController = controller,
+            onDismiss = { previewTarget = null },
+        )
     }
 }
 
@@ -1042,6 +1111,7 @@ private fun FilePreviewContent(
     onToggleSearch: () -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onSearchResult: (SoraFileSearchResult) -> Unit,
+    onOpenActions: () -> Unit,
 ) {
     val windowsDriveOverviewLabel = stringResource(R.string.files_windows_drives)
     Column(
@@ -1074,6 +1144,7 @@ private fun FilePreviewContent(
             onToggleSearch = onToggleSearch,
             onSearchQueryChange = onSearchQueryChange,
             onSearchResult = onSearchResult,
+            onOpenActions = onOpenActions,
             modifier = Modifier.weight(1f),
         )
     }
@@ -1138,6 +1209,7 @@ private fun PreviewCard(
     onToggleSearch: () -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onSearchResult: (SoraFileSearchResult) -> Unit,
+    onOpenActions: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val clipboard = LocalClipboardManager.current
@@ -1158,6 +1230,7 @@ private fun PreviewCard(
             copied = copied,
             copyEnabled = preview?.let { !it.binary && it.content.isNotBlank() } == true,
             onToggleSearch = onToggleSearch,
+            onOpenActions = onOpenActions,
             onCopy = {
                 val content = preview?.content.orEmpty()
                 if (content.isNotBlank()) {
@@ -1221,6 +1294,7 @@ private fun PreviewCardHeader(
     copied: Boolean,
     copyEnabled: Boolean,
     onToggleSearch: () -> Unit,
+    onOpenActions: () -> Unit,
     onCopy: () -> Unit,
 ) {
     val background = if (darkMode) LocalAAColors.current.raisedSurface else Color.White
@@ -1253,6 +1327,15 @@ private fun PreviewCardHeader(
             enabled = true,
             contentDescription = stringResource(R.string.files_search_in_file),
             onClick = onToggleSearch,
+        )
+        PreviewIconButton(
+            icon = Lucide.Download,
+            darkMode = darkMode,
+            background = buttonBackground,
+            border = buttonBorder,
+            enabled = true,
+            contentDescription = stringResource(R.string.file_preview_open_files),
+            onClick = onOpenActions,
         )
         PreviewIconButton(
             icon = if (copied) Lucide.Check else Lucide.Copy,

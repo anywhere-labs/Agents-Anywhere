@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="file_preview_download">下载</string>
+    <string name="file_preview_share">分享</string>
+    <string name="file_preview_open_with">其他应用打开</string>
+    <string name="file_preview_share_chooser">分享文件</string>
+    <string name="file_preview_open_chooser">选择打开方式</string>
+    <string name="file_preview_preparing">正在获取文件信息…</string>
+    <string name="file_preview_downloading">正在下载 %1$s / %2$s</string>
+    <string name="file_preview_downloading_indeterminate">正在下载…</string>
+    <string name="file_preview_rendering">正在生成预览…</string>
+    <string name="file_preview_render_failed">无法预览这个文件，仍可下载或用其他应用打开。</string>
+    <string name="file_preview_unsupported_title">暂不支持预览此格式</string>
+    <string name="file_preview_unsupported_body">可以下载原文件、分享，或用其他应用打开。</string>
+    <string name="file_preview_large_title">文件较大（%1$s）</string>
+    <string name="file_preview_large_body">预览需要先把整个文件下载到手机。</string>
+    <string name="file_preview_large_action">下载并预览</string>
+    <string name="file_preview_saved">已保存到「下载/Agents Anywhere/%1$s」</string>
+    <string name="file_preview_save_failed">保存文件失败。</string>
+    <string name="file_preview_save_permission_required">需要存储权限才能保存文件。</string>
+    <string name="file_preview_no_app">没有可以打开此文件的应用。</string>
+    <string name="file_preview_share_failed">分享文件失败。</string>
+    <string name="file_preview_mode_preview">预览</string>
+    <string name="file_preview_mode_source">源码</string>
+    <string name="file_preview_page_indicator">%1$d / %2$d</string>
+    <string name="file_preview_slide_label">第 %1$d 页</string>
+    <string name="file_preview_chart_placeholder">图表</string>
+    <string name="file_preview_empty_document">文档没有可显示的内容。</string>
+    <string name="file_preview_text_only_notice">仅显示文字内容，排版可能与原文件不同。</string>
+    <string name="file_preview_simplified_notice">简化预览，完整排版请用其他应用打开。</string>
+    <plurals name="file_preview_rows_truncated">
+        <item quantity="other">仅显示前 %1$d 行。</item>
+    </plurals>
+    <plurals name="file_preview_columns_truncated">
+        <item quantity="other">仅显示前 %1$d 列。</item>
+    </plurals>
+    <string name="file_preview_text_truncated">仅显示前 2 MB 内容，下载文件可查看全部。</string>
+    <string name="file_preview_pdf_protected">此 PDF 受密码保护，请用其他应用打开。</string>
+    <string name="file_preview_failed">无法打开文件。</string>
+    <string name="file_preview_not_found">工作设备上找不到这个文件。</string>
+    <string name="file_preview_too_large">超过 %1$s 的文件无法在手机端下载。</string>
+    <string name="file_preview_device_offline">工作设备离线，请让它上线后再打开文件。</string>
+    <string name="file_preview_file_type">文件</string>
+    <string name="file_preview_open_files">下载、分享或用其他应用打开</string>
+    <string name="file_preview_card_hint">点击预览</string>
+</resources>

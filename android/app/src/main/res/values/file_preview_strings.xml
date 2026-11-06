@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="file_preview_download">Download</string>
+    <string name="file_preview_share">Share</string>
+    <string name="file_preview_open_with">Open with</string>
+    <string name="file_preview_share_chooser">Share file</string>
+    <string name="file_preview_open_chooser">Open with</string>
+    <string name="file_preview_preparing">Getting file info…</string>
+    <string name="file_preview_downloading">Downloading %1$s / %2$s</string>
+    <string name="file_preview_downloading_indeterminate">Downloading…</string>
+    <string name="file_preview_rendering">Rendering preview…</string>
+    <string name="file_preview_render_failed">This file couldn\'t be previewed. You can still download it or open it in another app.</string>
+    <string name="file_preview_unsupported_title">Preview isn\'t available for this format</string>
+    <string name="file_preview_unsupported_body">Download the original file, share it, or open it in another app.</string>
+    <string name="file_preview_large_title">Large file (%1$s)</string>
+    <string name="file_preview_large_body">Previewing downloads the whole file to this phone first.</string>
+    <string name="file_preview_large_action">Download and preview</string>
+    <string name="file_preview_saved">Saved to Downloads/Agents Anywhere/%1$s</string>
+    <string name="file_preview_save_failed">Couldn\'t save the file.</string>
+    <string name="file_preview_save_permission_required">Storage permission is required to save files.</string>
+    <string name="file_preview_no_app">No installed app can open this file.</string>
+    <string name="file_preview_share_failed">Couldn\'t share the file.</string>
+    <string name="file_preview_mode_preview">Preview</string>
+    <string name="file_preview_mode_source">Source</string>
+    <string name="file_preview_page_indicator">%1$d / %2$d</string>
+    <string name="file_preview_slide_label">Slide %1$d</string>
+    <string name="file_preview_chart_placeholder">Chart</string>
+    <string name="file_preview_empty_document">This document has no content to show.</string>
+    <string name="file_preview_text_only_notice">Text-only preview. Layout may differ from the original file.</string>
+    <string name="file_preview_simplified_notice">Simplified preview. Open the file in another app for full formatting.</string>
+    <plurals name="file_preview_rows_truncated">
+        <item quantity="one">Showing the first %1$d row.</item>
+        <item quantity="other">Showing the first %1$d rows.</item>
+    </plurals>
+    <plurals name="file_preview_columns_truncated">
+        <item quantity="one">Showing the first %1$d column.</item>
+        <item quantity="other">Showing the first %1$d columns.</item>
+    </plurals>
+    <string name="file_preview_text_truncated">Only the first 2 MB is shown. Download the file to see all of it.</string>
+    <string name="file_preview_pdf_protected">This PDF is password protected. Open it in another app.</string>
+    <string name="file_preview_failed">Couldn\'t open the file.</string>
+    <string name="file_preview_not_found">This file doesn\'t exist on the work device.</string>
+    <string name="file_preview_too_large">Files larger than %1$s can\'t be downloaded in the app.</string>
+    <string name="file_preview_device_offline">The work device is offline. Bring it online to open this file.</string>
+    <string name="file_preview_file_type">File</string>
+    <string name="file_preview_open_files">Download, share, or open with another app</string>
+    <string name="file_preview_card_hint">Tap to preview</string>
+</resources>
