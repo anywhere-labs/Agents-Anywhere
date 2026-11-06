@@ -248,7 +248,7 @@ class CodexProvider(RuntimeProvider):
             raise RuntimeUnavailableError("Codex SDK is not available")
         provider_config.ensure_codex_home(str(config.values["codexHome"]))
         client = self._sdk_client_factory(config)
-        return CodexRuntime(
+        runtime = CodexRuntime(
             config=config,
             host=host,
             client=client,
@@ -257,6 +257,14 @@ class CodexProvider(RuntimeProvider):
             ipc_deeplink_handoff=config.values.get("ipcDeeplinkHandoff", True) is not False,
             safe_ipc_write_routing=True,
         )
+        from connector.planning.infrastructure.binding import bind_planning
+        from connector.runtimes.codex.planning import CodexPlanningPort
+
+        bind_planning(runtime, host, CodexPlanningPort(runtime))
+        from connector.goals.binding import bind_goals
+        from connector.runtimes.codex.goals import CodexGoalPort
+
+        return bind_goals(runtime, host, CodexGoalPort(runtime))
 
     def resource_claims(
         self,

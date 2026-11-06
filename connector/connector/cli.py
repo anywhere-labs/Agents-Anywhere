@@ -40,6 +40,12 @@ def main(argv: list[str] | None = None) -> None:
             _configure(args)
         elif args.command == "start":
             asyncio.run(_start(args))
+        elif args.command == "prepare-pi":
+            from connector.runtimes.acp.profiles.pi.environment import (
+                prepare_environment,
+            )
+
+            prepare_environment(args.root)
         elif args.command == "rpc":
             asyncio.run(_rpc(args))
         else:
@@ -79,7 +85,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="anywhere-cli", description="Agent Server Codex connector CLI"
     )
     subparsers = parser.add_subparsers(
-        dest="command", metavar="{start,pair,configure,rpc}"
+        dest="command", metavar="{start,pair,configure,rpc,prepare-pi}"
     )
 
     start = subparsers.add_parser("start", help="start the connector")
@@ -108,6 +114,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_config_args(rpc)
     _add_debug_arg(rpc)
+    prepare_pi = subparsers.add_parser(
+        "prepare-pi", help="prepare the Pi ACP adapter and dependencies"
+    )
+    prepare_pi.add_argument("--root", required=True, type=Path, help="npm runtime cache directory")
     return parser
 
 

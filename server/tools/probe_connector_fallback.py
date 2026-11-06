@@ -124,7 +124,7 @@ async def probe(args):
                 assert response.status_code == 200, response.text
                 assert connector.counts[marker] == connector.legacy_calls[marker] == 1
             assert (await info())["route"] is None
-            passed("bootstrap 503 leaves all 41 business methods usable over WebSocket without waiting for Mesh", methods=41)
+            passed(f"bootstrap 503 leaves all {len(methods)} business methods usable over WebSocket without waiting for Mesh", methods=len(methods))
 
             held = [pending(call("shell.exec", f"held-{index}", block=True)) for index in range(8)]
             async def eight_running():
@@ -208,7 +208,7 @@ async def probe(args):
                 response = await call(method, marker)
                 assert response.status_code == 200, response.text
                 assert connector.legacy_calls[marker] == connector.counts[marker] == 1
-            passed("old Mesh-capable peers remain WebSocket-primary even after their Mesh route is published", methods=41)
+            passed("old Mesh-capable peers remain WebSocket-primary even after their Mesh route is published", methods=len(methods))
             oversized = await call("fs.writeFile", "old-too-large", text="x" * (1024 * 1024))
             assert oversized.status_code != 200 and connector.counts["old-too-large"] == 0
             assert (await call("fs.readText", "old-still-usable")).status_code == 200

@@ -599,7 +599,7 @@ async def probe(args):
                         assert old.json()["error"] == new.json()["error"], method
                     else:
                         assert old.json() == new.json(), method
-            results.append({"scenario": "41 mappings: legacy WS versus Mesh, synthetic domain", "passed": True})
+            results.append({"scenario": f"{len(CONTROL_METHODS) - 1} mappings: legacy WS versus Mesh, synthetic domain", "passed": True})
 
             for params, code in [({"fail": True}, "runtime_invalid_request"),
                                  ({"missing": True}, "FileNotFoundError")]:

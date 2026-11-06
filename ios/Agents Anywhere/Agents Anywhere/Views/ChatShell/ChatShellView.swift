@@ -6,6 +6,9 @@ struct ChatShellView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
+    @State private var agentReminderCheckedScope: ObjectIdentifier?
+    @State private var showsAgentReminder = false
+    @State private var showsReminderPairing = false
     @State private var sidebar = ChatSidebarState()
     @State private var newSessionPresentationID = UUID()
     private var selection: ChatShellSelection {
@@ -44,10 +47,50 @@ struct ChatShellView: View {
                 }
             }
         }
+        .task(id: agentReminderKey) { await checkAgentReminder() }
+        .alert(String(localized: "agentReminder.title"), isPresented: $showsAgentReminder) {
+            Button(String(localized: "agentReminder.add")) {
+                guard let services = appState.nativeChatServices else { return }
+                if let connector = appState.connectors.first(where: { $0.status == .online }) {
+                    services.agentSetup.watch(connector)
+                    services.agentSetup.configure(connector.id)
+                } else if let connector = appState.connectors.first {
+                    selection = .device(connector.id)
+                } else {
+                    services.agentSetup.pairingFormPresented = true
+                    showsReminderPairing = true
+                }
+            }
+            Button(String(localized: "agentReminder.later"), role: .cancel) {}
+        } message: { Text(String(localized: "agentReminder.description")) }
+        .sheet(isPresented: $showsReminderPairing, onDismiss: {
+            appState.nativeChatServices?.agentSetup.pairingFormPresented = false
+            agentReminderCheckedScope = nil
+        }) { PairDeviceSheet() }
         .onChange(of: visibleSessionID, initial: true) { _, id in
             appState.setVisibleSession(id)
         }
         .onDisappear { appState.setVisibleSession(nil) }
+    }
+
+    private var agentReminderKey: String {
+        let scope = appState.nativeChatServices.map { String(describing: ObjectIdentifier($0)) } ?? ""
+        let devices = appState.connectors.map { $0.id }.joined(separator: ",")
+        return "\(scope):\(devices):\(appState.hasLoadedConnectors):\(appState.isDashboardLoading):\(appState.nativeChatServices?.dashboardRepository.isFresh == true):\(selection == .newSession):\(appState.nativeChatServices?.agentSetup.pairingFormPresented == true)"
+    }
+
+    private func checkAgentReminder() async {
+        guard let services = appState.nativeChatServices,
+              agentReminderCheckedScope != ObjectIdentifier(services),
+              appState.hasLoadedConnectors, !appState.isDashboardLoading, services.dashboardRepository.isFresh,
+              selection == .newSession, !services.agentSetup.pairingFormPresented,
+              services.agentSetup.presentedConnector == nil else { return }
+        do {
+            let configured = try await services.deviceManagement.hasConfiguredAgents(connectors: appState.connectors)
+            guard !Task.isCancelled, appState.nativeChatServices === services else { return }
+            agentReminderCheckedScope = ObjectIdentifier(services)
+            showsAgentReminder = !configured
+        } catch { /* A failed inventory read is not an empty inventory. */ }
     }
 
     private var agentSetupBinding: Binding<V2Connector?> {

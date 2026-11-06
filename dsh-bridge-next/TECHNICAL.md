@@ -41,13 +41,13 @@ Bridge 与 Connector 运行日志统一由 Connector 保存到操作系统用户
 
 AA Desktop 正在运行时，连接功能显示桌面端引导；仅安装而未运行时，插件仍可管理连接。桥接运行日志需 Connector 日志服务可用；无连接时不读取旧插件日志文件。手机连接复用已有 `/auth/mobile-login/qr`、`status`、`confirm` 接口；二维码包含手机扫描协议要求的临时登录凭据，使用当前账号的后端地址，不使用 DSH 地址或 OAuth Web 开发端口。无需新增 AA Server 接口。
 
-插件基于 DSH `0.2.1-rc.2` 开发和测试，peer 声明支持 `>=0.2.0-rc.1 <0.3.0-0`（自动化检查只覆盖 `0.2.1-rc.2`），支持附件和模型/effort/权限、Agent 模式配置。Runtime 提供 DSH 一键配置、官方侧栏过滤、原生会话和历史读取、首次完整校准、归档同步、实时事件、文本、图片和普通文件新建/续聊、中断、`ask_user_question` 以及受限操作的单次批准或拒绝。新建使用 AA 显式传入的模型和权限选择；已有会话可切换配置。AA 发来的 PNG/JPEG/WebP/GIF 使用图片接口，普通文件通过本机暂存文件和官方 `fileUploads.uploadStream` 上传，RPC 只传文件元数据。平台发出的附件保留 AA 文件引用；不回传 DSH 本地产生的附件。首次会话清单成功提交到平台之前，runtime 保持初始化状态；同步中断时自动重试。
+插件基于 DSH `0.2.2-rc.1` 开发和测试，peer 声明支持 `>=0.2.0-rc.1 <0.3.0-0`（自动化检查只覆盖 `0.2.2-rc.1`），支持附件和模型/effort/权限、Agent 模式配置。Runtime 提供 DSH 一键配置、官方侧栏过滤、原生会话和历史读取、首次完整校准、归档同步、实时事件、文本、图片和普通文件新建/续聊、中断、`ask_user_question` 以及受限操作的单次批准或拒绝。新建使用 AA 显式传入的模型和权限选择；已有会话可切换配置。AA 发来的 PNG/JPEG/WebP/GIF 使用图片接口，普通文件通过本机暂存文件和官方 `fileUploads.uploadStream` 上传，RPC 只传文件元数据。平台发出的附件保留 AA 文件引用；不回传 DSH 本地产生的附件。首次会话清单成功提交到平台之前，runtime 保持初始化状态；同步中断时自动重试。
 
 实机日志定位到官方历史读取器拒绝一个序号不连续的会话，进而拖断整个同步流。当前通过 `ctx.sessionQuery` 读取，按会话隔离读取失败，保留 AA 已接收的历史，并允许后续刷新重试。图片及配置恢复后，包含坏历史的完整回传测试继续通过。桥接日志页、Python 启动互斥、ID 历史和 Desktop 安装信息职责调整保留；检查与实机状态见 [验证记录](./VERIFICATION.md)。
 
-RPC 解析、执行、响应大小、取消和超时错误按请求返回，不会关闭已鉴权连接或取消其他请求。同步读取与投影按会话隔离；全局清单、ACK 超时或后端交付失败时只重建同步订阅，正常 RPC 继续可用。模型目录异常也不会关闭消息发送。AA Server 的会话操作检查与页面统一读取实时能力，避免旧缓存拒绝下一条消息；读取能力失败会明确报错并允许重试，不会默认为允许。
+RPC 解析、执行、响应大小、取消和超时错误按请求返回，不会关闭已鉴权连接或取消其他请求。同步读取与投影按会话隔离；全局清单、ACK 超时或后端交付失败时只重建同步订阅，正常 RPC 继续可用；Connector 对网络中断、408/429 和 5xx 先重试同一批次 3 次（1、2、4 秒退避），完整快照的每一页（包括第一页）同样先重试，仍失败才交给重订阅。流式输出时，连续只含进行中条目的批次照常立即提交，但 Connector 要到距提交开始满 0.25 秒才返回，插件在等待期间合并后续片段。被 Server 拒收而隔离的会话，在重捕到期前再提交快照时 Connector 不上传，直接返回 `accepted:false`。模型目录异常也不会关闭消息发送。AA Server 的会话操作检查与页面统一读取实时能力，避免旧缓存拒绝下一条消息；读取能力失败会明确报错并允许重试，不会默认为允许。
 
-交互连接兼容 DSH `0.2.1-rc.2` 的显式 Peer：使用 Connection 提供的 `browserPeer`，旧版本回退到 `operator`，订阅和回答使用同一个连接所有者。连接可用性实际变化时才发布能力更新；持续失败的重连不会反复发布相同状态。清单扫描期间的能力、命令、目录及可见性失效通知按类型合并，扫描结束的更新与清单完成通知一起批量提交，避免重复同步积压导致设备长期显示“启动中”，并占用发送前的状态回传链路。原生会话事件仍按顺序处理。
+交互连接兼容 DSH `0.2.1-rc.2` 的显式 Peer：使用 Connection 提供的 `browserPeer`，旧版本回退到 `operator`，订阅和回答使用同一个连接所有者。连接可用性实际变化时才发布能力更新；持续失败的重连不会反复发布相同状态。清单扫描期间的能力、命令、目录及可见性失效通知按类型合并，扫描结束的更新与清单完成通知一起批量提交，避免重复同步积压导致设备长期显示“启动中”，并占用发送前的状态回传链路。原生会话事件仍按顺序处理。同一会话的状态、问答和审批失效通知同样只排一份；Agent 流式输出中同一内容块的连续片段在队列中合并为一条，投影和计划草稿的结果不变。待处理变更仍超过上限（1 万条或 16 MiB）时，不再关闭同步流，而是让占用最多的会话放弃排队中的变更、改为从已提交检查点重新校准一次（生成中的会话补完整快照），只保留回合结束、计划模式、模型和 Agent 模式选择等基线不会重发的事件，并记录 `sync.queue_compacted` 及各类变更数量。
 
 除常规 `corepack yarn check` 外，可以只读使用另一套已安装的 DSH SDK 运行启动、状态、消息和交互检查（路径由开发者指定）：
 
@@ -78,7 +78,7 @@ cd /Users/t4wefan/code/github/Agents-Anywhere/dsh-bridge-next
 corepack yarn install
 corepack yarn check
 
-DSH_HOME="$HOME/.dsh" npx -y -p @deepseek-ai/dsh@0.2.1-rc.2 \
+DSH_HOME="$HOME/.dsh" npx -y -p @deepseek-ai/dsh@0.2.2-rc.1 \
   dsh plugin --profile desktop add "link:$PWD"
 ```
 
@@ -266,4 +266,4 @@ scripts/               构建、源码复制与产物检查
 tests/                 单元及集成测试
 ```
 
-Host 输出 `lib/index.js`，Client 输出 DSH 模块加载格式的 `lib/client.js`，不能当独立网页打开。开发依赖统一锁定 Harness `0.2.1-rc.2`；Cordis、Typert 与 Schemastery 使用 Host 提供的 peer 依赖，以免破坏服务类型身份。DSH 只按 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*` peer 判断插件兼容性（预发布版本参与范围匹配），因此 Typert peer 的范围就是插件声明支持的 DSH 版本范围：同一 minor 内的新 rc 和正式版无需改声明，升级到新 minor 前需要重新验证并放宽上限。握手上报的 `runtimeVersion` 读取 Host 实际提供的 Typert 包版本，`bridgeVersion` 读取插件自身 `package.json`。依赖、构建产物和锁文件遵循仓库现有忽略规则。
+Host 输出 `lib/index.js`，Client 输出 DSH 模块加载格式的 `lib/client.js`，不能当独立网页打开。开发依赖统一锁定 Harness `0.2.2-rc.1`（Cordis 4.1、Schemastery 3.19）；Cordis、Typert 与 Schemastery 使用 Host 提供的 peer 依赖，以免破坏服务类型身份。Cordis 与 Schemastery 的 peer 同时覆盖 0.2.1 线（4.0、3.18）和 0.2.2 线（4.1、3.19），避免在 0.2.2 profile 中安装时出现 peer 不满足的警告。DSH 只按 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*` peer 判断插件兼容性（预发布版本参与范围匹配），因此 Typert peer 的范围就是插件声明支持的 DSH 版本范围：同一 minor 内的新 rc 和正式版无需改声明，升级到新 minor 前需要重新验证并放宽上限。握手上报的 `runtimeVersion` 读取 Host 实际提供的 Typert 包版本，`bridgeVersion` 读取插件自身 `package.json`。依赖、构建产物和锁文件遵循仓库现有忽略规则。

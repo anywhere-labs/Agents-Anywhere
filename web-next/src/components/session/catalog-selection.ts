@@ -225,7 +225,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function metadataString(metadata: Record<string, unknown>, key: string): string | null {
-  const value = metadata[key]
+function metadataString(metadata: Record<string, unknown> | null | undefined, key: string): string | null {
+  const value = metadata?.[key]
   return typeof value === "string" && value.length > 0 ? value : null
 }

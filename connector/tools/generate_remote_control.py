@@ -9,12 +9,12 @@ from meshcall.contract_io import render_contract
 
 from connector.server.local_rpc import LocalRpcHandler
 from connector.server.mesh_services import DOMAIN_SERVICE_TYPES
-from connector.server.runtime_rpc import RuntimeRpcHandler
+from connector.server.runtime_rpc import WORKFLOW_RPC, RuntimeRpcHandler
 
 EXPECTED_METHOD_COUNTS = {
     "RuntimeControl": 10,
-    "Sessions": 13,
-    "Workspaces": 1,
+    "Sessions": 32,
+    "Workspaces": 7,
     "Files": 5,
     "Shell": 3,
     "Terminals": 10,
@@ -40,7 +40,7 @@ if args.check:
     mapping = next(ast.literal_eval(node.value) for node in tree.body
                    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
                    and node.target.id == "CONTROL_METHODS")
-    implemented = RuntimeRpcHandler.METHODS | LocalRpcHandler.METHODS
+    implemented = RuntimeRpcHandler.METHODS | set(WORKFLOW_RPC) | LocalRpcHandler.METHODS
     if set(mapping) != implemented | {"workspace.refresh"}:
         raise SystemExit("Remote control routing and dispatcher coverage differ")
     service_methods = {(domain, method.name) for domain, contract in zip(DOMAIN_SERVICE_TYPES, contracts, strict=True)

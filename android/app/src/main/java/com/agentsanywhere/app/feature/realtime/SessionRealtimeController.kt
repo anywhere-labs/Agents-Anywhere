@@ -242,8 +242,10 @@ class SessionRealtimeController(
                 onSnapshotRequired("events.snapshotRequired")
                 return
             }
-            val events = response.events.sortedWith(
-                compareBy<RemoteSessionEventEnvelope> { it.sequence }.thenBy { it.eventId },
+            val events = recoveredEventsToApply(
+                response.events.sortedWith(
+                    compareBy<RemoteSessionEventEnvelope> { it.sequence }.thenBy { it.eventId },
+                ),
             )
             if (events.isNotEmpty()) onEvents(events)
             val next = response.nextCursor
@@ -266,6 +268,20 @@ class SessionRealtimeController(
 
 private fun RemoteSessionEventEnvelope.isTimelineUpsert(): Boolean =
     type == "timeline.item_created" || type == "timeline.item_updated"
+
+/**
+ * Recovered capabilities are projected from stored connector facts and can be
+ * older than pushes applied while the request was in flight. Every recovery
+ * also re-reads live capabilities, so, as on Web, stored ones are only applied
+ * while the connector is offline and that read cannot succeed.
+ */
+private fun recoveredEventsToApply(events: List<RemoteSessionEventEnvelope>): List<RemoteSessionEventEnvelope> {
+    val session = events.lastOrNull { it.type == "session.meta.updated" && it.payload.session != null }
+        ?.payload
+        ?.session
+    if (session?.connectorStatus != "online") return events
+    return events.filterNot { it.type == "runtime.capability.updated" }
+}
 
 private fun remainingBatchMillis(deadline: Long): Long =
     ((deadline - System.nanoTime() + 999_999L) / 1_000_000L).coerceAtLeast(0L)

@@ -24,7 +24,7 @@
 - 响应不是 Timeline 落库确认：最终事实分别由 Runtime、文件/PTY、Server 记录及
   Timeline revision 持有。旧连接的返回不能绑定新连接，结果未知不自动重放。
 
-## 41 个业务方法
+## 66 个业务方法
 
 | 方法 | 原参数关键字段 | 原结果与完成条件 |
 | --- | --- | --- |
@@ -51,6 +51,21 @@
 | `session.send_message` | R、S、content、cwd、selections、attachments、clientMessageId | 原 RuntimeOperationResult；接收与回合结束分开 |
 | `session.steer` | R、S、content、attachments、clientMessageId | 原 RuntimeOperationResult；保留运行中 steer 的拒绝条件 |
 | `session.interrupt` | R、S、reason | 原 RuntimeOperationResult；中断响应与最终 idle 分开 |
+| `session.goal.get` | R、S、externalSessionId、controlAllowed | 目标状态与可用动作；查询不改变目标 |
+| `session.goal.execute` | R、S、externalSessionId、controlAllowed、request（含 operationId） | 原 goal operation 结果；领域拒绝返回 `ok:false`/`outcome:rejected`，不改成传输异常 |
+| `session.goal.operation` | R、S、operationId | `operation`；读取已记录的操作结果，用于结果未知后的核对 |
+| `session.goal.forget` | sessionIds、runtimeId（可省略） | `ok:true`；仅在 Server 删除回执后丢弃本机目标数据，可重复 |
+| `session.planning.get` | R、S、externalSessionId、controlAllowed | 计划状态与能力；无规划能力时返回 unsupported |
+| `session.planning.execute` | R、S、externalSessionId、request | 原 planning response；保留版本校验与拒绝 |
+| `session.planning.operation` | R、S、operationId | `operation`；读取已记录的计划操作结果 |
+| `session.configuration.get` | R、S | 原 Runtime 配置结果 |
+| `session.configuration.update` | R、S 及配置字段 | 原 Runtime 操作结果；不重写 Runtime 拒绝 |
+| `session.creation.begin`、`session.creation.get`、`session.creation.respond`、`session.creation.cancel` | R 及 workflow 参数（creationId、response 等） | 原 workflow view；开始/回答/取消返回接纳后的视图，创建完成另看视图状态 |
+| `interaction.response.get` | R 及 workflow 参数 | 原 workflow view；读取交互回答的已记录结果 |
+| `session.tree`、`session.position.select` | R、S 及 workflow 参数 | 原 workflow view；树查询与位置切换各自返回 |
+| `session.close`、`session.recover` | R、S 及 workflow 参数 | 原 workflow view；关闭/恢复请求接纳，后续状态另看通知 |
+| `session.agent.operate` | R、S 及 workflow 参数 | 原 workflow view；保留 agent 操作的领域拒绝 |
+| `workspace.prepare`、`workspace.preparation.get`、`workspace.preparation.refresh`、`workspace.preparation.cancel`、`workspace.preparation.respond`、`workspace.preparation.reserve` | R 及 workflow 参数（preparationId、response 等） | 原 workflow view；准备、刷新、回答、取消和预留各自返回接纳后的视图 |
 | `fs.prepareDownload` | root、path、sessionId | name/size/sha256/mediaType；读取元信息 |
 | `fs.uploadPreparedDownload` | root、path、sessionId、transferId 及原上传授权字段 | `transferId/uploadStarted`；后台上传接纳，数据仍走 HTTP |
 | `fs.writeFile` | root、path、content、encoding、ifMatch、sessionId | bytesWritten/sha256；实际文件写入或原异常 |
@@ -70,7 +85,9 @@
 | `terminal.snapshot` | terminalId、fromSeq | terminal/baseSeq/seq/dataBase64/增量；保留 512 KiB scrollback |
 | `terminal.relay.connect` | terminalId、sessionId、token、mode 及原 relay 参数 | `connecting:true`；接纳连接任务，不代表已连通，原 broker 继续等待 |
 
-`workspace.refresh` 单列为预留方法，不计入 41 个已实现业务。
+`workspace.refresh` 单列为预留方法，不计入 66 个已实现业务。
+合并主线后新增的目标、计划、会话配置及 Runtime workflow 共 25 个方法同样登记到 Mesh，
+并与原有方法共用 8+2 执行器额度；表中按方法组列出，契约 `service.json` 逐个列出。
 
 ## 拓扑与共享状态
 
@@ -105,7 +122,7 @@
 ## 验证证据的层次
 
 工具目录探针使用真实 Router/Redis/HTTP/WebSocket 和多 worker，认证、领域处理器
-为受控实现；41 个方法逐个比较参数/结果、业务拒绝及异常 code，另检查 8+2 排队、
+为受控实现；全部已实现方法逐个比较参数/结果、业务拒绝及异常 code，另检查 8+2 排队、
 超时后继续执行、丢响应不重放、大帧、授权和连接替换。它不宣称覆盖每种 Runtime
 的所有业务分支。现有领域自动化与真实 Codex/文件/PTY/Electron 检查分别记录，不能
 把这三类证据互相替代。
@@ -299,3 +316,17 @@ Connector确认链路可用后删除路由，观察备用请求成功、原子�
 状态矩阵使用实际状态解析与链接生命周期代码，HTTP为受控响应；轮换探针另外使用
 真实Router、HTTP、WebSocket及子进程，认证与领域分发仍为探针实现。新增场景通过
 既有recovery和renewal CI步骤执行，未修改`tests/`或产品版本。
+
+### 合并主线后的方法补齐（2026-11-06）
+
+主线新增的目标、计划、会话配置 9 个方法，以及工作区准备、会话创建、交互回答查询、
+会话树、关闭、恢复和 agent 操作 16 个 Runtime workflow 方法，全部登记到 Sessions /
+Workspaces 服务。WS 回退入口同样把 workflow 方法交给共享执行器，Mesh 与 WS 继续共用
+8+2 额度。领域参数、结果与拒绝语义不变。
+
+| 检查 | 结果 |
+| --- | --- |
+| 只读控制契约 | 66 个实现、1 个预留映射一致 |
+| Mesh 传输探针 | CI Mesh 作业全部 20 步通过；66 个映射旧 WS 与 Mesh 逐项对照一致，回退探针 66 个方法均可经 WS 使用 |
+| Server 完整 pytest | 1138 通过、14 跳过；1 个用例在与探针并行时出现 setup 错误，单独及整文件复跑通过 |
+| Connector 完整 pytest | 1363 通过；3 个 Codex provider 用例读取本机 `~/.agents-anywhere/goal.sqlite3` 失败，与本次改动无关 |

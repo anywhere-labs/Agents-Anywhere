@@ -44,7 +44,7 @@ from connector.server.notification_coalescer import (
 from connector.server.protocol_revision import ProtocolRevisionClock
 from connector.server.rpc import ConnectorRpcChannel, ConnectorWebSocketFrameTooLarge
 from connector.server.runtime_host import ConnectorRuntimeHost
-from connector.server.runtime_rpc import RuntimeRpcHandler
+from connector.server.runtime_rpc import WORKFLOW_RPC, RuntimeRpcHandler
 from connector.server.runtime_rpc_payloads import (
     DeferredServerPayload,
     server_payload_without_turn_data,
@@ -285,7 +285,7 @@ class BackendRpcClient:
             ) as ws:
                 try:
                     self._rpc.set_connection(ws, executor=self._remote_control.executor, generation=self._mesh_connection_token,
-                                             business_methods=frozenset(RuntimeRpcHandler.METHODS | LocalRpcHandler.METHODS))
+                                             business_methods=frozenset(RuntimeRpcHandler.METHODS | set(WORKFLOW_RPC) | LocalRpcHandler.METHODS))
                     tasks.append(asyncio.create_task(self._publish_runtime_capabilities(request_session)))
                     heartbeat_task = asyncio.create_task(self._heartbeat_loop())
                     tasks.append(heartbeat_task)

@@ -17,6 +17,7 @@ from connector.runtime_protocol import (
     RuntimeCommand,
     RuntimeCommandResult,
     RuntimeConfig,
+    RuntimeConflictError,
     RuntimeIdentity,
     RuntimeModelCatalog,
     RuntimeOperationResult,
@@ -69,6 +70,7 @@ from connector.runtimes.codex.lifecycle.runtime_lifecycle import CodexRuntimeLif
 from connector.runtimes.codex.notifications import CodexNotificationProjector
 from connector.runtimes.codex.notifications.projector import notification_event
 from connector.runtimes.codex.sdk.runtime_client import (
+    CodexCompactResult,
     CodexModelListResult,
     CodexRuntimeClient,
 )
@@ -181,6 +183,7 @@ class CodexRuntime(AgentRuntime):
         # Async answers are ordinary start/steer writes and must use the same
         # owner routing as messages, including after a Connector restart.
         self._turns.interactions.turn_actions = self
+        self._turns.commands.compact_thread = self._compact_thread
 
     @property
     def identity(self) -> RuntimeIdentity:
@@ -193,8 +196,12 @@ class CodexRuntime(AgentRuntime):
     async def start(self) -> None:
         await self._lifecycle.start()
         await self._start_ipc()
+        if self.goals is not None:
+            await self.goals.recover()
 
     async def stop(self) -> None:
+        if self.goals is not None:
+            await self.goals.close()
         if self.ipc_owner is not None:
             self.ipc_owner.detach()
         if self.ipc_service is not None:
@@ -459,6 +466,22 @@ class CodexRuntime(AgentRuntime):
             started_at=started_at,
             detail=detail,
         )
+
+    async def _compact_thread(self, session_id: str, thread_id: str) -> CodexCompactResult:
+        """Compact through the same writer a message to this thread would use."""
+
+        route = await self._ipc_route_for_write(session_id, thread_id)
+        if route.kind == "blocked":
+            raise RuntimeConflictError(
+                route.message or "The Codex session owner is unavailable."
+            )
+        if route.thread is not None:
+            controller = self._ipc_controller()
+            assert controller is not None
+            return await controller.compact_thread(route.thread)
+        if self.client is None:
+            raise RuntimeUnsupportedError("session.commands")
+        return await self.client.compact_thread(thread_id)
 
     async def _legacy_ipc_write_route(
         self,
@@ -997,15 +1020,31 @@ class CodexRuntime(AgentRuntime):
         session_id: str,
         reason: str | None = None,
     ) -> RuntimeOperationResult:
+        pause_error = None
+        if self.goals is not None:
+            try:
+                await self.goals.pause_before_stop(session_id)
+            except Exception as error:  # noqa: BLE001 - interruption remains available after a failed pause
+                pause_error = error
         thread = self._ipc_attached_thread(session_id)
         if thread is not None:
             controller = self._ipc_controller()
             assert controller is not None
-            return await controller.interrupt_session(session_id=session_id, thread=thread)
-        return await self._turns.interrupt_session(
-            session_id=session_id,
-            reason=reason,
-        )
+            result = await controller.interrupt_session(
+                session_id=session_id, thread=thread
+            )
+        else:
+            result = await self._turns.interrupt_session(
+                session_id=session_id, reason=reason
+            )
+        if pause_error is not None:
+            return RuntimeOperationResult(
+                ok=False,
+                code="goal_pause_unknown",
+                message=str(pause_error),
+                result={**result.result, "interrupted": result.ok},
+            )
+        return result
 
     async def update_session_selections(
         self,
@@ -1183,6 +1222,23 @@ class CodexRuntime(AgentRuntime):
     async def _after_notification(self, message: Any) -> None:
         """Let the IPC owner republish after a native notification was projected."""
 
+        from connector.runtimes.codex.sdk.command_notifications import (
+            notification_parts,
+        )
+
+        method, params = notification_parts(message)
+        if self.goals is not None and method.startswith("thread/goal/"):
+            thread_id = params.get("threadId")
+            cached = (
+                self._session_states.get_by_external_session_id(thread_id)
+                if thread_id
+                else None
+            )
+            if cached:
+                try:
+                    self.goals.notify(cached.session_id, thread_id)
+                except ValueError:
+                    pass  # A late native event cannot revive an explicitly deleted AA session.
         if self.ipc_owner is not None:
             try:
                 thread_id = notification_event(message).thread_id

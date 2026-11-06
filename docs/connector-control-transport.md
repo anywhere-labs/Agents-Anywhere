@@ -56,7 +56,7 @@ flowchart TD
 `Mesh.connect()` 阶段最多使用 `min(1秒, 剩余预算/2)`，SDK 禁用自动重连和重试。
 开始调用 `call_unary` 就按可能分发处理；只接受表中的明确 Router 拒绝，不按异常类名
 或 retryable 标记推断安全。编程异常和调用方取消保持原行为。预留的 `workspace.refresh`
-不在41个已实现业务方法中，也不提供 WS 回退。
+不在66个已实现业务方法中，也不提供 WS 回退。
 
 | 状态 | 迁移前 | 迁移后 |
 | --- | --- | --- |
@@ -115,7 +115,7 @@ Lua 可精确表示的安全整数范围，越界或损坏不归零，避免精�
 
 逐方法参数、结果、并发、错误和拓扑核对见 [迁移对照清单](connector-control-parity.md)。
 
-以下 41 个方法保持原始业务字典参数与结果，不由传输层补默认值或解释 `ok`。
+以下 66 个方法保持原始业务字典参数与结果，不由传输层补默认值或解释 `ok`。
 领域异常 code/message 保留；无显式 code 的 Python 异常沿用类名。`ok:false` 的
 业务结果原样返回，由现有业务层处理。
 
@@ -127,6 +127,10 @@ Lua 可精确表示的安全整数范围，越界或损坏不归零，避免精�
 | Sessions | `session.create`、`session.send_message`、`session.steer` | Runtime 处理结果，保留消息接收与业务拒绝字段；不代表整个回合结束 |
 | Sessions | `session.sync` | 原后台同步任务已接纳；不代表历史全部落库 |
 | Sessions | `session.selections.update`、`session.command.execute`、`session.interrupt`、`interaction.respond` | 原 Runtime 操作结果；中断请求不等于回合已结束，审批结果不等于后续工作完成 |
+| Sessions | `session.goal.get`、`session.goal.operation`、`session.planning.get`、`session.planning.operation`、`session.configuration.get` | 当前查询处理器返回；操作查询用于结果未知后的核对 |
+| Sessions | `session.goal.execute`、`session.goal.forget`、`session.planning.execute`、`session.configuration.update` | 原领域操作结果；`ok:false` 和拒绝结果原样返回 |
+| Sessions | `session.creation.begin`、`session.creation.get`、`session.creation.respond`、`session.creation.cancel`、`interaction.response.get`、`session.tree`、`session.position.select`、`session.close`、`session.recover`、`session.agent.operate` | 原 Runtime workflow view；接纳与后续状态分开 |
+| Workspaces | `workspace.prepare`、`workspace.preparation.get`、`workspace.preparation.refresh`、`workspace.preparation.cancel`、`workspace.preparation.respond`、`workspace.preparation.reserve` | 原 Runtime workflow view；准备完成另看视图状态 |
 | Files | `fs.prepareDownload`、`fs.uploadPreparedDownload`、`fs.writeFile`、`fs.readDir`、`fs.readText` | 原文件处理器结果；保存已执行写入并返回 hash，后台上传接纳与传输完成分开 |
 | Shell | `shell.exec`、`shell.task.start`、`shell.task.cancel` | 原同步执行或任务控制结果，异步完成沿用原事件 |
 | Terminals | `terminal.create`、`terminal.write`、`terminal.resize`、`terminal.close`、`terminal.rename`、`terminal.setPersistent`、`terminal.list`、`terminal.release`、`terminal.snapshot`、`terminal.relay.connect` | 保留 PTY 操作、relay 接纳及 broker 等待各自的完成条件 |
@@ -534,7 +538,7 @@ uv run python -m tools.probe_connector_mesh_state \
 同代次 owner 冲突、状态损坏、TTL、连接替换及 Redis 异常。短 TTL 仅在探针内注入，
 不增加生产配置项。
 
-回退探针在 bootstrap 503、404 和代理拒绝 Mesh WS 升级时逐项调用41个领域方法，
+回退探针在 bootstrap 503、404 和代理拒绝 Mesh WS 升级时逐项调用全部已实现领域方法，
 统计处理器执行次数。它用真实文件、独立 hash、Shell 子进程、PTY 和 relay 验证
 本地领域行为，并核对两路混合8+2额度、握手不占业务额度、新路由恢复和旧版固定 WS。
 Runtime 方法在此探针中使用受控处理器，与真实模型会话验收分开报告：

@@ -313,10 +313,86 @@ class SessionService(_DomainService):
     async def respondInteraction(self, request: Payload, ctx: RpcContext) -> Payload:
         return await self._call("interaction.respond", request, ctx)
 
+    @query(description="Read the goal state and allowed goal actions of a session.")
+    async def getGoal(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("session.goal.get", request, ctx)
+
+    @mutates(description="Apply a goal action to a session.")
+    async def executeGoal(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("session.goal.execute", request, ctx)
+
+    @query(description="Read the recorded result of a goal operation.")
+    async def goalOperation(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("session.goal.operation", request, ctx)
+
+    @mutates(description="Discard local goal data after a Server deletion receipt.", idempotent=True)
+    async def forgetGoals(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("session.goal.forget", request, ctx)
+
+    @query(description="Read the planning state and allowed plan actions of a session.")
+    async def getPlanning(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("session.planning.get", request, ctx)
+
+    @mutates(description="Apply a planning action to a session.")
+    async def executePlanning(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("session.planning.execute", request, ctx)
+
+    @query(description="Read the recorded result of a planning operation.")
+    async def planningOperation(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("session.planning.operation", request, ctx)
+
+    @query(description="Read the Runtime-owned configuration of a session.")
+    async def getConfiguration(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("session.configuration.get", request, ctx)
+
+    @mutates(description="Update the Runtime-owned configuration of a session.")
+    async def updateConfiguration(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("session.configuration.update", request, ctx)
+
+    @mutates(description="Begin a Runtime session creation workflow.")
+    async def beginCreation(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("session.creation.begin", request, ctx)
+
+    @query(description="Read the state of a session creation workflow.")
+    async def getCreation(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("session.creation.get", request, ctx)
+
+    @mutates(description="Answer a prompt raised by a session creation workflow.")
+    async def respondCreation(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("session.creation.respond", request, ctx)
+
+    @mutates(description="Cancel a session creation workflow.")
+    async def cancelCreation(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("session.creation.cancel", request, ctx)
+
+    @query(description="Read the recorded result of an interaction response.")
+    async def getInteractionResponse(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("interaction.response.get", request, ctx)
+
+    @query(description="Read the branch tree of a session.")
+    async def tree(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("session.tree", request, ctx)
+
+    @mutates(description="Select the active position in a session tree.")
+    async def selectPosition(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("session.position.select", request, ctx)
+
+    @mutates(description="Close a Runtime session.")
+    async def close(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("session.close", request, ctx)
+
+    @mutates(description="Recover a Runtime session after interruption.")
+    async def recover(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("session.recover", request, ctx)
+
+    @mutates(description="Operate a Runtime agent attached to a session.")
+    async def operateAgent(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("session.agent.operate", request, ctx)
+
 
 @service("aa.remote.v1.Workspaces", targeted=True)
 class WorkspaceService(_DomainService):
-    """Reconcile Runtime-owned workspace inventory."""
+    """Prepare Runtime workspaces and reconcile Runtime-owned workspace inventory."""
 
     @mutates(
         description="Request a fresh Runtime-owned workspace inventory.",
@@ -324,6 +400,30 @@ class WorkspaceService(_DomainService):
     )
     async def refresh(self, request: Payload, ctx: RpcContext) -> Payload:
         return await self._call("workspace.refresh", request, ctx)
+
+    @mutates(description="Prepare a Runtime workspace before session creation.")
+    async def prepare(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("workspace.prepare", request, ctx)
+
+    @query(description="Read the state of a workspace preparation.")
+    async def getPreparation(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("workspace.preparation.get", request, ctx)
+
+    @mutates(description="Re-check a workspace preparation.")
+    async def refreshPreparation(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("workspace.preparation.refresh", request, ctx)
+
+    @mutates(description="Cancel a workspace preparation.")
+    async def cancelPreparation(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("workspace.preparation.cancel", request, ctx)
+
+    @mutates(description="Answer a prompt raised by a workspace preparation.")
+    async def respondPreparation(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("workspace.preparation.respond", request, ctx)
+
+    @mutates(description="Reserve a prepared workspace for session creation.")
+    async def reservePreparation(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("workspace.preparation.reserve", request, ctx)
 
 
 @service("aa.remote.v1.Files", targeted=True)

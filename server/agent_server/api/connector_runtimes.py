@@ -41,6 +41,10 @@ from agent_server.services.device_runtimes import (
 router = APIRouter(prefix="/connectors", tags=["connector-runtimes"])
 
 
+
+
+
+
 @router.get(
     "/{connector_id}/runtimes",
     response_model=DeviceRuntimeListResponse,
@@ -410,7 +414,9 @@ async def request_runtime_rpc(
 
 
 def parse_runtime_capability_response(result: Any) -> ProtocolCapabilitySet:
-    raw_capability_set = result.get("capabilitySet") if isinstance(result, dict) else None
+    raw_capability_set = (
+        result.get("capabilitySet") if isinstance(result, dict) else None
+    )
     if not isinstance(raw_capability_set, dict):
         raise_invalid_runtime_response("invalid_runtime_capabilities")
     try:

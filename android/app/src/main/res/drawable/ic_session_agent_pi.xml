@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Official monochrome Pi badge: https://pi.dev/favicon.svg. Tinted by SessionAgentIcon. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="16dp"
+    android:height="16dp"
+    android:viewportWidth="560"
+    android:viewportHeight="560">
+    <path android:fillColor="#FFFFFFFF" android:pathData="M420 280H280V140H0V0H420V280Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M560 560H420V280H560V560Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M140 560H0V140H140V280H280V420H140V560Z" />
+</vector>
