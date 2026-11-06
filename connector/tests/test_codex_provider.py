@@ -447,6 +447,36 @@ async def _test_codex_provider_creates_sdk_runtime(tmp_path: Path) -> None:
     assert runtime._pending_messages._connector_id == _NoHost().session_namespace
 
 
+def test_codex_provider_persists_gateway_for_desktop_resume(tmp_path: Path) -> None:
+    asyncio.run(_test_codex_provider_persists_gateway_for_desktop_resume(tmp_path))
+
+
+async def _test_codex_provider_persists_gateway_for_desktop_resume(
+    tmp_path: Path,
+) -> None:
+    provider = CodexProvider(
+        sdk_checker=_available_sdk,
+        sdk_client_factory=lambda config: _FakeSdkClient(),
+    )
+    codex_home = tmp_path / "codex-home"
+    config = await provider.validate_config(
+        {
+            "codexHome": str(codex_home),
+            "modelGateway": {
+                "baseUrl": "https://gateway.example/v1",
+                "apiKey": "gateway-secret",
+            },
+        }
+    )
+
+    await provider.create_runtime(config, _NoHost())
+
+    config_contents = (codex_home / "config.toml").read_text(encoding="utf-8")
+    assert "[model_providers.agents_anywhere_gateway]" in config_contents
+    assert 'base_url = "https://gateway.example/v1"' in config_contents
+    assert 'experimental_bearer_token = "gateway-secret"' in config_contents
+
+
 def test_codex_provider_canonicalizes_home_claims(tmp_path: Path) -> None:
     async def run() -> None:
         real_home = tmp_path / "real-home"
