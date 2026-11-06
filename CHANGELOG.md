@@ -7,11 +7,11 @@
 ### 升级须知
 
 - Codex、Claude Code 统一目标模式需要 Server 执行 `v2_47` 数据库迁移，并配套更新 Connector 和客户端。（[#539](https://github.com/anywhere-labs/Agents-Anywhere/pull/539)）
-- Server 执行 `v2_48` 数据库迁移：新增会话扫描记录，不重写已有会话；`sourceAvailabilityUpdatedAt` 改为来源状态最后一次写入的时间，详见[升级指南](docs/upgrading.md)。（@@PR@@）
+- Server 执行 `v2_48` 数据库迁移：新增会话扫描记录，不重写已有会话；`sourceAvailabilityUpdatedAt` 改为来源状态最后一次写入的时间，详见[升级指南](docs/upgrading.md)。（[#557](https://github.com/anywhere-labs/Agents-Anywhere/pull/557)）
 
 ### Codex 与 Claude
 
-- Codex 的定时会话扫描只写入真正变化的会话，会话数量较多的部署数据库写入明显下降，并减少这些写入拖慢其他请求的情况。（@@PR@@）
+- Codex 的定时会话扫描只写入真正变化的会话，会话数量较多的部署数据库写入明显下降，并减少这些写入拖慢其他请求的情况。（[#557](https://github.com/anywhere-labs/Agents-Anywhere/pull/557)）
 - Web、Desktop、Android 和 iOS 可用 `/goal` 设置目标，在输入区上方编辑、暂停、恢复或清除；停止时阻止自动续跑，完成结果留在会话历史中，长目标栏与输入框保持同宽并自动截断正文。（[#539](https://github.com/anywhere-labs/Agents-Anywhere/pull/539)）
 
 ### DSH 同步
