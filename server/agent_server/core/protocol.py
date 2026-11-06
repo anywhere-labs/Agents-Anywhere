@@ -16,11 +16,19 @@ from agent_server.core.models import (
     TimelineItem,
 )
 
+# Public wire exports; definitions remain in their bounded planning context.
+from agent_server.core.planning.models import (
+    PlanningRequest as PlanningRequest,
+    PlanningResponse as PlanningResponse,
+    PlanningState as PlanningState,
+    PlanDocument as PlanDocument,
+)
+
 PROTOCOL_VERSION_1 = "1.0"
-SUPPORTED_PROTOCOL_VERSIONS = [PROTOCOL_VERSION_1]
+SUPPORTED_PROTOCOL_VERSIONS = ["1.1", PROTOCOL_VERSION_1]
 PROTOCOL_MAX_REVISION = 9_007_199_254_740_991
 
-ProtocolVersion = Literal["1.0"]
+ProtocolVersion = Literal["1.0", "1.1"]
 ProtocolCapabilityScope = Literal["runtime", "session"]
 
 

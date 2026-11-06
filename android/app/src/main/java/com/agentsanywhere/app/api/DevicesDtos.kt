@@ -1,5 +1,9 @@
 package com.agentsanywhere.app.api
 
+import com.agentsanywhere.app.model.ModelConnectionCapability
+import com.agentsanywhere.app.model.ModelConnectionStatus
+import com.agentsanywhere.app.model.SecretFieldState
+
 data class RemoteDevice(
     val id: String,
     val name: String,
@@ -27,6 +31,7 @@ data class RemoteDeviceRuntime(
     val runtimeId: String,
     val runtimeType: String,
     val displayName: String,
+    val typeDisplayName: String? = null,
     val present: Boolean,
     val configured: Boolean,
     val active: Boolean,
@@ -35,16 +40,49 @@ data class RemoteDeviceRuntime(
     val metadata: Map<String, Any?> = emptyMap(),
     val schema: Map<String, Any?>?,
     val uiSchema: Map<String, Any?>,
+    val defaults: Map<String, Any?> = emptyMap(),
     val config: Map<String, Any?>?,
     val error: Map<String, Any?>?,
     /** Step inside a non-error status (e.g. syncing while starting). Informational only. */
     val phase: Map<String, Any?>? = null,
     val lastDiscoveredAt: String?,
     val updatedAt: String?,
+    /** "experimental", "beta" or "stable"; null when the Server does not say. */
+    val maturity: String? = null,
+    val modelConnection: ModelConnectionCapability? = null,
+    val modelConnectionStatus: ModelConnectionStatus? = null,
+    /** Write-only values left out of [config], by path such as `modelGateway.apiKey`. */
+    val secretFields: Map<String, SecretFieldState> = emptyMap(),
+    /** "model-config" when the model configuration created this instance. */
+    val managedBy: String? = null,
 ) {
     val name: String
         get() = displayName
 }
+
+data class RemoteRuntimeTypeList(
+    val connectorId: String,
+    val runtimeTypes: List<RemoteRuntimeType>,
+)
+
+/** A runtime type a Connector supports; instances of it are [RemoteDeviceRuntime]s. */
+data class RemoteRuntimeType(
+    val connectorId: String,
+    val runtimeType: String,
+    val displayName: String,
+    val description: String?,
+    val present: Boolean,
+    val available: Boolean,
+    val reason: String?,
+    val recommended: Boolean,
+    val recommendationRank: Int?,
+    val schema: Map<String, Any?>?,
+    val uiSchema: Map<String, Any?>,
+    val defaults: Map<String, Any?>,
+    /** "single" or "multiple". */
+    val instancePolicy: String,
+    val maxInstances: Int?,
+)
 
 enum class RemoteDeviceRuntimeStatus(val wireValue: String) {
     Stopped("stopped"),

@@ -100,7 +100,7 @@ class ConnectorRuntimeHost(RuntimeHostClient):
             raise RuntimeError("Synchronous notification ingestion is unavailable")
         allowed = {"session.meta.upsert", "session.source.updated", "session.state.updated",
                    "session.turnEnded", "session.inventory.begin", "session.inventory.complete",
-                   "timeline.sync", "timeline.itemUpsert"}
+                   "timeline.sync", "timeline.itemUpsert", "notice.upsert", "runtime.capability.updated"}
         bound = []
         for notice in notifications:
             if notice.get("method") not in allowed or not isinstance(notice.get("params"), dict):
@@ -113,6 +113,15 @@ class ConnectorRuntimeHost(RuntimeHostClient):
     @property
     def connector_id(self) -> str:
         return self._connector_id
+
+    async def publish_planning(self, snapshot: dict, durable: bool = False) -> None:
+        notification = {"method": "session.planning.updated", "params": snapshot}
+        if durable:
+            if self._ingest_notifications is None:
+                raise RuntimeError("Durable plan ingestion is unavailable")
+            await self._ingest_notifications([notification])
+        else:
+            await self._notify_server(notification["method"], snapshot)
 
     async def session_meta_upsert(
         self,

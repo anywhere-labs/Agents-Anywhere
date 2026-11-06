@@ -73,6 +73,9 @@ class CodexTurnActions:
         }:
             return _source_failure_result(cached_source)
         await self.ensure_started()
+        entered = await self.host.prepare_planning_turn(session_id, external_session_id)
+        if entered and not content.strip() and not attachments:
+            return RuntimeOperationResult(ok=True, result={"externalSessionId": external_session_id, "created": True, "messageAccepted": False})
         effective_selections = dict(selections or {})
         if not effective_selections:
             cached = self.session_states.get(session_id)

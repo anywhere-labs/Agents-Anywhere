@@ -1,5 +1,16 @@
 package com.agentsanywhere.app.feature.files
 
+import java.io.File
+
+data class DownloadedFile(
+    val path: String,
+    val name: String,
+    val mediaType: String,
+    val size: Long,
+    val sha256: String,
+    val file: File,
+)
+
 data class FilesDirectory(
     val path: String,
     val entries: List<FileEntry> = emptyList(),

@@ -109,9 +109,11 @@ curl http://127.0.0.1:8000/api/v2/health/ready
 | `AGENT_SERVER_FILES_S3_REGION` | S3 region. Defaults to `us-east-1`. |
 | `AGENT_SERVER_FILES_S3_ENDPOINT_URL` | Optional S3-compatible endpoint URL. |
 | `AGENT_SERVER_FILES_S3_VIRTUAL_HOST_STYLE` | Set to `true` for virtual-host-style S3 URLs. |
-| `AGENT_SERVER_SECRET` | Secret used for signed auth tokens. Set this outside local dev. |
+| `AGENT_SERVER_SECRET` | Secret used for signed auth tokens. Set this outside local dev. It also derives the key that encrypts saved model keys and Tokens Anywhere refresh tokens, so model configuration needs at least 32 characters and a non-default value; changing it makes those saved values unreadable. |
 | `AGENT_SERVER_SETUP_TOKEN_TTL` | First-run setup token TTL in seconds. |
-| `AGENT_SERVER_PUBLIC_ORIGIN` | Public Web origin used for OAuth redirect URLs when reverse-proxy headers or `returnTo` are unavailable. Example: `https://agents.example.com`. |
+| `AGENT_SERVER_PUBLIC_ORIGIN` | Public Web origin used for OAuth redirect URLs when reverse-proxy headers or `returnTo` are unavailable. Example: `https://agents.example.com`. Tokens Anywhere identifies the instance by this origin, so set it before users link. |
+| `AGENT_SERVER_TOKENS_URL` | Default Tokens Anywhere origin for linking accounts in 配置管理, such as `https://tokens.example.com`. It must equal Tokens Anywhere's `TOKENS_PUBLIC_ORIGIN` exactly, because the authorization answer's `iss` is checked against it. Tokens Anywhere must also set `TOKENS_SECRETS_KEY`: without it it hands out a managed key's secret only once, and Agents Anywhere fetches the key again each time it applies it. An administrator can override it under 管理 → 常规 in Web or Desktop (`PUT /api/v2/admin/integrations/tokens`). Unset with no override turns the link off. |
+| `AGENT_SERVER_ALLOW_PRIVATE_MODEL_GATEWAYS` | Set to `1` to let the server detect model services on private addresses (LAN, loopback, link-local) when a user adds one by address. Off by default, so the server cannot be used to call internal hosts; users can still enter such a service's protocols by hand. See `docs/api/model-config.md`. |
 | `AGENT_SERVER_TOKENS_ANYWHERE_CLIENT_SECRET` | Client secret that lets Tokens Anywhere offer "Sign in with Agents Anywhere". At least 32 characters, and `AGENT_SERVER_SECRET` must also be at least 32 characters. Leave it and the redirect URI unset to turn the client off. |
 | `AGENT_SERVER_TOKENS_ANYWHERE_REDIRECT_URI` | Tokens Anywhere's exact HTTPS callback URL, such as `https://tokens.example.com/oauth/aa`. No query or fragment. |
 | `AGENT_SERVER_CORS_ORIGINS` | Comma-separated explicit CORS origins. |

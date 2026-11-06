@@ -11,16 +11,24 @@ from connector.runtime_protocol import (
     RuntimeSupervisor,
 )
 from connector.runtime_protocol.instance_binding import runtime_config_for_instance
+from connector.runtime_protocol.model_probe import MODEL_PROBE_FEATURE
+from connector.runtime_protocol.switch_fence import (
+    CHANNEL_RECONCILE_FENCE_FEATURE,
+    SWITCH_FENCE_FEATURE,
+)
+from connector.runtime_protocol.workflows import RuntimeWorkflowRequest
 from connector.server.runtime_rpc_params import (
     RuntimeCatalogParams,
     RuntimeConfigParams,
     RuntimeIdParams,
     SessionReadParams,
+    optional_switch_request,
     scoped_runtime,
 )
 from connector.server.runtime_rpc_payloads import (
     capability_set_payload,
     model_catalog_payload,
+    model_connection_result,
     permission_catalog_payload,
     runtime_config_payload,
     runtime_config_schema_payload,
@@ -45,19 +53,38 @@ from connector.server.runtime_turn_rpc import (
     dispatch_session_steer,
 )
 
+WORKFLOW_RPC = {
+    "workspace.prepare": "prepare", "workspace.preparation.get": "get_preparation",
+    "workspace.preparation.refresh": "refresh_preparation", "workspace.preparation.cancel": "cancel_preparation",
+    "workspace.preparation.respond": "respond_preparation", "workspace.preparation.reserve": "reserve",
+    "session.creation.begin": "begin_creation", "session.creation.get": "get_creation",
+    "session.creation.respond": "respond_creation", "session.creation.cancel": "cancel_initialization",
+    "interaction.response.get": "get_response", "session.tree": "get_tree", "session.position.select": "select_position",
+    "session.close": "close_session", "session.recover": "recover_session",
+    "session.agent.operate": "agent_operation",
+}
+
 BackgroundScheduler = Callable[[Any], None]
+
+CONNECTOR_FEATURES = (SWITCH_FENCE_FEATURE, MODEL_PROBE_FEATURE, CHANNEL_RECONCILE_FENCE_FEATURE)
 
 
 class RuntimeRpcHandler:
     """Route Runtime Control and Agent Runtime Protocol calls."""
 
     METHODS: ClassVar[set[str]] = {
+        "session.planning.operation",
+        "session.planning.get",
+        "session.planning.execute",
         "runtime.discover",
+        "session.configuration.get",
+        "session.configuration.update",
         "runtime.configSchema",
         "runtime.config",
         "runtime.validateConfig",
         "runtime.start",
         "runtime.stop",
+        "runtime.probeModelConnection",
         "runtime.capabilities",
         "runtime.commands",
         "runtime.modelCatalog",
@@ -88,9 +115,32 @@ class RuntimeRpcHandler:
         self.schedule_background = schedule_background
 
     def supports(self, method: str) -> bool:
-        return method in self.METHODS
+        return method in self.METHODS or method in WORKFLOW_RPC
 
     async def dispatch(self, method: str, params: dict[str, Any]) -> Any:
+        if method in {"session.planning.get", "session.planning.execute", "session.planning.operation"}:
+            runtime = self._resolve_agent_runtime(params)
+            parsed = SessionReadParams.parse(params)
+            planning = runtime.planning
+            if planning is None:
+                return {"capabilities": {"supported": False, "actions": []}, "freshness": "unknown"}
+            if method == "session.planning.operation":
+                return {"operation": await planning.operation(parsed.session_id, str(params.get("operationId", "")))}
+            if method == "session.planning.get":
+                return await planning.snapshot(parsed.session_id, parsed.external_session_id, allow_control=params.get("controlAllowed") is True)
+            return await planning.execute(parsed.session_id, parsed.external_session_id, dict(params.get("request") or {}))
+        if method in {"session.configuration.get", "session.configuration.update"}:
+            runtime = self._resolve_agent_runtime(params)
+            session_id = params.get("sessionId")
+            if not isinstance(session_id, str) or not session_id:
+                raise RuntimeInvalidRequestError("sessionId is required")
+            result = await runtime.get_session_configuration(session_id) if method.endswith(".get") else await runtime.update_session_configuration(session_id, params)
+            return self._runtime_result(runtime, result)
+        if method in WORKFLOW_RPC:
+            runtime = self._resolve_agent_runtime(params)
+            values = {key: value for key, value in params.items() if key not in {"runtime", "runtimeId", "runtimeType"}}
+            result = await runtime.execute_workflow(RuntimeWorkflowRequest(WORKFLOW_RPC[method], values))
+            return self._runtime_result(runtime, dict(result.values))
         if method == "runtime.discover":
             return await self.discover_runtimes(params)
         if method == "runtime.configSchema":
@@ -128,6 +178,7 @@ class RuntimeRpcHandler:
                 parsed.instance,
                 parsed.config,
                 revision=parsed.config_revision,
+                switch=parsed.switch,
             )
             return self._scoped_result(
                 RuntimeScope(parsed.runtime_id, parsed.runtime_type),
@@ -139,6 +190,7 @@ class RuntimeRpcHandler:
                 parsed.instance,
                 parsed.config,
                 revision=parsed.config_revision,
+                switch=parsed.switch,
             )
             entry = self.agent_runtime_supervisor.entry(parsed.runtime_id)
             return self._scoped_result(
@@ -148,15 +200,38 @@ class RuntimeRpcHandler:
                     "status": entry.status,
                     **({"error": dict(entry.error)} if entry.error is not None else {}),
                     **({"phase": dict(entry.phase)} if entry.phase is not None else {}),
+                    **model_connection_result(entry),
+                    "configDigest": self.agent_runtime_supervisor.config_digest(
+                        parsed.runtime_id
+                    ),
+                    "instanceId": self.agent_runtime_supervisor.instance_id,
                 },
             )
         if method == "runtime.stop":
-            parsed = RuntimeIdParams.parse(params)
+            switch = optional_switch_request(params)
+            parsed = RuntimeIdParams.parse({key: value for key, value in params.items()
+                                            if key not in {"operationId", "switchRevision"}})
             self._validate_known_scope(parsed.scope, require_entry=True)
-            await self.agent_runtime_supervisor.stop(parsed.runtime_id)
+            await self.agent_runtime_supervisor.stop(parsed.runtime_id, switch=switch)
             return self._scoped_result(
                 parsed.scope,
                 {"runtimeId": parsed.runtime_id, "status": "stopped"},
+            )
+        if method == "runtime.probeModelConnection":
+            parsed = RuntimeIdParams.parse(params)
+            self._validate_known_scope(parsed.scope, require_entry=True)
+            probe, digest = await self.agent_runtime_supervisor.probe_model_connection(
+                parsed.runtime_id,
+                parsed.runtime_type,
+            )
+            return self._scoped_result(
+                parsed.scope,
+                {
+                    "runtimeId": parsed.runtime_id,
+                    "probe": probe.payload(),
+                    "configDigest": digest,
+                    "instanceId": self.agent_runtime_supervisor.instance_id,
+                },
             )
         if method == "runtime.capabilities":
             runtime = self._resolve_agent_runtime(params)
@@ -174,10 +249,7 @@ class RuntimeRpcHandler:
         if method == "runtime.modelCatalog":
             runtime = self._resolve_agent_runtime(params)
             parsed = RuntimeCatalogParams.parse(params)
-            catalog = await runtime.list_model_catalog(
-                query=parsed.query,
-                limit=parsed.limit,
-            )
+            catalog = await runtime.list_scoped_model_catalog(params["sessionId"], query=parsed.query, limit=parsed.limit) if isinstance(params.get("sessionId"), str) else await runtime.list_model_catalog(query=parsed.query, limit=parsed.limit)
             return self._runtime_result(
                 runtime,
                 {"catalog": model_catalog_payload(catalog)},
@@ -281,6 +353,8 @@ class RuntimeRpcHandler:
                 runtime_type_descriptor_payload(descriptor)
                 for descriptor in descriptors
             ],
+            # Connector-wide protocol features the Server may rely on.
+            "features": list(CONNECTOR_FEATURES),
         }
 
     def accept_session_sync(self, params: dict[str, Any]) -> dict[str, Any]:

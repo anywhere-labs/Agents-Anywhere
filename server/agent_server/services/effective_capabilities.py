@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Protocol
 from weakref import WeakKeyDictionary
+
+from loguru import logger
 
 from agent_server.core.capabilities import (
     CATALOG_EFFORT,
@@ -10,9 +13,18 @@ from agent_server.core.capabilities import (
     CATALOG_PERMISSION,
     RUNTIME_ATTACHMENT,
     RUNTIME_CONFIG,
+    SESSION_CLOSE,
     SESSION_COMMANDS,
+    SESSION_CONFIGURATION_READ,
+    SESSION_CONFIGURATION_UPDATE,
+    SESSION_EXECUTION_POSITION_READ,
+    SESSION_EXECUTION_POSITION_SELECT,
     SESSION_INTERACTION_APPROVAL,
     SESSION_INTERRUPT,
+    SESSION_PLAN_DOCUMENT,
+    SESSION_PLAN_REVIEW,
+    SESSION_PLANNING,
+    SESSION_RECOVER,
     SESSION_SEND_MESSAGE,
     SESSION_STEER,
 )
@@ -35,11 +47,20 @@ _INHERITED_RUNTIME_CAPABILITY_IDS = (
     SESSION_STEER,
     SESSION_INTERACTION_APPROVAL,
     SESSION_COMMANDS,
+    SESSION_PLANNING,
+    SESSION_PLAN_DOCUMENT,
+    SESSION_PLAN_REVIEW,
     RUNTIME_ATTACHMENT,
     RUNTIME_CONFIG,
     CATALOG_MODEL,
     CATALOG_PERMISSION,
     CATALOG_EFFORT,
+    SESSION_CLOSE,
+    SESSION_RECOVER,
+    SESSION_CONFIGURATION_READ,
+    SESSION_CONFIGURATION_UPDATE,
+    SESSION_EXECUTION_POSITION_READ,
+    SESSION_EXECUTION_POSITION_SELECT,
 )
 
 
@@ -70,6 +91,26 @@ class SessionCapabilityRepository(Protocol):
 
 class SessionCapabilityPublisher(Protocol):
     async def publish(self, session_id: str, payload: dict[str, Any]) -> None: ...
+
+
+async def read_runtime_capability_facts(
+    manager: ConnectorRpcManager,
+    connector_id: str,
+    *,
+    runtime: str,
+    runtime_id: str,
+) -> ProtocolCapabilitySet:
+    """Read current instance facts before admitting a new session."""
+    result = await manager.request(
+        connector_id, "runtime.capabilities",
+        {"runtime": runtime, "runtimeId": runtime_id}, timeout=10,
+    )
+    if not isinstance(result, dict) or not isinstance(result.get("capabilitySet"), dict):
+        raise TypeError("connector did not return a runtime capability set")
+    try:
+        return ProtocolCapabilitySet.model_validate(result["capabilitySet"])
+    except ValueError as exc:
+        raise ValueError("connector returned an invalid runtime capability set") from exc
 
 
 async def read_session_capability_facts(
@@ -167,6 +208,56 @@ async def publish_connector_session_capabilities(
             _ACTIVE_PUBLICATIONS.pop(publisher, None)
 
 
+class ConnectorCapabilityRefresh:
+    """App-owned, latest-wins session broadcasts, outside ingestion barriers."""
+
+    def __init__(self, store: SessionCapabilityRepository, presence: ConnectorPresencePort,
+                 publisher: SessionCapabilityPublisher) -> None:
+        self._store, self._presence, self._publisher = store, presence, publisher
+        self._current: dict[str, asyncio.Task[None]] = {}
+        self._tasks: set[asyncio.Task[None]] = set()
+        self._closed = False
+
+    def request(self, connector_id: str) -> None:
+        if self._closed:
+            return
+        previous = self._current.get(connector_id)
+        if previous is not None:
+            previous.cancel()
+
+        async def refresh() -> None:
+            # Let cancellation release the old session fence before proceeding.
+            if previous is not None:
+                await asyncio.gather(previous, return_exceptions=True)
+            await publish_connector_session_capabilities(
+                self._store, self._presence, self._publisher, connector_id,
+            )
+
+        task = asyncio.create_task(refresh(), name=f"session-capabilities-{connector_id}")
+        self._current[connector_id] = task
+        self._tasks.add(task)
+
+        def completed(task: asyncio.Task[None]) -> None:
+            self._tasks.discard(task)
+            if self._current.get(connector_id) is task:
+                self._current.pop(connector_id, None)
+            if not task.cancelled() and (error := task.exception()) is not None:
+                logger.opt(exception=error).error(
+                    "session capability refresh failed connector_id={}", connector_id,
+                )
+
+        task.add_done_callback(completed)
+
+    async def close(self) -> None:
+        self._closed = True
+        tasks = list(self._tasks)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._tasks.clear()
+        self._current.clear()
+
+
 class SessionCapabilityIndex:
     """Index one validated capability snapshot for many session projections."""
 
@@ -202,6 +293,8 @@ class SessionCapabilityIndex:
         for capability_id in _INHERITED_RUNTIME_CAPABILITY_IDS:
             source = next((group[capability_id] for group in groups
                            if capability_id in group), None)
+            if source is None and capability_id in {SESSION_CLOSE, SESSION_RECOVER, SESSION_EXECUTION_POSITION_READ, SESSION_EXECUTION_POSITION_SELECT, SESSION_CONFIGURATION_READ, SESSION_CONFIGURATION_UPDATE}:
+                continue
             capabilities.append(platform_scoped_session_capability(
                 session, capability_id, source,
                 online=session.connectorStatus == "online",
@@ -232,7 +325,7 @@ def platform_scoped_session_capability(
     )
     runtime_allowed = source_capability.allowed if source_capability is not None else True
     available = supported and runtime_available and online
-    allowed = runtime_allowed and session.takeover
+    allowed = runtime_allowed and (session.takeover or capability_id in {SESSION_EXECUTION_POSITION_READ, SESSION_CONFIGURATION_READ})
     unavailable_reason = platform_unavailable_reason(
         source_capability,
         supported,

@@ -55,7 +55,9 @@ PostgreSQL and Redis, the Server on fixed port `8000`, the Web app on fixed port
 It releases existing listeners on those three application ports, always points
 Desktop at the local Server, and stays in the foreground like `./local-up.sh`,
 streaming prefixed Server, Web, and Desktop logs (also written to
-`.local-dev/logs/`). Press Ctrl-C to stop everything it started; `down` stops a
+`.local-dev/logs/`). Press Ctrl-C to stop its application processes (with a 5-second shutdown
+timeout); shared PostgreSQL and Redis containers stay running for the next launch.
+`down` stops a
 launcher still running in another terminal:
 
 ```bash

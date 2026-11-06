@@ -53,6 +53,8 @@ async function render(t, { source = "desktop", flowId = "", authFailed = false }
   }
   t.mock.method(authApi, "config", async () => ({ needsBootstrap: false, registrationOpen: true }))
   t.mock.method(authApi, "me", async () => account)
+  t.mock.method(dashboardApi, "listConnectors", async () => ({ connectors: [connector] }))
+  t.mock.method(dashboardApi, "getConnectorRuntimes", async () => ({ runtimes: [] }))
   t.mock.method(dashboardApi, "getConnector", async () => ({ connector }))
   const container = document.createElement("div")
   document.body.append(container)
@@ -98,9 +100,9 @@ test("skipping records completion for a user launch and opens the app", async (t
   await act(async () => { button(container, "跳过引导").click(); await delay(10) })
   const dialog = document.querySelector('[role="dialog"]')
   assert.ok(dialog, "the skip confirmation did not open")
-  assert.match(dialog.textContent, /确认跳过引导？/)
+  assert.match(dialog.textContent, /你还没有添加任何 Agent/)
   await act(async () => {
-    [...dialog.querySelectorAll("button")].find((item) => item.textContent === "确认跳过").click()
+    [...dialog.querySelectorAll("button")].find((item) => item.textContent === "暂不配置，继续").click()
     await delay(10)
   })
   await until(() => container.querySelector('[data-slide="complete"]'))
@@ -119,7 +121,7 @@ test("a plugin flow records the plugin source", async (t) => {
   await act(async () => { button(container, "跳过引导").click(); await delay(10) })
   const dialog = document.querySelector('[role="dialog"]')
   await act(async () => {
-    [...dialog.querySelectorAll("button")].find((item) => item.textContent === "确认跳过").click()
+    [...dialog.querySelectorAll("button")].find((item) => item.textContent === "暂不配置，继续").click()
     await delay(10)
   })
   await until(() => container.querySelector('[data-slide="complete"]'))

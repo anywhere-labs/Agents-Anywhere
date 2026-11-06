@@ -21,6 +21,7 @@ from agent_server.infra.db import connectors as connectors_t
 from agent_server.infra.db import device_runtimes as device_runtimes_t
 from agent_server.infra.db import retired_device_runtimes as retired_runtimes_t
 from agent_server.infra.db import sessions as sessions_t
+from agent_server.infra.repositories.channel_reconciliation import channel_connection
 
 _CONTROL_V2_DESCRIPTOR_KEY = "__runtimeControlV2Descriptor"
 
@@ -37,14 +38,14 @@ def _json_loads(value: str | None) -> Any:
 
 class DeviceRuntimeRepositoryMixin:
     async def runtime_session_ids(self, connector_id: str, runtime_id: str) -> list[str]:
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             return list((await conn.execute(select(sessions_t.c.id).where(
                 sessions_t.c.connector_id == connector_id, sessions_t.c.runtime_id == runtime_id,
             ))).scalars())
 
     async def get_unconfigured_runtime_ids(self, connector_id: str) -> set[str]:
         """Ingress denylist, including identities permanently retired by deletion."""
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             result = await conn.execute(
                 select(device_runtimes_t.c.runtime_id).where(
                     device_runtimes_t.c.connector_id == connector_id,
@@ -64,7 +65,7 @@ class DeviceRuntimeRepositoryMixin:
         """Persist Runtime Control 2.0 type facts without creating instances."""
 
         now = utc_now()
-        async with self._engine.begin() as conn:
+        async with channel_connection(self, write=True) as conn:
             connector = (
                 await conn.execute(
                     select(connectors_t.c.id).where(
@@ -190,7 +191,7 @@ class DeviceRuntimeRepositoryMixin:
         )
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             rows = (await conn.execute(query)).mappings().all()
             if not rows and not await self._connector_exists(
                 conn, connector_id, user_id=user_id
@@ -216,7 +217,7 @@ class DeviceRuntimeRepositoryMixin:
         )
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             row = (await conn.execute(query)).mappings().first()
         if row is None:
             raise KeyError(runtime_type)
@@ -230,13 +231,18 @@ class DeviceRuntimeRepositoryMixin:
         name: str,
         config: dict[str, Any],
         active: bool,
+        runtime_id: str | None = None,
+        managed_by: str | None = None,
     ) -> dict[str, Any]:
         normalized_name = normalize_runtime_instance_name(name)
-        runtime_id = str(generate_runtime_instance_id())
+        runtime_id = runtime_id or str(generate_runtime_instance_id())
         RuntimeIdentity.create(runtime_type=runtime_type, runtime_id=runtime_id)
         now = utc_now()
         try:
-            async with self._engine.begin() as conn:
+            async with channel_connection(self, write=True) as conn:
+                owner = await self.channel_connector_owner(connector_id)
+                if owner is not None:
+                    await conn.execute(select(func.pg_advisory_xact_lock(func.hashtextextended("channel-user:" + owner, 0))))
                 # Lock the type row so concurrent creates serialize before
                 # counting existing instances. NO KEY leaves foreign-key checks
                 # from other writers unblocked.
@@ -252,6 +258,12 @@ class DeviceRuntimeRepositoryMixin:
                 ).first()
                 if locked is None:
                     raise KeyError(runtime_type)
+                existing = (await conn.execute(select(device_runtimes_t.c.runtime_id).where(
+                    device_runtimes_t.c.connector_id == connector_id,
+                    device_runtimes_t.c.runtime_id == runtime_id,
+                ))).first()
+                if existing is not None:
+                    return await self.get_device_runtime(connector_id, runtime_id)
 
                 type_row = (
                     (
@@ -308,6 +320,7 @@ class DeviceRuntimeRepositoryMixin:
                         name=normalized_name,
                         name_key=runtime_instance_name_key(normalized_name),
                         config_json=_json_dumps(config),
+                        managed_by=managed_by,
                         active=1 if active else 0,
                         status="stopped",
                         error_json=None,
@@ -316,6 +329,8 @@ class DeviceRuntimeRepositoryMixin:
                         updated_at=now,
                     )
                 )
+                if owner is not None:
+                    await self._refresh_channel_targets(owner)
         except IntegrityError as exc:
             raise ValueError("runtime instance ID or name already exists") from exc
         return await self.get_device_runtime(connector_id, runtime_id)
@@ -329,7 +344,7 @@ class DeviceRuntimeRepositoryMixin:
         normalized_name = normalize_runtime_instance_name(name)
         now = utc_now()
         try:
-            async with self._engine.begin() as conn:
+            async with channel_connection(self, write=True) as conn:
                 instance = (
                     await conn.execute(
                         select(device_runtimes_t.c.runtime_type).where(
@@ -380,7 +395,7 @@ class DeviceRuntimeRepositoryMixin:
         query = query.order_by(
             device_runtimes_t.c.name_key, device_runtimes_t.c.runtime_id
         )
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             rows = (await conn.execute(query)).mappings().all()
             if not rows and not await self._connector_exists(
                 conn, connector_id, user_id=user_id
@@ -408,7 +423,7 @@ class DeviceRuntimeRepositoryMixin:
             )
             .order_by(device_runtimes_t.c.name_key, device_runtimes_t.c.runtime_id)
         )
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             rows = (await conn.execute(query)).mappings().all()
         return [_runtime_row(row) for row in rows]
 
@@ -426,7 +441,7 @@ class DeviceRuntimeRepositoryMixin:
         )
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
-        async with self._engine.connect() as conn:
+        async with channel_connection(self) as conn:
             row = (await conn.execute(query)).mappings().first()
         if row is None:
             raise KeyError(runtime_id)
@@ -475,6 +490,18 @@ class DeviceRuntimeRepositoryMixin:
             phase_json=_json_dumps(phase) if phase is not None else None,
         )
 
+    async def set_device_runtime_model_connection(
+        self,
+        connector_id: str,
+        runtime_id: str,
+        report: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        return await self._update_device_runtime(
+            connector_id,
+            runtime_id,
+            model_connection_json=_json_dumps(report) if report is not None else None,
+        )
+
     async def delete_runtime_session_files(self, session_ids: list[str]) -> None:
         for session_id in session_ids:
             await self.files.delete_session(session_id)
@@ -496,7 +523,7 @@ class DeviceRuntimeRepositoryMixin:
             sessions_t.c.connector_id == connector_id,
             sessions_t.c.runtime_id == runtime_id,
         )
-        async with self._engine.begin() as conn:
+        async with channel_connection(self, write=True) as conn:
             result = await conn.execute(
                 update(device_runtimes_t)
                 .where(
@@ -556,7 +583,7 @@ class DeviceRuntimeRepositoryMixin:
         **values: Any,
     ) -> dict[str, Any]:
         values["updated_at"] = utc_now()
-        async with self._engine.begin() as conn:
+        async with channel_connection(self, write=True) as conn:
             result = await conn.execute(
                 update(device_runtimes_t)
                 .where(
@@ -637,6 +664,8 @@ def _runtime_type_row(row: Any) -> dict[str, Any]:
         "metadata": _json_loads(row["metadata_json"]) or {},
         "instancePolicy": str(row["instance_policy"]),
         "maxInstances": row["max_instances"],
+        "maturity": descriptor.get("maturity") if descriptor is not None else None,
+        "modelConnection": descriptor.get("modelConnection") if descriptor is not None else None,
         "lastDiscoveredAt": str(row["last_discovered_at"]),
         "createdAt": str(row["created_at"]),
         "updatedAt": str(row["updated_at"]),
@@ -649,6 +678,10 @@ def _runtime_row(row: Any) -> dict[str, Any]:
     configured = row["config_json"] is not None
     status = str(row["status"])
     error = _json_loads(row["error_json"])
+    descriptor = _stored_v2_descriptor(discovery) or {}
+    report = (
+        _json_loads(row["model_connection_json"]) if "model_connection_json" in row else None
+    )
     phase = _json_loads(row["phase_json"]) if "phase_json" in row else None
     if not isinstance(phase, dict):
         phase = None
@@ -681,6 +714,10 @@ def _runtime_row(row: Any) -> dict[str, Any]:
         "defaults": _json_loads(row["type_defaults_json"]) or {},
         "capabilities": _json_loads(row["type_capabilities_json"]) or {},
         "config": _json_loads(row["config_json"]),
+        "maturity": descriptor.get("maturity"),
+        "modelConnection": descriptor.get("modelConnection"),
+        "modelConnectionReport": report if isinstance(report, dict) else None,
+        "managedBy": row.get("managed_by"),
         "error": error,
         "phase": phase,
         "lastDiscoveredAt": str(row["type_last_discovered_at"]),

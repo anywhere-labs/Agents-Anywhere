@@ -23,6 +23,7 @@ from connector.runtimes.codex.sdk.runtime_client import (
 )
 from connector.runtimes.codex.turns.actions import CodexTurnActions
 from connector.runtimes.codex.turns.selection_scopes import unsupported_selection_scope
+from connector.runtimes.runtime_model import selections_with_runtime_model
 
 EnsureStarted = Callable[[], Awaitable[None]]
 ListModelCatalog = Callable[[str | None, int], Awaitable[RuntimeModelCatalog]]
@@ -72,6 +73,9 @@ class CodexSessionStartController:
                     "selections": dict(effective_selections),
                 },
             )
+        effective_selections = await selections_with_runtime_model(
+            effective_selections, lambda: self.list_model_catalog(None, 200)
+        )
         try:
             selected_model = await model_settings_from_selection(
                 effective_selections.get("model"), self.list_model_catalog

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from connector.runtime_protocol import (
@@ -16,6 +16,7 @@ from connector.runtime_protocol import (
     MarkdownMessageContent,
     McpToolContent,
     MessageTimelineItem,
+    NoticeSystemContent,
     ReasoningSystemContent,
     RuntimeTimelineItem,
     SystemTimelineItem,
@@ -29,6 +30,7 @@ from connector.runtime_protocol import (
     complete_tool_content,
 )
 from connector.runtimes.claude.domain.session import ClaudeSession
+from connector.runtimes.claude.sdk.retry import api_retry_details
 from connector.runtimes.claude.timeline.agent_calls import (
     claude_agent_call_content,
     complete_claude_agent_call_content,
@@ -81,6 +83,50 @@ class ClaudeMessageProjector:
         self._tool_calls: dict[str, ClaudePendingToolCall] = {}
         self._tool_call_lookup = dict(tool_call_lookup or {})
         self._ignored_task_tool_use_ids: set[str] = set(ignored_task_tool_use_ids or ())
+        self._retry_items: dict[tuple[str, str], SystemTimelineItem] = {}
+
+    def retry_item_for_message(
+        self, session: ClaudeSession, turn_id: str, message: Any,
+    ) -> RuntimeTimelineItem | None:
+        details = api_retry_details(message)
+        if details is None:
+            return None
+        key = (session.session_id, turn_id)
+        previous = self._retry_items.get(key)
+        item_id = _stable_id("api-retry", *key)
+        if item_id not in self._order_by_id:
+            self._order_by_id[item_id] = self._next_order_seq
+            self._next_order_seq += 1
+        item = SystemTimelineItem(
+            id=item_id, type="system", status="running", role="system",
+            turn_id=turn_id, revision=previous.revision + 1 if previous else 1,
+            content=NoticeSystemContent(
+                text="The model service is temporarily unavailable. Retrying.",
+                severity="warning", metadata=details,
+            ),
+            source=TimelineSource(
+                runtime="claude", external_session_id=session.external_session_id,
+                turn_id=turn_id, event="claude.api_retry", derived_key="api_retry",
+            ),
+        )
+        self._retry_items[key] = item
+        return item.to_platform_item(session.session_id, self._order_by_id[item_id])
+
+    def finish_retry(
+        self, session: ClaudeSession, turn_id: str, outcome: str,
+    ) -> RuntimeTimelineItem | None:
+        item = self._retry_items.pop((session.session_id, turn_id), None)
+        if item is None:
+            return None
+        content = replace(
+            item.content, text="Model request retry finished.",
+            metadata={**item.content.metadata, "state": outcome},
+        )
+        item = replace(
+            item, content=content, revision=item.revision + 1,
+            status={"completed": "done", "failed": "failed"}.get(outcome, "interrupted"),
+        )
+        return item.to_platform_item(session.session_id, self._order_by_id[item.id])
 
     def message_item(
         self,

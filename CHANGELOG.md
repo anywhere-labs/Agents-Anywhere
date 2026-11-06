@@ -4,14 +4,125 @@
 
 ## 未发布
 
+### 升级须知
+
+
+- Pi 优先复用本机兼容安装的模型、认证和配置；已有受管模型网关配置保持隔离，用户也可明确选择受管环境。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
+- Pi 接入需要 Server 执行 `v2_45` 数据库迁移，并配套更新 Connector 和使用此功能的客户端。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
+- 统一 Plan 需要 Server 执行 `v2_46` 数据库迁移，并配套更新 Connector、客户端和 DSH Bridge；DSH 还需组合原生 Plan 插件。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- 配置管理需要 Server 执行 `v2_47`、`v2_48` 和 `v2_49` 数据库迁移，升级前须停止旧 Server 进程，并配套更新 Server、Connector 和各客户端，旧 Connector 会保留原配置并提示升级；保存手动填写的 Key、链接 Tokens Anywhere 之前，部署者要把 `AGENT_SERVER_SECRET` 设为至少 32 个字符。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 链接 Tokens Anywhere 需要设置 `AGENT_SERVER_TOKENS_URL`（或由管理员在实例设置中填写 Tokens Anywhere 地址），并用 `AGENT_SERVER_PUBLIC_ORIGIN` 指定实例对外的地址；Tokens Anywhere 一侧要设置 `TOKENS_SECRETS_KEY`，否则 AA 拿不回托管 Key。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- Runtime 配置中的模型网关 Key 改为只写，接口和实时快照不再返回已保存的 Key；旧版客户端编辑这类配置时需要重新填写 Key。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+
+### 统一 Plan
+
+- 修复本机 Codex 会话首次同步时计划状态可能先于会话到达、导致计划同步被拒绝的问题。
+
+- 补齐 Web、Desktop、Android 和 iOS 计划卡片、审阅、阅读器及规划入口提示的中英文翻译，随客户端语言切换。
+
+- 修复 Codex 规划模式调用旧写入路由接口导致首轮任务创建失败的问题，并避免异常日志展开运行时对象造成 Connector 卡顿和断连。
+- 在 Codex、Claude Code 和 DSH 会话中可统一使用 `/plan`、`/plan <任务>` 与 `/plan off`；新会话首条任务即可进入原生规划，裸 `/plan` 只设置创建意图，不消耗空模型回合。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- Web、Desktop、Android 和 iOS 新增流式计划卡片，在输入区直接「同意并执行／修改计划／暂不执行」，不再弹出审批窗口；计划卡片与确认面板沿用审批卡样式，长计划可展开全文，「打开计划」后可复制和导出完整计划，Web 和 Desktop 支持与聊天并排阅读。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- 计划按不可变版本保存，设备离线仍可查阅；旧版本批准、重复执行和结果未知后的自动重发会被阻止，批准计划继续使用用户当前权限设置。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- 提交修改意见后的新计划作为同一份计划的下一版本（版本 2、3…），旧版本在时间线中收为一行，可随时打开；计划卡片按产生时间排在时间线中，批准后紧贴在实施内容上方，Codex 不再额外显示一条重复的计划系统消息。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- 斜杠菜单在支持规划的会话中提供 `/plan`，并显示中英文说明；Codex 内置指令的说明随客户端语言显示。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- Runtime、工作区准备、会话创建和原生历史的错误改为按稳定错误码显示中英文文案，英文界面不再出现 Connector 或 Server 固定输出的中文；Android 新建会话的输入校验提示也随语言显示。错误码文案集中在 `contracts/runtime-errors/1.0/messages.json`，由脚本生成到四端。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- 修复英文界面打开斜杠菜单时 `/plan` 说明文案解析失败报错；日期按应用语言而不是浏览器语言显示；Codex 与 Claude 的审批卡标题在中英文界面下各自显示对应语言。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- 本机缺少 Pi 等启动前即可确定的工作区准备失败，改为明确的失败状态并显示对应原因，不再标记为「结果未知」后反复查询。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+- 计划执行开始后不再在时间线末尾长期保留「计划执行已开始」，执行状态改由计划卡片显示；以冒号结尾的引导句作为计划标题时不再保留冒号。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
+
+### 配置管理
+
+- 所有渠道切换（包括模型或 Key 更新、重试和恢复）都立即执行，不再等待运行中的任务结束；切回设备自带配置时撤销 AA 写入的 Gateway 并重新加载原配置。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+
+- Web 和 Desktop 的模型渠道页改为开放式分区，移除导航、账户、余额和用量的嵌套卡片，用留白、分隔线和数字层级呈现信息；各渠道的 Runtime 列表固定展示所选渠道，不再提供渠道切换下拉框，渠道按钮与状态统一使用「应用／已应用」，渠道名称完整显示为「Tokens Anywhere」，移除左侧所有渠道和「添加配置」前的图标；设置侧栏分为上方的设置项和下方的「模型」分组，「模型渠道」移到「模型」分组中。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+
+- Android 和 iOS 的「模型渠道」改为与 Web 和 Desktop 相同的结构和文字：首页只列出各渠道，标出「已应用」和使用它的 Runtime 数量，点进渠道后再「应用」、查看配置和它的 Runtime；Tokens Anywhere 按「账户／模型与连接／Runtime」分页，不再把所有 Runtime 和按钮堆在同一页。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 模型渠道仅列出支持模型连接配置的 Runtime，DSH 等不支持此能力的 Runtime 不再出现在列表或切换进度中。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 修复旧配置待更新或新发现的 Runtime 因缺少切换任务而一直显示「排队中」的问题，重启服务或刷新模型渠道后可自动继续切换。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- Android 和 iOS 可在 Tokens Anywhere 账户中退出，待使用它的 Runtime 切离渠道后解除绑定；连接区域集中显示地址、协议和密钥轮换，地址可复制，用量支持主动刷新并自动清除失效的模型筛选；四端移除用量页底部的账户统计说明。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 「设置 → 模型渠道」可以选择默认渠道：设备自带配置、Anywhere 或手动添加的模型服务，没有单独指定的 Runtime 都跟随默认渠道，单个 Runtime 也可以单独指定；每个 Runtime 同一时间只用一个渠道。Web 和 Desktop 不再有顶部的渠道卡片，在左侧列表选中渠道后点「设为默认」，列表标出「默认」、每个渠道有几个 Runtime，以及是否正在切换或有切换失败。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 切换渠道时显示进度，并按设备列出每个 Runtime 的状态；Web 和 Desktop 选中渠道即可看到归它的 Runtime，Anywhere 账户的 Runtime 收入独立 Tab：
+  - 在线 Runtime 立即切换并中断运行中的任务，设备离线的上线后自动切换；
+  - 切换前会保存原配置，新配置没能启动或核实不一致时自动恢复原渠道并显示原因，可以「重试」；恢复也失败时显示「需要处理」；切换和恢复只核实配置是否生效，不再因余额不足或模型请求失败而回滚或报切换失败；
+  - 切换期间新建会话和发送消息会稍等切换完成，不会落到正在重启的 Runtime 上；Server 重启后会接着完成未完成的切换；
+  - 还没有配置过的 Runtime、协议不兼容的 Runtime 不跟随渠道，列在「不支持」里并说明原因；会修改自身全局配置的 Runtime 只能单独指定并确认。
+
+  [#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)
+- 链接 Anywhere 账户后，账户卡片按页签展示：
+  - 「Runtime」页签显示使用 Anywhere 渠道的 Runtime 和切换进度；
+  - 「账户」显示账户和余额、跳转充值，以及整个 Tokens Anywhere 账户近 7 天或 30 天的花费、请求数、输入／输出／缓存 Tokens、每日花费图表和按模型汇总，支持按模型筛选和切换每日花费表格；
+  - 「模型与连接」显示可复制的地址、Key 提示与「轮换 Key」，按厂商列出 Tokens Anywhere 的模型，可以关闭单个模型或整组、给模型改名（只影响 Agents Anywhere），保存后使用 Anywhere 渠道的 Runtime 自动重新写入；还可以展开查看各协议地址。Web 和 Desktop 不再显示「恢复默认」按钮。
+
+  [#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)
+- 管理员可以在「管理 → 常规」里填写或清空 Tokens Anywhere 地址；已有账户链接时地址会锁定，全部断开后才能修改。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 修复 Web 和 Desktop 模型渠道页在浏览器授权 Tokens Anywhere 后进度不更新、同步失败仍持续转圈的问题。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 本地启动器退出时保留共用的 PostgreSQL 和 Redis，并在关闭超时后结束残留应用进程，避免重启期间数据库断连或新旧进程重叠。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 本地启动时自动生成并保存配置管理所需的密钥，后续启动继续复用，无需手动填写即可测试模型 Key 保存。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 「设置 → 模型渠道」也可以手动添加模型服务，作为渠道给各设备上的 Codex、Claude Code 和 Pi 使用：只需填写名称、地址和 Key，保存时自动识别服务支持的协议和模型，不调用模型、不产生费用；地址在内网、连不上或识别不出协议时，可以改为手动选择协议并填写模型，部署者也可以设置 `AGENT_SERVER_ALLOW_PRIVATE_MODEL_GATEWAYS=1` 允许识别内网地址；在任一客户端修改后，其他客户端立即同步显示；离线期间多次切换会在上线后直接追到最终渠道，相同有效配置不再重复重启，恢复失败后的重试会继续完成恢复和目标应用。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- Web 和 Desktop 的 Anywhere 账户用「退出」代替「切换账号」：使用 Anywhere 的 Runtime 先重启并改用默认渠道（Anywhere 原本就是默认渠道时改用设备自带配置），全部切换完成后自动退出账户并撤销授权；轮换 Key 前需二次确认，确认后新 Key 按切换流程写入所有使用 Anywhere 渠道的 Runtime，回包丢失时会自动核实轮换结果，离线设备上线后补齐新 Key。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- Runtime 的模型连接状态分为「未配置」「已保存，待应用」「已应用」「应用失败」「由外部客户端管理」；「已应用」表示 Runtime 已采用配置，不代表连接已验证。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 模型网关的 Key 保存后不再显示，只保留开头和结尾几位用于辨认；不改 Key 时可以留空，更换地址时需要重新填写。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 本机模式的 Pi 不能使用模型网关，切换到 AA 渠道时会另建一个受管 Pi 实例，本机 Pi 及其历史不受影响，切回设备自带配置后新会话回到本机 Pi。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 移除「服务模型／渠道切换」设置页、Tokens Anywhere 的一键配置和逐台设备「应用」；模型仍在输入框中选择，Web 和 Desktop 的模型选择不显示渠道图标。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 接入模型网关后恢复 Codex 已有会话时，继续使用会话原来的模型，不再被切换成本机 Codex 配置里的模型。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+
 ### 会话创建与消息交付
+
+- Desktop 在准备本机 Connector 环境时一并准备 Pi 适配器及依赖，支持查看安装输出、取消与失败重试；已有缓存有效时直接启动，不再每次弹出依赖准备窗口，首次创建 Pi 会话不再临时下载适配器。（[#518](https://github.com/anywhere-labs/Agents-Anywhere/pull/518)、[#527](https://github.com/anywhere-labs/Agents-Anywhere/pull/527)）
+
+- Connector 重连恢复期间，Web 与 Desktop 会等待 Agent 就绪后再允许创建会话，显示 Agent 启动、模型加载和空目录状态，加载失败时可查看原因并重试，且仍可切换设备与 Agent；运行时启动不再等待所有历史会话的能力刷新。（[#518](https://github.com/anywhere-labs/Agents-Anywhere/pull/518)、[#523](https://github.com/anywhere-labs/Agents-Anywhere/pull/523)）
+
+- 附件上传与下载改为流式处理，发送或打开大文件时不再整包占用服务端内存；图片附件同时提供缩略图地址，浏览大图更省流量。（[#492](https://github.com/anywhere-labs/Agents-Anywhere/pull/492)）
+
+- 修复 Codex 查看图片的记录显示为 `unknown` 的问题，现可点击图片路径打开预览。（[#491](https://github.com/anywhere-labs/Agents-Anywhere/pull/491)）
+
+- 修复接入 Codex 已有会话后，补入的旧消息出现在最新消息下方、历史消息交错或重排后顺序没有更新的问题；升级后同步会自动校准已有记录。（[#480](https://github.com/anywhere-labs/Agents-Anywhere/pull/480)）
+
+- Pi 接入：
+  - Web、Desktop、Android 和 iOS 会话列表统一显示 Pi 官方单色图标，并随应用主题着色。（[#514](https://github.com/anywhere-labs/Agents-Anywhere/pull/514)）
+  - 沿用 Codex 的 Agent、模型、权限和发送入口，各端自动加载工作区模型；
+  - 支持首条及后续附件、工具审批、运行中追加指示和会话恢复；
+  - 可以浏览本机原生历史，退出对应 CLI 会话后用「继续任务」恢复原会话；
+  - 检测到外部历史变化时停止继续写入；
+  - 附件卡片在历史同步和恢复后仍然保留，运行中追加的指示和扩展自动发送的消息各自单独显示，不会和你的消息混在一起；
+  - 所选模型不支持图片时，各端在发送或新建前就会提示，会话仍可继续使用，在执行前被拒绝的消息显示为失败；
+  - 本机 Pi 支持 1.2.0 及之后的 1.x 版本，不再只认 1.4.0；升级本机 Pi 后已有的 Pi 实例可以继续使用，遇到不兼容的版本会说明原因；
+  - 本机 Pi 尚未登录或没有可用模型时，新建会话会提示先运行 `pi` 完成登录或模型配置，不再只显示「Agent 初始化未完成」。
+
+  [#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)、[#509](https://github.com/anywhere-labs/Agents-Anywhere/pull/509)
+
+- Desktop 刷新本机设备列表时不再反复返回 Connector 启动页。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 
 - Connector 上报的时间线条目序号超出范围时只拒绝这条上报，同批其他消息照常保存，不再让整个会话之后的消息都存不进数据库；升级前已经积压的条目会按原顺序排到时间线末尾保存，持续写入失败的会话也不再每秒重试刷屏日志。（[#464](https://github.com/anywhere-labs/Agents-Anywhere/pull/464)）
 
+### DSH 同步
+
+- 首次同步大量或很长的会话时，即使有 Agent 正在持续输出，也不再因事件积压反复从头同步、一直停在「正在同步 DSH 会话…」；积压过多时只重新校准占用最多的那个会话。（[#511](https://github.com/anywhere-labs/Agents-Anywhere/pull/511)）
+- 上传同步数据时连接偶尔中断或 Server 短暂返回 5xx，会先自动重试，不再立即中断并重新同步全部会话。（[#511](https://github.com/anywhere-labs/Agents-Anywhere/pull/511)）
+
 ### Web 与 Desktop 界面
 
+- 新建会话输入框下方不再显示模型加载时返回的原始错误提示，保留模型状态和重试入口。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- Anywhere 账户支持一键「切换账号」，授权后新 Key 按切换流程写入各设备，保留模型配置、Runtime 和会话，忙碌或离线设备会在空闲上线后自动完成。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+
 - Tokens Anywhere 可以用 Agents Anywhere 账号登录：Web 会先显示「登录 Tokens Anywhere」确认页，确认后才向 Tokens Anywhere 提供名称、邮箱和头像，选「取消」则不提供任何信息。部署者设置 `AGENT_SERVER_TOKENS_ANYWHERE_CLIENT_SECRET` 和 `AGENT_SERVER_TOKENS_ANYWHERE_REDIRECT_URI` 后开启。（[#470](https://github.com/anywhere-labs/Agents-Anywhere/pull/470)）
-- 侧边栏新增 Tokens Anywhere 入口，介绍页可以直接前往获取 API 密钥；不需要时可以在页面上或「设置 → 外观」里隐藏。构建 Web 和 Desktop 时设置 `NEXT_PUBLIC_TOKENS_ANYWHERE_URL` 才会出现这个入口。（[#470](https://github.com/anywhere-labs/Agents-Anywhere/pull/470)）
+- 侧边栏新增 Tokens Anywhere 入口，介绍页可以直接前往获取 API 密钥；不需要时可以在页面上或「设置 → 外观」里隐藏。实例设置了 Tokens Anywhere 地址后才会出现这个入口，自部署实例不需要重新构建。（[#470](https://github.com/anywhere-labs/Agents-Anywhere/pull/470)、[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- Beta 和实验性的 Runtime 会在状态旁显示「Beta」「实验性」标记，例如「Pi Beta · 运行中」。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+
+### Android
+
+- 修复开启接管后输入框有时仍提示「当前运行时状态下不可发送消息」、需要重新进入会话才能发送的问题。（[#519](https://github.com/anywhere-labs/Agents-Anywhere/pull/519)）
+
+- Android 可以直接添加和管理 Agent，不必再去桌面端操作：
+  - 设备页可以快速添加、配置、重命名、启停和删除 Agent，配置项按 Agent 类型自动生成，包括路径、模型 Gateway、环境变量和自定义模型等；
+  - 连接设备后直接打开「为这台设备选择 Agent」，可一键配置；离开配对页后设备才上线时，也会提示添加 Agent；
+  - 进入主界面仍没有 Agent 时会弹窗提醒，「添加 Agent」直接打开这个面板；已添加但离线的 Agent 不会误触发提醒；
+  - 删除 Agent 配置前会说明关联的会话、消息记录和附件将被永久删除。
+
+  [#513](https://github.com/anywhere-labs/Agents-Anywhere/pull/513)、[#521](https://github.com/anywhere-labs/Agents-Anywhere/pull/521)
+
+- 终端文件页可以预览工作区图片；对话里工具和命令输出提到的工作区截图，点一下即可加载缩略图，再点可打开大图。（[#493](https://github.com/anywhere-labs/Agents-Anywhere/pull/493)）
 
 ## 2.1.0（2026-10-27）
 
@@ -36,9 +147,11 @@
 
 ### Codex 与 Claude
 
+- Claude 模型请求遇到限流或服务暂不可用并自动重试时，四端会话会显示重试次数和等待时间，中断或请求结束后提示同步收尾。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+
 - 接入 Codex App / IDE 插件的 IPC 协议，在 Codex 窗口里打开的会话也能在 AA 中继续操作，包括发消息、中断、审批、切换模型和权限、发送附件；支持 macOS 和 Windows。（[#299](https://github.com/anywhere-labs/Agents-Anywhere/pull/299)、[#334](https://github.com/anywhere-labs/Agents-Anywhere/pull/334)）
 - 新增 `/open-in-codex-app` 和 `/kill-chatgpt` 命令：前者在 Codex App 中打开当前会话，后者退出 App 以释放写锁。（[#299](https://github.com/anywhere-labs/Agents-Anywhere/pull/299)）
-- 写入发往当前持有会话的一方；会话被 Codex App 占着、却没有窗口显示它时，先让正在运行的 App 打开这个会话再发送（由设置「把被锁定的线程交给 Codex App」控制），仍联系不上持有方才报错，不会和 App 抢写锁。（[#437](https://github.com/anywhere-labs/Agents-Anywhere/pull/437)、[#455](https://github.com/anywhere-labs/Agents-Anywhere/pull/455)）
+- 写入（包括 `/compact`）发往当前持有会话的一方；会话被 Codex App 占着、却没有窗口显示它时，先让正在运行的 App 打开这个会话再发送（由设置「把被锁定的线程交给 Codex App」控制），仍联系不上持有方才报错，不会和 App 抢写锁。（[#437](https://github.com/anywhere-labs/Agents-Anywhere/pull/437)、[#455](https://github.com/anywhere-labs/Agents-Anywhere/pull/455)、[#506](https://github.com/anywhere-labs/Agents-Anywhere/pull/506)）
 - 只读取状态或在后台同步时不再接管会话，Codex Desktop 和 AA 可以在同一个会话里同时对话。（[#445](https://github.com/anywhere-labs/Agents-Anywhere/pull/445)）
 - Connector 作为 IPC 路由时，为每个请求单独查找处理方，修复两端互相等待 10 秒、导致 AA 的写入被误拦截。（[#446](https://github.com/anywhere-labs/Agents-Anywhere/pull/446)）
 - AA 新建的会话会立即出现在 Codex App 里，App 新建的会话也会被立即跟随，两边都不用重启。（[#334](https://github.com/anywhere-labs/Agents-Anywhere/pull/334)）
@@ -93,6 +206,8 @@
 
 ### Web 与 Desktop 界面
 
+- 跳过教程或未添加 Agent 就继续时会提醒配置，进入主界面仍无 Agent 时可直接在弹窗中添加，已添加但离线的 Agent 不会触发空配置提醒，添加期间设备离线也可关闭弹窗。（[#513](https://github.com/anywhere-labs/Agents-Anywhere/pull/513)）
+
 - 管理看板重做：
   - 新增概览、用户、使用量、设备与 Runtime、运行质量视图；
   - 支持选择时间范围，并显示实时指标；
@@ -123,6 +238,8 @@
 - 「立即更新」会从官网 www.agents-anywhere.com 下载最新 APK。（[#458](https://github.com/anywhere-labs/Agents-Anywhere/pull/458)）
 
 ### iOS
+
+- 跳过 Agent 配置或关闭连接引导时会提醒确认，进入主界面尚无 Agent 时可从提醒弹窗打开现有配置面板，没有设备时引导连接设备。（[#513](https://github.com/anywhere-labs/Agents-Anywhere/pull/513)）
 
 - 启动和回到前台时展示公告，已读记录按服务器分别保存。（[#248](https://github.com/anywhere-labs/Agents-Anywhere/pull/248)）
 - 模型选择器按供应商分组，与其他端一致。（[#449](https://github.com/anywhere-labs/Agents-Anywhere/pull/449)）

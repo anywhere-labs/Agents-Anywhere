@@ -1,0 +1,36 @@
+{
+  "$id": "https://agents-anywhere.dev/contracts/runtime-control/2.1/schemas/runtime-discover-response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Provider descriptors and Connector-wide protocol features for the single supported Runtime Control protocol.",
+  "properties": {
+    "features": {
+      "description": "Connector-wide protocol features. switchFence: runtime.validateConfig and runtime.start accept operationId and switchRevision, runtime.start reports configDigest and instanceId, and a fenced runtime.start always replaces the instance. modelProbe: runtime.probeModelConnection sends one minimal model request with the running instance's connection. Unknown entries must be ignored; absent means none. channelReconcileFence: extends persistent switch fencing to runtime.stop and managed-instance reconciliation; required for automatic channel catch-up.",
+      "items": {
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[A-Za-z][A-Za-z0-9._-]*$",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "runtimeTypes": {
+      "items": {
+        "$ref": "runtime-type-descriptor.schema.json"
+      },
+      "maxItems": 64,
+      "type": "array"
+    }
+  },
+  "required": [
+    "runtimeTypes"
+  ],
+  "title": "RuntimeDiscoverResponse",
+  "type": "object",
+  "x-direction": "egress",
+  "x-rpc-method": "runtime.discover",
+  "x-rpc-part": "result",
+  "x-runtime-control-version": "2.1"
+}

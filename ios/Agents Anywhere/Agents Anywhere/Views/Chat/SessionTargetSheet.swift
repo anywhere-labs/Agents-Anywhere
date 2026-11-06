@@ -57,7 +57,7 @@ struct SessionTargetSheet: View {
             Text(String(localized: "这台设备尚无已配置的 Agent。")).font(.footnote).foregroundStyle(.secondary)
         }
         ForEach(inventory) { runtime in
-            InlineSelectionButton(title: runtime.sessionDisplayName, detail: runtime.sessionUnavailableReason,
+            InlineSelectionButton(title: runtime.sessionDisplayName, detail: runtime.pickerDetail,
                 isSelected: model.connectorID == device.id && model.runtimeID == runtime.id,
                 isWorking: applying == TargetSelection(connectorID: device.id, runtimeID: runtime.id)) {
                 apply(device: device, runtime: runtime)

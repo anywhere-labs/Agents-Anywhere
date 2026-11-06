@@ -693,7 +693,10 @@ def test_session_create_and_start_preallocates_session_and_passes_selections(tmp
         headers=headers,
         follow_redirects=False,
     )
-    assert open_attachment.status_code == 302
+    # Local storage serves /open from disk directly (no signed redirect), so a
+    # phone can stream, resume and revalidate instead of buffering it.
+    assert open_attachment.status_code == 200
+    assert open_attachment.content == b"hello"
     state = client.get(f"/sessions/{session['id']}/runtime/state", headers=headers)
     assert state.status_code == 200
     assert state.json()["state"]["status"] == "idle"
@@ -11198,21 +11201,38 @@ def test_client_uploads_attachment_and_connector_downloads_by_session(tmp_path):
     assert base64.b64decode(download_body["contentBase64"]) == data
 
     open_response = client.get(upload_body["openUrl"], headers=headers, follow_redirects=False)
-    assert open_response.status_code == 302
-    local_url = open_response.headers["location"]
-    assert local_url.startswith(f"/api/v2/sessions/local/{session_id}/{upload_body['fileId']}?token=")
+    assert open_response.status_code == 200
+    assert open_response.content == data
+    assert open_response.headers["accept-ranges"] == "bytes"
+    assert open_response.headers["etag"] == f'"{upload_body["sha256"]}"'
+    assert "filename*=UTF-8''%E6%88%AA%E5%9B%BE.png" in open_response.headers["content-disposition"]
 
-    raw_response = client.get(local_url)
-    assert raw_response.status_code == 200
-    assert raw_response.content == data
-    assert "filename*=UTF-8''%E6%88%AA%E5%9B%BE.png" in raw_response.headers["content-disposition"]
+    ranged_response = client.get(
+        upload_body["openUrl"],
+        headers={**headers, "Range": "bytes=0-4"},
+        follow_redirects=False,
+    )
+    assert ranged_response.status_code == 206
+    assert ranged_response.content == data[:5]
+    assert ranged_response.headers["content-range"] == f"bytes 0-4/{len(data)}"
+
+    not_modified = client.get(
+        upload_body["openUrl"],
+        headers={**headers, "If-None-Match": open_response.headers["etag"]},
+        follow_redirects=False,
+    )
+    assert not_modified.status_code == 304
 
     user_token_open_response = client.get(
         f"{upload_body['openUrl']}?token={headers['Authorization'].removeprefix('Bearer ')}",
         follow_redirects=False,
     )
-    assert user_token_open_response.status_code == 302
-    assert client.get(f"{upload_body['openUrl']}-token", headers=headers).status_code == 404
+    assert user_token_open_response.status_code == 200
+    assert user_token_open_response.content == data
+    # An unknown suffix must not fall back to serving the blob; the bundled web
+    # build answers unknown paths with its SPA shell instead of a 404.
+    unknown_suffix = client.get(f"{upload_body['openUrl']}-token", headers=headers)
+    assert unknown_suffix.status_code == 404
 
     connector_download = client.get(
         f"/api/v2/connector/sessions/{session_id}/attachments/{upload_body['fileId']}/content",

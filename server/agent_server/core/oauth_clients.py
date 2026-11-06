@@ -55,10 +55,13 @@ def first_party_oauth_client(client_id: str) -> FirstPartyOAuthClient | None:
         if not secret and not redirect:
             return None
         uri = urlsplit(redirect)
+        # HTTPS, except a Tokens Anywhere running on this machine for local
+        # development: the callback comes from configuration, never a request.
+        loopback = uri.scheme == "http" and uri.hostname in {"localhost", "127.0.0.1", "::1"}
         if (
             len(secret) < 32
             or len(os.environ.get("AGENT_SERVER_SECRET", "")) < 32
-            or uri.scheme != "https"
+            or (uri.scheme != "https" and not loopback)
             or not uri.hostname
             or uri.username is not None
             or uri.password is not None

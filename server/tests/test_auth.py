@@ -1298,3 +1298,9 @@ def test_web_oauth_expired_code_and_disabled_client(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENT_SERVER_TOKENS_ANYWHERE_CLIENT_SECRET", "short")
     monkeypatch.setenv("AGENT_SERVER_TOKENS_ANYWHERE_REDIRECT_URI", "http://api.example.test/oauth/aa")
     assert client.get("/oauth/authorize", params=params, follow_redirects=False).status_code == 503
+    # Plain http is only allowed for a Tokens Anywhere on this machine.
+    monkeypatch.setenv("AGENT_SERVER_TOKENS_ANYWHERE_CLIENT_SECRET", "test-anywhere-client-secret-at-least-32-bytes")
+    assert client.get("/oauth/authorize", params=params, follow_redirects=False).status_code == 503
+    monkeypatch.setenv("AGENT_SERVER_TOKENS_ANYWHERE_REDIRECT_URI", "http://localhost:5173/oauth/aa")
+    local = client.get("/oauth/authorize", params={**params, "redirect_uri": "http://localhost:5173/oauth/aa"}, follow_redirects=False)
+    assert local.status_code in {302, 307}, local.text

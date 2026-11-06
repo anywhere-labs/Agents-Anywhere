@@ -6,6 +6,7 @@ import pytest
 from test_codex_runtime import FakeCodexClient, FakeHost, _config
 
 from connector.runtime_protocol import RuntimeConflictError
+from connector.runtimes.codex.ipc import FollowedThread, IpcResponse
 from connector.runtimes.codex.runtime import CodexRuntime
 
 
@@ -249,5 +250,121 @@ def test_other_native_writer_rejects_command_without_prompt_fallback():
         assert not result.ok and result.code == "command_rejected"
         assert "active writer" in result.message
         assert not any(m == "turn/start" for m, _ in client.requests)
+
+    run(check())
+
+
+class _HeldFollower:
+    def __init__(self, *, reachable: bool = True) -> None:
+        self.reachable = reachable
+        self.thread = None
+
+    def get(self, thread_id):
+        return self.thread if self.thread and self.thread.thread_id == thread_id else None
+
+    async def follow(self, thread_id, *, discovery_timeout_ms=None):
+        if not self.reachable:
+            raise TimeoutError("no owner answered")
+        self.thread = FollowedThread(
+            thread_id=thread_id,
+            status="following",
+            owner_client_id="codex-app",
+            revision=1,
+            state={"cwd": "/w", "currentPermissions": {}},
+        )
+        return self.thread
+
+
+class _HeldService:
+    def __init__(self, follower) -> None:
+        self.follower = follower
+
+    async def start(self) -> None: ...
+
+    async def stop(self) -> None: ...
+
+    def thread_is_held(self, thread_id):
+        return True
+
+
+class _OwnerIpc:
+    client_id = "aa"
+    initialized = True
+    is_router = False
+
+    def __init__(self, error: str | None = None) -> None:
+        self.error = error
+        self.calls = []
+
+    async def request(self, method, params, *, target_client_id=None, host_id=None, timeout_ms=None):
+        self.calls.append((method, params, target_client_id))
+        return IpcResponse(
+            request_id="r",
+            result_type="error" if self.error else "success",
+            method=method,
+            handled_by_client_id=target_client_id,
+            result=None if self.error else {},
+            error=self.error,
+        )
+
+    async def start(self) -> None: ...
+
+    async def stop(self) -> None: ...
+
+
+async def held_runtime_fixture(ipc, follower):
+    client = FakeCodexClient()
+    runtime = CodexRuntime(
+        config=_config(),
+        host=FakeHost(),
+        client=client,
+        ipc=ipc,
+        ipc_service=_HeldService(follower),
+        safe_ipc_write_routing=True,
+    )
+    await runtime._session_states.update("sess_1", "thread_1", status="idle")
+    return runtime, client
+
+
+def test_compact_of_a_thread_held_by_codex_app_goes_to_its_owner():
+    async def check():
+        ipc = _OwnerIpc()
+        runtime, client = await held_runtime_fixture(ipc, _HeldFollower())
+        result = await runtime.execute_command("sess_1", "compact", "thread_1", "/compact")
+        assert result.ok and result.result["executionState"] == "accepted"
+        assert result.result["transport"] == "ipc"
+        assert ipc.calls == [
+            ("thread-follower-compact-thread", {"conversationId": "thread_1"}, "codex-app")
+        ]
+        # Resuming locally would collide with the App's writer lock.
+        assert not any(
+            method in {"thread/resume", "thread/compact/start"}
+            for method, _ in client.requests
+        )
+
+    run(check())
+
+
+def test_compact_rejected_by_the_owner_is_reported_without_local_fallback():
+    async def check():
+        ipc = _OwnerIpc(error="thread-not-found")
+        runtime, client = await held_runtime_fixture(ipc, _HeldFollower())
+        result = await runtime.execute_command("sess_1", "compact", "thread_1", "/compact")
+        assert not result.ok and result.code == "command_rejected"
+        assert result.message == "thread-not-found"
+        assert not any(method == "thread/resume" for method, _ in client.requests)
+
+    run(check())
+
+
+def test_compact_of_a_held_thread_without_reachable_owner_is_rejected():
+    async def check():
+        ipc = _OwnerIpc()
+        runtime, client = await held_runtime_fixture(ipc, _HeldFollower(reachable=False))
+        runtime.ipc_deeplink_handoff = False
+        result = await runtime.execute_command("sess_1", "compact", "thread_1", "/compact")
+        assert not result.ok and result.code == "command_rejected"
+        assert ipc.calls == []
+        assert not any(method == "thread/resume" for method, _ in client.requests)
 
     run(check())

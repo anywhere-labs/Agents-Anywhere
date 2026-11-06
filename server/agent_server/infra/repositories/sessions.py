@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from agent_server.infra.db.engine import closing_connection
+
+from sqlalchemy import func
+
 from sqlalchemy import case, literal_column
 from pydantic import BaseModel
 
@@ -249,7 +253,7 @@ def _session_view_query(latest_item: tuple[Any, Any] | None = None) -> Any:
 
 class SessionRepositoryMixin:
     async def get_session_runtime(self, session_id: str) -> str | None:
-        async with self._engine.connect() as conn:
+        async with closing_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(sessions_t.c.runtime).where(sessions_t.c.id == session_id)
@@ -272,11 +276,15 @@ class SessionRepositoryMixin:
         permission_selection_id: str | None = None,
         selections: dict[str, str | None] | None = None,
         takeover: bool = False,
+        session_id: str | None = None,
     ) -> SessionView:
         identity = _runtime_identity(runtime, runtime_id)
-        session_id = f"sess_{secrets.token_urlsafe(10)}"
+        has_reserved_id = session_id is not None
+        session_id = session_id or f"sess_{secrets.token_urlsafe(10)}"
         now = utc_now()
-        async with self._engine.begin() as conn:
+        async with closing_connection(self._engine, write=True) as conn:
+            if has_reserved_id:
+                await conn.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(session_id, 0))))
             connector_q = select(
                 connectors_t.c.status,
                 connectors_t.c.user_id,
@@ -316,8 +324,13 @@ class SessionRepositoryMixin:
                         "project connector and workspace must match the session"
                     )
                 cwd = project.workspace_path or cleaned_cwd
-            await conn.execute(
-                insert(sessions_t).values(
+            existing = (await conn.execute(select(sessions_t).where(sessions_t.c.id == session_id))).mappings().first()
+            if existing:
+                if existing["connector_id"] != connector_id or existing["project_id"] != project_id or existing["runtime_id"] != str(identity.runtime_id):
+                    raise ValueError("session identity conflict")
+            else:
+                await conn.execute(
+                    insert(sessions_t).values(
                     id=session_id,
                     connector_id=connector_id,
                     project_id=project_id,
@@ -343,7 +356,7 @@ class SessionRepositoryMixin:
 
     async def discard_unstarted_session(self, session_id: str) -> bool:
         """Roll back only our empty allocation after a proven pre-admission refusal."""
-        async with self._engine.begin() as conn:
+        async with closing_connection(self._engine, write=True) as conn:
             result = await conn.execute(
                 delete(sessions_t).where(
                     sessions_t.c.id == session_id,
@@ -377,7 +390,7 @@ class SessionRepositoryMixin:
     ) -> SessionView:
         identity = _runtime_identity(runtime, runtime_id)
         canonical_session_id = session_id
-        async with self._engine.connect() as conn:
+        async with closing_connection(self._engine) as conn:
             existing = (
                 await conn.execute(
                     select(sessions_t.c.id).where(sessions_t.c.id == session_id)
@@ -446,7 +459,7 @@ class SessionRepositoryMixin:
         has_permission_selection_id = permission_selection_id is not None
         now = utc_now()
         normalized_origin = _normalize_session_origin(origin)
-        async with self._engine.begin() as conn:
+        async with closing_connection(self._engine, write=True) as conn:
             connector = (
                 await conn.execute(
                     select(
@@ -605,7 +618,7 @@ class SessionRepositoryMixin:
         runtime_id: str | None = None,
     ) -> str:
         identity = _runtime_identity(runtime, runtime_id) if runtime is not None else None
-        async with self._engine.connect() as conn:
+        async with closing_connection(self._engine) as conn:
             explicit_query = select(
                 sessions_t.c.id,
                 sessions_t.c.origin,
@@ -667,7 +680,7 @@ class SessionRepositoryMixin:
         external-session match, otherwise the explicit row.
         """
 
-        async with self._engine.connect() as conn:
+        async with closing_connection(self._engine) as conn:
             explicit = (
                 await conn.execute(
                     select(
@@ -770,7 +783,7 @@ class SessionRepositoryMixin:
                 sessions_t.c.id.desc(),
             )
         )
-        async with self._engine.connect() as conn:
+        async with closing_connection(self._engine) as conn:
             rows = (await conn.execute(query)).mappings().all()
         return [await self._session_from_row(row) for row in rows]
 
@@ -837,7 +850,7 @@ class SessionRepositoryMixin:
                     ),
                 )
             )
-        async with self._engine.connect() as conn:
+        async with closing_connection(self._engine) as conn:
             rows = (await conn.execute(query)).mappings().all()
         page_rows = rows[:limit]
         sessions = [await self._session_from_row(row) for row in page_rows]
@@ -870,7 +883,7 @@ class SessionRepositoryMixin:
         runtime_id: str,
         scan_token: str,
     ) -> None:
-        async with self._engine.begin() as conn:
+        async with closing_connection(self._engine, write=True) as conn:
             await conn.execute(
                 update(sessions_t)
                 .where(
@@ -893,7 +906,7 @@ class SessionRepositoryMixin:
     ) -> list[str]:
         now = utc_now()
         changed: list[str] = []
-        async with self._engine.connect() as conn:
+        async with closing_connection(self._engine) as conn:
             rows = (
                 await conn.execute(
                     select(
@@ -965,7 +978,7 @@ class SessionRepositoryMixin:
                 ):
                     changed.append(session_id)
             if unchanged_missing_ids:
-                async with self._engine.begin() as conn:
+                async with closing_connection(self._engine, write=True) as conn:
                     await conn.execute(
                         update(sessions_t)
                         .where(
@@ -982,7 +995,7 @@ class SessionRepositoryMixin:
                         )
                     )
         elif remaining_rows:
-            async with self._engine.begin() as conn:
+            async with closing_connection(self._engine, write=True) as conn:
                 await conn.execute(
                     update(sessions_t)
                     .where(
@@ -1007,7 +1020,7 @@ class SessionRepositoryMixin:
         if not observations:
             return
         observation_items = list(observations.items())
-        async with self._engine.begin() as conn:
+        async with closing_connection(self._engine, write=True) as conn:
             # Each row contributes up to five bind parameters across the two
             # CASE mappings and the IN predicate.  asyncpg rejects statements
             # with more than 32,767 arguments, so keep ample fixed-parameter
@@ -1061,7 +1074,7 @@ class SessionRepositoryMixin:
         now: str,
     ) -> bool:
         async with self.session_revision_fence(session_id):
-            async with self._engine.begin() as conn:
+            async with closing_connection(self._engine, write=True) as conn:
                 row = (
                     await conn.execute(
                         select(
@@ -1120,7 +1133,7 @@ class SessionRepositoryMixin:
         now: str,
     ) -> bool:
         async with self.session_revision_fence(session_id):
-            async with self._engine.begin() as conn:
+            async with closing_connection(self._engine, write=True) as conn:
                 row = (
                     await conn.execute(
                         select(
@@ -1172,7 +1185,7 @@ class SessionRepositoryMixin:
         """
         observed = observed_at or utc_now()
         stale = sessions_t.c.source_state_at > observed
-        async with self._engine.begin() as conn:
+        async with closing_connection(self._engine, write=True) as conn:
             result = await conn.execute(update(sessions_t).where(
                 sessions_t.c.id == session_id,
                 sessions_t.c.connector_id == connector_id,
@@ -1198,7 +1211,7 @@ class SessionRepositoryMixin:
         observation_origin: str,
     ) -> SessionView:
         effective_observed_at = observed_at or utc_now()
-        async with self._engine.begin() as conn:
+        async with closing_connection(self._engine, write=True) as conn:
             row = (
                 await conn.execute(
                     select(
@@ -1276,7 +1289,7 @@ class SessionRepositoryMixin:
         )
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
-        async with self._engine.connect() as conn:
+        async with closing_connection(self._engine) as conn:
             rows = (await conn.execute(query)).mappings().all()
         return [await self._session_from_row(row) for row in rows]
 
@@ -1292,7 +1305,7 @@ class SessionRepositoryMixin:
             )
             .order_by(sessions_t.c.created_at.desc())
         )
-        async with self._engine.connect() as conn:
+        async with closing_connection(self._engine) as conn:
             rows = (await conn.execute(query)).mappings().all()
         return [await self._session_from_row(row) for row in rows]
 
@@ -1302,7 +1315,7 @@ class SessionRepositoryMixin:
         query = select(connectors_t.c.user_id).select_from(
             sessions_t.join(connectors_t, sessions_t.c.connector_id == connectors_t.c.id)
         ).where(sessions_t.c.id == session_id, connectors_t.c.revoked == 0)
-        async with self._engine.connect() as conn:
+        async with closing_connection(self._engine) as conn:
             row = (await conn.execute(query)).first()
         if row is None:
             raise KeyError(session_id)
@@ -1315,7 +1328,7 @@ class SessionRepositoryMixin:
         )
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
-        async with self._engine.connect() as conn:
+        async with closing_connection(self._engine) as conn:
             row = (await conn.execute(query)).mappings().first()
         if row is None:
             raise KeyError(session_id)
@@ -1344,7 +1357,7 @@ class SessionRepositoryMixin:
         )
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
-        async with self._engine.connect() as conn:
+        async with closing_connection(self._engine) as conn:
             row = (await conn.execute(query)).mappings().first()
         if row is None:
             raise KeyError(session_id)
@@ -1378,7 +1391,7 @@ class SessionRepositoryMixin:
 
 
     async def session_owned_by_connector(self, session_id: str, connector_id: str) -> bool:
-        async with self._engine.connect() as conn:
+        async with closing_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(sessions_t.c.id)
@@ -1394,7 +1407,7 @@ class SessionRepositoryMixin:
 
 
     async def get_session_seq(self, session_id: str) -> int:
-        async with self._engine.connect() as conn:
+        async with closing_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(sessions_t.c.seq).where(sessions_t.c.id == session_id)
@@ -1407,7 +1420,7 @@ class SessionRepositoryMixin:
 
     @session_revision_fenced
     async def set_takeover(self, session_id: str, takeover: bool) -> SessionView:
-        async with self._engine.begin() as conn:
+        async with closing_connection(self._engine, write=True) as conn:
             await self._bump_session(conn, session_id)
             await conn.execute(
                 update(sessions_t).where(sessions_t.c.id == session_id).values(takeover=int(takeover))
@@ -1427,7 +1440,7 @@ class SessionRepositoryMixin:
     ) -> SessionView:
         await self.get_session(session_id, user_id=user_id)
         now = utc_now()
-        async with self._engine.begin() as conn:
+        async with closing_connection(self._engine, write=True) as conn:
             await conn.execute(
                 update(sessions_t)
                 .where(sessions_t.c.id == session_id)
@@ -1449,7 +1462,7 @@ class SessionRepositoryMixin:
     ) -> SessionView:
         await self.get_session(session_id, user_id=user_id)
         now = utc_now()
-        async with self._engine.begin() as conn:
+        async with closing_connection(self._engine, write=True) as conn:
             await conn.execute(
                 update(sessions_t)
                 .where(sessions_t.c.id == session_id)
@@ -1487,7 +1500,7 @@ class SessionRepositoryMixin:
         if user_id is not None:
             owned_query = owned_query.where(connectors_t.c.user_id == user_id)
 
-        async with self._engine.begin() as conn:
+        async with closing_connection(self._engine, write=True) as conn:
             rows = (await conn.execute(owned_query)).all()
             owned_ids = {str(row.id) for row in rows}
             if owned_ids:
@@ -1503,7 +1516,7 @@ class SessionRepositoryMixin:
                 _session_view_query()
                 .where(sessions_t.c.id.in_(owned_ids))
             )
-            async with self._engine.connect() as conn:
+            async with closing_connection(self._engine) as conn:
                 view_rows = (await conn.execute(view_query)).mappings().all()
             by_id = {row["id"]: row for row in view_rows}
             for sid in ordered:
@@ -1530,7 +1543,7 @@ class SessionRepositoryMixin:
                 connectors_t.c.user_id == user_id,
                 connectors_t.c.revoked == 0,
             )
-            async with self._engine.connect() as conn:
+            async with closing_connection(self._engine) as conn:
                 owned = (await conn.execute(conn_query)).first()
             if owned is None:
                 raise KeyError(connector_id)
@@ -1552,7 +1565,7 @@ class SessionRepositoryMixin:
         if scope_filter is not None:
             target_query = target_query.where(scope_filter)
 
-        async with self._engine.begin() as conn:
+        async with closing_connection(self._engine, write=True) as conn:
             target_rows = (await conn.execute(target_query)).all()
             target_ids = [str(row.id) for row in target_rows]
             if target_ids:
@@ -1569,7 +1582,7 @@ class SessionRepositoryMixin:
             _session_view_query()
             .where(sessions_t.c.id.in_(target_ids))
         )
-        async with self._engine.connect() as conn:
+        async with closing_connection(self._engine) as conn:
             view_rows = (await conn.execute(view_query)).mappings().all()
         return [await self._session_from_row(row) for row in view_rows]
 
@@ -1586,7 +1599,7 @@ class SessionRepositoryMixin:
             raise ValueError("title must not be empty")
         await self.get_session(session_id, user_id=user_id)
         now = utc_now()
-        async with self._engine.begin() as conn:
+        async with closing_connection(self._engine, write=True) as conn:
             await conn.execute(
                 update(sessions_t)
                 .where(sessions_t.c.id == session_id)
@@ -1603,7 +1616,7 @@ class SessionRepositoryMixin:
     ) -> SessionView:
         await self.get_session(session_id, user_id=user_id)
         now = utc_now()
-        async with self._engine.begin() as conn:
+        async with closing_connection(self._engine, write=True) as conn:
             row = (
                 await conn.execute(
                     select(sessions_t.c.updated_seq).where(sessions_t.c.id == session_id)
@@ -1645,7 +1658,7 @@ class SessionRepositoryMixin:
             owned_query = owned_query.where(connectors_t.c.user_id == user_id)
 
         now = utc_now()
-        async with self._engine.begin() as conn:
+        async with closing_connection(self._engine, write=True) as conn:
             rows = (await conn.execute(owned_query)).all()
             owned_ids = {str(row.id) for row in rows}
             if owned_ids:
@@ -1661,7 +1674,7 @@ class SessionRepositoryMixin:
                 _session_view_query()
                 .where(sessions_t.c.id.in_(owned_ids))
             )
-            async with self._engine.connect() as conn:
+            async with closing_connection(self._engine) as conn:
                 view_rows = (await conn.execute(view_query)).mappings().all()
             by_id = {str(row["id"]): await self._session_from_row(row) for row in view_rows}
             sessions = [by_id[sid] for sid in ordered if sid in by_id]
@@ -1690,7 +1703,7 @@ class SessionRepositoryMixin:
         )
         if user_id is not None:
             statement = statement.where(connectors_t.c.user_id == user_id)
-        async with self._engine.connect() as conn:
+        async with closing_connection(self._engine) as conn:
             rows = (await conn.execute(statement)).all()
         owned_ids = {str(row.id) for row in rows}
         return [session_id for session_id in ordered if session_id in owned_ids]
@@ -1706,7 +1719,7 @@ class SessionRepositoryMixin:
     ) -> SessionView:
         async with self.session_revision_fence(session_id):
             changed = False
-            async with self._engine.begin() as conn:
+            async with closing_connection(self._engine, write=True) as conn:
                 statement = select(sessions_t.c.status).where(
                     sessions_t.c.id == session_id
                 )
@@ -1774,7 +1787,7 @@ class SessionRepositoryMixin:
             values["source_state"] = source_state
             values["source_state_at"] = utc_now()
             values["source_scan_token"] = None
-        async with self._engine.begin() as conn:
+        async with closing_connection(self._engine, write=True) as conn:
             row = (
                 await conn.execute(
                     select(
@@ -1853,7 +1866,7 @@ class SessionRepositoryMixin:
             .order_by(timeline_items_t.c.order_seq.asc(), timeline_items_t.c.updated_seq.asc())
             .limit(1)
         )
-        async with self._engine.connect() as conn:
+        async with closing_connection(self._engine) as conn:
             row = (await conn.execute(query)).first()
         if row is None:
             return None
@@ -1866,7 +1879,7 @@ class SessionRepositoryMixin:
 
     async def _lock_in_derived_title(self, session_id: str, title: str) -> None:
         # Guard against races: only fill when DB title is still empty.
-        async with self._engine.begin() as conn:
+        async with closing_connection(self._engine, write=True) as conn:
             await conn.execute(
                 sessions_t.update()
                 .where(

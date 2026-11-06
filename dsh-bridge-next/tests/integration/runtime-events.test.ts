@@ -15,6 +15,7 @@ import { corruptHistory } from '../fixtures/corrupt-history.js'
 import { mountAgents, TextAdapter, initialSelections } from '../fixtures/agent-runtime.js'
 import { MAX_RETAINED_PROJECTIONS, SyncFeed, SYNC_FLUSH_MS, type SyncOperation, type SyncTransport } from '../../src/host/dsh-runtime/sync.js'
 import type { SnapshotRequest, SnapshotResult } from '../../src/host/generated/dsh-sync.js'
+import type { NativeChange } from '../../src/host/dsh-runtime/native.js'
 import { projectHistory } from '../../src/host/dsh-runtime/history.js'
 import { nativeSessionId, sessionId } from '../../src/host/dsh-runtime/identity.js'
 import { RuntimeRouter } from '../../src/host/dsh-runtime/router.js'
@@ -250,6 +251,80 @@ test('baseline buffers native changes and archive events without syncing native 
     assert.ok(!notifications(ops()).some(n => n.method === 'session.source.updated' && n.params.sessionId === sessionId('test', 'empty-native')), 'Draft source notifications must not create empty AA sessions either')
     assert.deepEqual(errors, [])
     assert.deepEqual(batches.map(b => b.batchSeq), batches.map((_, n) => n + 1))
+  } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
+
+/** Holds the first capture until released, like a slow upload during the startup scan. */
+function holdFirstCapture() {
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const state = { held: false, release }
+  return { state, snapshot: async () => {
+    if (state.held) return
+    state.held = true
+    await gate
+  } }
+}
+
+/** Records the feed's diagnostics events in order. */
+function recordDiagnostics(native: { diagnostics: { log: (...args: never[]) => void } }) {
+  const events: { event: string, fields: Record<string, unknown> }[] = []
+  const log = native.diagnostics.log.bind(native.diagnostics) as (level: string, event: string, fields?: Record<string, unknown>, error?: unknown) => void
+  native.diagnostics.log = ((level: string, event: string, fields: Record<string, unknown> = {}, error?: unknown) => {
+    events.push({ event, fields }); log(level, event, fields, error)
+  }) as never
+  return events
+}
+
+test('a streaming Agent during a slow startup scan neither overflows the feed nor loses chunks', { timeout: 30_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-stream-flood-'))
+  const fixture = await nativeRuntime(home)
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  const diagnostics = recordDiagnostics(native)
+  const hold = holdFirstCapture()
+  const stream = follow(native, { snapshot: hold.snapshot })
+  const emit = (change: NativeChange) => (native as unknown as { emit(change: NativeChange): void }).emit(change)
+  try {
+    await until(() => hold.state.held, 'first capture was held')
+    const id = fixture.session.id, throughSeq = Number(fixture.session.seq) - 1
+    // Far more native chunks than the feed may buffer, interleaved with status invalidations.
+    for (let n = 0; n < 30_000; n++) {
+      emit({ type: 'stream', id, turn: 9, step: 1, chunk: { type: 'text-delta', index: 0, text: 'x' }, time: n, throughSeq })
+      if (n % 10 === 0) emit({ type: 'status', id })
+    }
+    hold.state.release()
+    await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'inventory completes')
+    await until(() => notifications(stream.ops()).some(n => n.method === 'timeline.itemUpsert'
+      && (n.params.item as { content: { text?: string } }).content.text === 'x'.repeat(30_000)), 'the merged chunks project the complete draft')
+    assert.deepEqual(stream.errors, [])
+    assert.ok(!diagnostics.some(entry => entry.event === 'sync.queue_compacted' || entry.event === 'sync.failed'))
+  } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
+
+test('changes that outpace a slow startup scan recalibrate the noisiest session instead of failing the feed', { timeout: 60_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-event-flood-'))
+  const fixture = await nativeRuntime(home)
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  const diagnostics = recordDiagnostics(native)
+  const hold = holdFirstCapture()
+  const stream = follow(native, { snapshot: hold.snapshot })
+  const notes = () => notifications(stream.ops())
+  try {
+    await until(() => hold.state.held, 'first capture was held')
+    fixture.session.append('turn/start', { turn: 2 })
+    for (let n = 0; n < 10_500; n++) fixture.session.append('session/title', { title: `title ${n}`, source: { kind: 'user' }, messageSeqs: [] })
+    fixture.session.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
+    hold.state.release()
+    await until(() => notes().some(n => n.method === 'session.inventory.complete'), 'inventory completes')
+    await until(() => notes().some(n => n.method === 'session.turnEnded'), 'the retained turn end is still reported')
+    assert.deepEqual(stream.errors, [])
+    const compacted = diagnostics.find(entry => entry.event === 'sync.queue_compacted')
+    assert.ok(compacted, 'the overflow compacts the queue')
+    assert.equal(compacted.fields.sessions, 1)
+    const platformId = sessionId('test', fixture.session.id)
+    const last = stream.captures.findLast(capture => capture.request.sessionId === platformId)!
+    assert.equal(last.request.meta.title, 'title 10499', 'the recalibration captures the final state')
+    assert.ok(!diagnostics.some(entry => entry.event === 'sync.failed'))
   } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })
 

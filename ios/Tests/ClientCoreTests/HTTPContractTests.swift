@@ -205,6 +205,108 @@ nonisolated private final class InterceptingURLProtocol: URLProtocol, @unchecked
         #expect(InterceptingURLProtocol.state.requests.count == 1)
     }
 
+    @Test func modelConfigRoutesHeadersAndBodiesMatchTheBackend() async throws {
+        let session = session(); defer { session.invalidateAndCancel() }
+        let api = V2APIClient(serverURL: URL(string: "https://example.test")!, tokenProvider: StaticAuthTokenProvider(token: "test-token"), urlSession: session)
+        let channel = try fixtureData("modelChannel")
+        let replies: [InterceptedRequests.Reply] = try [
+            .response(201, fixtureData("modelProfile")), .response(204, Data()),
+            .response(200, channel), .response(200, channel), .response(200, channel), .response(200, channel),
+            .response(200, channel), .response(200, channel), .response(200, channel),
+            .response(200, fixtureData("tokensLinkStart")), .response(200, fixtureData("modelProfile")),
+            .response(200, fixtureData("tokensUnlink")), .response(200, channel),
+            .response(409, fixtureData("modelConfigError")),
+        ]
+        InterceptingURLProtocol.state.reset(replies)
+        let model = api.modelConfig
+        let target = V2ModelTarget(connectorId: "device", runtimeId: "rti_gateway")
+        _ = try await model.createProfile(.init(name: "Gateway", apiKey: "sk-test",
+            offers: [.init(format: "openai_chat", baseUrl: "https://gateway.example/v1", models: [.init(id: "gpt-test")])]))
+        try await model.deleteProfile(id: "mpr_test")
+        let state = try await model.channel()
+        #expect(state.channel == "mpr_test" && state.runtimes.count == 3)
+        _ = try await model.setChannel("tokens")
+        _ = try await model.setRuntimeChannel(target, channel: nil, confirmNativeGlobal: false)
+        _ = try await model.setRuntimeChannel(target, channel: "tokens", confirmNativeGlobal: true)
+        _ = try await model.switchNow(target)
+        _ = try await model.retryChannel()
+        _ = try await model.retryChannel(target)
+        #expect(try await model.beginTokensLink().startUrl.hasPrefix("https://example.test/"))
+        _ = try await model.syncTokens()
+        #expect(try await model.unlinkTokens().revoked)
+        #expect(try await model.rotateTokensKey(profileId: "mpr_tokens", allowInterrupt: false).revision == 3)
+        do { try await model.deleteProfile(id: "mpr_test"); Issue.record("Expected a conflict") }
+        catch { #expect(ModelConfigErrorText.text(error) == String(localized: "This profile is a channel in use. Switch to another channel first.")) }
+
+        let requests = InterceptingURLProtocol.state.requests
+        let expected = [
+            ("POST", "/model-profiles"), ("DELETE", "/model-profiles/mpr_test"),
+            ("GET", "/model-config/channel"), ("PUT", "/model-config/channel"),
+            ("PUT", "/model-config/channel/runtimes/device/rti_gateway"), ("PUT", "/model-config/channel/runtimes/device/rti_gateway"),
+            ("POST", "/model-config/channel/runtimes/device/rti_gateway/switch-now"),
+            ("POST", "/model-config/channel/retry"), ("POST", "/model-config/channel/retry"),
+            ("POST", "/integrations/tokens/link"), ("POST", "/integrations/tokens/sync"), ("DELETE", "/integrations/tokens/link"),
+            ("POST", "/model-profiles/mpr_tokens/rotate-key"), ("DELETE", "/model-profiles/mpr_test"),
+        ]
+        #expect(requests.count == expected.count)
+        let routes: [[String: String]] = try JSONDecoder().decode([[String: String]].self, from: fixtureData("routes"))
+        for (request, expected) in zip(requests, expected) {
+            #expect(request.httpMethod == expected.0)
+            #expect(request.url?.path == "/api/v2" + expected.1)
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer test-token")
+            #expect(request.value(forHTTPHeaderField: "Idempotency-Key") == nil)
+            #expect(request.url?.query == nil, "\(expected.1) takes no query")
+            #expect(routes.contains { route in
+                guard route["method"] == request.httpMethod else { return false }
+                let pattern = "^" + route["path"]!.replacingOccurrences(of: #"\{[^}]+\}"#, with: "[^/]+", options: .regularExpression) + "$"
+                return request.url!.path.range(of: pattern, options: .regularExpression) != nil
+            }, "\(expected.0) \(expected.1) is not a backend route")
+        }
+        let bodies = try fixtureObject("requests")
+        for (index, key) in [(3, "setChannel"), (4, "followChannel"), (5, "confirmRuntimeChannel"), (7, "retryAll"), (8, "retryRuntime")] {
+            let body = try JSONDecoder().decode(JSONValue.self, from: #require(requests[index].httpBody))
+            let backend = try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: bodies[key]!))
+            #expect(body == backend, "Request \(key) differs from the backend model")
+        }
+        let created = try JSONDecoder().decode(JSONValue.self, from: #require(requests[0].httpBody))
+        #expect(created["apiKey"]?.stringValue == "sk-test" && created["offers"]?.configArray?.count == 1)
+        let rotate = try JSONDecoder().decode(JSONValue.self, from: #require(requests[12].httpBody))
+        #expect(rotate == .object(["allowInterrupt": .bool(false)]))
+        #expect(requests[2].httpBody == nil && requests[6].httpBody == nil && requests[9].httpBody == nil && requests[10].httpBody == nil)
+    }
+
+    @Test func profileCreationSendsEitherTheAddressOrTheOffers() async throws {
+        let session = session(); defer { session.invalidateAndCancel() }
+        let api = V2APIClient(serverURL: URL(string: "https://example.test")!, tokenProvider: StaticAuthTokenProvider(token: "test-token"), urlSession: session)
+        InterceptingURLProtocol.state.reset(try [
+            .response(422, fixtureData("modelGatewayError")), .response(201, fixtureData("modelProfile")),
+        ])
+        let repository = V2DashboardRepository(service: .init(connectorAPI: api.connectors, projectAPI: api.projects,
+            sessionAPI: api.sessions, realtimeAPI: api.realtime))
+        let model = ModelConfigModel(api: api.modelConfig, dashboard: repository)
+        var draft = ModelProfileDraft()
+        draft.name = "Gateway"; draft.apiKey = "sk-test"; draft.baseURL = "https://gateway.example/v1"
+        let failure = try #require(await model.createProfile(draft))
+        #expect(failure.code == "gateway_unreachable")
+        #expect(failure.message == String(localized: "The server could not reach this address. Check the address."))
+        let turnedManual = draft.fallBackToManual(after: failure.code)
+        #expect(turnedManual)
+        #expect(await model.createProfile(draft) == nil)
+
+        let requests = InterceptingURLProtocol.state.requests
+        #expect(requests.count == 2, "A failed detection is not retried")
+        let bodies = try fixtureObject("requests")
+        let detect = try JSONDecoder().decode(JSONValue.self, from: #require(requests.first?.httpBody))
+        let backend = try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: bodies["detectModelProfile"]!))
+        #expect(detect == backend)
+        let manual = try JSONDecoder().decode(JSONValue.self, from: #require(requests.last?.httpBody))
+        #expect(manual["baseUrl"] == nil && manual["offers"]?.configArray?.first?["format"] == .string("openai_chat"))
+        #expect(manual["offers"]?.configArray?.first?["baseUrl"] == .string("https://gateway.example/v1"))
+        for request in requests {
+            #expect(request.httpMethod == "POST" && request.url?.path == "/api/v2/model-profiles")
+        }
+    }
+
     private func query(_ request: URLRequest) -> [String: String] {
         Dictionary(uniqueKeysWithValues: URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!.map { ($0.name, $0.value ?? "") })
     }

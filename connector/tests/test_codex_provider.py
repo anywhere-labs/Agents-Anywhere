@@ -112,6 +112,7 @@ async def _test_codex_provider_schema_exposes_ipc_switches_but_no_app_server_mod
         "environment",
         "ipcDeeplinkHandoff",
         "ipcEnabled",
+        "model",
         "modelGateway",
         "useSystemCodex",
     }

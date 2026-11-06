@@ -67,7 +67,10 @@ test('Tokens Anywhere login and registration preserve the original authorization
     assert.equal(takeAuthFlow(screen, store), hash)
     assert.equal(takeAuthFlow(screen, store), null)
   }
-  for (const [key, value] of [['client_id', 'evil'], ['redirect_uri', 'javascript:alert(1)'], ['redirect_uri', 'https://user:pass@api.example.test/'], ['code_challenge_method', 'plain'], ['code_challenge', ''], ['state', ''], ['scope', 'profile admin']]) {
+  const local = new URLSearchParams(params)
+  local.set('redirect_uri', 'http://localhost:5173/oauth/aa')
+  assert.equal(readWebOAuthParams(local)?.redirect_uri, 'http://localhost:5173/oauth/aa')
+  for (const [key, value] of [['client_id', 'evil'], ['redirect_uri', 'javascript:alert(1)'], ['redirect_uri', 'https://user:pass@api.example.test/'], ['redirect_uri', 'http://api.example.test/oauth/aa'], ['code_challenge_method', 'plain'], ['code_challenge', ''], ['state', ''], ['scope', 'profile admin']]) {
     const invalid = new URLSearchParams(params)
     invalid.set(key, value)
     assert.equal(readWebOAuthParams(invalid), null)

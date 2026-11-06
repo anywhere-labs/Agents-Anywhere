@@ -99,6 +99,7 @@ type ConnectorLauncher = {
 export class ConnectorSupervisor {
   private readonly environment: ConnectorEnvironment;
   private acquisition: Promise<void> | null = null;
+  private claimedProcess: ChildProcessWithoutNullStreams | null = null;
   private maintenance: Promise<unknown> | null = null;
   private generation = 0;
   private rpcProcess: ChildProcessWithoutNullStreams | null = null;
@@ -297,10 +298,16 @@ export class ConnectorSupervisor {
 
   private async acquire(): Promise<void> {
     try {
-      this.options.onOwnership?.({ status: "checking" });
+      // Revalidating a live lease must not unmount the workspace. Device-list
+      // refreshes also validate ownership and would otherwise restart that loop.
+      if (!this.rpcProcess || this.claimedProcess !== this.rpcProcess) {
+        this.options.onOwnership?.({ status: "checking" });
+      }
       await this.request("connector.acquireOwnership", undefined, { requiresConfig: false, timeoutMs: CONTROL_CONNECT_TIMEOUT_MS });
+      this.claimedProcess = this.rpcProcess;
       this.options.onOwnership?.({ status: "owned" });
     } catch (error) {
+      this.claimedProcess = null;
       const conflict = error instanceof ConnectorRpcError && error.ownershipConflict;
       const message = errorMessage(error);
       this.log({ level: conflict ? "WARNING" : "ERROR", message: `Could not acquire Connector ownership: ${message}` });
@@ -327,6 +334,7 @@ export class ConnectorSupervisor {
       if (fs.existsSync(path.join(context.environment, "pyvenv.cfg"))) {
         fs.rmSync(context.environment, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
       }
+      fs.rmSync(path.join(this.options.dataPath, "pi-npm-runtimes"), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
       if (this.options.packaged) {
         for (const name of ["uv-cache", "connector-source"]) fs.rmSync(path.join(this.options.dataPath, name), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
         this.projectDir = null;
@@ -936,6 +944,7 @@ export class ConnectorSupervisor {
       ...process.env,
       ...this.shellEnvironment,
       AA_CONNECTOR_OWNER_KIND: "desktop-workbench",
+      AA_PI_NPM_ROOT: path.join(this.options.dataPath, "pi-npm-runtimes"),
       PATH: [...new Set(entries)].join(path.delimiter),
       PYTHONUNBUFFERED: "1",
       PYTHONDONTWRITEBYTECODE: "1",

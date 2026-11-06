@@ -49,7 +49,9 @@ export function readWebOAuthParams(params: { get(name: string): string | null })
   if (scope.split(' ').filter(Boolean).some(value => !['profile', 'email'].includes(value))) return null
   try {
     const url = new URL(redirect)
-    if (url.protocol !== 'https:' || url.username || url.password || url.hash || url.search) return null
+    // HTTPS, or plain http to a Tokens Anywhere on this machine, as the server allows.
+    const loopback = url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+    if ((url.protocol !== 'https:' && !loopback) || url.username || url.password || url.hash || url.search) return null
   } catch { return null }
   // The server checks the exact configured callback on approval AND cancellation.
   return { response_type: 'code', client_id: 'tokens-anywhere', redirect_uri: redirect,

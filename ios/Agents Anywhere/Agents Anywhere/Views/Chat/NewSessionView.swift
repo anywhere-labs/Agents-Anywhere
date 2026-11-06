@@ -56,6 +56,7 @@ struct NewSessionView: View, Equatable {
                             ? ChatControlMetrics.expandedHorizontalInset : ChatControlMetrics.collapsedHorizontalInset)
                         .padding(.leading, 6)
                         .padding(.bottom, 6)
+                if model.planningCreation { Text(String(localized: "新会话将使用计划模式")).font(.caption).foregroundStyle(.secondary).padding(.horizontal) }
                 ChatComposerDock(draft: model.draft, settings: model.settings,
                     maximumEditorHeight: min(160, max(72, geometry.size.height * 0.30)), controls: controls,
                     canSend: model.canCreate, canAttach: model.canAttach && model.prepared != nil,
@@ -69,6 +70,8 @@ struct NewSessionView: View, Equatable {
                 .frame(maxWidth: ChatControlMetrics.maximumContentWidth).frame(maxWidth: .infinity)
             }
         }
+        .task { if let session = await model.resumeWorkflow() { onCreated(session) } }
+        .task(id: model.workspace) { if model.prepared == nil { await model.prepareTarget() } }
         .modifier(ChatPageToolbar(title: "", onMenu: onMenu))
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -102,6 +105,12 @@ struct NewSessionView: View, Equatable {
     private var statusContent: some View {
         VStack(alignment: .leading, spacing: 28) {
             connectionStatus
+            if model.hasPendingWorkflow { Button(String(localized: "重试")) { Task { if let session = await model.resumeWorkflow() { onCreated(session) } } }.disabled(model.isResumingWorkflow) }
+            if let workflow = model.runtimeWorkflow {
+                RuntimeWorkflowView(operation: workflow, pending: model.workflowResponding,
+                    onRespond: { request, action, input in Task { await model.respondWorkflow(request, action: action, input: input) } },
+                    onCancel: { Task { await model.cancelWorkflow() } })
+            }
             if model.isCreating {
                 Label(String(localized: "正在创建会话…"), appSymbol: "arrow.up.circle")
                     .font(.subheadline).foregroundStyle(.secondary)
