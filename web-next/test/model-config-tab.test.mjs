@@ -115,67 +115,64 @@ const runtimesRegion = (container) => [...container.querySelectorAll('[role=regi
   .find((region) => region.querySelector('[role=heading]')?.textContent === 'Runtime')
 const statusText = (container) => runtimesRegion(container).querySelector('span[role=status]')?.textContent
 
-test('channels are listed on the left with the default one marked and opened first', async (t) => {
+test('channels are listed on the left with the applied one marked and opened first', async (t) => {
   const second = { ...profile, id: 'mpr_2', name: '公司网关' }
   const container = await renderTab(t, { secretConfigured: true, profiles: [profile, second], assignments: [], tokens: unlinked,
     channel: channelState([], { channel: 'mpr_2', switch: null }) })
 
   const nav = container.querySelector('nav')
   const names = [...nav.querySelectorAll('button[type="button"]')].map((button) => button.textContent)
-  assert.deepEqual(names, ['设备自带配置', 'AAnywhere', '通通用模型网关（演示）', '公公司网关默认'])
-  // The page opens on the default channel; there is no channel card above the list.
-  assert.equal(container.querySelector('select[aria-label="默认渠道"]'), null)
-  assert.equal(nav.querySelector('[aria-current="true"]').textContent, '公公司网关默认')
+  assert.deepEqual(names, ['设备自带配置', 'Tokens Anywhere', '通用模型网关（演示）', '公司网关已应用'])
+  // The page opens on the applied channel; there is no channel card above the list.
+  assert.equal(nav.querySelector('[aria-current="true"]').textContent, '公司网关已应用')
   const pane = container.querySelector('section')
   assert.match(pane.textContent, /公司网关/)
-  // The default channel cannot be deleted, and needs no button to make it the default.
+  // The applied channel cannot be deleted, and needs no button to apply it.
   assert.equal(pane.querySelector('button[aria-label="删除配置"]').disabled, true)
-  assert.equal(buttons(pane, '设为默认').length, 0)
-  assert.equal(statusText(container), undefined)
-  assert.match(runtimesRegion(container).textContent, /还没有 Runtime 使用这个渠道/)
+  assert.equal(buttons(pane, '应用').length, 0)
+  // With no runtime on it, the page shows no runtime list.
+  assert.equal(runtimesRegion(container), undefined)
 
-  // Not linked, Anywhere offers only the link.
-  await click(navItem(container, 'Anywhere'))
+  // Not linked, Tokens Anywhere offers only the link.
+  await click(navItem(container, 'Tokens Anywhere'))
   assert.equal(buttons(container, '链接账户').length, 1)
-  assert.equal(buttons(container, '设为默认').length, 0)
+  assert.equal(buttons(container, '应用').length, 0)
 
   // The device's own configuration is a channel like the others.
   await click(navItem(container, '设备自带配置'))
   assert.equal(nav.querySelector('[aria-current="true"]').textContent, '设备自带配置')
   assert.match(container.querySelector('section').textContent, /Runtime 使用设备上它自己的模型配置/)
-  assert.equal(buttons(container, '设为默认').length, 1)
+  assert.equal(buttons(container, '应用').length, 1)
 })
 
-test('a channel chosen in the list is made the default from its page', async (t) => {
+test('a channel chosen in the list is applied from its page', async (t) => {
   const calls = []
   t.mock.method(modelConfigApi, 'setChannel', async (_token, channel) => { calls.push(channel); return channelState([], { channel, revision: 9 }) })
   const container = await renderTab(t, { secretConfigured: true, profiles: [profile], assignments: [], channel: channelState([], { channel: 'native', switch: null }) })
 
-  assert.doesNotMatch(container.textContent, /应用到设备/)
-  assert.equal(container.querySelector('nav [aria-current="true"]').textContent, '设备自带配置默认')
+  assert.equal(container.querySelector('nav [aria-current="true"]').textContent, '设备自带配置已应用')
   await click(navItem(container, '通用模型网关'))
   const pane = container.querySelector('section')
   assert.equal(pane.querySelector('button[aria-label="删除配置"]').disabled, false)
-  await click(buttons(pane, '设为默认')[0])
+  await click(buttons(pane, '应用')[0])
   assert.deepEqual(calls, ['mpr_1'])
   // The answer shows at once, before the next push.
-  assert.equal(navItem(container, '通用模型网关').textContent, '通通用模型网关（演示）默认')
-  assert.equal(buttons(container.querySelector('section'), '设为默认').length, 0)
+  assert.equal(navItem(container, '通用模型网关').textContent, '通用模型网关（演示）已应用')
+  assert.equal(buttons(container.querySelector('section'), '应用').length, 0)
 })
 
 test('each channel counts its own runtimes switching, done or failed', async (t) => {
   const running = await renderTab(t, { secretConfigured: true, profiles: [profile], assignments: [], channel: channelState([
     row('c', 'codex', 'applied'),
-    row('c', 'claude', 'waiting_idle', { runningSessions: 2 }),
     row('d', 'codex', 'waiting_online'),
     row('c', 'dsh', 'switching', { step: 'activating' }),
     row('c', 'shell', 'unsupported', { reason: 'model_connection_unsupported' }),
   ]) })
-  assert.equal(statusText(running), '正在切换 1/4 个 Runtime · 1 个等任务结束 · 1 台设备离线，上线后切换')
+  assert.equal(statusText(running), '正在切换 1/3 个 Runtime · 1 台设备离线，上线后切换')
   assert.equal(running.querySelector('[role=progressbar]').getAttribute('aria-valuenow'), '1')
   // The list shows the count and that it is still switching.
   const item = navItem(running, '通用模型网关')
-  assert.match(item.textContent, /4$/)
+  assert.match(item.textContent, /3$/)
   assert.ok(item.querySelector('[aria-label="正在切换"]'))
 
   const done = await renderTab(t, { secretConfigured: true, profiles: [profile], assignments: [], channel: channelState([
@@ -199,12 +196,10 @@ test('each channel counts its own runtimes switching, done or failed', async (t)
   assert.deepEqual(retried, [undefined])
 })
 
-test('runtimes are listed by device without expanding, and a waiting one switches now', async (t) => {
-  const switched = []
-  t.mock.method(modelConfigApi, 'switchNow', async (_token, target) => { switched.push(`${target.connectorId}/${target.runtimeId}`); return channelState([]) })
+test('runtimes are listed by device without expanding, each naming the channel it is on', async (t) => {
   const container = await renderTab(t, { secretConfigured: true, profiles: [profile], assignments: [], channel: channelState([
     row('c', 'codex', 'applied'),
-    row('c', 'claude', 'waiting_idle', { runningSessions: 2 }),
+    row('c', 'claude', 'pending'),
     row('d', 'codex', 'applied'),
     row('c', 'shell', 'unsupported', { reason: 'model_connection_unsupported' }),
   ]) })
@@ -213,69 +208,52 @@ test('runtimes are listed by device without expanding, and a waiting one switche
   const mac = container.querySelector('[data-device="c"]')
   const studio = container.querySelector('[data-device="d"]')
   assert.match(mac.textContent, /Codex已生效/)
-  assert.match(mac.textContent, /Claude Code2 个任务运行中，空闲后切换/)
+  // Until it switches, a runtime says which channel it still uses.
+  assert.match(mac.textContent, /Claude Code排队中 · 当前使用「设备自带配置」/)
   assert.match(studio.querySelector('[data-runtime="d/codex"]').textContent, /已生效/)
   assert.ok(studio.querySelector('[aria-label="离线"]'))
   // Runtimes that cannot switch stay in view at the end.
   assert.match(runtimesRegion(container).textContent, /1 个 Runtime 不支持/)
   assert.match(container.querySelector('[data-runtime="c/shell"]').textContent, /不支持 · 不支持模型连接/)
-  // A runtime without a model connection offers no channel choice.
-  assert.equal(container.querySelector('[data-runtime="c/shell"] select'), null)
-
-  await click(buttons(container.querySelector('[data-runtime="c/claude"]'), '立即切换')[0])
-  const dialog = document.body.querySelector('[role=alertdialog]')
-  assert.match(dialog.textContent, /2 个任务在运行，立即切换会中断它们/)
-  await click(buttons(dialog, '立即切换')[0])
-  assert.deepEqual(switched, ['c/claude'])
+  // The list shows the channel; runtimes are not moved one by one here.
+  assert.equal(container.querySelector('[data-runtime] select'), null)
+  assert.match(container.querySelector('[data-runtime="c/codex"]').textContent, /通用模型网关（演示）$/)
 })
 
-test('a runtime can use its own channel; one without an instance of its own asks first', async (t) => {
-  const calls = []
-  t.mock.method(modelConfigApi, 'setRuntimeChannel', async (_token, target, channel, confirm) => {
-    calls.push([`${target.connectorId}/${target.runtimeId}`, channel, confirm ?? false]); return channelState([])
-  })
-  const container = await renderTab(t, { secretConfigured: true, profiles: [profile, tokensProfile], assignments: [], tokens: linked, channel: channelState([
+test('a runtime offers retry only after a failed switch, and says why it cannot follow', async (t) => {
+  const retried = []
+  t.mock.method(modelConfigApi, 'retryChannel', async (_token, target) => { retried.push(`${target.connectorId}/${target.runtimeId}`); return channelState([]) })
+  const container = await renderTab(t, { secretConfigured: true, profiles: [profile], assignments: [], channel: channelState([
     row('c', 'codex', 'pending'),
+    row('c', 'claude', 'restored', { reason: 'verify_failed' }),
     row('c', 'dsh', 'unsupported', { reason: 'confirmation_required' }),
-  ]) })
+  ], { switch: { revision: 4, state: 'attention', startedAt: '', finishedAt: '' } }) })
 
-  const codex = container.querySelector('[data-runtime="c/codex"] select')
-  assert.deepEqual([...codex.options].map((option) => option.textContent), ['跟随默认渠道', '设备自带配置', 'Anywhere', '通用模型网关（演示）'])
-  await choose(codex, 'tokens')
-  assert.deepEqual(calls, [['c/codex', 'tokens', false]])
-
+  assert.equal(buttons(container.querySelector('[data-runtime="c/codex"]'), '重试').length, 0)
+  assert.match(container.querySelector('[data-runtime="c/claude"]').textContent, /切换失败，已恢复原渠道 · Runtime 回报的连接与目标不一致/)
   assert.match(container.querySelector('[data-runtime="c/dsh"]').textContent, /需要单独指定并确认/)
-  await choose(container.querySelector('[data-runtime="c/dsh"] select'), 'tokens')
-  assert.equal(calls.length, 1)
-  const dialog = document.body.querySelector('[role=alertdialog]')
-  assert.match(dialog.textContent, /改写它自身的全局配置/)
-  await click(buttons(dialog, '确认修改')[0])
-  assert.deepEqual(calls[1], ['c/dsh', 'tokens', true])
-
-  // Back to the device's own configuration needs no confirmation.
-  await choose(container.querySelector('[data-runtime="c/dsh"] select'), 'native')
-  assert.deepEqual(calls[2], ['c/dsh', 'native', false])
+  await click(buttons(container.querySelector('[data-runtime="c/claude"]'), '重试')[0])
+  assert.deepEqual(retried, ['c/claude'])
 })
 
-test('a linked Anywhere account offers to become the default, signs out and counts its runtimes', async (t) => {
+test('a linked Tokens Anywhere account offers to be applied, signs out and counts its runtimes', async (t) => {
   const container = await renderTab(t, { secretConfigured: true, profiles: [tokensProfile], assignments: [], tokens: linked, channel: channelState([
     row('c', 'codex', 'pending', { desired: 'native', actual: 'tokens' }),
   ], { channel: 'native' }) })
 
-  // The runtime leaving Anywhere belongs to the device's own configuration now.
+  // The runtime leaving Tokens Anywhere belongs to the device's own configuration now.
   assert.match(navItem(container, '设备自带配置').textContent, /1$/)
-  await click(navItem(container, 'Anywhere'))
+  await click(navItem(container, 'Tokens Anywhere'))
   const pane = container.querySelector('section')
-  assert.equal(pane.querySelectorAll('[role=region]').length, 2)
-  assert.match(pane.textContent, /Anywhere 账户/)
-  assert.equal(buttons(pane, '设为默认').length, 1)
+  assert.match(pane.textContent, /Tokens Anywhere 账户/)
+  assert.equal(buttons(pane, '应用').length, 1)
   assert.equal(buttons(pane, '退出').length, 1)
   assert.equal(buttons(pane, '切换账号').length, 0)
   assert.match(pane.textContent, /1 个 Runtime 在用/)
   assert.match(runtimesRegion(container).textContent, /还没有 Runtime 使用这个渠道/)
 })
 
-test('signing out moves the runtimes on Anywhere to the default first, then unlinks', async (t) => {
+test('signing out moves the runtimes on Tokens Anywhere to the default first, then unlinks', async (t) => {
   const calls = []
   let unlinks = 0
   t.mock.method(modelConfigApi, 'setChannel', async (_token, channel) => {
@@ -292,7 +270,7 @@ test('signing out moves the runtimes on Anywhere to the default first, then unli
       row('c', 'claude', 'applied', { desired: 'native', actual: 'native' }),
     ], { channel: 'native', revision: 6 })
   })
-  // Still in use at first: the page tries again once nothing is on Anywhere.
+  // Still in use at first: the page tries again once nothing is on Tokens Anywhere.
   t.mock.method(modelConfigApi, 'unlinkTokens', async () => {
     unlinks += 1
     if (unlinks === 1) throw new ApiError({ status: 409, detail: 'in use', kind: 'http', code: 'channel_in_use' })
@@ -310,6 +288,6 @@ test('signing out moves the runtimes on Anywhere to the default first, then unli
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)) })
   assert.deepEqual(calls, [['channel', 'native'], ['runtime', 'c/claude', null]])
   assert.equal(unlinks, 2)
-  // The default moved, but the page stays on Anywhere.
-  assert.equal(container.querySelector('nav [aria-current="true"]').textContent, 'AAnywhere')
+  // The applied channel moved, but the page stays on Tokens Anywhere.
+  assert.equal(container.querySelector('nav [aria-current="true"]').textContent, 'Tokens Anywhere')
 })

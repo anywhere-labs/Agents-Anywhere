@@ -60,13 +60,12 @@ const row = (runtimeId, state, extra = {}) => ({
 test("channel: progress counts only runtimes taking part", () => {
   const state = { channel: "tokens", revision: 3, switch: null, runtimes: [
     row("codex", "applied"),
-    row("claude", "waiting_idle", { runningSessions: 2 }),
     row("pi", "waiting_online", { connectorId: "d" }),
     row("dsh", "unsupported", { reason: "confirmation_required" }),
   ] }
   const progress = channel.channelProgress(state)
   assert.equal(progress.phase, "running")
-  assert.deepEqual([progress.total, progress.applied, progress.waitingIdle, progress.offlineDevices, progress.unsupported], [3, 1, 1, 1, 1])
+  assert.deepEqual([progress.total, progress.applied, progress.unfinished, progress.offlineDevices, progress.unsupported], [2, 1, 1, 1, 1])
   assert.equal(channel.channelProgress({ ...state, runtimes: [row("codex", "applied"), row("x", "restored")] }).phase, "attention")
   assert.equal(channel.channelProgress({ ...state, runtimes: [row("codex", "applied")] }).phase, "done")
   assert.equal(channel.channelProgress(null).phase, "none")

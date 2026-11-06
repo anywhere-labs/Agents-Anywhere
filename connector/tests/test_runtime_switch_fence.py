@@ -229,7 +229,7 @@ def test_discover_advertises_switch_fence() -> None:
     async def run() -> None:
         handler, *_ = _supervisor()
         discovered = await handler.dispatch("runtime.discover", {})
-        assert discovered["features"] == ["switchFence", "modelProbe"]
+        assert discovered["features"] == ["switchFence", "modelProbe", "channelReconcileFence"]
 
     asyncio.run(run())
 

@@ -3282,7 +3282,7 @@ async def _exercise_agent_runtime_discovery() -> None:
     inventory = await client.dispatch("runtime.discover", {})
 
     assert set(inventory) == {"runtimeTypes", "features"}
-    assert inventory["features"] == ["switchFence", "modelProbe"]
+    assert inventory["features"] == ["switchFence", "modelProbe", "channelReconcileFence"]
     assert len(inventory["runtimeTypes"]) == 1
     descriptor = inventory["runtimeTypes"][0]
     assert descriptor["runtimeType"] == "codex"

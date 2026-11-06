@@ -349,7 +349,7 @@ def test_failed_discovery_does_not_block_named_runtime_requests(monkeypatch) -> 
         discovered = await handler.dispatch("runtime.discover", {})
         _contract_validator("runtime-discover-response").validate(discovered)
         assert set(discovered) == {"runtimeTypes", "features"}
-        assert discovered["features"] == ["switchFence", "modelProbe"]
+        assert discovered["features"] == ["switchFence", "modelProbe", "channelReconcileFence"]
 
     asyncio.run(run())
 
