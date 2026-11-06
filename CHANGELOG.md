@@ -14,8 +14,8 @@
 
 ### DSH 同步
 
-- 经本地代理上传大批量会话时，不再因为等待服务器响应超过 60 秒而反复失败；上传失败的日志会写明错误类型、数据大小和耗时。（[#PR2](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR2)）
-- 连不上服务器时，DSH 插件会重发当前批次并在恢复后继续，不再断开同步后重新扫描全部会话。（[#PR2](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR2)）
+- 经本地代理上传大批量会话时，不再因为等待服务器响应超过 60 秒而反复失败；上传失败的日志会写明错误类型、数据大小和耗时。（[#551](https://github.com/anywhere-labs/Agents-Anywhere/pull/551)）
+- 连不上服务器时，DSH 插件会重发当前批次并在恢复后继续，不再断开同步后重新扫描全部会话。（[#551](https://github.com/anywhere-labs/Agents-Anywhere/pull/551)）
 - Connector 忙碌或同步流被重建时，DSH 不再因 Agents Anywhere 插件的连接调用被取消或超时而整个退出（`Call was cancelled`、`Call deadline exceeded`）。（[#547](https://github.com/anywhere-labs/Agents-Anywhere/pull/547)）
 
 ## 2.2.0（日期待定）
