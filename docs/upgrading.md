@@ -83,4 +83,4 @@ WHERE i.indexrelid::regclass::text IN
 
 ## 统一目标模式
 
-使用 Goal 时，先升级 Server 数据库至 `v2_47` 和服务，再升级 Connector 及客户端。迁移只新增 Goal 表，旧会话无需回填；旧 Connector 不声明目标能力。详情见 [Goal API 与持久化](api/goals.md)。产品版本未在本次修改。
+使用 Goal 时，先升级 Server 数据库至 `v2_47` 和服务，再升级 Connector 及客户端。迁移只新增 Goal 表，旧会话无需回填；旧 Connector 不声明目标能力。详情见 [Goal API 与持久化](api/goals.md)。这项包含在产品版本 2.2.0 里。
