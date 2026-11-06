@@ -6,11 +6,21 @@
 
 ### 升级须知
 
+- Connector 现在遵守系统代理的例外列表，并在只设置了 `NO_PROXY` 时继续使用系统代理：同一台设备连接服务器的路径可能因此改变（走代理改为直连，或反过来），不符合预期时可在「Connector 网络」里指定。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
 - Codex、Claude Code 统一目标模式需要 Server 执行 `v2_47` 数据库迁移，并配套更新 Connector 和客户端。（[#539](https://github.com/anywhere-labs/Agents-Anywhere/pull/539)）
 
 ### Codex 与 Claude
 
 - Web、Desktop、Android 和 iOS 可用 `/goal` 设置目标，在输入区上方编辑、暂停、恢复或清除；停止时阻止自动续跑，完成结果留在会话历史中，长目标栏与输入框保持同宽并自动截断正文。（[#539](https://github.com/anywhere-labs/Agents-Anywhere/pull/539)）
+
+### 本机连接
+
+- Desktop 和 DSH 插件的设置里新增「Connector 网络」，可选跟随系统、直连或自定义代理；Connector 的接口请求、实时连接和终端都走同一条路，日志里记录实际走的路径。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
+- 在系统代理里把服务器地址加入例外现在对 Connector 生效；只设置 `NO_PROXY` 不再让 Connector 绕过系统代理。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
+- 系统代理开关开着但本机代理软件已退出时，Connector 改为直连，不再一直连不上服务器。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
+- `NO_PROXY` 里出现 `[::1]` 或写法有误的条目时，Connector 不再启动失败。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
+- Windows 和 macOS 上 Connector 改用系统证书库校验服务器证书，不再因为 Python 自带或读到的证书过期而报「certificate has expired」；证书被拒时日志会说明可能是本机证书库的问题。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
+- Intel Mac 首次准备 Connector 环境时不再因为缺少预编译包而长时间卡在编译 `cryptography`。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
 
 ### DSH 同步
 

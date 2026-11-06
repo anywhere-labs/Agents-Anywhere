@@ -451,3 +451,26 @@ process.stdin.on('end', () => process.exit(0));
     assert.equal(fs.existsSync(path.join(root, "connector.json")), true, "credentials survive");
   } finally { await packaged.shutdown(); }
 });
+
+test("the Connector network setting replaces any proxy choice inherited from the shell", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-desktop-proxy-env-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const settings = new DesktopSettingsStore(path.join(root, "settings.json"), ["en-US"]);
+  const supervisor = new ConnectorSupervisor({
+    configPath: path.join(root, "connector.json"), dataPath: root, connectorDir: root, resourcesPath: root,
+    uvBundleDir: path.join(root, "build", "uv"),
+    pythonBundleDir: path.join(root, "build", "python"),
+    packaged: false, homePath: root, settings,
+    shellEnvironment: { AA_CONNECTOR_PROXY: "http://inherited:1" },
+    binding: new DesktopBindingStore(path.join(root, "binding.json")),
+    logs: new ConnectorLogStore(path.join(root, "logs"), () => settings.get()),
+    onState: () => {}, onLog: () => {},
+    connectControl: async () => fakeChannel(),
+  });
+  const environment = () => (supervisor as unknown as { connectorEnvironment(): NodeJS.ProcessEnv }).connectorEnvironment();
+  assert.equal(environment().AA_CONNECTOR_PROXY, undefined);
+  settings.save({ connectorProxy: "direct" });
+  assert.equal(environment().AA_CONNECTOR_PROXY, "direct");
+  settings.save({ connectorProxy: "http://127.0.0.1:7890" });
+  assert.equal(environment().AA_CONNECTOR_PROXY, "http://127.0.0.1:7890");
+});

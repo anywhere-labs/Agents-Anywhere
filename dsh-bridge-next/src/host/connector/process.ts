@@ -275,6 +275,8 @@ export class SourceConnector implements ConnectorProcess {
         ...(typeof process.env['NO_PROXY'] === 'string' ? { NO_PROXY: process.env['NO_PROXY'].replaceAll('[::1]', '::1') } : {}),
         ...(typeof process.env['no_proxy'] === 'string' ? { no_proxy: process.env['no_proxy'].replaceAll('[::1]', '::1') } : {}),
         AA_CONNECTOR_OWNER_KIND: 'dsh-plugin',
+        // Undefined removes an inherited value: the setting decides.
+        AA_CONNECTOR_PROXY: settings.connectorProxy || undefined,
         ...(this.config.dshHome ? { DSH_HOME: this.config.dshHome } : {}),
         AGENT_CONNECTOR_DATA_DIR: dataDir,
         UV_PROJECT_ENVIRONMENT: join(this.config.stateRoot, 'connector-venv'),

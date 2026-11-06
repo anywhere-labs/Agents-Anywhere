@@ -15,6 +15,7 @@ const SETTINGS: DesktopSettings = {
   pythonPath: "",
   uvPypiIndexUrl: "",
   uvPythonInstallMirror: "",
+  connectorProxy: "",
   logChunkSizeKb: 512,
   logRetainChunks: 20,
   logRetentionDays: 14,
