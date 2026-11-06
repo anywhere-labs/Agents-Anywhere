@@ -286,7 +286,7 @@ private fun MarkdownBlocks(
                         .background(styles.border),
                 )
                 is HtmlBlock -> MarkdownInlineText(
-                    nodes = listOf(Text(mathSource.restoreLiteral(node.literal))),
+                    nodes = listOf(HtmlInline().apply { literal = mathSource.restoreLiteral(node.literal) }),
                     mathSource = mathSource,
                     textStyle = styles.body,
                     styles = styles,
@@ -436,6 +436,22 @@ private fun MarkdownInlineText(
     onOpenFile: (String) -> Unit,
     onOpenUrl: (String) -> Unit,
 ) {
+    val imageParts = remember(nodes, mathSource) {
+        splitMarkdownImages(nodes, mathSource::restoreLiteral)
+    }
+    if (imageParts.any { it is MarkdownImagePart.Picture }) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            imageParts.forEach { part ->
+                when (part) {
+                    is MarkdownImagePart.Picture -> MarkdownImage(part.source, part.description)
+                    is MarkdownImagePart.Words -> MarkdownInlineText(
+                        part.nodes, mathSource, textStyle, styles, onOpenFile, onOpenUrl,
+                    )
+                }
+            }
+        }
+        return
+    }
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
     val maxInlineMathWidthPx = with(density) { 280.dp.roundToPx() }
@@ -581,6 +597,22 @@ private fun buildMarkdownInline(
                             appendNodes(node.children())
                         }
                         pop()
+                    }
+                    is ImageTextWrapper -> {
+                        val wrapper = node.styleNode
+                        if (wrapper is Link) {
+                            val destination = mathSource.restoreLiteral(wrapper.destination)
+                            val filePath = if (isFilePath(destination)) stripLine(destination) else null
+                            pushStringAnnotation(if (filePath != null) AnnotationFile else AnnotationUrl, filePath ?: destination)
+                        }
+                        val span = when (wrapper) {
+                            is Link -> SpanStyle(color = styles.linkColor, textDecoration = TextDecoration.Underline)
+                            is Emphasis -> SpanStyle(fontStyle = FontStyle.Italic)
+                            is StrongEmphasis -> SpanStyle(fontWeight = FontWeight.Bold)
+                            else -> SpanStyle(textDecoration = TextDecoration.LineThrough)
+                        }
+                        withSpan(span) { appendNodes(node.content) }
+                        if (wrapper is Link) pop()
                     }
                     is Image -> appendNodes(node.children())
                     is HtmlInline -> append(mathSource.restoreLiteral(node.literal))

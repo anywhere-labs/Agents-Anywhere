@@ -11,6 +11,7 @@ nonisolated struct V2SessionCachePolicy {
 @MainActor
 final class V2SessionRepository {
     let scope: V2ClientScope
+    private let goalAPI: V2GoalAPI?
     private let planningAPI: V2PlanningAPI?
     private let detail: V2SessionDetailService
     private let interactions: V2RuntimeInteractionService
@@ -30,10 +31,12 @@ final class V2SessionRepository {
         interactions: V2RuntimeInteractionService,
         policy: V2SessionCachePolicy = V2SessionCachePolicy(),
         planningAPI: V2PlanningAPI? = nil,
+        goalAPI: V2GoalAPI? = nil,
         localStore: V2LocalStore? = nil,
         now: @escaping () -> Date = Date.init,
         sleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
+        self.goalAPI = goalAPI
         self.planningAPI = planningAPI
         self.scope = scope
         self.detail = detail
@@ -44,6 +47,29 @@ final class V2SessionRepository {
         self.sleep = sleep
     }
 
+    func refreshGoal(sessionId: V2SessionID) async {
+        guard let goalAPI else { return }
+        if var state = try? await goalAPI.state(sessionId: sessionId) {
+            if let id=state.pendingOperationId {
+                _ = try? await goalAPI.operation(sessionId:sessionId,id:id)
+                state = (try? await goalAPI.state(sessionId:sessionId)) ?? state
+            }
+            entries[sessionId]?.model.observeGoal(state)
+        }
+    }
+    func executeGoal(sessionId: V2SessionID, request: V2GoalRequest) async throws -> Bool {
+        guard let goalAPI else { throw HTTPError.invalidResponse }
+        var result = try await goalAPI.execute(sessionId: sessionId,request: request)
+        for _ in 0..<10 {
+            if result.outcome != "unknown" && result.outcome != "pending" { break }
+            try await Task.sleep(for: .milliseconds(300))
+            result = try await goalAPI.operation(sessionId: sessionId,id: request.operationId)
+        }
+        if let state=result.state { entries[sessionId]?.model.observeGoal(state) }
+        await refreshGoal(sessionId: sessionId)
+        guard result.ok else { throw NSError(domain:"Goal",code:1,userInfo:[NSLocalizedDescriptionKey:result.message ?? (result.outcome=="rejected" ? String(localized:"目标操作失败。") : String(localized:"目标操作结果尚不确定，请刷新核对。"))]) }
+        return true
+    }
     func refreshPlanning(sessionId: V2SessionID) async {
         guard let planningAPI else { return }
         if let state = try? await planningAPI.state(sessionId: sessionId) { entries[sessionId]?.model.observePlanning(state) }
@@ -523,6 +549,10 @@ final class V2SessionRepository {
 
     private func receive(_ event: V2SessionEvent, entry: Entry) async throws {
         guard event.sessionId == entry.id else { return }
+        if event.type == "goal.state.updated", let raw = event.payload["state"] {
+            entry.model.observeGoal(try JSONDecoder().decode(V2GoalState.self, from: JSONEncoder().encode(raw)))
+            return
+        }
         if event.type == "planning.state.updated", let raw = event.payload["state"] {
             entry.model.observePlanning(try JSONDecoder().decode(V2PlanningState.self, from: JSONEncoder().encode(raw)))
             return

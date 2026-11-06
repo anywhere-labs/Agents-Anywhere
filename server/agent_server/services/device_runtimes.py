@@ -624,6 +624,8 @@ class DeviceRuntimeService:
                         await self._timeline_write_buffer.discard_session(session_id)
                     if self._runtime_state_cache is not None:
                         await self._runtime_state_cache.discard(session_id)
+                lookup = getattr(self._store, "goal_session_ids", None)
+                goals = await lookup(session_ids) if callable(lookup) else []
                 await self._store.clear_device_runtime_config(
                     connector_id, runtime_id, cleanup_files=False, retire=True,
                 )
@@ -631,6 +633,18 @@ class DeviceRuntimeService:
                 remaining = await self._get_owned(connector_id, runtime_id, user_id=user_id)
                 await self._manager.set_runtime_ingress_enabled(connector_id, runtime_id, remaining.configured)
                 raise
+            if goals:
+                try:
+                    await self._manager.request(
+                        connector_id,
+                        "session.goal.forget",
+                        {"sessionIds": goals, "runtimeId": runtime_id},
+                        timeout=5,
+                    )
+                except Exception as error:  # noqa: BLE001 - committed deletion does not depend on an online Connector
+                    logger.debug(
+                        "local goal deletion notification unavailable: {}", error
+                    )
             # The row is gone; report its final state so clients drop it.
             runtime = runtime.model_copy(update={
                 "configured": False,

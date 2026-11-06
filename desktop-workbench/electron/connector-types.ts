@@ -100,6 +100,8 @@ export type ConnectorState = {
   pythonPath: string;
   uvPypiIndexUrl: string;
   uvPythonInstallMirror: string;
+  /** "" follows the system, "direct" skips any proxy, otherwise a proxy URL. */
+  connectorProxy: string;
   logChunkSizeKb: number;
   logRetainChunks: number;
   logRetentionDays: number;
@@ -118,6 +120,8 @@ export type DesktopSettings = {
   pythonPath: string;
   uvPypiIndexUrl: string;
   uvPythonInstallMirror: string;
+  /** "" follows the system, "direct" skips any proxy, otherwise a proxy URL. */
+  connectorProxy: string;
   logChunkSizeKb: number;
   logRetainChunks: number;
   logRetentionDays: number;

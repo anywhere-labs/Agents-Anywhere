@@ -622,3 +622,9 @@ planning_creations = Table("planning_creations", metadata,
     Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), primary_key=True),
     Column("runtime_id", Text, primary_key=True), Column("operation_id", Text, primary_key=True),
     Column("fingerprint", Text, nullable=False), Column("payload", Text, nullable=False))
+
+from agent_server.infra.db.goal_schema import define_goal_tables
+
+session_goals, session_goal_state, goal_operations, goal_event_outbox = (
+    define_goal_tables(metadata)
+)

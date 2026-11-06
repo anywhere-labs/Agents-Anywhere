@@ -192,4 +192,9 @@ class ClaudeProvider(RuntimeProvider):
         )
         from connector.planning.infrastructure.binding import bind_planning
         from connector.runtimes.claude.planning import ClaudePlanningPort
-        return bind_planning(runtime, host, ClaudePlanningPort(runtime))
+
+        bind_planning(runtime, host, ClaudePlanningPort(runtime))
+        from connector.goals.binding import bind_goals
+        from connector.runtimes.claude.goals import ClaudeGoalPort
+
+        return bind_goals(runtime, host, ClaudeGoalPort(runtime))
