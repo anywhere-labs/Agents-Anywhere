@@ -7,6 +7,8 @@ final class SessionChatModel {
     let timeline = SessionTimelinePresentation()
     let settings = ConversationSettings()
     let disclosures = TimelineDisclosureState()
+    var goalMode = false
+    var goalReplacementText: String?
     var takeoverError: String?
     private(set) var takeoverUncertain = false
     private(set) var isWorking: Bool {
@@ -125,8 +127,13 @@ final class SessionChatModel {
     var canUseCommands: Bool { session.runtime.allows("session.commands") && connectorOnline }
     /// `/plan` is parsed by AA, not run by the runtime; offer it wherever planning is usable.
     var planningUsable: Bool { session.runtime.allows("session.planning") && connectorOnline }
+    var goalUsable: Bool { session.runtime.allows("session.goal") && connectorOnline }
     var offeredCommands: [V2RuntimeCommand] {
-        planningUsable && !commands.contains(where: { $0.id == "plan" }) ? [Self.planCommand] + commands : commands
+        let base = planningUsable && !commands.contains(where: { $0.id == "plan" }) ? [Self.planCommand] + commands : commands
+        return goalUsable ? [Self.goalCommand] + base.filter { $0.id != "goal" } : base
+    }
+    static var goalCommand: V2RuntimeCommand {
+        V2RuntimeCommand(id:"goal",title:"/goal",description:String(localized:"持续执行直到目标完成"),aliases:[],category:nil,scope:"session",enabled:true,disabledReason:nil,acceptsArgs:true,argsSchema:nil,metadata:.object(["ui":.object(["kind":.string("execute"),"argumentHint":.string(String(localized:"目标内容"))])]))
     }
     static var planCommand: V2RuntimeCommand {
         V2RuntimeCommand(id: "plan", title: "plan", description: String(localized: "进入原生规划：/plan <任务> 先出计划、确认后执行；/plan off 退出"),
@@ -157,6 +164,7 @@ final class SessionChatModel {
 
     func commandBlock(_ command: V2RuntimeCommand) -> RuntimeCommandBlock? {
         // AA's own /plan is not a runtime command; the planning capability already gated it.
+        if command.id == "goal", goalUsable { return nil }
         if command.id == "plan", !commands.contains(where: { $0.id == "plan" }) { return nil }
         if isRunningCommand || isWorking { return .busy }
         return command.block(status: session.runtime.state?.status, capability: canUseCommands,
@@ -197,6 +205,7 @@ final class SessionChatModel {
 
     /// Menu choice: commands with arguments are completed into the draft.
     func choose(_ command: V2RuntimeCommand) async {
+        if command.id == "goal", goalUsable { goalMode=true;session.composer.text="";session.composer.isFocused=true;return }
         if let block = commandBlock(command) { fail(commandBlockMessage(command, block)); return }
         let draft = session.composer
         let current = SlashIntent(draft.text).flatMap { [command].exact($0) } != nil ? draft.text : "/\(command.id)"
@@ -374,7 +383,33 @@ final class SessionChatModel {
         }
     }
 
+    func goalAction(_ action: String, objective: String? = nil) async -> Bool {
+        guard !isWorking, let state=session.goalState, state.freshness=="fresh", state.capabilities?.actions?.contains(action)==true else { return false }
+        isWorking=true; error=nil
+        defer { isWorking=false }
+        do { return try await repository.executeGoal(sessionId: session.id,request: V2GoalRequest(expectedRevision: state.revision ?? 0,action: action,objective: objective)) }
+        catch { self.error=error.localizedDescription;return false }
+    }
+    func sendGoal(_ text: String, confirmed: Bool = false) async {
+        let raw=text.trimmingCharacters(in:.whitespacesAndNewlines)
+        let objective=raw.hasPrefix("/goal ") ? String(raw.dropFirst(6)).trimmingCharacters(in:.whitespacesAndNewlines) : raw
+        guard !objective.isEmpty,!isWorking else { return }
+        if !confirmed,session.goalState?.goal != nil { goalReplacementText=text;return }
+        guard let state=session.goalState,state.freshness=="fresh",state.capabilities?.actions?.contains("set")==true else { return }
+        let selected=session.composer.attachments
+        isWorking=true;error=nil
+        defer { isWorking=false }
+        do {
+            var request=V2GoalRequest(expectedRevision:state.revision ?? 0,action:"set",objective:objective)
+            if !selected.isEmpty { let files=try await attachments.upload(sessionId:session.id,attachments:selected.map(\.local));request.attachments=files.map{V2AttachmentSendReference(fileId:$0.fileId)} }
+            if try await repository.executeGoal(sessionId:session.id,request:request),session.composer.text==text,session.composer.attachments.map(\.id)==selected.map(\.id) { session.composer.clear();goalMode=false }
+        } catch { self.error=error.localizedDescription }
+    }
     func send(_ text: String) async {
+        let trimmed=text.trimmingCharacters(in:.whitespacesAndNewlines)
+        if trimmed=="/goal",session.runtime.allows("session.goal") { goalMode=true;session.composer.text="";return }
+        if goalMode || (goalUsable && trimmed.hasPrefix("/goal ")) { await sendGoal(text);return }
+
         if let intent = V2PlanningCommand.parse(text) {
             guard !isWorking else { return }
             let selected = session.composer.attachments

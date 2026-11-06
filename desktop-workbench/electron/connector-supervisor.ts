@@ -195,7 +195,8 @@ export class ConnectorSupervisor {
       previous.uvPath !== current.uvPath ||
       previous.pythonPath !== current.pythonPath ||
       previous.uvPypiIndexUrl !== current.uvPypiIndexUrl ||
-      previous.uvPythonInstallMirror !== current.uvPythonInstallMirror;
+      previous.uvPythonInstallMirror !== current.uvPythonInstallMirror ||
+      previous.connectorProxy !== current.connectorProxy;
     this.refreshLocalState();
     if (!launcherChanged) return this.emitState();
     if (!this.resolveLauncher()) {
@@ -995,6 +996,9 @@ export class ConnectorSupervisor {
     // Without a bundled or saved interpreter uv downloads CPython itself; the default is GitHub.
     environment.UV_PYTHON_INSTALL_MIRROR = settings.uvPythonInstallMirror || PYTHON_BUILDS_GITHUB;
     environment.UV_HTTP_TIMEOUT ||= UV_HTTP_TIMEOUT_SECONDS;
+    // The setting decides, so a value inherited from the shell cannot contradict the UI.
+    if (settings.connectorProxy) environment.AA_CONNECTOR_PROXY = settings.connectorProxy;
+    else delete environment.AA_CONNECTOR_PROXY;
     if (process.platform === "win32") {
       delete environment.Path;
       delete environment.path;
@@ -1066,6 +1070,7 @@ export class ConnectorSupervisor {
     | "pythonPath"
     | "uvPypiIndexUrl"
     | "uvPythonInstallMirror"
+    | "connectorProxy"
     | "logChunkSizeKb"
     | "logRetainChunks"
     | "logRetentionDays"
@@ -1080,6 +1085,7 @@ export class ConnectorSupervisor {
       pythonPath: settings.pythonPath,
       uvPypiIndexUrl: settings.uvPypiIndexUrl,
       uvPythonInstallMirror: settings.uvPythonInstallMirror,
+      connectorProxy: settings.connectorProxy,
       logChunkSizeKb: settings.logChunkSizeKb,
       logRetainChunks: settings.logRetainChunks,
       logRetentionDays: settings.logRetentionDays,

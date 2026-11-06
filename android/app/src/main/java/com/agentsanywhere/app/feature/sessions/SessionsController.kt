@@ -148,7 +148,8 @@ class SessionsController(
         devices: List<AgentDevice>,
         projects: List<AgentProject> = emptyList(),
     ): NewSessionCreateOutcome {
-        val planning = com.agentsanywhere.app.feature.sessiondetail.PlanningCommand.parse(draft.content)
+        val goal = Regex("^/goal(?:\\s|$)").containsMatchIn(draft.content.trimStart())
+        val planning = if(goal)null else com.agentsanywhere.app.feature.sessiondetail.PlanningCommand.parse(draft.content)
         if (planning?.command == "exit_plan" || planning?.command == "enter_plan") return NewSessionCreateOutcome.Failed(PlanningFailure(PlanningFailure.Reason.TaskRequired))
         // Prepared-workspace creation does not carry a planning intent yet; refuse instead of silently dropping it.
         if (planning != null && draft.preparedWorkspace != null) return NewSessionCreateOutcome.Failed(PlanningFailure(PlanningFailure.Reason.WorkspaceRequired))
@@ -203,7 +204,8 @@ class SessionsController(
                         runtime = draft.runtimeType,
                         title = draft.title?.trim()?.takeIf(String::isNotBlank),
                         cwd = resolved.cwd,
-                        content = planning?.content ?: if (planning != null) "" else draft.content.trim(),
+                        content = if(goal)draft.content.trimStart().drop(5).trim() else planning?.content ?: if (planning != null) "" else draft.content.trim(),
+                        goalIntent = goal,
                         planningIntent = planning != null,
                         selections = draft.selections.toMap(),
                         attachments = draft.attachments.map(NewSessionAttachmentPart::toInlineAttachmentRef),

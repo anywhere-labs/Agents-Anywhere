@@ -185,7 +185,9 @@ and BFSU carry no `openai-codex`) still installs. `PIP_INDEX_URL` follows the
 mirror. The saved `uvPythonInstallMirror` sets `UV_PYTHON_INSTALL_MIRROR` for
 the Python interpreter download (GitHub python-build-standalone when empty); it
 only matters without a bundled or saved interpreter, and Settings hides it
-otherwise. `UV_HTTP_TIMEOUT` defaults to 60 seconds.
+otherwise. `UV_HTTP_TIMEOUT` defaults to 60 seconds. The saved `connectorProxy`
+sets `AA_CONNECTOR_PROXY` for the Connector's route to the Server, see
+[Connector network](../docs/connector-network.md).
 
 When building the environment fails, or uv itself reports the failure on a
 normal launch (`error:`, `×` or `Caused by:` lines), the ownership gate offers

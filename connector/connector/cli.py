@@ -16,6 +16,7 @@ from connector.core.runtime_owner import (
 from connector.logging import configure_connector_logging, logger
 from connector.mesh.host import serve_host
 from connector.server.client import BackendRpcClient
+from connector.server.network import open_http_client, sanitize_no_proxy_environment
 from connector.server.pairing import (
     poll_pairing,
     resolve_pair_server_url,
@@ -33,6 +34,7 @@ def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
     configure_connector_logging(debug=bool(getattr(args, "debug", False)))
+    sanitize_no_proxy_environment()
     try:
         if args.command in {"pair", "login"}:
             asyncio.run(_pair(args))
@@ -180,7 +182,7 @@ async def _pair(args: argparse.Namespace) -> None:
 
 async def _pair_with_lease(args: argparse.Namespace, lease: RuntimeLease) -> None:
     server_url = await _resolve_server_url_for_pair(args.server, timeout=10)
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with await open_http_client(server_url, 30) as client:
         pairing = await start_pairing(client, server_url, args.timeout)
         pairing_id = pairing["pairingId"]
         code = pairing["code"]

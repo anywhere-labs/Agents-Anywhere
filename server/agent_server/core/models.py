@@ -13,6 +13,7 @@ from pydantic import (
 )
 
 from agent_server.core.planning.models import PlanningCreationIntent
+from agent_server.core.goal.models import GoalCreationIntent
 from agent_server.core.email_settings import EmailSettingsUpdate, EmailSettingsView
 from agent_server.core.runtime_identity import (
     RuntimeIdentity,
@@ -807,12 +808,23 @@ class SessionCreateAndStartRequest(BaseModel):
     content: str
     selections: dict[str, str | None] = Field(default_factory=dict)
     planningIntent: PlanningCreationIntent | None = None
+    goalIntent: GoalCreationIntent | None = None
     runtimeOptions: dict[str, Any] = Field(default_factory=dict, max_length=16)
     attachments: list[InlineAttachmentRef] = Field(default_factory=list, max_length=10)
     clientMessageId: str | None = None
 
     @model_validator(mode="after")
     def _validate_runtime_identity(self) -> SessionCreateAndStartRequest:
+        if self.goalIntent is not None and self.planningIntent is not None:
+            raise ValueError("goal_and_plan_creation_conflict")
+        if (
+            self.goalIntent is not None
+            and self.clientMessageId is not None
+            and self.goalIntent.operationId != self.clientMessageId
+        ):
+            raise ValueError("goal_creation_identity_mismatch")
+        if self.goalIntent is not None and not self.content.strip():
+            raise ValueError("goal_objective_required")
         if self.planningIntent is not None and not self.content.strip() and not self.attachments:
             raise ValueError("裸 /plan 只设置客户端创建意图，请填写规划任务后再创建会话。")
         identity = RuntimeIdentity.create(

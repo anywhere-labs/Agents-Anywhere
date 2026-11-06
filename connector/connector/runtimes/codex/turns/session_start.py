@@ -120,6 +120,11 @@ class CodexSessionStartController:
             external_session_id=thread_id,
             selections=effective_selections,
         )
+        goal_result = await self.host.prepare_goal_creation(
+            session_id, thread_id, content, attachments, client_message_id or session_id
+        )
+        if goal_result is not None:
+            return goal_result
         turn_result = await self.turn_actions.start_turn(
             session_id=session_id,
             external_session_id=thread_id,

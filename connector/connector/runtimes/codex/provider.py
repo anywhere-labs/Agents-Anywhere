@@ -262,7 +262,12 @@ class CodexProvider(RuntimeProvider):
         )
         from connector.planning.infrastructure.binding import bind_planning
         from connector.runtimes.codex.planning import CodexPlanningPort
-        return bind_planning(runtime, host, CodexPlanningPort(runtime))
+
+        bind_planning(runtime, host, CodexPlanningPort(runtime))
+        from connector.goals.binding import bind_goals
+        from connector.runtimes.codex.goals import CodexGoalPort
+
+        return bind_goals(runtime, host, CodexGoalPort(runtime))
 
     def resource_claims(
         self,

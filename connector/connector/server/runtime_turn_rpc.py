@@ -26,6 +26,12 @@ async def dispatch_session_create(
     params: dict[str, Any],
 ) -> dict[str, Any]:
     parsed = SessionCreateParams.parse(params)
+    if params.get("goalIntent") is not None:
+        if runtime.goals is None:
+            raise ValueError("goal_unavailable")
+        runtime.goals.port.runtime.host.__dict__.setdefault("_goal_creations", {})[
+            parsed.session_id
+        ] = params["goalIntent"]
     if params.get("planningIntent") is not None:
         if runtime.planning is None:
             raise ValueError("Native planning is unavailable")

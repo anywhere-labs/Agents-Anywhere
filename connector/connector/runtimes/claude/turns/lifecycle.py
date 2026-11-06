@@ -400,6 +400,9 @@ class ClaudeTurnRunner:
             emitted_final_assistant_content = False
             stream_accumulator = ClaudeStreamAccumulator()
             async for message in receive_response_messages(client):
+                goal_port = getattr(self.host, "_goal_port", None)
+                if goal_port is not None:
+                    goal_port.observe_message(session.session_id, message)
                 external_session_id = message_session_id(message)
                 if external_session_id is not None:
                     await self._update_external_session_id(session, external_session_id)
@@ -417,7 +420,12 @@ class ClaudeTurnRunner:
                 role = message_role(message)
                 text = message_text(message)
                 native_message_id = message_id(message)
-                synthetic_control = is_synthetic_control_message(message)
+                goal_control = getattr(
+                    getattr(self.host, "_goal_port", None), "is_control_message", None
+                )
+                synthetic_control = is_synthetic_control_message(message) or (
+                    callable(goal_control) and goal_control(message)
+                )
                 if (
                     role == "user"
                     and text

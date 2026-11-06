@@ -992,6 +992,7 @@ async def session_snapshot(
         previous_state=runtime_state,
     )
     return ProtocolSessionSnapshotResponse(
+        goalState=await db.read_goal(session_id),
         session=session.model_dump(mode="json"),
         state=(
             runtime_state.model_dump(mode="json")

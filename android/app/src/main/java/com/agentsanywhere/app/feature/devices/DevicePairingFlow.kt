@@ -49,17 +49,3 @@ fun randomPairingDeviceName(): String {
     )
     return "${adjectives.random()}-${nouns.random()}"
 }
-
-/** A successful one-time claim must survive failures in the subsequent setup check. */
-class DevicePairingCompletion {
-    var claimed = false
-        private set
-
-    suspend fun complete(claimPairing: suspend () -> Unit, checkAgents: suspend () -> Boolean): Boolean {
-        if (!claimed) {
-            claimPairing()
-            claimed = true
-        }
-        return checkAgents()
-    }
-}

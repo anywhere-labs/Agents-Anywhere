@@ -32,7 +32,11 @@ from agent_server.infra.repositories.planning import PlanningRepositoryMixin
 from agent_server.infra.repositories.runtime_workflows import RuntimeWorkflowRepositoryMixin
 
 
+from agent_server.infra.repositories.goals import GoalRepositoryMixin
+
+
 class Store(
+    GoalRepositoryMixin,
     PlanningRepositoryMixin,
     RuntimeWorkflowRepositoryMixin,
     DeviceRuntimeRepositoryMixin,
