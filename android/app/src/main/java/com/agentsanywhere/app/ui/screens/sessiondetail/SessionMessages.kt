@@ -1268,7 +1268,10 @@ private fun AgentMessageContent(
     onOpenFile: (String) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (message.text.isNotBlank()) AgentMarkdownText(message.text, darkMode, onOpenFile = onOpenFile)
+        if (message.text.isNotBlank()) {
+            AgentMarkdownText(message.text, darkMode, onOpenFile = onOpenFile)
+            GeneratedFileCards(markdown = message.text, onOpenFile = onOpenFile)
+        }
         UserAttachmentStrip(
             attachments = message.attachments,
             darkMode = darkMode,

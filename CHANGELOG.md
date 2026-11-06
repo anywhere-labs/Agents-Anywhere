@@ -50,6 +50,15 @@
 
 - 管理员删除用户时，会先删除该用户的设备及其项目和会话，不再留下无主设备；用户项目里还有会话时返回冲突提示，不再报服务器错误。（[#550](https://github.com/anywhere-labs/Agents-Anywhere/pull/550)）
 
+### Android
+
+- 点击会话中的文件链接可直接预览 Agent 生成的 PDF、Word、PowerPoint、Excel、CSV、HTML、Markdown、图片和文本文件，预览页底部提供「下载」「分享」「其他应用打开」，暂不支持预览的格式也可以下载原文件；Agent 回复提到的报告、演示文稿等文件会在消息下方显示为文件卡片。
+  - 下载的文件保存到手机「下载/Agents Anywhere」，分享和用其他应用打开时保留原始文件名和扩展名，支持中文文件名和带空格的路径。
+  - 设备和会话的文件浏览里点开文档同样进入预览页，文本文件预览页右上角也可以下载、分享或用其他应用打开。
+  - Word 和 PowerPoint 97-2003（`.doc`、`.ppt`）只显示文字内容，`.docx`、`.pptx`、`.xlsx` 为简化排版；Markdown 中引用工作设备上的图片会一并显示。
+
+  [#567](https://github.com/anywhere-labs/Agents-Anywhere/pull/567)
+
 ## 2.2.0（日期待定）
 
 [发布说明](docs/releases/2.2.0.md) · [与 2.1.0 的差异](https://github.com/anywhere-labs/Agents-Anywhere/compare/v2.1.0...main)
