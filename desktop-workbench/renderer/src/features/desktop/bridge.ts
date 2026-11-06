@@ -59,6 +59,7 @@ export type DesktopConnectorState = {
   logRetentionDays?: number
   uvPypiIndexUrl?: string
   uvPythonInstallMirror?: string
+  connectorProxy?: string
 }
 
 export type DesktopLocalBinding = {
@@ -122,6 +123,7 @@ export type DesktopConnectorSettings = Partial<Pick<
   | "logRetentionDays"
   | "uvPypiIndexUrl"
   | "uvPythonInstallMirror"
+  | "connectorProxy"
 >>
 
 export type DesktopConnectorConfigPatch = Partial<Pick<

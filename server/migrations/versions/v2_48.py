@@ -1,17 +1,18 @@
-"""Track session inventory scans without rewriting every session row.
+"""Align timeline and connector indexes with production.
 
-Every complete inventory scan used to stamp ``source_scan_token`` on all sessions
-of the runtime and clear it again, so an unchanged scan rewrote each row twice.
-A scan now lives in one ``session_inventory_scans`` row. The per-row question "did
-this source state move after the scan started?" is answered by comparing
-``sessions.source_changed_seq`` with the sequence value the scan took when it began.
+``idx_timeline_items_item_time_type_role`` leads with ``item_time`` and is not
+used by any query since 2.1.0: every timeline read is scoped by ``session_id``
+and served by the per-session indexes. On production it had grown to ~79 GB and
+was dropped by hand, so this revision drops it everywhere else too.
 
-``source_changed_seq`` is added without a default first and gets its default in a
-second statement: existing rows stay ``NULL`` (older than any scan), and the default
-applies only to future inserts, so neither statement rewrites the large table.
+Connector lookups filter on ``user_id`` and ``revoked = 0``. Production gained
+``idx_connectors_user_revoked`` by hand; this revision creates it elsewhere.
 
-``source_scan_token`` is kept so the previous Server release can still run against
-this schema during a rollback. Nothing in this release reads or writes it.
+Both statements are guarded with ``IF EXISTS`` / ``IF NOT EXISTS`` so the
+revision is a no-op on databases that were already aligned by hand. They run
+without ``CONCURRENTLY``: the whole upgrade shares one transaction, and the
+revision is meant to run in a maintenance window with workers stopped, where
+dropping an index and indexing the small ``connectors`` table are quick.
 
 Revision ID: v2_48
 Revises: v2_47
@@ -24,33 +25,23 @@ down_revision = "v2_47"
 branch_labels = None
 depends_on = None
 
+TIMELINE_INDEX = "idx_timeline_items_item_time_type_role"
+CONNECTOR_INDEX = "idx_connectors_user_revoked"
+
 
 def upgrade() -> None:
-    op.execute("CREATE SEQUENCE session_source_change_seq")
-    op.execute("ALTER TABLE sessions ADD COLUMN source_changed_seq BIGINT")
+    op.execute(f"DROP INDEX IF EXISTS {TIMELINE_INDEX}")
     op.execute(
-        "ALTER TABLE sessions ALTER COLUMN source_changed_seq "
-        "SET DEFAULT nextval('session_source_change_seq')"
-    )
-    op.execute(
-        "ALTER SEQUENCE session_source_change_seq OWNED BY sessions.source_changed_seq"
-    )
-    op.execute(
-        """
-CREATE TABLE session_inventory_scans (
- connector_id TEXT NOT NULL REFERENCES connectors(id) ON DELETE CASCADE,
- runtime TEXT NOT NULL,
- runtime_id TEXT NOT NULL,
- scan_token TEXT NOT NULL,
- started_seq BIGINT NOT NULL,
- started_at TEXT NOT NULL,
- PRIMARY KEY (connector_id, runtime, runtime_id)
-)
-"""
+        f"CREATE INDEX IF NOT EXISTS {CONNECTOR_INDEX} "
+        "ON connectors (user_id, revoked)"
     )
 
 
 def downgrade() -> None:
-    op.execute("DROP TABLE session_inventory_scans")
-    # Dropping the owning column also drops the sequence.
-    op.execute("ALTER TABLE sessions DROP COLUMN source_changed_seq")
+    op.execute(f"DROP INDEX IF EXISTS {CONNECTOR_INDEX}")
+    # Rebuilding this index scans the whole timeline table and can take a long
+    # time on large databases.
+    op.execute(
+        f"CREATE INDEX IF NOT EXISTS {TIMELINE_INDEX} "
+        "ON timeline_items (item_time, type, role)"
+    )

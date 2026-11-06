@@ -13,6 +13,7 @@ from agent_server.infra.db.schema import (
     session_planning,
     sessions,
 )
+from agent_server.infra.db.engine import read_connection
 
 
 class PlanningRepositoryMixin:
@@ -83,7 +84,7 @@ class PlanningRepositoryMixin:
         return True
 
     async def read_planning(self, session_id: str) -> dict | None:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             value = (
                 await conn.execute(
                     select(session_planning.c.payload).where(
@@ -94,7 +95,7 @@ class PlanningRepositoryMixin:
         return json.loads(value) if value else None
 
     async def list_plan_documents(self, session_id: str) -> list[dict]:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (
                 (
                     await conn.execute(
@@ -113,7 +114,7 @@ class PlanningRepositoryMixin:
     async def get_plan_document(
         self, session_id: str, plan_id: str, revision: int
     ) -> dict:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             value = (
                 await conn.execute(
                     select(plan_documents.c.payload).where(
@@ -173,7 +174,7 @@ class PlanningRepositoryMixin:
     async def get_planning_operation(
         self, session_id: str, operation_id: str
     ) -> dict | None:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             value = (
                 await conn.execute(
                     select(planning_operations.c.payload).where(

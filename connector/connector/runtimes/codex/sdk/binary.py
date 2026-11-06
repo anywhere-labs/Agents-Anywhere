@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -180,23 +181,27 @@ def select_codex_runtime_binary(
 def codex_version_error(candidate: str, environment: Mapping[str, str]) -> str | None:
     """Validate the executable with the same environment used by the SDK."""
     try:
-        result = subprocess.run(
-            codex_launch_command(candidate, ["--version"], environment),
-            env=dict(environment),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-            timeout=5.0,
-        )
+        # On Windows, PIPE capture starts reader threads before checking the
+        # timeout. A stuck Thread.start() can therefore outlive timeout=5.0.
+        with tempfile.TemporaryFile() as output:
+            result = subprocess.run(
+                codex_launch_command(candidate, ["--version"], environment),
+                env=dict(environment),
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=5.0,
+            )
+            output.seek(0)
+            stdout = output.read().decode("utf-8", errors="replace")
     except (OSError, subprocess.SubprocessError) as exc:
         return str(exc) or exc.__class__.__name__
     if result.returncode != 0:
         return f"exited with code {result.returncode}"
     if (
         re.search(
-            r"(?m)^codex(?:-cli)? \d+\.\d+\.\d+(?:[-+][\w.-]+)?\s*$", result.stdout
+            r"(?m)^codex(?:-cli)? \d+\.\d+\.\d+(?:[-+][\w.-]+)?\s*$", stdout
         )
         is None
     ):

@@ -1,4 +1,4 @@
-from agent_server.infra.db.engine import build_engine
+from agent_server.infra.db.engine import build_engine, read_connection
 from agent_server.infra.db.schema import (
     connector_protocol_capabilities,
     connector_runtime_catalogs,
@@ -43,6 +43,7 @@ __all__ = [
     "oauth_clients",
     "pairing_codes",
     "projects",
+    "read_connection",
     "retired_device_runtimes",
     "session_active_runs",
     "session_inventory_scans",

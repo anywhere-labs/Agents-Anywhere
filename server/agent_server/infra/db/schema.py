@@ -52,6 +52,7 @@ connectors = Table(
     # preferences (e.g. ~/.claude/settings.json fields). Read-only from the
     # backend's perspective; the daemon owns the write loop.
     Column("user_preferences", Text),
+    Index("idx_connectors_user_revoked", "user_id", "revoked"),
 )
 
 
@@ -426,7 +427,7 @@ sessions = Table(
     Column("source_state_at", Text),
     Column("source_state_reason", Text),
     Column("source_observation_origin", Text),
-    # Retired by v2_48 and kept only so the previous release can roll back.
+    # Retired by v2_49 and kept only so the previous release can roll back.
     Column("source_scan_token", Text),
     # Sequence value of the last source observation that an inventory scan which
     # began earlier must not overwrite. NULL means older than any scan.
@@ -535,7 +536,6 @@ timeline_items = Table(
         "session_id",
         "order_seq",
     ),
-    Index("idx_timeline_items_item_time_type_role", "item_time", "type", "role"),
 )
 
 
