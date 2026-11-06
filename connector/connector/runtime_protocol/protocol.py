@@ -31,6 +31,10 @@ class AgentRuntime(ABC):
     """Connector -> Runtime."""
 
     @property
+    def goals(self):
+        return getattr(self, "_goals", None)
+
+    @property
     def planning(self):
         return getattr(self, "_planning", None)
 

@@ -1,6 +1,62 @@
 {
   "artifacts": [
     {
+      "direction": "bidirectional",
+      "model": "GoalRequest",
+      "path": "schemas/goal-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "8d3dc8f2988b2aace5794dde80f0a63d3241b6bbe4b109beabd94f66eb4678c5",
+      "slug": "goal-request"
+    },
+    {
+      "direction": "egress",
+      "model": "GoalState",
+      "path": "schemas/goal-state.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "d0950fe1485920c214355947751faa714dd94c4520ead41188a9cbef09d30bd0",
+      "slug": "goal-state"
+    },
+    {
+      "direction": "egress",
+      "model": "GoalResponse",
+      "path": "schemas/goal-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "bd43e12469c1ebb68c910ea42e9b9ef896f5ca213565d4338912d70bc5e0cf15",
+      "slug": "goal-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "PlanningRequest",
+      "path": "schemas/planning-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "63b4c6f22cb1ae6e6494a8e4627c2a51c29441a1f7c73c40b10af2a2759c2b24",
+      "slug": "planning-request"
+    },
+    {
+      "direction": "egress",
+      "model": "PlanningState",
+      "path": "schemas/planning-state.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "035dd5ed22f2a99cb43cde8159f7e273a21c9d70a51fac0144a8852f114d9bb7",
+      "slug": "planning-state"
+    },
+    {
+      "direction": "egress",
+      "model": "PlanningResponse",
+      "path": "schemas/planning-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "97645b70de3e374d0c39c836f7f42f32f92f1c2a7d2d4e90c66fc2b05702a901",
+      "slug": "planning-response"
+    },
+    {
+      "direction": "egress",
+      "model": "PlanDocument",
+      "path": "schemas/plan-document.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "3fe1d13902e61bb338d743d627c208dc19f026413265c7d48b14e028183d606e",
+      "slug": "plan-document"
+    },
+    {
       "direction": "ingress",
       "model": "ProtocolHandshakeRequest",
       "path": "schemas/handshake-request.schema.json",
@@ -69,7 +125,7 @@
       "model": "ProtocolSessionSnapshotResponse",
       "path": "schemas/session-snapshot-response.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "566db7f99df706a995fd2cd05c4c6f0dd5d27eae459bfe0d4c7e6cd11563b170",
+      "sha256": "00f2fa4e6264c0395da8516fddf8e39587efd72cc8601d4bb1f57deadd3d03d6",
       "slug": "session-snapshot-response"
     },
     {

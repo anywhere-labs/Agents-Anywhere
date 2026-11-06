@@ -76,6 +76,11 @@ final class V2PendingMessage: Identifiable {
 final class V2SessionModel: Identifiable {
     let id: V2SessionID
     let scope: V2ClientScope
+    private(set) var goalState: V2GoalState?
+    func observeGoal(_ observed: V2GoalState) {
+        if let old=goalState, (old.revision ?? 0) > (observed.revision ?? 0) { return }
+        goalState=observed
+    }
     private(set) var planning: V2PlanningState?
     func observePlanning(_ observed: V2PlanningState) {
         guard observed.sessionId == id else { return }

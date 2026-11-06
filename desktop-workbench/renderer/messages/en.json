@@ -2401,5 +2401,30 @@
     "openDevice": "Open device",
     "chooseDevice": "Choose a device",
     "done": "Done"
+  },
+  "goal": {
+    "title": "Goal",
+    "commandDescription": "Keep working toward a goal",
+    "objective": "Goal objective",
+    "pause": "Pause goal",
+    "resume": "Resume goal",
+    "clear": "Clear goal",
+    "clearMode": "Exit goal input",
+    "edit": "Edit goal",
+    "cancel": "Cancel",
+    "save": "Save",
+    "replaceTitle": "Replace current goal?",
+    "replace": "Replace goal",
+    "working": "Updating goal",
+    "operationFailed": "Goal operation failed",
+    "operationUnknown": "The result is unknown. Checking the original operation.",
+    "stateUnavailable": "Goal state is unavailable",
+    "workspaceUnsupported": "Goal mode is not available in this workspace",
+    "achieved": "Goal achieved in {time}",
+    "failed": "Goal failed",
+    "status": "{status, select, active {Pursuing goal} paused {Paused goal} blocked {Goal stalled} usageLimited {Goal usage limited} budgetLimited {Goal limited} other {Goal}}",
+    "achievedUnknownTime": "Goal achieved",
+    "secondsUnit": " s",
+    "resumeTitle": "Resume this goal?"
   }
 }

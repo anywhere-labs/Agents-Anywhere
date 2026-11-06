@@ -186,6 +186,15 @@ fun SessionDetailScreen(
     onSessionChanged: (AgentSession) -> Unit = {},
 ) {
     var planningCreation by remember(sessionId, preparedSession?.localSessionId) { mutableStateOf(false) }
+    var goalState by remember(sessionId){mutableStateOf<com.agentsanywhere.app.api.RemoteGoalState?>(null)}
+    var goalMode by remember(sessionId,preparedSession?.localSessionId){mutableStateOf(false)}
+    var goalBusy by remember(sessionId){mutableStateOf(false)}
+    var goalReplacement by remember(sessionId){mutableStateOf<Pair<String,List<com.agentsanywhere.app.feature.sessiondetail.TimelineAttachment>>?>(null)}
+    LaunchedEffect(sessionId) {
+        val id=sessionId
+        if(id!=null)while(true){controller.loadGoal(id).onSuccess{goalState=it};delay(3000)}
+    }
+
     var planningBusy by remember(sessionId) { mutableStateOf(false) }
     val planReader = remember(sessionId) { mutableStateOf<com.agentsanywhere.app.api.PlanDocument?>(null) }
     val planningSession by rememberUpdatedState(sessionId)
@@ -1204,6 +1213,10 @@ fun SessionDetailScreen(
             onEvents = { events ->
                 if (sessionId != id || !appVisible) return@start
                 withContext(Dispatchers.Main.immediate) {
+                    for(event in events) {
+                        val observed=event.payload.goal
+                        if(event.sessionId==id && observed!=null && (goalState==null || observed.revision>=goalState!!.revision))goalState=observed
+                    }
                     val before = state
                     state = controller.applyRealtimeEvents(state, events, currentDevices)
                     if (latestTimelineItemChanged(before.messages, state.messages) || before.notices != state.notices) {
@@ -1326,14 +1339,17 @@ fun SessionDetailScreen(
         attachmentsReady &&
         (attachments.isEmpty() || canUseAttachments) &&
         (isPreparedSession || canUseSendMessage)
+    val goalUsable = connectorOnline && (preparedSession?.goalsEnabled==true || state.capabilities.isUsable("session.goal", runtimeId, runtimeType))
+    val goalInput = goalMode || goalUsable && Regex("^/goal(?:\\s|$)").containsMatchIn(draft.trimStart())
     val planInput = com.agentsanywhere.app.feature.sessiondetail.PlanningCommand.parse(draft) != null
-    val canSend = (inputEnabled || (planInput && takeoverEnabled && !state.planning?.actions.isNullOrEmpty())) &&
+    val canSend = (inputEnabled || (goalInput && takeoverEnabled && !goalState?.actions.isNullOrEmpty()) || (planInput && takeoverEnabled && !state.planning?.actions.isNullOrEmpty())) &&
         !state.sending &&
         !preparedSessionCreating &&
         !state.commandExecuting &&
         (draft.isNotBlank() || attachments.isNotEmpty()) &&
         when {
             // Blocked commands still submit so the tap explains why they cannot run.
+            goalInput -> attachmentsReady && !goalBusy
             planInput -> attachmentsReady && !planningBusy
             exactCommand != null -> true
             commandLookupPending -> false
@@ -1412,7 +1428,8 @@ fun SessionDetailScreen(
 
     fun commandBlockMessage(command: RuntimeCommand): String? =
         // AA's own /plan is not a runtime command; the planning capability already gated it.
-        if (command.id == "plan" && state.commands.commands.none { it.id == "plan" }) null
+        if (command.id == "goal" && goalUsable) null
+        else if (command.id == "plan" && state.commands.commands.none { it.id == "plan" }) null
         else when (command.block(runtimeStatus, canUseCommands, takeoverEnabled, connectorOnline)) {
             null -> null
             RuntimeCommandBlock.Busy -> context.getString(R.string.session_command_busy)
@@ -1482,6 +1499,7 @@ fun SessionDetailScreen(
 
     /** Suggestion tap: commands with arguments are completed into the draft, the rest run directly. */
     fun chooseCommand(command: RuntimeCommand) {
+        if(command.id == "goal" && goalUsable) { goalMode=true;setComposerDraft("");return }
         commandBlockMessage(command)?.let { message ->
             showError(message)
             return
@@ -1514,6 +1532,20 @@ fun SessionDetailScreen(
         }
     }
 
+    fun goalAction(action:String,objective:String?=null,uploaded:List<TimelineAttachment> = emptyList(),clearDraft:Boolean=false) {
+        val id=sessionId?:return
+        val observed=goalState?:return
+        if(goalBusy)return
+        if(observed.freshness!="fresh"||action !in observed.actions){showError(context.getString(R.string.goal_state_unavailable));return}
+        val sentDraft=draft
+        scope.launch {
+            goalBusy=true
+            controller.executeGoal(id,observed.revision,action,objective,uploaded).onSuccess {
+                if(planningSession==id){goalState=it;if(clearDraft&&draft==sentDraft){clearComposerDraft();goalMode=false}}
+            }.onFailure { showError(it.message ?: context.getString(if(it is SessionDetailController.GoalFailure && it.code!="goal_outcome_unknown")R.string.goal_operation_failed else R.string.goal_unknown)) }
+            if(planningSession==id)goalBusy=false
+        }
+    }
     fun sendDraft() {
         val inputs = if (preparedSession != null) {
             preparedSession.preparedWorkspace?.inputModalities(preparedSelections.model)
@@ -1528,6 +1560,17 @@ fun SessionDetailScreen(
         val text = raw.trim()
         if (text.isEmpty() && attachments.isEmpty()) return
         val id = sessionId
+        val rawGoal=goalUsable && Regex("^/goal(?:\\s|$)").containsMatchIn(raw.trimStart())
+        if(rawGoal && raw.trimStart().drop(5).isBlank()){goalMode=true;clearComposerDraft();return}
+        if(goalMode||rawGoal){
+            val objective=if(rawGoal)raw.trimStart().drop(5).trim() else text
+            if(objective.isBlank())return
+            if(isPreparedSession){sendText("/goal $objective");return}
+            if(attachments.any{it.remote==null||it.uploadState!=AttachmentUploadState.Uploaded})return
+            val uploaded=attachments.mapNotNull{it.remote}
+            if(goalState?.goal!=null){goalReplacement=objective to uploaded;return}
+            goalAction("set",objective,uploaded,true);return
+        }
         val planning = com.agentsanywhere.app.feature.sessiondetail.PlanningCommand.parse(raw)
         if (planning != null && isPreparedSession && planning.command != "submit_task") {
             if (attachments.isNotEmpty()) { showError(context.getString(R.string.planning_attachment_task)); return }
@@ -1629,8 +1672,12 @@ fun SessionDetailScreen(
             metadata = mapOf("ui" to mapOf("kind" to "execute", "argumentHint" to planCommandHint)),
         )
     }
-    val offeredCommands = remember(state.commands.commands, planningUsable, planCommand) {
-        if (planningUsable && state.commands.commands.none { it.id == "plan" }) listOf(planCommand) + state.commands.commands else state.commands.commands
+    val goalCommandDescription = stringResource(R.string.goal_command_description)
+    val goalCommandHint = stringResource(R.string.goal_objective)
+    val goalCommand = remember(planCommand, goalCommandDescription, goalCommandHint) { planCommand.copy(id="goal", title="/goal", description=goalCommandDescription, metadata=mapOf("ui" to mapOf("kind" to "execute", "argumentHint" to goalCommandHint))) }
+    val offeredCommands = remember(state.commands.commands, planningUsable, goalUsable, planCommand, goalCommand) {
+        val base = if (planningUsable && state.commands.commands.none { it.id == "plan" }) listOf(planCommand) + state.commands.commands else state.commands.commands
+        if(goalUsable) listOf(goalCommand) + base.filter { it.id != "goal" } else base
     }
     val commandSuggestions = remember(offeredCommands, slashIntent?.command) {
         slashIntent?.let { intent -> offeredCommands.filter { it.matchesPrefix(intent.command) }.take(6) }
@@ -1767,7 +1814,8 @@ fun SessionDetailScreen(
                             state.messages.isEmpty() && (state.planning == null || (state.planning?.effectiveMode != "plan" && state.planning?.draft == null && state.planning?.proposal == null && state.planning?.documents.isNullOrEmpty())) && openInteractions.isEmpty() && !hasOpenNotifications ->
                                 SessionWelcomeMessage()
                             else -> MessageList(
-                                planningContent = { SessionPlanningPanel(state.planning, darkMode) },
+                                planningContent = { SessionPlanningPanel(state.planning, darkMode)
+                            goalState?.lastOutcome?.takeIf{it.status=="complete"}?.let{outcome->androidx.compose.material3.Text(stringResource(R.string.goal_achieved,(outcome.seconds?:0).toString()),style=androidx.compose.material3.MaterialTheme.typography.labelSmall)} },
                                 planDocuments = planDocs,
                                 planEntry = { document ->
                                     PlanTimelineEntry(planning, document, latestPlanRevisions[document.planId] ?: document.revision, darkMode, onRead = { planReader.value = it })
@@ -1864,6 +1912,11 @@ fun SessionDetailScreen(
                                 }
                                 planTarget?.let { target ->
                                     PlanningReviewPanel(target, planningBusy, onRespond = { action, feedback -> respondPlan(target, action, feedback) })
+                                }
+                                SessionGoalPanel(if(goalUsable && takeoverEnabled)goalState else goalState?.copy(actions=emptyList()),goalBusy,onAction={action,objective->goalAction(action,objective)})
+                                if(goalMode) androidx.compose.material3.TextButton(onClick={goalMode=false}) {androidx.compose.material3.Text(stringResource(R.string.goal_exit_mode))}
+                                goalReplacement?.let { replacement ->
+                                    androidx.compose.material3.AlertDialog(onDismissRequest={goalReplacement=null},title={androidx.compose.material3.Text(stringResource(R.string.goal_replace_title))},text={androidx.compose.material3.Text(replacement.first,maxLines=4)},confirmButton={androidx.compose.material3.TextButton(onClick={goalReplacement=null;goalAction("set",replacement.first,replacement.second,true)}){androidx.compose.material3.Text(stringResource(R.string.goal_replace))}},dismissButton={androidx.compose.material3.TextButton(onClick={goalReplacement=null}){androidx.compose.material3.Text(stringResource(R.string.goal_cancel))}})
                                 }
                                 if (planTarget == null) MessageComposer(
                                     darkMode = darkMode,

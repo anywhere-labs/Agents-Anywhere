@@ -98,7 +98,13 @@ struct SessionTimelineEventView: View {
                 } else { TimelineMarkerRow(title: value.title, symbol: value.symbol, status: row.value.status) }
             }
         case .marker:
-            if let detail = value.detail {
+            if row.value.raw["content"]?["kind"]?.stringValue == "goal" {
+                let goal=row.value.raw["content"]?["goal"]
+                if goal?["status"]?.stringValue == "complete" {
+                    if let seconds=goal?["timeUsedSeconds"]?.intValue {Text(String(localized:"目标已完成，用时 \(seconds) 秒")).font(.caption).foregroundStyle(.secondary)}
+                    else {Text(String(localized:"目标已完成")).font(.caption).foregroundStyle(.secondary)}
+                } else if goal?["status"]?.stringValue == "failed" {Text(String(localized:"目标未完成")).font(.caption).foregroundStyle(.secondary)}
+            } else if let detail = value.detail {
                 TimelineFold(id: row.id, title: value.title, symbol: value.symbol, status: row.value.status, disclosures: disclosures) {
                     TimelineCodePanel(label: String(localized: "Details"), code: detail.formattedJSON).clipShape(.rect(cornerRadius: 14))
                 }

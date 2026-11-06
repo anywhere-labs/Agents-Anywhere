@@ -11,6 +11,9 @@ from pydantic import BaseModel
 
 from agent_server.core.protocol import (
     PROTOCOL_VERSION_1,
+    GoalRequest,
+    GoalState,
+    GoalResponse,
     PlanningRequest,
     PlanningState,
     PlanningResponse,
@@ -47,6 +50,9 @@ class ProtocolSchema:
 
 
 SCHEMAS = (
+    ProtocolSchema("goal-request", GoalRequest, "bidirectional", "validation"),
+    ProtocolSchema("goal-state", GoalState, "egress", "serialization"),
+    ProtocolSchema("goal-response", GoalResponse, "egress", "serialization"),
     ProtocolSchema("planning-request", PlanningRequest, "bidirectional", "validation"),
     ProtocolSchema("planning-state", PlanningState, "egress", "serialization"),
     ProtocolSchema("planning-response", PlanningResponse, "egress", "serialization"),

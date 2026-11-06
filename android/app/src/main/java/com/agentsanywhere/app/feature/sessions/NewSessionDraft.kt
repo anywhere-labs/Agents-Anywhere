@@ -20,6 +20,7 @@ data class NewSessionDraft(
     val runtimeType: String = runtime,
     val runtimeName: String = runtimeLabel,
     val attachmentsEnabled: Boolean = true,
+    val goalsEnabled: Boolean = false,
     val localSessionId: String = newLocalSessionId(),
     val projectId: String = "",
     val preparedWorkspace: PreparedRuntimeWorkspace? = null,

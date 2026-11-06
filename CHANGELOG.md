@@ -2,6 +2,16 @@
 
 按版本记录用户能感知到的变化，最新版本在最前，每项一句话。接口变化、各端最低配套版本、数据库迁移和安装包记录见各版本的[发布说明](docs/releases/)。
 
+## 未发布
+
+### 升级须知
+
+- Codex、Claude Code 统一目标模式需要 Server 执行 `v2_47` 数据库迁移，并配套更新 Connector 和客户端。（[#539](https://github.com/anywhere-labs/Agents-Anywhere/pull/539)）
+
+### Codex 与 Claude
+
+- Web、Desktop、Android 和 iOS 可用 `/goal` 设置目标，在输入区上方编辑、暂停、恢复或清除；停止时阻止自动续跑，完成结果留在会话历史中，长目标栏与输入框保持同宽并自动截断正文。（[#539](https://github.com/anywhere-labs/Agents-Anywhere/pull/539)）
+
 ## 2.2.0（日期待定）
 
 [发布说明](docs/releases/2.2.0.md) · [与 2.1.0 的差异](https://github.com/anywhere-labs/Agents-Anywhere/compare/v2.1.0...main)
