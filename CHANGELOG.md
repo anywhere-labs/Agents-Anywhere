@@ -56,8 +56,8 @@
 
 ### Web 与 Desktop 界面
 
-- Tokens Anywhere 可以用 Agents Anywhere 账号登录：Web 会先显示「登录 Tokens Anywhere」确认页，确认后才向 Tokens Anywhere 提供名称、邮箱和头像，选「取消」则不提供任何信息。部署者设置 `AGENT_SERVER_TOKENS_ANYWHERE_CLIENT_SECRET` 和 `AGENT_SERVER_TOKENS_ANYWHERE_REDIRECT_URI` 后开启。（[#470](https://github.com/anywhere-labs/Agents-Anywhere/pull/470)）
-- 侧边栏新增 Tokens Anywhere 入口，介绍页可以直接前往获取 API 密钥；不需要时可以在页面上或「设置 → 外观」里隐藏。实例设置了 Tokens Anywhere 地址后才会出现这个入口，自部署实例不需要重新构建。（[#470](https://github.com/anywhere-labs/Agents-Anywhere/pull/470)、[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- Tokens Anywhere 可以用 Agents Anywhere 账号登录：Web 会先显示「登录 Tokens Anywhere」确认页，确认后才向 Tokens Anywhere 提供名称、邮箱和头像，选「取消」则不提供任何信息。部署者设置 `AGENT_SERVER_TOKENS_ANYWHERE_CLIENT_SECRET` 和 `AGENT_SERVER_TOKENS_ANYWHERE_REDIRECT_URI` 后开启。（[#571](https://github.com/anywhere-labs/Agents-Anywhere/pull/571)）
+- 侧边栏新增 Tokens Anywhere 入口，介绍页可以直接前往获取 API 密钥；不需要时可以在页面上或「设置 → 外观」里隐藏。实例设置了 Tokens Anywhere 地址后才会出现这个入口，自部署实例不需要重新构建。（[#571](https://github.com/anywhere-labs/Agents-Anywhere/pull/571)、[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 「设置 → 模型渠道」可以选择默认渠道，也可以手动添加模型服务；保存时自动识别协议和模型，不调用模型。地址在内网、连不上或识别不出协议时可以改为手动选择，部署者也可以设置 `AGENT_SERVER_ALLOW_PRIVATE_MODEL_GATEWAYS=1` 允许识别内网地址。离线期间多次切换会在上线后追到最终渠道。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 管理员可以在「管理 → 常规」里填写或清空 Tokens Anywhere 地址；已有账户链接时地址会锁定，全部断开后才能修改。Anywhere 账户用「退出」结束链接：使用该渠道的 Runtime 先切回默认渠道，全部完成后再撤销授权。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - Beta 和实验性的 Runtime 会在状态旁显示「Beta」「实验性」标记。模型网关的 Key 保存后只保留开头和结尾几位；不改 Key 时可以留空，更换地址时需要重新填写。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
