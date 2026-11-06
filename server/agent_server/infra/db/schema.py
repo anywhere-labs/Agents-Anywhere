@@ -13,6 +13,7 @@ from sqlalchemy import (
     Integer,
     MetaData,
     PrimaryKeyConstraint,
+    Sequence,
     Table,
     Text,
     UniqueConstraint,
@@ -385,6 +386,8 @@ projects = Table(
 )
 
 
+session_source_change_seq = Sequence("session_source_change_seq", metadata=metadata)
+
 sessions = Table(
     "sessions",
     metadata,
@@ -424,7 +427,15 @@ sessions = Table(
     Column("source_state_at", Text),
     Column("source_state_reason", Text),
     Column("source_observation_origin", Text),
+    # Retired by v2_49 and kept only so the previous release can roll back.
     Column("source_scan_token", Text),
+    # Sequence value of the last source observation that an inventory scan which
+    # began earlier must not overwrite. NULL means older than any scan.
+    Column(
+        "source_changed_seq",
+        BigInteger,
+        server_default=text("nextval('session_source_change_seq')"),
+    ),
     Column("last_read_seq", BigInteger, nullable=False, server_default="0"),
     Column("latest_turn_end_seq", BigInteger, nullable=False, server_default="0"),
     Column("timeline_reset_seq", BigInteger, nullable=False, server_default="0"),
@@ -450,6 +461,23 @@ sessions = Table(
         "pinned",
         "sort_at",
     ),
+)
+
+
+session_inventory_scans = Table(
+    "session_inventory_scans",
+    metadata,
+    Column(
+        "connector_id",
+        Text,
+        ForeignKey("connectors.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("runtime", Text, primary_key=True),
+    Column("runtime_id", Text, primary_key=True),
+    Column("scan_token", Text, nullable=False),
+    Column("started_seq", BigInteger, nullable=False),
+    Column("started_at", Text, nullable=False),
 )
 
 

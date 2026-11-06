@@ -171,19 +171,19 @@ def test_unchanged_source_fast_path_preserves_seq_archive_and_scan_order(tmp_pat
         # Repeated observations must not re-archive a session the user restored.
         from sqlalchemy import update
         async with store.engine.begin() as conn:
-            await conn.execute(update(sessions_t).where(sessions_t.c.id == session_id).values(archived=0, source_scan_token="current-scan"))
+            await conn.execute(update(sessions_t).where(sessions_t.c.id == session_id).values(archived=0, source_changed_seq=-1))
         observation = {"connector_id": connector_id, "runtime": first.runtime, "runtime_id": first.runtimeId,
             "availability": "archived", "reason": "archive", "observation_origin": "inventory"}
         assert await store.refresh_unchanged_session_source(session_id, observed_at="2026-09-11T00:00:00Z", **observation)
         async with store.engine.connect() as conn:
             row = (await conn.execute(select(sessions_t).where(sessions_t.c.id == session_id))).mappings().one()
-        assert row["source_scan_token"] == "current-scan"
+        assert row["source_changed_seq"] == -1
         assert row["source_state_at"] == "2026-09-11T00:00:01Z"
         assert row["updated_seq"] == initial_seq and row["archived"] == 0
         assert await store.refresh_unchanged_session_source(session_id, observed_at="2026-09-11T00:00:02Z", **observation)
         async with store.engine.connect() as conn:
             row = (await conn.execute(select(sessions_t).where(sessions_t.c.id == session_id))).mappings().one()
-        assert row["source_scan_token"] is None
+        assert row["source_changed_seq"] not in (None, -1)
         assert row["source_state_at"] == "2026-09-11T00:00:02Z"
         assert row["updated_seq"] == initial_seq and row["archived"] == 0
         observation["reason"] = "changed reason"

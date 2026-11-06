@@ -477,6 +477,13 @@ class ConnectorRepositoryMixin:
         return await self.get_connector(connector_id)
 
 
+    async def list_user_connector_ids(self, user_id: str) -> list[str]:
+        """Every connector the user owns, including revoked and pending ones."""
+        async with self._engine.connect() as conn:
+            return list((await conn.execute(
+                select(connectors_t.c.id).where(connectors_t.c.user_id == user_id)
+            )).scalars())
+
     async def pending_connector_deletions(self) -> list[tuple[str, str]]:
         async with read_connection(self._engine) as conn:
             rows = (await conn.execute(select(connectors_t.c.id, connectors_t.c.user_id)

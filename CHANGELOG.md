@@ -10,6 +10,7 @@
 - Codex、Claude Code 统一目标模式需要 Server 执行 `v2_47` 数据库迁移，并配套更新 Connector 和客户端。（[#539](https://github.com/anywhere-labs/Agents-Anywhere/pull/539)）
 - Server 执行 `v2_48` 数据库迁移：删除时间线表上不再使用的大索引，并为设备列表查询补上索引；已经手工调整过这两个索引的数据库执行后不变，请在停止 Server 和 worker 的维护窗口里运行，细节见[升级指南](docs/upgrading.md)。（[#553](https://github.com/anywhere-labs/Agents-Anywhere/pull/553)）
 - Server 读数据库时不再给每次查询额外开启并回滚事务，从连接池取连接时的检查也只需一次往返，数据库往返和回滚数明显减少；升级后数据库统计里的提交数会上升、回滚数接近零，按提交与回滚比例设置的监控需要相应调整。（[#559](https://github.com/anywhere-labs/Agents-Anywhere/pull/559)）
+- Server 执行 `v2_49` 数据库迁移：新增会话扫描记录，不重写已有会话；`sourceAvailabilityUpdatedAt` 改为来源状态最后一次写入的时间，详见[升级指南](docs/upgrading.md)。（[#557](https://github.com/anywhere-labs/Agents-Anywhere/pull/557)）
 
 ### 会话创建与消息交付
 
@@ -17,6 +18,7 @@
 
 ### Codex 与 Claude
 
+- Codex 的定时会话扫描只写入真正变化的会话，会话数量较多的部署数据库写入明显下降，并减少这些写入拖慢其他请求的情况。（[#557](https://github.com/anywhere-labs/Agents-Anywhere/pull/557)）
 - Connector 的 Codex 会话清单没有变化时不再重复上报，只每隔约 10 分钟核对一次；重连和启动时的扫描也会错开，故障恢复时不再集中冲击 Server。（[#555](https://github.com/anywhere-labs/Agents-Anywhere/pull/555)）
 - Web、Desktop、Android 和 iOS 可用 `/goal` 设置目标，在输入区上方编辑、暂停、恢复或清除；停止时阻止自动续跑，完成结果留在会话历史中，长目标栏与输入框保持同宽并自动截断正文。（[#539](https://github.com/anywhere-labs/Agents-Anywhere/pull/539)）
 - 在 Codex App 或 IDE 窗口里处理审批后，Agents Anywhere 里的会话不再一直显示「等待批准」。（[#532](https://github.com/anywhere-labs/Agents-Anywhere/pull/532)）
@@ -37,6 +39,10 @@
 - 经本地代理上传大批量会话时，不再因为等待服务器响应超过 60 秒而反复失败；上传失败的日志会写明错误类型、数据大小和耗时。（[#551](https://github.com/anywhere-labs/Agents-Anywhere/pull/551)）
 - 连不上服务器时，DSH 插件会重发当前批次并在恢复后继续，不再断开同步后重新扫描全部会话。（[#551](https://github.com/anywhere-labs/Agents-Anywhere/pull/551)）
 - Connector 忙碌或同步流被重建时，DSH 不再因 Agents Anywhere 插件的连接调用被取消或超时而整个退出（`Call was cancelled`、`Call deadline exceeded`）。（[#547](https://github.com/anywhere-labs/Agents-Anywhere/pull/547)）
+
+### 本机连接、所有权与日志
+
+- 管理员删除用户时，会先删除该用户的设备及其项目和会话，不再留下无主设备；用户项目里还有会话时返回冲突提示，不再报服务器错误。（[#550](https://github.com/anywhere-labs/Agents-Anywhere/pull/550)）
 
 ## 2.2.0（日期待定）
 
