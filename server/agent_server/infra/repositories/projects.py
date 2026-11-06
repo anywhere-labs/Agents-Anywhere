@@ -557,4 +557,4 @@ class ProjectRepositoryMixin:
                 .mappings()
                 .all()
             )
-        return [await self._session_from_row(row) for row in rows]
+        return await self._sessions_from_rows(rows)

@@ -33,6 +33,7 @@ from connector.server.dispatch import (
 )
 from connector.server.errors import ConnectorNetworkError
 from connector.server.ingest import ConnectorIngestClient
+from connector.server.network import NetworkEgress, certificate_hint
 from connector.server.notification_coalescer import (
     TimelineItemNotificationCoalescer,
 )
@@ -52,7 +53,7 @@ from connector.server.transfers import (
 from connector.server.transfers import (
     upload_prepared_download as upload_backend_prepared_download,
 )
-from connector.server.urls import api_v2_path, device_os, is_loopback_url
+from connector.server.urls import api_v2_path, device_os
 from connector.server.urls import (
     ws_url as build_ws_url,
 )
@@ -95,7 +96,8 @@ class BackendRpcClient:
         )
         self._preferences_reader = preferences_reader or read_local_preferences
         self.local_ops = create_local_ops(notify=self.send_backend_notification)
-        self._terminal_relay = TerminalRelayRunner(config.server_url, self.local_ops)
+        self._egress = NetworkEgress(config.server_url, config.proxy)
+        self._terminal_relay = TerminalRelayRunner(config.server_url, self.local_ops, egress=self._egress)
         self._terminal_relay_lock = asyncio.Lock()
         self._terminal_relay_tasks: dict[str, tuple[str, asyncio.Task[None]]] = {}
         self._background_tasks: set[asyncio.Task[Any]] = set()
@@ -139,6 +141,7 @@ class BackendRpcClient:
         self._runtime_sync_task: asyncio.Task[None] | None = None
 
     async def run_forever(self) -> None:
+        await self._egress.refresh()
         self._http_client = self._new_http_client(timeout=60)
         ingest_flush_task = asyncio.create_task(self._ingest.flush_loop())
         sync_state_flush_task = asyncio.create_task(self._sync_state_flush_loop())
@@ -192,7 +195,7 @@ class BackendRpcClient:
                 except OSError as exc:
                     logger.warning(
                         "connector backend connection failed error={}; reconnecting in {}s",
-                        exc,
+                        certificate_hint(exc, self.config.server_url) or exc,
                         self.config.reconnect_seconds,
                     )
                     await asyncio.sleep(self.config.reconnect_seconds)
@@ -245,6 +248,8 @@ class BackendRpcClient:
                 self._http_client = None
 
     async def run_once(self) -> None:
+        # A proxy changed in the system settings applies from this connection on.
+        await self._egress.refresh()
         access_token = await self.ensure_access_token(force=True)
         websocket_url = build_ws_url(
             self.config.server_url, api_v2_path("/connector/ws")
@@ -257,7 +262,7 @@ class BackendRpcClient:
                 "Authorization": f"Bearer {access_token}",
                 "X-Device-OS": device_os(),
             },
-            proxy=None if is_loopback_url(self.config.server_url) else True,
+            **self._egress.websocket_options(websocket_url),
         ) as ws:
             self._rpc.set_connection(ws)
             capabilities_task = asyncio.create_task(
@@ -522,9 +527,7 @@ class BackendRpcClient:
         return self._http_client
 
     def _new_http_client(self, timeout: httpx.Timeout | float) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            timeout=timeout, trust_env=not is_loopback_url(self.config.server_url)
-        )
+        return self._egress.http_client(timeout)
 
 
 def _is_auth_close(exc: ConnectionClosed) -> bool:

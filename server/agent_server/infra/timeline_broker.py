@@ -57,6 +57,7 @@ class TimelineBroker:
         coordinator: RedisCoordinator | None = None,
         *,
         dashboard_debounce_seconds: float = 0.0,
+        dashboard_min_interval_seconds: float = 0.0,
         event_workers: int = 0,
         event_threshold_bytes: int = 256 * 1024,
         event_queue_items: int = 32,
@@ -68,6 +69,15 @@ class TimelineBroker:
         self._dashboard_pending: dict[str, dict] = {}
         self._dashboard_tasks: dict[str, asyncio.Task[None]] = {}
         self._dashboard_debounce_seconds = dashboard_debounce_seconds
+        # Local delivery throttle. Every delivered invalidation makes each
+        # subscribed socket of the user read the complete session inventory,
+        # so deliveries per user are spaced by at least this interval. The
+        # first change after a quiet period is delivered at once; changes
+        # inside the interval collapse into one trailing delivery.
+        self._dashboard_min_interval_seconds = dashboard_min_interval_seconds
+        self._dashboard_delivered_at: dict[str, float] = {}
+        self._dashboard_throttled: dict[str, str] = {}
+        self._dashboard_throttle_tasks: dict[str, asyncio.Task[None]] = {}
         self._lock = asyncio.Lock()
         self._pubsub = None
         self.connection_lost = asyncio.Event()
@@ -125,7 +135,11 @@ class TimelineBroker:
 
     async def close(self) -> None:
         self._invalidate_subscription()
-        tasks = [*self._dashboard_tasks.values(), *self._preparation_tasks]
+        tasks = [
+            *self._dashboard_tasks.values(),
+            *self._dashboard_throttle_tasks.values(),
+            *self._preparation_tasks,
+        ]
         if self._listener_task is not None:
             self._listener_task.cancel()
             tasks.append(self._listener_task)
@@ -137,6 +151,9 @@ class TimelineBroker:
         self._listener_task = None
         self._dashboard_tasks.clear()
         self._dashboard_pending.clear()
+        self._dashboard_throttle_tasks.clear()
+        self._dashboard_throttled.clear()
+        self._dashboard_delivered_at.clear()
         self._preparation_tasks.clear()
         if self._pubsub is not None:
             await self._pubsub.aclose()
@@ -207,7 +224,7 @@ class TimelineBroker:
                     message,
                 )
                 return
-            await self._fan_out(self._dashboard_subs, user_id, message)
+            await self._deliver_dashboard(user_id, message)
             return
         async with self._lock:
             self._dashboard_pending[user_id] = {
@@ -224,7 +241,6 @@ class TimelineBroker:
         async with self._lock:
             payload = self._dashboard_pending.pop(user_id, None)
             self._dashboard_tasks.pop(user_id, None)
-            queues = list(self._dashboard_subs.get(user_id, ()))
         if payload is None:
             return
         message = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
@@ -234,7 +250,46 @@ class TimelineBroker:
                 message,
             )
         else:
-            self._fan_out_queues(queues, message)
+            await self._deliver_dashboard(user_id, message)
+
+    async def _deliver_dashboard(self, user_id: str, message: str) -> None:
+        """Hand a dashboard invalidation to this instance's sockets of a user."""
+
+        interval = self._dashboard_min_interval_seconds
+        if interval <= 0:
+            await self._fan_out(self._dashboard_subs, user_id, message)
+            return
+        loop = asyncio.get_running_loop()
+        async with self._lock:
+            queues = list(self._dashboard_subs.get(user_id, ()))
+            if not queues:
+                return
+            if user_id in self._dashboard_throttle_tasks:
+                self._dashboard_throttled[user_id] = message
+                return
+            now = loop.time()
+            last = self._dashboard_delivered_at.get(user_id)
+            if last is not None and now - last < interval:
+                self._dashboard_throttled[user_id] = message
+                self._dashboard_throttle_tasks[user_id] = asyncio.create_task(
+                    self._deliver_dashboard_later(user_id, last + interval - now)
+                )
+                return
+            self._dashboard_delivered_at[user_id] = now
+        self._fan_out_queues(queues, message)
+
+    async def _deliver_dashboard_later(self, user_id: str, delay: float) -> None:
+        await asyncio.sleep(delay)
+        async with self._lock:
+            if self._dashboard_throttle_tasks.get(user_id) is not asyncio.current_task():
+                return
+            self._dashboard_throttle_tasks.pop(user_id, None)
+            message = self._dashboard_throttled.pop(user_id, None)
+            queues = list(self._dashboard_subs.get(user_id, ()))
+            if message is None or not queues:
+                return
+            self._dashboard_delivered_at[user_id] = asyncio.get_running_loop().time()
+        self._fan_out_queues(queues, message)
 
     async def _listen(self) -> None:
         delay = 1.0
@@ -273,8 +328,7 @@ class TimelineBroker:
                     self._subs, channel[len(timeline_prefix) :], message
                 )
             elif channel.startswith(dashboard_prefix):
-                await self._fan_out(
-                    self._dashboard_subs,
+                await self._deliver_dashboard(
                     channel[len(dashboard_prefix) :],
                     message,
                 )
@@ -329,3 +383,8 @@ class TimelineBroker:
                 pool.discard(queue)
                 if not pool:
                     self._dashboard_subs.pop(user_id, None)
+                    self._dashboard_delivered_at.pop(user_id, None)
+                    self._dashboard_throttled.pop(user_id, None)
+                    pending = self._dashboard_throttle_tasks.pop(user_id, None)
+                    if pending is not None:
+                        pending.cancel()

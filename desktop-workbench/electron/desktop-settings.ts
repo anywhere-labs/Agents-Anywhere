@@ -12,6 +12,7 @@ const DEFAULT_SETTINGS: DesktopSettings = {
   pythonPath: "",
   uvPypiIndexUrl: "",
   uvPythonInstallMirror: "",
+  connectorProxy: "",
   logChunkSizeKb: 512,
   logRetainChunks: 20,
   logRetentionDays: 14,
@@ -74,10 +75,18 @@ function normalizeSettings(value: Partial<DesktopSettings>): DesktopSettings {
     uvPythonInstallMirror: typeof value.uvPythonInstallMirror === "string"
       ? value.uvPythonInstallMirror.trim()
       : DEFAULT_SETTINGS.uvPythonInstallMirror,
+    connectorProxy: connectorProxyValue(value.connectorProxy),
     logChunkSizeKb: clamp(value.logChunkSizeKb, DEFAULT_SETTINGS.logChunkSizeKb, 64, 10_240),
     logRetainChunks: clamp(value.logRetainChunks, DEFAULT_SETTINGS.logRetainChunks, 1, 200),
     logRetentionDays: clamp(value.logRetentionDays, DEFAULT_SETTINGS.logRetentionDays, 1, 365),
   };
+}
+
+/** An unusable value follows the system rather than handing the Connector a bad URL. */
+function connectorProxyValue(value: unknown): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (text === "direct") return text;
+  return /^(?:https?|socks5h?):\/\/[^\s/]+/i.test(text) ? text : DEFAULT_SETTINGS.connectorProxy;
 }
 
 function booleanValue(value: unknown, fallback: boolean): boolean {

@@ -8,6 +8,7 @@ import httpx
 
 from connector.core.config import ConnectorConfig
 from connector.server.errors import ConnectorNetworkError
+from connector.server.network import certificate_hint
 from connector.server.urls import api_v2_url
 
 ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 60.0
@@ -51,8 +52,10 @@ class ConnectorAuthenticator:
                     },
                 )
             except httpx.RequestError as exc:
+                # httpx timeouts have an empty message.
+                detail = certificate_hint(exc, self._config.server_url) or str(exc) or type(exc).__name__
                 raise ConnectorNetworkError(
-                    f"backend authentication request failed: {exc}"
+                    f"backend authentication request failed: {detail}"
                 ) from exc
             if response.status_code == 401:
                 raise ConnectorAuthenticationError("invalid connector credential")

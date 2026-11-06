@@ -35,6 +35,8 @@ import { LogsServiceClient, type LogEntry, type LogPage } from "./generated/conn
 /** The Connector restarts its Router within a couple of seconds; wait it out. */
 const CONTROL_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_RPC_TIMEOUT_MS = 30_000;
+const HEALTH_CHECK_INTERVAL_MS = 30_000;
+const HEALTH_CHECK_TIMEOUT_MS = 10_000;
 const PYTHON_BUILDS_GITHUB = "https://github.com/astral-sh/python-build-standalone/releases/download";
 const PYPI_SIMPLE = "https://pypi.org/simple";
 const UV_HTTP_TIMEOUT_SECONDS = "60";
@@ -193,7 +195,8 @@ export class ConnectorSupervisor {
       previous.uvPath !== current.uvPath ||
       previous.pythonPath !== current.pythonPath ||
       previous.uvPypiIndexUrl !== current.uvPypiIndexUrl ||
-      previous.uvPythonInstallMirror !== current.uvPythonInstallMirror;
+      previous.uvPythonInstallMirror !== current.uvPythonInstallMirror ||
+      previous.connectorProxy !== current.connectorProxy;
     this.refreshLocalState();
     if (!launcherChanged) return this.emitState();
     if (!this.resolveLauncher()) {
@@ -680,6 +683,30 @@ export class ConnectorSupervisor {
   private watchStreams(channel: ConnectorChannel): void {
     const controller = new AbortController();
     this.streams = controller;
+    const child = this.rpcProcess;
+    let probing = false;
+    let failures = 0;
+    // A live process can lose its control service or block its event loop.
+    // Stream resubscription alone cannot recover that process.
+    const healthCheck = setInterval(() => {
+      if (probing || controller.signal.aborted || this.shuttingDown || this.maintenance || !this.keepRuntimeRunning || this.state.authFailed) return;
+      probing = true;
+      void (async () => {
+        try {
+          await channel.control.getState({ timeoutMs: HEALTH_CHECK_TIMEOUT_MS });
+          failures = 0;
+        } catch (error) {
+          if (controller.signal.aborted || this.rpcProcess !== child || this.shuttingDown || this.maintenance || !this.keepRuntimeRunning || this.state.authFailed) return;
+          if (++failures < 2) return;
+          this.log({ level: "WARNING", message: `Connector control service is unresponsive; restarting RPC: ${errorMessage(error)}` });
+          await this.terminateRpcProcess();
+        } finally {
+          probing = false;
+        }
+      })().catch(error => this.logError(error));
+    }, HEALTH_CHECK_INTERVAL_MS);
+    healthCheck.unref();
+    controller.signal.addEventListener("abort", () => clearInterval(healthCheck), { once: true });
     this.options.onLogSourceChanged?.();
     const follow = async <T>(name: string, open: (since: number | null, signal: AbortSignal) => AsyncIterable<T>) => {
       let since: number | null = null;
@@ -969,6 +996,9 @@ export class ConnectorSupervisor {
     // Without a bundled or saved interpreter uv downloads CPython itself; the default is GitHub.
     environment.UV_PYTHON_INSTALL_MIRROR = settings.uvPythonInstallMirror || PYTHON_BUILDS_GITHUB;
     environment.UV_HTTP_TIMEOUT ||= UV_HTTP_TIMEOUT_SECONDS;
+    // The setting decides, so a value inherited from the shell cannot contradict the UI.
+    if (settings.connectorProxy) environment.AA_CONNECTOR_PROXY = settings.connectorProxy;
+    else delete environment.AA_CONNECTOR_PROXY;
     if (process.platform === "win32") {
       delete environment.Path;
       delete environment.path;
@@ -1040,6 +1070,7 @@ export class ConnectorSupervisor {
     | "pythonPath"
     | "uvPypiIndexUrl"
     | "uvPythonInstallMirror"
+    | "connectorProxy"
     | "logChunkSizeKb"
     | "logRetainChunks"
     | "logRetentionDays"
@@ -1054,6 +1085,7 @@ export class ConnectorSupervisor {
       pythonPath: settings.pythonPath,
       uvPypiIndexUrl: settings.uvPypiIndexUrl,
       uvPythonInstallMirror: settings.uvPythonInstallMirror,
+      connectorProxy: settings.connectorProxy,
       logChunkSizeKb: settings.logChunkSizeKb,
       logRetainChunks: settings.logRetainChunks,
       logRetentionDays: settings.logRetentionDays,
