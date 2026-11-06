@@ -7,7 +7,7 @@
 ### 升级须知
 
 - Codex、Claude Code 统一目标模式需要 Server 执行 `v2_47` 数据库迁移，并配套更新 Connector 和客户端。（[#539](https://github.com/anywhere-labs/Agents-Anywhere/pull/539)）
-- Server 执行 `v2_48` 数据库迁移：删除时间线表上不再使用的大索引，并为设备列表查询补上索引；已经手工调整过这两个索引的数据库执行后不变，请在停止 Server 和 worker 的维护窗口里运行，细节见[升级指南](docs/upgrading.md)。
+- Server 执行 `v2_48` 数据库迁移：删除时间线表上不再使用的大索引，并为设备列表查询补上索引；已经手工调整过这两个索引的数据库执行后不变，请在停止 Server 和 worker 的维护窗口里运行，细节见[升级指南](docs/upgrading.md)。（[#553](https://github.com/anywhere-labs/Agents-Anywhere/pull/553)）
 
 ### Codex 与 Claude
 
