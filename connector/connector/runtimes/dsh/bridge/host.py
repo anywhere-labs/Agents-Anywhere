@@ -212,11 +212,21 @@ class BridgeHost:
         self._mounted = False
         self._published: Path | None = None
 
-    async def start(self) -> None:
+    async def start(self, *, publish: bool = True) -> None:
         if not self._mounted:
+            if self.hub.serving:
+                # MeshCall freezes its service list once serving starts, so a
+                # late mount has to stop and restart the Router server. That
+                # cancels the Desktop's long-lived Control/Logs streams and
+                # takes the device offline. Callers mount the bridge before
+                # serving; a late call must fail instead of disconnecting them.
+                raise RuntimeError(
+                    "DSH bridge must be mounted before the local router starts serving"
+                )
             await self.hub.mount(SyncService(self.registry, asyncio.get_running_loop()))
             self._mounted = True
-        self.publish()
+        if publish:
+            self.publish()
 
     def publish(self) -> None:
         path = rendezvous_path()
@@ -240,14 +250,14 @@ class BridgeHost:
 _hosts: dict[int, BridgeHost] = {}
 
 
-async def bridge_host() -> BridgeHost:
+async def bridge_host(*, publish: bool = True) -> BridgeHost:
     """The DSH bridge services of this process's Router, started on first use."""
     hub = await local_hub()
     host = _hosts.get(id(hub))
     if host is None:
         host = _hosts[id(hub)] = BridgeHost(hub)
         hub.on_stop(_forget(hub, host))
-    await host.start()
+    await host.start(publish=publish)
     return host
 
 

@@ -18,13 +18,46 @@ from typing import Any
 
 from connector.control import ConnectorController
 from connector.core import runtime_owner
-from connector.logging import install_rpc_log_sink
+from connector.logging import install_rpc_log_sink, logger
 from connector.mesh.control import ControlEvents, ControlService
 from connector.mesh.hub import HOST_ROLE, LocalHub, set_local_hub
 from connector.mesh.logs import LogsService, open_log_hub
 
 READY_KIND = "connector.ready"
 READY_VERSION = 1
+
+
+async def mount_host_services(hub: LocalHub, *services: object) -> None:
+    """Mount the DSH bridge, then ``services``, and publish the bridge last.
+
+    MeshCall freezes its service list when serving starts, so mounting the DSH
+    SyncService later stops and restarts serving and cancels the Desktop's
+    Control/Logs streams. Mounting it before those streams exist puts that
+    restart before the Desktop connects; the rendezvous is published only
+    afterwards so the DSH plugin cannot connect during the restart.
+    """
+
+    from connector.runtimes.dsh.bridge.host import bridge_host
+
+    dsh_host = None
+    try:
+        dsh_host = await bridge_host(publish=False)
+    except Exception as exc:  # noqa: BLE001 - DSH is optional; control/logs still start
+        logger.warning(
+            "DSH bridge could not be mounted before serving error_type={} error={}",
+            type(exc).__name__,
+            exc,
+        )
+    await hub.mount(*services)
+    if dsh_host is not None:
+        try:
+            dsh_host.publish()
+        except Exception as exc:  # noqa: BLE001 - DSH must not block the control plane
+            logger.warning(
+                "DSH bridge rendezvous could not be published error_type={} error={}",
+                type(exc).__name__,
+                exc,
+            )
 
 
 def ready_message(hub: LocalHub) -> dict[str, Any]:
@@ -70,7 +103,11 @@ async def serve_host(
     set_local_hub(hub)
     try:
         await hub.start()
-        await hub.mount(ControlService(controller, events, loop), LogsService(logs))
+        await mount_host_services(
+            hub,
+            ControlService(controller, events, loop),
+            LogsService(logs),
+        )
         output = stdout if stdout is not None else sys.stdout
         output.write(json.dumps(ready_message(hub)) + "\n")
         output.flush()
