@@ -72,7 +72,7 @@ import Testing
     @Test func creationStagesBeforeNetworkAndKeepsOneClientIDThroughBinding() async throws {
         let http = transport(); let model = make(http); let gate = TestGate()
         model.draft.text = "Start now"
-        await model.refresh(connectors: try devices()); _ = model.selectProject("project")
+        await model.refresh(connectors: try devices()); _ = model.selectProject("project"); await model.prepareTarget()
         var staged: NewSessionSubmission?
         var boundID: String?
         model.onStaged = { value in staged = value; await gate.wait() }
@@ -92,7 +92,7 @@ import Testing
         let http = transport(); let model = make(http)
         model.draft.text = "保留这个任务"
         await model.refresh(connectors: try devices())
-        _ = model.selectProject("project")
+        _ = model.selectProject("project"); await model.prepareTarget()
         #expect(model.canCreate)
         #expect(model.runtimeID == "rti_work")
         #expect(http.count("catalogs/model") == 0) // Unsupported capabilities are not queried.
@@ -103,7 +103,7 @@ import Testing
         #expect(model.draft.text == "保留这个任务")
         model.updateNetwork(.init(availability: .online))
         await model.refresh(connectors: try devices())
-        _ = model.selectProject("project")
+        _ = model.selectProject("project"); await model.prepareTarget()
         #expect(model.canCreate)
         #expect(http.calls.allSatisfy { $0.method == .get || $0.path.hasSuffix("fs/list") })
     }
@@ -131,7 +131,7 @@ import Testing
         defer { defaults.removePersistentDomain(forName: suite) }
         let model = make(transport(), defaults: defaults)
         await model.refresh(connectors: try devices())
-        _ = model.selectProject("project")
+        _ = model.selectProject("project"); await model.prepareTarget()
         #expect(await model.selectTarget(connectorID: "device", runtimeID: "rti_work"))
         #expect(model.selectProject("project"))
         #expect(!(await model.selectTarget(connectorID: "another-device", runtimeID: "rti_work")))
@@ -149,7 +149,7 @@ import Testing
         let http = transport(); let model = make(http)
         model.draft.text = "task"
         await model.refresh(connectors: try devices())
-        _ = model.selectProject("project")
+        _ = model.selectProject("project"); await model.prepareTarget()
         #expect(model.canCreate)
         http.respond = { call in
             if call.path.hasSuffix("/rti_work") {
@@ -168,7 +168,7 @@ import Testing
         let http = transport(); let model = make(http)
         model.draft.text = "task"
         await model.refresh(connectors: try devices())
-        _ = model.selectProject("project")
+        _ = model.selectProject("project"); await model.prepareTarget()
         http.respond = { call in
             if call.path.hasSuffix("/rti_work") { return try fixtureData("runtime") }
             if call.method == .post { model.draft.text = "next draft"; throw URLError(.timedOut) }
@@ -179,7 +179,7 @@ import Testing
         model.updateNetwork(.init(availability: .offline))
         model.updateNetwork(.init(availability: .online))
         await model.refresh(connectors: try devices())
-        _ = model.selectProject("project")
+        _ = model.selectProject("project"); await model.prepareTarget()
         #expect(await model.create(text: "next draft") == nil)
         #expect(http.calls.filter { $0.method == .post && !$0.path.hasSuffix("fs/list") }.count == 1)
         #expect(model.error != nil && model.draft.text == "next draft")
@@ -201,11 +201,26 @@ import Testing
         #expect(model.draft.text == "keep me" && http.calls.allSatisfy { $0.method == .get || $0.path.hasSuffix("fs/list") })
     }
 
+    @Test func reselectingTheCurrentWorkspaceKeepsThePreparedTarget() async throws {
+        let http = transport(); let model = make(http)
+        model.draft.text = "Start now"
+        await model.refresh(connectors: try devices())
+        _ = model.selectProject("project"); await model.prepareTarget()
+        #expect(model.canCreate)
+        // The page only prepares again when the path changes, so nothing would restore these.
+        #expect(model.selectProject("project"))
+        #expect(model.canCreate)
+        #expect(model.selectWorkspace(model.workspace))
+        #expect(model.canCreate)
+        #expect(model.selectWorkspace("/another-workspace"))
+        #expect(!model.canCreate)
+    }
+
     @Test func successfulCreateUsesTypeAndInstanceAndDoesNotPersistDraft() async throws {
         let http = transport(); let model = make(http)
         model.draft.text = "task\nsecond line"
         await model.refresh(connectors: try devices())
-        _ = model.selectProject("project")
+        _ = model.selectProject("project"); await model.prepareTarget()
         #expect(model.selectProject("project"))
         let result = await model.create(text: model.draft.text)
         #expect(result != nil)

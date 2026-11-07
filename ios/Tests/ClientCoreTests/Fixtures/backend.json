@@ -263,7 +263,6 @@
             "message": null,
             "override": null,
             "reason": "model_connection_unsupported",
-            "runningSessions": 0,
             "runtimeId": "rti_work",
             "state": "unsupported",
             "step": null,
@@ -276,7 +275,6 @@
             "message": null,
             "override": null,
             "reason": null,
-            "runningSessions": 0,
             "runtimeId": "rti_gateway",
             "state": "applied",
             "step": null,
@@ -289,7 +287,6 @@
             "message": "runtime did not confirm in time",
             "override": "tokens",
             "reason": "verify_timeout",
-            "runningSessions": 0,
             "runtimeId": "rti_global",
             "state": "restored",
             "step": null,
@@ -694,7 +691,6 @@
         "message": null,
         "override": null,
         "reason": "model_connection_unsupported",
-        "runningSessions": 0,
         "runtimeId": "rti_work",
         "state": "unsupported",
         "step": null,
@@ -707,7 +703,6 @@
         "message": null,
         "override": null,
         "reason": null,
-        "runningSessions": 0,
         "runtimeId": "rti_gateway",
         "state": "applied",
         "step": null,
@@ -720,7 +715,6 @@
         "message": "runtime did not confirm in time",
         "override": "tokens",
         "reason": "verify_timeout",
-        "runningSessions": 0,
         "runtimeId": "rti_global",
         "state": "restored",
         "step": null,
@@ -1334,10 +1328,6 @@
       "path": "/api/v2/model-config/channel/runtimes/{connector_id}/{runtime_id}"
     },
     {
-      "method": "POST",
-      "path": "/api/v2/model-config/channel/runtimes/{connector_id}/{runtime_id}/switch-now"
-    },
-    {
       "method": "GET",
       "path": "/api/v2/model-profiles"
     },
@@ -1814,6 +1804,7 @@
       "revision": 10
     },
     "eventCursor": "seq:10",
+    "goalState": null,
     "notices": [
       {
         "actions": [

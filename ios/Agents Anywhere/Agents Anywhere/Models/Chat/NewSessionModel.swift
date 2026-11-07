@@ -120,8 +120,10 @@ final class NewSessionModel {
     @discardableResult func selectProject(_ id: String) -> Bool {
         guard !isCreating, isValid, let value = projects.first(where: { $0.id == id }) else { return false }
         if connectorID != value.connectorId { focusDevice(value.connectorId, workspace: nil) }
-        workspace = value.workspacePath
-        preparedWorkflow = nil; runtimeWorkflow = nil; prepared = nil; preparationVersion += 1
+        if workspace != value.workspacePath {
+            workspace = value.workspacePath
+            preparedWorkflow = nil; runtimeWorkflow = nil; prepared = nil; preparationVersion += 1
+        }
         identifyProject()
         return true
     }
@@ -136,8 +138,11 @@ final class NewSessionModel {
     @discardableResult func selectWorkspace(_ path: String) -> Bool {
         guard isValid, !isCreating, !connectorID.isEmpty,
               ProjectWorkspacePath.key(path, deviceOS: connector?.deviceOs) != nil else { return false }
-        workspace = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        preparedWorkflow = nil; runtimeWorkflow = nil; prepared = nil; preparationVersion += 1
+        let path = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        if workspace != path {
+            workspace = path
+            preparedWorkflow = nil; runtimeWorkflow = nil; prepared = nil; preparationVersion += 1
+        }
         identifyProject()
         return true
     }
