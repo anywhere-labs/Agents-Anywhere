@@ -80,7 +80,14 @@ export async function acquireManagerLock(
   const record = managerLockRecordPath(path)
   const token = randomBytes(24).toString('base64url')
   // Not an HTTP/RPC endpoint: a connection only ever receives the token.
-  const lease = createServer(socket => { socket.end(`${token}\n`) })
+  // A contender or port probe can reset the connection before the token is
+  // written. Without an 'error' listener that write failure escapes as an
+  // uncaught exception and takes the whole Host down (#545), so a lease
+  // connection's errors are confined to that connection.
+  const lease = createServer(socket => {
+    socket.on('error', () => socket.destroy())
+    socket.end(`${token}\n`)
+  })
   await new Promise<void>((resolve, reject) => {
     lease.once('error', reject)
     lease.listen({ host: '127.0.0.1', port: 0, exclusive: true }, () => {
