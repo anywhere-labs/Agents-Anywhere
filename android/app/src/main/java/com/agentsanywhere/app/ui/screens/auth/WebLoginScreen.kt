@@ -4,10 +4,14 @@ import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.net.http.SslError
 import android.os.Bundle
+import android.util.Log
+import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.SslErrorHandler
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
@@ -57,14 +61,17 @@ import com.agentsanywhere.app.feature.auth.WebLoginSession
 import com.agentsanywhere.app.feature.auth.WebLoginState
 import com.agentsanywhere.app.feature.auth.WebLoginViewModel
 import com.agentsanywhere.app.feature.auth.webLoginApiOriginBridgeScript
+import com.agentsanywhere.app.feature.auth.webLoginViewportBridgeScript
 import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.AuthErrorNotice
 import com.agentsanywhere.app.ui.designsystem.BackPill
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
-import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Info
+import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Server
+
+private const val WEB_LOGIN_LOG_TAG = "WebLogin"
 
 @Composable
 fun WebLoginHostScreen(
@@ -246,6 +253,9 @@ private fun EmbeddedWebLogin(
 ) {
     var webView by remember(session) { mutableStateOf<WebView?>(null) }
     var loading by remember(session) { mutableStateOf(true) }
+    fun record(line: String) {
+        Log.i(WEB_LOGIN_LOG_TAG, line)
+    }
 
     BackHandler(onBack = onBack)
 
@@ -272,6 +282,13 @@ private fun EmbeddedWebLogin(
                         CookieManager.getInstance().setAcceptCookie(true)
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
                         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                            // The IdP page is a different origin, so the viewport fix must apply everywhere;
+                            // the API rewrite stays limited to our own origin.
+                            WebViewCompat.addDocumentStartJavaScript(
+                                this,
+                                webLoginViewportBridgeScript(),
+                                setOf("*"),
+                            )
                             WebViewCompat.addDocumentStartJavaScript(
                                 this,
                                 webLoginApiOriginBridgeScript(session.oauthWebOrigin),
@@ -281,10 +298,17 @@ private fun EmbeddedWebLogin(
                             onWebError("Update Android System WebView to continue signing in.")
                             return@apply
                         }
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                                record("console " + message.message())
+                                return true
+                            }
+                        }
                         webViewClient = SecureLoginWebViewClient(
                             onLoadingChanged = { loading = it },
                             onCallback = onCallback,
                             onError = onWebError,
+                            onEvent = { record(it) },
                         )
                         val restored = takeSavedState()
                         if (restored == null || restoreState(restored) == null) {
@@ -321,13 +345,24 @@ private class SecureLoginWebViewClient(
     private val onLoadingChanged: (Boolean) -> Unit,
     private val onCallback: (String) -> Unit,
     private val onError: (String) -> Unit,
+    private val onEvent: (String) -> Unit,
 ) : WebViewClient() {
     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+        onEvent("start ${url?.take(120)}")
         onLoadingChanged(true)
     }
 
     override fun onPageFinished(view: WebView?, url: String?) {
+        onEvent("finish ${url?.take(120)}")
         onLoadingChanged(false)
+    }
+
+    override fun onReceivedHttpError(
+        view: WebView?,
+        request: WebResourceRequest?,
+        errorResponse: WebResourceResponse?,
+    ) {
+        onEvent("http ${errorResponse?.statusCode} ${request?.url}")
     }
 
     override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest): Boolean {
@@ -343,6 +378,7 @@ private class SecureLoginWebViewClient(
     }
 
     override fun onReceivedError(view: WebView?, request: WebResourceRequest, error: WebResourceError?) {
+        onEvent("error ${error?.errorCode} ${error?.description}")
         if (request.isForMainFrame) {
             onError(error?.description?.toString().orEmpty().ifBlank { "Could not load the web login page." })
         }

@@ -105,17 +105,18 @@ internal fun pkceChallenge(codeVerifier: String): String {
     return Base64.getUrlEncoder().withoutPadding().encodeToString(digest)
 }
 
-internal fun webLoginApiOriginBridgeScript(webOrigin: String): String {
-    val origin = requireNotNull(normalizeServerOrigin(webOrigin)) {
-        "Web login URL must be an HTTP(S) origin."
-    }
-    // Web requests use the login site's API proxy; native requests use serverUrl.
-    val legacyApiRoute = usesLegacyApiRoute(origin)
-    return """
-         (() => {
-           const webOrigin = ${JSONObject.quote(origin)};
-           const apiNamespace = "/api/v2";
-           const legacyApiRoute = $legacyApiRoute;
+/**
+ * Viewport units (`vh`/`dvh`) can resolve to zero inside the embedded WebView even when
+ * `innerHeight` is valid, which collapses any page laid out with them. Third-party
+ * identity-provider pages (Authentik, Keycloak, Entra ID, ...) hit this too and render
+ * blank during sign-in, so this script is injected for every origin.
+ */
+internal fun webLoginViewportBridgeScript(): String = """
+     (() => {
+       try {
+       // Top-level document only: inside a frame innerHeight is the frame height,
+       // and pinning it would break self-sizing iframes on any page we visit.
+       if (window.top !== window) return;
            const viewportHeightProperty = "--agents-anywhere-android-viewport-height";
            const installViewportHeightFix = () => {
              const root = document.documentElement;
@@ -126,10 +127,15 @@ internal fun webLoginApiOriginBridgeScript(webOrigin: String): String {
 
              const style = document.createElement("style");
              // Viewport units can resolve to zero in WebView even when innerHeight is valid.
-             // Cover the login form and OAuth/loading containers as well as the document.
+             // Cover identity-provider login containers as well as our own login shell.
              style.textContent = `
                html, body {
-                 height: var(${'$'}{viewportHeightProperty}) !important;
+                 min-height: var(${'$'}{viewportHeightProperty}) !important;
+               }
+               body > div,
+               .pf-c-login,
+               .pf-c-login__container,
+               .pf-c-login__main {
                  min-height: var(${'$'}{viewportHeightProperty}) !important;
                }
                .h-dvh {
@@ -142,17 +148,51 @@ internal fun webLoginApiOriginBridgeScript(webOrigin: String): String {
              root.appendChild(style);
 
              const updateViewportHeight = () => {
-               const height = window.visualViewport?.height || window.innerHeight;
+               const height = window.visualViewport?.height
+                 || document.documentElement?.clientHeight
+                 || window.innerHeight
+                 || 0;
                if (height > 0) {
                  root.style.setProperty(viewportHeightProperty, `${'$'}{Math.round(height)}px`);
                }
              };
              updateViewportHeight();
+             if (window.console && window.console.log) {
+               window.console.log(
+                 "[aa-viewport] h=" + root.style.getPropertyValue(viewportHeightProperty) +
+                 " inner=" + window.innerHeight +
+                 " vv=" + (window.visualViewport ? window.visualViewport.height : 0) +
+                 " client=" + document.documentElement.clientHeight +
+                 " url=" + window.location.href
+               );
+             }
              window.addEventListener("resize", updateViewportHeight);
              window.visualViewport?.addEventListener("resize", updateViewportHeight);
+             // The document can start with a zero-size viewport and only get its real size after
+             // the first layout pass, which raises no resize event; sample again shortly after.
+             window.setTimeout(updateViewportHeight, 250);
+             window.setTimeout(updateViewportHeight, 1200);
            };
            installViewportHeightFix();
+       } catch (error) {
+         if (window.console && window.console.log) {
+           window.console.log("[aa-viewport] failed " + error);
+         }
+       }
+     })();
+""".trimIndent()
 
+internal fun webLoginApiOriginBridgeScript(webOrigin: String): String {
+    val origin = requireNotNull(normalizeServerOrigin(webOrigin)) {
+        "Web login URL must be an HTTP(S) origin."
+    }
+    // Web requests use the login site's API proxy; native requests use serverUrl.
+    val legacyApiRoute = usesLegacyApiRoute(origin)
+    return """
+         (() => {
+           const webOrigin = ${JSONObject.quote(origin)};
+           const apiNamespace = "/api/v2";
+           const legacyApiRoute = $legacyApiRoute;
            const rewriteApiUrl = (value) => {
             try {
               const url = new URL(String(value), window.location.href);
