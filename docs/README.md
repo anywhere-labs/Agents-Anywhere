@@ -19,6 +19,7 @@
 | 架构和 API | [Server 架构](server-architecture.md)、[API](api/README.md) |
 | 使用统一原生 Plan、流式卡片和执行确认 | [Plan 使用与 API](api/planning.md)；[设计与实施计划](runtime-protocol/unified-plan-implementation-plan.md) |
 | 使用 Codex、Claude Code 目标模式 | [Goal 使用、API 与持久化](api/goals.md) |
+| 账号注销与数据删除（设计，尚未实施） | [设计](account-deletion-proposal.md) |
 | DSH 大历史内存 | [实现与验证](dsh-snapshot-uploads.md) |
 | DSH 慢速历史上传 | [实现与验证](dsh-slow-upload.md)、[2.1.0 发布说明](releases/2.1.0.md) |
 | 长会话流式更新卡顿 | [客户端优化方案与验证](performance/streaming-timeline-83.md) |
