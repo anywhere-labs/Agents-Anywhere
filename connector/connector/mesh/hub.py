@@ -183,6 +183,11 @@ class LocalHub:
     def running(self) -> bool:
         return self.router is not None and self.router.is_running
 
+    @property
+    def serving(self) -> bool:
+        """Whether mounted services are currently being served."""
+        return self._server is not None
+
     def key(self, role: str) -> str:
         return self._keys[role][0]
 
