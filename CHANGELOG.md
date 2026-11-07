@@ -50,6 +50,7 @@
 - DSH 插件登录和绑定设备时遇到瞬时网络错误会自动重试；可能已送达的写操作不会重复发送。（[#558](https://github.com/anywhere-labs/Agents-Anywhere/pull/558)）
 - 内置 uv 缺少执行权限时，DSH 插件会自动修复，不再提示找不到 uv。（[#558](https://github.com/anywhere-labs/Agents-Anywhere/pull/558)）
 - Connector 忙碌或同步流被重建时，DSH 不再因 Agents Anywhere 插件的连接调用被取消或超时而整个退出（`Call was cancelled`、`Call deadline exceeded`）。（[#547](https://github.com/anywhere-labs/Agents-Anywhere/pull/547)）
+- 其他程序探测或扫描本机管理锁的租约端口后立即断开时，DSH 插件不再整个退出，正在管理的设备保持在线。（#545）
 
 ### 本机连接、所有权与日志
 
