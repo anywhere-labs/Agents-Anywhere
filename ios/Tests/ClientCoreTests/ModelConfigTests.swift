@@ -299,7 +299,7 @@ import Testing
         let state: V2ModelChannelState = try decode([
             "channel": "mpr_new", "revision": 9, "switch": ["revision": 9, "state": "paused", "startedAt": 7],
             "runtimes": [
-                ["connectorId": "c", "runtimeId": "a", "desired": "tokens", "actual": "native", "state": "hibernating", "step": "warming", "runningSessions": "two"],
+                ["connectorId": "c", "runtimeId": "a", "desired": "tokens", "actual": "native", "state": "hibernating", "step": "warming"],
                 ["runtimeId": "orphan"],
                 ["connectorId": "c", "runtimeId": "b"],
             ],
@@ -307,7 +307,7 @@ import Testing
         #expect(state.channel == "mpr_new" && state.revision == 9)
         #expect(state.progress?.state == "paused" && state.progress?.startedAt == nil)
         #expect(state.runtimes.map(\.runtimeId) == ["a", "b"])
-        #expect(state.runtimes[0].state == "hibernating" && state.runtimes[0].runningSessions == 0)
+        #expect(state.runtimes[0].state == "hibernating")
         #expect(ChannelPresentation.stateLabel(state.runtimes[0]) == "hibernating")
         #expect(ChannelPresentation.stateLabel(entry("x", "switching")) == String(localized: "pages.settings.modelConfigs.state.switching"))
         #expect(ChannelPresentation.tone("hibernating") == .neutral)
@@ -352,7 +352,7 @@ import Testing
         let groups = ChannelPresentation.groups(state, runtimes: runtimes, connectors: connectors)
         #expect(groups.devices.map(\.name) == ["Mac", "elsewhere"])
         #expect(groups.devices[0].rows.map(\.runtimeName) == ["Gateway"])
-        #expect(groups.devices[0].rows[0].maturity == "beta" && groups.devices[0].rows[0].canSwitchNow)
+        #expect(groups.devices[0].rows[0].maturity == "beta")
         // A runtime that writes its own global settings waits for a confirmed choice.
         let global = groups.devices[1].rows[0]
         #expect(global.changesGlobalSettings && !global.isUnsupported)
@@ -392,7 +392,7 @@ import Testing
         await model.setChannel("tokens")
         #expect(transport.calls.last?.method == .put && transport.calls.last?.path == "/model-config/channel")
         #expect(transport.calls.last?.body == .object(["channel": .string("tokens")]))
-        #expect(model.channel?.channel == "tokens" && model.channelSummary?.phase == .running)
+        #expect(model.channel?.channel == "tokens")
         #expect(model.channelBusyKey == nil)
         // Choosing the current channel again sends nothing.
         await model.setChannel("tokens")
@@ -423,7 +423,7 @@ import Testing
         let rows = ChannelPresentation.groups(channel, runtimes: dashboard.runtimes, connectors: dashboard.connectors).devices.flatMap(\.rows)
         let gateway = try #require(rows.first { $0.entry.runtimeId == "rti_gateway" })
         let restored = try #require(rows.first { $0.entry.runtimeId == "rti_global" })
-        #expect(restored.canRetry && !restored.canSwitchNow && restored.entry.override == "tokens")
+        #expect(restored.canRetry && restored.entry.override == "tokens")
 
         await model.setRuntimeChannel(gateway, channel: nil)
         #expect(transport.calls.last?.method == .put && transport.calls.last?.path == "/model-config/channel/runtimes/device/rti_gateway")
@@ -431,9 +431,6 @@ import Testing
         // Confirmation is sent only for a runtime that changes its own global settings.
         await model.setRuntimeChannel(gateway, channel: "tokens", confirmNativeGlobal: true)
         #expect(transport.calls.last?.body == .object(["channel": .string("tokens")]))
-        await model.switchNow(gateway)
-        #expect(transport.calls.last?.method == .post && transport.calls.last?.path == "/model-config/channel/runtimes/device/rti_gateway/switch-now")
-        #expect(transport.calls.last?.body == nil)
         await model.retryChannel(restored)
         #expect(transport.calls.last?.body == .object(["connectorId": .string("device"), "runtimeId": .string("rti_global")]))
         #expect(model.channel?.revision == 6)

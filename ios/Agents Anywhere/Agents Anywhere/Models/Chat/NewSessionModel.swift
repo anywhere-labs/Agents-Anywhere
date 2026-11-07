@@ -120,8 +120,7 @@ final class NewSessionModel {
     @discardableResult func selectProject(_ id: String) -> Bool {
         guard !isCreating, isValid, let value = projects.first(where: { $0.id == id }) else { return false }
         if connectorID != value.connectorId { focusDevice(value.connectorId, workspace: nil) }
-        workspace = value.workspacePath
-        preparedWorkflow = nil; runtimeWorkflow = nil; prepared = nil; preparationVersion += 1
+        setWorkspace(value.workspacePath)
         identifyProject()
         return true
     }
@@ -136,10 +135,18 @@ final class NewSessionModel {
     @discardableResult func selectWorkspace(_ path: String) -> Bool {
         guard isValid, !isCreating, !connectorID.isEmpty,
               ProjectWorkspacePath.key(path, deviceOS: connector?.deviceOs) != nil else { return false }
-        workspace = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        preparedWorkflow = nil; runtimeWorkflow = nil; prepared = nil; preparationVersion += 1
+        setWorkspace(path.trimmingCharacters(in: .whitespacesAndNewlines))
         identifyProject()
         return true
+    }
+
+    /// The page prepares again when `workspace` changes, so preparation is only
+    /// dropped on a real change. Reselecting the current path must keep it, or
+    /// nothing would prepare the target again and sending would stay disabled.
+    private func setWorkspace(_ path: String) {
+        guard path != workspace else { return }
+        workspace = path
+        preparedWorkflow = nil; runtimeWorkflow = nil; prepared = nil; preparationVersion += 1
     }
 
     private func identifyProject() {
