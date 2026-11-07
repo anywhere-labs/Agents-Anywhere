@@ -32,6 +32,7 @@
 
 ### 本机连接
 
+- 启用 DSH 时，桌面端启动后不再因为 DSH Bridge 初始化而断开与 Connector 的控制连接，设备保持在线。（[5d0302b](https://github.com/wkcaeser/Agents-Anywhere/commit/5d0302b46d687e324336375b79cad37293d05ce4)）
 - Desktop 和 DSH 插件的设置里新增「Connector 网络」，可选跟随系统、直连或自定义代理；Connector 的接口请求、实时连接和终端都走同一条路，日志里记录实际走的路径。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
 - 在系统代理里把服务器地址加入例外现在对 Connector 生效；只设置 `NO_PROXY` 不再让 Connector 绕过系统代理。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
 - 系统代理开关开着但本机代理软件已退出时，Connector 改为直连，不再一直连不上服务器。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
