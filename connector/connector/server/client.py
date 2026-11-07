@@ -205,6 +205,11 @@ class BackendRpcClient:
                         exc,
                         self.config.reconnect_seconds,
                     )
+                    if await self._egress.note_failure():
+                        logger.warning(
+                            "discarded the connection pool after {} consecutive network failures",
+                            self._egress.FAILURES_BEFORE_DISCARD,
+                        )
                     await asyncio.sleep(self._reconnect_delay())
                 except OSError as exc:
                     logger.warning(
@@ -212,6 +217,11 @@ class BackendRpcClient:
                         certificate_hint(exc, self.config.server_url) or exc,
                         self.config.reconnect_seconds,
                     )
+                    if await self._egress.note_failure():
+                        logger.warning(
+                            "discarded the connection pool after {} consecutive network failures",
+                            self._egress.FAILURES_BEFORE_DISCARD,
+                        )
                     await asyncio.sleep(self._reconnect_delay())
                 except Exception:
                     if ingest_flush_task.done():
@@ -279,6 +289,7 @@ class BackendRpcClient:
             **self._egress.websocket_options(websocket_url),
         ) as ws:
             self._rpc.set_connection(ws)
+            self._egress.note_success()
             capabilities_task = asyncio.create_task(
                 self._publish_runtime_capabilities(request_session)
             )

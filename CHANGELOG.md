@@ -32,6 +32,7 @@
 
 ### 本机连接
 
+- 网络抖动后 Connector 不再永久卡在连接池超时：连续多次请求失败会重建连接池并继续重连，设备无需重启桌面端即可恢复在线。（[857a4bc](https://github.com/wkcaeser/Agents-Anywhere/commit/857a4bcb869a4f8543e05f06e58a68e51ea72ba8)）
 - 启用 DSH 时，桌面端启动后不再因为 DSH Bridge 初始化而断开与 Connector 的控制连接，设备保持在线。（[5d0302b](https://github.com/wkcaeser/Agents-Anywhere/commit/5d0302b46d687e324336375b79cad37293d05ce4)）
 - Desktop 和 DSH 插件的设置里新增「Connector 网络」，可选跟随系统、直连或自定义代理；Connector 的接口请求、实时连接和终端都走同一条路，日志里记录实际走的路径。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
 - 在系统代理里把服务器地址加入例外现在对 Connector 生效；只设置 `NO_PROXY` 不再让 Connector 绕过系统代理。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）

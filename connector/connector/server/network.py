@@ -22,6 +22,7 @@ import socket
 import ssl
 import sys
 import urllib.request
+import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from functools import lru_cache
@@ -65,10 +66,15 @@ class NetworkEgress:
     change on their own, see ``_EgressTransport``.
     """
 
+    # Consecutive failed requests that justify replacing the connection pool.
+    FAILURES_BEFORE_DISCARD = 3
+
     def __init__(self, server_url: str, configured: str | None = None) -> None:
         self.server_url = server_url
         self.configured = configured
         self._current: Egress | None = None
+        self._transports: weakref.WeakSet[_EgressTransport] = weakref.WeakSet()
+        self._consecutive_failures = 0
 
     @property
     def current(self) -> Egress:
@@ -78,7 +84,41 @@ class NetworkEgress:
         self._store(await asyncio.to_thread(self._resolve))
 
     def http_client(self, timeout: httpx.Timeout | float) -> httpx.AsyncClient:
-        return httpx.AsyncClient(timeout=timeout, trust_env=False, transport=_EgressTransport(self))
+        transport = _EgressTransport(self)
+        self._transports.add(transport)
+        return httpx.AsyncClient(timeout=timeout, trust_env=False, transport=transport)
+
+    async def discard_route(self) -> None:
+        """Stop handing out the current pool so the next request dials fresh.
+
+        The old route is retired, not aborted: httpcore can leave a connection
+        unusable without returning it, and a shared client then waits out the full
+        pool timeout on every request and never recovers (upstream issue #381).
+        Closing the route outright would abort the requests still running on it —
+        ``ClosedResourceError`` escapes to the control loop and stops the Connector,
+        which leaves the device offline until the App restarts. Retiring lets those
+        requests finish and closes the route once it is idle.
+        """
+
+        transports = list(self._transports)
+        await asyncio.gather(
+            *(transport.retire_route() for transport in transports), return_exceptions=True
+        )
+
+    async def note_failure(self) -> bool:
+        """Count a failed request; replace the pool once enough fail in a row."""
+
+        self._consecutive_failures += 1
+        if self._consecutive_failures < self.FAILURES_BEFORE_DISCARD:
+            return False
+        self._consecutive_failures = 0
+        await self.discard_route()
+        return True
+
+    def note_success(self) -> None:
+        """A request reached the Server, so the pool is healthy again."""
+
+        self._consecutive_failures = 0
 
     def websocket_options(self, url: str) -> dict[str, Any]:
         """Keyword arguments for ``websockets.connect``; ``ssl`` is only valid for wss."""
@@ -176,14 +216,30 @@ class _EgressTransport(httpx.AsyncBaseTransport):
         self._route = None
         await asyncio.gather(*(route.transport.aclose() for route in routes), return_exceptions=True)
 
+    async def retire_route(self) -> None:
+        """Stop handing out the current pool; close it once its requests finish."""
+
+        route, self._route = self._route, None
+        if route is not None:
+            self._retired.add(route)
+            await self._close_if_idle(route)
+
     async def _current_route(self) -> _Route:
-        egress = self._egress.current
-        if self._route is None or self._route.egress != egress:
-            previous, self._route = self._route, _Route(egress)
-            if previous is not None:
-                self._retired.add(previous)
-                await self._close_if_idle(previous)
-        return self._route
+        while True:
+            egress = self._egress.current
+            route = self._route
+            if route is not None and route.egress == egress:
+                return route
+            # Building a route can await while the previous one closes, and a
+            # concurrent ``retire_route`` may drop the new one in that window.
+            # Only return a route that is still the current one.
+            fresh = _Route(egress)
+            self._route = fresh
+            if route is not None:
+                self._retired.add(route)
+                await self._close_if_idle(route)
+            if self._route is fresh:
+                return fresh
 
     async def _close_if_idle(self, route: _Route) -> None:
         if route in self._retired and route.active == 0:

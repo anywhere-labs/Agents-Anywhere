@@ -397,3 +397,155 @@ def test_certificate_hint_recognises_every_wording() -> None:
         hint = certificate_hint(error, SERVER)
         assert hint is not None and "web.example.com" in hint
     assert certificate_hint(ConnectionRefusedError("refused"), SERVER) is None
+
+
+class _RecordingEgress(NetworkEgress):
+    def __init__(self, server_url: str) -> None:
+        super().__init__(server_url)
+        self.discards = 0
+
+    async def discard_route(self) -> None:
+        self.discards += 1
+
+
+def test_pool_is_discarded_after_consecutive_failures() -> None:
+    egress = _RecordingEgress(SERVER)
+    threshold = NetworkEgress.FAILURES_BEFORE_DISCARD
+
+    async def run() -> list[bool]:
+        return [await egress.note_failure() for _ in range(threshold)]
+
+    results = asyncio.run(run())
+    assert results[:-1] == [False] * (threshold - 1)
+    assert results[-1] is True
+    assert egress.discards == 1
+
+
+def test_success_resets_the_failure_count() -> None:
+    egress = _RecordingEgress(SERVER)
+    threshold = NetworkEgress.FAILURES_BEFORE_DISCARD
+
+    async def run() -> None:
+        for _ in range(threshold - 1):
+            assert await egress.note_failure() is False
+        egress.note_success()
+        for _ in range(threshold - 1):
+            assert await egress.note_failure() is False
+
+    asyncio.run(run())
+    assert egress.discards == 0
+
+
+def test_discard_route_retires_every_client_route() -> None:
+    egress = NetworkEgress(SERVER)
+    first = egress.http_client(1)
+    second = egress.http_client(1)
+    retired: list[bool] = []
+
+    async def fake_retire() -> None:
+        retired.append(True)
+
+    first._transport.retire_route = fake_retire  # type: ignore[method-assign,union-attr]
+    second._transport.retire_route = fake_retire  # type: ignore[method-assign,union-attr]
+    try:
+        asyncio.run(egress.discard_route())
+        assert retired == [True, True]
+    finally:
+        asyncio.run(first.aclose())
+        asyncio.run(second.aclose())
+
+
+def test_retiring_a_route_keeps_in_flight_requests_alive() -> None:
+    # Closing the pool outright aborts the requests still running on it, and the
+    # resulting ClosedResourceError stops the Connector (issue #381 regression).
+    egress = NetworkEgress(SERVER)
+    transport = egress.http_client(1)._transport
+    route = network._Route(egress.current)
+    route.active = 1
+    transport._route = route
+    try:
+        asyncio.run(transport.retire_route())
+        assert transport._route is None
+        assert route in transport._retired
+        route.active = 0
+        asyncio.run(transport._close_if_idle(route))
+        assert route not in transport._retired
+    finally:
+        asyncio.run(transport.aclose())
+
+
+def test_route_selection_survives_a_concurrent_retire() -> None:
+    # retire_route may run while _current_route is closing the previous pool;
+    # the request must still get a fresh, current route instead of None or a
+    # route that was closed underneath it.
+    egress = NetworkEgress(SERVER)
+    transport = egress.http_client(1)._transport
+    stale = network._Route(egress.current)
+    transport._route = stale
+    egress._current = Egress("http://127.0.0.1:1", "config")
+    original = transport._close_if_idle
+    state = {"retired": False}
+
+    async def close_then_retire(route: network._Route) -> None:
+        await original(route)
+        if not state["retired"]:
+            state["retired"] = True
+            await transport.retire_route()
+
+    transport._close_if_idle = close_then_retire  # type: ignore[method-assign]
+    try:
+        route = asyncio.run(transport._current_route())
+        assert route is transport._route
+        assert route not in transport._retired
+    finally:
+        asyncio.run(transport.aclose())
+
+
+def test_pool_retirement_recovers_a_wedged_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Three pool timeouts must move the client onto a fresh pool that works."""
+
+    created: list[object] = []
+
+    class FakeTransport:
+        def __init__(self, index: int) -> None:
+            self.index = index
+            self.closed = False
+
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            if self.index == 0:
+                raise httpx.PoolTimeout("wedged pool")
+            return httpx.Response(200, request=request)
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    class FakeRoute:
+        def __init__(self, egress: Egress) -> None:
+            self.egress = egress
+            self.active = 0
+            self.transport = FakeTransport(len(created))
+            created.append(self)
+
+    monkeypatch.setattr(network, "_Route", FakeRoute)
+    egress = NetworkEgress(SERVER)
+    transport = egress.http_client(1)._transport
+    request = httpx.Request("GET", SERVER)
+
+    async def run() -> httpx.Response:
+        outcomes = []
+        for _ in range(NetworkEgress.FAILURES_BEFORE_DISCARD):
+            with pytest.raises(httpx.PoolTimeout):
+                await transport.handle_async_request(request)
+            outcomes.append(await egress.note_failure())
+        assert outcomes == [False] * (NetworkEgress.FAILURES_BEFORE_DISCARD - 1) + [True]
+        response = await transport.handle_async_request(request)
+        await response.aclose()
+        return response
+
+    response = asyncio.run(run())
+    assert response.status_code == 200
+    assert len(created) == 2
+    assert created[0].transport.closed is True
+    assert created[1].transport.closed is False
