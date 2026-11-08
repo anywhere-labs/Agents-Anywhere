@@ -13,14 +13,15 @@ Duo 合盖（外屏）现在走本仓自研的 `CompactChatShellView` 两 Tab �
 
 | 动作 | 位置 | 说明 |
 |---|---|---|
-| 形态分派回归单一 `sidebarLayout(layout)` | `ChatShellView.swift:47-53` | 与 `origin/main` 结构一致 |
+| 形态分派回归单一 `sidebarLayout(layout)` | `ChatShellView.body` | 与 `origin/main` 结构一致 |
 | 删除两 Tab 外壳 | `CompactChatShellView.swift`、`CompactSessionListView.swift`、`CompactMoreView.swift` | 仅被 ChatShellView 引用，无其他调用点 |
-| 侧栏底栏条件按形态收窄 | `ChatShellView.swift:193` | 见「侧栏底栏」 |
-| rail 注入不变 | `ChatShellView.swift:223` | 条件仍是 `isDuoFoldableIPhone`，合盖自动生效 |
+| 侧栏底栏条件按形态收窄 | `ChatShellView.sidebarLayout` | 见「侧栏底栏」 |
+| rail 注入不变 | `ChatShellView.sidebarLayout` | 条件仍是 `isDuoFoldableIPhone`，合盖自动生效 |
+| 抽屉打开时不渲染详情导航栏 | `ChatPageToolbar.body` | 消掉开抽屉时 toolbar 闪现（R6） |
 
-**不改**：`SidebarDrawer`、`ChatSidebarView`、`ChatPageToolbar`、rail 的
-`ChatRailContext` 结构、`isDuoFoldableIPhone` 的机型判断。外屏能力全部由
-既有组件承接，没有新组件。
+**不改**：`SidebarDrawer`、`ChatSidebarView`、rail 的 `ChatRailContext`
+结构、`isDuoFoldableIPhone` 的机型判断。外屏能力全部由既有组件承接，
+没有新组件。
 
 ## 形态矩阵（改后）
 
@@ -93,6 +94,14 @@ rail 条目 placement 恒为 `.topBarTrailing`，由系统按可用宽度分派�
   会引入第三套外屏外壳。否决。
 - **外屏也清空侧栏底栏（与内屏一致）**：抽屉内失去新会话/账号入口，
   多一步操作。否决，按上方「侧栏底栏」保留。
+- **自绘常驻右缘竖排（两个按钮 / 带「…」溢出两版都做过）**：2026-11-05
+  真机试过并撤回。系统 toolbar 本身就会分派竖排，自绘等于重复实现一遍
+  glass 容器与按钮间距，且与系统竖排的尺寸/材质对不齐；用户对比后认为
+  原样更好。
+- **按横竖屏切换 `toolbarVerticalBehavior(.disabled)` 让外屏横屏回到顶部**：
+  2026-11-05 试过并撤回。Apple 的 Duo 规则是外屏 toolbar 永远竖排在侧边，
+  且该开关要求是稳定选择、禁止随方向或视图状态切换；切换后系统在旋转时
+  重建 toolbar，横屏观感反而怪。结论：位置交给系统，不改。
 
 ## 验证计划
 

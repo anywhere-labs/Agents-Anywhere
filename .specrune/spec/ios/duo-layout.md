@@ -392,6 +392,17 @@ struct ChatOverflowAction: Identifiable {
   （普通 iPhone 与外屏统一两 Tab），2026-11-04 用户要求外屏回归原版后
   撤销。外屏原有入口（设备/账号/设置/配对）在 `ChatSidebarView` 均有
   等价实现，删两 Tab 不丢功能。
+- **抽屉打开期间不渲染详情导航栏**（`ChatPageToolbar` 读
+  `\.sidebarDrawerObscuresDetail`）：抽屉一开就盖住详情，导航栏在卡片
+  位移中会被系统重画一次，表现为"顶部 toolbar 闪现又消失"（2026-11-05
+  真机反馈）。nativeSidebar 下该环境值恒 false，内屏不受影响。
+- **不要用 `toolbarVerticalBehavior(.disabled)` 调位置**：Apple 的 Duo
+  规则是外屏 toolbar 永远竖排在侧边；该开关必须当稳定选择，禁止随方向
+  或视图状态切换。2026-11-05 试过"横屏禁用竖排回顶部"，系统在旋转时
+  重建 toolbar，横屏观感反而怪，已撤回。**位置交给系统分派**。
+- **不要自绘右缘竖排**：做过两版（两个按钮 / 带「…」溢出），均撤回。
+  系统 toolbar 自己会分派竖排，自绘等于重造 glass 容器与按钮间距，
+  尺寸和材质对不齐。
 
 ## 溢出菜单动作必须带图标（2026-10-29）
 

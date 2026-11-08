@@ -39,7 +39,13 @@
    - 横屏：rail 进右缘竖排，抽屉仍可滑出。
 8. **回归对照**：普通 iPhone 模拟器抽屉行为不变；Duo 内屏双栏与右缘
    竖排不变。
-9. **更新文档**：`CHANGELOG.md` 未发布节 iOS 分类写一条用户可见变化；
+9. **消掉开抽屉时的 toolbar 闪现**：`ChatPageToolbar.body`
+   - 读 `\.sidebarDrawerObscuresDetail`，抽屉打开（含动画）时
+     `.toolbar(.hidden, for: .navigationBar)`，收起恢复。
+   - 内屏 nativeSidebar 下该环境值恒 false，不受影响。
+10. **不要碰 toolbar 竖排开关**：`toolbarVerticalBehavior` 是稳定选择，
+   禁止按方向/视图状态切换（Apple Duo 规则；2026-11-05 试过并撤回）。
+11. **更新文档**：`CHANGELOG.md` 未发布节 iOS 分类写一条用户可见变化；
    `.specrune/spec/ios/duo-layout.md` 的机型门控条目补一句"外屏外壳已回归
    原版，`isDuoFoldableIPhone` 剩余门控 = rail 注入 + 底栏 + 宽度上限"。
 
