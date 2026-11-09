@@ -28,7 +28,7 @@
 - Web、Desktop、Android 和 iOS 可用 `/goal` 设置目标，在输入区上方编辑、暂停、恢复或清除；停止时阻止自动续跑，完成结果留在会话历史中，长目标栏与输入框保持同宽并自动截断正文。（[#539](https://github.com/anywhere-labs/Agents-Anywhere/pull/539)）
 - 在 Codex App 或 IDE 窗口里处理审批后，Agents Anywhere 里的会话不再一直显示「等待批准」。（[#532](https://github.com/anywhere-labs/Agents-Anywhere/pull/532)）
 - Claude 工具结果里的图片（例如读取截图）不再以原文同步到云端，会话中改为显示 `[Image omitted: image/png, 1.2 MB]` 这样的摘要，不再显示一大段乱码；含大量截图的历史会话不再因请求过大（413）而每轮同步失败。（[#548](https://github.com/anywhere-labs/Agents-Anywhere/pull/548)）
-- Codex 和 Claude Code 的历史会话超过服务器单次请求上限时改为分批上传，不再因 413 一直同步失败；服务器仍然拒收的会话会暂停重试（从约 10 分钟起逐次加倍，最长约 6 小时），不再每轮重新读取和上传、拖慢同一设备上其他会话的同步，暂停期间会话标题和状态照常更新。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
+- Codex 和 Claude Code 的历史会话超过服务器单次请求上限时改为分批上传，不再因 413 一直同步失败；服务器仍然拒收的会话会暂停重试（从约 10 分钟起逐次加倍，最长约 6 小时），不再每轮重新读取和上传、拖慢同一设备上其他会话的同步，暂停期间会话标题和状态照常更新。（[#589](https://github.com/anywhere-labs/Agents-Anywhere/pull/589)）
 - 本机模式的 Pi 不能使用模型网关，切换到 AA 渠道时会另建一个受管 Pi 实例，本机 Pi 及其历史不受影响。接入模型网关后恢复 Codex 已有会话时，继续使用会话原来的模型。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 
 ### 本机连接
