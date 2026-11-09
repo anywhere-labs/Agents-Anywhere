@@ -280,6 +280,7 @@ def test_v2_0_database_upgrades_through_current_revision(fresh_database_url) -> 
         ("v2_50", "v2_51"),
         ("v2_51", "v2_52"),
         ("v2_52", "v2_53"),
+        ("v2_53", "v2_54"),
     ],
 )
 def test_every_adjacent_schema_upgrade(tmp_path,
@@ -1020,9 +1021,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_53() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_53"
-    assert CURRENT_SCHEMA_VERSION == "2.53"
+def test_current_schema_version_is_v2_54() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_54"
+    assert CURRENT_SCHEMA_VERSION == "2.54"
 
 
 def test_v2_49_tracks_inventory_scans_without_rewriting_sessions(
@@ -2549,5 +2550,76 @@ def test_v2_35_replaces_the_session_item_time_index(fresh_database_url) -> None:
         assert "COALESCE(item_time, ''::text) DESC" in definition
         assert "order_seq DESC" in definition
         assert "updated_seq DESC" in definition
+    finally:
+        engine.dispose()
+
+
+def test_v2_54_stores_newest_timeline_row_on_sessions(fresh_database_url) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_53")
+    engine = create_engine(_sync_url(url))
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("SET LOCAL session_replication_role = 'replica'"))
+            for session_id in ("with_items", "empty"):
+                _insert_required(connection, "sessions", {
+                    "id": session_id, "connector_id": "conn", "runtime": "codex",
+                    "runtime_id": "codex",
+                })
+            # (id, item_time, order_seq, updated_seq, payload)
+            rows = [
+                ("old", "2026-10-01T09:00:00Z", 1, 1, {"updatedAt": "2026-10-01T09:00:00Z"}),
+                # Same time as "newest": the higher order_seq wins.
+                ("tie", "2026-10-01T10:00:00Z", 2, 2, {"updatedAt": "2026-10-01T10:00:00Z"}),
+                # An empty updatedAt falls back to completedAt.
+                ("newest", "2026-10-01T10:00:00Z", 3, 3, {
+                    "updatedAt": "", "completedAt": "2026-10-01T10:00:00Z",
+                    "createdAt": "2026-10-01T08:00:00Z",
+                }),
+                # No item_time sorts after every timed row.
+                ("untimed", None, 9, 9, {}),
+            ]
+            for item_id, item_time, order_seq, updated_seq, payload in rows:
+                _insert_required(connection, "timeline_items", {
+                    "session_id": "with_items", "id": item_id, "item_time": item_time,
+                    "order_seq": order_seq, "updated_seq": updated_seq,
+                    "payload_json": json.dumps(payload),
+                })
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=url)
+
+    engine = create_engine(_sync_url(url))
+    try:
+        with engine.connect() as connection:
+            stored = {
+                row.id: tuple(row)[1:]
+                for row in connection.execute(text(
+                    "SELECT id, latest_item_id, latest_item_time, latest_item_order_seq,"
+                    " latest_item_updated_seq, latest_item_at FROM sessions"
+                ))
+            }
+        assert stored == {
+            "with_items": ("newest", "2026-10-01T10:00:00Z", 3, 3, "2026-10-01T10:00:00Z"),
+            "empty": (None, None, None, None, None),
+        }
+    finally:
+        engine.dispose()
+
+    engine = create_engine(_sync_url(url))
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE alembic_version"))
+    finally:
+        engine.dispose()
+    assert asyncio.run(classify_database(url)) == UnversionedDatabase("v2", "v2_54")
+
+    command.stamp(_alembic_config(url), "v2_54")
+    command.downgrade(_alembic_config(url), "v2_53")
+    engine = create_engine(_sync_url(url))
+    try:
+        columns = {column["name"] for column in inspect(engine).get_columns("sessions")}
+        assert "latest_item_id" not in columns
     finally:
         engine.dispose()
