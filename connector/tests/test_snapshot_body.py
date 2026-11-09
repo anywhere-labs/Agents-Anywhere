@@ -133,3 +133,32 @@ def test_single_page_body_is_the_unpaged_snapshot():
     with encode_snapshot("dsh", "instance", "session", {"externalSessionId": "native"}, iter(items)) as snapshot:
         assert page_bodies(snapshot, 45 * 1024 * 1024) == [single]
     assert json.loads(single)["notifications"][1]["params"]["items"] == items
+
+
+def test_partial_snapshot_only_appends_and_trailing_notifications_ride_on_the_last_page():
+    trailing = [{"method": "session.state.updated", "params": {"sessionId": "session", "status": "idle", "turnId": "kept"}}]
+    items = [{"id": str(index), "content": {"text": "x" * 300}} for index in range(10)]
+    with encode_snapshot("claude", "claude", "session", {"externalSessionId": "native"}, iter(items),
+                         complete=False, trailing=trailing) as snapshot:
+        bodies = [json.loads(body) for body in page_bodies(snapshot, 1500)]
+        whole = json.loads(page_bodies(snapshot, None)[0])
+    assert len(bodies) > 2
+    assert all(
+        n["params"]["complete"] is False for body in bodies for n in body["notifications"] if n["method"] == "timeline.sync"
+    )
+    assert [n["method"] for n in bodies[-1]["notifications"]][-1] == "session.state.updated"
+    assert all(n["method"] != "session.state.updated" for body in bodies[:-1] for n in body["notifications"])
+    assert bodies[-1]["notifications"][-1]["params"]["turnId"] == "kept", "trailing notifications are sent as given"
+    assert [n["method"] for n in whole["notifications"]] == ["session.meta.upsert", "timeline.sync", "session.state.updated"]
+
+
+def test_trailing_notifications_count_against_the_page_size():
+    trailing = [{"method": "notice.upsert", "params": {"text": "n" * 800}}]
+    items = [{"id": str(index), "content": {"text": "x" * 300}} for index in range(6)]
+    with encode_snapshot("claude", "claude", "session", {"externalSessionId": "native"}, iter(items),
+                         trailing=trailing) as snapshot:
+        bodies = page_bodies(snapshot, 1500)
+    for body in bodies:
+        syncs = [n for n in json.loads(body)["notifications"] if n["method"] == "timeline.sync"]
+        assert len(body) <= 1500 or len(syncs[0]["params"]["items"]) == 1
+    assert b"notice.upsert" in bodies[-1]

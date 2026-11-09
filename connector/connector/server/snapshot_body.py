@@ -20,7 +20,8 @@ SNAPSHOT_LEGACY_PAGE_BYTES = 8 * 1024 * 1024
 SNAPSHOT_MIN_PAGE_BYTES = 1024 * 1024
 
 _OPEN = b'{"notifications":['
-_CLOSE = b"]}}]}"
+_CLOSE_ITEMS = b"]}}"
+_CLOSE = _CLOSE_ITEMS + b"]}"
 
 
 class EncodedSnapshot:
@@ -36,15 +37,21 @@ class EncodedSnapshot:
     (``complete: false``). Items arrive sorted by ``orderSeq`` and the Server
     keeps the ``orderSeq`` of a new item that sorts after everything it already
     holds, so appending them in order rebuilds the timeline the single request
-    would have. Close it when the upload ends.
+    would have. A partial snapshot (``complete: false`` from the start) only
+    appends, page after page. Notifications that have to follow the items,
+    such as the session state, ride on the last page. Close it when the upload
+    ends.
     """
 
-    def __init__(self, file: BinaryIO, ends: list[int], first_prefix: bytes, later_prefix: bytes) -> None:
+    def __init__(
+        self, file: BinaryIO, ends: list[int], first_prefix: bytes, later_prefix: bytes, trailing: bytes = b"",
+    ) -> None:
         self._file = file
         # Item i ends at ends[i]; the next one starts after its comma.
         self._ends = ends
         self._first_prefix = first_prefix
         self._later_prefix = later_prefix
+        self._last_close = _CLOSE_ITEMS + b"," + trailing + b"]}" if trailing else _CLOSE
 
     def __len__(self) -> int:
         return len(self._ends)
@@ -70,16 +77,18 @@ class EncodedSnapshot:
 
         if page_bytes is None:
             return len(self._ends)
-        overhead = len(self._prefix(first)) + len(_CLOSE)
+        prefix = len(self._prefix(first))
         offset = self._start(start)
         end = start
-        while end < len(self._ends) and (end == start or overhead + self._ends[end] - offset <= page_bytes):
+        while end < len(self._ends) and (
+            end == start or prefix + self._ends[end] - offset + len(self._close(end + 1)) <= page_bytes
+        ):
             end += 1
         return end
 
     def page_size(self, start: int, end: int, *, first: bool) -> int:
         items = self._ends[end - 1] - self._start(start) if end > start else 0
-        return len(self._prefix(first)) + items + len(_CLOSE)
+        return len(self._prefix(first)) + items + len(self._close(end))
 
     def page_chunks(self, start: int, end: int, *, first: bool, chunk_bytes: int) -> Iterator[bytes]:
         """The request body of items ``start:end``, read from the file in chunks; repeatable."""
@@ -94,10 +103,13 @@ class EncodedSnapshot:
                     raise OSError("The encoded snapshot ended early")
                 remaining -= len(chunk)
                 yield chunk
-        yield _CLOSE
+        yield self._close(end)
 
     def _prefix(self, first: bool) -> bytes:
         return self._first_prefix if first else self._later_prefix
+
+    def _close(self, end: int) -> bytes:
+        return self._last_close if end >= len(self._ends) else _CLOSE
 
     def _start(self, index: int) -> int:
         return self._ends[index - 1] + 1 if index else 0
@@ -106,8 +118,13 @@ class EncodedSnapshot:
 def encode_snapshot(
     runtime: str, runtime_id: str, session_id: str,
     meta: dict[str, Any], items: Iterable[dict[str, Any]],
+    *, complete: bool = True, trailing: Iterable[dict[str, Any]] = (),
 ) -> EncodedSnapshot:
-    """Encode a complete snapshot for ``/connector/ingest``, one item at a time."""
+    """Encode a snapshot for ``/connector/ingest``, one item at a time.
+
+    ``complete`` says whether the first page replaces the timeline. The
+    ``trailing`` notifications are sent as given after the last item.
+    """
 
     encoder = json.JSONEncoder(ensure_ascii=False, separators=(",", ":"), allow_nan=False, sort_keys=True)
     binding = {"runtime": runtime, "runtimeId": runtime_id, "sessionId": session_id}
@@ -122,8 +139,14 @@ def encode_snapshot(
         # Leave the params object open; the items follow.
         return head[:-2] + b',"items":['
 
-    first_prefix = _OPEN + encode({"method": "session.meta.upsert", "params": {**meta, **binding}}) + b"," + sync_head(True)
+    first_prefix = _OPEN + encode({"method": "session.meta.upsert", "params": {**meta, **binding}}) + b"," + sync_head(complete)
     later_prefix = _OPEN + sync_head(False)
+    trailing_body = b",".join(
+        json.dumps(notification, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode(
+            "utf-8", UTF8_REPLACE_LONE_SURROGATES,
+        )
+        for notification in trailing
+    )
     file = tempfile.TemporaryFile(mode="w+b")  # noqa: SIM115 - ownership transfers to the snapshot
     try:
         ends: list[int] = []
@@ -135,7 +158,7 @@ def encode_snapshot(
     except BaseException:
         file.close()
         raise
-    return EncodedSnapshot(file, ends, first_prefix, later_prefix)
+    return EncodedSnapshot(file, ends, first_prefix, later_prefix, trailing_body)
 
 
 def snapshot_body(

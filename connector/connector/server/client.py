@@ -147,6 +147,7 @@ class BackendRpcClient:
             send_notification=self.send_backend_notification,
             ingest_notifications=self.ingest_notifications,
             flush_sync_state=self._flush_sync_state,
+            ingest_snapshot=self.ingest_snapshot,
         )
         self._runtime_sync_task: asyncio.Task[None] | None = None
 
