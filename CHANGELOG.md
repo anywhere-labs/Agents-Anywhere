@@ -50,6 +50,7 @@
 - 停用后重新启用 DSH 插件不再报 `ID BridgePayload already exists in the registry`，不需要重启 DSH。（[#558](https://github.com/anywhere-labs/Agents-Anywhere/pull/558)）
 - DSH 插件登录和绑定设备时遇到瞬时网络错误会自动重试；可能已送达的写操作不会重复发送。（[#558](https://github.com/anywhere-labs/Agents-Anywhere/pull/558)）
 - 内置 uv 缺少执行权限时，DSH 插件会自动修复，不再提示找不到 uv。（[#558](https://github.com/anywhere-labs/Agents-Anywhere/pull/558)）
+- 超过 45 MiB（或因代理限制被分页）的 DSH 会话完整同步时，不再把第一页之后的历史整段删掉再写回，只改写有变化的条目；上传中途失败时，服务器上也不再只剩前半段历史。需要 Server 和 Connector 都升级到本版。（[#590](https://github.com/anywhere-labs/Agents-Anywhere/pull/590)）
 - Connector 忙碌或同步流被重建时，DSH 不再因 Agents Anywhere 插件的连接调用被取消或超时而整个退出（`Call was cancelled`、`Call deadline exceeded`）。（[#547](https://github.com/anywhere-labs/Agents-Anywhere/pull/547)）
 
 ### 本机连接、所有权与日志
@@ -75,6 +76,7 @@
 ### iOS
 
 - iOS 的「模型渠道」与 Web、Desktop 相同：首页列出渠道和「已应用」，点进渠道后再应用、查看配置和 Runtime；Tokens Anywhere 按「账户／模型与连接／Runtime」分页，可以退出账户。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 所选 Agent 换了模型渠道后，iOS 新建会话页会重新准备并刷新模型列表，不再停留在旧渠道的模型上。（[#588](https://github.com/anywhere-labs/Agents-Anywhere/pull/588)）
 
 ## 2.2.0（日期待定）
 

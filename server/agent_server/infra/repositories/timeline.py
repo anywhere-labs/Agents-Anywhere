@@ -418,6 +418,105 @@ class TimelineRepositoryMixin:
         )
 
     @session_revision_fenced
+    async def replace_timeline_range(
+        self,
+        *,
+        session_id: str,
+        items: list[TimelineItemIn],
+        after_order_seq: int | None,
+        through_order_seq: int | None,
+        source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
+    ) -> TimelineBatchWriteResult:
+        """Replace one ``orderSeq`` range from one page of a complete snapshot.
+
+        A snapshot too large for one request arrives as pages, each holding
+        every snapshot item with ``after < orderSeq <= through`` (``None`` is
+        unbounded). Only stored rows in that range that the page no longer
+        holds are deleted and only changed items are written, so a paged
+        resync neither rewrites unchanged history nor leaves the session with
+        a partial timeline between pages.
+
+        Changed items get one revision each, like an incremental batch, so
+        clients can follow them by cursor. Deleting or moving a stored row is
+        invisible to a cursor, so it also raises the reset fence and the
+        result is marked ``reordered`` for clients to refetch.
+        """
+
+        incoming_by_id = latest_timeline_items_by_id(items)
+        async with self._timeline_transaction(session_id) as conn:
+            range_ids = await self.timeline.ids_in_order_range(
+                conn,
+                session_id,
+                after_order_seq=after_order_seq,
+                through_order_seq=through_order_seq,
+            )
+            current_by_id = {
+                item.id: item
+                for item in await self.timeline.read_many(
+                    session_id,
+                    set(incoming_by_id),
+                    conn=conn,
+                )
+            }
+            await update_source_observed_at(
+                conn,
+                session_id=session_id,
+                source_observed_at=source_observed_at,
+            )
+            removed = range_ids - set(incoming_by_id)
+            changed_inputs = [
+                item
+                for item in incoming_by_id.values()
+                if (existing := current_by_id.get(item.id)) is None
+                or not timeline_item_state_is_unchanged(existing, item)
+                or existing.orderSeq != item.orderSeq
+            ]
+            if not changed_inputs and not removed:
+                return TimelineBatchWriteResult(items=(), changed=False)
+
+            reset = bool(removed) or any(
+                item.id in current_by_id
+                and current_by_id[item.id].orderSeq != item.orderSeq
+                for item in changed_inputs
+            )
+            revision_count = max(1, len(changed_inputs))
+            first_updated_seq = await self._reserve_session_revisions(
+                conn,
+                session_id,
+                count=revision_count,
+                mark_read=mark_read_on_change,
+            )
+            now = utc_now()
+            changed_items = [
+                timeline_item_from_runtime_input(
+                    item,
+                    updated_seq=first_updated_seq + index,
+                    now=now,
+                    existing=current_by_id.get(item.id),
+                    revision=next_timeline_item_revision(
+                        item, current_by_id.get(item.id)
+                    ),
+                )
+                for index, item in enumerate(changed_inputs)
+            ]
+            if reset:
+                await conn.execute(
+                    update(sessions_t)
+                    .where(sessions_t.c.id == session_id)
+                    .values(
+                        timeline_reset_seq=first_updated_seq + revision_count - 1
+                    )
+                )
+            await self.timeline.upsert_many(conn, changed_items)
+            await self.timeline.delete_items(conn, session_id, removed)
+        return TimelineBatchWriteResult(
+            items=tuple(changed_items),
+            changed=True,
+            reordered=reset,
+        )
+
+    @session_revision_fenced
     async def upsert_timeline_item(
         self,
         *,

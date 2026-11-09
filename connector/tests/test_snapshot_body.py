@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import itertools
 import json
 import tracemalloc
 from unittest.mock import AsyncMock
@@ -135,9 +136,65 @@ def test_single_page_body_is_the_unpaged_snapshot():
     assert json.loads(single)["notifications"][1]["params"]["items"] == items
 
 
+def _sync_params(body: bytes) -> dict:
+    return json.loads(body)["notifications"][-1]["params"]
+
+
+def test_paged_snapshot_pages_tile_the_order_seq_space_with_ranges():
+    items = [{"id": str(index), "orderSeq": index * 10, "content": {"text": "中" * 300}} for index in range(40)]
+    with encode_snapshot("dsh", "instance", "session", {"externalSessionId": "native"}, iter(items)) as snapshot:
+        bodies = page_bodies(snapshot, 4096)
+    assert len(bodies) > 3
+    assert all(len(body) <= 4096 for body in bodies)
+    pages = [_sync_params(body) for body in bodies]
+    ranges = [page["snapshotRange"] for page in pages]
+    assert "afterOrderSeq" not in ranges[0], "the first page is unbounded below"
+    assert "throughOrderSeq" not in ranges[-1], "the last page is unbounded above"
+    for previous, current in itertools.pairwise(ranges):
+        assert current["afterOrderSeq"] == previous["throughOrderSeq"], "pages leave no gap"
+    for page in pages:
+        bounds = page["snapshotRange"]
+        for item in page["items"]:
+            assert bounds.get("afterOrderSeq", -(2**31)) < item["orderSeq"] <= bounds.get("throughOrderSeq", 2**31)
+    assert [page["complete"] for page in pages] == [True] + [False] * (len(pages) - 1)
+
+
+def test_ranges_follow_the_highest_order_seq_when_items_are_out_of_order():
+    order = [0, 1, 2, 9, 3, 4, 5, 6, 7, 8]
+    items = [{"id": str(seq), "orderSeq": seq, "content": {"text": "x" * 300}} for seq in order]
+    with encode_snapshot("dsh", "instance", "session", {"externalSessionId": "native"}, iter(items)) as snapshot:
+        pages = [_sync_params(body) for body in page_bodies(snapshot, 800)]
+    assert len(pages) > 2
+    for previous, current in itertools.pairwise(pages):
+        after, through = current["snapshotRange"].get("afterOrderSeq"), current["snapshotRange"].get("throughOrderSeq")
+        assert after == previous["snapshotRange"]["throughOrderSeq"]
+        assert through is None or after <= through, "an out-of-order page never names an inverted range"
+
+
+def test_a_recut_page_after_the_first_names_its_own_range():
+    items = [{"id": str(index), "orderSeq": index, "content": {"text": "x" * 500}} for index in range(30)]
+    with encode_snapshot("dsh", "instance", "session", {"externalSessionId": "native"}, iter(items)) as snapshot:
+        start = snapshot.page_end(0, 8192, first=True)
+        fine = page_bodies(snapshot, 2048, start=start, first=False)
+    assert _sync_params(fine[0])["snapshotRange"]["afterOrderSeq"] == start - 1
+    assert "throughOrderSeq" not in _sync_params(fine[-1])["snapshotRange"]
+
+
+def test_single_page_and_order_less_snapshots_carry_no_range():
+    ordered = [{"id": str(index), "orderSeq": index, "content": {"text": "x"}} for index in range(3)]
+    with encode_snapshot("dsh", "instance", "session", {"externalSessionId": "native"}, iter(ordered)) as snapshot:
+        (single,) = page_bodies(snapshot, 45 * 1024 * 1024)
+    assert "snapshotRange" not in _sync_params(single)
+    unordered = [{"id": str(index), "content": {"text": "x" * 500}} for index in range(10)]
+    with encode_snapshot("dsh", "instance", "session", {"externalSessionId": "native"}, iter(unordered)) as snapshot:
+        bodies = page_bodies(snapshot, 1024)
+    assert len(bodies) > 1
+    assert all("snapshotRange" not in _sync_params(body) for body in bodies)
+
+
 def test_partial_snapshot_only_appends_and_trailing_notifications_ride_on_the_last_page():
     trailing = [{"method": "session.state.updated", "params": {"sessionId": "session", "status": "idle", "turnId": "kept"}}]
-    items = [{"id": str(index), "content": {"text": "x" * 300}} for index in range(10)]
+    items = [{"id": str(index), "orderSeq": index, "content": {"text": "x" * 300}} for index in range(10)]
     with encode_snapshot("claude", "claude", "session", {"externalSessionId": "native"}, iter(items),
                          complete=False, trailing=trailing) as snapshot:
         bodies = [json.loads(body) for body in page_bodies(snapshot, 1500)]
@@ -146,6 +203,9 @@ def test_partial_snapshot_only_appends_and_trailing_notifications_ride_on_the_la
     assert all(
         n["params"]["complete"] is False for body in bodies for n in body["notifications"] if n["method"] == "timeline.sync"
     )
+    assert all(
+        "snapshotRange" not in n["params"] for body in bodies for n in body["notifications"]
+    ), "a range would delete the history a partial snapshot leaves out"
     assert [n["method"] for n in bodies[-1]["notifications"]][-1] == "session.state.updated"
     assert all(n["method"] != "session.state.updated" for body in bodies[:-1] for n in body["notifications"])
     assert bodies[-1]["notifications"][-1]["params"]["turnId"] == "kept", "trailing notifications are sent as given"

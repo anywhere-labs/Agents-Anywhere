@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import tempfile
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from typing import Any, BinaryIO
 
 from connector.core.unicode import UTF8_REPLACE_LONE_SURROGATES
@@ -22,6 +22,8 @@ SNAPSHOT_MIN_PAGE_BYTES = 1024 * 1024
 _OPEN = b'{"notifications":['
 _CLOSE_ITEMS = b"]}}"
 _CLOSE = _CLOSE_ITEMS + b"]}"
+# The Server stores orderSeq as a 32-bit integer.
+_ORDER_SEQ_MIN = -(2**31)
 
 
 class EncodedSnapshot:
@@ -32,26 +34,50 @@ class EncodedSnapshot:
     size learned during the upload re-cuts the remaining items without encoding
     them again.
 
-    The first page carries the session meta and replaces the whole timeline
-    (``complete: true``); later pages append the remaining items
-    (``complete: false``). Items arrive sorted by ``orderSeq`` and the Server
-    keeps the ``orderSeq`` of a new item that sorts after everything it already
-    holds, so appending them in order rebuilds the timeline the single request
-    would have. A partial snapshot (``complete: false`` from the start) only
-    appends, page after page. Notifications that have to follow the items,
-    such as the session state, ride on the last page. Close it when the upload
-    ends.
+    A snapshot that fits one page replaces the whole timeline
+    (``complete: true``). When it is paged, the first page also carries the
+    session meta and ``complete: true``, later pages ``complete: false``, and
+    every page names the ``orderSeq`` range it covers in ``snapshotRange``:
+    items arrive sorted by ``orderSeq``, so page *k* holds every item in
+    ``(highest orderSeq before it, highest orderSeq through it]``, unbounded
+    below on the first page and above on the last. The Server replaces only
+    that range, so each page is applied on its own and unchanged history is
+    not rewritten. A Server that does not know ``snapshotRange`` replaces the
+    timeline with the first page and appends the rest, which rebuilds the
+    timeline the single request would have. Items without an integer
+    ``orderSeq`` turn ranges off for the whole snapshot.
+
+    A partial snapshot (``complete: false`` from the start) only adds items:
+    every page is ``complete: false`` and carries no range, since a range
+    would delete the history the snapshot leaves out. Notifications that have
+    to follow the items, such as the session state, ride on the last page.
+    Close it when the upload ends.
     """
 
     def __init__(
-        self, file: BinaryIO, ends: list[int], first_prefix: bytes, later_prefix: bytes, trailing: bytes = b"",
+        self,
+        file: BinaryIO,
+        ends: list[int],
+        meta_prefix: bytes,
+        sync_head: Callable[[bool, dict[str, int] | None], bytes],
+        through_order_seqs: list[int] | None,
+        trailing: bytes = b"",
     ) -> None:
         self._file = file
         # Item i ends at ends[i]; the next one starts after its comma.
         self._ends = ends
-        self._first_prefix = first_prefix
-        self._later_prefix = later_prefix
+        self._meta_prefix = meta_prefix
+        self._sync_head = sync_head
+        # Highest orderSeq among items 0..i, or None when ranges are off.
+        self._through = through_order_seqs
         self._last_close = _CLOSE_ITEMS + b"," + trailing + b"]}" if trailing else _CLOSE
+        # The longest range header, so a page cut before its range is known
+        # never outgrows the page size.
+        widest = {"afterOrderSeq": _ORDER_SEQ_MIN, "throughOrderSeq": _ORDER_SEQ_MIN}
+        self._widest_prefix_bytes = {
+            first: len(self._prefix_for(first, widest if through_order_seqs is not None else None))
+            for first in (True, False)
+        }
 
     def __len__(self) -> int:
         return len(self._ends)
@@ -77,7 +103,7 @@ class EncodedSnapshot:
 
         if page_bytes is None:
             return len(self._ends)
-        prefix = len(self._prefix(first))
+        prefix = self._widest_prefix_bytes[first]
         offset = self._start(start)
         end = start
         while end < len(self._ends) and (
@@ -86,14 +112,26 @@ class EncodedSnapshot:
             end += 1
         return end
 
+    def page_range(self, start: int, end: int, *, first: bool) -> dict[str, int] | None:
+        """The ``snapshotRange`` of items ``start:end``; ``None`` for a single-page snapshot."""
+
+        if self._through is None or (first and end >= len(self._ends)):
+            return None
+        bounds: dict[str, int] = {}
+        if not first and start > 0:
+            bounds["afterOrderSeq"] = self._through[start - 1]
+        if end < len(self._ends):
+            bounds["throughOrderSeq"] = self._through[end - 1]
+        return bounds
+
     def page_size(self, start: int, end: int, *, first: bool) -> int:
         items = self._ends[end - 1] - self._start(start) if end > start else 0
-        return len(self._prefix(first)) + items + len(self._close(end))
+        return len(self._prefix(start, end, first)) + items + len(self._close(end))
 
     def page_chunks(self, start: int, end: int, *, first: bool, chunk_bytes: int) -> Iterator[bytes]:
         """The request body of items ``start:end``, read from the file in chunks; repeatable."""
 
-        yield self._prefix(first)
+        yield self._prefix(start, end, first)
         if end > start:
             self._file.seek(self._start(start))
             remaining = self._ends[end - 1] - self._start(start)
@@ -105,8 +143,12 @@ class EncodedSnapshot:
                 yield chunk
         yield self._close(end)
 
-    def _prefix(self, first: bool) -> bytes:
-        return self._first_prefix if first else self._later_prefix
+    def _prefix(self, start: int, end: int, first: bool) -> bytes:
+        return self._prefix_for(first, self.page_range(start, end, first=first))
+
+    def _prefix_for(self, first: bool, snapshot_range: dict[str, int] | None) -> bytes:
+        head = self._sync_head(first, snapshot_range)
+        return (self._meta_prefix if first else _OPEN) + head
 
     def _close(self, end: int) -> bytes:
         return self._last_close if end >= len(self._ends) else _CLOSE
@@ -132,15 +174,17 @@ def encode_snapshot(
     def encode(value: Any) -> bytes:
         return "".join(encoder.iterencode(server_payload_without_turn_data(value))).encode("utf-8", UTF8_REPLACE_LONE_SURROGATES)
 
-    def sync_head(complete: bool) -> bytes:
-        head = encode({"method": "timeline.sync", "params": {
-            **binding, "externalSessionId": meta["externalSessionId"], "complete": complete,
-        }})
+    def sync_head(first: bool, snapshot_range: dict[str, int] | None) -> bytes:
+        params: dict[str, Any] = {
+            **binding, "externalSessionId": meta["externalSessionId"], "complete": first and complete,
+        }
+        if snapshot_range is not None:
+            params["snapshotRange"] = snapshot_range
+        head = encode({"method": "timeline.sync", "params": params})
         # Leave the params object open; the items follow.
         return head[:-2] + b',"items":['
 
-    first_prefix = _OPEN + encode({"method": "session.meta.upsert", "params": {**meta, **binding}}) + b"," + sync_head(complete)
-    later_prefix = _OPEN + sync_head(False)
+    meta_prefix = _OPEN + encode({"method": "session.meta.upsert", "params": {**meta, **binding}}) + b","
     trailing_body = b",".join(
         json.dumps(notification, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode(
             "utf-8", UTF8_REPLACE_LONE_SURROGATES,
@@ -150,15 +194,23 @@ def encode_snapshot(
     file = tempfile.TemporaryFile(mode="w+b")  # noqa: SIM115 - ownership transfers to the snapshot
     try:
         ends: list[int] = []
+        # A partial snapshot never names a range; see EncodedSnapshot.
+        through: list[int] | None = [] if complete else None
         for item in items:
             if ends:
                 file.write(b",")
             file.write(encode(item))
             ends.append(file.tell())
+            if through is not None:
+                order_seq = item.get("orderSeq")
+                if isinstance(order_seq, bool) or not isinstance(order_seq, int):
+                    through = None
+                else:
+                    through.append(max(order_seq, through[-1]) if through else order_seq)
     except BaseException:
         file.close()
         raise
-    return EncodedSnapshot(file, ends, first_prefix, later_prefix, trailing_body)
+    return EncodedSnapshot(file, ends, meta_prefix, sync_head, through, trailing_body)
 
 
 def snapshot_body(

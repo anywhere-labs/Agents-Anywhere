@@ -111,6 +111,27 @@ class SqlTimelineStore:
                 )
             )
 
+    async def ids_in_order_range(
+        self,
+        conn: AsyncConnection,
+        session_id: str,
+        *,
+        after_order_seq: int | None,
+        through_order_seq: int | None,
+    ) -> set[str]:
+        """Stable IDs stored with ``after < orderSeq <= through``; ``None`` is unbounded."""
+
+        conditions = [timeline_items.c.session_id == session_id]
+        if after_order_seq is not None:
+            conditions.append(timeline_items.c.order_seq > after_order_seq)
+        if through_order_seq is not None:
+            conditions.append(timeline_items.c.order_seq <= through_order_seq)
+        return set(
+            (
+                await conn.execute(select(timeline_items.c.id).where(*conditions))
+            ).scalars()
+        )
+
     async def latest_item(self, session_id: str) -> TimelineItem | None:
         async with read_connection(self._engine) as conn:
             row = (
