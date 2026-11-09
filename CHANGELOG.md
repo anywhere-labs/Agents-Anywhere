@@ -83,6 +83,10 @@
 - iOS 的「模型渠道」与 Web、Desktop 相同：首页列出渠道和「已应用」，点进渠道后再应用、查看配置和 Runtime；Tokens Anywhere 按「账户／模型与连接／Runtime」分页，可以退出账户。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 所选 Agent 换了模型渠道后，iOS 新建会话页会重新准备并刷新模型列表，不再停留在旧渠道的模型上。（[#588](https://github.com/anywhere-labs/Agents-Anywhere/pull/588)）
 
+### 文档
+
+- 项目许可证由 MIT 改为 Apache License 2.0，仓库提供许可证全文和 `NOTICE`；此前已发布的版本仍可按原 MIT 声明使用，DSH 插件的 npm 包也会附带这两个文件。（[#594](https://github.com/anywhere-labs/Agents-Anywhere/pull/594)）
+
 ## 2.2.0（日期待定）
 
 [发布说明](docs/releases/2.2.0.md) · [与 2.1.0 的差异](https://github.com/anywhere-labs/Agents-Anywhere/compare/v2.1.0...main)

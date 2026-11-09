@@ -31,7 +31,8 @@
     "TECHNICAL.md",
     "docs/images",
     "RUNTIME_READS.md",
-    "USER_QUESTIONS.md"
+    "USER_QUESTIONS.md",
+    "NOTICE"
   ],
   "dsh": {
     "bundle": {
@@ -178,7 +179,7 @@
     "node": "^22.19.0 || >=24"
   },
   "packageManager": "yarn@4.18.0",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "dependencies": {
     "@dataiku/uv": "0.12.0",
     "clsx": "2.1.1",
