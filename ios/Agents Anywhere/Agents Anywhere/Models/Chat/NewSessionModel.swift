@@ -64,6 +64,9 @@ final class NewSessionModel {
     @ObservationIgnored private var inventoryTasks: [String: Task<[V2DeviceRuntime], Error>] = [:]
     @ObservationIgnored private var homeTasks: [String: Task<String, Error>] = [:]
     @ObservationIgnored private var resolvedHomes: Set<String> = []
+    private(set) var modelChannel: NewSessionModelChannel?
+    /// The target and channel the last preparation was made for.
+    @ObservationIgnored private var preparedChannel: (target: V2ModelTarget, key: String?)?
 
     init(scope: V2ClientScope, devices: V2DeviceManagementService,
          preparation: V2SessionPreparationService, creation: V2SessionCreationService, projectAPI: V2ProjectAPI,
@@ -105,6 +108,31 @@ final class NewSessionModel {
             runtimeID = ""
             restoreProjectForDevice()
         }
+    }
+
+    /// The dashboard's channel state, and the runtimes that resolve managed instances to their row.
+    func updateModelChannel(_ overview: V2ModelConfigOverview?, runtimes: [V2DeviceRuntime]) {
+        guard isValid else { return }
+        let value = overview?.channel.map { NewSessionModelChannel(state: $0, runtimes: runtimes, assignments: overview?.assignments ?? []) }
+        if modelChannel != value { modelChannel = value }
+    }
+
+    /// The channel the selected runtime actually uses; nil until the dashboard reports channels.
+    var runtimeChannel: String? {
+        guard let modelChannel else { return nil }
+        return ChannelPresentation.runtimeKey(ChannelPresentation.row(for: .init(connectorId: connectorID, runtimeId: runtimeID),
+            in: modelChannel.state, runtimes: modelChannel.runtimes, assignments: modelChannel.assignments))
+    }
+
+    /// A runtime that switched channels offers other models: prepare it again and
+    /// read its catalog, also when its workspace preparation would otherwise be kept.
+    func prepareAfterChannelChange() async {
+        guard isValid, !isCreating, let current = runtimeChannel, let mark = preparedChannel,
+              mark.target == .init(connectorId: connectorID, runtimeId: runtimeID) else { return }
+        // A preparation made before channels were known is taken as made on the current one.
+        guard let previous = mark.key else { preparedChannel = (mark.target, current); return }
+        guard previous != current else { return }
+        await prepareTarget()
     }
 
     func updateProjects(_ values: [V2Project]) {
@@ -273,6 +301,7 @@ final class NewSessionModel {
 
     func prepareTarget() async {
         if hasPendingWorkflow && !isCreating { return }
+        preparedChannel = (.init(connectorId: connectorID, runtimeId: runtimeID), runtimeChannel)
         preparationVersion += 1
         let version = preparationVersion
         prepared = nil
@@ -560,6 +589,12 @@ final class NewSessionModel {
 
 /// Session activity, device names and last-seen timestamps do not invalidate
 /// the target catalogs on every dashboard update.
+struct NewSessionModelChannel: Equatable {
+    let state: V2ModelChannelState
+    let runtimes: [V2DeviceRuntime]
+    let assignments: [V2ModelAssignment]
+}
+
 struct NewSessionRefreshKey: Equatable {
     let connectorID: String
     let isOnline: Bool

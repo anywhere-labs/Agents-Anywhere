@@ -84,6 +84,32 @@ nonisolated enum ChannelPresentation {
         return options
     }
 
+    /// The manager that marks instances the model configuration created.
+    static let modelConfigManager = "model-config"
+
+    /// The channel row for a runtime. A managed instance is not listed itself:
+    /// its row is the one of the runtime of the same type it serves on that device.
+    static func row(for target: V2ModelTarget, in state: V2ModelChannelState?, runtimes: [V2DeviceRuntime],
+                    assignments: [V2ModelAssignment]) -> V2ChannelRuntime? {
+        guard let state else { return nil }
+        if let direct = state.runtimes.first(where: { $0.target == target }) { return direct }
+        func isManaged(_ runtime: V2DeviceRuntime) -> Bool {
+            runtime.managedBy == modelConfigManager || assignments.contains { $0.createdRuntime && $0.target == runtime.target }
+        }
+        guard let runtime = runtimes.first(where: { $0.target == target }), isManaged(runtime) else { return nil }
+        return state.runtimes.first { row in
+            row.connectorId == target.connectorId && runtimes.contains {
+                $0.target == row.target && $0.runtimeType == runtime.runtimeType && !isManaged($0)
+            }
+        }
+    }
+
+    /// Changes whenever the channel a runtime actually uses changes, or settles;
+    /// progress messages and timestamps do not change it.
+    static func runtimeKey(_ row: V2ChannelRuntime?) -> String {
+        row.map { "\($0.actual):\($0.appliedGeneration.map(String.init) ?? ""):\($0.state == "applied")" } ?? ""
+    }
+
     /// Runtimes that should use `channel`: following it as the applied one, or chosen for it.
     static func rows(_ state: V2ModelChannelState?, for channel: String) -> [V2ChannelRuntime] {
         state?.runtimes.filter { $0.desired == channel } ?? []
