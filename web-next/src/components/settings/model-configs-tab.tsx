@@ -190,16 +190,17 @@ function ModelChannels({
   const listed = modelConfig.profiles.filter((profile) => profile !== tokensProfile)
   const enabled = listed.filter((profile) => profile.state === "active")
   const detached = listed.filter((profile) => profile.state !== "active")
-  const channels = [NATIVE_CHANNEL, ...(tokensAvailable ? [TOKENS_CHANNEL] : []), ...enabled.map((item) => item.id), ...detached.map((item) => item.id)]
+  // The device's own configuration is not listed: signing out of Tokens Anywhere switches back to it.
+  const channels: ModelChannel[] = [...(tokensAvailable ? [TOKENS_CHANNEL] : []), ...enabled.map((item) => item.id), ...detached.map((item) => item.id)]
   const inUse = channel?.channel ?? null
-  // The page opens on the default channel, where most runtimes are.
-  const current = selected && channels.includes(selected) ? selected : inUse && channels.includes(inUse) ? inUse : NATIVE_CHANNEL
+  // The page opens on the applied channel, where most runtimes are, or else the first one listed.
+  const current = selected && channels.includes(selected) ? selected : inUse && channels.includes(inUse) ? inUse : channels[0] ?? null
   const currentProfile = current === TOKENS_CHANNEL ? tokensProfile : listed.find((profile) => profile.id === current)
   // Runtimes actually on a channel; before the Server reports channels, the recorded assignments.
   const signOut = useTokensSignOut({ token, channel, runtimes, errorText, onAccepted: accept, onChanged: changed })
   // Changing the default does not move the page off the channel being looked at.
   React.useEffect(() => {
-    if (selected === null && (channel || current !== NATIVE_CHANNEL)) onSelect(current)
+    if (selected === null && channel && current) onSelect(current)
   }, [channel, current, onSelect, selected])
   const usedBy = (id: ModelChannel, profile?: ModelProfile) => channel
     ? channelUsers(channel, id)
@@ -259,10 +260,9 @@ function ModelChannels({
       ) : null}
       <div className="grid items-start gap-8 md:grid-cols-[16rem_minmax(0,1fr)] md:gap-10 lg:gap-12">
         <nav aria-label={t("channels.title")} className="flex flex-col gap-1 md:sticky md:top-0">
-          <ChannelGroup>
-            {channelButton(NATIVE_CHANNEL, t("current.native"))}
-            {tokensAvailable ? channelButton(TOKENS_CHANNEL, t("channels.anywhere")) : null}
-          </ChannelGroup>
+          {tokensAvailable ? (
+            <ChannelGroup>{channelButton(TOKENS_CHANNEL, t("channels.anywhere"))}</ChannelGroup>
+          ) : null}
           {enabled.length ? (
             <ChannelGroup title={t("channels.manual")}>
               {enabled.map((profile) => channelButton(profile.id, profile.name))}
@@ -285,14 +285,7 @@ function ModelChannels({
         </nav>
 
         <section className="flex min-w-0 flex-col gap-8">
-          {current === NATIVE_CHANNEL ? (
-            <SettingsSection
-              variant="plain"
-              title={t("current.native")}
-              description={t("native.description")}
-              action={currentAction(NATIVE_CHANNEL)}
-            />
-          ) : current === TOKENS_CHANNEL ? (
+          {current === TOKENS_CHANNEL ? (
             <TokensChannel
               token={token}
               overview={modelConfig}
@@ -329,8 +322,8 @@ function ModelChannels({
               />
             </SettingsSection>
           ) : null}
-          {/* With no runtime on the device's own or a custom configuration, "Apply" above is all the page needs. */}
-          {channel
+          {/* With no runtime on a custom configuration, "Apply" above is all the page needs. */}
+          {channel && current
             && !(current === TOKENS_CHANNEL && modelConfig.tokens?.link?.status === "linked")
             && (current === TOKENS_CHANNEL || channelRows(channel, current).length > 0)
             ? runtimesOf(current) : null}

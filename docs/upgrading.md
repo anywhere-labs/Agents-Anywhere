@@ -73,7 +73,7 @@ WHERE i.indexrelid::regclass::text IN
 - 接口字段 `sourceAvailabilityUpdatedAt` 现在表示来源状态最后一次写入的时间，不再随每次扫描刷新。
 - `source_scan_token` 列保留到后续版本再删除，以便回滚到上一版 Server；新版 Server 不再读写它。
 
-## 模型渠道与 Tokens Anywhere 链接（`v2_50`–`v2_52`）
+## 模型网关与 Tokens Anywhere 链接（`v2_50`–`v2_52`）
 
 `v2_50` 起新增模型配置、Tokens Anywhere 链接和渠道对账表，并给 Runtime 增加模型连接报告列。升级时先停止旧 Server worker，执行迁移后再启动新 Server，然后升级 Connector。保存手动填写的 Key 或链接 Tokens Anywhere 之前，`AGENT_SERVER_SECRET` 至少 32 个字符，且不能仍是开发默认值 `agent-server-dev-secret`。旧 Connector 会保留原配置并提示升级。已经执行过模型配置分支旧编号 `v2_47`–`v2_49` 的数据库不能直接套用这组新编号，需要从 main 的 `v2_49` 或空库升级。
 

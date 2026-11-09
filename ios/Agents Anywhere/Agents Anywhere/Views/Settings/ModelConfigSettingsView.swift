@@ -20,7 +20,7 @@ struct ModelConfigSettingsView: View {
     }
 }
 
-/// 「模型渠道」, as on the desktop: every channel in a list, each opening its
+/// 「模型网关」, as on the desktop: every channel in a list, each opening its
 /// own page, so the list stays short however many runtimes there are.
 private struct ModelConfigPage: View {
     @StateObject private var storage: StableViewModel<ModelConfigModel>
@@ -40,9 +40,9 @@ private struct ModelConfigPage: View {
             ModelConfigFeedbackSection(model: model)
             if let overview = model.overview {
                 if !overview.secretConfigured { SecretMissingSection() }
-                Section {
-                    channelLink(V2ModelChannel.native)
-                    if overview.tokens?.available == true { channelLink(V2ModelChannel.tokens) }
+                // The device's own configuration is not listed: signing out of Tokens Anywhere switches back to it.
+                if overview.tokens?.available == true {
+                    Section { channelLink(V2ModelChannel.tokens) }
                 }
                 // The active Tokens profile belongs to the Tokens Anywhere channel.
                 let listed = overview.profiles.filter { !($0.isTokens && $0.isActive) }

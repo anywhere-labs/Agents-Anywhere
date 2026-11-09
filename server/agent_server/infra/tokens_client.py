@@ -156,6 +156,13 @@ class TokensClient:
             "profiles": body.get("profiles") if isinstance(body.get("profiles"), dict) else {},
         }
 
+    async def embed_ticket(self, access_token: str, *, next_path: str) -> dict[str, Any]:
+        """A one-minute, single-use address that opens the console in this instance's iframe."""
+        body = await self._api("POST", "/api/v1/oauth/embed-tickets", access_token, json={"next": next_path})
+        if not isinstance(body.get("url"), str) or not body["url"]:
+            raise TokensUnavailableError("tokens_unavailable", "Tokens Anywhere returned no embed address")
+        return body
+
     async def balance(self, access_token: str) -> dict[str, Any]:
         return await self._api("GET", "/api/v1/balance", access_token)
 

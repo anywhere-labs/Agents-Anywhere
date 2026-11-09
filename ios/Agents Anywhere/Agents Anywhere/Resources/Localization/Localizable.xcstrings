@@ -233,13 +233,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld failed to switch and went back to their previous channel"
+            "value": "%lld failed to switch and went back to their previous gateway"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld 个切换失败，已恢复原渠道"
+            "value": "%lld 个切换失败，已恢复原网关"
           }
         }
       }
@@ -1544,13 +1544,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Anywhere is the current channel. Runtimes that follow it switch automatically."
+            "value": "Anywhere is the current gateway. Runtimes that follow it switch automatically."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Anywhere 是当前渠道，跟随当前渠道的 Runtime 会自动切换。"
+            "value": "Anywhere 是当前网关，跟随当前网关的 Runtime 会自动切换。"
           }
         }
       }
@@ -2010,13 +2010,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Changes its own global settings; choose a channel for it to confirm"
+            "value": "Changes its own global settings; choose a gateway for it to confirm"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "会修改它自身的全局配置，需要单独为它指定渠道并确认"
+            "value": "会修改它自身的全局配置，需要单独为它指定网关并确认"
           }
         }
       }
@@ -2027,13 +2027,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Channel for this runtime"
+            "value": "Gateway for this runtime"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "这个 Runtime 的渠道"
+            "value": "这个 Runtime 的网关"
           }
         }
       }
@@ -2998,13 +2998,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Current channel"
+            "value": "Current gateway"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "当前渠道"
+            "value": "当前网关"
           }
         }
       }
@@ -3504,13 +3504,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Each runtime uses one channel at a time. Runtimes follow the current channel unless you choose one for them; runtimes with running tasks switch once the tasks end."
+            "value": "Each runtime uses one gateway at a time. Runtimes follow the current gateway unless you choose one for them; runtimes with running tasks switch once the tasks end."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "每个 Runtime 同一时间只使用一个渠道。没有单独指定的 Runtime 跟随当前渠道；有任务在运行的 Runtime 等任务结束后再切换。"
+            "value": "每个 Runtime 同一时间只使用一个网关。没有单独指定的 Runtime 跟随当前网关；有任务在运行的 Runtime 等任务结束后再切换。"
           }
         }
       }
@@ -3885,13 +3885,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Follow the current channel (%@)"
+            "value": "Follow the current gateway (%@)"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "跟随当前渠道（%@）"
+            "value": "跟随当前网关（%@）"
           }
         }
       }
@@ -4172,13 +4172,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Its chosen model is not in this channel"
+            "value": "Its chosen model is not in this gateway"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "它选择的模型不在这个渠道里"
+            "value": "它选择的模型不在这个网关里"
           }
         }
       }
@@ -4230,7 +4230,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Key 已轮换，使用 Anywhere 渠道的 Runtime 会写入新 Key。"
+            "value": "Key 已轮换，使用 Anywhere 网关的 Runtime 会写入新 Key。"
           }
         }
       }
@@ -4349,13 +4349,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Link your Tokens Anywhere account to use its models as a channel."
+            "value": "Link your Tokens Anywhere account to use its models as a gateway."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "链接 Tokens Anywhere 账户后，可以把它的模型作为一个渠道使用。"
+            "value": "链接 Tokens Anywhere 账户后，可以把它的模型作为一个网关使用。"
           }
         }
       }
@@ -4680,13 +4680,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Model channels"
+            "value": "Model gateways"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "模型渠道"
+            "value": "模型网关"
           }
         }
       }
@@ -5178,7 +5178,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "还没有 Runtime 使用 Anywhere 渠道。"
+            "value": "还没有 Runtime 使用 Anywhere 网关。"
           }
         }
       }
@@ -6866,13 +6866,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Runtimes still use the Anywhere channel. Switch them to another channel first."
+            "value": "Runtimes still use the Anywhere gateway. Switch them to another gateway first."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "还有 Runtime 在用 Anywhere 渠道，请先切换到其他渠道。"
+            "value": "还有 Runtime 在用 Anywhere 网关，请先切换到其他网关。"
           }
         }
       }
@@ -7199,13 +7199,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Set Anywhere as the current channel, or choose it for single runtimes under Current channel."
+            "value": "Set Anywhere as the current gateway, or choose it for single runtimes under Current gateway."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "可以把 Anywhere 设为当前渠道，或在「当前渠道」里为单个 Runtime 指定。"
+            "value": "可以把 Anywhere 设为当前网关，或在「当前网关」里为单个 Runtime 指定。"
           }
         }
       }
@@ -7216,13 +7216,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Set as current channel"
+            "value": "Set as current gateway"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "设为当前渠道"
+            "value": "设为当前网关"
           }
         }
       }
@@ -7736,13 +7736,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "That channel no longer exists."
+            "value": "That gateway no longer exists."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "这个渠道已不存在。"
+            "value": "这个网关已不存在。"
           }
         }
       }
@@ -7928,13 +7928,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The channel's profile is no longer available"
+            "value": "The gateway's profile is no longer available"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "渠道对应的配置已不可用"
+            "value": "网关对应的配置已不可用"
           }
         }
       }
@@ -8289,13 +8289,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The runtime is switching channels. Try again shortly."
+            "value": "The runtime is switching gateways. Try again shortly."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Runtime 正在切换渠道，请稍后再试。"
+            "value": "Runtime 正在切换网关，请稍后再试。"
           }
         }
       }
@@ -9012,13 +9012,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "This profile is a channel in use. Switch to another channel first."
+            "value": "This profile is a gateway in use. Switch to another gateway first."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "这份配置是正在使用的渠道，请先切换到其他渠道。"
+            "value": "这份配置是正在使用的网关，请先切换到其他网关。"
           }
         }
       }
@@ -11926,13 +11926,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Anywhere channel"
+            "value": "Anywhere gateway"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Anywhere 渠道"
+            "value": "Anywhere 网关"
           }
         }
       }
@@ -22284,13 +22284,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Upgrade the Connector to synchronize channels safely"
+            "value": "Upgrade the Connector to synchronize gateways safely"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "请升级 Connector 后同步渠道"
+            "value": "请升级 Connector 后同步网关"
           }
         }
       }
@@ -22353,13 +22353,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Runtimes using Tokens Anywhere will restart and interrupt running tasks. Offline devices must reconnect before this account can be signed out. Other selected channels are kept."
+            "value": "Runtimes using Tokens Anywhere will restart and interrupt running tasks. Offline devices must reconnect before this account can be signed out. Other selected gateways are kept."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "使用 Tokens Anywhere 的 Runtime 将重启并中断运行中的任务；离线设备需上线完成切换后才能退出。其他已选渠道保持不变。"
+            "value": "使用 Tokens Anywhere 的 Runtime 将重启并中断运行中的任务；离线设备需上线完成切换后才能退出。其他已选网关保持不变。"
           }
         }
       }
@@ -22722,13 +22722,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld failed and went back to the previous channel"
+            "value": "%lld failed and went back to the previous gateway"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld 个切换失败，已恢复原渠道"
+            "value": "%lld 个切换失败，已恢复原网关"
           }
         }
       }
@@ -22800,13 +22800,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Channel for %@"
+            "value": "Gateway for %@"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "%@ 使用的渠道"
+            "value": "%@ 使用的网关"
           }
         }
       }
@@ -22926,13 +22926,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Link a Tokens Anywhere account, then apply the Tokens Anywhere channel to give the runtimes on every device the models Tokens Anywhere provides."
+            "value": "Link a Tokens Anywhere account, then apply the Tokens Anywhere gateway to give the runtimes on every device the models Tokens Anywhere provides."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "链接 Tokens Anywhere 账户后，可以应用 Tokens Anywhere 渠道，各设备的 Runtime 会自动接入 Tokens Anywhere 提供的模型。"
+            "value": "链接 Tokens Anywhere 账户后，可以应用 Tokens Anywhere 网关，各设备的 Runtime 会自动接入 Tokens Anywhere 提供的模型。"
           }
         }
       }
@@ -23016,13 +23016,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Apply this channel immediately to runtimes without a channel of their own. Running tasks will be interrupted."
+            "value": "Apply this gateway immediately to runtimes without a gateway of their own. Running tasks will be interrupted."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "立即应用此渠道，运行中的任务会被中断。没有单独指定渠道的 Runtime 都会使用它。"
+            "value": "立即应用此网关，运行中的任务会被中断。没有单独指定网关的 Runtime 都会使用它。"
           }
         }
       }
@@ -23088,13 +23088,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Channel applied. Runtimes are switching."
+            "value": "Gateway applied. Runtimes are switching."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "渠道已应用，各 Runtime 正在切换。"
+            "value": "网关已应用，各 Runtime 正在切换。"
           }
         }
       }
@@ -23124,13 +23124,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Follow applied channel"
+            "value": "Follow applied gateway"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "跟随已应用渠道"
+            "value": "跟随已应用网关"
           }
         }
       }
@@ -23261,24 +23261,6 @@
         }
       }
     },
-    "pages.settings.modelConfigs.native.description": {
-      "comment": "Shared with Web: pages.settings.modelConfigs.native.description. Sync with ios/scripts/web_copy.py.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No model connection is written; runtimes use their own model settings on the device."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "不写入模型连接，Runtime 使用设备上它自己的模型配置。"
-          }
-        }
-      }
-    },
     "pages.settings.modelConfigs.reason.confirmation_required": {
       "comment": "Shared with Web: pages.settings.modelConfigs.reason.confirmation_required. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -23286,7 +23268,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Changes its own global settings; choose a channel for it and confirm"
+            "value": "Changes its own global settings; choose a gateway for it and confirm"
           }
         },
         "zh-Hans": {
@@ -23304,13 +23286,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Upgrade the Connector to synchronize channels safely"
+            "value": "Upgrade the Connector to synchronize gateways safely"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "请升级 Connector 后同步渠道"
+            "value": "请升级 Connector 后同步网关"
           }
         }
       }
@@ -23394,13 +23376,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The chosen model is not on this channel"
+            "value": "The chosen model is not on this gateway"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "所选模型不在这个渠道里"
+            "value": "所选模型不在这个网关里"
           }
         }
       }
@@ -23466,13 +23448,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The channel is no longer available"
+            "value": "The gateway is no longer available"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "渠道已不可用"
+            "value": "网关已不可用"
           }
         }
       }
@@ -23808,13 +23790,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Switch failed, back on the previous channel"
+            "value": "Switch failed, back on the previous gateway"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "切换失败，已恢复原渠道"
+            "value": "切换失败，已恢复原网关"
           }
         }
       }
@@ -23898,13 +23880,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No runtimes use this channel yet."
+            "value": "No runtimes use this gateway yet."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "还没有 Runtime 使用这个渠道。"
+            "value": "还没有 Runtime 使用这个网关。"
           }
         }
       }

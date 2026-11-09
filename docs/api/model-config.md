@@ -209,6 +209,7 @@ Tokens Anywhere 是 OAuth 授权服务器，每个 AA 实例是公共 PKCE 客�
 | --- | --- | --- |
 | GET | `/integrations/tokens/account` | `{account: {id, displayName, email}, balance: {balance, available, held, bonus}, links: {console, billing, usage}}`。金额是 Tokens Anywhere 给出的人民币元字符串（4 位小数），客户端只做展示，求和时按 0.0001 元的整数计算 |
 | GET | `/integrations/tokens/usage?days=` | `days` 为 1–92，默认 30。返回 `{from, to, items}`，`items` 是整个 Tokens 账户按北京时间日期和模型统计的已结算用量：`date`、`model`、`requests`、`inputTokens`、`outputTokens`、`cacheReadTokens`、`cacheWrite5mTokens`、`cacheWrite1hTokens`、`amountCharged`；没有请求的日期不返回 |
+| POST | `/integrations/tokens/embed-ticket` | `{next?}`，`next` 是要打开的控制台页面，默认 `/console/`，只接受 `/console/` 下的页面（否则 422 `invalid_embed_path`）。返回 `{url, origin, expiresAt}`：`url` 是 Tokens Anywhere 的嵌入起始页，带一次性票据，约 1 分钟内有效、打开即作废；`origin` 是控制台的来源，客户端只接受这个来源发来的 `postMessage`。未链接时 409 `tokens_not_linked`。access token 不离开 Server；响应带 `Cache-Control: no-store` |
 | PUT | `/integrations/tokens/models` | `{disabled: [模型 ID], names: {模型 ID: 名称}}`，关闭模型或改名，只影响 Agents Anywhere。返回 `{applying}`：为 `true` 时使用 Anywhere 渠道的 Runtime 按切换流程重新写入，进度在渠道状态里 |
 
 Tokens 配置的 `offers` 始终是 Tokens 给出的完整模型目录，模型带 `vendor`、`contextWindow`、`maxOutputTokens`（来自 Tokens 价格表，可能为空）；配置另有 `preferences: {disabled, names}`。写入 Runtime 时 Server 先去掉关闭的模型、换上新名称；某种协议的模型全部关闭时，这种协议不再提供给 Runtime。同步模型目录时保留 `preferences`。
