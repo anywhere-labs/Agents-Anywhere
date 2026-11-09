@@ -45,7 +45,7 @@
 
 ### DSH 同步
 
-- 经本地代理上传大批量会话时，不再因为等待服务器响应超过 60 秒而反复失败；上传失败的日志会写明错误类型、数据大小和耗时。（[#551](https://github.com/anywhere-labs/Agents-Anywhere/pull/551)）
+- 经本地代理上传大批量会话时，不再因为等待服务器响应超过 60 秒而反复失败；上行很慢（低于约 64 KB/s）时每次重试会等得更久，不再在同一个大会话上反复重传、卡住后面所有会话的同步；上传失败的日志会写明错误类型、数据大小和耗时。（[#551](https://github.com/anywhere-labs/Agents-Anywhere/pull/551)、[#593](https://github.com/anywhere-labs/Agents-Anywhere/pull/593)）
 - 连不上服务器时，DSH 插件会重发当前批次并在恢复后继续，不再断开同步后重新扫描全部会话。（[#551](https://github.com/anywhere-labs/Agents-Anywhere/pull/551)）
 - Connector 启动后短暂忙碌时，DSH 插件不再判定启动失败并关掉它（`Call deadline exceeded`），设备可以正常上线。（[#558](https://github.com/anywhere-labs/Agents-Anywhere/pull/558)）
 - 停用后重新启用 DSH 插件不再报 `ID BridgePayload already exists in the registry`，不需要重启 DSH。（[#558](https://github.com/anywhere-labs/Agents-Anywhere/pull/558)）
