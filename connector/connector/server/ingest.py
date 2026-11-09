@@ -111,9 +111,13 @@ class ConnectorIngestClient:
     async def ingest_snapshot(
         self, runtime: str, runtime_id: str, session_id: str,
         meta: dict[str, Any], items: Iterable[dict[str, Any]], *, on_progress: UploadProgress | None = None,
-        ordered: bool = True,
+        ordered: bool = True, complete: bool = True, trailing: Iterable[dict[str, Any]] = (),
     ) -> None:
-        """Upload one complete snapshot; returns once every page was accepted.
+        """Upload one snapshot; returns once every page was accepted.
+
+        A ``complete`` snapshot replaces the timeline with its first page; a
+        partial one only adds items. ``trailing`` notifications follow the last
+        item in the same request as it.
 
         An ordered snapshot lands after the notifications already queued and
         holds later ones back until it is done. A caller that orders its own
@@ -121,7 +125,9 @@ class ConnectorIngestClient:
         then neither waits for the shared queue nor stalls it, and live
         notifications keep using the WebSocket meanwhile.
         """
-        task = asyncio.create_task(asyncio.to_thread(encode_snapshot, runtime, runtime_id, session_id, meta, items))
+        task = asyncio.create_task(asyncio.to_thread(
+            encode_snapshot, runtime, runtime_id, session_id, meta, items, complete=complete, trailing=list(trailing),
+        ))
         try:
             snapshot = await asyncio.shield(task)
         except asyncio.CancelledError:
