@@ -448,6 +448,15 @@ sessions = Table(
     Column("source_observed_at", Text),
     Column("last_activity_at", Text),
     Column("sort_at", Text),
+    # Summary of the newest timeline row (same order as
+    # ``idx_timeline_items_session_latest``), kept current by every timeline
+    # write so session lists never look into ``timeline_items``. All NULL when
+    # the session has no timeline rows.
+    Column("latest_item_id", Text),
+    Column("latest_item_time", Text),
+    Column("latest_item_order_seq", Integer),
+    Column("latest_item_updated_seq", BigInteger),
+    Column("latest_item_at", Text),
     Column("seq", BigInteger, nullable=False),
     Column("seq_allocated_high", BigInteger, nullable=False, server_default="0"),
     Column("updated_seq", BigInteger, nullable=False),

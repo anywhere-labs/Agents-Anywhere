@@ -444,6 +444,7 @@ class GoalRepositoryMixin:
                             payload_json=encode(item),
                         )
                     )
+                    await self.timeline.refresh_session_latest(c, session_id)
                     envelope["items"] = [item]
                 await c.execute(
                     insert(goal_event_outbox).values(

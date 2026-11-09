@@ -1,16 +1,29 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from typing import Any
 
-from sqlalchemy import BigInteger, Integer, Text, bindparam, delete, select, text
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Integer,
+    Text,
+    bindparam,
+    cast,
+    delete,
+    func,
+    literal_column,
+    select,
+    text,
+    update,
+)
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from agent_server.core.models import TimelineItem
-from agent_server.infra.db import timeline_items
+from agent_server.infra.db import sessions, timeline_items
 from agent_server.infra.db.engine import read_connection
 
 
@@ -103,6 +116,8 @@ class SqlTimelineStore:
         """Delete the given stable IDs inside the caller's transaction."""
 
         ids = list(item_ids)
+        if not ids:
+            return
         for offset in range(0, len(ids), 500):
             await conn.execute(
                 delete(timeline_items).where(
@@ -110,6 +125,7 @@ class SqlTimelineStore:
                     timeline_items.c.id.in_(ids[offset : offset + 500]),
                 )
             )
+        await self.refresh_session_latest(conn, session_id)
 
     async def ids_in_order_range(
         self,
@@ -181,6 +197,105 @@ class SqlTimelineStore:
         await conn.execute(
             _UPSERT_MANY,
             {column: [row[column] for row in rows] for column in _UPSERT_COLUMNS},
+        )
+        by_session: dict[str, dict[str, TimelineItem]] = {}
+        for item in latest.values():
+            by_session.setdefault(item.sessionId, {})[item.id] = item
+        for session_id in sorted(by_session):
+            await self.refresh_session_latest(
+                conn, session_id, written=by_session[session_id]
+            )
+
+    async def refresh_session_latest(
+        self,
+        conn: AsyncConnection,
+        session_id: str,
+        *,
+        written: Mapping[str, TimelineItem] | None = None,
+    ) -> None:
+        """Store the session's newest timeline row on its ``sessions`` row.
+
+        Session lists read these columns instead of looking the newest row up
+        in ``timeline_items`` for every listed session. Call this in the same
+        transaction after any write that inserts, updates or deletes rows of
+        the session. ``written`` holds the items the caller just stored; when
+        the newest row is one of them its display time comes from the item
+        itself, so the payload is read back only when the newest row is an
+        older one, for example after a delete.
+
+        The session row is locked before the newest row is read. A writer
+        that already changed rows of this session holds that lock until it
+        commits, so this read sees its rows and a slower writer cannot store
+        an older summary over a newer one.
+        """
+
+        stored = (
+            await conn.execute(
+                select(
+                    sessions.c.latest_item_id,
+                    sessions.c.latest_item_time,
+                    sessions.c.latest_item_order_seq,
+                    sessions.c.latest_item_updated_seq,
+                    sessions.c.latest_item_at,
+                )
+                .where(sessions.c.id == session_id)
+                .with_for_update()
+            )
+        ).first()
+        if stored is None:
+            return
+        newest = (
+            await conn.execute(
+                select(
+                    timeline_items.c.id,
+                    timeline_items.c.item_time,
+                    timeline_items.c.order_seq,
+                    timeline_items.c.updated_seq,
+                )
+                .where(timeline_items.c.session_id == session_id)
+                .order_by(*latest_timeline_order())
+                .limit(1)
+            )
+        ).first()
+        if newest is None:
+            values: tuple[Any, ...] = (None, None, None, None, None)
+        else:
+            item = (written or {}).get(newest.id)
+            if item is not None and item.updatedSeq == newest.updated_seq:
+                at = timeline_item_display_at(item)
+            elif (
+                stored.latest_item_id == newest.id
+                and stored.latest_item_updated_seq == newest.updated_seq
+            ):
+                at = stored.latest_item_at
+            else:
+                at = (
+                    await conn.execute(
+                        select(timeline_item_display_at_sql(timeline_items)).where(
+                            timeline_items.c.session_id == session_id,
+                            timeline_items.c.id == newest.id,
+                        )
+                    )
+                ).scalar_one_or_none()
+            values = (
+                newest.id,
+                newest.item_time,
+                newest.order_seq,
+                newest.updated_seq,
+                at,
+            )
+        if tuple(stored) == values:
+            return
+        await conn.execute(
+            update(sessions)
+            .where(sessions.c.id == session_id)
+            .values(
+                latest_item_id=values[0],
+                latest_item_time=values[1],
+                latest_item_order_seq=values[2],
+                latest_item_updated_seq=values[3],
+                latest_item_at=values[4],
+            )
         )
 
     async def read_one(
@@ -326,3 +441,30 @@ class SqlTimelineStore:
 def _item_time(item: TimelineItem) -> str | None:
     values = [value for value in (item.createdAt, item.completedAt, item.updatedAt) if value]
     return max(values) if values else None
+
+
+def latest_timeline_order(table: Any = timeline_items) -> tuple[Any, ...]:
+    """Order rows newest first, matching ``idx_timeline_items_session_latest``."""
+
+    return (
+        func.coalesce(table.c.item_time, literal_column("''")).desc(),
+        table.c.order_seq.desc(),
+        table.c.updated_seq.desc(),
+    )
+
+
+def timeline_item_display_at(item: TimelineItem) -> str | None:
+    """Return the time a session list shows for its newest item."""
+
+    return item.updatedAt or item.completedAt or item.createdAt or None
+
+
+def timeline_item_display_at_sql(table: Any) -> Any:
+    """SQL form of :func:`timeline_item_display_at` over ``payload_json``."""
+
+    payload = cast(table.c.payload_json, JSON)
+
+    def field(name: str) -> Any:
+        return func.nullif(payload[name].as_string(), "")
+
+    return func.coalesce(field("updatedAt"), field("completedAt"), field("createdAt"))

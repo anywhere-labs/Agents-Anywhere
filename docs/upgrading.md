@@ -2,7 +2,7 @@
 
 ## 先区分三个版本
 
-本次产品版本为 **2.2.0**；当前源码中的数据库 revision 为 **`v2_53`**，schema version 为 **`2.53`**。各端的 PATCH 版本可以不同，数据库 revision 独立编号，不能用来推断兼容性，见[版本号规则](versioning.md)。
+本次产品版本为 **2.2.0**；当前源码中的数据库 revision 为 **`v2_54`**，schema version 为 **`2.54`**。各端的 PATCH 版本可以不同，数据库 revision 独立编号，不能用来推断兼容性，见[版本号规则](versioning.md)。
 
 `main` 现在承载 v2。本文所说的 **v1 / 旧主线** 指主线切换前的实现，源代码提交为 `6c47e419`，不再指当前 `main`。早期 [main-to-v2 文档](migrations/main-to-v2/README.md)保留作历史参考。
 
@@ -20,7 +20,7 @@
    uv run python -m agent_server.infra.db.migrations current --verbose
    ```
 
-   以上命令使用该环境的 `AGENT_SERVER_DB_URL`。当前目标应为 `v2_53`；以后升级时，以待部署源码的 `CURRENT_SCHEMA_REVISION` 为准。
+   以上命令使用该环境的 `AGENT_SERVER_DB_URL`。当前目标应为 `v2_54`；以后升级时，以待部署源码的 `CURRENT_SCHEMA_REVISION` 为准。
 4. 启动同一版本的 Server/Web，检查 `/api/v2/health/ready`，再恢复入口流量和 Connector。验证账号登录、设备连接、会话恢复、消息、审批、文件和终端。
 5. 使用 [README 下载表](../README.md#下载与入口)升级客户端。从 2.1.0 起，Desktop（macOS、Windows）和 Android 的「立即更新」会从官网下载最新安装包。2.2.0 的安装包尚未记录，见[发布说明](releases/2.2.0.md)。
 
@@ -82,6 +82,19 @@ WHERE i.indexrelid::regclass::text IN
 ## 使用统计小时汇总（`v2_53`）
 
 `v2_53` 新建按小时汇总使用事件的表，并按已经记录的使用事件回填这些表。事件多的实例这一步会更久，请在停止所有 Server 和 worker 的维护窗口里执行。之后每次写入使用事件都会在同一事务里更新这些汇总。
+
+## 会话最新条目摘要（`v2_54`）
+
+`v2_54` 给 `sessions` 增加 5 个可空列（`latest_item_id`、`latest_item_time`、`latest_item_order_seq`、`latest_item_updated_seq`、`latest_item_at`），记录每个会话最新一条时间线条目的摘要，并从已有数据回填。之后每次写时间线都会在同一事务里更新这些列；仪表盘快照、`/sessions/list` 和分页的 `/sessions` 只读 `sessions`，不再为每个会话到 `timeline_items` 里查最新条目。接口字段 `lastItemAt`、`lastItemOrderSeq`、`sortAt` 的含义不变，客户端无须升级。
+
+回填按会话逐个通过 `idx_timeline_items_session_latest` 找到最新一条，并解析它的 `payload_json`，耗时随会话数增长，与 `timeline_items` 的总大小无关；每个会话会改写一次 `sessions` 行。请在停止所有 Server 和 worker 的维护窗口里运行：回填期间提交的时间线写入，要等该会话下次写入才会反映到摘要里。会话多的实例可以先估算规模：
+
+```sql
+SELECT count(*) FROM sessions s
+WHERE EXISTS (SELECT 1 FROM timeline_items t WHERE t.session_id = s.id);
+```
+
+回滚到 `v2_53` 只删除这 5 列。
 
 ## 统一目标模式
 

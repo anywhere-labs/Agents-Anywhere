@@ -167,6 +167,11 @@ switching a device filter or opening archives does not fetch another session lis
 An explicit HTTP refresh reads `/projects` and `/sessions/list` once each, alongside
 the connector list; it does not issue a request for every project or archive state.
 
+Building the session inventory does not read the timeline. Each timeline write
+stores a summary of the session's newest timeline item (its order, `orderSeq` and
+display time) on the session in the same transaction, and the snapshot reads only
+session rows. `lastItemAt`, `lastItemOrderSeq` and `sortAt` keep their meaning.
+
 Project mutations refresh the shared project list. A session with an unknown or
 missing project binding also triggers a shared project refresh and remains visible
 under ungrouped sessions. Clients coalesce concurrent project reads and remember
