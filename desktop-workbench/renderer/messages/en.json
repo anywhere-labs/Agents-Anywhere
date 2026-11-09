@@ -551,6 +551,13 @@
       "directoryRequired": "Choose a directory."
     },
     "device": {
+      "deviceSettings": "Device settings",
+      "confirmQuitOnShutdown": "Ask before quitting on shutdown",
+      "confirmQuitOnShutdownDescription": "When on, Agents Anywhere asks before quitting when the computer shuts down or restarts. When off, it quits right away and never blocks shutdown.",
+      "deviceSettingsPending": "Saved. It takes effect when the device comes online.",
+      "deviceSettingsSaveFailed": "Device settings were not saved",
+      "deviceSettingsLoadFailed": "Couldn't load device settings.",
+      "deviceSettingsRetry": "Retry",
       "sessionCount": "{count, plural, one {# session} other {# sessions}}",
       "newSession": "New session",
       "active": "Active",
@@ -1637,6 +1644,8 @@
       "desktopStartConnectorDescription": "Start automatically when credentials are saved.",
       "desktopSilentLaunch": "Launch silently at login",
       "desktopSilentLaunchDescription": "When opened at login, run in the background without showing a window. Open the app again to show it.",
+      "desktopConfirmQuitOnShutdown": "Ask before quitting on shutdown",
+      "desktopConfirmQuitOnShutdownDescription": "When on, Agents Anywhere asks before quitting when the computer shuts down or restarts. When off, it quits right away and never blocks shutdown. You can also change this from the device page on your phone or other devices; this computer must be connected to the server first.",
       "desktopMaintenance": "Maintenance",
       "desktopMaintenanceDescription": "Open local data or restart Connector if it encounters a problem.",
       "desktopOpenDataFolder": "Open data folder",

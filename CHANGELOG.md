@@ -16,6 +16,7 @@
 - Runtime 配置中的模型网关 Key 改为只写，接口和实时快照不再返回已保存的 Key；旧版客户端编辑这类配置时需要重新填写 Key。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - Server 执行 `v2_53` 数据库迁移：会按已经记录的使用事件回填按小时的汇总，事件多的实例迁移耗时会更长。（[#473](https://github.com/anywhere-labs/Agents-Anywhere/pull/473)）
 - Server 执行 `v2_54` 数据库迁移：为每个会话记下最新一条记录的摘要并从已有数据回填，耗时随会话数增长，请在停止 Server 和 worker 的维护窗口里运行；客户端无须升级，细节见[升级指南](docs/upgrading.md)。（[#595](https://github.com/anywhere-labs/Agents-Anywhere/pull/595)）
+- 设备设置需要 Server 执行 `v2_55` 数据库迁移（只给设备表加一列，不改写已有数据）；关机行为要等 Connector 和 Desktop 也升级后才按设置生效，旧版 Desktop 关机时仍会弹窗确认。（PR 链接待补）
 
 ### 会话创建与消息交付
 
@@ -36,6 +37,7 @@
 
 ### 本机连接
 
+- 电脑关机、重启或注销时，Desktop 不再弹出「退出 Agents Anywhere？」阻止关机，而是直接停止本机连接并退出；需要确认的用户可以打开「关机时询问是否退出」。在 Desktop 里手动退出时仍会确认。（PR 链接待补）
 - Desktop 和 DSH 插件的设置里新增「Connector 网络」，可选跟随系统、直连或自定义代理；Connector 的接口请求、实时连接和终端都走同一条路，日志里记录实际走的路径。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
 - 在系统代理里把服务器地址加入例外现在对 Connector 生效；只设置 `NO_PROXY` 不再让 Connector 绕过系统代理。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
 - 系统代理开关开着但本机代理软件已退出时，Connector 改为直连，不再一直连不上服务器。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
@@ -62,6 +64,7 @@
 
 ### Web 与 Desktop 界面
 
+- Desktop 设备的详情页和 Desktop 的「设置 → 启动与通知」新增「关机时询问是否退出」开关，在任一设备上修改都会同步；设备离线时修改，会在它下次上线时生效。（PR 链接待补）
 - Agent 连接断开后，没有原生历史的会话会显示「恢复会话」，不用新建会话就能接着用，未确认的消息不会自动重发。（[#591](https://github.com/anywhere-labs/Agents-Anywhere/pull/591)）
 - Tokens Anywhere 可以用 Agents Anywhere 账号登录：Web 会先显示「登录 Tokens Anywhere」确认页，确认后才向 Tokens Anywhere 提供名称、邮箱和头像，选「取消」则不提供任何信息。部署者设置 `AGENT_SERVER_TOKENS_ANYWHERE_CLIENT_SECRET` 和 `AGENT_SERVER_TOKENS_ANYWHERE_REDIRECT_URI` 后开启。（[#571](https://github.com/anywhere-labs/Agents-Anywhere/pull/571)）
 - 侧边栏新增 Tokens Anywhere 入口，介绍页可以直接前往获取 API 密钥；不需要时可以在页面上或「设置 → 外观」里隐藏。实例设置了 Tokens Anywhere 地址后才会出现这个入口，自部署实例不需要重新构建。（[#571](https://github.com/anywhere-labs/Agents-Anywhere/pull/571)、[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
@@ -73,6 +76,7 @@
 
 ### Android
 
+- Desktop 设备的详情页新增「设备设置」，可以远程打开或关闭「关机时询问是否退出」。（PR 链接待补）
 - Agent 连接断开后，没有原生历史的会话可以点「恢复会话」接着用。（[#591](https://github.com/anywhere-labs/Agents-Anywhere/pull/591)）
 - Android 的「模型渠道」与 Web、Desktop 相同：首页列出渠道和「已应用」，点进渠道后再应用、查看配置和 Runtime；Tokens Anywhere 按「账户／模型与连接／Runtime」分页，可以退出账户。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 所选 Agent 换了模型渠道后，Android 新建会话页会重新准备并刷新模型列表，不再停留在旧渠道的模型上。（[#587](https://github.com/anywhere-labs/Agents-Anywhere/pull/587)）
@@ -80,6 +84,7 @@
 
 ### iOS
 
+- Desktop 设备的详情页新增「设备设置」，可以远程打开或关闭「关机时询问是否退出」。（PR 链接待补）
 - Agent 连接断开后，没有原生历史的会话可以点「恢复会话」接着用。（[#591](https://github.com/anywhere-labs/Agents-Anywhere/pull/591)）
 - iOS 的「模型渠道」与 Web、Desktop 相同：首页列出渠道和「已应用」，点进渠道后再应用、查看配置和 Runtime；Tokens Anywhere 按「账户／模型与连接／Runtime」分页，可以退出账户。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 所选 Agent 换了模型渠道后，iOS 新建会话页会重新准备并刷新模型列表，不再停留在旧渠道的模型上。（[#588](https://github.com/anywhere-labs/Agents-Anywhere/pull/588)）

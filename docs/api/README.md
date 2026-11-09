@@ -48,6 +48,7 @@ The connector channel endpoints are intentionally stable. Runtime protocol refac
 /connectors
 /connectors/{connectorId}
 /connectors/{connectorId}/preferences
+/connectors/{connectorId}/device-settings
 /connectors/{connectorId}/runtimes
 /connectors/{connectorId}/runtimes/discover
 /connectors/{connectorId}/runtimes/{runtimeId}/capabilities

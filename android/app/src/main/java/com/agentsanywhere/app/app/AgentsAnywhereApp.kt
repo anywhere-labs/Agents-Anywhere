@@ -681,6 +681,7 @@ fun AgentsAnywhereApp(
             }
         },
         deviceAgents = devicesController,
+        deviceSettings = devicesController,
         onBulkSetSessionsArchived = { ids, archived ->
             if (!hasAuthSession) {
                 Result.failure(IllegalStateException("Sign in again to update sessions."))

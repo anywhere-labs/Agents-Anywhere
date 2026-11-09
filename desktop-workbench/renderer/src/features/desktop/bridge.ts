@@ -43,6 +43,8 @@ export type DesktopConnectorState = {
   startConnectorOnLaunch: boolean
   silentLaunch: boolean
   notificationsEnabled: boolean
+  /** The device setting the server last handed to this Desktop; change it through the server. */
+  confirmQuitOnShutdown?: boolean
   configPath?: string
   runtimePath?: string
   dataPath?: string

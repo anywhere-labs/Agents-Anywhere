@@ -8,6 +8,7 @@ const DEFAULT_SETTINGS: DesktopSettings = {
   startConnectorOnLaunch: true,
   silentLaunch: true,
   notificationsEnabled: true,
+  confirmQuitOnShutdown: false,
   uvPath: "",
   pythonPath: "",
   uvPypiIndexUrl: "",
@@ -43,7 +44,20 @@ export class DesktopSettingsStore {
   }
 
   save(patch: DesktopSettingsPatch): DesktopSettings {
-    const next = normalizeSettings({ ...this.settings, ...patch });
+    // The device setting is not a local preference; only the Connector sets it.
+    const { confirmQuitOnShutdown: _ignored, ...local } = patch as Partial<DesktopSettings>;
+    return this.write({ ...this.settings, ...local });
+  }
+
+  /** Records the device settings the server handed over; returns whether they changed. */
+  saveDeviceSettings(settings: { confirmQuitOnShutdown: boolean }): boolean {
+    if (this.settings.confirmQuitOnShutdown === settings.confirmQuitOnShutdown) return false;
+    this.write({ ...this.settings, confirmQuitOnShutdown: settings.confirmQuitOnShutdown });
+    return true;
+  }
+
+  private write(value: Partial<DesktopSettings>): DesktopSettings {
+    const next = normalizeSettings(value);
     writeJsonFile(this.filePath, next);
     this.settings = next;
     return this.get();
@@ -66,6 +80,10 @@ function normalizeSettings(value: Partial<DesktopSettings>): DesktopSettings {
     notificationsEnabled: booleanValue(
       value.notificationsEnabled,
       DEFAULT_SETTINGS.notificationsEnabled,
+    ),
+    confirmQuitOnShutdown: booleanValue(
+      value.confirmQuitOnShutdown,
+      DEFAULT_SETTINGS.confirmQuitOnShutdown,
     ),
     uvPath: typeof value.uvPath === "string" ? value.uvPath.trim() : DEFAULT_SETTINGS.uvPath,
     pythonPath: typeof value.pythonPath === "string" ? value.pythonPath.trim() : DEFAULT_SETTINGS.pythonPath,

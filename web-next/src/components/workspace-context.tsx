@@ -149,6 +149,7 @@ function mapConnector(connector: RealConnectorView): ConnectorView {
     userId: connector.userId,
     name: connector.name,
     deviceOs: connector.deviceOs,
+    connectorKind: connector.connectorKind,
     status: connector.status,
     lastSeenAt: connector.lastSeenAt,
   }

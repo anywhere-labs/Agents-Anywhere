@@ -551,6 +551,13 @@
       "directoryRequired": "请选择一个目录。"
     },
     "device": {
+      "deviceSettings": "设备设置",
+      "confirmQuitOnShutdown": "关机时询问是否退出",
+      "confirmQuitOnShutdownDescription": "开启后，电脑关机或重启时先弹窗确认再退出；关闭时直接退出，不阻止关机。",
+      "deviceSettingsPending": "已保存，设备上线后生效",
+      "deviceSettingsSaveFailed": "设备设置未保存",
+      "deviceSettingsLoadFailed": "无法读取设备设置。",
+      "deviceSettingsRetry": "重试",
       "sessionCount": "{count, plural, one {# 个会话} other {# 个会话}}",
       "newSession": "新会话",
       "active": "活跃",
@@ -1637,6 +1644,8 @@
       "desktopStartConnectorDescription": "已保存凭据时自动启动。",
       "desktopSilentLaunch": "登录时静默启动",
       "desktopSilentLaunchDescription": "通过登录项启动时在后台运行，不自动显示窗口；再次启动应用即可打开。",
+      "desktopConfirmQuitOnShutdown": "关机时询问是否退出",
+      "desktopConfirmQuitOnShutdownDescription": "电脑关机或重启时先弹窗确认再退出；关闭时直接退出，不阻止关机。也可以在手机等其他设备的设备详情页修改，本机需要先连接服务器。",
       "desktopMaintenance": "维护",
       "desktopMaintenanceDescription": "查看本机数据，或在出现异常时重新启动 Connector。",
       "desktopOpenDataFolder": "打开数据目录",
