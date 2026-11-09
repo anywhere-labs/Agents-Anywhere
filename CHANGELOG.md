@@ -68,6 +68,7 @@
 ### Android
 
 - Android 的「模型渠道」与 Web、Desktop 相同：首页列出渠道和「已应用」，点进渠道后再应用、查看配置和 Runtime；Tokens Anywhere 按「账户／模型与连接／Runtime」分页，可以退出账户。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 所选 Agent 换了模型渠道后，Android 新建会话页会重新准备并刷新模型列表，不再停留在旧渠道的模型上。（[#587](https://github.com/anywhere-labs/Agents-Anywhere/pull/587)）
 
 ### iOS
 

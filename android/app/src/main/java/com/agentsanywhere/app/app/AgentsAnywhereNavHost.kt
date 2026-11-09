@@ -331,6 +331,7 @@ internal fun AgentsAnywhereNavHost(
                     onLoadModelCatalog = onLoadNewSessionModelCatalog,
                     onPrepareRuntimeWorkspace = onPrepareRuntimeWorkspace,
                     onLoadPermissionCatalog = onLoadNewSessionPermissionCatalog,
+                    modelConfigState = modelConfigState,
                     onPrepareSession = onPrepareSession,
                     onRefreshDevices = onRefreshSessions,
                     devicesRefreshing = isRefreshingSessions,
