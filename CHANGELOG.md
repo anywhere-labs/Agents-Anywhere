@@ -18,6 +18,7 @@
 
 ### 会话创建与消息交付
 
+- 现在可以把本机安装的 Hermes Agent 作为 Agent 使用：支持对话、工具审批、文本和图片附件、运行中追加指令、中断与恢复；暂不支持浏览 Hermes 的旧会话。（[#591](https://github.com/anywhere-labs/Agents-Anywhere/pull/591)）
 - 会话很多或多个会话同时运行时，会话列表的实时刷新不再拖慢 Server 数据库：同一用户的连续变化最多每 2 秒合并推送一次，部署者可用 `AGENT_SERVER_DASHBOARD_MIN_INTERVAL_SECONDS` 调整。（[#552](https://github.com/anywhere-labs/Agents-Anywhere/pull/552)）
 - Connector 断线重连或集中补传积压记录时，会话写入不再卡住数小时，也不再长期占着数据库连接、阻塞清理，进而拖垮整个服务；许多会话同时写入时，也不再全部报数据库连接超时。（[#556](https://github.com/anywhere-labs/Agents-Anywhere/pull/556)）
 - 使用 Redis 的部署里，Connector 断线重连时个别会话不再约 5 分钟写不进新消息、同步反复失败。（[#592](https://github.com/anywhere-labs/Agents-Anywhere/pull/592)）
@@ -60,6 +61,7 @@
 
 ### Web 与 Desktop 界面
 
+- Agent 连接断开后，没有原生历史的会话会显示「恢复会话」，不用新建会话就能接着用，未确认的消息不会自动重发。（[#591](https://github.com/anywhere-labs/Agents-Anywhere/pull/591)）
 - Tokens Anywhere 可以用 Agents Anywhere 账号登录：Web 会先显示「登录 Tokens Anywhere」确认页，确认后才向 Tokens Anywhere 提供名称、邮箱和头像，选「取消」则不提供任何信息。部署者设置 `AGENT_SERVER_TOKENS_ANYWHERE_CLIENT_SECRET` 和 `AGENT_SERVER_TOKENS_ANYWHERE_REDIRECT_URI` 后开启。（[#571](https://github.com/anywhere-labs/Agents-Anywhere/pull/571)）
 - 侧边栏新增 Tokens Anywhere 入口，介绍页可以直接前往获取 API 密钥；不需要时可以在页面上或「设置 → 外观」里隐藏。实例设置了 Tokens Anywhere 地址后才会出现这个入口，自部署实例不需要重新构建。（[#571](https://github.com/anywhere-labs/Agents-Anywhere/pull/571)、[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 「设置 → 模型渠道」可以选择默认渠道，也可以手动添加模型服务；保存时自动识别协议和模型，不调用模型。地址在内网、连不上或识别不出协议时可以改为手动选择，部署者也可以设置 `AGENT_SERVER_ALLOW_PRIVATE_MODEL_GATEWAYS=1` 允许识别内网地址。离线期间多次切换会在上线后追到最终渠道。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
@@ -70,12 +72,14 @@
 
 ### Android
 
+- Agent 连接断开后，没有原生历史的会话可以点「恢复会话」接着用。（[#591](https://github.com/anywhere-labs/Agents-Anywhere/pull/591)）
 - Android 的「模型渠道」与 Web、Desktop 相同：首页列出渠道和「已应用」，点进渠道后再应用、查看配置和 Runtime；Tokens Anywhere 按「账户／模型与连接／Runtime」分页，可以退出账户。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 所选 Agent 换了模型渠道后，Android 新建会话页会重新准备并刷新模型列表，不再停留在旧渠道的模型上。（[#587](https://github.com/anywhere-labs/Agents-Anywhere/pull/587)）
 - Android 内置浏览器登录依赖视口高度的 OIDC 身份提供方时不再白屏，保留正常页头、页脚和登录卡片的布局，登录 URL 和第三方控制台输出不写入应用日志。（[#575](https://github.com/anywhere-labs/Agents-Anywhere/pull/575)）
 
 ### iOS
 
+- Agent 连接断开后，没有原生历史的会话可以点「恢复会话」接着用。（[#591](https://github.com/anywhere-labs/Agents-Anywhere/pull/591)）
 - iOS 的「模型渠道」与 Web、Desktop 相同：首页列出渠道和「已应用」，点进渠道后再应用、查看配置和 Runtime；Tokens Anywhere 按「账户／模型与连接／Runtime」分页，可以退出账户。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 所选 Agent 换了模型渠道后，iOS 新建会话页会重新准备并刷新模型列表，不再停留在旧渠道的模型上。（[#588](https://github.com/anywhere-labs/Agents-Anywhere/pull/588)）
 

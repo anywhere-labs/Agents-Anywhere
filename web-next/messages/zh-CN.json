@@ -1122,6 +1122,15 @@
         "reviewPreviewBlocked": "文件预览窗口被浏览器拦截了。",
         "reviewDiffCard": "第 {index}/{count} 次修改"
       },
+      "agentRecovery": {
+        "title": "执行者已断开",
+        "hint": "重新连接后可以继续这个会话，未确认的消息不会自动重发。",
+        "action": "恢复会话",
+        "preparing": "正在恢复会话…",
+        "check": "查询恢复状态",
+        "failed": "恢复失败，请重试。",
+        "unknown": "恢复结果尚未确认，请查询恢复状态。"
+      },
       "nativeHistory": {
         "title": "原生历史",
         "continue": "继续任务",

@@ -17,7 +17,7 @@ Web / Desktop / Android / iOS
   → Pi SDK
 ```
 
-默认 Provider 为 Codex、Claude、DSH、Pi。Pi 使用 `runtimeType=pi`、`implementationType=acp-stdio`，ACP 是内部对接协议。通用 `AcpRuntime` 通过注入 `AgentProfile`、启动配置、准备策略复用协调逻辑，其他 Agent 可以有自己的 Provider 身份；默认列表没有单独名为 ACP 的入口。
+默认 Provider 为 Codex、Claude、DSH、Pi、Hermes。Pi 使用 `runtimeType=pi`、`implementationType=acp-stdio`，ACP 是内部对接协议。通用 `AcpRuntime` 通过注入 `AgentProfile`、启动配置、准备策略复用协调逻辑，其他 Agent 可以有自己的 Provider 身份；默认列表没有单独名为 ACP 的入口。
 
 Pi 的 `PiProvider` 直接实现 `RuntimeProvider` 的配置、发现和启动流程，优先复用本机 npm 安装的 Pi SDK，第三方 `@openma/pi-acp` 提供 ACP 入口并在自己的进程内调用该 SDK。
 
@@ -128,10 +128,43 @@ Connector 显式加载 `permissions.mjs`，在首次加载、恢复及重载后�
 
 TUI 协作、最终模型请求守卫、持久接纳回执和原生位置选择未在默认路径开放。通用原生历史快照按来源完整性处理，不能用部分结果删除其他历史；默认 Pi 没有独立的原生位置选择界面。
 
+## Hermes
+
+`HermesProvider` 使用 `runtimeType=hermes`、`implementationType=acp-stdio`，启动本机的 `hermes acp`，复用上述通用 ACP 层；专用逻辑只在 `profiles/hermes/`。第一期不做原生历史索引，旧会话浏览和「继续任务」不可用，只能恢复经 AA 创建的会话。
+
+| 配置 | 含义 |
+| --- | --- |
+| `cliPath` | 可选的 hermes 入口；默认查找 PATH、`~/.local/bin/hermes` 和 `~/.hermes/hermes-agent/venv/bin/hermes` |
+| `hermesHome` | 可选的配置目录，作为 `HERMES_HOME` 传入；默认沿用 Hermes 自己的规则 |
+
+每次准备或恢复前运行 `hermes acp --check` 和 `--version`，缺少 CLI 或 ACP 依赖时直接返回失败，不启动 Agent。模型、凭据和其他设置都来自 Hermes 自己的配置，AA 不写入这些文件。
+
+Hermes 的 `hermes acp` 是其 profile gateway 的查看端：执行归 gateway daemon，首次连接时自动启动，空闲约 600 秒后自行退出，关闭 AA 进程不会立即结束它。恢复时 Hermes 会重放历史，这些内容在新连接绑定前到达，不会重复写入 Timeline。
+
+Agent 连接断开后会话进入 `blocked`。四端在 `session.recover` 可用时显示「恢复会话」，请求只带 `operationId` 和 `expectedGeneration`，不需要原生历史的 `sourceRevision` 和 `cliExited`；原生历史会话仍走自己的「继续任务」确认。未确认的消息不会自动重发。
+
+| AA | Hermes |
+| --- | --- |
+| 模型 | `model` 配置项 |
+| 推理强度 | `reasoning_effort` 配置项（类别 `thought_level`） |
+| 权限 | `edit_approval_policy` 配置项（类别 `mode`）：Default / Accept Edits / Don't Ask，只控制文件编辑 |
+| 工具审批 | `session/request_permission`，选项原样来自 Hermes，例如 `allow_once`、`deny` |
+| 运行中追加指示 | `/steer` 命令，不支持附件；Connector 已提供，Web 与 Desktop 暂无入口 |
+| 命令 | `available_commands_update` |
+
+Hermes 决定哪些命令需要审批，AA 不声明 `managed_tool_permissions`。没有模型配置项的 Hermes 视为版本过旧或未配置，不会开放会话。Hermes 专用错误码没有进入 `contracts/runtime-errors`，客户端显示 Connector 提供的中文文案。
+
+真实验证脚本使用本地模型夹具和临时 `HERMES_HOME`，不调用付费服务；覆盖允许、拒绝、文本与图片附件、运行中追加、中断和恢复：
+
+```sh
+PYTHONPATH=connector connector/.venv/bin/python connector/scripts/verify-hermes-acp.py --hermes "$(command -v hermes)"
+```
+
 ## 源码与维护入口
 
 - [默认 Provider 注册](../../connector/connector/runtimes/providers.py)
 - [Pi Provider 与固定依赖](../../connector/connector/runtimes/acp/profiles/pi/provider.py)、[配置生成](../../connector/connector/runtimes/acp/profiles/pi/settings.py)
+- [Hermes Provider](../../connector/connector/runtimes/acp/profiles/hermes/provider.py)、[HermesClient](../../connector/connector/runtimes/acp/profiles/hermes/client.py)
 - [PiClient](../../connector/connector/runtimes/acp/profiles/pi/client.py)、[工具权限扩展](../../connector/connector/runtimes/acp/profiles/pi/permissions.mjs)
 - [npm / Node 安装器](../../connector/connector/runtimes/acp/infrastructure/npm.py)
 - [通用 Runtime](../../connector/connector/runtimes/acp/runtime.py)、[会话用例](../../connector/connector/runtimes/acp/application/sessions.py)、[同步](../../connector/connector/runtimes/acp/application/synchronization.py)
