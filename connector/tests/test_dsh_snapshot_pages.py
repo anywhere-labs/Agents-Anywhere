@@ -23,9 +23,11 @@ class Uplink(httpx.AsyncBaseTransport):
         self.fail = {index: list(outcomes) for index, outcomes in (fail or {}).items()}
         self.attempts: list[int] = []
         self.refused: list[int] = []
+        self.read_timeouts: list[float] = []
 
     async def handle_async_request(self, request):
         raw = b"".join([chunk async for chunk in request.stream])
+        self.read_timeouts.append(request.extensions["timeout"]["read"])
         page = len(self.bodies)
         self.attempts.append(page)
         outcomes = self.fail.get(page)
@@ -209,6 +211,19 @@ def test_a_server_outage_never_shrinks_the_pages(monkeypatch, outage):
     with pytest.raises(ConnectorNetworkError):
         _run(down, page_bytes=8192)
     assert down.attempts == [0] * (module.SNAPSHOT_PAGE_RETRIES + 1) and down.bodies == []
+
+
+def test_a_page_that_keeps_timing_out_waits_longer_on_each_retry(monkeypatch):
+    import connector.server.ingest as module
+
+    monkeypatch.setattr(module, "SNAPSHOT_PAGE_RETRY_BACKOFF_SECONDS", 0)
+    # A link slower than the timeout assumes would time out at the same point
+    # on every retry; a dropped connection says nothing about the link speed.
+    slow = Uplink(fail={0: [httpx.ReadTimeout("slow"), httpx.ConnectError("refused"), httpx.ReadTimeout("slow")]})
+    _run(slow, page_bytes=1024 * 1024)
+    base = slow.read_timeouts[0]
+    assert slow.read_timeouts == [base, base * 2, base * 2, base * 4]
+    assert _items(slow.bodies) == [item["id"] for item in ITEMS]
 
 
 def test_an_unordered_snapshot_neither_waits_for_nor_holds_back_the_shared_queue():

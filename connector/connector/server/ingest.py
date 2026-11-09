@@ -45,7 +45,10 @@ SYNC_BATCH_RETRY_BACKOFF_SECONDS = 1.0
 # proxy accepts the whole body at once and forwards it at its own pace, so the
 # client finishes writing and starts waiting for an answer that cannot arrive
 # until the proxy is done. It therefore grows with the body, assuming the slowest
-# link worth waiting for. Writes and connects still fail on a real stall.
+# link worth waiting for. Writes and connects still fail on a real stall. A link
+# slower than that would time out at the same point on every retry, so each
+# retry after a read timeout doubles the read timeout: the retries of a snapshot
+# page then wait for links down to a sixteenth of it.
 UPLOAD_CONNECT_SECONDS = 15
 UPLOAD_STALL_SECONDS = 60
 UPLOAD_SLOWEST_BYTES_PER_SECOND = 64 * 1024
@@ -196,17 +199,20 @@ class ConnectorIngestClient:
     async def _post_snapshot_page(
         self, client, snapshot: EncodedSnapshot, start: int, end: int, first: bool, on_progress: UploadProgress | None,
     ) -> None:
-        attempt = 0
+        attempt = read_timeouts = 0
         while True:
             token = await self._access_token_provider(False)
             try:
                 await self._send_with_auth(
-                    lambda token: self._post_snapshot_body(client, token, snapshot, start, end, first, on_progress), token,
-                    size=snapshot.page_size(start, end, first=first),
+                    lambda token, read_timeouts=read_timeouts: self._post_snapshot_body(
+                        client, token, snapshot, start, end, first, on_progress, read_timeouts,
+                    ),
+                    token, size=snapshot.page_size(start, end, first=first),
                 )
                 return
             except ConnectorNetworkError as exc:
                 attempt += 1
+                read_timeouts += _read_timed_out(exc)
                 if attempt > SNAPSHOT_PAGE_RETRIES or self._closed is not None:
                     raise
                 logger.warning("snapshot page at item {}/{} failed ({}); retrying", start, len(snapshot), exc)
@@ -214,7 +220,7 @@ class ConnectorIngestClient:
 
     async def _post_snapshot_body(
         self, client, token, snapshot: EncodedSnapshot, start: int, end: int, first: bool,
-        on_progress: UploadProgress | None,
+        on_progress: UploadProgress | None, read_timeouts: int = 0,
     ):
         size = snapshot.page_size(start, end, first=first)
 
@@ -229,7 +235,7 @@ class ConnectorIngestClient:
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Content-Length": str(size)},
             # The Server answers only after parsing and applying the whole page;
             # a page given up too early is uploaded again.
-            content=stream(), timeout=upload_timeout(size),
+            content=stream(), timeout=upload_timeout(size, read_timeouts=read_timeouts),
         )
 
     async def flush_loop(self) -> None:
@@ -297,19 +303,22 @@ class ConnectorIngestClient:
             self._inflight = []
 
     async def _post_batch_retrying(self, notifications: list[dict[str, Any]], *, on_progress: UploadProgress | None = None) -> None:
-        attempt = 0
+        attempt = read_timeouts = 0
         while True:
             try:
-                await self._post_batch(notifications, on_progress=on_progress)
+                await self._post_batch(notifications, on_progress=on_progress, read_timeouts=read_timeouts)
                 return
             except ConnectorNetworkError as exc:
                 attempt += 1
+                read_timeouts += _read_timed_out(exc)
                 if attempt > SYNC_BATCH_RETRIES or self._closed is not None:
                     raise
                 logger.warning("connector ingest batch failed notifications={} attempt={} ({}); retrying", len(notifications), attempt, exc)
                 await asyncio.sleep(SYNC_BATCH_RETRY_BACKOFF_SECONDS * 2 ** (attempt - 1))
 
-    async def _post_batch(self, notifications: list[dict[str, Any]], *, on_progress: UploadProgress | None = None) -> None:
+    async def _post_batch(
+        self, notifications: list[dict[str, Any]], *, on_progress: UploadProgress | None = None, read_timeouts: int = 0,
+    ) -> None:
         if not notifications:
             return
         notifications = coalesce_timeline_item_upserts(notifications)
@@ -325,7 +334,10 @@ class ConnectorIngestClient:
         ).encode("utf-8", UTF8_REPLACE_LONE_SURROGATES)
         try:
             await self._send_with_auth(
-                lambda token: self._post_ingest_batch(client, token, encoded, on_progress=on_progress), token, size=len(encoded),
+                lambda token: self._post_ingest_batch(
+                    client, token, encoded, on_progress=on_progress, read_timeouts=read_timeouts,
+                ),
+                token, size=len(encoded),
             )
         finally:
             if owned:
@@ -359,7 +371,7 @@ class ConnectorIngestClient:
         client: httpx.AsyncClient,
         access_token: str,
         encoded: bytes,
-        *, on_progress: UploadProgress | None = None,
+        *, on_progress: UploadProgress | None = None, read_timeouts: int = 0,
     ) -> httpx.Response:
         content: bytes | AsyncIterator[bytes] = encoded
         if on_progress is not None:
@@ -376,17 +388,22 @@ class ConnectorIngestClient:
             api_v2_url(self._server_url, "/connector/ingest"),
             headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json", "Content-Length": str(len(encoded))},
             content=content,
-            timeout=upload_timeout(len(encoded)),
+            timeout=upload_timeout(len(encoded), read_timeouts=read_timeouts),
         )
 
 
-def upload_timeout(size: int) -> httpx.Timeout:
-    """Timeouts for a request body of ``size`` bytes; see ``UPLOAD_SLOWEST_BYTES_PER_SECOND``."""
+def upload_timeout(size: int, *, read_timeouts: int = 0) -> httpx.Timeout:
+    """Timeouts for a request body of ``size`` bytes after ``read_timeouts`` read
+    timeouts of the same body; see ``UPLOAD_SLOWEST_BYTES_PER_SECOND``."""
     return httpx.Timeout(
         UPLOAD_STALL_SECONDS,
         connect=UPLOAD_CONNECT_SECONDS,
-        read=UPLOAD_STALL_SECONDS + size / UPLOAD_SLOWEST_BYTES_PER_SECOND,
+        read=(UPLOAD_STALL_SECONDS + size / UPLOAD_SLOWEST_BYTES_PER_SECOND) * 2 ** read_timeouts,
     )
+
+
+def _read_timed_out(error: Exception) -> bool:
+    return isinstance(error.__cause__, httpx.ReadTimeout)
 
 
 def _too_large(error: Exception) -> bool:
