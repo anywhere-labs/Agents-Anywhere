@@ -1193,6 +1193,15 @@
       "showCode": "Show code",
       "hideCode": "Hide code",
       "loadCodeFailed": "Failed to load code",
+      "agentRecovery": {
+        "title": "Agent disconnected",
+        "hint": "Reconnect to continue this session. Unconfirmed messages are not resent.",
+        "action": "Resume session",
+        "preparing": "Resuming session…",
+        "check": "Check recovery status",
+        "failed": "Recovery failed. Try again.",
+        "unknown": "The recovery result is not confirmed yet. Check its status."
+      },
       "nativeHistory": {
         "title": "Native history",
         "continue": "Continue task",

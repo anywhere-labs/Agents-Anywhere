@@ -687,6 +687,11 @@
     <string name="announcement_title">Announcement</string>
     <string name="announcement_published_at">Published %1$s</string>
     <string name="announcement_acknowledge">Got it</string>
+    <string name="agent_recovery_title">Agent disconnected</string>
+    <string name="agent_recovery_hint">Reconnect to continue this session. Unconfirmed messages are not resent.</string>
+    <string name="agent_recovery_action">Resume session</string>
+    <string name="agent_recovery_preparing">Resuming session…</string>
+    <string name="agent_recovery_check">Check recovery status</string>
     <string name="native_history_title">Native history</string>
     <string name="native_history_continue">Continue task</string>
     <string name="native_history_release">End AA execution</string>

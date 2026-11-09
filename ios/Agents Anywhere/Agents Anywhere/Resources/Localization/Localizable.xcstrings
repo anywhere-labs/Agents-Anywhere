@@ -13996,6 +13996,40 @@
         }
       }
     },
+    "执行者已断开": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent disconnected"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "执行者已断开"
+          }
+        }
+      }
+    },
+    "重新连接后可以继续这个会话，未确认的消息不会自动重发。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reconnect to continue this session. Unconfirmed messages are not resent."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新连接后可以继续这个会话，未确认的消息不会自动重发。"
+          }
+        }
+      }
+    },
     "原生历史": {
       "extractionState": "manual",
       "localizations": {

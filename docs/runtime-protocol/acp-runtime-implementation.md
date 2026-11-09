@@ -141,13 +141,15 @@ TUI 协作、最终模型请求守卫、持久接纳回执和原生位置选择�
 
 Hermes 的 `hermes acp` 是其 profile gateway 的查看端：执行归 gateway daemon，首次连接时自动启动，空闲约 600 秒后自行退出，关闭 AA 进程不会立即结束它。恢复时 Hermes 会重放历史，这些内容在新连接绑定前到达，不会重复写入 Timeline。
 
+Agent 连接断开后会话进入 `blocked`。四端在 `session.recover` 可用时显示「恢复会话」，请求只带 `operationId` 和 `expectedGeneration`，不需要原生历史的 `sourceRevision` 和 `cliExited`；原生历史会话仍走自己的「继续任务」确认。未确认的消息不会自动重发。
+
 | AA | Hermes |
 | --- | --- |
 | 模型 | `model` 配置项 |
 | 推理强度 | `reasoning_effort` 配置项（类别 `thought_level`） |
 | 权限 | `edit_approval_policy` 配置项（类别 `mode`）：Default / Accept Edits / Don't Ask，只控制文件编辑 |
 | 工具审批 | `session/request_permission`，选项原样来自 Hermes，例如 `allow_once`、`deny` |
-| 运行中追加指示 | `/steer` 命令，不支持附件 |
+| 运行中追加指示 | `/steer` 命令，不支持附件；Connector 已提供，Web 与 Desktop 暂无入口 |
 | 命令 | `available_commands_update` |
 
 Hermes 决定哪些命令需要审批，AA 不声明 `managed_tool_permissions`。没有模型配置项的 Hermes 视为版本过旧或未配置，不会开放会话。Hermes 专用错误码没有进入 `contracts/runtime-errors`，客户端显示 Connector 提供的中文文案。
