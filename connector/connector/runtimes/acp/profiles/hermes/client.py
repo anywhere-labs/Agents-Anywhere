@@ -66,9 +66,16 @@ class HermesClient(AgentClient):
     def __init__(self, on_update, on_interaction):
         self.commands: dict[str, list] = {}
         self.turns: dict[str, Turn] = {}
+        self.approval_cards: set[tuple[str, str]] = set()
 
         async def update(session_id, value):
             kind = value.get("sessionUpdate")
+            # Hermes closes an answered approval with an update to the card's own
+            # id, which is not a tool call and would show as an extra Timeline item.
+            card = (session_id, value.get("toolCallId"))
+            if kind == "tool_call_update" and card in self.approval_cards:
+                self.approval_cards.discard(card)
+                return
             if kind in EXECUTION_UPDATES:
                 await self.observe(session_id)
             if kind == "available_commands_update":
@@ -83,6 +90,10 @@ class HermesClient(AgentClient):
         async def interaction(session_id, kind, value):
             if session_id:
                 await self.observe(session_id)
+            if kind == "permission":
+                self.approval_cards.add(
+                    (session_id, value.get("toolCall", {}).get("toolCallId"))
+                )
             return await on_interaction(session_id, kind, value)
 
         super().__init__(update, interaction)

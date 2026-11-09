@@ -177,6 +177,26 @@ def test_commands_come_from_hermes():
     assert updates
 
 
+def test_answered_approval_card_is_not_a_timeline_tool():
+    hermes, updates = client()
+
+    async def scenario():
+        await hermes.callbacks.on_interaction(
+            "s", "permission", {"toolCall": {"toolCallId": "edit-approval-1"}, "options": []}
+        )
+        await hermes.callbacks.on_update(
+            "s",
+            {"sessionUpdate": "tool_call_update", "toolCallId": "edit-approval-1", "status": "completed"},
+        )
+        await hermes.callbacks.on_update(
+            "s", {"sessionUpdate": "tool_call_update", "toolCallId": "call_real", "status": "completed"}
+        )
+
+    asyncio.run(scenario())
+    assert [item["toolCallId"] for item in updates] == ["call_real"]
+    assert hermes.approval_cards == set()
+
+
 def test_config_updates_are_adapted():
     hermes, updates = client()
     asyncio.run(

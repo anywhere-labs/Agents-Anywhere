@@ -293,6 +293,9 @@ async def run_scenario(scenario, hermes):
         if scenario != "interrupt":
             assert any(REPLY in str(item.content) for item in snapshot.items), snapshot
         assert all(item.source["runtime"] == "hermes" for item in snapshot.items)
+        if scenario == "allow":
+            # One write_file call; the approval card must not add a second tool item.
+            assert sum(1 for item in snapshot.items if item.role == "tool") == 1, snapshot
         users = [item for item in snapshot.items if item.role == "user"]
         assert any(user.content.get("clientMessageId") == "first" for user in users), users
         if scenario in {"attachment", "image"}:
