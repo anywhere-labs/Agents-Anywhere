@@ -56,6 +56,12 @@ import Testing
         }
         return http
     }
+    private func channel(_ actual: String, generation: Int, state: String = "applied", message: String? = nil) throws -> V2ModelConfigOverview {
+        try decode(["profiles": [], "assignments": [], "channel": ["channel": actual, "revision": generation, "runtimes": [
+            ["connectorId": "device", "runtimeId": "rti_work", "desired": actual, "actual": actual, "state": state,
+             "appliedGeneration": generation, "message": message.map { $0 as Any } ?? NSNull()],
+        ]]])
+    }
     private func devices(online: Bool = true) throws -> [V2Connector] {
         var object = try fixtureObject("connector")
         var device = object["connector"] as! [String: Any]
@@ -263,6 +269,45 @@ import Testing
         model.focusDevice("device", workspace: nil)
         #expect(!model.canCreate)
         await model.refresh(connectors: try devices())
+        #expect(model.canCreate && http.count("/runtime-workflows/preparations") == 2)
+    }
+
+    @Test func aRuntimeThatSwitchedChannelsReadsItsCatalogAgain() async throws {
+        let http = transport(); let model = make(http)
+        model.draft.text = "Start now"
+        await model.refresh(connectors: try devices())
+        _ = model.selectProject("project"); await model.prepareTarget()
+        let prepared = http.count("/capabilities")
+        model.updateModelChannel(nil, runtimes: [])
+        #expect(model.runtimeChannel == nil)
+        await model.prepareAfterChannelChange()
+        // The first channel report describes the channel the preparation already used.
+        model.updateModelChannel(try channel("native", generation: 1), runtimes: [])
+        await model.prepareAfterChannelChange()
+        model.updateModelChannel(try channel("native", generation: 1, message: "still native"), runtimes: [])
+        await model.prepareAfterChannelChange()
+        #expect(http.count("/capabilities") == prepared && model.canCreate)
+
+        model.updateModelChannel(try channel("tokens", generation: 2), runtimes: [])
+        await model.prepareAfterChannelChange()
+        #expect(http.count("/capabilities") == prepared + 1 && model.canCreate)
+        await model.prepareAfterChannelChange()
+        #expect(http.count("/capabilities") == prepared + 1)
+    }
+
+    @Test func aRuntimeThatSwitchedChannelsPreparesItsWorkspaceAgain() async throws {
+        let http = preparingTransport(); let model = makePreparing(http)
+        model.draft.text = "Start now"
+        model.updateModelChannel(try channel("native", generation: 1), runtimes: [])
+        await model.refresh(connectors: try devices())
+        _ = model.selectProject("project")
+        await model.refresh(connectors: try devices())
+        #expect(model.canCreate && http.count("/runtime-workflows/preparations") == 1)
+        // A kept workspace preparation is not enough once the runtime uses another channel.
+        model.updateModelChannel(try channel("tokens", generation: 2), runtimes: [])
+        await model.refresh(connectors: try devices())
+        #expect(http.count("/runtime-workflows/preparations") == 1)
+        await model.prepareAfterChannelChange()
         #expect(model.canCreate && http.count("/runtime-workflows/preparations") == 2)
     }
 
