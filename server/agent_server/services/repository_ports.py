@@ -337,6 +337,17 @@ class ConnectorNotificationRepository(
         mark_read_on_change: bool = False,
     ) -> TimelineBatchWriteResult: ...
 
+    async def replace_timeline_range(
+        self,
+        *,
+        session_id: str,
+        items: list[TimelineItemIn],
+        after_order_seq: int | None,
+        through_order_seq: int | None,
+        source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
+    ) -> TimelineBatchWriteResult: ...
+
     async def sync_timeline_items(
         self,
         *,
