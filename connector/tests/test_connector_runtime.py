@@ -1927,6 +1927,7 @@ def test_default_runtime_providers_use_new_protocol_providers() -> None:
         "claude",
         "dsh",
         "pi",
+        "hermes",
     )
     assert isinstance(providers[0], CodexProvider)
     assert isinstance(providers[1], ClaudeProvider)
