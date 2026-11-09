@@ -9,7 +9,6 @@ import { OnboardingShell } from "@/components/onboarding/reference/components/on
 import { SlideFrame } from "@/components/onboarding/reference/components/slide-frame"
 import { Button as SlideButton } from "@/components/onboarding/reference/components/ui/button"
 import { Button } from "@/components/ui/button"
-import { TokensAnywhereArtwork } from "@/features/tokens-anywhere/artwork"
 import { useTokensAnywhereSidebarVisibility } from "@/features/tokens-anywhere/sidebar-visibility"
 import { useTokensAnywhereUrl } from "@/features/tokens-anywhere/address"
 import "@/components/onboarding/reference/styles/onboarding.css"
@@ -39,13 +38,12 @@ export function TokensAnywherePage() {
       </div>
 
       <div className="onboarding-viewport onboarding-viewport-embedded">
-        <OnboardingShell artwork="phone" wordmark={false}>
+        <OnboardingShell wordmark={false}>
           <div className="slide-page">
             <SlideFrame
               id="tokens-anywhere"
               title={t("headline")}
               description={t("description")}
-              artwork={<div className="-mx-6"><TokensAnywhereArtwork /></div>}
               actions={apiKeysUrl ? (
                 <SlideButton asChild size="lg">
                   <a href={apiKeysUrl} target="_blank" rel="noopener noreferrer">
