@@ -5,6 +5,7 @@ import com.agentsanywhere.app.feature.devices.DeviceRuntimeStatus
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.ChannelRuntime
 import com.agentsanywhere.app.model.ChannelSwitch
+import com.agentsanywhere.app.model.ModelAssignment
 import com.agentsanywhere.app.model.ModelChannelState
 import com.agentsanywhere.app.model.ModelConfigOverview
 import com.agentsanywhere.app.model.ModelConnectionCapability
@@ -16,6 +17,7 @@ import com.agentsanywhere.app.model.TokensLink
 import com.agentsanywhere.app.model.TokensLinkStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -41,6 +43,7 @@ class ModelConfigStateTest {
         connection: ModelConnectionCapability? = capability,
         maturity: String? = null,
         status: ModelConnectionStatus? = null,
+        managedBy: String? = null,
     ) = DeviceRuntime(
         connectorId = connectorId,
         id = id,
@@ -60,6 +63,7 @@ class ModelConfigStateTest {
         maturity = maturity,
         modelConnection = connection,
         modelConnectionStatus = status,
+        managedBy = managedBy,
     )
 
     private fun item(
@@ -317,5 +321,82 @@ class ModelConfigStateTest {
         assertFalse(profile().canDelete(usedBy = 0, inChannel = true))
         assertFalse(profile(source = "tokens").canDelete(usedBy = 0))
         assertTrue(profile(source = "tokens", state = "detached").canDelete(usedBy = 0))
+    }
+
+    private fun overview(channel: ModelChannelState?, assignments: List<ModelAssignment> = emptyList()) = ModelConfigOverview(
+        secretConfigured = true,
+        profiles = emptyList(),
+        assignments = assignments,
+        tokens = null,
+        channel = channel,
+    )
+
+    private fun createdAssignment(runtimeId: String) = ModelAssignment(
+        connectorId = "dev",
+        runtimeId = runtimeId,
+        profileId = "p",
+        offerFormat = null,
+        createdRuntime = true,
+        status = "applied",
+        errorCode = null,
+        errorMessage = null,
+        appliedAt = null,
+        modelConnectionStatus = null,
+    )
+
+    @Test
+    fun aRuntimeReadsItsOwnChannelRow() {
+        val row = item("codex", state = "applied", actual = "tokens")
+        val state = ModelConfigState(
+            runtimes = listOf(runtime("codex")),
+            overview = overview(channel(row, item("claude", state = "pending"))),
+        )
+
+        assertEquals(row, state.channelRowFor("dev", "codex"))
+        assertNull(state.channelRowFor("other", "codex"))
+        assertNull(state.channelRowFor("dev", "pi"))
+        assertNull(ModelConfigState(overview = overview(null)).channelRowFor("dev", "codex"))
+        assertNull(ModelConfigState().channelRowFor("dev", "codex"))
+    }
+
+    @Test
+    fun aManagedInstanceReadsTheRowOfTheRuntimeItServes() {
+        val served = item("codex", state = "applied", actual = "tokens")
+        val runtimes = listOf(
+            runtime("codex", type = "codex"),
+            runtime("claude", type = "claude-code"),
+            runtime("codex-2", type = "codex", managedBy = MODEL_CONFIG_MANAGER),
+            runtime("codex-3", type = "codex"),
+            runtime("claude-2", type = "claude-code", connectorId = "other", managedBy = MODEL_CONFIG_MANAGER),
+        )
+        val state = ModelConfigState(
+            runtimes = runtimes,
+            overview = overview(
+                channel(item("claude", state = "applied"), served),
+                assignments = listOf(createdAssignment("codex-3")),
+            ),
+        )
+
+        // Marked by configuration management, or created by an assignment.
+        assertEquals(served, state.channelRowFor("dev", "codex-2"))
+        assertEquals(served, state.channelRowFor("dev", "codex-3"))
+        // No runtime of the same type on its own device has a row.
+        assertNull(state.channelRowFor("other", "claude-2"))
+    }
+
+    @Test
+    fun theChannelKeyChangesOnlyWhenTheUsedChannelChangesOrSettles() {
+        val applied = item("codex", state = "applied", actual = "native").copy(appliedGeneration = 2)
+        val key = runtimeChannelKey(applied)
+
+        assertEquals("", runtimeChannelKey(null))
+        assertEquals(key, runtimeChannelKey(applied.copy(desired = "p", message = "m", updatedAt = "t", observedAt = "o")))
+        assertNotEquals(key, runtimeChannelKey(applied.copy(actual = "tokens")))
+        assertNotEquals(key, runtimeChannelKey(applied.copy(appliedGeneration = 3)))
+        assertNotEquals(key, runtimeChannelKey(applied.copy(state = "switching", step = "activating")))
+        assertEquals(
+            runtimeChannelKey(applied.copy(state = "switching", step = "preparing")),
+            runtimeChannelKey(applied.copy(state = "pending")),
+        )
     }
 }

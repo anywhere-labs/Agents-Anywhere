@@ -75,7 +75,9 @@ WHERE i.indexrelid::regclass::text IN
 
 ## 模型渠道与 Tokens Anywhere 链接（`v2_50`–`v2_52`）
 
-`v2_50` 起新增模型配置、Tokens Anywhere 链接和渠道对账表，并给 Runtime 增加模型连接报告列。升级时先停止旧 Server worker，执行迁移后再启动新 Server，然后升级 Connector。保存手动填写的 Key 或链接 Tokens Anywhere 之前，`AGENT_SERVER_SECRET` 至少 32 个字符。旧 Connector 会保留原配置并提示升级。已经执行过本分支旧编号 `v2_47`–`v2_49`（模型配置）的数据库不能直接套用这组新编号，需要从 main 的 `v2_49` 或空库升级。
+`v2_50` 起新增模型配置、Tokens Anywhere 链接和渠道对账表，并给 Runtime 增加模型连接报告列。升级时先停止旧 Server worker，执行迁移后再启动新 Server，然后升级 Connector。保存手动填写的 Key 或链接 Tokens Anywhere 之前，`AGENT_SERVER_SECRET` 至少 32 个字符，且不能仍是开发默认值 `agent-server-dev-secret`。旧 Connector 会保留原配置并提示升级。已经执行过模型配置分支旧编号 `v2_47`–`v2_49` 的数据库不能直接套用这组新编号，需要从 main 的 `v2_49` 或空库升级。
+
+要链接 Tokens Anywhere，启动新 Server 前设好两个环境变量：`AGENT_SERVER_PUBLIC_ORIGIN` 填实例对外的 origin（例如 `https://agents.example.com`），未设置时回退到反向代理头或请求 URL；`AGENT_SERVER_TOKENS_URL` 填 Tokens Anywhere 的 origin，必须与 Tokens 一侧的 `TOKENS_PUBLIC_ORIGIN` 完全一致。管理员在「管理 → 常规」保存的地址优先于 `AGENT_SERVER_TOKENS_URL`；管理员保存空地址会关闭链接，即使设置了环境变量也不会回退。两者都没有，或值不是 origin 时，链接同样保持关闭。完整的变量表见 [2.2.0 发布说明](releases/2.2.0.md)。
 
 ## 使用统计小时汇总（`v2_53`）
 
@@ -83,4 +85,4 @@ WHERE i.indexrelid::regclass::text IN
 
 ## 统一目标模式
 
-使用 Goal 时，先升级 Server 数据库至 `v2_47` 和服务，再升级 Connector 及客户端。迁移只新增 Goal 表，旧会话无需回填；旧 Connector 不声明目标能力。详情见 [Goal API 与持久化](api/goals.md)。产品版本未在本次修改。
+使用 Goal 时，先升级 Server 数据库至 `v2_47` 和服务，再升级 Connector 及客户端。迁移只新增 Goal 表，旧会话无需回填；旧 Connector 不声明目标能力。详情见 [Goal API 与持久化](api/goals.md)。这项包含在产品版本 2.2.0 里。

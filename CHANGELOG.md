@@ -68,6 +68,7 @@
 ### Android
 
 - Android 的「模型渠道」与 Web、Desktop 相同：首页列出渠道和「已应用」，点进渠道后再应用、查看配置和 Runtime；Tokens Anywhere 按「账户／模型与连接／Runtime」分页，可以退出账户。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
+- 所选 Agent 换了模型渠道后，Android 新建会话页会重新准备并刷新模型列表，不再停留在旧渠道的模型上。（[#587](https://github.com/anywhere-labs/Agents-Anywhere/pull/587)）
 - Android 内置浏览器登录依赖视口高度的 OIDC 身份提供方时不再白屏，保留正常页头、页脚和登录卡片的布局，登录 URL 和第三方控制台输出不写入应用日志。（[#575](https://github.com/anywhere-labs/Agents-Anywhere/pull/575)）
 
 ### iOS
@@ -84,7 +85,7 @@
 - Pi 优先复用本机兼容安装的模型、认证和配置；已有受管模型网关配置保持隔离，用户也可明确选择受管环境。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 - Pi 接入需要 Server 执行 `v2_45` 数据库迁移，并配套更新 Connector 和使用此功能的客户端。（[#484](https://github.com/anywhere-labs/Agents-Anywhere/pull/484)）
 - 统一 Plan 需要 Server 执行 `v2_46` 数据库迁移，并配套更新 Connector、客户端和 DSH Bridge；DSH 还需组合原生 Plan 插件。（[#490](https://github.com/anywhere-labs/Agents-Anywhere/pull/490)）
-- 用 Agents Anywhere 账号登录 Tokens Anywhere（[#470](https://github.com/anywhere-labs/Agents-Anywhere/pull/470)）和一键链接 Tokens Anywhere（[#510](https://github.com/anywhere-labs/Agents-Anywhere/issues/510)）仍未进入主线，不在这次切分里。
+- 用 Agents Anywhere 账号登录 Tokens Anywhere 已进入主线（[#571](https://github.com/anywhere-labs/Agents-Anywhere/pull/571) 取代了未合并的 [#470](https://github.com/anywhere-labs/Agents-Anywhere/pull/470)）。一键链接里的授权、申请 Key、模型渠道和断开也已进入主线（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)、[#571](https://github.com/anywhere-labs/Agents-Anywhere/pull/571)）；[#510](https://github.com/anywhere-labs/Agents-Anywhere/issues/510) 仍打开：嵌入控制台还没有，Tokens Anywhere 地址也还没有内置的云端默认值。
 
 ### 统一 Plan
 

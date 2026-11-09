@@ -5,8 +5,10 @@ endpoints, which recomputed statistics from raw timeline rows on every request.
 
 Usage statistics are **event-driven**: the Server appends a usage fact the moment
 platform activity happens, and the report only reads those facts plus a daily
-inventory snapshot. Nothing is backfilled from history, so a deployment's report
-starts on the day the `v2_42` migration was applied (see `range.dataSince`).
+inventory snapshot. Migration `v2_53` backfills the hourly rollup tables from
+usage events already recorded. It does not create usage events from timeline
+history before `v2_42`, so a deployment's report still starts on the day that
+migration was applied (see `range.dataSince`).
 
 ## Endpoints
 
