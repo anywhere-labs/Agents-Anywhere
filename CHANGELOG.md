@@ -19,7 +19,7 @@
 ### 会话创建与消息交付
 
 - 会话很多或多个会话同时运行时，会话列表的实时刷新不再拖慢 Server 数据库：同一用户的连续变化最多每 2 秒合并推送一次，部署者可用 `AGENT_SERVER_DASHBOARD_MIN_INTERVAL_SECONDS` 调整。（[#552](https://github.com/anywhere-labs/Agents-Anywhere/pull/552)）
-- 长时间运行的 Server 内存缓慢上涨时，部署者可以设置 `AGENT_SERVER_MALLOC_TRIM_INTERVAL_SECONDS`（例如 `300`），让每个工作进程定期把已释放的内存还给系统；默认不开启。
+- 长时间运行的 Server 内存缓慢上涨时，部署者可以设置 `AGENT_SERVER_MALLOC_TRIM_INTERVAL_SECONDS`（例如 `300`），让每个工作进程定期把已释放的内存还给系统；默认不开启。（[#586](https://github.com/anywhere-labs/Agents-Anywhere/pull/586)）
 - Connector 断线重连或集中补传积压记录时，会话写入不再卡住数小时，也不再长期占着数据库连接、阻塞清理，进而拖垮整个服务；许多会话同时写入时，也不再全部报数据库连接超时。（[#556](https://github.com/anywhere-labs/Agents-Anywhere/pull/556)）
 
 ### Codex 与 Claude
