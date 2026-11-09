@@ -41,27 +41,39 @@ class RemoteTerminalForegroundService : Service() {
     }
 
     private fun createNotificationChannel() {
-        val manager = getSystemService(NotificationManager::class.java)
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            getString(R.string.terminal_service_channel_name),
-            NotificationManager.IMPORTANCE_LOW,
-        ).apply {
-            description = getString(R.string.terminal_service_channel_description)
-            setShowBadge(false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = getSystemService(NotificationManager::class.java)
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                getString(R.string.terminal_service_channel_name),
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = getString(R.string.terminal_service_channel_description)
+                setShowBadge(false)
+            }
+            manager?.createNotificationChannel(channel)
         }
-        manager.createNotificationChannel(channel)
     }
 
     private fun buildNotification(): Notification {
-        return Notification.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle(getString(R.string.terminal_service_title))
-            .setContentText(getString(R.string.terminal_service_text))
-            .setCategory(Notification.CATEGORY_SERVICE)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .build()
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle(getString(R.string.terminal_service_title))
+                .setContentText(getString(R.string.terminal_service_text))
+                .setCategory(Notification.CATEGORY_SERVICE)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .build()
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle(getString(R.string.terminal_service_title))
+                .setContentText(getString(R.string.terminal_service_text))
+                .setOngoing(true)
+                .build()
+        }
     }
 
     companion object {

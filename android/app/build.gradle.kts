@@ -25,7 +25,7 @@ android {
 
     defaultConfig {
         applicationId = "com.agentsanywhere.app"
-        minSdk = 26
+        minSdk = 24
         targetSdk = 36
         versionCode = 11
         versionName = "2.2.0"
