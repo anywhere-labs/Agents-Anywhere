@@ -211,7 +211,8 @@ final class NewSessionModel {
         saveSelections()
         connectorID = id
         runtimeID = preference.connectorID == id ? preference.runtimeID : ""
-        prepared = nil; preparationVersion += 1
+        // Another device's workspace preparation never carries over, even when the path is the same.
+        preparedWorkflow = nil; runtimeWorkflow = nil; prepared = nil; preparationVersion += 1
         restoreProjectForDevice()
         if let workspace { _ = selectWorkspace(workspace) }
     }

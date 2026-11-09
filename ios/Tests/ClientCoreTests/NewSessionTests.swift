@@ -21,6 +21,41 @@ import Testing
         }
         return http
     }
+    /// A runtime that prepares a workspace before creating: each preparation posts once and is ready at once.
+    private func makePreparing(_ http: TestHTTPTransport) -> NewSessionModel {
+        let connectors = V2ConnectorAPI(transport: http)
+        let model = NewSessionModel(scope: .init(serverURL: URL(string: "https://example.test")!, accountID: "one"),
+            devices: .init(connectorAPI: connectors), preparation: .init(connectorAPI: connectors),
+            creation: .init(sessionAPI: V2SessionAPI(transport: http)), projectAPI: V2ProjectAPI(transport: http),
+            defaults: UserDefaults(suiteName: "aa-tests-\(UUID().uuidString)")!, workflowAPI: .init(transport: http))
+        if let response: V2ProjectListResponse = try? JSONDecoder().decode(V2ProjectListResponse.self, from: fixtureData("projects")) { model.updateProjects(response.projects) }
+        return model
+    }
+    private func preparingTransport() -> TestHTTPTransport {
+        let http = TestHTTPTransport()
+        http.respond = { call in
+            if call.path.hasSuffix("/capabilities") {
+                var value = try fixtureObject("capabilities")
+                var set = value["capabilitySet"] as! [String: Any]
+                var capabilities = set["capabilities"] as! [[String: Any]]
+                var prepare = capabilities[0]; prepare["capabilityId"] = "runtime.workspace.prepare"
+                capabilities.append(prepare); set["capabilities"] = capabilities; value["capabilitySet"] = set
+                return try JSONSerialization.data(withJSONObject: value)
+            }
+            if call.path == "/runtime-workflows/preparations" {
+                let count = http.count("/runtime-workflows/preparations")
+                let catalog = try fixtureObject("modelCatalog")["catalog"]!
+                return try JSONSerialization.data(withJSONObject: [
+                    "protocolVersion": "1", "id": "prep_\(count)", "kind": "preparation", "connectorId": "device",
+                    "runtimeId": "rti_work", "projectId": "project",
+                    "state": ["phase": "ready", "revision": 1, "catalogRevision": 1, "catalog": catalog, "interactions": []],
+                ])
+            }
+            if call.path.hasSuffix("/rti_work") { return try fixtureData("runtime") }
+            return try http.defaultResponse(call)
+        }
+        return http
+    }
     private func devices(online: Bool = true) throws -> [V2Connector] {
         var object = try fixtureObject("connector")
         var device = object["connector"] as! [String: Any]
@@ -214,6 +249,21 @@ import Testing
         #expect(model.canCreate)
         #expect(model.selectWorkspace("/another-workspace"))
         #expect(!model.canCreate)
+    }
+
+    @Test func returningToADevicePreparesItsWorkspaceAgain() async throws {
+        let http = preparingTransport(); let model = makePreparing(http)
+        model.draft.text = "Start now"
+        await model.refresh(connectors: try devices())
+        _ = model.selectProject("project")
+        await model.refresh(connectors: try devices())
+        #expect(model.canCreate && http.count("/runtime-workflows/preparations") == 1)
+        // Back on the same path, the page sees no workspace change; only the device refresh can prepare.
+        model.focusDevice("another-device", workspace: nil)
+        model.focusDevice("device", workspace: nil)
+        #expect(!model.canCreate)
+        await model.refresh(connectors: try devices())
+        #expect(model.canCreate && http.count("/runtime-workflows/preparations") == 2)
     }
 
     @Test func successfulCreateUsesTypeAndInstanceAndDoesNotPersistDraft() async throws {
