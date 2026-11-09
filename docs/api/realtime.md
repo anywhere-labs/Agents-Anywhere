@@ -278,6 +278,18 @@ explicit bulk sync and disconnected WebSocket fallback; it must still compute
 changed timeline items and publish session WebSocket events for frontend
 convergence.
 
+`timeline.sync` with `complete: true` replaces the whole session timeline: the
+Server writes only changed items and deletes items the snapshot no longer holds.
+A snapshot too large for one request is sent as pages, each carrying the optional
+`snapshotRange: {afterOrderSeq?, throughOrderSeq?}`. A page with a range holds every
+snapshot item with `afterOrderSeq < orderSeq <= throughOrderSeq` (a missing or null
+bound is unbounded), and the Server replaces only that range regardless of
+`complete`. Such a page never resets clients to its items: changed items are
+published incrementally, and a page that deletes or moves stored rows raises the
+timeline reset fence and asks clients to refetch. An inverted or out-of-range
+bound is rejected with `invalid_snapshot_range`. See
+[DSH snapshot uploads](../dsh-snapshot-uploads.md).
+
 `POST /api/v2/connector/ingest` isolates notification failures inside a batch.
 One malformed or conflicting notification must not produce HTTP 500 or prevent
 later notifications in the same request from being applied. The response

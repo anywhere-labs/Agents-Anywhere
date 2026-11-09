@@ -31,8 +31,8 @@ FLUSH_WINDOW_SECONDS = 0.02
 FLUSH_MAX = 64
 UPLOAD_CHUNK_BYTES = 64 * 1024
 # A snapshot page that fails for a transient reason is retried this often, with
-# a doubling backoff. Once the first page of a paged snapshot replaced the
-# timeline, the Server holds only part of the history until the last page lands.
+# a doubling backoff. A Server without ranged pages holds only part of the
+# history from the first page of a paged snapshot until the last page lands.
 SNAPSHOT_PAGE_RETRIES = 4
 SNAPSHOT_PAGE_RETRY_BACKOFF_SECONDS = 0.5
 # A synchronous batch (for example one DSH sync batch the plugin waits on) that
@@ -155,11 +155,13 @@ class ConnectorIngestClient:
                 await client.aclose()
 
     async def _post_snapshot_pages(self, client, snapshot: EncodedSnapshot, on_progress: UploadProgress | None) -> None:
-        # A snapshot that fits one page replaces the timeline atomically. A paged
-        # one replaces it with the first page and appends the rest, so the Server
-        # holds a partial history from the first acceptance until the last page
-        # lands; pages go out back to back and the first is never sent again once
-        # accepted (it would drop the pages after it). A page the transport
+        # A snapshot that fits one page replaces the timeline atomically. Each
+        # page of a paged one replaces only the orderSeq range it covers. A
+        # Server that predates ranges replaces the timeline with the first page
+        # and appends the rest instead, so it holds a partial history from the
+        # first acceptance until the last page lands; pages therefore go out
+        # back to back and the first is never sent again once accepted (on such
+        # a Server it would drop the pages after it). A page the transport
         # refuses as too large, or a page above the legacy size whose connection
         # keeps getting dropped, is cut smaller and the remaining items are
         # re-paged. Only a 413 says something about the deployment, so only that
