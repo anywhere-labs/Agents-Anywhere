@@ -63,7 +63,6 @@ internal fun TokensChannelDetail(
     channel: ModelChannelState?,
     controller: ModelConfigController,
     pendingBar: PendingModelsBarSlot,
-    applyCard: @Composable (Boolean) -> Unit,
     runtimesBlock: @Composable (Boolean) -> Unit,
     exiting: Boolean,
     exited: Boolean,
@@ -125,7 +124,6 @@ internal fun TokensChannelDetail(
         // A lapsed link keeps the connection runtimes still use.
         if (profile != null && !exited) {
             TokensConnectionBlock(profile, usedBy, controller, onNotice, onError)
-            runtimesBlock(true)
         }
         return
     }
@@ -170,7 +168,6 @@ internal fun TokensChannelDetail(
                     )
                 }
                 if (tokens.link?.relinkSoon == true) NoticeText(stringResource(R.string.model_config_relink_soon))
-                applyCard(profile != null && !exiting)
             },
             connection = {
                 if (profile != null && !exiting) TokensConnectionBlock(profile, usedBy, controller, onNotice, onError)

@@ -15,6 +15,7 @@ from connector.runtime_protocol import (
     CAPABILITY_SESSION_INTERRUPT,
     CAPABILITY_SESSION_SEND_MESSAGE,
     RuntimeConfig,
+    RuntimeOperationResult,
     RuntimeSessionStateCache,
     RuntimeTimelineItem,
     RuntimeUnsupportedError,
@@ -356,6 +357,8 @@ def test_controller_drives_owner_for_turns_and_approvals() -> None:
             bad = await controller.start_turn("sess_1", thread, "x")
             assert not bad.ok and bad.code == "codex_ipc_no_client_found"
             assert host.states[-1]["status"] == "error"
+            assert follower.get(THREAD).status == "owner_lost"
+            assert controller.attached_thread(THREAD) is None
 
             await client.stop()
             await owner_client.stop()
@@ -457,6 +460,156 @@ class _StubFollower:
         return self.thread if thread_id == self.thread.thread_id else None
 
 
+@pytest.mark.parametrize("reject_first", [False, True])
+def test_dead_owner_routes_once_to_local_writer(monkeypatch, reject_first):
+    from connector.runtimes.codex.ipc import IpcResponse
+    from connector.runtimes.codex.turns.controller import CodexTurnController
+
+    async def run():
+        class Client(_RecordingClient):
+            async def request(self, method, params, **kwargs):
+                self.calls.append((method, params, kwargs.get("target_client_id")))
+                service.held = False
+                return IpcResponse(request_id="rejected", method=method,
+                                   result_type="error", error="no-client-found")
+
+        class Service(_StubService):
+            held = reject_first
+
+            def thread_is_held(self, thread_id):
+                return self.held
+
+        local_calls = []
+
+        async def local_start(self, **kwargs):
+            local_calls.append(kwargs)
+            return RuntimeOperationResult(ok=True, result={"transport": "sdk"})
+
+        monkeypatch.setattr(CodexTurnController, "start_turn", local_start)
+        client = Client()
+        follower = ThreadFollower(client=client)
+        follower._threads[THREAD] = FollowedThread(
+            thread_id=THREAD, status="following", owner_client_id="gone", state=_state())
+        service = Service(follower)
+        runtime = CodexRuntime(config=RuntimeConfig(runtime="codex", revision=1, values={}),
+            host=_Host(), client=None, ipc=client, ipc_service=service, safe_ipc_write_routing=True)
+        result = await runtime.start_turn("session", THREAD, "hello", client_message_id="stable-id")
+        assert result.ok
+        assert len(local_calls) == 1
+        assert local_calls[0]["client_message_id"] == "stable-id"
+        assert len(client.calls) == int(reject_first)
+        assert follower.get(THREAD).status == "owner_lost"
+
+    asyncio.run(run())
+
+
+def test_stale_rejection_cannot_discard_replacement_owner():
+    async def run():
+        from dataclasses import replace
+        follower = ThreadFollower(client=_RecordingClient())
+        old = FollowedThread(thread_id=THREAD, status="following", owner_client_id="old", state=_state())
+        replacement = replace(old, owner_client_id="new")
+        follower._threads[THREAD] = replacement
+        await follower.owner_unavailable(old)
+        assert follower.get(THREAD) == replacement
+    asyncio.run(run())
+
+
+def test_unknown_send_outcome_never_retries_on_another_writer(monkeypatch):
+    from connector.runtimes.codex.ipc import IpcResponse, control
+    from connector.runtimes.codex.turns.controller import CodexTurnController
+
+    async def run():
+        class Client(_RecordingClient):
+            async def request(self, method, params, **kwargs):
+                self.calls.append((method, params, kwargs.get("target_client_id")))
+                return IpcResponse(request_id="uncertain", method=method,
+                                   result_type="error", error="client-disconnected")
+
+        async def forbidden_local_start(self, **kwargs):
+            raise AssertionError("an unconfirmed message must never be resent")
+
+        monkeypatch.setattr(CodexTurnController, "start_turn", forbidden_local_start)
+        monkeypatch.setattr(control, "START_TURN_CONFIRM_TIMEOUT", 0)
+        client = Client()
+        follower = ThreadFollower(client=client)
+        follower._threads[THREAD] = FollowedThread(
+            thread_id=THREAD, status="following", owner_client_id="maybe-alive", state=_state())
+        runtime = CodexRuntime(config=RuntimeConfig(runtime="codex", revision=1, values={}),
+            host=_Host(), client=None, ipc=client, ipc_service=_StubService(follower))
+        result = await runtime.start_turn("session", THREAD, "do once")
+        assert not result.ok
+        assert len(client.calls) == 1
+        assert follower.get(THREAD).status == "following"
+    asyncio.run(run())
+
+
+def test_owner_loss_preserves_turn_until_history_confirms_completion(tmp_path):
+    async def run():
+        host = _Host()
+        runtime = CodexRuntime(config=RuntimeConfig(runtime="codex", revision=1, values={}), host=host, client=None)
+        states, active = runtime._session_states, runtime._active_turn_ids
+        projector = CodexIpcSessionProjector(host=host, session_states=states,
+            notices=runtime._notices, active_turn_ids=active, timeline=runtime._timeline,
+            turn_lifecycle=runtime._notifications.turn_lifecycle)
+        projector._active_turns["session"] = "ipc-turn"
+        active["session"] = "ipc-turn"
+        runtime._timeline.begin_turn(THREAD, "ipc-turn")
+        await states.update("session", THREAD, "running", metadata={"source": "codex.ipc", "turn_id": "ipc-turn"})
+        lost = FollowedThread(thread_id=THREAD, status="owner_lost")
+        await projector.handle(FollowerEvent(kind="status", thread=lost))
+        assert active == {"session": "ipc-turn"}
+        assert states.get("session").status == "running"
+        assert states.get("session").metadata["turn_id"] == "ipc-turn"
+        assert host.turn_ends == []
+
+        path = tmp_path / "rollout.jsonl"
+        path.write_text(json.dumps({"type": "session_meta", "payload": {"id": THREAD}}) + "\n"
+            + json.dumps({"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "ipc-turn"}}) + "\n")
+        runtime._session_reader._observed_threads[THREAD] = {"id": THREAD, "path": str(path)}
+        assert (await runtime.get_session_state("session", THREAD)).status == "idle"
+        assert active == {}
+        assert not runtime._timeline._active_turn_positions
+        assert host.turn_ends == [{"session_id": "session", "turn_id": "ipc-turn", "outcome": "completed"}]
+        late_state = _state(threadRuntimeStatus={"type": "running"}, turnHistory={"history": {
+            "entitiesByKey": {"turn:ipc-turn": _turn("ipc-turn", "inProgress", [])},
+            "islands": [{"id": "tail:0", "entries": [{"key": "turn:ipc-turn"}]}],
+        }})
+        await projector.handle(FollowerEvent(kind="snapshot", thread=FollowedThread(
+            thread_id=THREAD, status="following", owner_client_id="old-owner", state=late_state)))
+        assert states.get("session").status == "idle" and active == {}
+        # A reconnected idle snapshot must not finish the same turn again.
+        await projector._track_turn("session", FollowedThread(thread_id=THREAD, status="following", state={}), "idle")
+        assert len(host.turn_ends) == 1
+        assert projector._active_turns == {}
+
+        active["session"] = "new-sdk-turn"
+        await states.update("session", THREAD, "running", metadata={"source": "codex.turn/started", "turn_id": "new-sdk-turn"})
+        await projector.handle(FollowerEvent(kind="status", thread=lost))
+        assert active == {"session": "new-sdk-turn"}
+        assert states.get("session").status == "running"
+    asyncio.run(run())
+
+
+def test_finished_native_turn_repairs_cached_status_and_stop(tmp_path):
+    async def run():
+        path = tmp_path / "rollout.jsonl"
+        path.write_text(json.dumps({"type": "session_meta", "payload": {"id": THREAD}}) + "\n"
+            + json.dumps({"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "finished"}}) + "\n")
+        host = _Host()
+        runtime = CodexRuntime(config=RuntimeConfig(runtime="codex", revision=1, values={}), host=host, client=None)
+        runtime._session_reader._observed_threads[THREAD] = {"id": THREAD, "path": str(path)}
+        runtime._active_turn_ids["session"] = "finished"
+        await runtime._session_states.update("session", THREAD, "running", metadata={"source": "codex.ipc", "turn_id": "finished"})
+        state = await runtime.get_session_state("session", THREAD)
+        assert state.status == "idle"
+        assert runtime._session_states.get("session").status == "idle"
+        assert "session" not in runtime._active_turn_ids
+        stopped = await runtime.interrupt_session("session")
+        assert stopped.ok and stopped.result["alreadyStopped"]
+    asyncio.run(run())
+
+
 def test_runtime_routes_attached_sessions_through_ipc() -> None:
     async def run() -> None:
         host = _Host()
@@ -491,4 +644,85 @@ def test_runtime_routes_attached_sessions_through_ipc() -> None:
         with pytest.raises(RuntimeUnsupportedError):
             await runtime.start_turn("sess_other", "01a12048-c50d-7cb3-9de3-f0a61be677b8", "x")
 
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(("native_status", "outcome"), [
+    ("completed", "completed"), ("failed", "failed"),
+    ("interrupted", "interrupted"), ("inProgress", None),
+])
+def test_history_reconciliation_preserves_outcome_and_is_idempotent(native_status, outcome, monkeypatch):
+    from types import SimpleNamespace
+
+    from connector.runtimes.codex.sessions.history_index import NativeThreadActivity
+    from connector.runtimes.codex.sessions.reader import CodexSessionReader
+
+    async def run():
+        host = _Host()
+        runtime = CodexRuntime(config=RuntimeConfig(runtime="codex", revision=1, values={}), host=host, client=None)
+        runtime._active_turn_ids["session"] = "ended"
+        runtime._timeline.begin_turn(THREAD, "ended")
+        expected = await runtime._session_states.update("session", THREAD, "running",
+            metadata={"source": "codex.ipc", "turn_id": "ended"})
+        evidence = "terminal" if outcome is not None else "stale"
+
+        async def read_activity(self, external_id):
+            return NativeThreadActivity("idle", "ended", native_status, evidence)
+
+        with monkeypatch.context() as context:
+            context.setattr(CodexSessionReader, "_read_native_activity", read_activity)
+            await runtime.get_session_state("session", THREAD)
+            await runtime.get_session_state("session", THREAD)
+        if outcome is None:
+            assert runtime._session_states.get("session") is expected
+            assert runtime._active_turn_ids == {"session": "ended"}
+            assert host.turn_ends == []
+        else:
+            assert host.turn_ends == [{"session_id": "session", "turn_id": "ended", "outcome": outcome}]
+            assert "session" not in runtime._active_turn_ids
+            assert not runtime._timeline._active_turn_positions
+            # Delayed terminal/start notifications cannot revive or end it again.
+            lifecycle = runtime._notifications.turn_lifecycle
+            await lifecycle.handle_turn_completed("session", THREAD,
+                SimpleNamespace(turn_id="ended", params={}, event_type="turn/completed"))
+            await lifecycle.handle_turn_failed("session", THREAD,
+                SimpleNamespace(turn_id="ended", params={}, event_type="turn/failed"))
+            await lifecycle.handle_turn_started("session", THREAD,
+                SimpleNamespace(turn_id="ended", params={}, event_type="turn/started"))
+            await runtime._notifications.handle({"method": "item/started", "params": {
+                "threadId": THREAD, "turnId": "ended",
+                "item": {"id": "late-message", "type": "agentMessage", "text": "late content"},
+            }})
+            assert len(host.turn_ends) == 1
+            assert runtime._session_states.get("session").status == "idle"
+
+        # The reader captures its cache before awaiting the native history read.
+        # Start a newer turn during that await and return an older terminal fact.
+        async def read_with_new_turn(self, external_id):
+            runtime._active_turn_ids["session"] = "new-turn"
+            await runtime._session_states.update("session", THREAD, "running",
+                metadata={"source": "codex.turn/started", "turn_id": "new-turn"})
+            return NativeThreadActivity("idle", "ended", "completed", "terminal")
+
+        await runtime._session_states.update("session", THREAD, "running",
+            metadata={"source": "codex.turn/started", "turn_id": "ended"})
+        previous_ends = list(host.turn_ends)
+        with monkeypatch.context() as context:
+            context.setattr(CodexSessionReader, "_read_native_activity", read_with_new_turn)
+            current = await runtime.get_session_state("session", THREAD)
+        assert current.status == "running" and current.metadata["turn_id"] == "new-turn"
+        assert runtime._active_turn_ids == {"session": "new-turn"}
+        assert host.turn_ends == previous_ends
+
+        # A startup or unanswered interaction can retain the preceding turn ID.
+        for status in ("waiting", "waiting_approval", "blocked"):
+            expected = await runtime._session_states.update("session", THREAD, status,
+                metadata={"source": "codex.turn/start.requested", "turn_id": "ended"})
+            async def read_stale(self, external_id):
+                return NativeThreadActivity("idle", "ended", "inProgress", "stale")
+            with monkeypatch.context() as context:
+                context.setattr(CodexSessionReader, "_read_native_activity", read_stale)
+                assert await runtime.get_session_state("session", THREAD) is expected
+            assert runtime._active_turn_ids == {"session": "new-turn"}
+            assert host.turn_ends == previous_ends
     asyncio.run(run())

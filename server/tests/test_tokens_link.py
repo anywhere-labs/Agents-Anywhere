@@ -41,6 +41,8 @@ class FakeTokens:
         self.key_kept = True
         self.usage_query: dict[str, str] | None = None
         self.model_hosts: list[str] = []
+        self.embed_next: str | None = None
+        self.embed_url: str | None = None
 
     def _pair(self) -> httpx.Response:
         self.refresh_count += 1
@@ -113,6 +115,10 @@ class FakeTokens:
                  "cacheReadTokens": 0, "cacheWrite5mTokens": 0, "cacheWrite1hTokens": 0, "amountCharged": "0.0200",
                  "keyId": None, "keyName": None},
             ]})
+        if path == "/api/v1/oauth/embed-tickets":
+            self.embed_next = json.loads(request.content)["next"]
+            url = self.embed_url or f"{ISSUER}/embed/start/?origin=http%3A%2F%2Ftestserver#ticket=tk-1"
+            return httpx.Response(201, json={"url": url, "expiresAt": "2026-11-09T00:01:00Z"})
         key = {"id": "7", "prefix": self.secret[:8], "strategy": {"id": "1", "name": "Default"}}
         if path == "/api/v1/keys/managed":
             if not self.key_kept:
@@ -412,6 +418,33 @@ def test_account_shows_balance_and_console_pages(tokens):
     assert fake.usage_query == {"from": body["from"], "to": body["to"], "groupBy": "model"}
     assert body["items"][0]["amountCharged"] == "0.0200"
     assert "keyId" not in body["items"][0]
+
+
+def test_embed_ticket_opens_the_linked_console(tokens):
+    client, fake, _connector_id, headers = tokens
+
+    unlinked = client.post("/integrations/tokens/embed-ticket", headers=headers, json={})
+    _link(client, headers, fake)
+    ticket = client.post("/integrations/tokens/embed-ticket", headers=headers, json={})
+    usage = client.post("/integrations/tokens/embed-ticket", headers=headers, json={"next": "/console/usage/"})
+    outside = client.post("/integrations/tokens/embed-ticket", headers=headers, json={"next": "/oauth/authorize/"})
+
+    assert unlinked.status_code == 409, unlinked.text
+    assert unlinked.json()["detail"]["code"] == "tokens_not_linked"
+    assert ticket.status_code == 200, ticket.text
+    assert ticket.headers["cache-control"] == "no-store"
+    assert ticket.json()["url"].startswith(f"{ISSUER}/embed/start/")
+    assert ticket.json()["origin"] == ISSUER
+    # The access token stays on the server; only the single-use address goes out.
+    assert fake.access not in ticket.text
+    assert usage.status_code == 200, usage.text
+    assert fake.embed_next == "/console/usage/"
+    assert outside.status_code == 422, outside.text
+
+    # An address on another site is never handed to the iframe.
+    fake.embed_url = "https://elsewhere.test/embed/start/#ticket=tk-2"
+    foreign = client.post("/integrations/tokens/embed-ticket", headers=headers, json={})
+    assert foreign.status_code == 502, foreign.text
 
 
 def test_turned_off_and_renamed_models_reach_runtimes(tmp_path, server_secret):

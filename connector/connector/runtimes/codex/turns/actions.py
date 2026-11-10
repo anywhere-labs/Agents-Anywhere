@@ -12,6 +12,7 @@ from connector.runtime_protocol import (
     RuntimeSessionStateCache,
     RuntimeUnsupportedError,
     SessionSourceObservation,
+    SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
@@ -21,6 +22,9 @@ from connector.runtimes.codex.domain.pending_messages import (
 from connector.runtimes.codex.domain.selections import (
     model_settings_from_selection,
     permission_settings_from_selection,
+)
+from connector.runtimes.codex.notifications.turn_lifecycle import (
+    CodexTurnLifecycleHandler,
 )
 from connector.runtimes.codex.runtime_helpers import soft_codex_unavailable_reason
 from connector.runtimes.codex.sdk.runtime_client import (
@@ -50,6 +54,14 @@ class CodexTurnActions:
     pending_messages: PendingClientMessageRegistry
     list_model_catalog: Callable[[str | None, int], Awaitable[Any]] | None = None
     list_permission_catalog: Callable[[str | None, int], Awaitable[Any]] | None = None
+    turn_lifecycle: CodexTurnLifecycleHandler | None = None
+
+    async def reconcile_history_state(
+        self, state: SessionState | None, expected: SessionState | None,
+    ) -> SessionState | None:
+        if self.turn_lifecycle is None:
+            return state
+        return await self.turn_lifecycle.reconcile_history_state(state, expected)
 
     async def start_turn(
         self,

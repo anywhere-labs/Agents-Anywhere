@@ -71,6 +71,40 @@ def test_snapshot_replacement_waits_for_complete_capture_and_preserves_empty_sna
     asyncio.run(exercise())
 
 
+def test_snapshot_items_are_dated_by_their_event_time_not_by_the_sync_moment():
+    """#277: an untimed item is dated at ingest, so a first import sorted by sync order."""
+    async def exercise():
+        receiver = host()
+        relay = ready_relay(receiver)
+        try:
+            evented = {**item("evented"), "source": {"runtime": "dsh", "time": 1779096600000}}
+            odd_time = {**item("odd"), "source": {"runtime": "dsh", "time": "yesterday"}}
+            dated = {**item("dated"), "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-02T00:00:00Z",
+                     "source": {"runtime": "dsh", "time": 1779096600000}}
+            await begin_snapshot(relay, meta={"externalSessionId": "native", "lastActivityAt": "2026-05-20T15:00:00.000Z"})
+            await add_page(relay, [evented, item(), odd_time, dated])
+            await relay.commit_snapshot()
+            items = receiver.publish_runtime_notifications.call_args.args[1][1]["params"]["items"]
+            assert [(i["id"], i["createdAt"], i["updatedAt"]) for i in items] == [
+                # Each message keeps its own DSH event time.
+                ("evented", "2026-05-18T09:30:00.000Z", "2026-05-18T09:30:00.000Z"),
+                # Without one, the session's last activity is the best estimate.
+                ("one", "2026-05-20T15:00:00.000Z", "2026-05-20T15:00:00.000Z"),
+                ("odd", "2026-05-20T15:00:00.000Z", "2026-05-20T15:00:00.000Z"),
+                # Items that already carry a time keep it.
+                ("dated", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"),
+            ]
+            # Without any time there is nothing better than the backend's own stamp.
+            await begin_snapshot(relay, meta={"externalSessionId": "native"})
+            await add_page(relay, [item()])
+            await relay.commit_snapshot()
+            untimed = receiver.publish_runtime_notifications.call_args.args[1][1]["params"]["items"][0]
+            assert "createdAt" not in untimed and "updatedAt" not in untimed
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
 def test_snapshot_abort_foreign_items_and_duplicate_pages_do_not_publish_partial_history():
     async def exercise():
         receiver = host()
@@ -526,7 +560,11 @@ def test_reconnect_skips_a_runtime_that_is_not_running(monkeypatch):
         def unavailable(_runtime_id):
             raise RuntimeUnavailableError("runtime instance 'dsh' is not running (status='starting')")
 
-        supervisor = SimpleNamespace(runtimes={"dsh": object()}, resolve_runtime=unavailable)
+        supervisor = SimpleNamespace(
+            runtimes={"dsh": object()},
+            resolve_runtime=unavailable,
+            entry=lambda _runtime_id: SimpleNamespace(status="starting"),
+        )
         runner = RuntimeSyncRunner(None, supervisor, host(), dict, AsyncMock())
         await runner.reconnect_event_runtimes()
     asyncio.run(exercise())

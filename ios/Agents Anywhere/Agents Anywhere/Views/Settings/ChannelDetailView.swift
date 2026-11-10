@@ -20,7 +20,8 @@ struct ChannelDetailView: View {
     private var exists: Bool {
         guard let overview = model.overview else { return true }
         switch channelId {
-        case V2ModelChannel.native: return true
+        // Not listed: signing out of Tokens Anywhere switches back to it.
+        case V2ModelChannel.native: return false
         case V2ModelChannel.tokens: return overview.tokens?.available == true
         default: return profile != nil
         }
@@ -88,9 +89,6 @@ struct ChannelDetailView: View {
 
     @ViewBuilder private func content(_ overview: V2ModelConfigOverview) -> some View {
         switch channelId {
-        case V2ModelChannel.native:
-            applySection(String(localized: "pages.settings.modelConfigs.native.description"))
-            if !model.channelRows(channelId).isEmpty { runtimes(showsTitle: true) }
         case V2ModelChannel.tokens:
             if let tokens = overview.tokens {
                 TokensChannelDetail(model: model, tokens: tokens, linker: linker,
@@ -133,7 +131,7 @@ struct ChannelDetailView: View {
         } footer: {
             VStack(alignment: .leading, spacing: 4) {
                 Text(about)
-                if model.channel.map({ $0.channel != channelId }) == true {
+                if channelId != V2ModelChannel.tokens && model.channel.map({ $0.channel != channelId }) == true {
                     Text(String(localized: "pages.settings.modelConfigs.current.description"))
                 }
             }
@@ -149,7 +147,7 @@ struct ChannelDetailView: View {
                 } icon: {
                     AppSymbol("checkmark.circle", size: 16).foregroundStyle(.green)
                 }
-            } else {
+            } else if channelId != V2ModelChannel.tokens {
                 Button {
                     Task { await model.setChannel(channelId) }
                 } label: {

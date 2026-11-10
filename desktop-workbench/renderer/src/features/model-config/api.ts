@@ -18,6 +18,9 @@ export type TokensAccount = {
   links: { console: string; billing: string; usage: string };
 };
 
+/** A single-use address that opens the linked console in an iframe; only `origin` may message the page. */
+export type TokensEmbedTicket = { url: string; origin: string; expiresAt: string | null };
+
 export type TokensUsageItem = {
   date: string;
   model: string | null;
@@ -124,6 +127,11 @@ export class ModelConfigApi {
   /** The linked account, its balance and its console pages. */
   tokensAccount(token: string): Promise<TokensAccount> {
     return this.client.get<TokensAccount>("/integrations/tokens/account", { token });
+  }
+
+  /** Opens `next` (a console page) in the embedded console without signing in. */
+  tokensEmbedTicket(token: string, next?: string): Promise<TokensEmbedTicket> {
+    return this.client.post<TokensEmbedTicket>("/integrations/tokens/embed-ticket", next ? { next } : {}, { token });
   }
 
   /** The whole Tokens account's settled usage over the last `days` Beijing days. */

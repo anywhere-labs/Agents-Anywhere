@@ -36,6 +36,8 @@ class CodexTimelineActivityHandler:
         thread_id: str,
         event: CodexSdkEvent,
         item: RuntimeTimelineItem,
+        *,
+        track_activity: bool = True,
     ) -> None:
         """Publish item activity timeline and running state.
 
@@ -45,6 +47,11 @@ class CodexTimelineActivityHandler:
         - upserts one RuntimeTimelineItem through the host
         """
 
+        if not track_activity:
+            # Preserve queued SDK content after history has finished its turn,
+            # without reviving that turn's activity or overwriting a newer one.
+            await self.host.timeline_item_upsert(item)
+            return
         turn_id = event.turn_id or self.active_turn_ids.get(session_id)
         if event.is_running_item_event and turn_id is not None:
             self.active_turn_ids[session_id] = turn_id

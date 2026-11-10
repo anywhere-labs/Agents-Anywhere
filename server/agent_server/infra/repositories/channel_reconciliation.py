@@ -15,6 +15,7 @@ from typing import Any
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from agent_server.core.model_channel import managed_channel_runtime_id
 from agent_server.core.utc import utc_now
 from agent_server.infra.db.engine import closing_connection
 from agent_server.infra.db.schema import (
@@ -23,6 +24,7 @@ from agent_server.infra.db.schema import (
     channel_rotation_intents,
     channel_sync_outbox,
     connectors,
+    device_runtimes,
     model_profiles,
     runtime_channel_switches,
     runtime_channel_sync,
@@ -120,6 +122,22 @@ class ChannelReconciliationRepositoryMixin:
                 ("tokens" if p["source"] == "tokens" else p["id"]): p for p in profiles
             }
             rows = await self.list_user_device_runtimes(user_id=user_id)
+            # Older stored managed instances may have lost their owner marker.
+            # Their reserved ID still identifies the logical runtime they serve;
+            # do not schedule a second switch against the same physical instance.
+            managed_ids = {
+                (row["connectorId"], managed_channel_runtime_id(row["connectorId"], row["runtimeId"]), row["runtimeType"])
+                for row in rows
+                if row.get("managedBy") != "model-config" and not row["runtimeId"].startswith("rti_channel_")
+            }
+            for row in rows:
+                if (row["connectorId"], row["runtimeId"], row["runtimeType"]) in managed_ids and row.get("managedBy") is None:
+                    await conn.execute(update(device_runtimes).where(
+                        device_runtimes.c.connector_id == row["connectorId"],
+                        device_runtimes.c.runtime_id == row["runtimeId"],
+                        device_runtimes.c.managed_by.is_(None),
+                    ).values(managed_by="model-config"))
+                    row["managedBy"] = "model-config"
             changed_devices = set()
             for runtime in sorted(
                 rows, key=lambda x: (x["connectorId"], x["runtimeId"])
