@@ -35,7 +35,7 @@ def timeline_item_type_from_raw_type(value: str) -> str:
         "unknown",
     }:
         return "system"
-    if value in {"contextCompaction", "ImageViewThreadItem"}:
+    if value == "contextCompaction":
         return "marker"
     if value in {
         "commandExecution",
@@ -54,7 +54,7 @@ def timeline_item_type_from_raw_type(value: str) -> str:
         "toolResult",
     }:
         return "tool"
-    if value in {"fileChange", "file_change"}:
+    if value in {"fileChange", "file_change", "imageView"}:
         return "artifact"
     return "system"
 
@@ -75,6 +75,10 @@ def timeline_item_status_from_value(value: str | None) -> str:
 
 def timeline_raw_type(raw: Mapping[str, Any]) -> str:
     value = raw.get("type") or raw.get("kind")
+    # The typed SDK projects PlanThreadItem as systemMessage, including its
+    # lane identity. Raw history must use the same platform projection.
+    if value == "plan":
+        return "systemMessage"
     return value if isinstance(value, str) and value else "unknown"
 
 
@@ -87,7 +91,7 @@ def timeline_item_role(raw: Mapping[str, Any]) -> str | None:
     value = raw.get("role")
     if isinstance(value, str) and value:
         return value
-    raw_type = raw.get("type")
+    raw_type = timeline_raw_type(raw)
     return timeline_item_role_from_values(
         raw_type=raw_type if isinstance(raw_type, str) else "unknown",
         role=None,
@@ -114,6 +118,10 @@ def timeline_item_role_from_values(raw_type: str, role: str | None) -> str | Non
         return "assistant"
     if raw_type in {
         "commandExecution",
+        "webSearch",
+        "mcpToolCall",
+        "dynamicToolCall",
+        "collabAgentToolCall",
         "SubAgentActivityThreadItem",
         "subAgentActivity",
         "function_call",

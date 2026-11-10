@@ -50,6 +50,7 @@ class CodexStartTurnRequest:
     approvals_reviewer: str | None = None
     sandbox: str | None = None
     attachments: tuple[CodexTurnInputAttachment, ...] = ()
+    collaboration_mode: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +136,13 @@ class CodexRuntimeClient(Protocol):
         thread_id: str,
         include_turns: bool = True,
     ) -> CodexThreadReadResult: ...
+    def thread_loaded(self, thread_id: str) -> bool: ...
+    async def update_thread_settings(
+        self, thread_id: str, settings: Mapping[str, Any]
+    ) -> bool: ...
+    async def update_turn_settings(
+        self, thread_id: str, turn_id: str, settings: Mapping[str, Any]
+    ) -> bool: ...
     async def list_thread_turns(self, thread_id: str) -> CodexThreadTurnsResult: ...
     async def start_thread(
         self, request: CodexStartThreadRequest

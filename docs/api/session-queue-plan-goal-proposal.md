@@ -1,7 +1,11 @@
 # 会话接口 2.2 提案：消息队列、计划、目标（参考 ACP）
 
+> Goal 的当前实现以 [统一目标模式](goals.md)为准。本提案中的 DSH 范围、迁移编号、模型自主创建目标和前端命令设想不代表当前行为。
+
 > 状态：提案（2026-10-12）。本文档描述设计，不代表已实现；实现前需与 `contracts/` 和源码核对。
 > 讨论范围：发送消息队列（含"打断并发送"，取代原生 steer）、goal 的表达与呈现、plan 模式与计划审阅的表达与呈现。
+>
+> Plan 专项更新（2026-10-30）：实际功能见[统一 Plan 使用与 API](planning.md)；[AA 统一原生 Plan 完整实施计划](../runtime-protocol/unified-plan-implementation-plan.md)接续本文第 2 节，补全三家原生输入输出、领域分层、流式卡片、持久阅读和执行确认。第 2 节及本文其他位置涉及 Plan 的旧假设仅作历史参考；队列和 Goal 设计范围不因该专项计划改变。
 
 ## 0. 为什么参考 ACP，借什么
 
@@ -128,6 +132,8 @@ Codex 桌面 / IDE 有自己的 queued follow-ups（IPC 里的 `thread-queued-fo
 - 排队消息显示在输入框上方（和 Codex App 一样），每条可编辑、拖动重排、立即发送（= 打断并发送）、删除；失败项红色并给"重试 / 删除"。
 
 ## 2. 计划（plan）
+
+本节已由[统一原生 Plan 专项实施计划](../runtime-protocol/unified-plan-implementation-plan.md)接续，不再作为 Plan 的当前实施依据。
 
 "plan" 实际上是三件事，必须拆开：
 

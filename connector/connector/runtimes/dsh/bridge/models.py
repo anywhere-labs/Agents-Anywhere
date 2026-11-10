@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any, cast
 
 from connector.core.unicode import replace_lone_surrogates
@@ -10,6 +11,7 @@ from connector.runtime_protocol import (
     RuntimeCommand,
     RuntimeCommandResult,
     RuntimeModelCatalog,
+    RuntimeModelGroup,
     RuntimeModelItem,
     RuntimePermissionCatalog,
     RuntimePermissionItem,
@@ -123,7 +125,48 @@ def model_catalog(value: Any) -> RuntimeModelCatalog:
     return RuntimeModelCatalog(
         runtime=_runtime(data),
         revision=_revision(data.get("revision")),
-        models=tuple(models),
+        models=_grouped_by_provider(models),
+    )
+
+
+def _grouped_by_provider(models: list[RuntimeModelItem]) -> tuple[RuntimeModelItem, ...]:
+    """Group each model under the DSH provider (channel or relay) that routes it.
+
+    Every Bridge since configuration support reports ``provider`` and
+    ``providerName`` in model metadata. Two providers sharing a display name
+    keep their IDs visible, matching the Bridge's model title rule. Under a
+    group header the row drops the provider the Bridge appends to colliding
+    names; two IDs sharing a name inside one provider keep their ``[model]``.
+    """
+
+    names: dict[str, str] = {}
+    for model in models:
+        provider = _optional_string(model.metadata.get("provider"))
+        if provider and provider not in names:
+            names[provider] = _optional_string(model.metadata.get("providerName")) or provider
+    shared = {name for name in names.values() if list(names.values()).count(name) > 1}
+
+    def item_title(model: RuntimeModelItem, provider: str) -> str | None:
+        name = _optional_string(model.metadata.get("modelName"))
+        if name is None:
+            return None
+        model_id = model.metadata.get("model")
+        twins = any(
+            other.metadata.get("provider") == provider and other.metadata.get("modelName") == name
+            and other.metadata.get("model") != model_id
+            for other in models
+        )
+        return f"{name} [{model_id}]" if twins else name
+
+    return tuple(
+        replace(model, group=RuntimeModelGroup(
+            id=provider,
+            title=f"{names[provider]} / {provider}" if names[provider] in shared else names[provider],
+            item_title=item_title(model, provider),
+        ))
+        if (provider := _optional_string(model.metadata.get("provider")))
+        else model
+        for model in models
     )
 
 

@@ -17,6 +17,7 @@ from connector.runtimes.codex.ipc import (
     FrameDecoder,
     IpcBroadcast,
     IpcFrameError,
+    IpcNotConnectedError,
     IpcRequest,
     IpcRouter,
     accepts_version,
@@ -236,6 +237,113 @@ def test_requests_are_routed_through_discovery() -> None:
 
             for client in (owner, other, asker):
                 await client.stop()
+            await router.close()
+
+    asyncio.run(run())
+
+
+def test_pending_discovery_does_not_stall_other_clients() -> None:
+    # Codex Desktop asks for IDE context (which nobody handles) whenever a
+    # client connects, so its request can be in discovery right when another
+    # client asks who owns a Desktop thread. Each client's discovery answer then
+    # sits behind its own request; a router that stops reading a client while
+    # its request is in discovery leaves both waiting for the timeout.
+    async def run() -> None:
+        with _SocketDir() as home:
+            router = IpcRouter(discovery_timeout=5.0)
+            path = home / "ipc.sock"
+            await router.listen(path)
+            desktop = _client(home, socket_path=path, allow_router=False, client_type="desktop")
+            asker = _client(home, socket_path=path, allow_router=False, client_type="asker")
+            asked = asyncio.Event()
+
+            async def owns(params: Any, request: IpcRequest) -> bool:
+                return params.get("conversationId") == "owned"
+
+            async def answer_after_asking(params: Any, request: IpcRequest) -> bool:
+                await asked.wait()
+                return False
+
+            async def handle(request: IpcRequest) -> Any:
+                return {"supportsUntrustedAppInput": True}
+
+            desktop.add_request_handler("thread-owner-discovery", owns, handle)
+            asker.add_request_handler("ide-context", answer_after_asking, handle)
+            for client in (desktop, asker):
+                await client.start()
+                await client.wait_until_initialized(timeout=2)
+
+            ide_context = asyncio.create_task(
+                desktop.request("ide-context", {"workspaceRoot": "/w"}, timeout_ms=8000)
+            )
+            await asyncio.sleep(0)
+            owner = asyncio.create_task(
+                asker.request(
+                    "thread-owner-discovery",
+                    {"hostId": "local", "conversationId": "owned"},
+                    timeout_ms=8000,
+                )
+            )
+            await asyncio.sleep(0)
+            # Both requests are on the wire before either discovery answer.
+            asked.set()
+
+            found = await asyncio.wait_for(owner, timeout=2)
+            assert found.ok and found.handled_by_client_id == desktop.client_id
+            unhandled = await asyncio.wait_for(ide_context, timeout=2)
+            assert unhandled.error == "no-client-found"
+
+            for client in (desktop, asker):
+                await client.stop()
+            await router.close()
+
+    asyncio.run(run())
+
+
+def test_request_is_dropped_when_its_sender_leaves_during_discovery() -> None:
+    async def run() -> None:
+        with _SocketDir() as home:
+            router = IpcRouter(discovery_timeout=5.0)
+            path = home / "ipc.sock"
+            await router.listen(path)
+            owner = _client(home, socket_path=path, allow_router=False, client_type="owner")
+            asker = _client(home, socket_path=path, allow_router=False, client_type="asker")
+            release = asyncio.Event()
+            asked = asyncio.Event()
+            handled: list[IpcRequest] = []
+
+            async def can_handle(params: Any, request: IpcRequest) -> bool:
+                asked.set()
+                await release.wait()
+                return True
+
+            async def handle(request: IpcRequest) -> Any:
+                handled.append(request)
+                return {"supportsUntrustedAppInput": True}
+
+            owner.add_request_handler("thread-owner-discovery", can_handle, handle)
+            for client in (owner, asker):
+                await client.start()
+                await client.wait_until_initialized(timeout=2)
+
+            pending = asyncio.create_task(
+                asker.request(
+                    "thread-owner-discovery",
+                    {"hostId": "local", "conversationId": "owned"},
+                    timeout_ms=8000,
+                )
+            )
+            await asyncio.wait_for(asked.wait(), timeout=2)
+            await asker.stop()
+            with pytest.raises(IpcNotConnectedError):
+                await pending
+            await _settle()
+            release.set()
+            await _settle()
+
+            # Nobody is left to receive the response, so the owner never runs it.
+            assert handled == []
+            await owner.stop()
             await router.close()
 
     asyncio.run(run())

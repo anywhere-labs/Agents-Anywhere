@@ -3,8 +3,6 @@
 import * as React from "react"
 import {
   ArrowLeft,
-  Check,
-  Copy,
   ExternalLink,
   Hash,
   KeyRound,
@@ -41,11 +39,10 @@ import {
 import { Input } from "@/components/ui/input"
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
+import { SourceCodeBlock } from "@/components/source-code-block"
 import { dashboardApi } from "@/features/dashboard/api"
 import { preparePairingCredential, type PairingCredential } from "@/features/dashboard/pairing-credential"
 import type { ConnectorCreateResponse, ConnectorRevokeResponse } from "@/features/dashboard/types"
-import { copyText } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 
 const ADJECTIVES = [
@@ -117,54 +114,7 @@ function shellQuote(value: string): string {
 }
 
 function CodeBlock({ code, copyLabel }: { code: string; copyLabel: string }) {
-  const t = useTranslations("dashboard.pairDevice")
-  const tCommon = useTranslations("common")
-  const [copied, setCopied] = React.useState(false)
-  const [copying, setCopying] = React.useState(false)
-  const containerRef = React.useRef<HTMLDivElement>(null)
-  const resetTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  React.useEffect(() => () => {
-    if (resetTimerRef.current !== null) clearTimeout(resetTimerRef.current)
-  }, [])
-
-  const copy = async () => {
-    if (copying) return
-    if (resetTimerRef.current !== null) clearTimeout(resetTimerRef.current)
-    setCopied(false)
-    setCopying(true)
-    try {
-      await copyText(code, containerRef.current ?? undefined)
-      setCopied(true)
-      resetTimerRef.current = setTimeout(() => setCopied(false), 2000)
-    } catch {
-      toast.error(t("errors.copyFailed"))
-    } finally {
-      setCopying(false)
-    }
-  }
-
-  return (
-    <div ref={containerRef} className="grid rounded-lg border border-border bg-muted/40" style={{ gridTemplateColumns: "1fr auto" }}>
-      <ScrollArea className="min-w-0">
-        <div className="px-4 py-3">
-          <code className="block whitespace-pre code-mono text-xs text-foreground">{code}</code>
-        </div>
-        <ScrollBar orientation="horizontal" />
-      </ScrollArea>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        onClick={copy}
-        disabled={copying}
-        aria-label={copied ? tCommon("copied") : copyLabel}
-        className="m-2 self-center text-muted-foreground"
-      >
-        {copying ? <Loader2 className="animate-spin" /> : copied ? <Check /> : <Copy />}
-      </Button>
-    </div>
-  )
+  return <SourceCodeBlock code={code} copyLabel={copyLabel} presentation="pairing" />
 }
 
 function PollingIndicator({ label }: { label: string }) {

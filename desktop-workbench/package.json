@@ -2,7 +2,7 @@
   "name": "agents-anywhere-desktop-workbench",
   "productName": "Agents Anywhere",
   "private": true,
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "Electron shell for the Agents Anywhere web workbench",
   "packageManager": "yarn@4.6.0",
   "workspaces": [
@@ -33,8 +33,8 @@
   "devDependencies": {
     "@types/node": "^24.10.2",
     "@types/ws": "8.18.1",
-    "electron": "^39.2.7",
-    "electron-builder": "^26.0.12",
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0",
     "proxy-agent": "^8.0.2",
     "typescript": "^6.0.3"
   },

@@ -12,9 +12,9 @@ const code = ts.transpileModule(declarations.join("\n"), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React },
 }).outputText
 
-function fixture(initial, api, { connector, copyText = async () => {} } = {}) {
+function fixture(initial, api, { connector, environment, copyText = async () => {} } = {}) {
   // useState slots in call order: state, busy, copied.
-  const slots = [initial, false, false]
+  const slots = [initial, false, false, null, null, false]
   let index = 0, effect, cleanup
   const elements = []
   const globals = {
@@ -22,7 +22,7 @@ function fixture(initial, api, { connector, copyText = async () => {} } = {}) {
     useState: () => { const slot = index++; return [slots[slot], value => { slots[slot] = value }] },
     useEffect: callback => { effect = callback },
     useTranslations: () => key => key,
-    getDesktopWorkbenchBridge: () => api ? { ownership: api, connector } : null,
+    getDesktopWorkbenchBridge: () => api ? { ownership: api, connector, environment } : null,
     copyText,
     // Errors thrown by the fixture's bridge come from this realm.
     Error,
@@ -178,3 +178,33 @@ test("a conflict with detail quotes the occupying owner info and offers copying 
   assert.equal(opened.length, 1)
 })
 
+
+const environmentState = (status, extra = {}) => ({ status, phase: status === "preparing" ? "downloading" : status, message: "latest output", ...extra })
+test("environment progress shows current package, inactivity, logs and an independent cancel action", async () => {
+  let notify, cancel = 0
+  const h = fixture({ status: "checking" }, { getState: async () => ({ status: "checking" }), onState: () => () => {} }, {
+    environment: { getState: async () => environmentState("checking"), onState: cb => { notify = cb; return () => {} }, cancel: async () => { cancel++; return environmentState("cancelled") } },
+    connector: { openLogsFolder: async () => "" },
+  })
+  h.render(); h.mount(); await settle()
+  notify(environmentState("preparing", { stalled: true, progress: { package: "openai-codex-cli-bin", totalBytes: 119 * 1024 ** 2 } }))
+  h.render()
+  assert.ok(h.elements.some(e => e.children.includes("stalled")))
+  assert.ok(h.elements.some(e => e.children.includes("openai-codex-cli-bin")))
+  assert.deepEqual(labels(h), ["copyOutput", "openLogs", "quit", "cancel"])
+  h.elements.find(e => e.type === "Button" && e.children.includes("cancel")).props.onClick()
+  await settle(); h.render()
+  assert.equal(cancel, 1)
+  assert.ok(h.elements.some(e => e.type === "AlertDialogTitle" && e.children.includes("cancelled")))
+})
+test("a late environment GET cannot overwrite a newer failed event; ownership remains separate", async () => {
+  let notify, resolve
+  const h = fixture({ status: "checking" }, { getState: async () => ({ status: "checking" }), onState: () => () => {} }, {
+    environment: { getState: () => new Promise(done => { resolve = done }), onState: cb => { notify = cb; return () => {} } },
+  })
+  h.render(); h.mount()
+  notify(environmentState("failed", { error: { kind: "permission", message: "permission denied" } }))
+  resolve(environmentState("ready")); await settle(); h.render()
+  assert.ok(h.elements.some(e => e.children.includes("environmentError.permission")))
+  assert.equal(h.state.status, "checking")
+})

@@ -21,7 +21,7 @@ class AuthSessionStore(context: Context) : AuthSessionReader, MobileAuthSessionS
         return preferences.getString(KEY_ACCESS_TOKEN, "").orEmpty()
     }
 
-    fun readUserId(): String {
+    override fun readUserId(): String {
         return preferences.getString(KEY_USER_ID, "").orEmpty()
     }
 
@@ -139,6 +139,7 @@ class AuthSessionStore(context: Context) : AuthSessionReader, MobileAuthSessionS
 }
 
 interface AuthSessionReader {
+    fun readUserId(): String = ""
     fun readServerUrl(): String
 
     fun readAccessToken(): String

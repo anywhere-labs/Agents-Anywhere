@@ -5,7 +5,10 @@ from dataclasses import replace
 from typing import Any
 
 from connector.runtime_protocol import SessionNotice
-from connector.runtimes.codex.domain.input_requests import is_input_request_context
+from connector.runtimes.codex.domain.input_requests import (
+    is_async_input_request_context,
+    is_input_request_context,
+)
 
 
 class _Unchanged:
@@ -85,6 +88,10 @@ class CodexNoticeRegistry:
         closed: list[SessionNotice] = []
         for notice in self.current_for_session(session_id):
             if notice.status not in {"open", "responding"}:
+                continue
+            # Async questionnaires remain answerable after their originating
+            # turn ends; they are answered by steering or starting another turn.
+            if is_async_input_request_context(notice.context):
                 continue
             is_questionnaire = is_input_request_context(notice.context)
             if notice.blocking is None and not is_questionnaire:

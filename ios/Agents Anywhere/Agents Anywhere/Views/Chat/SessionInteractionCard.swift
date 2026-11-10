@@ -65,15 +65,7 @@ struct SessionInteractionCard: View {
         }
     }
 
-    private var title: String {
-        switch item.notice.title {
-        case "Codex wants to run a command": String(localized: "Codex 请求执行命令")
-        case "Codex wants to edit files": String(localized: "Codex 请求修改文件")
-        case "Codex requests additional permissions": String(localized: "Codex 请求额外权限")
-        case "Claude wants to use a tool": String(localized: "Claude 请求使用工具")
-        default: item.notice.title
-        }
-    }
+    private var title: String { item.notice.displayTitle }
     private var summary: String {
         if let message = item.notice.message, !message.isEmpty { return message }
         if let question = item.form?.questions.first { return question.prompt }

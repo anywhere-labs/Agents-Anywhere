@@ -17,7 +17,7 @@
 
 <p align="center">
   <a href="docs/releases/2.0.3.md"><img src="https://img.shields.io/badge/release-2.0.3-222222?style=flat" alt="Release 2.0.3"></a>
-  <a href="#开源许可"><img src="https://img.shields.io/badge/license-MIT-222222?style=flat" alt="MIT"></a>
+  <a href="#开源许可"><img src="https://img.shields.io/badge/license-Apache--2.0-222222?style=flat" alt="Apache-2.0"></a>
   <a href="docker/README.md"><img src="https://img.shields.io/badge/self--hosted-Docker-222222?style=flat" alt="Self-host with Docker"></a>
 </p>
 
@@ -43,13 +43,13 @@
 <details>
 <summary>平台要求、安装包与更新说明</summary>
 
-- macOS：Apple Silicon / Intel 通用，已签名、公证；需要 macOS 12 及以上。
+- macOS：Apple Silicon / Intel 通用，已签名、公证；需要 macOS 13 及以上。
 - Windows：x64 桌面工作台，含本机 Connector；当前安装包未做代码签名。
 - Android：Android 8.0 及以上。
 - iOS / iPadOS：在 App Store 下载安装；也可以通过 TestFlight 安装测试版，以邀请页显示的可用状态为准。
 - Linux / headless：运行 Connector 接入工作设备，通过其他客户端操作。
 
-macOS、Windows 和 Android 的下载文件均为 **Agents Anywhere** 安装包，托管在 ModelScope 的 `t4wefan/deepseek-harness-desktop` 仓库中，同样的文件也发布在 GitHub 的 [v2.0.3 Release](https://github.com/anywhere-labs/Agents-Anywhere/releases/tag/v2.0.3)。历史 GitHub Releases 中的 0.1.x 安装包不作为 2.0 下载入口。当前发布客户端的应用内更新地址仍是占位配置，请通过上面的链接手动下载。
+macOS、Windows 和 Android 的下载文件均为 **Agents Anywhere** 安装包，托管在 ModelScope 的 `t4wefan/deepseek-harness-desktop` 仓库中，同样的文件也发布在 GitHub 的 [v2.0.3 Release](https://github.com/anywhere-labs/Agents-Anywhere/releases/tag/v2.0.3)。历史 GitHub Releases 中的 0.1.x 安装包不作为 2.0 下载入口。2.0.3 及更早版本的应用内更新地址是占位配置，请通过上面的链接手动下载；从 2.1.0 起，Desktop（macOS、Windows）和 Android 的「立即更新」会从官网下载最新安装包。
 
 `main` 是当前开发主线。源码中的新修复不一定已进入上面的 2.0.3 安装包；各端的 PATCH 版本独立发布，数据库 schema revision 单独编号，见[版本号规则](docs/versioning.md)。发布范围见 [2.0.3 发布说明](docs/releases/2.0.3.md)。
 
@@ -160,4 +160,4 @@ docker compose -f docker/docker-compose.postgres.yml up --build
 
 ## 开源许可
 
-MIT。README 中的产品截图与品牌素材说明见[图片来源与复现方式](docs/readme-artwork/README.md)。
+本项目以 [Apache License 2.0](LICENSE) 发布，此前以 MIT 声明发布的代码，其声明保留在 [NOTICE](NOTICE) 中。提交贡献即表示你同意以相同许可证授权你的贡献。仓库内的第三方代码与素材遵循各自的许可和条款；README 中的产品截图与品牌素材说明见[图片来源与复现方式](docs/readme-artwork/README.md)。

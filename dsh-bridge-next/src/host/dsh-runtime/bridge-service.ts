@@ -31,16 +31,33 @@ const BRIDGE_VERSION = packageVersion('@agents-anywhere/dsh-bridge-next/package.
 
 type Payload = Record<string, unknown>
 // 2.0 keeps the 1.0 payload shapes (contracts/dsh-bridge/1.0); per-field schemas are a later revision.
-const payload = z.looseObject({}).meta({ id: 'BridgePayload' })
-const syncRequest = z.object({
-  subscriptionId: z.string().min(1).max(128),
-  checkpointVersion: z.int().optional(),
-}).meta({ id: 'BridgeSyncRequest' })
-const syncEvent = z.object({
-  kind: z.literal('subscribed'),
-  projectionVersion: z.int(),
-  checkpointVersion: z.int().optional(),
-}).meta({ id: 'BridgeSyncEvent' })
+const REGISTERED_SCHEMAS = Symbol.for('agents-anywhere.dsh-bridge.registered-schemas')
+const { payload, syncRequest, syncEvent } = registerSchemas()
+
+/**
+ * Named schemas live in zod's process-wide registry, and DSH imports this module
+ * again when the plugin is reloaded. Some zod versions refuse a repeated id, which
+ * would leave the plugin unable to load until DSH restarts, so a new import first
+ * takes back what the previous one registered.
+ */
+function registerSchemas() {
+  const shared = globalThis as { [REGISTERED_SCHEMAS]?: z.ZodType[] }
+  for (const schema of shared[REGISTERED_SCHEMAS] ?? []) z.globalRegistry.remove(schema)
+  const schemas = {
+    payload: z.looseObject({}).meta({ id: 'BridgePayload' }),
+    syncRequest: z.object({
+      subscriptionId: z.string().min(1).max(128),
+      checkpointVersion: z.int().optional(),
+    }).meta({ id: 'BridgeSyncRequest' }),
+    syncEvent: z.object({
+      kind: z.literal('subscribed'),
+      projectionVersion: z.int(),
+      checkpointVersion: z.int().optional(),
+    }).meta({ id: 'BridgeSyncEvent' }),
+  }
+  shared[REGISTERED_SCHEMAS] = Object.values(schemas)
+  return schemas
+}
 
 /** A plugin error as a MeshCall application error: the code is the 1.0 error name. */
 export function bridgeFailure(error: unknown): MeshCallError {
@@ -115,6 +132,12 @@ export class BridgeService {
 
   @query({ description: 'One page of a session timeline snapshot.', request: payload, response: payload, inject: [callScope] })
   async getSessionSnapshot(request: Payload, call: CallScope, context: RpcContext): Promise<Payload> { return this.forward('getSessionSnapshot', request, call, context) }
+
+  @query({ description: 'Native planning state.', request: payload, response: payload, inject: [callScope] })
+  async getPlanning(request: Payload, call: CallScope, context: RpcContext): Promise<Payload> { return this.forward('getPlanning', request, call, context) }
+
+  @mutates({ description: 'Select native planning mode.', request: payload, response: payload, inject: [callScope] })
+  async setPlanning(request: Payload, call: CallScope, context: RpcContext): Promise<Payload> { return this.forward('setPlanning', request, call, context) }
 
   @query({ description: 'Status, selections and source state of a session.', request: payload, response: payload, inject: [callScope] })
   async getSessionState(request: Payload, call: CallScope, context: RpcContext): Promise<Payload> { return this.forward('getSessionState', request, call, context) }

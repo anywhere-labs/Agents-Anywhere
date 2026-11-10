@@ -190,6 +190,12 @@ class _Host(RuntimeHostClient):
     async def session_meta_upsert(self, *a, **k):
         pass
 
+    async def publish_runtime_notifications(self, runtime, notifications, runtime_id=None, on_progress=None):
+        for notification in notifications:
+            if notification["method"] == "session.meta.upsert":
+                params = notification["params"]
+                await self.session_meta_upsert(params["sessionId"], runtime, external_session_id=params.get("externalSessionId"), title=params.get("title"), cwd=params.get("cwd"), ordering_time=params.get("orderingTime"), metadata=params.get("metadata"))
+
     async def session_state_update(self, session_id, runtime, status=None, selections=None, external_session_id=None, status_reason=None, error=None, metadata=None):
         self.states.append({"session_id": session_id, "status": status, "selections": dict(selections or {}), "metadata": dict(metadata or {})})
 
@@ -355,13 +361,20 @@ def test_controller_pushes_selection_changes_to_owner() -> None:
             assert result.ok and result.result["applied"] is True
             sent = owner.updates[-1]
             assert sent["conversationId"] == THREAD and sent["activeTurnId"] is None
-            assert sent["threadSettings"]["model"] == "gpt-5.5"
-            assert sent["threadSettings"]["effort"] == "medium"
-            assert sent["threadSettings"]["approvalPolicy"] == "on-request"
-            assert sent["threadSettings"]["sandboxPolicy"]["type"] == "workspaceWrite"
-            assert sent["threadSettings"]["sandboxPolicy"]["writableRoots"] == ["/tmp/project"]
-            assert sent["threadSettings"]["activePermissionProfile"]["id"] == ":workspace"
+            # Only the changes, with the permission by profile name: the owner's
+            # own sandboxPolicy would clear its activePermissionProfile.
+            assert sent["threadSettings"] == {
+                "model": "gpt-5.5",
+                "effort": "medium",
+                "permissions": ":workspace",
+                "approvalPolicy": "on-request",
+                "approvalsReviewer": "user",
+            }
+            local = follower.get(THREAD).state["latestThreadSettings"]
+            assert local["sandboxPolicy"]["writableRoots"] == ["/tmp/project"]
+            assert local["activePermissionProfile"]["id"] == ":workspace"
             assert host.states[-1]["selections"]["model"] == _selection("gpt-5.5", "medium")
+            assert host.states[-1]["metadata"]["pendingSelectionScopes"] == []
 
             bad = await controller.update_selections("sess_1", thread, {"model": "nope"})
             assert not bad.ok and bad.code == "codex_invalid_selection"
@@ -449,6 +462,17 @@ def test_owner_snapshot_reflects_selections_and_accepts_window_settings() -> Non
         response = await owner._handle_follower(request)
         assert response["applied"] is True
         assert applied[-1][2] == {"model": _selection("gpt-6.1-sol", "high"), "permission": _permission("full_access")}
+
+        # Codex Desktop may send nothing but the profile name.
+        named = IpcRequest(
+            request_id="r2",
+            method="thread-follower-update-thread-settings",
+            params={"conversationId": THREAD, "threadSettings": {"permissions": ":danger-full-access"}},
+            version=2,
+        )
+        response = await owner._handle_follower(named)
+        assert response["applied"] is True
+        assert applied[-1][2] == {"permission": _permission("full_access")}
 
     asyncio.run(run())
 

@@ -11,10 +11,12 @@ const SETTINGS: DesktopSettings = {
   startConnectorOnLaunch: true,
   silentLaunch: true,
   notificationsEnabled: true,
+  confirmQuitOnShutdown: false,
   uvPath: "",
   pythonPath: "",
   uvPypiIndexUrl: "",
   uvPythonInstallMirror: "",
+  connectorProxy: "",
   logChunkSizeKb: 512,
   logRetainChunks: 20,
   logRetentionDays: 14,
@@ -40,6 +42,10 @@ class FakeState {
   emit(event: string, data: unknown): void {
     for (const listener of this.listeners.get(event) ?? []) listener(data);
   }
+
+  environmentState() { return { status: "unknown", phase: "checking" }; }
+  prepareEnvironment() { return { status: "ready", phase: "ready" }; }
+  cancelEnvironment() { return { status: "cancelled", phase: "cancelled" }; }
 
   ownershipState(): OwnershipState {
     return this.ownership;
@@ -180,19 +186,20 @@ test("the event stream sends the current snapshot and then batched log events", 
 
     await readFrame();
     await readFrame();
+    await readFrame();
     // Before the first probe answers, a subscriber learns that it is still checking.
-    assert.deepEqual(frames.map((frame) => frame.event), ["ownership", "settings"]);
-    assert.deepEqual(frames[0]?.data, { status: "checking" });
+    assert.deepEqual(frames.map((frame) => frame.event), ["environment", "ownership", "settings"]);
+    assert.deepEqual(frames[0]?.data, { status: "unknown", phase: "checking" });
 
     state.emit("ownership", { status: "owned" });
     await readFrame();
-    assert.equal(frames[2]?.event, "ownership");
-    assert.deepEqual(frames[2]?.data, { status: "owned" });
+    assert.equal(frames[3]?.event, "ownership");
+    assert.deepEqual(frames[3]?.data, { status: "owned" });
 
     state.emit("logs", [{ seq: 1, level: "INFO", message: "one", time: "2026-01-01T00:00:00.000Z" }]);
     await readFrame();
-    assert.equal(frames[3]?.event, "logs");
-    assert.deepEqual(frames[3]?.data, [{ seq: 1, level: "INFO", message: "one", time: "2026-01-01T00:00:00.000Z" }]);
+    assert.equal(frames[4]?.event, "logs");
+    assert.deepEqual(frames[4]?.data, [{ seq: 1, level: "INFO", message: "one", time: "2026-01-01T00:00:00.000Z" }]);
 
     controller.abort();
   });

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from runtime_fixtures import seed_runtime_inventory
@@ -30,6 +32,17 @@ from agent_server.infra.db import usage_events as usage_events_t
 from agent_server.services.usage_events import UsageRecorder
 from agent_server.services.usage_maintenance import UsageMaintenanceLoop
 from agent_server.services.usage_report import _rolling_active_counts
+
+
+def _load_migration(name: str) -> Any:
+    path = Path(__file__).resolve().parents[1] / "migrations" / "versions" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"migration_{name}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_V2_53 = _load_migration("v2_53")
 
 
 def _events(client, **filters: Any) -> list[dict[str, Any]]:
@@ -250,6 +263,73 @@ def test_duplicate_dedupe_keys_are_stored_once(tmp_path):
     _insert(client, [event, event])
 
     assert len(_events(client, dedupe_key="msg:same")) == 1
+
+
+def _rollup_rows(client) -> dict[str, list[tuple]]:
+    async def read() -> dict[str, list[tuple]]:
+        async with client.app.state.store.engine.connect() as conn:
+            return {
+                table: sorted(tuple(row) for row in (await conn.execute(text(f"SELECT * FROM {table}"))).all())
+                for table in _V2_53.TABLES
+            }
+
+    return asyncio.run(read())
+
+
+def _rebuilt_rollup_rows(client) -> dict[str, list[tuple]]:
+    """Rebuild the rollups from raw events with the migration's backfill, then
+    restore them, so a test can compare incremental maintenance to a rebuild."""
+
+    async def rebuild() -> dict[str, list[tuple]]:
+        async with client.app.state.store.engine.connect() as conn:
+            transaction = await conn.begin()
+            for table in _V2_53.TABLES:
+                await conn.execute(text(f"DELETE FROM {table}"))
+            params = {"message": EVENT_MESSAGE_SENT, "viewed": EVENT_SESSION_VIEWED, "online": EVENT_CONNECTOR_ONLINE}
+            for statement in _V2_53.BACKFILL:
+                await conn.execute(text(statement), params)
+            rows = {
+                table: sorted(tuple(row) for row in (await conn.execute(text(f"SELECT * FROM {table}"))).all())
+                for table in _V2_53.TABLES
+            }
+            await transaction.rollback()
+            return rows
+
+    return asyncio.run(rebuild())
+
+
+def test_rollups_stay_equal_to_a_rebuild_from_raw_events(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+    alice, bob = _seed_report_events(client, headers)
+    # Duplicates are dropped by the dedupe key and must not be added twice.
+    duplicate = UsageEvent(
+        EVENT_MESSAGE_SENT, "2026-10-02T01:30:00Z", user_id=bob, session_id="s2",
+        runtime_type="claude", dedupe_key="msg:dup",
+    )
+    _insert(client, [duplicate, duplicate])
+    _insert(client, [duplicate])
+    # A late event lands in an hour that already has rollup rows.
+    _insert(client, [
+        UsageEvent(
+            EVENT_APPROVAL_RESOLVED, "2026-10-02T01:59:00Z", session_id="s2", runtime_type="claude",
+            outcome="expired", duration_ms=9_000, dedupe_key="approval:late:resolved",
+        ),
+        UsageEvent(EVENT_CONNECTOR_ONLINE, "2026-10-01T23:10:00Z", connector_id="c1"),
+    ])
+
+    assert _rollup_rows(client) == _rebuilt_rollup_rows(client)
+    counts = {row[:4]: row[4] for row in _rollup_rows(client)["usage_hourly_counts"]}
+    assert counts[("2026-10-02T01", EVENT_MESSAGE_SENT, "claude", "")] == 2
+
+    # Deleting a user drops their rollup rows, as their raw events lose user_id.
+    client.delete(f"/admin/users/{bob}", headers=headers).raise_for_status()
+    assert _rollup_rows(client) == _rebuilt_rollup_rows(client)
+    body = _report(client, headers, **{"from": "2026-10-01", "to": "2026-10-02", "tz": "UTC"})
+    assert body["summary"]["activeUsers"] == 1
+    assert body["summary"]["messages"] == 3
+    assert {row["runtimeType"]: row["activeUsers"] for row in body["runtimes"]}["claude"] == 0
+    assert alice
 
 
 def test_usage_recorder_buffers_until_flush_and_throttles_presence():
@@ -496,33 +576,91 @@ def test_usage_report_rolling_windows_look_before_the_range(tmp_path):
     assert body["summary"]["mau"] == 2
 
 
+def test_usage_report_percentiles_and_read_only_sessions_per_day_and_range(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+    alice = _create_member(client, headers, "alice")
+
+    def turn(at: str, runtime: str | None, duration_ms: int, outcome: str = "completed") -> UsageEvent:
+        return UsageEvent(
+            EVENT_TURN_ENDED, at, session_id="s1", runtime_type=runtime, outcome=outcome, duration_ms=duration_ms
+        )
+
+    _insert(
+        client,
+        [
+            turn("2026-10-03T01:00:00Z", "claude", 10),
+            turn("2026-10-03T02:00:00Z", "claude", 20),
+            turn("2026-10-03T03:00:00Z", "claude", 30),
+            turn("2026-10-03T04:00:00Z", "claude", 40),
+            turn("2026-10-04T01:00:00Z", "codex", 100),
+            turn("2026-10-04T02:00:00Z", None, 50),
+            turn("2026-10-04T03:00:00Z", "codex", 999, outcome="failed"),
+            # s1 is read on the 3rd and written to on the 4th; s2 is only read.
+            UsageEvent(EVENT_SESSION_VIEWED, "2026-10-03T05:00:00Z", user_id=alice, session_id="s1", runtime_type="codex"),
+            UsageEvent(EVENT_MESSAGE_SENT, "2026-10-04T05:00:00Z", user_id=alice, session_id="s1", runtime_type="codex"),
+            UsageEvent(EVENT_SESSION_VIEWED, "2026-10-04T06:00:00Z", user_id=alice, session_id="s2", runtime_type="codex"),
+        ],
+    )
+
+    body = _report(client, headers, **{"from": "2026-10-03", "to": "2026-10-04", "tz": "UTC"})
+    days = _daily(body)
+    # Nearest rank: the ceil(n * fraction)-th smallest sample.
+    assert (days["2026-10-03"]["turnDurationP50Ms"], days["2026-10-03"]["turnDurationP90Ms"]) == (20, 40)
+    assert (days["2026-10-04"]["turnDurationP50Ms"], days["2026-10-04"]["turnDurationP90Ms"]) == (50, 100)
+    assert body["summary"]["turnDurationMs"] == {"p50": 30, "p90": 100, "p99": 100, "samples": 6}
+    assert body["summary"]["approvalWaitMs"] == {"p50": None, "p90": None, "p99": None, "samples": 0}
+    runtimes = {row["runtimeType"]: row for row in body["runtimes"]}
+    assert runtimes["claude"]["turnDurationP50Ms"] == 20
+    assert runtimes["codex"]["turnDurationP50Ms"] == 100
+    assert runtimes["codex"]["sessions"] == 1 and runtimes["codex"]["activeUsers"] == 1
+    assert "" not in runtimes
+
+    assert (days["2026-10-03"]["sessions"], days["2026-10-03"]["sessionsViewed"], days["2026-10-03"]["sessionsReadOnly"]) == (0, 1, 1)
+    assert (days["2026-10-04"]["sessions"], days["2026-10-04"]["sessionsViewed"], days["2026-10-04"]["sessionsReadOnly"]) == (1, 1, 1)
+    summary = body["summary"]
+    assert (summary["sessions"], summary["sessionsViewed"], summary["sessionsReadOnly"], summary["sessionViews"]) == (1, 2, 1, 2)
+    assert [day["date"] for day in body["daily"] if day["activeUsers"]] == ["2026-10-03", "2026-10-04"]
+
+
 def test_usage_report_retention_cohorts(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
     carol = _create_member(client, headers, "carol")
+    # Relative to the real clock: the report has no clock hook, and the d7
+    # window must have elapsed while the d30 window has not.
+    signup = datetime.now(UTC).date() - timedelta(days=10)
+    cohort_start = signup - timedelta(days=signup.weekday())
 
     async def backdate() -> None:
         async with client.app.state.store.engine.begin() as conn:
             await conn.execute(
                 text("UPDATE users SET created_at = :created WHERE id = :user_id"),
-                {"created": "2026-09-28T09:00:00Z", "user_id": carol},
+                {"created": f"{signup.isoformat()}T09:00:00Z", "user_id": carol},
             )
 
     asyncio.run(backdate())
+    next_day = signup + timedelta(days=1)
     _insert(
         client,
         [
-            UsageEvent(EVENT_USER_ACTIVE, "2026-09-28T09:05:00Z", user_id=carol),
-            UsageEvent(EVENT_MESSAGE_SENT, "2026-09-29T10:00:00Z", user_id=carol, session_id="s3", runtime_type="codex"),
+            UsageEvent(EVENT_USER_ACTIVE, f"{signup.isoformat()}T09:05:00Z", user_id=carol),
+            UsageEvent(
+                EVENT_MESSAGE_SENT,
+                f"{next_day.isoformat()}T10:00:00Z",
+                user_id=carol,
+                session_id="s3",
+                runtime_type="codex",
+            ),
         ],
     )
 
-    body = _report(client, headers, **{"from": "2026-09-28", "to": "2026-09-28", "tz": "UTC"})
+    body = _report(client, headers, **{"from": signup.isoformat(), "to": signup.isoformat(), "tz": "UTC"})
     assert body["summary"]["newUsers"] == 1
     assert body["users"]["retention"] == [
         {
-            "cohortStart": "2026-09-28",
-            "cohortEnd": "2026-10-04",
+            "cohortStart": cohort_start.isoformat(),
+            "cohortEnd": (cohort_start + timedelta(days=6)).isoformat(),
             "cohortSize": 1,
             "d1": 1.0,
             "d7": 1.0,
@@ -564,6 +702,14 @@ def test_usage_report_validation_and_authorization(tmp_path):
 def test_usage_live_reports_presence_and_running_turns(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
+    # A connector being deleted counts neither as online nor towards the total.
+    deleting = client.post("/connectors", headers=headers, json={"name": "old"}).json()["connector"]["id"]
+
+    async def mark_deleting() -> None:
+        async with client.app.state.store.engine.begin() as conn:
+            await conn.execute(text("UPDATE connectors SET revoked = 2 WHERE id = :id"), {"id": deleting})
+
+    asyncio.run(mark_deleting())
     fake_rpc = _take_over_session(client, connector_id, session_id, headers)
     response = client.post(
         f"/sessions/{session_id}/runtime/messages",
@@ -572,6 +718,10 @@ def test_usage_live_reports_presence_and_running_turns(tmp_path):
     )
     assert response.status_code == 200, response.text
     wait_for_rpc_method(fake_rpc, "session.send_message")
+    # Older than the 15-minute window, possibly in the same hour bucket.
+    stale = _create_member(client, headers, "stale")
+    stale_at = (datetime.now(UTC) - timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _insert(client, [UsageEvent(EVENT_USER_ACTIVE, stale_at, user_id=stale)])
 
     live = client.get("/admin/usage/live", headers=headers)
     assert live.status_code == 200, live.text
@@ -588,7 +738,9 @@ def test_usage_maintenance_snapshots_inventory_and_prunes_old_events(tmp_path):
     admin_id = _user_id(client, headers)
     client.post("/connectors", headers=headers, json={"name": "mac"}).raise_for_status()
     old = UsageEvent(EVENT_MESSAGE_SENT, "2026-01-01T00:00:00Z", user_id=admin_id, session_id="old")
-    recent = UsageEvent(EVENT_MESSAGE_SENT, "2026-10-09T00:00:00Z", user_id=admin_id, session_id="recent")
+    # Must stay inside the 30-day retention window whatever today is.
+    recent_at = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    recent = UsageEvent(EVENT_MESSAGE_SENT, recent_at, user_id=admin_id, session_id="recent")
     _insert(client, [old, recent])
 
     loop = UsageMaintenanceLoop(client.app.state.store, client.app.state.redis, retention_days=30)
@@ -606,6 +758,9 @@ def test_usage_maintenance_snapshots_inventory_and_prunes_old_events(tmp_path):
     assert snapshot[("users.total", "")] == 1.0
     assert snapshot[("connectors.total", "")] == 1.0
     assert [row["session_id"] for row in _events(client, event_type=EVENT_MESSAGE_SENT)] == ["recent"]
+    rollup_hours = {row[0] for rows in _rollup_rows(client).values() for row in rows}
+    assert "2026-01-01T00" not in rollup_hours
+    assert recent_at[:13] in rollup_hours
 
 
 def test_rolling_active_counts_merge_overlapping_windows():

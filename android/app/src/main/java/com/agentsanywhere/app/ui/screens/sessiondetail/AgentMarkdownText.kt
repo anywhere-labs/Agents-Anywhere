@@ -28,6 +28,7 @@ import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,6 +36,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
@@ -198,98 +200,103 @@ private fun MarkdownBlocks(
     onOpenFile: (String) -> Unit,
     onOpenUrl: (String) -> Unit,
 ) {
-    nodes.forEach { node ->
-        when (node) {
-            is Paragraph -> {
-                val standaloneCode = node.children().singleOrNull() as? Code
-                if (standaloneCode != null) {
-                    val codeLiteral = mathSource.restoreLiteral(standaloneCode.literal)
-                    if (codeLiteral.needsWrappingCode()) {
-                        MarkdownWrappingCodeChip(
-                            code = codeLiteral,
-                            path = parseFileRef(codeLiteral),
-                            styles = styles,
-                            onOpenFile = onOpenFile,
-                        )
-                        return@forEach
-                    }
-                }
-                val segments = splitParagraphSegments(node.children(), mathSource)
-                segments.forEach { segment ->
-                    when (segment) {
-                        is ParagraphSegment.InlineRun -> {
-                            MarkdownInlineText(
-                                nodes = segment.nodes,
-                                mathSource = mathSource,
-                                textStyle = styles.body,
+    val parentPart = LocalReadingPart.current
+    nodes.forEachIndexed { nodeIndex, node ->
+        CompositionLocalProvider(LocalReadingPart provides "$parentPart/node:$nodeIndex") {
+            when (node) {
+                is Paragraph -> {
+                    val standaloneCode = node.children().singleOrNull() as? Code
+                    if (standaloneCode != null) {
+                        val codeLiteral = mathSource.restoreLiteral(standaloneCode.literal)
+                        if (codeLiteral.needsWrappingCode()) {
+                            MarkdownWrappingCodeChip(
+                                code = codeLiteral,
+                                path = parseFileRef(codeLiteral),
                                 styles = styles,
                                 onOpenFile = onOpenFile,
-                                onOpenUrl = onOpenUrl,
                             )
+                            return@CompositionLocalProvider
                         }
-                        is ParagraphSegment.BlockMath -> {
-                            MarkdownMathBlock(
-                                latex = segment.expression.tex,
-                                copyText = segment.expression.source,
-                                styles = styles,
-                            )
+                    }
+                    val segments = splitParagraphSegments(node.children(), mathSource)
+                    segments.forEachIndexed { segmentIndex, segment ->
+                        CompositionLocalProvider(LocalReadingPart provides "$parentPart/node:$nodeIndex/segment:$segmentIndex") {
+                            when (segment) {
+                                is ParagraphSegment.InlineRun -> {
+                                    MarkdownInlineText(
+                                        nodes = segment.nodes,
+                                        mathSource = mathSource,
+                                        textStyle = styles.body,
+                                        styles = styles,
+                                        onOpenFile = onOpenFile,
+                                        onOpenUrl = onOpenUrl,
+                                    )
+                                }
+                                is ParagraphSegment.BlockMath -> {
+                                    MarkdownMathBlock(
+                                        latex = segment.expression.tex,
+                                        copyText = segment.expression.source,
+                                        styles = styles,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
-            }
-            is Heading -> MarkdownInlineText(
-                nodes = node.children(),
-                mathSource = mathSource,
-                textStyle = styles.heading(node.level),
-                styles = styles,
-                onOpenFile = onOpenFile,
-                onOpenUrl = onOpenUrl,
-            )
-            is FencedCodeBlock -> {
-                val rawLabel = node.info.trim().substringBefore(' ')
-                val rawCode = mathSource.restoreLiteral(node.literal.removeSuffix("\n"))
-                if (rawLabel.equals("math", ignoreCase = true)) {
-                    MarkdownMathBlock(
-                        latex = rawCode.trim(),
-                        copyText = rawCode,
-                        styles = styles,
-                    )
-                } else {
-                    MarkdownCodePanel(
-                        label = rawLabel.ifBlank { "code" },
-                        code = rawCode,
-                        darkMode = darkMode,
-                        styles = styles,
-                    )
+                is Heading -> MarkdownInlineText(
+                    nodes = node.children(),
+                    mathSource = mathSource,
+                    textStyle = styles.heading(node.level),
+                    styles = styles,
+                    onOpenFile = onOpenFile,
+                    onOpenUrl = onOpenUrl,
+                )
+                is FencedCodeBlock -> {
+                    val rawLabel = node.info.trim().substringBefore(' ')
+                    val rawCode = mathSource.restoreLiteral(node.literal.removeSuffix("\n"))
+                    if (rawLabel.equals("math", ignoreCase = true)) {
+                        MarkdownMathBlock(
+                            latex = rawCode.trim(),
+                            copyText = rawCode,
+                            styles = styles,
+                        )
+                    } else {
+                        MarkdownCodePanel(
+                            label = rawLabel.ifBlank { "code" },
+                            code = rawCode,
+                            darkMode = darkMode,
+                            styles = styles,
+                        )
+                    }
                 }
-            }
-            is IndentedCodeBlock -> MarkdownCodePanel(
-                label = "code",
-                code = mathSource.restoreLiteral(node.literal.removeSuffix("\n")),
-                darkMode = darkMode,
-                styles = styles,
-            )
-            is BulletList -> MarkdownList(node.children(), null, mathSource, darkMode, styles, onOpenFile, onOpenUrl)
-            is OrderedList -> MarkdownList(node.children(), node.startNumber, mathSource, darkMode, styles, onOpenFile, onOpenUrl)
-            is BlockQuote -> MarkdownQuote(node.children(), mathSource, darkMode, styles, onOpenFile, onOpenUrl)
-            is TableBlock -> MarkdownTable(node, mathSource, darkMode, styles, onOpenFile, onOpenUrl)
-            is ThematicBreak -> Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .background(styles.border),
-            )
-            is HtmlBlock -> MarkdownInlineText(
-                nodes = listOf(Text(mathSource.restoreLiteral(node.literal))),
-                mathSource = mathSource,
-                textStyle = styles.body,
-                styles = styles,
-                onOpenFile = onOpenFile,
-                onOpenUrl = onOpenUrl,
-            )
-            else -> {
-                val children = node.children()
-                if (children.isNotEmpty()) MarkdownBlocks(children, mathSource, darkMode, styles, onOpenFile, onOpenUrl)
+                is IndentedCodeBlock -> MarkdownCodePanel(
+                    label = "code",
+                    code = mathSource.restoreLiteral(node.literal.removeSuffix("\n")),
+                    darkMode = darkMode,
+                    styles = styles,
+                )
+                is BulletList -> MarkdownList(node.children(), null, mathSource, darkMode, styles, onOpenFile, onOpenUrl)
+                is OrderedList -> MarkdownList(node.children(), node.startNumber, mathSource, darkMode, styles, onOpenFile, onOpenUrl)
+                is BlockQuote -> MarkdownQuote(node.children(), mathSource, darkMode, styles, onOpenFile, onOpenUrl)
+                is TableBlock -> MarkdownTable(node, mathSource, darkMode, styles, onOpenFile, onOpenUrl)
+                is ThematicBreak -> Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(styles.border),
+                )
+                is HtmlBlock -> MarkdownInlineText(
+                    nodes = listOf(HtmlInline().apply { literal = mathSource.restoreLiteral(node.literal) }),
+                    mathSource = mathSource,
+                    textStyle = styles.body,
+                    styles = styles,
+                    onOpenFile = onOpenFile,
+                    onOpenUrl = onOpenUrl,
+                )
+                else -> {
+                    val children = node.children()
+                    if (children.isNotEmpty()) MarkdownBlocks(children, mathSource, darkMode, styles, onOpenFile, onOpenUrl)
+                }
             }
         }
     }
@@ -305,6 +312,7 @@ private fun MarkdownList(
     onOpenFile: (String) -> Unit,
     onOpenUrl: (String) -> Unit,
 ) {
+    val parentPart = LocalReadingPart.current
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         items.filterIsInstance<ListItem>().forEachIndexed { index, item ->
             val marker = item.children().filterIsInstance<TaskListItemMarker>().firstOrNull()
@@ -314,26 +322,28 @@ private fun MarkdownList(
                 startNumber != null -> "${startNumber + index}."
                 else -> "-"
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = markerText,
-                    color = styles.muted,
-                    fontSize = 16.sp,
-                    lineHeight = 24.sp,
-                    fontFamily = if (marker != null) FontFamily.Monospace else FontFamily.SansSerif,
-                )
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    MarkdownBlocks(
-                        nodes = item.children().filterNot { it is TaskListItemMarker },
-                        mathSource = mathSource,
-                        darkMode = darkMode,
-                        styles = styles,
-                        onOpenFile = onOpenFile,
-                        onOpenUrl = onOpenUrl,
+            CompositionLocalProvider(LocalReadingPart provides "$parentPart/list:$index") {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = markerText,
+                        color = styles.muted,
+                        fontSize = 16.sp,
+                        lineHeight = 24.sp,
+                        fontFamily = if (marker != null) FontFamily.Monospace else FontFamily.SansSerif,
                     )
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        MarkdownBlocks(
+                            nodes = item.children().filterNot { it is TaskListItemMarker },
+                            mathSource = mathSource,
+                            darkMode = darkMode,
+                            styles = styles,
+                            onOpenFile = onOpenFile,
+                            onOpenUrl = onOpenUrl,
+                        )
+                    }
                 }
             }
         }
@@ -379,6 +389,7 @@ private fun MarkdownTable(
     onOpenFile: (String) -> Unit,
     onOpenUrl: (String) -> Unit,
 ) {
+    val parentPart = LocalReadingPart.current
     Column(
         modifier = Modifier
             .horizontalScroll(rememberScrollState())
@@ -387,26 +398,28 @@ private fun MarkdownTable(
     ) {
         table.tableRows().forEachIndexed { rowIndex, row ->
             Row {
-                row.children().filterIsInstance<TableCell>().forEach { cell ->
-                    val cellStyle = styles.tableCell(
-                        header = cell.isHeader,
-                        alignment = cell.alignment,
-                    )
-                    Box(
-                        modifier = Modifier
-                            .widthIn(min = 112.dp, max = 240.dp)
-                            .background(if (cell.isHeader || rowIndex == 0) styles.codeBackground else Color.Transparent)
-                            .border(0.5.dp, styles.border)
-                            .padding(horizontal = 10.dp, vertical = 8.dp),
-                    ) {
-                        MarkdownInlineText(
-                            nodes = cell.children(),
-                            mathSource = mathSource,
-                            textStyle = cellStyle,
-                            styles = styles.copy(bodyColor = cellStyle.color),
-                            onOpenFile = onOpenFile,
-                            onOpenUrl = onOpenUrl,
+                row.children().filterIsInstance<TableCell>().forEachIndexed { columnIndex, cell ->
+                    CompositionLocalProvider(LocalReadingPart provides "$parentPart/table:$rowIndex:$columnIndex") {
+                        val cellStyle = styles.tableCell(
+                            header = cell.isHeader,
+                            alignment = cell.alignment,
                         )
+                        Box(
+                            modifier = Modifier
+                                .widthIn(min = 112.dp, max = 240.dp)
+                                .background(if (cell.isHeader || rowIndex == 0) styles.codeBackground else Color.Transparent)
+                                .border(0.5.dp, styles.border)
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                        ) {
+                            MarkdownInlineText(
+                                nodes = cell.children(),
+                                mathSource = mathSource,
+                                textStyle = cellStyle,
+                                styles = styles.copy(bodyColor = cellStyle.color),
+                                onOpenFile = onOpenFile,
+                                onOpenUrl = onOpenUrl,
+                            )
+                        }
                     }
                 }
             }
@@ -423,6 +436,22 @@ private fun MarkdownInlineText(
     onOpenFile: (String) -> Unit,
     onOpenUrl: (String) -> Unit,
 ) {
+    val imageParts = remember(nodes, mathSource) {
+        splitMarkdownImages(nodes, mathSource::restoreLiteral)
+    }
+    if (imageParts.any { it is MarkdownImagePart.Picture }) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            imageParts.forEach { part ->
+                when (part) {
+                    is MarkdownImagePart.Picture -> MarkdownImage(part.source, part.description)
+                    is MarkdownImagePart.Words -> MarkdownInlineText(
+                        part.nodes, mathSource, textStyle, styles, onOpenFile, onOpenUrl,
+                    )
+                }
+            }
+        }
+        return
+    }
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
     val maxInlineMathWidthPx = with(density) { 280.dp.roundToPx() }
@@ -439,11 +468,13 @@ private fun MarkdownInlineText(
         )
     }
     var layoutResult by remember(inline.text) { mutableStateOf<TextLayoutResult?>(null) }
+    val readingAnchor = ReadingTextAnchor(inline.text.text)
 
     BasicText(
         text = inline.text,
         modifier = Modifier
             .fillMaxWidth()
+            .onGloballyPositioned(readingAnchor::positioned)
             .pointerInput(inline.text) {
                 detectTapGestures { position ->
                     val offset = layoutResult?.getOffsetForPosition(position) ?: return@detectTapGestures
@@ -457,7 +488,7 @@ private fun MarkdownInlineText(
                 }
             },
         style = textStyle,
-        onTextLayout = { layoutResult = it },
+        onTextLayout = { layoutResult = it; readingAnchor.laidOut(it) },
         inlineContent = inline.inlineContent,
     )
 }
@@ -566,6 +597,22 @@ private fun buildMarkdownInline(
                             appendNodes(node.children())
                         }
                         pop()
+                    }
+                    is ImageTextWrapper -> {
+                        val wrapper = node.styleNode
+                        if (wrapper is Link) {
+                            val destination = mathSource.restoreLiteral(wrapper.destination)
+                            val filePath = if (isFilePath(destination)) stripLine(destination) else null
+                            pushStringAnnotation(if (filePath != null) AnnotationFile else AnnotationUrl, filePath ?: destination)
+                        }
+                        val span = when (wrapper) {
+                            is Link -> SpanStyle(color = styles.linkColor, textDecoration = TextDecoration.Underline)
+                            is Emphasis -> SpanStyle(fontStyle = FontStyle.Italic)
+                            is StrongEmphasis -> SpanStyle(fontWeight = FontWeight.Bold)
+                            else -> SpanStyle(textDecoration = TextDecoration.LineThrough)
+                        }
+                        withSpan(span) { appendNodes(node.content) }
+                        if (wrapper is Link) pop()
                     }
                     is Image -> appendNodes(node.children())
                     is HtmlInline -> append(mathSource.restoreLiteral(node.literal))

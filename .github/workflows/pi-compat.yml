@@ -1,0 +1,55 @@
+name: Pi compatibility
+
+# Local Pi execution accepts every Pi 1.x release from 1.2.0 on, and the
+# managed runtime follows @openma/pi-acp 0.1.x. New upstream releases do not
+# pass through a pull request here, so this runs the real native handoff check
+# against the oldest supported and the newest published Pi on a schedule.
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - connector/connector/runtimes/acp/**
+      - connector/scripts/verify-pi-native.py
+      - .github/workflows/pi-compat.yml
+
+permissions:
+  contents: read
+
+env:
+  UV_DEFAULT_INDEX: https://pypi.org/simple
+  UV_VERSION: 0.12.3
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: 22.23.2
+
+jobs:
+  native:
+    name: Native Pi ${{ matrix.pi }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        pi: ["1.2.0", latest]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install Pi ${{ matrix.pi }}
+        run: |
+          npm install --global --ignore-scripts "@earendil-works/pi-coding-agent@${{ matrix.pi }}"
+          pi --version
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install Connector dependencies
+        run: uv sync --project connector
+      - name: Verify native Pi handoff with a local model
+        working-directory: connector
+        run: uv run python scripts/verify-pi-native.py --cache-root "$RUNNER_TEMP/aa-pi-native"

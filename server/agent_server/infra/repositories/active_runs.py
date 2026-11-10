@@ -6,6 +6,7 @@ from sqlalchemy import delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agent_server.infra.db import session_active_runs as active_runs_t
+from agent_server.infra.db.engine import read_connection
 
 
 class ActiveRunRepository:
@@ -54,7 +55,7 @@ class ActiveRunRepository:
             )
 
     async def get(self, session_id: str) -> Any | None:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             return (
                 await conn.execute(
                     select(active_runs_t).where(active_runs_t.c.session_id == session_id)

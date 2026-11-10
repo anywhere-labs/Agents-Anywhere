@@ -17,7 +17,8 @@ function harness(t: TestContext, overrides: Partial<ConstructorParameters<typeof
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   let version = "0.1.7.2";
   const options: ConstructorParameters<typeof DesktopUpdateService>[0] = {
-    directory, currentVersion: "0.1.0", serverVersion: "0.1.0", downloadUrl: "https://download.test/desktop", platform: "darwin",
+    directory, currentVersion: "0.1.0", serverVersion: "0.1.0", platform: "darwin",
+    downloadUrls: { darwin: "https://download.test/desktop", win32: "https://download.test/desktop.exe" },
     fetcher: async (input, init) => {
       requests.push({ url: String(input), init });
       return String(input).endsWith("/health") ? healthy(version) : new Response("installer", { headers: { "content-length": "9", "content-type": "application/octet-stream" } });
@@ -109,6 +110,14 @@ test("the config download URL is used, progress is published, and only a complet
   assert.ok(h.states.every((s, index) => !index || s.revision > h.states[index - 1].revision));
 });
 
+test("each platform downloads the installer address configured for it", async (t) => {
+  const h = harness(t, { platform: "win32" });
+  await h.service.check(server);
+  assert.equal((await h.service.download()).phase, "downloaded");
+  assert.equal(h.requests[1].url, "https://download.test/desktop.exe");
+  assert.equal(path.extname(h.opened[0]), ".exe");
+});
+
 test("partial downloads are removed and can be retried without closing the dialog", async (t) => {
   let fail = true;
   const h = harness(t, { fetcher: async (input) => String(input).endsWith("/health") ? healthy() : new Response("installer", { headers: { "content-length": fail ? "100" : "9", "content-type": "application/octet-stream" } }) });
@@ -121,11 +130,13 @@ test("partial downloads are removed and can be retried without closing the dialo
   assert.equal((await h.service.download()).phase, "downloaded");
 });
 
-test("HTML download responses and placeholder URLs are not opened as installers", async (t) => {
-  const placeholder = harness(t, { downloadUrl: "https://downloads.example.invalid/desktop" });
-  await placeholder.service.check(server);
-  assert.equal((await placeholder.service.download()).error, "downloadNotConfigured");
-  assert.equal(placeholder.requests.length, 1);
+test("HTML download responses, placeholder URLs and platforms without an installer are not opened", async (t) => {
+  for (const patch of [{ downloadUrls: { darwin: "https://downloads.example.invalid/desktop" } }, { platform: "linux" }]) {
+    const unavailable = harness(t, patch);
+    await unavailable.service.check(server);
+    assert.equal((await unavailable.service.download()).error, "downloadNotConfigured");
+    assert.equal(unavailable.requests.length, 1);
+  }
   const html = harness(t, { fetcher: async (input) => String(input).endsWith("/health") ? healthy() : new Response("<html>not an installer</html>", { headers: { "content-type": "text/html" } }) });
   await html.service.check(server);
   assert.equal((await html.service.download()).error, "downloadFailed");

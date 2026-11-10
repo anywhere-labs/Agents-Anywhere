@@ -1,0 +1,49 @@
+{
+  "$id": "urn:agents-anywhere:runtime-workflows:1.2:interaction-response",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "actionId": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Actionid",
+      "type": "string"
+    },
+    "input": {
+      "default": null,
+      "title": "Input"
+    },
+    "interactionId": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Interactionid",
+      "type": "string"
+    },
+    "ownerGeneration": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Ownergeneration",
+      "type": "string"
+    },
+    "requestRevision": {
+      "minimum": 0,
+      "title": "Requestrevision",
+      "type": "integer"
+    },
+    "responseOperationId": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Responseoperationid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "interactionId",
+    "requestRevision",
+    "ownerGeneration",
+    "responseOperationId",
+    "actionId"
+  ],
+  "title": "WorkflowInteractionResponse",
+  "type": "object"
+}

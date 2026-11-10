@@ -46,6 +46,7 @@ class CodexTurnLifecycleHandler:
             status="running",
             metadata={
                 "source": "codex.turn/started",
+                "pendingSelectionScopes": [],
                 **({"turn_id": turn_id} if turn_id else {}),
             },
         )

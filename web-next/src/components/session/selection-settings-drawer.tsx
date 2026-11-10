@@ -14,6 +14,7 @@ import {
   DrawerTrigger,
 } from "@/components/ui/drawer"
 import { Separator } from "@/components/ui/separator"
+import { groupModelOptions, modelSectionRows, type ModelOptionGroup } from "@/components/session/catalog-selection"
 import { cn } from "@/lib/utils"
 
 export type SelectionOption = {
@@ -26,6 +27,7 @@ export type SelectionOption = {
 }
 
 export type ModelSelectionOption = SelectionOption & {
+  group?: ModelOptionGroup | null
   reasoningItems: SelectionOption[]
 }
 
@@ -41,6 +43,7 @@ export function SelectionSettingsDrawer({
   description,
   permissionLabel,
   modelLabel,
+  modelIcon,
   reasoningLabel,
   permissionItems,
   selectedPermission,
@@ -61,6 +64,7 @@ export function SelectionSettingsDrawer({
   description?: string
   permissionLabel: string
   modelLabel: string
+  modelIcon?: React.ReactNode
   reasoningLabel: string
   permissionItems: SelectionOption[]
   selectedPermission: string
@@ -80,6 +84,54 @@ export function SelectionSettingsDrawer({
     if (!nextOpen) setExpandedModelId(null)
   }
 
+  const renderModel = (model: ModelSelectionOption) => {
+    const hasReasoning = model.reasoningItems.length > 0
+    const expanded = expandedModelId === model.id
+    return (
+      <div key={model.id} className="flex flex-col gap-1">
+        <SelectionRow
+          selected={selectedModel === model.id}
+          label={model.label}
+          helper={model.enabled === false ? model.disabledReason ?? undefined : model.description ?? undefined}
+          disabled={modelDisabled || model.enabled === false}
+          trailing={hasReasoning
+            ? expanded
+              ? <ChevronDown className="size-4" />
+              : <ChevronRight className="size-4" />
+            : null}
+          onClick={() => {
+            if (hasReasoning) {
+              setExpandedModelId(expanded ? null : model.id)
+              return
+            }
+            onModelChange(model.id, "")
+            setDrawerOpen(false)
+          }}
+        />
+        {expanded ? (
+          <div className="ml-7 flex flex-col gap-1 border-l border-border pl-2">
+            <p className="px-3 py-1 text-xs font-medium text-muted-foreground">
+              {reasoningLabel}
+            </p>
+            {model.reasoningItems.map((reasoning) => (
+              <SelectionRow
+                key={reasoning.id}
+                selected={selectedModel === model.id && selectedReasoning === reasoning.id}
+                label={reasoning.label}
+                helper={reasoning.enabled === false ? reasoning.disabledReason ?? undefined : reasoning.description ?? undefined}
+                disabled={modelDisabled || reasoningDisabled || reasoning.enabled === false}
+                onClick={() => {
+                  onModelChange(model.id, reasoning.id)
+                  setDrawerOpen(false)
+                }}
+              />
+            ))}
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+
   return (
     <Drawer open={open} onOpenChange={setDrawerOpen} direction="bottom">
       <DrawerTrigger asChild>
@@ -90,6 +142,7 @@ export function SelectionSettingsDrawer({
           disabled={disabled}
           className="h-8 gap-1.5 rounded-xl px-2.5 text-muted-foreground"
         >
+          {modelIcon}
           <Settings2 className="size-3.5" />
           <span className="text-foreground">{buttonLabel}</span>
         </Button>
@@ -101,54 +154,24 @@ export function SelectionSettingsDrawer({
         </DrawerHeader>
         <div className="flex max-h-[58vh] flex-col gap-5 overflow-y-auto px-4 pb-4">
           {modelItems.length > 0 ? (
-            <SelectionSection title={modelLabel}>
-              {modelItems.map((model) => {
-                const hasReasoning = model.reasoningItems.length > 0
-                const expanded = expandedModelId === model.id
-                return (
-                  <div key={model.id} className="flex flex-col gap-1">
-                    <SelectionRow
-                      selected={selectedModel === model.id}
-                      label={model.label}
-                      helper={model.enabled === false ? model.disabledReason ?? undefined : model.description ?? undefined}
-                      disabled={modelDisabled || model.enabled === false}
-                      trailing={hasReasoning
-                        ? expanded
-                          ? <ChevronDown className="size-4" />
-                          : <ChevronRight className="size-4" />
-                        : null}
-                      onClick={() => {
-                        if (hasReasoning) {
-                          setExpandedModelId(expanded ? null : model.id)
-                          return
-                        }
-                        onModelChange(model.id, "")
-                        setDrawerOpen(false)
-                      }}
-                    />
-                    {expanded ? (
-                      <div className="ml-7 flex flex-col gap-1 border-l border-border pl-2">
-                        <p className="px-3 py-1 text-xs font-medium text-muted-foreground">
-                          {reasoningLabel}
-                        </p>
-                        {model.reasoningItems.map((reasoning) => (
-                          <SelectionRow
-                            key={reasoning.id}
-                            selected={selectedModel === model.id && selectedReasoning === reasoning.id}
-                            label={reasoning.label}
-                            helper={reasoning.enabled === false ? reasoning.disabledReason ?? undefined : reasoning.description ?? undefined}
-                            disabled={modelDisabled || reasoningDisabled || reasoning.enabled === false}
-                            onClick={() => {
-                              onModelChange(model.id, reasoning.id)
-                              setDrawerOpen(false)
-                            }}
-                          />
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                )
-              })}
+            <SelectionSection title={modelLabel} icon={modelIcon}>
+              {groupModelOptions(modelItems).map((section) => section.displayName ? (
+                <div
+                  key={`group:${section.id}`}
+                  role="group"
+                  aria-label={section.displayName}
+                  className="flex flex-col gap-1"
+                >
+                  <p className="px-3 py-1 text-xs font-medium text-muted-foreground">
+                    {section.displayName}
+                  </p>
+                  {modelSectionRows(section).map(renderModel)}
+                </div>
+              ) : (
+                <React.Fragment key="ungrouped">
+                  {section.items.map(renderModel)}
+                </React.Fragment>
+              ))}
             </SelectionSection>
           ) : null}
 
@@ -180,15 +203,17 @@ export function SelectionSettingsDrawer({
 
 function SelectionSection({
   title,
+  icon,
   children,
 }: {
   title: string
+  icon?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
     <section className="flex flex-col gap-2">
       <div className="flex min-h-7 items-center justify-between gap-2 px-1">
-        <h3 className="text-sm font-medium text-foreground">{title}</h3>
+        <h3 className="flex items-center gap-1.5 text-sm font-medium text-foreground">{icon}{title}</h3>
       </div>
       <div className="flex flex-col gap-1">{children}</div>
     </section>

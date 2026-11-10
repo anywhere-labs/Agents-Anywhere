@@ -90,6 +90,33 @@ class DevicesApi(
         )
     }
 
+    fun getDeviceSettings(
+        serverUrl: String,
+        authorizationToken: String,
+        deviceId: String,
+    ): RemoteDeviceSettings {
+        return client.getJson(
+            serverUrl = serverUrl,
+            path = "/connectors/${deviceId.urlEncode()}/device-settings",
+            authorizationToken = authorizationToken,
+        ).toRemoteDeviceSettings(deviceId)
+    }
+
+    /** Saves the given switches only; the Server keeps the others. */
+    fun updateDeviceSettings(
+        serverUrl: String,
+        authorizationToken: String,
+        deviceId: String,
+        confirmQuitOnShutdown: Boolean,
+    ): RemoteDeviceSettings {
+        return client.patchJson(
+            serverUrl = serverUrl,
+            path = "/connectors/${deviceId.urlEncode()}/device-settings",
+            body = JSONObject().put("confirmQuitOnShutdown", confirmQuitOnShutdown),
+            authorizationToken = authorizationToken,
+        ).toRemoteDeviceSettings(deviceId)
+    }
+
     fun listDeviceRuntimes(
         serverUrl: String,
         authorizationToken: String,
@@ -112,6 +139,68 @@ class DevicesApi(
             path = "/connectors/${deviceId.urlEncode()}/runtimes/discover",
             authorizationToken = authorizationToken,
         ).toRemoteDeviceRuntimeList(deviceId)
+    }
+
+    fun listDeviceRuntimeTypes(
+        serverUrl: String,
+        authorizationToken: String,
+        deviceId: String,
+    ): RemoteRuntimeTypeList {
+        return client.getJson(
+            serverUrl = serverUrl,
+            path = "/connectors/${deviceId.urlEncode()}/runtime-types",
+            authorizationToken = authorizationToken,
+        ).toRemoteRuntimeTypeList(deviceId)
+    }
+
+    /** Asks the Connector to report its runtime types again, e.g. after installing an Agent. */
+    fun discoverDeviceRuntimeTypes(
+        serverUrl: String,
+        authorizationToken: String,
+        deviceId: String,
+    ): RemoteRuntimeTypeList {
+        return client.postJson(
+            serverUrl = serverUrl,
+            path = "/connectors/${deviceId.urlEncode()}/runtime-types/discover",
+            authorizationToken = authorizationToken,
+        ).toRemoteRuntimeTypeList(deviceId)
+    }
+
+    fun createDeviceRuntime(
+        serverUrl: String,
+        authorizationToken: String,
+        deviceId: String,
+        runtimeType: String,
+        name: String,
+        config: Map<String, Any?>,
+        active: Boolean,
+    ): RemoteDeviceRuntime {
+        val body = JSONObject()
+            .put("runtimeType", runtimeType)
+            .put("name", name)
+            .put("config", config.toJsonObject())
+            .put("active", active)
+        return client.postJson(
+            serverUrl = serverUrl,
+            path = "/connectors/${deviceId.urlEncode()}/runtimes",
+            body = body,
+            authorizationToken = authorizationToken,
+        ).toRemoteDeviceRuntime(deviceId)
+    }
+
+    fun renameDeviceRuntime(
+        serverUrl: String,
+        authorizationToken: String,
+        deviceId: String,
+        runtimeId: String,
+        name: String,
+    ): RemoteDeviceRuntime {
+        return client.patchJson(
+            serverUrl = serverUrl,
+            path = "/connectors/${deviceId.urlEncode()}/runtimes/${runtimeId.urlEncode()}",
+            body = JSONObject().put("name", name),
+            authorizationToken = authorizationToken,
+        ).toRemoteDeviceRuntime(deviceId)
     }
 
     fun putDeviceRuntimeConfig(
@@ -221,6 +310,19 @@ class DevicesApi(
 
     internal fun parseDevice(value: JSONObject): RemoteDevice = value.toRemoteDevice()
 
+    internal fun parseDeviceSettings(value: JSONObject, fallbackConnectorId: String): RemoteDeviceSettings =
+        value.toRemoteDeviceSettings(fallbackConnectorId)
+
+    /** One runtime from the dashboard snapshot, or null when its identity is not valid. */
+    internal fun parseDeviceRuntime(value: JSONObject): RemoteDeviceRuntime? {
+        val connectorId = value.optString("connectorId")
+        if (connectorId.isBlank()) return null
+        return value.toRemoteDeviceRuntime(connectorId).takeIf { runtime ->
+            runtime.runtimeType.isValidRuntimeType() &&
+                runtime.runtimeId.isValidRuntimeInstanceId(runtime.runtimeType)
+        }
+    }
+
     private fun JSONObject.toRemoteDevice(): RemoteDevice {
         return RemoteDevice(
             id = getString("id"),
@@ -230,6 +332,54 @@ class DevicesApi(
             lastSeenAt = optNullableString("lastSeenAt"),
             createdAt = optNullableString("createdAt"),
             updatedAt = optNullableString("updatedAt"),
+            connectorKind = optNullableString("connectorKind"),
+        )
+    }
+
+    private fun JSONObject.toRemoteDeviceSettings(fallbackConnectorId: String): RemoteDeviceSettings {
+        val settings = optJSONObject("settings")
+        return RemoteDeviceSettings(
+            connectorId = optString("connectorId", fallbackConnectorId).ifBlank { fallbackConnectorId },
+            confirmQuitOnShutdown = settings?.optNullableBoolean("confirmQuitOnShutdown") ?: false,
+            delivered = optNullableBoolean("delivered"),
+            serverTime = optNullableString("serverTime"),
+        )
+    }
+
+    internal fun parseRuntimeTypeList(value: JSONObject, fallbackConnectorId: String): RemoteRuntimeTypeList =
+        value.toRemoteRuntimeTypeList(fallbackConnectorId)
+
+    private fun JSONObject.toRemoteRuntimeTypeList(
+        fallbackConnectorId: String,
+    ): RemoteRuntimeTypeList {
+        val connectorId = optString("connectorId", fallbackConnectorId).ifBlank { fallbackConnectorId }
+        return RemoteRuntimeTypeList(
+            connectorId = connectorId,
+            runtimeTypes = optJSONArray("runtimeTypes")
+                .toObjectList { toRemoteRuntimeType(connectorId) }
+                .filter { it.runtimeType.isValidRuntimeType() },
+        )
+    }
+
+    private fun JSONObject.toRemoteRuntimeType(connectorId: String): RemoteRuntimeType {
+        val runtimeType = optString("runtimeType")
+        // The same schema also travels inside the type's config schema descriptor.
+        val descriptor = optJSONObject("configSchema")
+        return RemoteRuntimeType(
+            connectorId = connectorId,
+            runtimeType = runtimeType,
+            displayName = optNullableString("displayName") ?: runtimeType,
+            description = optNullableString("description"),
+            present = optBoolean("present", false),
+            available = optBoolean("available", true),
+            reason = optNullableString("reason"),
+            recommended = optBoolean("recommended", false),
+            recommendationRank = optNullableInt("recommendationRank"),
+            schema = (optJSONObject("schema") ?: descriptor?.optJSONObject("schema"))?.toMap(),
+            uiSchema = (optJSONObject("uiSchema") ?: descriptor?.optJSONObject("uiSchema")).toMap(),
+            defaults = (optJSONObject("defaults") ?: descriptor?.optJSONObject("defaults")).toMap(),
+            instancePolicy = optString("instancePolicy", "single").ifBlank { "single" },
+            maxInstances = optNullableInt("maxInstances"),
         )
     }
 
@@ -267,6 +417,7 @@ class DevicesApi(
             runtimeId = runtimeId,
             runtimeType = runtimeType,
             displayName = displayName,
+            typeDisplayName = optNullableString("typeDisplayName"),
             present = optBoolean("present", false),
             configured = optBoolean("configured", false),
             active = optBoolean("active", false),
@@ -275,11 +426,17 @@ class DevicesApi(
             metadata = optJSONObject("metadata").toMap(),
             schema = optJSONObject("schema")?.toMap(),
             uiSchema = optJSONObject("uiSchema").toMap(),
+            defaults = optJSONObject("defaults").toMap(),
             config = optJSONObject("config")?.toMap(),
             error = optJSONObject("error")?.toMap(),
             phase = optJSONObject("phase")?.toMap(),
             lastDiscoveredAt = optNullableString("lastDiscoveredAt"),
             updatedAt = optNullableString("updatedAt"),
+            maturity = optNullableString("maturity"),
+            modelConnection = optJSONObject("modelConnection")?.toModelConnectionCapability(),
+            modelConnectionStatus = optJSONObject("modelConnectionStatus")?.toModelConnectionStatus(),
+            secretFields = optJSONObject("secretFields").toSecretFields(),
+            managedBy = optNullableString("managedBy"),
         )
     }
 
@@ -311,6 +468,7 @@ class DevicesApi(
             allowed = optBoolean("allowed", true),
             unavailableReason = optNullableString("unavailableReason"),
             parameters = optJSONObject("parameters").toMap(),
+            metadata = optJSONObject("metadata").toMap(),
             runtimeId = optNullableString("runtimeId"),
             runtimeType = optNullableString("runtimeType") ?: optNullableString("runtime"),
         )

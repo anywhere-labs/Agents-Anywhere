@@ -185,6 +185,17 @@ GET /sessions/{sessionId}/runtime/commands
 Command endpoints return the current command list. Web performs fuzzy matching
 and filtering locally after reading the list.
 
+Model catalog items may carry `group: {id, displayName, itemDisplayName?} | null`:
+the provider or relay that routes the model. DSH fills it from the provider in
+its model metadata; Codex and Claude send `null`. Clients section the model
+picker by `group.id` only when a catalog has two or more distinct groups,
+ordering sections by first appearance and keeping catalog order within each;
+models without a group follow in a headerless section. Under a section header a
+row shows `group.itemDisplayName` when present, which omits the provider the
+header already shows. `displayName` stays unique on its own (DSH appends the
+provider when names collide): flat lists, the selected-model label and clients
+that ignore `group` keep using it. Selection never depends on the group.
+
 Do not add new APIs like:
 
 ```text
