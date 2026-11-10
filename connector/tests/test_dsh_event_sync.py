@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from meshcall import MeshCallError
 
 from connector.runtime_protocol import (
     RuntimeInstanceHost,
@@ -12,6 +13,7 @@ from connector.runtime_protocol import (
     timeline_content_hash,
 )
 from connector.runtimes.dsh.bridge.host import (
+    SUBSCRIPTION_UNKNOWN,
     SnapshotPage,
     SnapshotRequest,
     SubscriptionRegistry,
@@ -182,11 +184,14 @@ def test_relay_failure_resubscribes_without_closing_concurrent_rpc(reject, proje
             stream_failed.set()
             await asyncio.wait_for(resubscribed.wait(), 1)
             # A batch delayed on the old subscription cannot touch the new feed.
-            with pytest.raises(ValueError, match="already ended"):
+            with pytest.raises(MeshCallError, match="already ended") as rejected:
                 await relay.ingest(SyncBatch(
                     subscriptionId=first or "", batchSeq=1,
                     projectionVersion=projection_version, operations=[op],
                 ))
+            # A typed refusal, never an acknowledgement: the plugin saves
+            # checkpoints only for acknowledged batches.
+            assert rejected.value.code == SUBSCRIPTION_UNKNOWN
             await deliver()
             assert acks == ([1] if reject else [1, 1])
         finally:
@@ -423,6 +428,148 @@ def test_inventory_does_not_report_healthy_while_delivery_is_pending_or_incomple
             await asyncio.gather(task, return_exceptions=True)
             await relay.close()
     asyncio.run(run())
+
+
+def test_resubscribe_keeps_the_runtime_running_with_a_sync_phase():
+    async def exercise():
+        streams = 0
+        failed, resubscribed = asyncio.Event(), asyncio.Event()
+
+        async def stream(method, params=None):
+            nonlocal streams
+            streams += 1
+            yield {"kind": "subscribed", "projectionVersion": 3}
+            if streams == 1:
+                await failed.wait()
+                raise RuntimeError("sync stream interrupted")
+            resubscribed.set()
+            await asyncio.Event().wait()
+
+        registry = SubscriptionRegistry()
+        client = SimpleNamespace(stream=stream, connected=True, host=SimpleNamespace(registry=registry))
+        receiver = host()
+        relay = SyncRelay(client, receiver, retry_delay=0.01)
+        relay.start()
+        try:
+            await asyncio.wait_for(relay.confirmed.wait(), 1)
+            await ingest(relay, {"kind": "notifications", "notifications": [{
+                "method": "session.inventory.complete", "params": {"scanToken": "scan", "complete": True, "sessions": []},
+            }]})
+            assert relay.baseline_complete is True
+            failed.set()
+            await asyncio.wait_for(resubscribed.wait(), 1)
+            assert relay.baseline_complete is False
+            calls = receiver.runtime_health_update.await_args_list
+            # An interrupted or rebuilding feed never takes the runtime out of "running" (#504).
+            assert {call.args[0] for call in calls} == {"running"}
+            phases = [call.kwargs["phase"]["code"] if "phase" in call.kwargs else None for call in calls]
+            assert phases == ["syncing", None, "sync_interrupted", "syncing"]
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
+def test_interrupted_sync_with_a_lost_bridge_does_not_report_running():
+    async def exercise():
+        client = SimpleNamespace(connected=True, host=SimpleNamespace(registry=SubscriptionRegistry()))
+
+        async def stream(method, params=None):
+            client.connected = False
+            raise ConnectionError("bridge gone")
+            yield  # pragma: no cover - makes this an async generator
+
+        client.stream = stream
+        receiver = host()
+        relay = SyncRelay(client, receiver, retry_delay=0.01)
+        relay.start()
+        await asyncio.wait_for(relay.task, 1)
+        # The runtime reports the lost Bridge itself; the relay must not overwrite it.
+        phases = [call.kwargs["phase"]["code"] for call in receiver.runtime_health_update.await_args_list]
+        assert phases == ["syncing"]
+        await relay.close()
+    asyncio.run(exercise())
+
+
+def test_rejected_batch_logs_the_facts_that_decided_it(monkeypatch):
+    from connector.runtimes.dsh.bridge import sync as sync_module
+
+    async def exercise():
+        warnings = []
+        monkeypatch.setattr(sync_module.logger, "warning", lambda message, *args: warnings.append(message.format(*args)))
+        relay = ready_relay(host())
+        try:
+            with pytest.raises(ValueError, match="Out-of-order"):
+                await relay.ingest(SyncBatch(subscriptionId="sub", batchSeq=4, projectionVersion=3,
+                                             operations=[{"kind": "workspace.inventory"}]))
+            assert len(warnings) == 1
+            for fact in ("subscription=sub", "batch_subscription=sub", "batch_seq=4", "expected_batch=1",
+                         "projection=3", "batch_projection=3", "ValueError: Out-of-order"):
+                assert fact in warnings[0]
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
+
+def test_unreachable_backend_is_not_logged_as_a_rejected_batch(monkeypatch):
+    from connector.runtimes.dsh.bridge import sync as sync_module
+    from connector.server.errors import ConnectorNetworkError
+
+    async def exercise():
+        warnings = []
+        monkeypatch.setattr(sync_module.logger, "warning", lambda message, *args: warnings.append(message.format(*args)))
+        relay = ready_relay(host())
+
+        async def unreachable(_batch):
+            raise ConnectorNetworkError("backend ingest temporarily unavailable: HTTP 503")
+
+        monkeypatch.setattr(relay, "_ingest_locked", unreachable)
+        try:
+            with pytest.raises(ConnectorNetworkError):
+                await relay.ingest(SyncBatch(subscriptionId="sub", batchSeq=1, projectionVersion=3,
+                                             operations=[{"kind": "workspace.inventory"}]))
+            assert warnings == []
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+def test_backend_reconnect_does_not_restart_a_sync_that_is_building_its_baseline():
+    async def exercise():
+        runtime = DshRuntime.__new__(DshRuntime)
+        runtime._client = SimpleNamespace(connected=True)
+        runtime._connect_lock = asyncio.Lock()
+        runtime._stopping = False
+        runtime._sync_mode = "events"
+        relay = SimpleNamespace(baseline_complete=False, close=AsyncMock())
+        runtime._sync = relay
+        await runtime.resynchronize()
+        relay.close.assert_not_awaited()
+        assert runtime._sync is relay
+    asyncio.run(exercise())
+
+
+def test_reconnect_skips_a_runtime_that_is_not_running(monkeypatch):
+    from connector.server import runtime_sync as runtime_sync_module
+
+    errors = []
+    monkeypatch.setattr(runtime_sync_module.logger, "exception", lambda message, *args: errors.append(message))
+
+    async def exercise():
+        from connector.runtime_protocol import RuntimeUnavailableError
+
+        def unavailable(_runtime_id):
+            raise RuntimeUnavailableError("runtime instance 'dsh' is not running (status='starting')")
+
+        supervisor = SimpleNamespace(
+            runtimes={"dsh": object()},
+            resolve_runtime=unavailable,
+            entry=lambda _runtime_id: SimpleNamespace(status="starting"),
+        )
+        runner = RuntimeSyncRunner(None, supervisor, host(), dict, AsyncMock())
+        await runner.reconnect_event_runtimes()
+    asyncio.run(exercise())
+    # An expected state, not a failure with a stack trace.
+    assert errors == []
 
 
 def test_snapshot_pages_and_aborts_from_another_capture_are_ignored():

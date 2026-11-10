@@ -923,7 +923,7 @@ export function DevicePage() {
                               <Badge variant="outline" className="shrink-0 font-normal">
                                 {runtimeStatusLabel(runtime)}
                               </Badge>
-                              {runtime.status === "starting" && runtimePhaseMessage(runtime) ? (
+                              {(runtime.status === "starting" || runtime.status === "running") && runtimePhaseMessage(runtime) ? (
                                 <span className="truncate text-xs text-muted-foreground">
                                   {runtimePhaseMessage(runtime)}
                                 </span>

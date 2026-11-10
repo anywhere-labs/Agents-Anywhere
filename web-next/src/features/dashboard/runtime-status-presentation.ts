@@ -34,7 +34,7 @@ export function isRuntimeNotRunningCode(code: string | null | undefined): boolea
   return typeof code === "string" && NOT_RUNNING_ERROR_CODES.has(code)
 }
 
-/** Progress detail reported by the connector while the instance is starting (e.g. "syncing sessions"). */
+/** Progress detail reported by the connector while the instance is starting or running (e.g. "syncing sessions"). */
 export function runtimePhaseMessage(runtime: DeviceRuntimeView): string | null {
   const message = runtime.phase?.message
   return typeof message === "string" && message.trim() ? message : null

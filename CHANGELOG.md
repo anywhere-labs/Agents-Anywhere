@@ -64,6 +64,9 @@
 - 内置 uv 缺少执行权限时，DSH 插件会自动修复，不再提示找不到 uv。（[#558](https://github.com/anywhere-labs/Agents-Anywhere/pull/558)）
 - 超过 45 MiB（或因代理限制被分页）的 DSH 会话完整同步时，不再把第一页之后的历史整段删掉再写回，只改写有变化的条目；上传中途失败时，服务器上也不再只剩前半段历史。需要 Server 和 Connector 都升级到本版。（[#590](https://github.com/anywhere-labs/Agents-Anywhere/pull/590)）
 - Connector 忙碌或同步流被重建时，DSH 不再因 Agents Anywhere 插件的连接调用被取消或超时而整个退出（`Call was cancelled`、`Call deadline exceeded`）。（[#547](https://github.com/anywhere-labs/Agents-Anywhere/pull/547)）
+- DSH 启动后首次同步、同步中断重试或重新同步期间，Runtime 保持「运行中」，Web、Desktop 和 Android 设备页显示「正在同步 DSH 会话…」；这段时间可以正常打开会话、回答审批、发消息和新建会话，不再报 `runtime is not running (status='starting')`，审批卡片也不会消失；只有 DSH Bridge 断开时才显示不可用。（[#512](https://github.com/anywhere-labs/Agents-Anywhere/pull/512)）
+- 同步全部 DSH 会话时，DSH 中已打开或正在运行的会话先完成同步，正在使用的会话在同步过程中就能实时看到回复，不再等全部会话同步完。（[#512](https://github.com/anywhere-labs/Agents-Anywhere/pull/512)）
+- DSH 同步批次被拒绝时，Connector 日志会记录拒绝原因和判定字段，日志中的错误也会带上完整堆栈，便于排查同步反复中断。（[#512](https://github.com/anywhere-labs/Agents-Anywhere/pull/512)）
 - 首次导入或重新同步 DSH 会话后，会话列表按最后使用时间排序，和 DSH 桌面端侧边栏一致，不再按同步先后打乱。（[#404](https://github.com/anywhere-labs/Agents-Anywhere/pull/404)）
 
 ### 本机连接、所有权与日志

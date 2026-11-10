@@ -114,7 +114,7 @@
       "type": "string"
     },
     "phase": {
-      "description": "Present while a lifecycle status has a finer-grained step the user should see (for example `syncing` during `starting`). Null or absent otherwise.",
+      "description": "Present while a lifecycle status has a finer-grained step the user should see (for example `waiting_bridge` during `starting`, or `syncing` while a running DSH instance rebuilds its session baseline). Null or absent otherwise.",
       "oneOf": [
         {
           "$ref": "#/$defs/RuntimePhase"

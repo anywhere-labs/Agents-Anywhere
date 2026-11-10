@@ -422,7 +422,47 @@ export class SyncFeed {
       this.native.diagnostics.log('error', 'sync.runtime_update_failed', { streamId: this.id, phase }, error)
     }
   }
-  private async changes(changes: NativeChange[]): Promise<void> {
+  /**
+   * Delivers the queued changes of individual sessions while the startup scan
+   * still runs, so a session someone is working in streams after its own
+   * baseline instead of after the whole inventory (#504). A session that has
+   * no baseline yet gets one first; runtime-wide changes and visibility
+   * reconciliation wait for the end of the scan.
+   */
+  private async liveChanges(): Promise<void> {
+    const live = this.queue.filter((change): change is Extract<NativeChange, { id: string }> => 'id' in change)
+    if (!live.length) return
+    this.queue = this.queue.filter(change => !('id' in change))
+    const ids = new Set(live.map(change => change.id))
+    for (const id of ids) {
+      // Later chunks must not merge into a change that is already being delivered.
+      this.lastQueued.delete(id)
+      for (const kind of SESSION_INVALIDATIONS) this.queuedInvalidations.delete(`${kind}:${id}`)
+    }
+    this.queuedBytes = this.queue.reduce((total, change) => total + jsonBytes(change), 0)
+    // Imported sessions first: another session's capture must not hold up their updates.
+    const imported = live.filter(change => this.published.has(change.id))
+    const pending = live.filter(change => !this.published.has(change.id))
+    let reconcile = await this.deliverLive(imported)
+    for (const id of new Set(pending.map(change => change.id))) {
+      if (!this.published.has(id) && await this.native.visible(id)) await this.baseline(id, true)
+    }
+    if (await this.deliverLive(pending)) reconcile = true
+    if (reconcile && !this.queuedInvalidations.has('visibility')) {
+      this.queuedInvalidations.add('visibility')
+      this.queue.push({ type: 'visibility' })
+    }
+  }
+  private async deliverLive(changes: NativeChange[]): Promise<boolean> {
+    if (!changes.length) return false
+    this.bufferedOperations = []
+    const reconcile = await this.changes(changes, false)
+    await this.flushOperations()
+    this.bufferedOperations = undefined
+    return reconcile
+  }
+  /** Applies changes; returns whether a visibility reconciliation is still due when `reconcileNow` is false. */
+  private async changes(changes: NativeChange[], reconcileNow = true): Promise<boolean> {
     const touched = new Set<string>(), statuses = new Set<string>(), capabilities = new Set<string>()
     const ended: [string, Record<string, unknown>][] = []
     let reconcile = false, runtimeCapabilities = false, allSessionCapabilities = false
@@ -524,12 +564,16 @@ export class SyncFeed {
     for (const id of capabilities) await this.sessionOperation(id, 'capabilities', async () => {
       if (this.published.has(id)) await this.notification('session.capability.updated', await this.native.capabilities(this.published.get(id), id as SessionId))
     })
+    if (!reconcileNow) return reconcile
     if (reconcile) await this.reconcile()
+    return false
   }
   private async run(): Promise<void> {
     await this.notification('session.inventory.begin', { scanToken: this.id })
     await this.native.inventory(this.abort.signal, async entry => {
-      await this.baseline(entry.header.id, true)
+      // A session the live changes below already imported needs no second capture.
+      if (!this.published.has(entry.header.id)) await this.baseline(entry.header.id, true)
+      await this.liveChanges()
       await this.rememberCheckpoints()
       this.trimProjections()
     })

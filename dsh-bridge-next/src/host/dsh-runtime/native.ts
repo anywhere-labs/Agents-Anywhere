@@ -182,7 +182,10 @@ export class NativeRuntime {
     const result: SessionRecord[] = []
     // Concurrent detail reads may refresh the source map while visibility awaits I/O.
     // Capture this inventory once so pagination cannot repeat reinserted records.
-    for (const entry of [...this.source.records.values()]) {
+    const entries = [...this.source.records.values()]
+    const loaded = (entry: SessionRecord) => this.ctx.sessions.get(entry.header.id as SessionId) !== undefined
+    // Sessions loaded in DSH (open or running) first: their baselines unblock live updates soonest.
+    for (const entry of [...entries.filter(loaded), ...entries.filter(entry => !loaded(entry))]) {
       signal?.throwIfAborted()
       if (await this.visible(entry.header.id)) {
         result.push(entry)
