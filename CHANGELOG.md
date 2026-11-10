@@ -95,6 +95,14 @@
 - Android 的「模型网关」与 Web、Desktop 相同：首页列出网关和「已应用」（不单列「设备自带配置」，退出 Tokens Anywhere 后自动切回），点进网关后再应用、查看配置和 Runtime；Tokens Anywhere 按「账户／模型与连接／Runtime」分页，可以退出账户。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)、[#598](https://github.com/anywhere-labs/Agents-Anywhere/pull/598)）
 - 所选 Agent 换了模型网关后，Android 新建会话页会重新准备并刷新模型列表，不再停留在旧网关的模型上。（[#587](https://github.com/anywhere-labs/Agents-Anywhere/pull/587)）
 - Android 内置浏览器登录依赖视口高度的 OIDC 身份提供方时不再白屏，保留正常页头、页脚和登录卡片的布局，登录 URL 和第三方控制台输出不写入应用日志。（[#575](https://github.com/anywhere-labs/Agents-Anywhere/pull/575)）
+- 点击会话中的文件链接可直接预览 Agent 生成的 PDF、Word、PowerPoint、Excel、CSV、HTML、Markdown、图片和文本文件，预览页底部提供「下载」「分享」「其他应用打开」，暂不支持预览的格式也可以下载原文件；Agent 回复提到的报告、演示文稿等文件会在消息下方显示为文件卡片。
+  - 下载的文件保存到手机「下载/Agents Anywhere」，分享和用其他应用打开时保留原始文件名和扩展名，支持中文文件名和带空格的路径。
+  - 设备和会话的文件浏览里点开文档同样进入预览页，文本文件预览页右上角也可以下载、分享或用其他应用打开。
+  - Word 和 PowerPoint 97-2003（`.doc`、`.ppt`）只显示文字内容，`.docx`、`.pptx`、`.xlsx` 为简化排版；Markdown 中引用工作设备上的图片会一并显示；Excel 保留原始数值精度，PowerPoint 超过 300 页时提示预览范围，文档损坏、过大或受密码保护时按当前语言显示提示。
+
+  [#567](https://github.com/anywhere-labs/Agents-Anywhere/pull/567)
+
+- Agent 还在输出时往上翻看长回复或之前的消息，正在读的内容不再随新输出反复跳动闪烁。（[#567](https://github.com/anywhere-labs/Agents-Anywhere/pull/567)）
 
 ### iOS
 
