@@ -65,7 +65,6 @@ import com.agentsanywhere.app.feature.modelconfig.ModelConfigState
 import com.agentsanywhere.app.feature.modelconfig.ModelStatusTone
 import com.agentsanywhere.app.feature.modelconfig.modelConfigErrorCode
 import com.agentsanywhere.app.model.AgentDevice
-import com.agentsanywhere.app.model.CHANNEL_NATIVE
 import com.agentsanywhere.app.model.CHANNEL_TOKENS
 import com.agentsanywhere.app.model.ModelChannelState
 import com.agentsanywhere.app.model.ModelConfigOverview
@@ -79,7 +78,7 @@ import com.agentsanywhere.app.ui.screens.profile.profilePageBackground
 import kotlinx.coroutines.launch
 
 /**
- * 「模型渠道」, as on the desktop: a list of channels, and one page per channel
+ * 「模型网关」, as on the desktop: a list of channels, and one page per channel
  * with what it needs. Every channel is one tap away, so nothing piles up here.
  */
 @Composable
@@ -269,9 +268,11 @@ fun ModelConfigScreen(
     }
 }
 
-/** Every channel the page lists; the active Tokens profile belongs to the Tokens Anywhere channel. */
+/**
+ * Every channel the page lists; the active Tokens profile belongs to the Tokens Anywhere channel.
+ * The device's own configuration is not listed: signing out of Tokens Anywhere switches back to it.
+ */
 private fun ModelConfigOverview.channelIds(): Set<String> = buildSet {
-    add(CHANNEL_NATIVE)
     if (tokens?.available == true) add(CHANNEL_TOKENS)
     profiles.filterNot { it.isTokens && it.isActive }.forEach { add(it.id) }
 }

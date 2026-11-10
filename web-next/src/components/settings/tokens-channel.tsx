@@ -11,14 +11,12 @@ import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import type { ModelConfigOverview } from "@/features/dashboard/types"
 import { modelConfigApi } from "@/features/model-config/api"
-import { createTokensLinkWindow, openTokensLinkStart } from "@/features/model-config/open-link"
+import { useTokensLink } from "@/features/model-config/use-tokens-link"
 
 /** The Anywhere channel: link an account first, then its account, models and connection. */
-export function TokensChannel({ token, overview, currentAction, signOut, connection, runtimes, errorText, onChanged }: {
+export function TokensChannel({ token, overview, signOut, connection, runtimes, errorText, onChanged }: {
   token: string
   overview: ModelConfigOverview
-  /** Offered when Anywhere is not the default channel. */
-  currentAction: React.ReactNode
   /** Leaves the linked account, moving its runtimes off it first. */
   signOut: React.ReactNode
   /** How runtimes reach the account: its address, key and their actions. */
@@ -29,45 +27,14 @@ export function TokensChannel({ token, overview, currentAction, signOut, connect
 }) {
   const t = useTranslations("pages.settings.modelConfigs")
   const [busy, setBusy] = React.useState(false)
-  const [authorizing, setAuthorizing] = React.useState(false)
-  const popupRef = React.useRef<Window | null>(null)
   const tokens = overview.tokens
   const linked = tokens?.link?.status === "linked"
   const profile = overview.profiles.find((item) => item.source === "tokens" && item.state === "active")
-
-  React.useEffect(() => {
-    if (linked) {
-      popupRef.current?.close(); popupRef.current = null
-      setAuthorizing(false)
-    }
-  }, [linked, tokens?.link?.linkedAt])
-  React.useEffect(() => () => popupRef.current?.close(), [])
-  React.useEffect(() => {
-    if (!authorizing) return
-    const timer = window.setInterval(() => {
-      if (popupRef.current?.closed) { popupRef.current = null; setAuthorizing(false) }
-    }, 500)
-    return () => window.clearInterval(timer)
-  }, [authorizing])
+  const { link, busy: linking, authorizing } = useTokensLink({
+    token, linked, linkedAt: tokens?.link?.linkedAt, errorText, onChanged,
+  })
 
   if (!tokens?.available) return null
-
-  const link = async () => {
-    if (busy) return
-    popupRef.current?.close()
-    const popup = createTokensLinkWindow()
-    popupRef.current = popup
-    setBusy(true)
-    try {
-      const response = await modelConfigApi.beginTokensLink(token)
-      openTokensLinkStart(response.startUrl, popup)
-      setAuthorizing(true)
-      onChanged()
-    } catch (error) {
-      popupRef.current?.close(); popupRef.current = null
-      toast.error(errorText(error))
-    } finally { setBusy(false) }
-  }
 
   const sync = async () => {
     setBusy(true)
@@ -84,7 +51,7 @@ export function TokensChannel({ token, overview, currentAction, signOut, connect
       <SettingsSection variant="plain" title={t("channels.anywhere")} description={t("channel.description")}>
         <div className="flex flex-col items-start gap-3">
           {tokens.link ? <p className="text-sm text-muted-foreground">{t("tokensReauth")}</p> : null}
-          <Button disabled={busy || !tokens.secretConfigured} onClick={() => void link()}>
+          <Button disabled={busy || linking || !tokens.secretConfigured} onClick={() => void link()}>
             {authorizing ? <Spinner /> : <Link2 data-icon="inline-start" />}
             {t(authorizing ? "channel.waiting" : tokens.link ? "relink" : "channel.link")}
           </Button>
@@ -101,7 +68,6 @@ export function TokensChannel({ token, overview, currentAction, signOut, connect
       onSync={() => void sync()} onChanged={onChanged} errorText={errorText}
       action={(
         <>
-          {currentAction}
           {signOut}
         </>
       )}

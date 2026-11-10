@@ -1302,14 +1302,24 @@
       "addDevice": "Add device"
     },
     "tokensAnywhere": {
+      "title": "Tokens Anywhere",
       "headline": "Every model,\none key.",
       "description": "Call models in the OpenAI, Anthropic or Gemini format, with the SDK you already use.\nConnect Claude Code, Codex or DeepSeek Harness in minutes.",
-      "getApiKey": "Get your API key",
+      "authorize": "Authorize Tokens Anywhere",
+      "reauthorize": "Authorize again",
+      "authorizeHint": "Authorization opens your Tokens Anywhere console here and automatically applies its gateway, interrupting running tasks on affected runtimes.",
+      "reauthHint": "The authorization expired. Authorize again to open the console.",
+      "waiting": "Waiting for authorization in the browser…",
+      "loadFailed": "Couldn't open the Tokens Anywhere console right now.",
+      "retry": "Try again",
+      "reload": "Reload",
+      "openInBrowser": "Open in browser",
       "hideFromSidebar": "Hide in sidebar",
       "showInSidebar": "Show in sidebar",
       "hiddenToast": "Tokens Anywhere hidden. Show it again in Settings → Appearance.",
       "shownToast": "Tokens Anywhere is now shown in the sidebar.",
-      "unavailable": "Tokens Anywhere is not configured yet."
+      "unavailable": "Tokens Anywhere is not configured yet.",
+      "secretMissing": "The server has no AGENT_SERVER_SECRET (at least 32 characters) yet. Ask an administrator to set it before saving keys or linking Tokens Anywhere."
     }
   },
   "privacy": {
@@ -1721,7 +1731,7 @@
           "secret_unconfigured": "The server has no AGENT_SERVER_SECRET (at least 32 characters) yet, so it cannot keep keys or link accounts.",
           "secret_required": "The address changed. Enter the API key again.",
           "profile_changed": "This profile was changed elsewhere. Refresh and try again.",
-          "profile_in_use": "This profile is applied or still in use. Switch to another channel first.",
+          "profile_in_use": "This profile is applied or still in use. Switch to another gateway first.",
           "profile_read_only": "This profile is managed by its source and cannot be edited here.",
           "profile_detached": "This profile is unlinked and can no longer be used.",
           "busy": "Tasks are running. Allow interrupting them to apply.",
@@ -1747,9 +1757,9 @@
           "models_required": "This runtime needs at least one imported model.",
           "key_rotated": "The key was rotated. Apply this profile again.",
           "key_not_kept": "Tokens Anywhere did not keep this instance's key, so it cannot be fetched again. Ask its operator to set TOKENS_SECRETS_KEY, then unlink and link again.",
-          "channel_not_found": "This channel no longer exists. Refresh and try again.",
-          "channel_in_use": "Runtimes still want or use the Tokens Anywhere channel. Switch to another channel first.",
-          "runtime_switching": "This runtime is switching channels. Try again shortly.",
+          "channel_not_found": "This gateway no longer exists. Refresh and try again.",
+          "channel_in_use": "Runtimes still want or use the Tokens Anywhere gateway. Switch to another gateway first.",
+          "runtime_switching": "This runtime is switching gateways. Try again shortly.",
           "gateway_address_not_allowed": "This address is on a private network, which the server does not call, so it can't be detected.",
           "gateway_unreachable": "The server could not reach this address. Check the address.",
           "gateway_key_rejected": "The model service refused this key. Check it and try again.",
@@ -1835,42 +1845,39 @@
         },
         "channel": {
           "link": "Link account",
-          "title": "Tokens Anywhere channel",
-          "description": "Link a Tokens Anywhere account, then apply the Tokens Anywhere channel to give the runtimes on every device the models Tokens Anywhere provides.",
+          "title": "Tokens Anywhere gateway",
+          "description": "Linking a Tokens Anywhere account automatically applies its gateway to runtimes without a gateway override and interrupts their running tasks.",
           "waiting": "Waiting for browser authorization"
         },
         "channels": {
-          "title": "Model channels",
+          "title": "Model gateways",
           "anywhere": "Tokens Anywhere",
           "manual": "Model services",
           "detached": "Disconnected",
           "connection": "Connection"
         },
-        "rotated": "Key rotated. Writing it to the runtimes on the Tokens Anywhere channel.",
+        "rotated": "Key rotated. Writing it to the runtimes on the Tokens Anywhere gateway.",
         "deleteInUse": "This profile is applied, chosen for a runtime, or in use, so it cannot be deleted.",
         "current": {
-          "title": "Applied channel",
-          "description": "Apply this channel immediately to runtimes without a channel of their own. Running tasks will be interrupted.",
+          "title": "Applied gateway",
+          "description": "Apply this gateway immediately to runtimes without a gateway of their own. Running tasks will be interrupted.",
           "native": "Device's own configuration",
           "makeCurrent": "Apply",
           "inUse": "Applied",
-          "switched": "Channel applied. Runtimes are switching."
-        },
-        "native": {
-          "description": "No model connection is written; runtimes use their own model settings on the device."
+          "switched": "Gateway applied. Runtimes are switching."
         },
         "runtimes": {
           "title": "Runtimes",
-          "count": "{count, plural, one {# runtime uses this channel} other {# runtimes use this channel}}",
+          "count": "{count, plural, one {# runtime uses this gateway} other {# runtimes use this gateway}}",
           "switching": "Switching",
           "attention": "Some runtimes need attention"
         },
         "status": {
-          "none": "No runtimes use this channel yet.",
+          "none": "No runtimes use this gateway yet.",
           "running": "Switching {applied}/{total} runtimes",
           "done": "{count, plural, one {In effect on # runtime} other {In effect on # runtimes}}",
           "attention": "{applied}/{total} in effect",
-          "restored": "{count} failed and went back to the previous channel",
+          "restored": "{count} failed and went back to the previous gateway",
           "failed": "{count} need attention",
           "waitingOnline": "{count, plural, one {# device offline, switches when back online} other {# devices offline, switch when back online}}"
         },
@@ -1879,8 +1886,8 @@
           "offline": "Offline",
           "unsupported": "{count, plural, one {# runtime not supported} other {# runtimes not supported}}",
           "using": "Using {name}",
-          "follow": "Follow applied channel",
-          "channelFor": "Channel for {runtime}",
+          "follow": "Follow applied gateway",
+          "channelFor": "Gateway for {runtime}",
           "nativeGlobalTitle": "Change the runtime's own global settings?",
           "nativeGlobalDescription": "{runtime} has no separate instance managed by AA. Using {channel} rewrites its own global settings, which also affects anything using it outside AA.",
           "nativeGlobalConfirm": "Change settings"
@@ -1891,7 +1898,7 @@
           "waiting_online": "Device offline, switches when back online",
           "switching": "Switching",
           "restoring": "Restoring the previous configuration",
-          "restored": "Switch failed, back on the previous channel",
+          "restored": "Switch failed, back on the previous gateway",
           "failed": "Switch failed, needs attention",
           "unsupported": "Not supported"
         },
@@ -1906,10 +1913,10 @@
           "format_unsupported": "No protocol in common",
           "mode_unsupported": "Its current mode takes no model connection",
           "models_required": "Needs at least one imported model",
-          "model_unavailable": "The chosen model is not on this channel",
-          "confirmation_required": "Changes its own global settings; choose a channel for it and confirm",
-          "connector_upgrade_required": "Upgrade the Connector to synchronize channels safely",
-          "profile_unavailable": "The channel is no longer available",
+          "model_unavailable": "The chosen model is not on this gateway",
+          "confirmation_required": "Changes its own global settings; choose a gateway for it and confirm",
+          "connector_upgrade_required": "Upgrade the Connector to synchronize gateways safely",
+          "profile_unavailable": "The gateway is no longer available",
           "validate_failed": "The new configuration did not validate",
           "start_failed": "The runtime did not start",
           "verify_failed": "The runtime reported a different connection",
@@ -1923,9 +1930,9 @@
         "detecting": "Detecting…",
         "manualProtocols": "You can also pick the protocols and enter the models yourself:"
       },
-      "modelConfigsTitle": "Model channels",
+      "modelConfigsTitle": "Model gateways",
       "modelsGroup": "Models",
-      "channelSwitchTitle": "Channel switching"
+      "channelSwitchTitle": "Gateway switching"
     },
     "team": {
       "title": "Team",

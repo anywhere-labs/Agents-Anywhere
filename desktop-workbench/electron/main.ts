@@ -41,6 +41,7 @@ import type { BackendInit } from "./backend/protocol";
 import { DesktopBackendClient } from "./backend-client";
 import { readDesktopSettings } from "./desktop-settings";
 import { ConnectorLogStore } from "./log-store";
+import { allowWorkbenchFrame } from "./embedded-console";
 import { windowMaterialOptions } from "./window-material";
 import buildInfo from "../build-info.json";
 import { droppedFolderPath } from "./dropped-folder";
@@ -281,6 +282,22 @@ function shouldProxyApiPath(pathname: string): boolean {
   if (namespace) return pathname === namespace || pathname.startsWith(`${namespace}/`);
   return API_ROUTE_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
+
+/** Lets the workbench frame the Tokens Anywhere console its instance may frame; see embedded-console. */
+function registerEmbeddedConsoleFrames(): void {
+  session.defaultSession.webRequest.onHeadersReceived(
+    { urls: ["https://*/*", "http://*/*"] },
+    (details, callback) => {
+      if (details.resourceType !== "subFrame") {
+        callback({});
+        return;
+      }
+      const origins = [`${WEB_PROTOCOL}://${WEB_HOST}`, ...(devOrigin ? [devOrigin] : [])];
+      const responseHeaders = allowWorkbenchFrame(details.responseHeaders, origins);
+      callback(responseHeaders ? { responseHeaders } : {});
+    },
   );
 }
 
@@ -1094,6 +1111,7 @@ if (hasSingleInstanceLock) {
     // macOS and Linux announce a shutdown here; Windows uses the window events.
     powerMonitor.on("shutdown", handleSystemShutdown);
     registerStaticWebProtocol();
+    registerEmbeddedConsoleFrames();
     await initializeDesktopServices();
     updates = new DesktopUpdateService({
       directory: path.join(app.getPath("userData"), "updates"),

@@ -57,7 +57,6 @@ struct TokensChannelDetail<Apply: View, Runtimes: View>: View {
                 Text(String(localized: "pages.settings.modelConfigs.channel.description"))
             }
             // A lapsed link keeps the runtimes that still use it.
-            if lapsed && !model.channelRows(V2ModelChannel.tokens).isEmpty { runtimes(true) }
         }
     }
 

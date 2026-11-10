@@ -513,7 +513,6 @@
     "pages.settings.modelConfigs.interruptContinue": "pages.settings.modelConfigs.interruptContinue",
     "pages.settings.modelConfigs.interruptDescription": "pages.settings.modelConfigs.interruptDescription",
     "pages.settings.modelConfigs.interruptTitle": "pages.settings.modelConfigs.interruptTitle",
-    "pages.settings.modelConfigs.native.description": "pages.settings.modelConfigs.native.description",
     "pages.settings.modelConfigs.reason.confirmation_required": "pages.settings.modelConfigs.reason.confirmation_required",
     "pages.settings.modelConfigs.reason.connector_upgrade_required": "pages.settings.modelConfigs.reason.connector_upgrade_required",
     "pages.settings.modelConfigs.reason.device_offline": "pages.settings.modelConfigs.reason.device_offline",

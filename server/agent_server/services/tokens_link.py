@@ -66,6 +66,8 @@ KEY_NOT_KEPT = {"key_secret_not_kept", "secrets_key_missing"}
 KEEP_ALIVE_INTERVAL = timedelta(days=1)
 # Tokens Anywhere counts usage by Beijing date.
 BEIJING = timezone(timedelta(hours=8))
+# The console is the only part of Tokens Anywhere that may be embedded.
+EMBED_START = "/console/"
 
 
 class TokensLinkError(Exception):
@@ -357,10 +359,12 @@ class TokensLinkService:
             # The new key identity outdates every runtime on Anywhere; they are
             # rewritten through the switch, waiting for running tasks.
             await self._channels().refresh(user_id=user_id, rewrite=TOKENS)
+            await self._channels().set_channel(TOKENS, user_id=user_id)
             await self._publish(user_id)
             return row["issuer"]
         try:
             await self.sync(user_id=user_id)
+            await self._channels().set_channel(TOKENS, user_id=user_id)
         except (TokensLinkError, TokensError, ModelConfigError):
             # The link stands; the page offers to sync again.
             logger.warning("tokens catalog sync failed after linking user_id={}", user_id)
@@ -562,6 +566,25 @@ class TokensLinkService:
                 "usage": f"{issuer}/console/usage/",
             },
         }
+
+    async def embed_ticket(self, *, user_id: str, next_path: str = EMBED_START) -> dict[str, Any]:
+        """Where an iframe opens the linked account's console without signing in.
+
+        The address carries a single-use ticket that expires within a minute; the
+        access token itself never leaves the server.
+        """
+        if not next_path.startswith(EMBED_START):
+            raise TokensLinkError("invalid_embed_path", "only console pages can be embedded", status_code=422)
+        issuer = await self._link_issuer(user_id)
+        try:
+            body = await self._call(user_id, lambda client, token: client.embed_ticket(token, next_path=next_path))
+        except TokensError as exc:
+            raise TokensLinkError("tokens_unavailable", "Tokens Anywhere is unavailable", status_code=502) from exc
+        url = body["url"]
+        # The iframe may only ever point at the linked account's own site.
+        if not url.startswith(f"{issuer}/embed/start/"):
+            raise TokensLinkError("tokens_unavailable", "Tokens Anywhere returned another address", status_code=502)
+        return {"url": url, "origin": issuer, "expiresAt": body.get("expiresAt")}
 
     async def usage(self, *, user_id: str, days: int) -> dict[str, Any]:
         """Settled usage of the whole Tokens account per day and model."""

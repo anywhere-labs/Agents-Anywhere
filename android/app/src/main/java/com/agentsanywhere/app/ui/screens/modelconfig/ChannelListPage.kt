@@ -32,7 +32,6 @@ import com.agentsanywhere.app.feature.modelconfig.ModelStatusTone
 import com.agentsanywhere.app.feature.modelconfig.channelKind
 import com.agentsanywhere.app.feature.modelconfig.channelProgress
 import com.agentsanywhere.app.feature.modelconfig.rowsFor
-import com.agentsanywhere.app.model.CHANNEL_NATIVE
 import com.agentsanywhere.app.model.CHANNEL_TOKENS
 import com.agentsanywhere.app.model.ModelChannelState
 import com.agentsanywhere.app.model.ModelConfigOverview
@@ -64,10 +63,8 @@ internal fun ChannelListPage(
             onClick = { onOpen(id) },
         )
     }
-    ChannelGroup(title = null, ids = buildList {
-        add(CHANNEL_NATIVE)
-        if (overview.tokens?.available == true) add(CHANNEL_TOKENS)
-    }, row = row)
+    // The device's own configuration is not listed: signing out of Tokens Anywhere switches back to it.
+    if (overview.tokens?.available == true) ChannelGroup(title = null, ids = listOf(CHANNEL_TOKENS), row = row)
     if (enabled.isNotEmpty()) {
         ChannelGroup(stringResource(R.string.model_config_channels_manual), enabled.map { it.id }, row)
     }
