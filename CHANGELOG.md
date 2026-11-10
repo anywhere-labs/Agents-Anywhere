@@ -30,6 +30,7 @@
 
 ### Codex 与 Claude
 
+- 修复 Codex 接管后原客户端离线导致发送失败、停止无效，以及任务已完成却仍显示运行中的问题；发送结果未知时不会自动重发消息，恢复旧任务状态时不会结束新回合或重复报告完成。（[#541](https://github.com/anywhere-labs/Agents-Anywhere/pull/541)）
 - Codex 的定时会话扫描只写入真正变化的会话，会话数量较多的部署数据库写入明显下降，并减少这些写入拖慢其他请求的情况。（[#557](https://github.com/anywhere-labs/Agents-Anywhere/pull/557)）
 - Connector 的 Codex 会话清单没有变化时不再重复上报，只每隔约 10 分钟核对一次；重连和启动时的扫描也会错开，故障恢复时不再集中冲击 Server。（[#555](https://github.com/anywhere-labs/Agents-Anywhere/pull/555)）
 - Codex 回合失败后只显示错误卡片，不再锁住输入框：可以直接继续发送或重试，下一轮开始时卡片自动消失。（[#581](https://github.com/anywhere-labs/Agents-Anywhere/pull/581)）
@@ -214,7 +215,6 @@
 
 ### Codex 与 Claude
 
-- 修复 Codex 接管后原客户端离线导致发送失败、停止无效，以及任务已完成却仍显示运行中的问题；发送结果未知时不会自动重发消息。（[#541](https://github.com/anywhere-labs/Agents-Anywhere/pull/541)）
 - 接入 Codex App / IDE 插件的 IPC 协议，在 Codex 窗口里打开的会话也能在 AA 中继续操作，包括发消息、中断、审批、切换模型和权限、发送附件；支持 macOS 和 Windows。（[#299](https://github.com/anywhere-labs/Agents-Anywhere/pull/299)、[#334](https://github.com/anywhere-labs/Agents-Anywhere/pull/334)）
 - 新增 `/open-in-codex-app` 和 `/kill-chatgpt` 命令：前者在 Codex App 中打开当前会话，后者退出 App 以释放写锁。（[#299](https://github.com/anywhere-labs/Agents-Anywhere/pull/299)）
 - 写入（包括 `/compact`）发往当前持有会话的一方；会话被 Codex App 占着、却没有窗口显示它时，先让正在运行的 App 打开这个会话再发送（由设置「把被锁定的线程交给 Codex App」控制），仍联系不上持有方才报错，不会和 App 抢写锁。（[#437](https://github.com/anywhere-labs/Agents-Anywhere/pull/437)、[#455](https://github.com/anywhere-labs/Agents-Anywhere/pull/455)、[#506](https://github.com/anywhere-labs/Agents-Anywhere/pull/506)）

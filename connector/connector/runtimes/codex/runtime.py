@@ -179,6 +179,7 @@ class CodexRuntime(AgentRuntime):
             list_permission_catalog=self._catalogs.list_permission_catalog,
             pending_messages=self._pending_messages,
             timeline=self._timeline,
+            turn_lifecycle=self._notifications.turn_lifecycle,
         )
         # Async answers are ordinary start/steer writes and must use the same
         # owner routing as messages, including after a Connector restart.
@@ -238,6 +239,7 @@ class CodexRuntime(AgentRuntime):
                 read_model_catalog=self._ipc_model_catalog,
                 read_permission_catalog=self._ipc_permission_catalog,
                 async_submissions=self._async_submissions,
+                turn_lifecycle=self._notifications.turn_lifecycle,
             )
             self.ipc_service = CodexIpcService(
                 client=self.ipc,
@@ -819,11 +821,12 @@ class CodexRuntime(AgentRuntime):
         await self._bind_state_session(session_id, external_session_id)
         # Reads never resume: thread/resume takes the writer lock and would lock
         # Codex Desktop out of a thread that AA only displayed or synced.
+        expected = self._session_states.get(session_id)
         state = await self._session_reader.get_session_state(
             session_id,
             external_session_id,
         )
-        return await self._turns.reconcile_history_state(state)
+        return await self._turns.reconcile_history_state(state, expected)
 
     async def get_session_notices(
         self,

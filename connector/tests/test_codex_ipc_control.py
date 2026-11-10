@@ -20,7 +20,6 @@ from connector.runtime_protocol import (
     RuntimeTimelineItem,
     RuntimeUnsupportedError,
     SessionNotice,
-    SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
@@ -545,23 +544,48 @@ def test_unknown_send_outcome_never_retries_on_another_writer(monkeypatch):
     asyncio.run(run())
 
 
-def test_owner_loss_clears_ipc_turn_but_preserves_new_sdk_turn():
+def test_owner_loss_preserves_turn_until_history_confirms_completion(tmp_path):
     async def run():
         host = _Host()
-        states = RuntimeSessionStateCache("codex", host)
-        active = {"session": "ipc-turn"}
+        runtime = CodexRuntime(config=RuntimeConfig(runtime="codex", revision=1, values={}), host=host, client=None)
+        states, active = runtime._session_states, runtime._active_turn_ids
         projector = CodexIpcSessionProjector(host=host, session_states=states,
-            notices=CodexNoticeRegistry(), active_turn_ids=active)
+            notices=runtime._notices, active_turn_ids=active, timeline=runtime._timeline,
+            turn_lifecycle=runtime._notifications.turn_lifecycle)
         projector._active_turns["session"] = "ipc-turn"
+        active["session"] = "ipc-turn"
+        runtime._timeline.begin_turn(THREAD, "ipc-turn")
         await states.update("session", THREAD, "running", metadata={"source": "codex.ipc", "turn_id": "ipc-turn"})
         lost = FollowedThread(thread_id=THREAD, status="owner_lost")
-        await projector._project_detached(lost)
+        await projector.handle(FollowerEvent(kind="status", thread=lost))
+        assert active == {"session": "ipc-turn"}
+        assert states.get("session").status == "running"
+        assert states.get("session").metadata["turn_id"] == "ipc-turn"
+        assert host.turn_ends == []
+
+        path = tmp_path / "rollout.jsonl"
+        path.write_text(json.dumps({"type": "session_meta", "payload": {"id": THREAD}}) + "\n"
+            + json.dumps({"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "ipc-turn"}}) + "\n")
+        runtime._session_reader._observed_threads[THREAD] = {"id": THREAD, "path": str(path)}
+        assert (await runtime.get_session_state("session", THREAD)).status == "idle"
         assert active == {}
-        assert states.get("session").status == "idle"
-        assert states.get("session").metadata["turn_id"] is None
+        assert not runtime._timeline._active_turn_positions
+        assert host.turn_ends == [{"session_id": "session", "turn_id": "ipc-turn", "outcome": "completed"}]
+        late_state = _state(threadRuntimeStatus={"type": "running"}, turnHistory={"history": {
+            "entitiesByKey": {"turn:ipc-turn": _turn("ipc-turn", "inProgress", [])},
+            "islands": [{"id": "tail:0", "entries": [{"key": "turn:ipc-turn"}]}],
+        }})
+        await projector.handle(FollowerEvent(kind="snapshot", thread=FollowedThread(
+            thread_id=THREAD, status="following", owner_client_id="old-owner", state=late_state)))
+        assert states.get("session").status == "idle" and active == {}
+        # A reconnected idle snapshot must not finish the same turn again.
+        await projector._track_turn("session", FollowedThread(thread_id=THREAD, status="following", state={}), "idle")
+        assert len(host.turn_ends) == 1
+        assert projector._active_turns == {}
+
         active["session"] = "new-sdk-turn"
         await states.update("session", THREAD, "running", metadata={"source": "codex.turn/started", "turn_id": "new-sdk-turn"})
-        await projector._project_detached(lost)
+        await projector.handle(FollowerEvent(kind="status", thread=lost))
         assert active == {"session": "new-sdk-turn"}
         assert states.get("session").status == "running"
     asyncio.run(run())
@@ -625,19 +649,80 @@ def test_runtime_routes_attached_sessions_through_ipc() -> None:
 
 @pytest.mark.parametrize(("native_status", "outcome"), [
     ("completed", "completed"), ("failed", "failed"),
-    ("interrupted", "interrupted"), ("inProgress", "interrupted"),
+    ("interrupted", "interrupted"), ("inProgress", None),
 ])
-def test_history_reconciliation_preserves_outcome_and_is_idempotent(native_status, outcome):
+def test_history_reconciliation_preserves_outcome_and_is_idempotent(native_status, outcome, monkeypatch):
+    from types import SimpleNamespace
+
+    from connector.runtimes.codex.sessions.history_index import NativeThreadActivity
+    from connector.runtimes.codex.sessions.reader import CodexSessionReader
+
     async def run():
         host = _Host()
         runtime = CodexRuntime(config=RuntimeConfig(runtime="codex", revision=1, values={}), host=host, client=None)
         runtime._active_turn_ids["session"] = "ended"
-        await runtime._session_states.update("session", THREAD, "running",
+        runtime._timeline.begin_turn(THREAD, "ended")
+        expected = await runtime._session_states.update("session", THREAD, "running",
             metadata={"source": "codex.ipc", "turn_id": "ended"})
-        state = SessionState(session_id="session", external_session_id=THREAD, runtime="codex", status="idle",
-            metadata={"source": "codex.thread_history.state", "turn_id": "ended", "native_status": native_status})
-        await runtime._turns.reconcile_history_state(state)
-        await runtime._turns.reconcile_history_state(runtime._session_states.get("session"))
-        assert host.turn_ends == [{"session_id": "session", "turn_id": "ended", "outcome": outcome}]
-        assert "session" not in runtime._active_turn_ids
+        evidence = "terminal" if outcome is not None else "stale"
+
+        async def read_activity(self, external_id):
+            return NativeThreadActivity("idle", "ended", native_status, evidence)
+
+        with monkeypatch.context() as context:
+            context.setattr(CodexSessionReader, "_read_native_activity", read_activity)
+            await runtime.get_session_state("session", THREAD)
+            await runtime.get_session_state("session", THREAD)
+        if outcome is None:
+            assert runtime._session_states.get("session") is expected
+            assert runtime._active_turn_ids == {"session": "ended"}
+            assert host.turn_ends == []
+        else:
+            assert host.turn_ends == [{"session_id": "session", "turn_id": "ended", "outcome": outcome}]
+            assert "session" not in runtime._active_turn_ids
+            assert not runtime._timeline._active_turn_positions
+            # Delayed terminal/start notifications cannot revive or end it again.
+            lifecycle = runtime._notifications.turn_lifecycle
+            await lifecycle.handle_turn_completed("session", THREAD,
+                SimpleNamespace(turn_id="ended", params={}, event_type="turn/completed"))
+            await lifecycle.handle_turn_failed("session", THREAD,
+                SimpleNamespace(turn_id="ended", params={}, event_type="turn/failed"))
+            await lifecycle.handle_turn_started("session", THREAD,
+                SimpleNamespace(turn_id="ended", params={}, event_type="turn/started"))
+            await runtime._notifications.handle({"method": "item/started", "params": {
+                "threadId": THREAD, "turnId": "ended",
+                "item": {"id": "late-message", "type": "agentMessage", "text": "late content"},
+            }})
+            assert len(host.turn_ends) == 1
+            assert runtime._session_states.get("session").status == "idle"
+
+        # The reader captures its cache before awaiting the native history read.
+        # Start a newer turn during that await and return an older terminal fact.
+        async def read_with_new_turn(self, external_id):
+            runtime._active_turn_ids["session"] = "new-turn"
+            await runtime._session_states.update("session", THREAD, "running",
+                metadata={"source": "codex.turn/started", "turn_id": "new-turn"})
+            return NativeThreadActivity("idle", "ended", "completed", "terminal")
+
+        await runtime._session_states.update("session", THREAD, "running",
+            metadata={"source": "codex.turn/started", "turn_id": "ended"})
+        previous_ends = list(host.turn_ends)
+        with monkeypatch.context() as context:
+            context.setattr(CodexSessionReader, "_read_native_activity", read_with_new_turn)
+            current = await runtime.get_session_state("session", THREAD)
+        assert current.status == "running" and current.metadata["turn_id"] == "new-turn"
+        assert runtime._active_turn_ids == {"session": "new-turn"}
+        assert host.turn_ends == previous_ends
+
+        # A startup or unanswered interaction can retain the preceding turn ID.
+        for status in ("waiting", "waiting_approval", "blocked"):
+            expected = await runtime._session_states.update("session", THREAD, status,
+                metadata={"source": "codex.turn/start.requested", "turn_id": "ended"})
+            async def read_stale(self, external_id):
+                return NativeThreadActivity("idle", "ended", "inProgress", "stale")
+            with monkeypatch.context() as context:
+                context.setattr(CodexSessionReader, "_read_native_activity", read_stale)
+                assert await runtime.get_session_state("session", THREAD) is expected
+            assert runtime._active_turn_ids == {"session": "new-turn"}
+            assert host.turn_ends == previous_ends
     asyncio.run(run())
