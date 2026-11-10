@@ -56,6 +56,7 @@ from agent_server.infra.db.migrations import (
     upgrade_database,
 )
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
+from agent_server.infra.malloc_trim import run_malloc_trim_loop
 from agent_server.infra.model_gateway_probe import (
     GatewayProber,
     private_gateways_allowed,
@@ -137,6 +138,7 @@ def create_app(
         usage_task: asyncio.Task[None] | None = None
         tokens_task: asyncio.Task[None] | None = None
         goal_task: asyncio.Task[None] | None = None
+        trim_task: asyncio.Task[None] | None = None
         try:
             logger.info(
                 "server concurrency pid={} workers={} event_workers={}",
@@ -167,11 +169,20 @@ def create_app(
             goal_task = asyncio.create_task(
                 run_goal_outbox(app.state.store, app.state.timeline_broker)
             )
+            if process_settings.malloc_trim_interval_seconds > 0:
+                # Opt-in mitigation for glibc heap creep in long-lived workers (#466).
+                trim_task = asyncio.create_task(
+                    run_malloc_trim_loop(process_settings.malloc_trim_interval_seconds),
+                    name="malloc-trim",
+                )
             # Generate the bootstrap token early so operators see it in logs.
             if await app.state.store.count_users() == 0:
                 await SetupTokenService(app.state.setup_token, app.state.redis).snapshot()
             yield
         finally:
+            if trim_task is not None:
+                trim_task.cancel()
+                await asyncio.gather(trim_task, return_exceptions=True)
             if tokens_task is not None:
                 tokens_task.cancel()
                 await asyncio.gather(tokens_task, return_exceptions=True)
