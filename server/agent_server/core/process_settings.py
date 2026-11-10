@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 
@@ -11,6 +12,24 @@ def _integer(name: str, default: int, minimum: int) -> int:
     return value
 
 
+MIN_MALLOC_TRIM_INTERVAL_SECONDS = 30.0
+
+
+def _malloc_trim_interval(name: str) -> float:
+    """0 (the default) disables trimming; anything else must be >= 30 seconds."""
+
+    raw = os.environ.get(name, "").strip()
+    value = float(raw) if raw else 0.0
+    if value != 0 and not (
+        math.isfinite(value) and value >= MIN_MALLOC_TRIM_INTERVAL_SECONDS
+    ):
+        raise ValueError(
+            f"{name} must be 0 (disabled) or at least "
+            f"{MIN_MALLOC_TRIM_INTERVAL_SECONDS:g} seconds"
+        )
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class ProcessSettings:
     workers: int
@@ -18,6 +37,7 @@ class ProcessSettings:
     single_instance: bool
     host: str
     port: int
+    malloc_trim_interval_seconds: float = 0.0
 
     @classmethod
     def from_environment(cls) -> ProcessSettings:
@@ -33,6 +53,9 @@ class ProcessSettings:
             in {"1", "true", "yes"},
             host=os.environ.get("AGENT_SERVER_HOST", "127.0.0.1"),
             port=_integer("AGENT_SERVER_PORT", 8000, 1),
+            malloc_trim_interval_seconds=_malloc_trim_interval(
+                "AGENT_SERVER_MALLOC_TRIM_INTERVAL_SECONDS"
+            ),
         )
 
     def validate_shared_state(self, *, redis_configured: bool) -> None:

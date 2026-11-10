@@ -250,6 +250,20 @@ test('canonical identities and hashes match the shared cross-language fixtures',
   }
   for (const entry of fixture.timelineIds) assert.equal(itemId(entry.externalSessionId, entry.projectionKind, entry.businessId), entry.itemId)
   for (const entry of fixture.contentHashes) assert.equal(contentHash(entry), entry.contentHash)
+  const rawItem = {
+    type: 'tool' as const,
+    status: 'done' as const,
+    role: 'assistant',
+    content: {
+      kind: 'tool_call',
+      title: 'bash',
+      omitted: undefined,
+      nested: { keep: 1, drop: undefined },
+      items: ['a', undefined, 'b'],
+    } as unknown as Record<string, null>,
+  }
+  const transportedItem = JSON.parse(JSON.stringify(rawItem))
+  assert.equal(contentHash(rawItem), contentHash(transportedItem))
 })
 
 test('read cursors capture one complete inventory and truncated snapshots are never marked complete', async () => {
@@ -335,4 +349,54 @@ test('rc.1 failed attempts discard provisional blocks before the next attempt', 
   assert.equal(projection.drain().removed.length, 1)
   projection.stream(1, 1, { type: 'text-delta', index: 0, text: 'retry' }, 1003, 2)
   assert.ok(projection.drain().items.some(item => item.content.text === 'retry'))
+})
+
+test('multi-page list and snapshot captures release on final page or timer expiry without extra requests', async () => {
+  const large = log([
+    ...start,
+    ...Array.from({ length: 1005 }, (_, i) => ({
+      type: 'user/message',
+      data: { id: `u-${i}`, role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: `msg-${i}` }] },
+    })),
+  ])
+  const records = [
+    { header: { ...large.session, id: 's-1' as never }, live: true, persisted: true },
+    { header: { ...large.session, id: 's-2' as never }, live: true, persisted: true },
+  ]
+  const router = new RuntimeRouter({
+    query: {
+      listSessions: async () => records,
+      readTitleSnapshots: async ids => ids.map(id => ({ sessionId: id, status: 'fulfilled' as const, value: { session: large.session } })),
+      readSession: async () => large,
+    },
+    status: () => undefined,
+  }, 'instance', 40)
+  const signal = new AbortController().signal
+
+  // 1. Multi-page listSessions releases inventory as soon as the final page is read.
+  const firstList = await router.request('listSessions', { limit: 1 }, signal) as { nextCursor: string | null }
+  assert.ok(firstList.nextCursor)
+  assert.equal(router.hasInventoryPage, true)
+  const secondList = await router.request('listSessions', { limit: 1, cursor: firstList.nextCursor }, signal) as { nextCursor: string | null }
+  assert.equal(secondList.nextCursor, null)
+  assert.equal(router.hasInventoryPage, false)
+
+  // 2. Multi-page getSessionSnapshot releases history as soon as the final page is read.
+  const params = { sessionId: sessionId('instance', 'native'), externalSessionId: 'native' }
+  const firstSnap = await router.request('getSessionSnapshot', params, signal) as { nextCursor: string | null, items: unknown[] }
+  assert.ok(firstSnap.nextCursor)
+  assert.equal(firstSnap.items.length, 1000)
+  assert.equal(router.hasHistoryPage, true)
+  const secondSnap = await router.request('getSessionSnapshot', { ...params, cursor: firstSnap.nextCursor }, signal) as { nextCursor: string | null, items: unknown[] }
+  assert.equal(secondSnap.nextCursor, null)
+  assert.equal(router.hasHistoryPage, false)
+
+  // 3. Abandoned multi-page captures expire and clear via timer without another request.
+  await router.request('listSessions', { limit: 1 }, signal)
+  await router.request('getSessionSnapshot', params, signal)
+  assert.equal(router.hasInventoryPage, true)
+  assert.equal(router.hasHistoryPage, true)
+  await new Promise(resolve => setTimeout(resolve, 80))
+  assert.equal(router.hasInventoryPage, false)
+  assert.equal(router.hasHistoryPage, false)
 })

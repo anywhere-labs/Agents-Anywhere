@@ -1,0 +1,15 @@
+{
+  "configDigest": "3f9a1c0d5b7e2a4f6c8d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d",
+  "instanceId": "6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5",
+  "modelConnection": {
+    "externalOwner": null,
+    "mode": null,
+    "protocol": "openai_responses",
+    "reason": null,
+    "scope": "instance",
+    "state": "applied"
+  },
+  "runtime": "codex",
+  "runtimeId": "rti_codex_work_01",
+  "status": "running"
+}

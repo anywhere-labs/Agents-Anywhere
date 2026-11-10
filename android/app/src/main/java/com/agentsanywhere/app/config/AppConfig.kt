@@ -7,8 +7,8 @@ object AppConfig {
     // Debug builds can override the backend in android/local.properties.
     val OFFICIAL_SERVER_URL: String = BuildConfig.OFFICIAL_SERVER_URL
     const val DESKTOP_DOWNLOAD_URL = "https://agents-anywhere.com/download"
-    // Replace this placeholder with the fixed APK address before distribution.
-    const val UPDATE_DOWNLOAD_URL = "https://downloads.example.invalid/agents-anywhere.apk"
+    // The official site redirects this to the latest release APK.
+    const val UPDATE_DOWNLOAD_URL = "https://www.agents-anywhere.com/api/download/android/latest?from=update"
 
     fun isOfficialServer(serverUrl: String): Boolean {
         val officialOrigin = normalizeServerOrigin(OFFICIAL_SERVER_URL) ?: return false

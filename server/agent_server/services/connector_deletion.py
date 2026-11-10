@@ -33,6 +33,21 @@ async def delete_connector_data(
         session_ids = await store.begin_connector_deletion(
             connector_id, user_id=user_id
         )
+        lookup = getattr(store, "goal_session_ids", None)
+        if callable(lookup):
+            goals = await lookup(session_ids)
+            if goals:
+                try:
+                    await manager.request(
+                        connector_id,
+                        "session.goal.forget",
+                        {"sessionIds": goals},
+                        timeout=5,
+                    )
+                except Exception as error:  # noqa: BLE001 - deletion still commits when a device is offline
+                    logger.debug(
+                        "local goal deletion notification unavailable: {}", error
+                    )
         await manager.disconnect(connector_id, reason="connector deleted")
         await terminals.remove_for_connector(connector_id)
         for session_id in session_ids:

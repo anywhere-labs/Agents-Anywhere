@@ -21,7 +21,7 @@ def _violations(layer: str, forbidden: tuple[str, ...]) -> list[str]:
     result: list[str] = []
     for path in sorted((PACKAGE_ROOT / layer).glob("*.py")):
         for module in sorted(_imports(path)):
-            if module == forbidden or module.startswith(forbidden):
+            if module.startswith(forbidden):
                 result.append(f"{path.relative_to(PACKAGE_ROOT)} -> {module}")
     return result
 

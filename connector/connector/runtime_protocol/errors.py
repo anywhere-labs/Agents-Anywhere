@@ -29,3 +29,10 @@ class RuntimeUnavailableError(RuntimeProtocolError):
 
 class RuntimeUpstreamError(RuntimeProtocolError):
     code = "runtime_upstream_error"
+
+
+class RuntimeNoticePublishError(RuntimeProtocolError):
+    """A notice could not be admitted to the backend notification transport."""
+
+    code = "runtime_notice_publish_error"
+    retryable = True

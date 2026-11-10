@@ -2,13 +2,17 @@
 
 import type { AttachedFile } from "@/components/attachment-input"
 import type { TimelineItem } from "@/features/dashboard/types"
-import { sortTimelineItems } from "@/components/session/session-utils"
+import { compareTimelineItems, sortTimelineItems } from "@/components/session/session-utils"
 import {
   incomingTimelineItemCanReplace,
   mergeSequencedTimelineSnapshot,
 } from "@/components/session/timeline-sequence"
 
 export const OPTIMISTIC_ITEM_PREFIX = "optimistic-message:"
+
+// Timeline arrays/items are immutable. Replacements retain the same ID/order
+// index; WeakMap keys let closed sessions and superseded arrays be collected.
+const timelineIndexes = new WeakMap<TimelineItem[], Map<string, number>>()
 
 export function timelineClientMessageId(item: TimelineItem): string | null {
   const value = item.source.clientMessageId
@@ -50,11 +54,27 @@ export function mergeTimelineItems(
   currentItems: TimelineItem[],
   incomingItems: TimelineItem[],
 ): TimelineItem[] {
+  const incoming = incomingItems.length === 1 ? incomingItems[0] : undefined
+  const index = incoming ? timelineIndexes.get(currentItems)?.get(incoming.id) : undefined
+  if (incoming && index !== undefined) {
+    const existing = currentItems[index]!
+    if (canReplaceTimelineItemInPlace(existing, incoming)) {
+      if (!incomingTimelineItemCanReplace(existing, incoming) || existing === incoming) return currentItems
+      if ((index === 0 || compareTimelineItems(currentItems[index - 1]!, incoming) <= 0)
+        && (index === currentItems.length - 1 || compareTimelineItems(incoming, currentItems[index + 1]!) <= 0)) {
+        const result = currentItems.slice()
+        result[index] = incoming
+        timelineIndexes.set(result, timelineIndexes.get(currentItems)!)
+        return result
+      }
+    }
+  }
+
   const byId = new Map(currentItems.map((item) => [item.id, item]))
   for (const item of incomingItems) {
     let nextItem = item
     const clientMessageId = timelineClientMessageId(item)
-    if (!isOptimisticTimelineItem(item)) {
+    if (!isOptimisticTimelineItem(item) && item.type === "message" && item.role === "user" && clientMessageId) {
       for (const [id, existing] of byId) {
         if (optimisticUserMessageMatchesServerItem(existing, item, clientMessageId)) {
           nextItem = mergeOptimisticAttachmentMetadata(item, existing)
@@ -67,7 +87,23 @@ export function mergeTimelineItems(
       byId.set(nextItem.id, nextItem)
     }
   }
-  return reconcileDshAssistantActivity(sortTimelineItems(Array.from(byId.values())))
+  const result = reconcileDshAssistantActivity(sortTimelineItems(Array.from(byId.values())))
+  timelineIndexes.set(result, new Map(result.map((item, index) => [item.id, index])))
+  return result
+}
+
+function canReplaceTimelineItemInPlace(existing: TimelineItem, incoming: TimelineItem): boolean {
+  if (isOptimisticTimelineItem(existing) || isOptimisticTimelineItem(incoming)) return false
+  if (incoming.role === "user" || incoming.type !== existing.type || incoming.role !== existing.role) return false
+  if (incoming.orderSeq !== existing.orderSeq) return false
+  if (sourceString(incoming, "runtime") !== sourceString(existing, "runtime")
+    || sourceString(incoming, "itemType") !== sourceString(existing, "itemType")
+    || sourceString(incoming, "replacedBy") !== sourceString(existing, "replacedBy")) return false
+  if (!isDshAssistantMessage(incoming)) return true
+  // Completed DSH items participate in deduplication. A changed hash, lifecycle
+  // or legacy revision category must take the reconciliation path.
+  return incoming.status === existing.status && (incoming.status !== "done"
+    || (incoming.contentHash === existing.contentHash && (incoming.revision > 1) === (existing.revision > 1)))
 }
 
 function reconcileDshAssistantActivity(items: TimelineItem[]): TimelineItem[] {
@@ -79,30 +115,23 @@ function reconcileDshAssistantActivity(items: TimelineItem[]): TimelineItem[] {
     if (replacedBy && itemIds.has(replacedBy)) supersededIds.add(item.id)
   }
 
-  for (let finalIndex = 0; finalIndex < items.length; finalIndex += 1) {
-    const finalItem = items[finalIndex]
-    if (!finalItem) continue
-    if (!isDshAssistantMessage(finalItem) || finalItem.status !== "done") continue
-
-    for (let candidateIndex = finalIndex - 1; candidateIndex >= 0; candidateIndex -= 1) {
-      const candidate = items[candidateIndex]
-      if (!candidate) continue
-      if (candidate.type === "message" && candidate.role === "user") break
-      if (!isDshAssistantMessage(candidate) || candidate.status !== "done") continue
-      if (candidate.contentHash !== finalItem.contentHash) continue
-
-      const candidateItemType = sourceString(candidate, "itemType")
-      const finalItemType = sourceString(finalItem, "itemType")
-      const isNativeReplacement = candidateItemType === "assistant_activity" && finalItemType === "message"
-      const isLegacyReplacement = candidateItemType === null
-        && finalItemType === null
-        && candidate.revision > 1
-        && finalItem.revision === 1
-      if (!isNativeReplacement && !isLegacyReplacement) continue
-
-      supersededIds.add(candidate.id)
-      break
+  const nativeByHash = new Map<string, string>()
+  const legacyByHash = new Map<string, string>()
+  for (const item of items) {
+    if (item.type === "message" && item.role === "user") {
+      nativeByHash.clear()
+      legacyByHash.clear()
+      continue
     }
+    if (!isDshAssistantMessage(item) || item.status !== "done") continue
+    const itemType = sourceString(item, "itemType")
+    const candidate = itemType === "message" ? nativeByHash.get(item.contentHash)
+      : itemType === null && item.revision === 1 ? legacyByHash.get(item.contentHash) : undefined
+    if (candidate !== undefined) supersededIds.add(candidate)
+    // Keep the nearest eligible candidate, including already superseded ones,
+    // matching the old backwards scan without rescanning a whole turn.
+    if (itemType === "assistant_activity") nativeByHash.set(item.contentHash, item.id)
+    if (itemType === null && item.revision > 1) legacyByHash.set(item.contentHash, item.id)
   }
 
   return supersededIds.size > 0 ? items.filter((item) => !supersededIds.has(item.id)) : items

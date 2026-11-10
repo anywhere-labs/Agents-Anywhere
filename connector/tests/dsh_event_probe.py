@@ -211,14 +211,19 @@ async def main(home: Path) -> None:
                     "params": {"sessionId": "sess-new", "item": stale}}])
                 assert any(i.id == "legacy-notice" for i in await stored("sess-new"))
                 count = completed_inventories()
+                subscription = runtime._sync.subscription_id
                 transport.lose_snapshot_reply = True
                 await runtime.resynchronize("sess-new", external_id)
 
                 async def recovered():
-                    return transport.lost and completed_inventories() > count
+                    return transport.lost and not any(i.id == "legacy-notice" for i in await stored("sess-new"))
 
-                await until(recovered, "lost reply did not trigger targeted recalibration")
-                assert runtime._client is initial_client and initial_client.connected, "a failed ingest must only replace the sync subscription"
+                # The targeted recalibration replaces the timeline; its lost reply is
+                # retried (replacing again is idempotent) instead of resubscribing.
+                await until(recovered, "lost snapshot reply was not retried")
+                assert runtime._sync.subscription_id == subscription and completed_inventories() == count, \
+                    "a retried snapshot page must not resubscribe"
+                assert runtime._client is initial_client and initial_client.connected, "a failed ingest must not reconnect the bridge"
                 assert await first_native_message(), "reconnection duplicated or lost the native first message"
                 assert "empty-native" not in {
                     s.externalSessionId for s in await store.list_sessions_for_connector(connector.id)

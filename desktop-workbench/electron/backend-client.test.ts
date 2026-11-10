@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import childProcess from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -138,6 +139,91 @@ test("a backend that exits before ready rejects startup with its exit code and o
     assert.deepEqual(exits, [], "startup reports the exit once, through the rejected start");
   } finally {
     await client.shutdown();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// The channel closes first and the process lingers: the window in which Main
+// still holds `child` but every send to it fails.
+const CLOSING_CHANNEL_FIXTURE = (afterReady: string) => `
+process.send({ type: "ready", port: 1, token: "fixture-token" }, () => {
+  ${afterReady}
+});
+`;
+const DISCONNECT_AND_LINGER = `process.disconnect(); setTimeout(() => process.exit(0), 400);`;
+
+test("a netFetch reply to a backend whose channel already closed does not crash Main", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-backend-client-fetch-race-"));
+  const entryPath = path.join(root, "fixture-backend.js");
+  fs.writeFileSync(entryPath, CLOSING_CHANNEL_FIXTURE(`
+  process.send({ type: "netFetch", id: 9, url: "https://server.example/api/v2/connectors", method: "GET", headers: {}, body: null }, () => {
+    ${DISCONNECT_AND_LINGER}
+  });`), "utf8");
+  let fetchStarted = false;
+  const client = new DesktopBackendClient({
+    entryPath,
+    fetcher: async (url) => {
+      if (url.endsWith("/events")) return new Response("", { status: 200 });
+      fetchStarted = true;
+      // Answer only after the backend has closed its channel.
+      await delay(100);
+      return new Response("{}", { status: 200 });
+    },
+  });
+  try {
+    await client.start(initFor(root));
+    await waitFor(() => fetchStarted, "The backend never proxied its netFetch request.");
+    await waitFor(() => !client.running, "The backend never exited.");
+  } finally {
+    await client.shutdown();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("shutdown returns once a backend that closed its channel exits", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-backend-client-shutdown-race-"));
+  const entryPath = path.join(root, "fixture-backend.js");
+  fs.writeFileSync(entryPath, CLOSING_CHANNEL_FIXTURE(DISCONNECT_AND_LINGER), "utf8");
+  const client = new DesktopBackendClient({
+    entryPath,
+    fetcher: async () => new Response("", { status: 200 }),
+  });
+  try {
+    await client.start(initFor(root));
+    await delay(100);
+    const started = Date.now();
+    await client.shutdown();
+    assert.equal(client.running, false);
+    assert.ok(Date.now() - started < 2_000, "shutdown saw the exit instead of waiting out its grace period");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a backend that cannot be spawned fails startup at once and still shuts down", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-backend-client-spawn-failure-"));
+  const missing = path.join(root, "missing-node");
+  const fork = childProcess.fork;
+  t.mock.method(childProcess, "fork", (modulePath: string, args: string[], options: childProcess.ForkOptions) =>
+    fork(modulePath, args, { ...options, execPath: missing }));
+  const logged: string[] = [];
+  t.mock.method(console, "error", (message: string) => logged.push(message));
+  const client = new DesktopBackendClient({
+    entryPath: path.join(root, "fixture-backend.js"),
+    fetcher: async () => new Response("", { status: 200 }),
+  });
+  try {
+    const started = Date.now();
+    await assert.rejects(client.start(initFor(root)), (error: Error) => {
+      assert.match(error.message, /^Desktop backend exited before it became ready \(code -?\d+\)\.\nDesktop backend could not be started: spawn .*ENOENT/);
+      return true;
+    });
+    assert.ok(Date.now() - started < 2_000, "startup does not wait out the ready timeout");
+    assert.ok(logged.some((line) => /^\[desktop-backend\] spawn .*ENOENT/.test(line)), "the spawn error is logged");
+    // A failed spawn never emits `exit`; shutdown must not wait for one.
+    const finished = await Promise.race([client.shutdown().then(() => true), delay(2_000).then(() => false)]);
+    assert.equal(finished, true, "shutdown returns after a failed spawn");
+  } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

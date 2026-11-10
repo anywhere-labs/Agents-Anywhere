@@ -88,7 +88,7 @@ export type BackendControlMessage =
   | { type: "shutdown" }
   | { type: "shutdownComplete" };
 
-export type BackendEventName = "ownership" | "state" | "logs" | "logsCleared" | "settings";
+export type BackendEventName = "environment" | "ownership" | "state" | "logs" | "logsCleared" | "settings";
 
 export type BackendEvent = { event: BackendEventName; data: unknown };
 

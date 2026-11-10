@@ -55,6 +55,25 @@ export function canonicalJson(value: Json): string {
   return JSON.stringify(value)
 }
 
+function wireValue(value: unknown): Json | undefined {
+  if (value !== null && typeof value === 'object' && typeof (value as { toJSON?: unknown }).toJSON === 'function') {
+    value = (value as { toJSON: () => unknown }).toJSON()
+  }
+  if (value === undefined || typeof value === 'function' || typeof value === 'symbol') return undefined
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  if (Array.isArray(value)) return value.map(item => wireValue(item) ?? null)
+  if (typeof value === 'object') {
+    const result: Record<string, Json> = {}
+    for (const [key, item] of Object.entries(value)) {
+      const normalized = wireValue(item)
+      if (normalized !== undefined) result[key] = normalized
+    }
+    return result
+  }
+  return undefined
+}
+
 export function contentHash(item: Pick<TimelineItem, 'type' | 'status' | 'role' | 'content'>): string {
-  return `sha256:${digest(canonicalJson({ type: item.type, status: item.status, role: item.role, content: item.content }))}`
+  return `sha256:${digest(canonicalJson({ type: item.type, status: item.status, role: item.role ?? null, content: wireValue(item.content) ?? {} }))}`
 }

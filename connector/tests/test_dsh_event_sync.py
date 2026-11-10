@@ -69,6 +69,40 @@ def test_snapshot_replacement_waits_for_complete_capture_and_preserves_empty_sna
     asyncio.run(exercise())
 
 
+def test_snapshot_items_are_dated_by_their_event_time_not_by_the_sync_moment():
+    """#277: an untimed item is dated at ingest, so a first import sorted by sync order."""
+    async def exercise():
+        receiver = host()
+        relay = ready_relay(receiver)
+        try:
+            evented = {**item("evented"), "source": {"runtime": "dsh", "time": 1779096600000}}
+            odd_time = {**item("odd"), "source": {"runtime": "dsh", "time": "yesterday"}}
+            dated = {**item("dated"), "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-02T00:00:00Z",
+                     "source": {"runtime": "dsh", "time": 1779096600000}}
+            await begin_snapshot(relay, meta={"externalSessionId": "native", "lastActivityAt": "2026-05-20T15:00:00.000Z"})
+            await add_page(relay, [evented, item(), odd_time, dated])
+            await relay.commit_snapshot()
+            items = receiver.publish_runtime_notifications.call_args.args[1][1]["params"]["items"]
+            assert [(i["id"], i["createdAt"], i["updatedAt"]) for i in items] == [
+                # Each message keeps its own DSH event time.
+                ("evented", "2026-05-18T09:30:00.000Z", "2026-05-18T09:30:00.000Z"),
+                # Without one, the session's last activity is the best estimate.
+                ("one", "2026-05-20T15:00:00.000Z", "2026-05-20T15:00:00.000Z"),
+                ("odd", "2026-05-20T15:00:00.000Z", "2026-05-20T15:00:00.000Z"),
+                # Items that already carry a time keep it.
+                ("dated", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"),
+            ]
+            # Without any time there is nothing better than the backend's own stamp.
+            await begin_snapshot(relay, meta={"externalSessionId": "native"})
+            await add_page(relay, [item()])
+            await relay.commit_snapshot()
+            untimed = receiver.publish_runtime_notifications.call_args.args[1][1]["params"]["items"][0]
+            assert "createdAt" not in untimed and "updatedAt" not in untimed
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
 def test_snapshot_abort_foreign_items_and_duplicate_pages_do_not_publish_partial_history():
     async def exercise():
         receiver = host()
@@ -177,6 +211,46 @@ def test_replayed_batch_after_a_lost_acknowledgement_is_idempotent():
                                              operations=[{"kind": "workspace.inventory"}]))
         finally:
             await relay.close()
+    asyncio.run(exercise())
+
+
+def test_a_streaming_reply_is_posted_at_most_once_per_interval():
+    def upsert(status, text):
+        content = {"text": text, "format": "markdown"}
+        return {"method": "timeline.itemUpsert", "params": {"sessionId": "session", "item": {
+            **item("reply"), "status": status, "content": content,
+            "contentHash": timeline_content_hash("message", status, "assistant", content)}}}
+
+    async def exercise():
+        loop = asyncio.get_running_loop()
+        receiver = host()
+        posted = []
+        receiver.publish_runtime_notifications.side_effect = lambda runtime, notices, **kwargs: posted.append(
+            (loop.time(), [n["params"].get("item", n["params"])["status"] for n in notices]))
+        relay = ready_relay(receiver)
+        relay.streaming_post_interval = 0.1
+        try:
+            for text in ("a", "ab", "abc"):
+                await ingest(relay, {"kind": "notifications", "notifications": [upsert("running", text)]})
+            # A batch that finishes an item is never held, and neither is any other notification.
+            await ingest(relay, {"kind": "notifications", "notifications": [upsert("running", "abcd"), upsert("done", "abcde")]})
+            await ingest(relay, {"kind": "notifications", "notifications": [
+                {"method": "session.state.updated", "params": {"sessionId": "session", "status": "idle"}}]})
+            # Nor is a lone draft after other work (another session's baseline, say).
+            await ingest(relay, {"kind": "notifications", "notifications": [upsert("running", "x")]})
+            await ingest(relay, {"kind": "notifications", "notifications": [upsert("running", "xy")]})
+            returned = loop.time()
+        finally:
+            await relay.close()
+        times = [at for at, _ in posted]
+        assert [statuses for _, statuses in posted] == [
+            ["running"], ["running"], ["running"], ["running", "done"], ["idle"], ["running"], ["running"]]
+        gaps = [later - earlier for earlier, later in zip(times, times[1:], strict=False)]
+        assert gaps[0] < 0.05, "a single draft batch is acknowledged at once"
+        assert gaps[1] >= 0.09 and gaps[2] >= 0.09, "a streaming reply waits for the interval"
+        assert gaps[3] < 0.05 and gaps[4] < 0.05 and gaps[5] < 0.05
+        # Each post goes out as soon as it arrives; the acknowledgement is what waits.
+        assert returned - times[6] >= 0.09
     asyncio.run(exercise())
 
 

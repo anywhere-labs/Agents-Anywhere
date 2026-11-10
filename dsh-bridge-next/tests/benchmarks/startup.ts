@@ -1,6 +1,6 @@
 import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
-import JsonlPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
+import * as JsonlPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SqliteQuery from '@deepseek-ai/dsh-session-query-sqlite'
 import Storage from '@deepseek-ai/dsh-storage'
 import * as StorageJson from '@deepseek-ai/dsh-storage-json'
@@ -49,7 +49,7 @@ try {
     let native: NativeRuntime | undefined, feed: SyncFeed | undefined
     try {
       await ctx.plugin(SessionStore).await()
-      await ctx.plugin(JsonlPersistence, { root: join(home, 'native-sessions'), compression: 'none' }).await()
+      await ctx.plugin(Reflect.get(JsonlPersistence, 'default') ?? JsonlPersistence, { root: join(home, 'native-sessions'), compression: 'none' }).await()
       await ctx.plugin(SqliteQuery, { path: ':memory:', openAt: 'never' }).await()
       await ctx.plugin(Storage).await()
       await ctx.plugin(StorageJson, { root: join(home, 'storage') }).await()

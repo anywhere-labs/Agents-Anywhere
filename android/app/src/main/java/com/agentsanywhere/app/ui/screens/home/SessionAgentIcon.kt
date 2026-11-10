@@ -21,12 +21,14 @@ internal fun SessionAgentIcon(
     val type = runtimeType?.trim().orEmpty().ifBlank { runtime }
         .lowercase().filterNot { it.isWhitespace() || it == '_' || it == '-' }
     val drawable = when (type) {
+        "pi" -> R.drawable.ic_session_agent_pi
         "codex" -> R.drawable.ic_session_agent_codex
         "claude", "claudecode" -> R.drawable.ic_session_agent_claude
         "dsh", "deepseek", "deepseekharness" -> R.drawable.ic_session_agent_deepseek
         else -> null
     }
     val label = when (drawable) {
+        R.drawable.ic_session_agent_pi -> "Pi"
         R.drawable.ic_session_agent_codex -> "Codex"
         R.drawable.ic_session_agent_claude -> "Claude Code"
         R.drawable.ic_session_agent_deepseek -> "DeepSeek Harness"

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from connector.logging import logger
-from connector.runtime_protocol import RuntimeAttachment
+from connector.runtime_protocol import RuntimeAttachment, SessionNotice
 from connector.runtime_protocol.attachments import attachment_target
+from connector.runtime_protocol.errors import RuntimeNoticePublishError
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtimes.claude.notifications.notices import ClaudeNoticeRegistry
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,8 +32,10 @@ async def materialize_claude_attachments(
     host: RuntimeHostClient,
     session_id: str,
     attachments: tuple[RuntimeAttachment, ...],
+    notices: ClaudeNoticeRegistry,
 ) -> tuple[ClaudeTurnAttachment, ...]:
     materialized: list[ClaudeTurnAttachment] = []
+    failed: list[RuntimeAttachment] = []
     for attachment in attachments:
         try:
             downloaded = await host.attachment_download(session_id, attachment.file_id)
@@ -40,6 +44,7 @@ async def materialize_claude_attachments(
                 "Claude attachment download failed file_id={}",
                 attachment.file_id,
             )
+            failed.append(attachment)
             continue
         name = downloaded.name or attachment.name or attachment.file_id
         target = attachment_target(session_id, attachment.file_id, name)
@@ -56,6 +61,39 @@ async def materialize_claude_attachments(
                 file_id=attachment.file_id,
             )
         )
+    notice_id = f"notice_claude_attachment_delivery_{session_id}"
+    notice: SessionNotice | None = None
+    if failed:
+        names = "\n".join(f"- {item.name or item.file_id}" for item in failed)
+        notice = SessionNotice(
+            notice_id=notice_id,
+            session_id=session_id,
+            runtime="claude",
+            type="notification",
+            title="Attachments were not delivered",
+            message=(
+                "AA could not download these attachments:\n"
+                f"{names}\n"
+                "The message continues with the remaining attachments. "
+                "Claude Code did not receive the files listed above. Please resend them."
+            ),
+            severity="warning",
+            context={"failedFileIds": [item.file_id for item in failed]},
+        )
+    elif attachments:
+        previous = notices.get(notice_id)
+        if previous is not None and previous.status == "open":
+            notice = replace(previous, status="resolved")
+    if notice is not None:
+        notices.upsert(notice)
+        try:
+            await host.notice_upsert(notice)
+        except RuntimeNoticePublishError:
+            logger.warning(
+                "Claude attachment notice publication failed; local state retained notice_id={} status={}",
+                notice.notice_id,
+                notice.status,
+            )
     return tuple(materialized)
 
 

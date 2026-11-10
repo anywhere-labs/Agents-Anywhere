@@ -43,6 +43,7 @@ The initial resource clients are:
 - `V2SessionAPI`
 - `V2RuntimeAPI`
 - `V2AttachmentAPI`
+- `V2ModelConfigAPI`
 - `V2RealtimeAPI`
 
 ## Business
@@ -124,6 +125,30 @@ creation. The creation response binds the same client message and attachment
 previews to the server ID. The local destination never makes session API requests.
 Normal sends stage before upload; accepted, confirmed and uncertain are distinct.
 No persisted record is an automatic write outbox.
+
+## Model configuration
+
+The dashboard snapshot carries every runtime instance (with its maturity, model
+connection capability and status, and write-only `secretFields`) and the
+`modelConfig` overview, including the channel state (`modelConfig.channel`):
+the current channel, each runtime's override, desired and actual channel, and
+its switch progress. `V2DashboardRepository` keeps the latest pushed values;
+`ModelConfigModel` issues single requests through `V2ModelConfigAPI`. Channel
+writes (current channel, per-runtime override, switch now, retry) answer with
+the channel state, which the page shows until the next push replaces it; an
+answer older than the latest push is dropped. `ChannelPresentation` groups
+runtimes by device, sets apart runtimes without a model connection, and counts
+the switch summary. Rows render from the channel state and declared
+capabilities only. Keys are write-only: the runtime configuration sheet never
+shows a saved gateway key, an empty key keeps it on the same origin,
+and a new address needs it again. `TokensLinkCoordinator` opens the Tokens
+Anywhere link in `ASWebAuthenticationSession` and closes it once a snapshot
+shows the new link, because the flow never calls back into the app.
+Once linked, the page shows the Anywhere account: `TokensAccountModel` reads
+the account, balance and usage on request (again when the app returns to the
+foreground), edits a draft of the pushed model choices and saves it in one
+request. `TokensAccountPresentation` sums yuan amounts as integer
+ten-thousandths, never as floating point.
 
 ## Migration boundary
 

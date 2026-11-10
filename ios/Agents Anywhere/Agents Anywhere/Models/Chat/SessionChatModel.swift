@@ -7,6 +7,8 @@ final class SessionChatModel {
     let timeline = SessionTimelinePresentation()
     let settings = ConversationSettings()
     let disclosures = TimelineDisclosureState()
+    var goalMode = false
+    var goalReplacementText: String?
     var takeoverError: String?
     private(set) var takeoverUncertain = false
     private(set) var isWorking: Bool {
@@ -14,8 +16,32 @@ final class SessionChatModel {
         set { session.isPerformingAction = newValue }
     }
     private(set) var isLoadingSettings = false
+    // The composer derives its pending confirmation from current Runtime state.
+    var planReviewTarget: V2PlanningReviewTarget? {
+        guard session.runtime.allows("session.plan_review"), let state = session.planning,
+              let review = state.review, let plan = state.proposal,
+              state.capabilities?.actions.contains(where: { ["approve_and_execute", "request_revision", "dismiss_review"].contains($0) }) == true,
+              review.status == "open" || (review.status == "approved" && state.execution?.status == "rejected" && state.execution?.retryable == true),
+              review.planId == plan.planId, review.planRevision == plan.revision, review.contentHash == plan.contentHash else { return nil }
+        return .init(state: state)
+    }
+    func respondPlan(_ target: V2PlanningState, action: String, feedback: String) async {
+        guard !isWorking, let review = target.review else { return }
+        isWorking = true; error = nil
+        defer { isWorking = false }
+        do {
+            let request = V2PlanningRequest(command: action, feedback: feedback, reviewId: review.reviewId,
+                planId: review.planId, planRevision: review.planRevision, contentHash: review.contentHash,
+                epoch: target.epoch)
+            _ = try await repository.executePlanning(sessionId: session.id, request: request)
+        } catch { self.error = error.localizedDescription }
+    }
     var error: String?
     var settingsError: String?
+    private(set) var nativeHistoryBusy = false
+    var nativeHistoryError: String?
+    @ObservationIgnored private var nativeRecovery: (id: String, generation: String, revision: String?)?
+    var hasNativeRecovery: Bool { nativeRecovery != nil }
     private(set) var isOpeningPrepared = false
     var isOpeningReady: Bool { isOpeningPrepared && timeline.hasPresentedSnapshot }
     private(set) var openingError: String?
@@ -33,11 +59,12 @@ final class SessionChatModel {
     @ObservationIgnored var onDiscardCreation: (() -> Void)?
     @ObservationIgnored let repository: V2SessionRepository
     @ObservationIgnored private let attachments: V2AttachmentService
+    @ObservationIgnored private let workflowAPI: V2RuntimeWorkflowAPI?
     @ObservationIgnored private let files: V2WorkspaceFilesService?
 
-    init(session: V2SessionModel, repository: V2SessionRepository, attachments: V2AttachmentService, files: V2WorkspaceFilesService? = nil) {
+    init(session: V2SessionModel, repository: V2SessionRepository, attachments: V2AttachmentService, files: V2WorkspaceFilesService? = nil, workflowAPI: V2RuntimeWorkflowAPI? = nil) {
         self.session = session; self.repository = repository; self.attachments = attachments
-        self.files = files
+        self.files = files; self.workflowAPI = workflowAPI
         // Cached history can still be expensive to project. prepareOpening()
         // performs that work after the page's navigation transition settles.
     }
@@ -78,6 +105,8 @@ final class SessionChatModel {
         if session.failure?.kind == .authentication { return String(localized: "登录状态需要重新验证，已填写的内容会保留。") }
         return String(localized: "正在确认 Agent 的最新状态，已填写的内容会保留。")
     }
+
+
     var canAttach: Bool { session.runtime.allows("runtime.attachment") }
     var canChangeTakeover: Bool {
         session.isValid && session.connection == .connected && session.metadata?.connectorStatus == .online
@@ -96,6 +125,21 @@ final class SessionChatModel {
     /// The runtime advertises commands at all, even when they cannot run now.
     var offersCommands: Bool { session.isValid && session.runtime.capabilities?.capability(id: "session.commands") != nil }
     var canUseCommands: Bool { session.runtime.allows("session.commands") && connectorOnline }
+    /// `/plan` is parsed by AA, not run by the runtime; offer it wherever planning is usable.
+    var planningUsable: Bool { session.runtime.allows("session.planning") && connectorOnline }
+    var goalUsable: Bool { session.runtime.allows("session.goal") && connectorOnline }
+    var offeredCommands: [V2RuntimeCommand] {
+        let base = planningUsable && !commands.contains(where: { $0.id == "plan" }) ? [Self.planCommand] + commands : commands
+        return goalUsable ? [Self.goalCommand] + base.filter { $0.id != "goal" } : base
+    }
+    static var goalCommand: V2RuntimeCommand {
+        V2RuntimeCommand(id:"goal",title:"/goal",description:String(localized:"持续执行直到目标完成"),aliases:[],category:nil,scope:"session",enabled:true,disabledReason:nil,acceptsArgs:true,argsSchema:nil,metadata:.object(["ui":.object(["kind":.string("execute"),"argumentHint":.string(String(localized:"目标内容"))])]))
+    }
+    static var planCommand: V2RuntimeCommand {
+        V2RuntimeCommand(id: "plan", title: "plan", description: String(localized: "进入原生规划：/plan <任务> 先出计划、确认后执行；/plan off 退出"),
+            aliases: [], category: nil, scope: "session", enabled: true, disabledReason: nil, acceptsArgs: true, argsSchema: nil,
+            metadata: .object(["ui": .object(["kind": .string("execute"), "argumentHint": .string(String(localized: "[任务 | off]"))])]))
+    }
     var commandsUnavailableReason: String? {
         guard let capability = session.runtime.capabilities?.capability(id: "session.commands"), !canUseCommands else { return nil }
         if !connectorOnline { return String(localized: "设备离线") }
@@ -119,6 +163,9 @@ final class SessionChatModel {
     }
 
     func commandBlock(_ command: V2RuntimeCommand) -> RuntimeCommandBlock? {
+        // AA's own /plan is not a runtime command; the planning capability already gated it.
+        if command.id == "goal", goalUsable { return nil }
+        if command.id == "plan", !commands.contains(where: { $0.id == "plan" }) { return nil }
         if isRunningCommand || isWorking { return .busy }
         return command.block(status: session.runtime.state?.status, capability: canUseCommands,
             writable: session.metadata?.takeover == true, online: connectorOnline)
@@ -145,7 +192,7 @@ final class SessionChatModel {
     /// is not a command-like slash (e.g. a path or prose).
     func commandSuggestions(for text: String) -> [V2RuntimeCommand]? {
         guard let intent = SlashIntent(text), intent.isCommandLike, intent.suffix.isEmpty, !intent.multiline else { return nil }
-        return commands.filter { $0.matches(intent.command) }
+        return offeredCommands.filter { $0.matches(intent.command) }
     }
 
     /// Only drafts naming a catalog command run as commands; the catalog is read
@@ -158,6 +205,7 @@ final class SessionChatModel {
 
     /// Menu choice: commands with arguments are completed into the draft.
     func choose(_ command: V2RuntimeCommand) async {
+        if command.id == "goal", goalUsable { goalMode=true;session.composer.text="";session.composer.isFocused=true;return }
         if let block = commandBlock(command) { fail(commandBlockMessage(command, block)); return }
         let draft = session.composer
         let current = SlashIntent(draft.text).flatMap { [command].exact($0) } != nil ? draft.text : "/\(command.id)"
@@ -220,6 +268,7 @@ final class SessionChatModel {
         if let data = repository.cached(sessionId: session.id) {
             timeline.presentOpening(data.items, pendingMessages: session.pendingMessages)
         }
+        await repository.refreshPlanning(sessionId: session.id)
         isOpeningPrepared = true
     }
 
@@ -241,6 +290,55 @@ final class SessionChatModel {
         if session.runtime.isFresh { takeoverUncertain = false; takeoverError = nil }
     }
 
+    func continueNativeTask() async {
+        guard !nativeHistoryBusy, let workflowAPI, let state = session.runtime.state else { return }
+        nativeHistoryBusy = true; nativeHistoryError = nil
+        defer { nativeHistoryBusy = false }
+        do {
+            if nativeRecovery == nil {
+                guard let generation = state.metadata["ownerGeneration"]?.stringValue else { return }
+                // Only native history binds recovery to a source revision.
+                let revision = state.metadata["sourceRevision"]?.stringValue
+                if state.metadata["nativeHistory"] == .bool(true), revision == nil { return }
+                if session.metadata?.takeover != true { try await repository.setTakeover(sessionId: session.id, enabled: true) }
+                nativeRecovery = (UUID().uuidString, generation, revision)
+            }
+            guard let request = nativeRecovery else { return }
+            for _ in 0..<360 {
+                guard session.isValid, !Task.isCancelled else { return }
+                let result = try await workflowAPI.recover(sessionID: session.id, generation: request.generation,
+                    operationID: request.id, sourceRevision: request.revision)
+                switch result["phase"]?.stringValue {
+                case "completed": nativeRecovery = nil; await session.refresh(); return
+                case "running": try await Task.sleep(for: .seconds(1))
+                case "rejected", "failed":
+                    nativeRecovery = nil
+                    throw V2RuntimeError(code: result["failure"]?["code"]?.stringValue ?? "native_history_recovery_failed",
+                        message: result["failure"]?["message"]?.stringValue ?? String(localized: "恢复失败，历史仍可查看。"))
+                default: throw V2RuntimeError(code: "native_history_recovery_unconfirmed", message: String(localized: "恢复结果尚未确认，请查询原操作状态。"))
+                }
+            }
+            nativeHistoryError = String(localized: "恢复结果尚未确认，请查询原操作状态。")
+        } catch {
+            if let status = (error as? HTTPError)?.statusCode, (400..<500).contains(status) { nativeRecovery = nil }
+            if !Task.isCancelled { nativeHistoryError = error.localizedDescription; await session.refresh() }
+        }
+    }
+
+    func endNativeTask() async {
+        guard !nativeHistoryBusy, let workflowAPI,
+              let generation = session.runtime.state?.metadata["ownerGeneration"]?.stringValue else { return }
+        nativeHistoryBusy = true; nativeHistoryError = nil
+        defer { nativeHistoryBusy = false }
+        do {
+            let result = try await workflowAPI.closeSession(sessionID: session.id, generation: generation)
+            if result["closed"] != .bool(true) {
+                nativeHistoryError = String(localized: "尚未确认执行实例已释放，请刷新状态。")
+            }
+            await session.refresh()
+        } catch { nativeHistoryError = error.localizedDescription }
+    }
+
     func loadSettings() async {
         guard !isLoadingSettings, session.isValid else { return }
         guard session.runtime.isFresh else { settingsError = String(localized: "连接恢复后可更改对话选项。"); return }
@@ -250,12 +348,22 @@ final class SessionChatModel {
         do {
             let catalogs = try await repository.catalogs(sessionId: session.id, capabilities: session.runtime.capabilities)
             guard session.isValid, !Task.isCancelled else { return }
-            settings.replace(ChatSettingsCatalog(catalogs), selections: currentSelections, defaults: false)
+            settings.replaceRuntime(ChatSettingsCatalog(catalogs), selections: currentSelections)
         } catch { if session.isValid { self.settingsError = error.localizedDescription } }
     }
 
-    private var currentSelections: [V2RuntimeSelectionScope: V2SelectionID] {
-        (session.runtime.state?.selections ?? [:]).compactMapValues { $0 }
+    private var currentSelections: [V2RuntimeSelectionScope: V2SelectionID?] {
+        session.runtime.state?.selections ?? [:]
+    }
+
+    var pendingSelectionScopes: Set<V2RuntimeSelectionScope> {
+        guard let state = session.runtime.state,
+              case let .object(metadata) = state.metadata,
+              let pending = metadata["pendingSelectionScopes"],
+              case let .array(values) = pending else { return [] }
+        return Set(values.compactMap { value in
+            value.stringValue.map(V2RuntimeSelectionScope.init(rawValue:))
+        })
     }
 
     func applySettings() async -> Bool {
@@ -272,12 +380,54 @@ final class SessionChatModel {
             return session.isValid
         } catch {
             self.settingsError = error.localizedDescription
-            settings.replace(settings.catalog, selections: currentSelections, defaults: false)
+            settings.replaceRuntime(settings.catalog, selections: currentSelections)
             return false
         }
     }
 
+    func goalAction(_ action: String, objective: String? = nil) async -> Bool {
+        guard !isWorking, let state=session.goalState, state.freshness=="fresh", state.capabilities?.actions?.contains(action)==true else { return false }
+        isWorking=true; error=nil
+        defer { isWorking=false }
+        do { return try await repository.executeGoal(sessionId: session.id,request: V2GoalRequest(expectedRevision: state.revision ?? 0,action: action,objective: objective)) }
+        catch { self.error=error.localizedDescription;return false }
+    }
+    func sendGoal(_ text: String, confirmed: Bool = false) async {
+        let raw=text.trimmingCharacters(in:.whitespacesAndNewlines)
+        let objective=raw.hasPrefix("/goal ") ? String(raw.dropFirst(6)).trimmingCharacters(in:.whitespacesAndNewlines) : raw
+        guard !objective.isEmpty,!isWorking else { return }
+        if !confirmed,session.goalState?.goal != nil { goalReplacementText=text;return }
+        guard let state=session.goalState,state.freshness=="fresh",state.capabilities?.actions?.contains("set")==true else { return }
+        let selected=session.composer.attachments
+        isWorking=true;error=nil
+        defer { isWorking=false }
+        do {
+            var request=V2GoalRequest(expectedRevision:state.revision ?? 0,action:"set",objective:objective)
+            if !selected.isEmpty { let files=try await attachments.upload(sessionId:session.id,attachments:selected.map(\.local));request.attachments=files.map{V2AttachmentSendReference(fileId:$0.fileId)} }
+            if try await repository.executeGoal(sessionId:session.id,request:request),session.composer.text==text,session.composer.attachments.map(\.id)==selected.map(\.id) { session.composer.clear();goalMode=false }
+        } catch { self.error=error.localizedDescription }
+    }
     func send(_ text: String) async {
+        let trimmed=text.trimmingCharacters(in:.whitespacesAndNewlines)
+        if trimmed=="/goal",session.runtime.allows("session.goal") { goalMode=true;session.composer.text="";return }
+        if goalMode || (goalUsable && trimmed.hasPrefix("/goal ")) { await sendGoal(text);return }
+
+        if let intent = V2PlanningCommand.parse(text) {
+            guard !isWorking else { return }
+            let selected = session.composer.attachments
+            guard intent.command == "submit_task" || selected.isEmpty else { error = String(localized: "请填写附件对应的规划任务。"); return }
+            isWorking = true; error = nil
+            defer { isWorking = false }
+            do {
+                var request = V2PlanningRequest(command: intent.command, content: intent.content)
+                if !selected.isEmpty {
+                    let files = try await attachments.upload(sessionId: session.id, attachments: selected.map(\.local))
+                    request.attachments = files.map { V2AttachmentSendReference(fileId: $0.fileId) }
+                }
+                if try await repository.executePlanning(sessionId: session.id, request: request), session.composer.text == text, session.composer.attachments.map(\.id) == selected.map(\.id) { session.composer.clear() }
+            } catch { self.error = error.localizedDescription }
+            return
+        }
         if let command = await catalogCommand(for: text) {
             session.composer.text = text
             await runCommand(command, raw: text)
@@ -288,6 +438,11 @@ final class SessionChatModel {
         draft.text = text
         let selected = draft.attachments
         guard selected.isEmpty || canAttach else { return }
+        if case let .array(inputs) = session.runtime.capabilities?.capability(id: "runtime.attachment")?.metadata?["inputModalities"],
+           !inputs.contains(.string("image")), selected.contains(where: { AgentForm.isModelImage($0.local.mediaType) }) {
+            fail(String(localized: "当前模型声明不支持图片输入，请移除图片或切换模型。"))
+            return
+        }
         isWorking = true
         error = nil
         defer { isWorking = false }
@@ -311,7 +466,13 @@ final class SessionChatModel {
     func respond(notice: SessionNoticeModel, action: V2RuntimeNoticeAction) async {
         guard !isWorking, notice.canRespond(fresh: session.runtime.isFresh),
               notice.notice.actions.contains(action), notice.hasValidInput(for: action) else { return }
-        let input = notice.payload(for: action)
+        var input = notice.payload(for: action)
+        if let owner = notice.notice.metadata["ownerGeneration"]?.stringValue,
+           let revision = notice.notice.metadata["requestRevision"]?.intValue {
+            var envelope: [String: JSONValue] = ["ownerGeneration": .string(owner), "requestRevision": .number(Double(revision)), "responseOperationId": .string(UUID().uuidString)]
+            if let input { envelope["response"] = input }
+            input = .object(envelope)
+        }
         notice.begin(actionID: action.id)
         isWorking = true
         defer { isWorking = false }
@@ -320,6 +481,19 @@ final class SessionChatModel {
             notice.accepted()
             if notice.submission == .accepted { responseRevision += 1 }
         } catch { notice.fail(error) }
+    }
+
+    func respondRuntimeDialog(notice: SessionNoticeModel, actionID: String, value: JSONValue?) async {
+        guard !isWorking, notice.canRespond(fresh: session.runtime.isFresh),
+              notice.notice.actions.contains(where: { $0.id == actionID }),
+              let owner = notice.notice.metadata["ownerGeneration"]?.stringValue,
+              let revision = notice.notice.metadata["requestRevision"]?.intValue else { return }
+        var body: [String: JSONValue] = ["ownerGeneration": .string(owner), "requestRevision": .number(Double(revision)), "responseOperationId": .string(UUID().uuidString)]
+        if let value { body["response"] = value }
+        notice.begin(actionID: actionID); isWorking = true
+        defer { isWorking = false }
+        do { try await repository.respond(sessionId: session.id, noticeId: notice.id, actionId: actionID, input: .object(body)); notice.accepted() }
+        catch { notice.fail(error) }
     }
 
     @discardableResult func perform(_ operation: () async throws -> Void) async -> Bool {

@@ -24,6 +24,7 @@ class FakeRpc:
         self.online = True
         self.requests: list[tuple[str, str, dict[str, Any]]] = []
         self.errors: dict[str, ConnectorRpcError] = {}
+        self.responses: dict[str, dict[str, Any]] = {}
 
     async def is_online(self, _connector_id: str) -> bool:
         return self.online
@@ -99,6 +100,8 @@ class FakeRpc:
                     }
                 ]
             }
+        if method in self.responses:
+            return self.responses[method]
         return {"ok": True}
 
     async def request_bound(
@@ -315,30 +318,37 @@ def test_custom_executable_path_is_not_constrained_to_discovered_default(tmp_pat
     assert params == {"runtime": "codex", "runtimeId": "codex", "name": "Codex", "config": config, "configRevision": params["configRevision"]}
 
 
-def test_model_gateway_key_round_trips_without_redaction(tmp_path):
-    client, rpc, connector_id, headers = _make_client(tmp_path)
-    gateway_schema = {
+def _with_gateway_schema(client, rpc, connector_id, *, key_pattern=None):
+    api_key = {"type": "string", "minLength": 1}
+    if key_pattern:
+        api_key["pattern"] = key_pattern
+    rpc.inventory["runtimes"][0]["schema"]["properties"]["modelGateway"] = {
         "type": "object",
         "required": ["baseUrl", "apiKey"],
         "properties": {
             "baseUrl": {"type": "string", "minLength": 1},
-            "apiKey": {"type": "string", "minLength": 1},
+            "apiKey": api_key,
         },
         "additionalProperties": False,
     }
-    rpc.inventory["runtimes"][0]["schema"]["properties"]["modelGateway"] = (
-        gateway_schema
-    )
     asyncio.run(
         client.app.state.device_runtime_service.ingest_runtime_types(
             connector_id,
             describe_inventory(rpc.inventory),
         )
     )
+
+
+GATEWAY_KEY = "sk-gateway-secret-1234"
+
+
+def test_model_gateway_key_is_write_only(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    _with_gateway_schema(client, rpc, connector_id)
     config = {
         "modelGateway": {
             "baseUrl": "https://gateway.example/v1",
-            "apiKey": "gateway-secret",
+            "apiKey": GATEWAY_KEY,
         }
     }
 
@@ -351,13 +361,89 @@ def test_model_gateway_key_round_trips_without_redaction(tmp_path):
 
     assert saved.status_code == 200, saved.text
     assert loaded.status_code == 200, loaded.text
-    assert saved.json()["config"] == config
-    assert loaded.json()["runtimes"][0]["config"] == config
+    public = {"modelGateway": {"baseUrl": "https://gateway.example/v1"}}
+    hint = {"modelGateway.apiKey": {"set": True, "hint": "sk-gate…1234"}}
+    assert saved.json()["config"] == public
+    assert saved.json()["secretFields"] == hint
+    assert loaded.json()["runtimes"][0]["config"] == public
+    assert loaded.json()["runtimes"][0]["secretFields"] == hint
+    assert GATEWAY_KEY not in saved.text + loaded.text
+    # The Connector still receives the real key.
     params = rpc.requests[-1][2]
     assert params["runtime"] == params["runtimeId"] == "codex"
     assert params["config"] == config
     assert params["name"] == "Codex"
     assert isinstance(params["configRevision"], int)
+
+
+def test_saving_without_the_key_keeps_it_on_the_same_origin(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    _with_gateway_schema(client, rpc, connector_id)
+    url = f"{_runtime_url(connector_id)}/config"
+    first = {"modelGateway": {"baseUrl": "https://gateway.example/v1", "apiKey": GATEWAY_KEY}}
+    assert client.put(url, headers=headers, json={"config": first}).status_code == 200
+
+    moved_path = {"modelGateway": {"baseUrl": "https://gateway.example/v2"}}
+    response = client.put(url, headers=headers, json={"config": moved_path})
+
+    assert response.status_code == 200, response.text
+    assert rpc.requests[-1][2]["config"]["modelGateway"] == {
+        "baseUrl": "https://gateway.example/v2",
+        "apiKey": GATEWAY_KEY,
+    }
+
+
+def test_a_new_gateway_origin_needs_the_key_again(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    _with_gateway_schema(client, rpc, connector_id)
+    url = f"{_runtime_url(connector_id)}/config"
+    first = {"modelGateway": {"baseUrl": "https://gateway.example/v1", "apiKey": GATEWAY_KEY}}
+    assert client.put(url, headers=headers, json={"config": first}).status_code == 200
+    requests_before = len(rpc.requests)
+
+    response = client.put(
+        url,
+        headers=headers,
+        json={"config": {"modelGateway": {"baseUrl": "https://attacker.example/v1"}}},
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "secret_required"
+    assert len(rpc.requests) == requests_before
+
+
+def test_validation_errors_never_quote_the_key(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    _with_gateway_schema(client, rpc, connector_id, key_pattern="^sk-live-")
+
+    response = client.put(
+        f"{_runtime_url(connector_id)}/config",
+        headers=headers,
+        json={"config": {"modelGateway": {"baseUrl": "https://gateway.example/v1", "apiKey": GATEWAY_KEY}}},
+    )
+
+    assert response.status_code == 422, response.text
+    assert GATEWAY_KEY not in response.text
+    assert "***" in response.text
+
+
+def test_connector_errors_never_quote_the_key(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    _with_gateway_schema(client, rpc, connector_id)
+    rpc.errors["runtime.validateConfig"] = ConnectorRpcError(
+        "invalid_config", f"modelGateway.apiKey {GATEWAY_KEY!r} was rejected"
+    )
+
+    response = client.put(
+        f"{_runtime_url(connector_id)}/config",
+        headers=headers,
+        json={"config": {"modelGateway": {"baseUrl": "https://gateway.example/v1", "apiKey": GATEWAY_KEY}}},
+    )
+    loaded = client.get(f"/connectors/{connector_id}/runtimes", headers=headers)
+
+    assert response.status_code == 422, response.text
+    assert GATEWAY_KEY not in response.text
+    assert GATEWAY_KEY not in loaded.text
 
 
 def test_server_rejects_invalid_config_before_connector_rpc(tmp_path):
@@ -628,11 +714,13 @@ def test_session_runtime_catalog_reads_start_active_runtime_before_rpc(tmp_path)
         "runtime": "codex",
         "runtimeId": "codex",
         "limit": 200,
+        "sessionId": session_id,
     }
     assert rpc.requests[2][2] == {
         "runtime": "codex",
         "runtimeId": "codex",
         "limit": 200,
+        "sessionId": session_id,
     }
 
 

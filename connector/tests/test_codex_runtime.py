@@ -11,8 +11,6 @@ import pytest
 from openai_codex import InvalidRequestError
 from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
-    ApprovalsReviewer,
-    AskForApprovalValue,
     ContextCompactedNotification,
     ContextCompactionThreadItem,
     LocalImageUserInput,
@@ -47,6 +45,7 @@ from connector.runtime_protocol import (
     ArtifactTimelineItem,
     CommandToolContent,
     CompactMarkerContent,
+    ImageArtifactContent,
     InputRequestValidationError,
     MarkdownMessageContent,
     MarkerTimelineItem,
@@ -141,6 +140,9 @@ from connector.runtimes.codex.timeline.projection import (
     CodexTimelineProjection,
     timeline_item_from_projection,
     timeline_projection_from_raw,
+)
+from connector.runtimes.codex.timeline.typed_events import (
+    timeline_projection_from_thread_item,
 )
 
 
@@ -297,8 +299,8 @@ def test_codex_timeline_native_item_classes_are_explicitly_mapped() -> None:
     )
     assert codex_timeline_item_class("contextCompaction") is CodexContextCompactionItem
     assert issubclass(CodexContextCompactionItem, MarkerTimelineItem)
-    assert codex_timeline_item_class("ImageViewThreadItem") is CodexImageViewItem
-    assert issubclass(CodexImageViewItem, MarkerTimelineItem)
+    assert codex_timeline_item_class("imageView") is CodexImageViewItem
+    assert issubclass(CodexImageViewItem, ArtifactTimelineItem)
     assert codex_timeline_item_class("fileChange") is CodexFileChangeItem
     assert codex_timeline_item_class("turnStart") is CodexTurnStartItem
     assert codex_timeline_item_class("turnEnd") is CodexTurnEndItem
@@ -321,7 +323,7 @@ def test_codex_timeline_items_extend_protocol_parent_classes() -> None:
     assert issubclass(CodexWebSearchItem, CodexToolTimelineItem)
     assert issubclass(CodexFileChangeItem, CodexArtifactTimelineItem)
     assert issubclass(CodexContextCompactionItem, CodexMarkerTimelineItem)
-    assert issubclass(CodexImageViewItem, CodexMarkerTimelineItem)
+    assert issubclass(CodexImageViewItem, CodexArtifactTimelineItem)
     assert issubclass(CodexReasoningItem, CodexSystemTimelineItem)
     assert issubclass(CodexUnknownItem, CodexSystemTimelineItem)
     assert issubclass(CodexTurnStartItem, CodexTurnStartTimelineItem)
@@ -408,29 +410,63 @@ def test_codex_projection_maps_context_compaction_to_compact_content() -> None:
     assert platform_item.source["rawType"] == "contextCompaction"
 
 
-def test_codex_projection_maps_image_view_to_marker_content() -> None:
-    projection = CodexTimelineProjection(
-        native_id="image_view_1",
-        raw_type="ImageViewThreadItem",
-        status="completed",
-    )
+IMAGE_VIEW_RAW_ITEM = {
+    "type": "imageView",
+    "id": "call_image_view_1",
+    "path": "/tmp/invoice-pages/page-1.png",
+}
 
+
+def image_view_platform_item(projection: CodexTimelineProjection, event: str):
     item = timeline_item_from_projection(
-        projection=projection,
+        projection=projection.with_turn_position(0),
         external_session_id="thread_1",
         fallback_index=0,
-        event="item/completed",
+        event=event,
     )
-    platform_item = item.to_platform_item(session_id="sess_1", order_seq=0)
+    return item, item.to_platform_item(session_id="sess_1", order_seq=0)
+
+
+def test_codex_projection_maps_raw_image_view_to_image_artifact() -> None:
+    projection = timeline_projection_from_raw(
+        {**IMAGE_VIEW_RAW_ITEM, "turnId": "turn_1"}
+    )
+
+    item, platform_item = image_view_platform_item(projection, "thread/read")
 
     assert isinstance(item, CodexImageViewItem)
-    assert item.type == "marker"
+    assert isinstance(item.content, ImageArtifactContent)
+    assert platform_item.type == "artifact"
     assert platform_item.content == {
-        "kind": "system",
-        "label": "查看图片",
-        "state": "completed",
+        "kind": "image",
+        "path": "/tmp/invoice-pages/page-1.png",
+        "mediaType": "image/png",
     }
-    assert platform_item.source["rawType"] == "ImageViewThreadItem"
+    assert platform_item.source["rawType"] == "imageView"
+    assert platform_item.source["itemId"] == "call_image_view_1"
+
+
+def test_codex_sdk_image_view_matches_raw_image_view_identity() -> None:
+    raw_projection = timeline_projection_from_raw(
+        {**IMAGE_VIEW_RAW_ITEM, "turnId": "turn_1"}
+    )
+    sdk_projection = timeline_projection_from_thread_item(
+        item=ThreadItem.model_validate(IMAGE_VIEW_RAW_ITEM),
+        turn_id="turn_1",
+        event_status="completed",
+    )
+    assert sdk_projection is not None
+
+    _, raw_item = image_view_platform_item(raw_projection, "thread/read")
+    sdk_item, platform_item = image_view_platform_item(
+        sdk_projection, "item/completed"
+    )
+
+    assert isinstance(sdk_item, CodexImageViewItem)
+    assert platform_item.type == "artifact"
+    assert platform_item.content == raw_item.content
+    assert platform_item.id == raw_item.id
+    assert platform_item.source["derivedKey"] == raw_item.source["derivedKey"]
 
 
 class FakeCodexClient:
@@ -3736,6 +3772,126 @@ async def _test_codex_runtime_materializes_attachments_for_turn_start() -> None:
     assert attachment["byteSize"] == 5
 
 
+@pytest.mark.parametrize("operation", ["start", "steer"])
+@pytest.mark.parametrize(
+    "files", [(), ("good",), ("missing",), ("missing", "good", "unnamed")]
+)
+def test_codex_attachment_delivery_notices(
+    tmp_path, monkeypatch, operation, files
+) -> None:
+    monkeypatch.setenv("AGENT_CONNECTOR_ATTACHMENTS_ROOT", str(tmp_path))
+
+    async def run() -> None:
+        host = FakeHost()
+        client = FakeCodexClient()
+        runtime = CodexRuntime(config=_config(), host=host, client=client)
+        attempted = []
+
+        async def download(session_id, file_id):
+            attempted.append(file_id)
+            if file_id != "good":
+                raise OSError("download unavailable")
+            return RuntimeAttachmentContent(
+                file_id=file_id, name="good.txt", media_type="text/plain", content=b"ok"
+            )
+
+        monkeypatch.setattr(host, "attachment_download", download)
+        if operation == "steer":
+            await runtime.start_turn("sess_1", "thread_1", "hello")
+        attachments = tuple(
+            RuntimeAttachment(
+                file_id=file_id, name=None if file_id == "unnamed" else f"{file_id}.txt"
+            )
+            for file_id in files
+        )
+        send = runtime.start_turn if operation == "start" else runtime.steer_turn
+        result = await send("sess_1", "thread_1", "read this", attachments=attachments)
+
+        assert result.ok is True
+        assert attempted == list(files)
+        params = client.requests[-1][1]
+        if operation == "start":
+            assert [item["name"] for item in params.get("attachments", [])] == (
+                ["good.txt"] if "good" in files else []
+            )
+        else:
+            text = params["input"][0]["text"]
+            assert ("good.txt" in text) == ("good" in files)
+            assert "missing.txt" not in text
+        failed = [file_id for file_id in files if file_id != "good"]
+        if not failed:
+            assert host.notice_upserts == []
+            return
+        assert len(host.notice_upserts) == 1
+        notice = host.notice_upserts[0]
+        assert notice.type == "notification"
+        assert notice.severity == "warning"
+        assert notice.status == "open"
+        assert notice.blocking is None
+        assert notice.response_required is False
+        assert notice.context["failedFileIds"] == failed
+        assert "Please resend" in notice.message
+        assert "missing.txt" in notice.message
+        if "unnamed" in failed:
+            assert "- unnamed" in notice.message
+        assert await runtime.get_session_notices("sess_1") == (notice,)
+        assert await runtime.get_session_notices("other_session") == ()
+
+    asyncio.run(run())
+
+
+def test_codex_attachment_delivery_notice_reuses_id_and_resolves_on_success(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("AGENT_CONNECTOR_ATTACHMENTS_ROOT", str(tmp_path))
+
+    async def run() -> None:
+        host = FakeHost()
+        runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+        attachment = RuntimeAttachment(file_id="file_1", name="note.txt")
+        for _ in range(2):
+            await runtime.start_turn(
+                "sess_1", "thread_1", "read this", attachments=(attachment,)
+            )
+        assert len({notice.notice_id for notice in host.notice_upserts}) == 1
+        assert len(await runtime.get_session_notices("sess_1")) == 1
+        await runtime.start_turn("sess_1", "thread_1", "plain text")
+        assert len(await runtime.get_session_notices("sess_1")) == 1
+        host.attachments["file_1"] = RuntimeAttachmentContent(
+            file_id="file_1", name="note.txt", media_type="text/plain", content=b"ok"
+        )
+        await runtime.start_turn(
+            "sess_1", "thread_1", "retry", attachments=(attachment,)
+        )
+        assert host.notice_upserts[-1].status == "resolved"
+        assert await runtime.get_session_notices("sess_1") == ()
+
+    asyncio.run(run())
+
+
+def test_codex_attachment_download_cancellation_is_not_skipped(monkeypatch) -> None:
+    async def run() -> None:
+        host = FakeHost()
+        client = FakeCodexClient()
+        runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+        async def download(session_id, file_id):
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(host, "attachment_download", download)
+        with pytest.raises(asyncio.CancelledError):
+            await runtime.start_turn(
+                "sess_1",
+                "thread_1",
+                "read this",
+                attachments=(RuntimeAttachment(file_id="file_1"),),
+            )
+        assert not any(method == "turn/start" for method, _ in client.requests)
+        assert host.notice_upserts == []
+
+    asyncio.run(run())
+
+
 def test_codex_runtime_materializes_create_and_start_attachments_from_host(
     tmp_path, monkeypatch
 ) -> None:
@@ -4863,11 +5019,11 @@ async def _test_codex_runtime_interrupted_and_cancelled_turns_set_idle() -> None
     ]
 
 
-def test_codex_runtime_failed_turn_creates_blocking_error_notice() -> None:
-    asyncio.run(_test_codex_runtime_failed_turn_creates_blocking_error_notice())
+def test_codex_runtime_failed_turn_creates_non_blocking_error_notice() -> None:
+    asyncio.run(_test_codex_runtime_failed_turn_creates_non_blocking_error_notice())
 
 
-async def _test_codex_runtime_failed_turn_creates_blocking_error_notice() -> None:
+async def _test_codex_runtime_failed_turn_creates_non_blocking_error_notice() -> None:
     host = FakeHost()
     runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
 
@@ -4892,7 +5048,11 @@ async def _test_codex_runtime_failed_turn_creates_blocking_error_notice() -> Non
     assert notice.type == "interaction"
     assert notice.interaction_type == "execution_error"
     assert notice.severity == "error"
-    assert notice.blocking == {"scope": "session", "targetId": "sess_1"}
+    # The failed turn must stay visible without gating the composer: there is
+    # no action to answer, so blocking would strand every mobile client.
+    assert notice.blocking is None
+    assert notice.response_required is False
+    assert notice.actions == ()
     assert host.turn_ends[-1]["outcome"] == "failed"
     assert host.state_updates[-1]["status"] == "idle"
     assert interrupt.ok is True
@@ -4901,6 +5061,44 @@ async def _test_codex_runtime_failed_turn_creates_blocking_error_notice() -> Non
         update for update in reversed(host.state_updates) if update["status"] == "error"
     )
     assert error_update["error"]["code"] == "boom"
+
+
+def test_codex_runtime_new_turn_closes_previous_execution_error() -> None:
+    asyncio.run(_test_codex_runtime_new_turn_closes_previous_execution_error())
+
+
+async def _test_codex_runtime_new_turn_closes_previous_execution_error() -> None:
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+
+    await runtime._handle_notification(
+        {
+            "method": "turn/failed",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_failed",
+                "error": {"code": "boom", "message": "Exploded"},
+            },
+        }
+    )
+    await runtime._handle_notification(
+        {
+            "method": "turn/started",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_next",
+            },
+        }
+    )
+
+    assert [notice.status for notice in host.notice_upserts] == ["open", "closed"]
+    closed = host.notice_upserts[-1]
+    assert closed.notice_id == "notice_error_sess_1_turn_failed"
+    assert closed.blocking is None
+    assert closed.metadata["close_reason"] == "turn_started"
+    assert await runtime.get_session_notices("sess_1") == ()
 
 
 def test_codex_runtime_native_failed_completion_sets_error_state() -> None:
@@ -5560,9 +5758,11 @@ async def _test_codex_sdk_start_turn_initializes_before_low_level_detection() ->
     assert sdk_client.low_level.turn_starts
     assert not sdk_client.high_level_turns
     turn_params = sdk_client.low_level.turn_starts[0][2]
-    assert turn_params.approval_policy.root == AskForApprovalValue.on_request
-    assert turn_params.approvals_reviewer == ApprovalsReviewer.user
-    assert turn_params.sandbox_policy.root.type == "workspaceWrite"
+    assert turn_params["approvalPolicy"] == "on-request"
+    assert turn_params["approvalsReviewer"] == "user"
+    # The profile by name keeps activePermissionProfile; sandboxPolicy clears it.
+    assert turn_params["permissions"] == ":workspace"
+    assert "sandboxPolicy" not in turn_params
     assert result.turn_id == "turn_low"
 
 
@@ -5611,7 +5811,7 @@ async def _test_codex_sdk_start_turn_uses_low_level_for_attachments() -> None:
         "inspect these\n\n[Attached file: note.txt (text/plain, 9 bytes) at /tmp/note.txt]"
     )
     assert wire_input[1]["path"] == "/tmp/image.png"
-    assert [item.root.type for item in turn_params.input] == [
+    assert [item["type"] for item in turn_params["input"]] == [
         "text",
         "localImage",
     ]
@@ -5634,9 +5834,10 @@ async def _test_codex_sdk_start_thread_initializes_before_low_level_detection() 
     assert sdk_client.low_level.thread_starts
     assert not sdk_client.high_level_thread_starts
     thread_params = sdk_client.low_level.thread_starts[0]
-    assert thread_params.approval_policy.root == AskForApprovalValue.on_request
-    assert thread_params.approvals_reviewer == ApprovalsReviewer.user
-    assert thread_params.sandbox.value == "workspace-write"
+    assert thread_params["approvalPolicy"] == "on-request"
+    assert thread_params["approvalsReviewer"] == "user"
+    assert thread_params["permissions"] == ":workspace"
+    assert "sandbox" not in thread_params
     assert result.thread_id == "thread_low"
 
 

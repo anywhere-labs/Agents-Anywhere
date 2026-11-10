@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <style>
+    .glyph { fill: #000; stroke: #000; }
+    @media (prefers-color-scheme: dark) {
+      .glyph { fill: #fff; stroke: #fff; }
+    }
+  </style>
+  <path class="glyph" d="M13.5 14 L28.5 28 L13.5 42" fill="none" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round" style="fill: none" />
+  <rect class="glyph" x="24" y="47" width="30" height="7" rx="2.5" stroke="none" style="stroke: none" />
+</svg>

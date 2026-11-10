@@ -8,6 +8,7 @@ from pathlib import PurePosixPath, PureWindowsPath
 from sqlalchemy import case
 
 from agent_server.infra.repositories.store_support import *
+from agent_server.infra.db.engine import read_connection
 
 
 class MissingWorkspaceError(ValueError):
@@ -283,7 +284,7 @@ class ProjectRepositoryMixin:
                 projects_t.c.id.desc(),
             )
         )
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (await conn.execute(query)).mappings().all()
         return [_project_from_row(row) for row in rows]
 
@@ -292,7 +293,7 @@ class ProjectRepositoryMixin:
             projects_t.c.id == project_id,
             projects_t.c.user_id == user_id,
         )
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (await conn.execute(query)).mappings().first()
         if row is None:
             raise KeyError(project_id)
@@ -546,7 +547,7 @@ class ProjectRepositoryMixin:
                 )
         if not session_ids:
             return []
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (
                 (
                     await conn.execute(
@@ -556,4 +557,4 @@ class ProjectRepositoryMixin:
                 .mappings()
                 .all()
             )
-        return [await self._session_from_row(row) for row in rows]
+        return await self._sessions_from_rows(rows)

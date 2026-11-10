@@ -37,6 +37,16 @@ export function OAuthNewUserScreen() {
   }
 
   const normalizedEmail = email.trim().toLowerCase()
+  const submit = async () => {
+    if (loading || !isValidEmail(email) || !isValidDisplayName(displayName) || (emailVerificationRequired && code.length !== 6) || (setLocalPassword && !password)) return
+    await finalizeOAuth({
+      email: normalizedEmail,
+      displayName,
+      code,
+      password: setLocalPassword ? password : undefined,
+      setPassword: setLocalPassword,
+    }).catch(() => undefined)
+  }
   const fallback = normalizedEmail.slice(0, 2).toUpperCase() || "AA"
 
   return (
@@ -53,83 +63,79 @@ export function OAuthNewUserScreen() {
         </div>
       </div>
 
-      <FieldGroup>
-        <Field>
-          <Label htmlFor="oauth-email">{t("fields.email")}</Label>
-          <InputGroup className="h-11 rounded-lg">
-            <InputGroupAddon><User className="size-4" /></InputGroupAddon>
-            <InputGroupInput
-              id="oauth-email"
-              value={email}
-              onChange={(event) => { setEmail(event.currentTarget.value); setCode("") }}
-              className="code-mono"
-              type="email"
-              autoComplete="email"
-              spellCheck={false}
-              required
-            />
-          </InputGroup>
-        </Field>
-
-        <DisplayNameField variant="auth" value={displayName} onChange={setDisplayName} />
-        {emailVerificationRequired ? <EmailCodeField variant="auth" email={email} value={code} onChange={setCode} pendingToken={oauthPending.pendingToken} disabled={loading} /> : null}
-
-        <div className="flex items-center gap-2.5">
-          <Checkbox
-            id="set-password"
-            checked={setLocalPassword}
-            onCheckedChange={(value: boolean | "indeterminate") => setSetLocalPassword(Boolean(value))}
-          />
-          <Label htmlFor="set-password" className="cursor-pointer text-sm font-normal">
-            {t("oauth.setLocalPassword")}
-          </Label>
-        </div>
-
-        {setLocalPassword ? (
+      <form noValidate onSubmit={(event) => { event.preventDefault(); void submit() }}>
+        <FieldGroup>
           <Field>
-            <Label htmlFor="oauth-password">{t("fields.password")}</Label>
+            <Label htmlFor="oauth-email">{t("fields.email")}</Label>
             <InputGroup className="h-11 rounded-lg">
-              <InputGroupAddon><Lock className="size-4" /></InputGroupAddon>
+              <InputGroupAddon><User className="size-4" /></InputGroupAddon>
               <InputGroupInput
-                id="oauth-password"
-                type="password"
-                placeholder={t("register.passwordPlaceholder")}
-                value={password}
-                onChange={(event) => setPassword(event.currentTarget.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && isValidEmail(email) && isValidDisplayName(displayName) && (!emailVerificationRequired || code.length === 6) && password) {
-                    void finalizeOAuth({ email: normalizedEmail, displayName, code, password, setPassword: true }).catch(() => undefined)
-                  }
-                }}
+                id="oauth-email"
+                value={email}
+                onChange={(event) => { setEmail(event.currentTarget.value); setCode("") }}
                 className="code-mono"
-                autoComplete="new-password"
+                type="email"
+                name="email"
+                inputMode="email"
+                autoCapitalize="none"
+                autoCorrect="off"
+                autoComplete="email"
+                spellCheck={false}
+                required
               />
             </InputGroup>
           </Field>
-        ) : null}
 
-        {error ? <p className="text-center text-sm text-destructive">{error}</p> : null}
+          <DisplayNameField variant="auth" value={displayName} onChange={setDisplayName} />
+          {emailVerificationRequired ? <EmailCodeField variant="auth" email={email} value={code} onChange={setCode} pendingToken={oauthPending.pendingToken} disabled={loading} /> : null}
 
-        <Button
-          className="h-11 w-full font-medium"
-          disabled={loading || !isValidEmail(email) || !isValidDisplayName(displayName) || (emailVerificationRequired && code.length !== 6) || (setLocalPassword && !password)}
-          onClick={() => void finalizeOAuth({
-            email: normalizedEmail,
-            displayName,
-            code,
-            password: setLocalPassword ? password : undefined,
-            setPassword: setLocalPassword,
-          }).catch(() => undefined)}
-        >
-          {loading ? t("login.signingIn") : t("oauth.createSubmit")}
-        </Button>
+          <div className="flex items-center gap-2.5">
+            <Checkbox
+              id="set-password"
+              checked={setLocalPassword}
+              onCheckedChange={(value: boolean | "indeterminate") => setSetLocalPassword(Boolean(value))}
+            />
+            <Label htmlFor="set-password" className="cursor-pointer text-sm font-normal">
+              {t("oauth.setLocalPassword")}
+            </Label>
+          </div>
 
-        <Button variant="outline" className="h-11 w-full" onClick={cancelOAuth}>
-          {t("oauth.back")}
-        </Button>
+          {setLocalPassword ? (
+            <Field>
+              <Label htmlFor="oauth-password">{t("fields.password")}</Label>
+              <InputGroup className="h-11 rounded-lg">
+                <InputGroupAddon><Lock className="size-4" /></InputGroupAddon>
+                <InputGroupInput
+                  id="oauth-password"
+                  name="password"
+                  type="password"
+                  placeholder={t("register.passwordPlaceholder")}
+                  value={password}
+                  onChange={(event) => setPassword(event.currentTarget.value)}
+                  className="code-mono"
+                  autoComplete="new-password"
+                />
+              </InputGroup>
+            </Field>
+          ) : null}
 
-        <PrivacyNotice message={t("oauth.privacyNotice")} />
-      </FieldGroup>
+          {error ? <p className="text-center text-sm text-destructive">{error}</p> : null}
+
+          <Button
+            className="h-11 w-full font-medium"
+            disabled={loading || !isValidEmail(email) || !isValidDisplayName(displayName) || (emailVerificationRequired && code.length !== 6) || (setLocalPassword && !password)}
+            type="submit"
+          >
+            {loading ? t("login.signingIn") : t("oauth.createSubmit")}
+          </Button>
+
+          <Button type="button" variant="outline" className="h-11 w-full" onClick={cancelOAuth}>
+            {t("oauth.back")}
+          </Button>
+
+          <PrivacyNotice message={t("oauth.privacyNotice")} />
+        </FieldGroup>
+      </form>
     </AuthShell>
   )
 }

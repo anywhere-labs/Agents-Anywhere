@@ -1,7 +1,7 @@
 import { translateMessage, type Translate } from '../../locales.js'
 import { useEffect, useId, useState } from 'react'
 import { Button, Input, Menu, RiskConfirmation, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
-import { ChevronDown, FolderOpen, Power, RotateCw } from 'lucide-react'
+import { ChevronDown, FolderOpen, PackageX, Power, RotateCw } from 'lucide-react'
 import { PYPI_MIRRORS, PYTHON_MIRRORS, SYNC_INTERVALS } from '../../../contracts/connector.js'
 import type { OnboardingHostApi, OnboardingSnapshot } from '../../../contracts/index.js'
 import { connectorStatus } from './account-panel.js'
@@ -27,10 +27,14 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
   const [draft, setDraft] = useState(management?.settings)
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [customProxy, setCustomProxy] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [openingFolder, setOpeningFolder] = useState<'data' | 'logs' | null>(null)
   const [reset, setReset] = useState<'normal' | 'force' | null>(null)
   const [acknowledged, setAcknowledged] = useState(false)
+  const [reinstall, setReinstall] = useState(false)
+  const [reinstallAcknowledged, setReinstallAcknowledged] = useState(false)
+  const [reinstalling, setReinstalling] = useState(false)
   const id = useId()
   const signature = JSON.stringify(management?.settings)
   useEffect(() => { setDraft(management?.settings) }, [signature])
@@ -40,6 +44,7 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
   const status = connectorStatus(snapshot, state.readError, t)
   const dirty = JSON.stringify(draft) !== signature
   const mirror = PYPI_MIRRORS.find(mirror => mirror.url === draft.uvPypiIndexUrl)?.id ?? 'default'
+  const proxyChoice = draft.connectorProxy === 'direct' ? 'direct' : draft.connectorProxy || customProxy ? 'custom' : 'system'
   const update = <K extends keyof typeof draft>(key: K, value: (typeof draft)[K]) => {
     setDraft({ ...draft, [key]: value }); setSaved(false); state.clearError()
   }
@@ -57,6 +62,12 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
     if (success) { setReset(null); onConnection() }
     else if (!force && revokeFailed) { setReset('force'); setAcknowledged(false) }
   }
+  const confirmReinstall = () => {
+    setReinstall(false)
+    setReinstalling(true)
+    // A stalled installation is the usual reason to be here, so this may interrupt it.
+    void state.run(() => host.resetConnectorEnvironment(), { interrupt: true }).finally(() => setReinstalling(false))
+  }
 
   return <section className={css.panel} aria-busy={state.busy}>
     <div className={css.section}>
@@ -69,6 +80,7 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
         <dt>{t('服务器')}</dt><dd>{snapshot.settings.apiBaseUrl}</dd>
       </dl>
       {status.detail ? <p className={css.hint} role="status">{translateMessage(t, status.detail)}</p> : null}
+      {snapshot.stage === 'error' && !snapshot.deviceRecovery ? <p className={css.hint}>{t('如果依赖下载反复失败，可以切换下方的 PyPI 镜像，或在“维护”中重装依赖环境。')}</p> : null}
       {!snapshot.account || snapshot.deviceRecovery ? <Button variant="outline" onClick={onConnection}>
         {snapshot.account ? t('前往恢复连接') : t('前往登录')}
       </Button> : <div className={css.actions}>
@@ -111,6 +123,25 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
       </div>
 
       <div className={css.section}>
+        <h3>{t('网络')}</h3>
+        <div className={css.row}>
+          <div><span>{t('Connector 网络')}</span><p className={css.hint}>{t('上传很慢或一直同步失败时，可以换成直连')}</p></div>
+          <Choice label={t('Connector 网络')} disabled={busy} value={proxyChoice}
+            options={[{ id: 'system', label: t('跟随系统') }, { id: 'direct', label: t('直连') }, { id: 'custom', label: t('自定义代理') }]}
+            onChange={id => {
+              setCustomProxy(id === 'custom')
+              if (id !== 'custom') update('connectorProxy', id === 'direct' ? 'direct' : '')
+              else if (draft.connectorProxy === 'direct') update('connectorProxy', '')
+            }} />
+        </div>
+        {proxyChoice === 'custom' ? <>
+          <label className={css.field} htmlFor={`${id}-proxy`}>{t('代理地址')}</label>
+          <Input id={`${id}-proxy`} className={css.input!} disabled={busy} value={draft.connectorProxy} spellCheck={false}
+            placeholder='http://127.0.0.1:7890' autoComplete="off" onChange={event => update('connectorProxy', event.target.value)} />
+        </> : null}
+      </div>
+
+      <div className={css.section}>
         <h3>{t('同步设置')}</h3>
         <div className={css.row}>
           <div><span>{t('同步间隔')}</span><p className={css.hint}>{t('用于定时扫描的 Agent；DSH 消息实时同步')}</p></div>
@@ -134,10 +165,19 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
           onClick={() => openFolder('data')}>{t('打开数据目录')}</Button>
         <Button variant="outline" icon={<FolderOpen size={14} />} disabled={openingFolder !== null || !management.canOpenFolders}
           onClick={() => openFolder('logs')}>{t('打开日志目录')}</Button>
+        <Button variant="outline" icon={<PackageX size={14} />} disabled={reinstalling || Boolean(state.readError)}
+          onClick={() => { setReinstall(true); setReinstallAcknowledged(false); state.clearError() }}>
+          {reinstalling ? t('正在重装依赖环境…') : t('重装依赖环境')}
+        </Button>
         <Button variant="outline" className={css.danger} disabled={busy}
           onClick={() => { setReset('normal'); setAcknowledged(false); state.clearError() }}>{t('恢复出厂设置')}</Button>
       </div>
       {!management.canOpenFolders ? <p className={css.hint}>{t('当前环境不支持打开本机目录。')}</p> : null}
+      <RiskConfirmation open={reinstall} title={t('重装依赖环境')}
+        description={t('将停止 Connector，删除本插件的 Python 依赖环境并重新下载安装，可能需要几分钟。登录状态、设备连接和设置会保留。')}
+        acknowledgeLabel={t('我了解需要重新下载依赖')} acknowledged={reinstallAcknowledged} onAcknowledgedChange={setReinstallAcknowledged}
+        cancelLabel={t('取消')} closeLabel={t('关闭重装依赖环境确认')} confirmLabel={t('确认重装')}
+        disabled={reinstalling} onCancel={() => setReinstall(false)} onConfirm={confirmReinstall} />
       <RiskConfirmation open={reset !== null} title={reset === 'force' ? t('无法撤销连接') : t('恢复出厂设置')}
         description={reset === 'force' ? t('服务端撤销失败，本地数据尚未清理。可以取消后重试，或仅清理本地数据；原设备凭据在服务端可能仍有效。')
           : t('将撤销当前设备凭据、停止 Connector，并清除本插件的本地连接数据。DSH 会话和共享的设备记录会保留。')}

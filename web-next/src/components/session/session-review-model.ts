@@ -62,7 +62,13 @@ type ExtractedFileChange = {
   path: string
   action: FileChangeAction
   diff: string
+  additions: number
+  deletions: number
 }
+
+// A streamed item is replaced rather than mutated. Parse and count each file
+// change once per item object, without retaining obsolete payloads by ID.
+const fileChangesByItem = new WeakMap<TimelineItem, ExtractedFileChange[]>()
 
 const CLAUDE_INTERRUPTED_REQUEST_MARKERS = new Set([
   "[Request interrupted by user]",
@@ -85,6 +91,36 @@ export function buildTurnReviewDisplay(
   return {
     activeReview: activeTurn?.review.files.length ? activeTurn.review : null,
     completedTurns: turns.filter((turn) => turn !== activeTurn && turn.review.files.length > 0),
+  }
+}
+
+/** Per-view selector for immutable, ordered, unique timeline items. */
+export function createTurnReviewDisplaySelector() {
+  let previousInputs: Array<TimelineItem | string | number | boolean> = []
+  let previousResult: ReturnType<typeof buildTurnReviewDisplay> | undefined
+  return (items: TimelineItem[], options: ReviewOptions & { turnInProgress: boolean }) => {
+    // Text/tool output does not affect file reviews. Only user boundaries,
+    // file changes and turn endpoints invalidate the previous result.
+    const inputs: typeof previousInputs = [
+      options.root?.trim() || ".", options.caseInsensitivePaths ?? false,
+      options.turnInProgress, items[0]?.orderSeq ?? 0,
+    ]
+    let previousItem: TimelineItem | undefined
+    for (const item of items) {
+      if (isVisibleUserTurnBoundary(item)) {
+        if (previousItem) inputs.push(previousItem.id, previousItem.orderSeq)
+        inputs.push(item)
+      } else if (item.content.kind === "file_change") {
+        inputs.push(item)
+      }
+      previousItem = item
+    }
+    if (previousItem) inputs.push(previousItem.id, previousItem.orderSeq)
+    if (previousResult && inputs.length === previousInputs.length
+      && inputs.every((value, index) => value === previousInputs[index])) return previousResult
+    previousInputs = inputs
+    previousResult = buildTurnReviewDisplay(items, options)
+    return previousResult
   }
 }
 
@@ -253,13 +289,15 @@ function compareItemRevision(left: TimelineItem, right: TimelineItem): number {
 
 function timelineItemFileChanges(item: TimelineItem): ExtractedFileChange[] {
   if (textOf(item.content.kind) !== "file_change") return []
+  const cached = fileChangesByItem.get(item)
+  if (cached) return cached
   const nested = rawFileChanges(item.content.changes)
     .map(normalizeExtractedFileChange)
     .filter((change): change is ExtractedFileChange => change !== null)
-  if (nested.length > 0) return nested
-
-  const direct = normalizeExtractedFileChange(item.content)
-  return direct ? [direct] : []
+  const direct = nested.length > 0 ? null : normalizeExtractedFileChange(item.content)
+  const changes = nested.length > 0 ? nested : direct ? [direct] : []
+  fileChangesByItem.set(item, changes)
+  return changes
 }
 
 function rawFileChanges(value: unknown): Record<string, unknown>[] {
@@ -275,10 +313,12 @@ function normalizeExtractedFileChange(change: Record<string, unknown>): Extracte
   const path = firstTextOf(change.path, change.filePath, change.file, change.uri)?.trim()
   if (!path) return null
   const rawDiff = firstTextOf(change.diff, change.patch, change.content)
+  const diff = fileChangeDisplayDiff(change, rawDiff) ?? normalizeLineEndings(rawDiff ?? "")
   return {
     path,
     action: fileChangeAction(change),
-    diff: fileChangeDisplayDiff(change, rawDiff) ?? normalizeLineEndings(rawDiff ?? ""),
+    diff,
+    ...diffLineCounts(diff),
   }
 }
 
@@ -307,7 +347,7 @@ function foldFileChange(
       displayPath,
       name: fileName(displayPath),
       action: nextAction,
-      diffs: change.diff ? [reviewFileDiff(change.diff, item, changeIndex)] : [],
+      diffs: change.diff ? [reviewFileDiff(change, item, changeIndex)] : [],
       firstOrderSeq: item.orderSeq,
       sourceItemIds: [item.id],
     })
@@ -315,17 +355,16 @@ function foldFileChange(
   }
 
   existing.action = foldedReviewAction(existing.action, nextAction)
-  if (change.diff) existing.diffs.push(reviewFileDiff(change.diff, item, changeIndex))
+  if (change.diff) existing.diffs.push(reviewFileDiff(change, item, changeIndex))
   if (!existing.sourceItemIds.includes(item.id)) existing.sourceItemIds.push(item.id)
 }
 
-function reviewFileDiff(diff: string, item: TimelineItem, changeIndex: number): ReviewFileDiff {
-  const counts = diffLineCounts(diff)
+function reviewFileDiff(change: ExtractedFileChange, item: TimelineItem, changeIndex: number): ReviewFileDiff {
   return {
     id: `${item.id}:${changeIndex}`,
-    diff,
-    additions: counts.additions,
-    deletions: counts.deletions,
+    diff: change.diff,
+    additions: change.additions,
+    deletions: change.deletions,
     orderSeq: item.orderSeq,
   }
 }

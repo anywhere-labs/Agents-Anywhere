@@ -4,8 +4,13 @@ xcuserdata/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.testmondata*
+.test-results/
 .ruff_cache/
 .venv/
+# Desktop Connector environment ownership leases.
+*.desktop-lock/
+*.desktop-lock.lease
 .next/
 web-next/out/
 .env.local
@@ -46,3 +51,6 @@ docs/reference/*
 _reference/*
 !_reference/httpx-s3-client/
 !_reference/httpx-s3-client/**
+
+# Package dependencies are local, including linked worktree dependencies.
+**/node_modules

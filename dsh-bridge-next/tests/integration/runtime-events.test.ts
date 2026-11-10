@@ -7,14 +7,15 @@ import { tmpdir } from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { SessionId, type Session } from '@deepseek-ai/dsh-session'
 import { createAssistantMessage, createToolResultMessage, createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
-import { LocalRouter, Mesh, Router } from 'meshcall'
+import { LocalRouter, Mesh, MeshCallError, Router } from 'meshcall'
 import { bridgePath, nativeRuntime } from '../fixtures/native-runtime.js'
 import { corruptHistory } from '../fixtures/corrupt-history.js'
 import { mountAgents, TextAdapter, initialSelections } from '../fixtures/agent-runtime.js'
-import { SyncFeed, SYNC_FLUSH_MS, type SyncOperation, type SyncTransport } from '../../src/host/dsh-runtime/sync.js'
+import { MAX_RETAINED_PROJECTIONS, SyncFeed, SYNC_FLUSH_MS, type SyncOperation, type SyncTransport } from '../../src/host/dsh-runtime/sync.js'
 import type { SnapshotRequest, SnapshotResult } from '../../src/host/generated/dsh-sync.js'
+import type { NativeChange } from '../../src/host/dsh-runtime/native.js'
 import { projectHistory } from '../../src/host/dsh-runtime/history.js'
 import { nativeSessionId, sessionId } from '../../src/host/dsh-runtime/identity.js'
 import { RuntimeRouter } from '../../src/host/dsh-runtime/router.js'
@@ -251,6 +252,101 @@ test('baseline buffers native changes and archive events without syncing native 
     assert.deepEqual(errors, [])
     assert.deepEqual(batches.map(b => b.batchSeq), batches.map((_, n) => n + 1))
   } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
+
+/** Holds the first capture until released, like a slow upload during the startup scan. */
+function holdFirstCapture() {
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const state = { held: false, release }
+  return { state, snapshot: async () => {
+    if (state.held) return
+    state.held = true
+    await gate
+  } }
+}
+
+/** Records the feed's diagnostics events in order. */
+function recordDiagnostics(native: { diagnostics: { log: (...args: never[]) => void } }) {
+  const events: { event: string, fields: Record<string, unknown> }[] = []
+  const log = native.diagnostics.log.bind(native.diagnostics) as (level: string, event: string, fields?: Record<string, unknown>, error?: unknown) => void
+  native.diagnostics.log = ((level: string, event: string, fields: Record<string, unknown> = {}, error?: unknown) => {
+    events.push({ event, fields }); log(level, event, fields, error)
+  }) as never
+  return events
+}
+
+test('a streaming Agent during a slow startup scan neither overflows the feed nor loses chunks', { timeout: 30_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-stream-flood-'))
+  const fixture = await nativeRuntime(home)
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  const diagnostics = recordDiagnostics(native)
+  const hold = holdFirstCapture()
+  const stream = follow(native, { snapshot: hold.snapshot })
+  const emit = (change: NativeChange) => (native as unknown as { emit(change: NativeChange): void }).emit(change)
+  try {
+    await until(() => hold.state.held, 'first capture was held')
+    const id = fixture.session.id, throughSeq = Number(fixture.session.seq) - 1
+    // Far more native chunks than the feed may buffer, interleaved with status invalidations.
+    for (let n = 0; n < 30_000; n++) {
+      emit({ type: 'stream', id, turn: 9, step: 1, chunk: { type: 'text-delta', index: 0, text: 'x' }, time: n, throughSeq })
+      if (n % 10 === 0) emit({ type: 'status', id })
+    }
+    hold.state.release()
+    await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'inventory completes')
+    await until(() => notifications(stream.ops()).some(n => n.method === 'timeline.itemUpsert'
+      && (n.params.item as { content: { text?: string } }).content.text === 'x'.repeat(30_000)), 'the merged chunks project the complete draft')
+    assert.deepEqual(stream.errors, [])
+    assert.ok(!diagnostics.some(entry => entry.event === 'sync.queue_compacted' || entry.event === 'sync.failed'))
+  } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
+
+test('changes that outpace a slow startup scan recalibrate the noisiest session instead of failing the feed', { timeout: 60_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-event-flood-'))
+  const fixture = await nativeRuntime(home)
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  const diagnostics = recordDiagnostics(native)
+  const hold = holdFirstCapture()
+  const stream = follow(native, { snapshot: hold.snapshot })
+  const notes = () => notifications(stream.ops())
+  try {
+    await until(() => hold.state.held, 'first capture was held')
+    fixture.session.append('turn/start', { turn: 2 })
+    for (let n = 0; n < 10_500; n++) fixture.session.append('session/title', { title: `title ${n}`, source: { kind: 'user' }, messageSeqs: [] })
+    fixture.session.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
+    hold.state.release()
+    await until(() => notes().some(n => n.method === 'session.inventory.complete'), 'inventory completes')
+    await until(() => notes().some(n => n.method === 'session.turnEnded'), 'the retained turn end is still reported')
+    assert.deepEqual(stream.errors, [])
+    const compacted = diagnostics.find(entry => entry.event === 'sync.queue_compacted')
+    assert.ok(compacted, 'the overflow compacts the queue')
+    assert.equal(compacted.fields.sessions, 1)
+    const platformId = sessionId('test', fixture.session.id)
+    const last = stream.captures.findLast(capture => capture.request.sessionId === platformId)!
+    assert.equal(last.request.meta.title, 'title 10499', 'the recalibration captures the final state')
+    assert.ok(!diagnostics.some(entry => entry.event === 'sync.failed'))
+  } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
+
+test('an unreachable Server retries the same batch and keeps the feed; any other failure still ends it', { timeout: 30_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-batch-retry-'))
+  const fixture = await nativeRuntime(home)
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  let unavailable = 2
+  const stream = follow(native, { onBatch: () => {
+    if (unavailable > 0) { unavailable -= 1; throw new MeshCallError('backend_unavailable', 'backend ingest request failed', { retryable: true }) }
+  } })
+  const refused = follow(native, { onBatch: () => { throw new MeshCallError('INVALID_PARAMS', 'refused') } })
+  try {
+    await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'inventory completes after the Server returns')
+    assert.deepEqual(stream.errors, [])
+    const [first, second, third] = stream.batches
+    assert.equal(first!.batchSeq, second!.batchSeq, 'the failed batch goes out again')
+    assert.equal(first!.batchSeq, third!.batchSeq)
+    assert.deepEqual(first!.operations, third!.operations)
+    await until(() => refused.errors.length === 1, 'a refused batch ends the feed')
+    assert.equal(refused.batches.length, 1)
+  } finally { stream.feed.close(); refused.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })
 
 test('new native drafts sync once after their first real user message, including attachment-only messages', { timeout: 30_000 }, async () => {
@@ -622,6 +718,77 @@ test('checkpoint mismatches and active turns recalibrate only the affected sessi
     assert.deepEqual(stream.captures.map(capture => capture.request.sessionId), [sessionId('test', 'native-main')])
     native.refresh('persisted-only')
     await until(() => stream.captures.some(capture => capture.request.sessionId === sessionId('test', 'persisted-only')), 'manual refresh bypasses a matching checkpoint')
+    assert.deepEqual(stream.errors, [])
+  } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
+
+/** Idle live sessions beyond the projection budget, each with one completed turn. */
+async function idleSessions(fixture: Awaited<ReturnType<typeof nativeRuntime>>, home: string): Promise<Session[]> {
+  const sessions: Session[] = []
+  for (let i = 0; i < MAX_RETAINED_PROJECTIONS + 3; i++) {
+    const live = fixture.ctx.sessions.create(SessionId(`live-extra-${i}`), { meta: { cwd: home, createdAt: i + 10 } })
+    appendTurn(live, 1, `initial-${i}`)
+    await fixture.ctx.sessions.flush(live)
+    sessions.push(live)
+  }
+  return sessions
+}
+
+/** A message reaches the platform either as an incremental item or inside a full capture. */
+function delivered(stream: ReturnType<typeof follow>, text: string): boolean {
+  return notifications(stream.ops()).some(n => n.method === 'timeline.itemUpsert' && JSON.stringify(n.params).includes(text))
+    || stream.captures.some(capture => JSON.stringify(capture.items).includes(text))
+}
+
+function appendTurn(session: Session, turn: number, text: string): void {
+  session.append('turn/start', { turn })
+  session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text }] }), { surfaceOp: 'append' })
+  session.append('turn/end', { turn, reason: { kind: 'completed' } })
+}
+
+test('startup scan releases cold observations and evicted sessions resume from their durable checkpoints', { timeout: 30_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-scan-memory-'))
+  const fixture = await nativeRuntime(home)
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  const sessions = await idleSessions(fixture, home)
+  // Records which sessions the feed restores from their Connector checkpoint.
+  const restored: string[] = []
+  const checkpoints = new class extends Map<string, unknown> {
+    override get(id: string) { restored.push(id); return super.get(id) }
+  }()
+  const stream = follow(native, { checkpoints })
+  const notes = () => notifications(stream.ops())
+  try {
+    await until(() => notes().some(n => n.method === 'session.inventory.complete'), 'inventory completes')
+    assert.equal(native.source.retainedLogCount, 0, 'cold session observations are released after baseline')
+    assert.ok(stream.feed.retainedProjectionCount <= MAX_RETAINED_PROJECTIONS, 'settled projections are bounded by MAX_RETAINED_PROJECTIONS')
+    const captures = stream.captures.length
+    restored.length = 0
+
+    // LRU trimming evicted the earliest session's settled projection during the scan.
+    appendTurn(sessions[0]!, 2, 'after-eviction-delta')
+    await until(() => delivered(stream, 'after-eviction-delta'), 'the evicted session delivers its new message')
+    assert.deepEqual(restored, ['live-extra-0'], 'only the evicted session resumes from its checkpoint')
+    assert.equal(stream.captures.length, captures, 'a resumed session does not re-upload its history')
+    await until(() => stream.feed.retainedProjectionCount <= MAX_RETAINED_PROJECTIONS, 'projections are trimmed again after the update')
+    assert.deepEqual(stream.errors, [])
+  } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
+
+test('feeds without durable checkpoints keep settled projections instead of re-uploading evicted sessions', { timeout: 30_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-scan-memory-volatile-'))
+  const fixture = await nativeRuntime(home)
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  const sessions = await idleSessions(fixture, home)
+  const stream = follow(native)
+  const notes = () => notifications(stream.ops())
+  try {
+    await until(() => notes().some(n => n.method === 'session.inventory.complete'), 'inventory completes')
+    assert.equal(native.source.retainedLogCount, 0, 'observations are released without durable checkpoints too')
+    const captures = stream.captures.length
+    appendTurn(sessions[0]!, 2, 'volatile-delta')
+    await until(() => delivered(stream, 'volatile-delta'), 'the earliest session delivers its new message')
+    assert.equal(stream.captures.length, captures, 'the kept projection sends only the delta')
     assert.deepEqual(stream.errors, [])
   } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })

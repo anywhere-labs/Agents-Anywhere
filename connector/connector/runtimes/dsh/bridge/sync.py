@@ -41,6 +41,12 @@ from connector.server.ingest import ConnectorIngestRejectedError
 MAX_RETRY_DELAY_SECONDS = 30.0
 # How long an ingest call waits for its subscription's "subscribed" item.
 SUBSCRIBE_CONFIRM_TIMEOUT_SECONDS = 30.0
+# A streaming reply rewrites its draft items many times a second. Once two
+# batches in a row carry only still-running items, each such batch is posted at
+# once but acknowledged no sooner than this after its post started; the plugin
+# merges the chunks that arrive meanwhile into its next batch. A single draft
+# batch between other work (another session's baseline, say) is not held.
+STREAMING_POST_INTERVAL_SECONDS = 0.25
 
 # Called once when the relay task ends for any reason other than close().
 RelayExitHandler = Callable[["SyncRelay", BaseException | None], None]
@@ -56,7 +62,8 @@ _DURABLE_NOTIFICATIONS = {
 # the other sessions. The commit is acknowledged so the feed moves on, but no
 # checkpoint is saved for it, its live history is withheld (it would land on a
 # timeline that never received a baseline) and a fresh capture is requested
-# after a growing delay. Transient failures keep the resubscribe path.
+# after a growing delay. Captures the plugin makes before then are acknowledged
+# without uploading. Transient failures keep the resubscribe path.
 QUARANTINE_RETRY_DELAY_SECONDS = 30.0
 QUARANTINE_TOO_LARGE_RETRY_DELAY_SECONDS = 5 * 60.0
 QUARANTINE_MAX_RETRY_DELAY_SECONDS = 30 * 60.0
@@ -71,10 +78,41 @@ class _Quarantine:
     attempts: int = 1
     # Live history arrived while quarantined; the next capture must be fresh.
     stale: bool = False
+    # Event loop time from which a capture of this session is uploaded again.
+    retry_at: float = 0.0
 
     def source_state(self) -> dict[str, Any]:
         return {"availability": "unavailable", "reason": self.reason,
                 "observedAt": _observed_now(), "observationOrigin": "event"}
+
+
+def _with_event_time(items: Iterator[dict[str, Any]], activity: Any) -> Iterator[dict[str, Any]]:
+    """Date replayed items with their own DSH event time when they carry no time.
+
+    DSH items keep their event time only inside ``source``, so the backend dates an
+    untimed item with the moment it was ingested. For a complete capture that is
+    the sync moment: a first import, or any re-capture, would sort every session
+    by the order this relay happened to walk them instead of by when it was used.
+    An item without an event time falls back to the session's last activity, as
+    the polling path does with the session's ordering time. Items that already
+    carry a time keep it.
+    """
+    fallback = activity if isinstance(activity, str) and activity else None
+    for item in items:
+        source = item.get("source")
+        time = (_event_time(source.get("time")) if isinstance(source, Mapping) else None) or fallback
+        yield item if time is None else {"createdAt": time, "updatedAt": time, **item}
+
+
+def _event_time(value: Any) -> str | None:
+    """Turn a DSH event time (epoch milliseconds) into the backend's ISO form."""
+    if isinstance(value, bool) or not isinstance(value, int | float) or not value > 0:
+        return None
+    try:
+        moment = datetime.fromtimestamp(value / 1000, UTC)
+    except (OverflowError, OSError, ValueError):
+        return None
+    return moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _checkpoint(value: Any) -> dict[str, Any] | None:
@@ -107,6 +145,8 @@ class SyncRelay:
         on_exit: RelayExitHandler | None = None,
         quarantine_retry_delay: float = QUARANTINE_RETRY_DELAY_SECONDS,
         quarantine_too_large_retry_delay: float = QUARANTINE_TOO_LARGE_RETRY_DELAY_SECONDS,
+        quarantined: dict[str, _Quarantine] | None = None,
+        streaming_post_interval: float = STREAMING_POST_INTERVAL_SECONDS,
     ) -> None:
         self.client, self.host = client, host
         self.registry = client.host.registry
@@ -125,10 +165,14 @@ class SyncRelay:
         self.failures = 0
         self.quarantine_retry_delay = quarantine_retry_delay
         self.quarantine_too_large_retry_delay = quarantine_too_large_retry_delay
-        # Platform session id -> refused capture. Survives resubscription so an
-        # unchanged refused capture is not uploaded again and again.
-        self.quarantined: dict[str, _Quarantine] = {}
+        # Platform session id -> refused capture. The runtime hands the same map
+        # to every relay it builds, so neither a resubscription nor a rebuilt
+        # relay uploads a refused session again before its retry is due.
+        self.quarantined: dict[str, _Quarantine] = {} if quarantined is None else quarantined
         self.retry_tasks: set[asyncio.Task[None]] = set()
+        self.streaming_post_interval = streaming_post_interval
+        # When the previous post started, if it carried only drafts.
+        self.last_draft_post = float("-inf")
         self.task: asyncio.Task[None] | None = None
         self.snapshot: dict[str, Any] | None = None
         self.file = None
@@ -141,6 +185,9 @@ class SyncRelay:
     def start(self) -> None:
         self.task = asyncio.create_task(self.run(), name="dsh-event-sync")
         self.task.add_done_callback(self._finished)
+        # Refusals an earlier relay recorded keep their retry schedule.
+        for session_id, record in self.quarantined.items():
+            self._schedule_retry(session_id, record)
 
     def _finished(self, task: asyncio.Task[None]) -> None:
         # Whatever ended the loop, the owner gets to decide whether to start a
@@ -223,8 +270,14 @@ class SyncRelay:
 
     async def deliver_snapshot(self, session_id: str, snapshot: dict[str, Any]) -> None:
         meta = snapshot["meta"]
+        items = _with_event_time(self.iter_items(), meta.get("lastActivityAt"))
         try:
-            await self.host.publish_runtime_snapshot("dsh", session_id, meta, self.iter_items())
+            # With durable checkpoints every earlier notification of the feed has
+            # landed before its capture, so the upload need not queue behind, or
+            # hold back, the other notifications of the Connector.
+            await self.host.publish_runtime_snapshot(
+                "dsh", session_id, meta, items, ordered=not self.durable_checkpoints,
+            )
         except (ConnectorIngestRejectedError, httpx.HTTPStatusError) as error:
             if isinstance(error, httpx.HTTPStatusError) and not 400 <= error.response.status_code < 500:
                 raise
@@ -237,12 +290,17 @@ class SyncRelay:
 
         too_large = isinstance(error, httpx.HTTPStatusError) and error.response.status_code == 413
         previous = self.quarantined.get(session_id)
+        attempts = previous.attempts + 1 if previous is not None else 1
+        delay = min(self._retry_base(too_large) * 2 ** (attempts - 1), QUARANTINE_MAX_RETRY_DELAY_SECONDS)
         record = _Quarantine(
             external_id, through_seq,
             "history_too_large" if too_large else "history_rejected",
-            attempts=previous.attempts + 1 if previous is not None else 1,
+            attempts=attempts, retry_at=asyncio.get_running_loop().time() + delay,
         )
         self.quarantined[session_id] = record
+        # Captures are withheld until the retry, so it must exist even if the
+        # report below fails.
+        self._schedule_retry(session_id, record)
         logger.warning(
             "DSH session history refused by the backend; session quarantined session_id={} reason={} attempts={} error={}",
             session_id, record.reason, record.attempts, error,
@@ -251,17 +309,22 @@ class SyncRelay:
             "method": "session.source.updated",
             "params": {"sessionId": session_id, "externalSessionId": external_id, **record.source_state()},
         }])
+
+    def _retry_base(self, too_large: bool) -> float:
+        return self.quarantine_too_large_retry_delay if too_large else self.quarantine_retry_delay
+
+    def _schedule_retry(self, session_id: str, record: _Quarantine) -> None:
         task = asyncio.create_task(self.retry_capture(session_id, record), name="dsh-sync-quarantine-retry")
         self.retry_tasks.add(task)
         task.add_done_callback(self.retry_tasks.discard)
 
     async def retry_capture(self, session_id: str, record: _Quarantine) -> None:
-        """Ask the plugin for a fresh complete capture of a quarantined session."""
+        """Ask the plugin for a fresh complete capture of a quarantined session once it is due."""
 
-        base = self.quarantine_too_large_retry_delay if record.reason == "history_too_large" else self.quarantine_retry_delay
         attempts = record.attempts
+        delay = record.retry_at - asyncio.get_running_loop().time()
         while True:
-            await asyncio.sleep(min(base * 2 ** (attempts - 1), QUARANTINE_MAX_RETRY_DELAY_SECONDS))
+            await asyncio.sleep(max(delay, 0.0))
             if self.quarantined.get(session_id) is not record:
                 return  # Released, or a newer refusal owns the retry.
             try:
@@ -273,6 +336,10 @@ class SyncRelay:
             except Exception as error:  # noqa: BLE001 - keep retrying this session only
                 logger.warning("DSH quarantined session refresh failed session_id={} error_type={}", session_id, type(error).__name__)
                 attempts += 1
+                delay = min(
+                    self._retry_base(record.reason == "history_too_large") * 2 ** (attempts - 1),
+                    QUARANTINE_MAX_RETRY_DELAY_SECONDS,
+                )
                 continue
             return
 
@@ -326,7 +393,14 @@ class SyncRelay:
     async def ingest_notifications(self, notifications: list[dict[str, Any]]) -> None:
         if not notifications:
             return
+        loop = asyncio.get_running_loop()
+        drafts = all(_streaming_draft(notice) for notice in notifications)
+        started = loop.time()
         await self.host.publish_runtime_notifications("dsh", notifications)
+        streaming = drafts and self.last_draft_post > float("-inf")
+        self.last_draft_post = started if drafts else float("-inf")
+        if streaming and (hold := started + self.streaming_post_interval - loop.time()) > 0:
+            await asyncio.sleep(hold)
         if any(n["method"] == "session.inventory.complete" and n["params"].get("complete") is True for n in notifications):
             await self._report_health("running")
 
@@ -368,7 +442,12 @@ class SyncRelay:
             raise ValueError("Invalid runtime notification")  # noqa: TRY004 - protocol validation error
         # Use the existing typed Host API, just like Codex and Claude. The Host
         # owns instance binding, coalescing, WebSocket delivery and HTTP fallback.
-        if method == "timeline.itemUpsert":
+        if method == "planning.observed":
+            from connector.runtime_protocol.planning import PlanningObservation
+            await self.host.observe_planning(PlanningObservation(session_id=params["sessionId"],
+                external_session_id=params.get("externalSessionId"), kind=params["kind"],
+                native_id=params.get("nativeId", ""), text=params.get("text", ""), mode=params.get("mode", "unknown")))
+        elif method == "timeline.itemUpsert":
             item = timeline_item(params["item"])
             if item.session_id != params.get("sessionId"):
                 raise ValueError("Incremental item belongs to a different session")
@@ -398,7 +477,9 @@ class SyncRelay:
                 turn_id=params.get("turnId"), outcome=params.get("outcome", "completed"), metadata=params.get("metadata"),
             )
         elif method == "notice.upsert":
-            await self.host.notice_upsert(session_notice(params))
+            from connector.runtimes.dsh.planning import observe_dsh_notice
+            if not await observe_dsh_notice(self.host, params):
+                await self.host.notice_upsert(session_notice(params))
         elif method == "runtime.capability.updated":
             await self.host.runtime_capabilities_update(capability_set(params, connector_id=self.host.connector_id))
         elif method == "session.capability.updated":
@@ -546,8 +627,13 @@ class SyncRelay:
 
     async def begin_snapshot(self, request: SnapshotRequest) -> None:
         self.clear_snapshot()
+        record = self.quarantined.get(request.sessionId)
         self.snapshot = {"captureId": request.captureId, "sessionId": request.sessionId,
-                         "meta": request.meta, "throughSeq": request.throughSeq}
+                         "meta": request.meta, "throughSeq": request.throughSeq,
+                         # The plugin captures an unpublished session again on each of its
+                         # changes. Before the retry is due such a capture would only be
+                         # refused again: drop its pages and keep the quarantine.
+                         "withheld": record is not None and asyncio.get_running_loop().time() < record.retry_at}
 
     async def add_snapshot_page(self, page: SnapshotPage) -> None:
         snapshot = self.snapshot
@@ -555,6 +641,8 @@ class SyncRelay:
             raise ValueError("Snapshot page outside a capture")
         if page.captureId != snapshot["captureId"]:
             raise ValueError("Snapshot page belongs to a different capture")
+        if snapshot["withheld"]:
+            return
         for raw in page.items:
             item = timeline_item(raw)
             if item.session_id != snapshot["sessionId"] or item.id in self.item_ids:
@@ -569,7 +657,8 @@ class SyncRelay:
         if capture_id is not None and snapshot.get("captureId") != capture_id:
             raise ValueError("Snapshot commit belongs to a different capture")
         session_id = snapshot["sessionId"]
-        await self.deliver_snapshot(session_id, snapshot)
+        if not snapshot["withheld"]:
+            await self.deliver_snapshot(session_id, snapshot)
         self.clear_snapshot()
         record = self.quarantined.get(session_id)
         if record is None:
@@ -581,6 +670,12 @@ class SyncRelay:
         if capture_id is not None and self.snapshot is not None and self.snapshot.get("captureId") != capture_id:
             return
         self.clear_snapshot()
+
+
+def _streaming_draft(notice: Mapping[str, Any]) -> bool:
+    params = notice.get("params")
+    item = params.get("item") if isinstance(params, Mapping) else None
+    return notice.get("method") == "timeline.itemUpsert" and isinstance(item, Mapping) and item.get("status") == "running"
 
 
 def _observed_now() -> str:

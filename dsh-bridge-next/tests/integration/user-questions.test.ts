@@ -94,7 +94,7 @@ async function remote(ctx: Context) {
       const response = await ctx.connection.createSharedFetchHandler('/api').fetch(new Request('http://127.0.0.1/api/$events/result', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ type: 'client-request', rpcId, method: '$events/result', payload: { args: { clientId: ready.clientId, eventId, outcome } } }),
-      }))
+      }), interactionPeer(ctx.connection))
       assert.equal((await response.json()).result.ok, true)
     } }
 }
@@ -281,6 +281,42 @@ test('plan review accepts approval, revision feedback and cancellation through t
     const notice = f.runtime.questions.notices('test', id).find(item => item.status === 'open')!
     assert.equal((await f.request('respondInteraction', { sessionId: platformId, noticeId: notice.noticeId, actionId: 'cancel' }) as { ok: boolean }).ok, true)
     assert.equal((await pending).code, 'ASK_CANCELLED')
+    await handle.dispose()
+  } finally { await f.close() }
+})
+
+test('DSH approval questions reach the platform in Chinese as a plain single choice without free text', { timeout: 30_000 }, async () => {
+  const f = await fixture()
+  const id = SessionId('approval-question')
+  const platformId = sessionId('test', id)
+  try {
+    const handle = await f.ctx.agents.create({ sessionId: id, agentOptions: { provider: 'test', model: 'text' }, meta: { cwd: f.home } })
+    handle.agent.session.append('turn/start', { turn: 1 })
+    handle.agent.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: '打开 Safari' }] }), { surfaceOp: 'append' })
+    // Shaped like the application access request of DSH 0.2.2 Computer Use.
+    const options = [{ label: 'Allow for this session' }, { label: 'Deny' }, { label: 'Always allow' }]
+    const display = {
+      question: { en: 'Allow computer use to launch, read, capture and control this application?', zh: '允许 Computer Use 启动、读取、截图和控制此应用吗？' },
+      detail: { en: 'Session access and denial apply only to this conversation.', zh: '会话许可和拒绝仅在当前对话中生效。' },
+      approve: { en: 'Allow for this session', zh: '本会话允许' },
+    }
+    const pending = f.ctx.userQuestions.ask({ agent: handle.agent, questions: [{ id: 'cua-app-access',
+      question: 'Allow computer use to launch if needed, read, capture, and control Safari?', detail: display.detail.en,
+      options, intent: { kind: 'approval', approve: 'Allow for this session', reject: 'Deny', always: 'Always allow', subject: { name: 'Safari' }, display } }] })
+    await until(() => f.runtime.questions.waiting(id), 'approval question reaches the platform')
+    const notice = f.runtime.questions.notices('test', id).find(item => item.status === 'open')!
+    assert.equal(notice.title, '需要你的回答')
+    const question = notice.actions[0]!.input!.uiSchema.questions[0]!
+    assert.deepEqual([question.multiple, question.allowCustom, 'intent' in question], [false, false, false])
+    assert.equal(question.header, '授权请求 · Safari')
+    assert.equal(question.prompt, `${display.question.zh}\n\n${display.detail.zh}`)
+    assert.deepEqual(question.options.map(option => option.label), ['本会话允许', '拒绝', '始终允许'])
+    const respond = (input: unknown) => f.request('respondInteraction', { sessionId: platformId, noticeId: notice.noticeId, actionId: 'submit',
+      inputData: { answers: { 'cua-app-access': input } } })
+    await assert.rejects(respond({ customText: '允许' }))
+    assert.equal(f.runtime.questions.waiting(id), true, 'a refused free-text answer leaves the question open')
+    assert.equal((await respond({ optionIds: ['o_0'] }) as { ok: boolean }).ok, true)
+    assert.deepEqual(await pending, { answers: [{ id: 'cua-app-access', selected: ['Allow for this session'] }] })
     await handle.dispose()
   } finally { await f.close() }
 })

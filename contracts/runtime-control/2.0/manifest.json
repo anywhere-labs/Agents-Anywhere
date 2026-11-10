@@ -19,13 +19,6 @@
       "slug": "runtime-discover-response"
     },
     {
-      "direction": "egress",
-      "model": "RuntimeTypeDescriptor",
-      "path": "schemas/runtime-type-descriptor.schema.json",
-      "sha256": "45986a848627cf00c25609ff2b2c67afd5b59155f269c7a94ce5f1b06997697d",
-      "slug": "runtime-type-descriptor"
-    },
-    {
       "direction": "bidirectional",
       "model": "RuntimeInstanceSpec",
       "path": "schemas/runtime-instance-spec.schema.json",
@@ -48,21 +41,21 @@
     },
     {
       "direction": "ingress",
-      "model": "RuntimeValidateConfigParams",
-      "path": "schemas/runtime-validate-config-params.schema.json",
-      "rpcMethod": "runtime.validateConfig",
-      "rpcPart": "params",
-      "sha256": "2175a35bab90f68b8db8c550ab6e90a9065be2a59686c93881f002738f6f875f",
-      "slug": "runtime-validate-config-params"
-    },
-    {
-      "direction": "ingress",
       "model": "RuntimeStartParams",
       "path": "schemas/runtime-start-params.schema.json",
       "rpcMethod": "runtime.start",
       "rpcPart": "params",
       "sha256": "2d579046fb397b3a84acbfacb75e3fe8288a146dc13bd7cf60ffb3b4fea4589a",
       "slug": "runtime-start-params"
+    },
+    {
+      "direction": "egress",
+      "model": "RuntimeStartResult",
+      "path": "schemas/runtime-start-result.schema.json",
+      "rpcMethod": "runtime.start",
+      "rpcPart": "result",
+      "sha256": "8e42dceb9b4a09b67823a6f3d501cce076c4ceeb78d085186ff9c0ccdb93afc4",
+      "slug": "runtime-start-result"
     },
     {
       "direction": "ingress",
@@ -72,6 +65,22 @@
       "rpcPart": "params",
       "sha256": "6743d3ad063f0c5c4c9339c34ec1e8595c7d34d2786375b548780ff7ac199aa3",
       "slug": "runtime-stop-params"
+    },
+    {
+      "direction": "egress",
+      "model": "RuntimeTypeDescriptor",
+      "path": "schemas/runtime-type-descriptor.schema.json",
+      "sha256": "b4a3fb73749a26dbb47e4a6e213c9241d706d9e8754be7085ff07807cf90857f",
+      "slug": "runtime-type-descriptor"
+    },
+    {
+      "direction": "ingress",
+      "model": "RuntimeValidateConfigParams",
+      "path": "schemas/runtime-validate-config-params.schema.json",
+      "rpcMethod": "runtime.validateConfig",
+      "rpcPart": "params",
+      "sha256": "2175a35bab90f68b8db8c550ab6e90a9065be2a59686c93881f002738f6f875f",
+      "slug": "runtime-validate-config-params"
     }
   ],
   "jsonSchemaDraft": "https://json-schema.org/draft/2020-12/schema",

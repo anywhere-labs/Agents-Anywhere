@@ -23,7 +23,7 @@ DEFAULT_LOG_FORMAT = (
 def configure_connector_logging(*, debug: bool = False) -> None:
     level = "DEBUG" if debug else "INFO"
     logger.remove()
-    logger.add(sys.stderr, level=level, format=DEFAULT_LOG_FORMAT)
+    logger.add(sys.stderr, level=level, format=DEFAULT_LOG_FORMAT, diagnose=False)
 
 
 class RpcLogSink:
@@ -40,7 +40,7 @@ class RpcLogSink:
     ) -> RpcLogSink:
         if remove_default_sink:
             logger.remove()
-        self._sink_id = logger.add(self._write, level=level, format="{message}",
+        self._sink_id = logger.add(self._write, level=level, format="{message}", diagnose=False,
                                    filter=lambda record: record["extra"].get("meshcall_service") != "aa.local.v2.Logs"
                                    and not record["message"].startswith("RPC call aa.local.v2.Logs."))
         return self

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from dataclasses import replace
 
 import pytest
 
+from connector.logging import logger
 from connector.runtime_protocol import RuntimeConfig
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.codex.ipc import FollowedThread, IpcResponse
+from connector.runtimes.codex.ipc import CodexIpcOwnerService, FollowedThread, IpcResponse
 from connector.runtimes.codex.ipc import deeplink as ipc_deeplink
 from connector.runtimes.codex.runtime import CodexRuntime
 
@@ -84,6 +86,27 @@ class _Follower:
             self.thread = FollowedThread(thread_id=thread_id, status="following", owner_client_id="desktop-1", revision=1, state={"cwd": "/w", "currentPermissions": {}})
         else:
             self.thread = FollowedThread(thread_id=thread_id, status=status, error="no-client-found")  # type: ignore[arg-type]
+        return self.thread
+
+
+class _LateSnapshotFollower(_Follower):
+    """An owner that answers discovery first and sends its snapshot afterwards."""
+
+    def __init__(self, statuses: list[str], *, snapshot: bool = True) -> None:
+        super().__init__(statuses)
+        self.snapshot = snapshot
+        self.state_waits: list[float] = []
+
+    async def follow(self, thread_id: str, *, discovery_timeout_ms: int | None = None) -> FollowedThread:
+        thread = await super().follow(thread_id, discovery_timeout_ms=discovery_timeout_ms)
+        self.thread = replace(thread, state=None)
+        return self.thread
+
+    async def wait_until_state(self, thread_id: str, *, timeout: float) -> FollowedThread | None:
+        self.state_waits.append(timeout)
+        if self.thread is None or not self.snapshot:
+            return None
+        self.thread = replace(self.thread, state={"cwd": "/w", "currentPermissions": {}})
         return self.thread
 
 
@@ -214,6 +237,101 @@ def test_handoff_falls_back_to_sdk_when_owner_never_appears(monkeypatch: pytest.
             await runtime.start_turn("sess_1", THREAD, "hi")
         assert len(desktop.opened) == 1
         assert follower.follow_calls == [3000, 5000]
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(("is_router", "role"), [(True, "self"), (False, "external")])
+def test_blocked_write_logs_router_role_and_discovery_error(
+    monkeypatch: pytest.MonkeyPatch, is_router: bool, role: str
+) -> None:
+    _Desktop(running=False).install(monkeypatch)
+    messages: list[str] = []
+
+    async def run() -> None:
+        client = _Client()
+        client.is_router = is_router  # type: ignore[attr-defined]
+        runtime = _runtime(_Follower(["no_owner"]), client, safe_ipc_write_routing=True)
+        result = await runtime.start_turn("sess_1", THREAD, "hi")
+        assert not result.ok and result.code == "codex_ipc_owner_unreachable"
+
+    sink = logger.add(lambda message: messages.append(message.record["message"]), level="WARNING")
+    try:
+        asyncio.run(run())
+    finally:
+        logger.remove(sink)
+    blocked = [message for message in messages if message.startswith("codex ipc write route blocked")]
+    assert len(blocked) == 1
+    assert f"ipc_router={role}" in blocked[0]
+    assert "detail=no-client-found" in blocked[0]
+
+
+def test_safe_write_route_hands_locked_ownerless_thread_to_desktop(monkeypatch: pytest.MonkeyPatch) -> None:
+    desktop = _Desktop()
+    desktop.install(monkeypatch)
+
+    async def run() -> None:
+        follower = _LateSnapshotFollower(["unreachable", "following"])
+        client = _Client()
+        runtime = _runtime(follower, client, safe_ipc_write_routing=True)
+        result = await runtime.start_turn("sess_1", THREAD, "hi")
+        assert result.ok and result.result["transport"] == "ipc"
+        assert desktop.opened == [f"codex://threads/{THREAD}"]
+        assert follower.follow_calls == [3000, 5000]
+        # The app answers discovery before its first snapshot arrives.
+        assert len(follower.state_waits) == 1 and 0 < follower.state_waits[0] <= 5
+        assert client.calls == ["thread-follower-start-turn"]
+
+    asyncio.run(run())
+
+
+def test_safe_write_route_blocks_when_desktop_never_takes_over(monkeypatch: pytest.MonkeyPatch) -> None:
+    desktop = _Desktop()
+    desktop.install(monkeypatch)
+
+    async def run() -> None:
+        follower = _Follower(["unreachable", "unreachable"])
+        runtime = _runtime(follower, _Client(), safe_ipc_write_routing=True)
+        # Without an SDK client a local resume would raise: the write is refused instead.
+        result = await runtime.start_turn("sess_1", THREAD, "hi")
+        assert not result.ok and result.code == "codex_ipc_owner_unreachable"
+        assert desktop.opened == [f"codex://threads/{THREAD}"]
+        assert follower.follow_calls == [3000, 5000]
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(("running", "handoff"), [(False, True), (None, True), (True, False)])
+def test_safe_write_route_blocks_without_handoff(
+    monkeypatch: pytest.MonkeyPatch, running: bool | None, handoff: bool
+) -> None:
+    desktop = _Desktop(running=running)
+    desktop.install(monkeypatch)
+
+    async def run() -> None:
+        follower = _Follower(["no_owner", "following"])
+        runtime = _runtime(
+            follower, _Client(), safe_ipc_write_routing=True, ipc_deeplink_handoff=handoff
+        )
+        result = await runtime.start_turn("sess_1", THREAD, "hi")
+        assert not result.ok and result.code == "codex_ipc_owner_unreachable"
+        assert desktop.opened == [] and follower.follow_calls == [3000]
+
+    asyncio.run(run())
+
+
+def test_safe_write_route_never_hands_off_a_thread_with_a_reachable_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    desktop = _Desktop()
+    desktop.install(monkeypatch)
+
+    async def run() -> None:
+        follower = _LateSnapshotFollower(["following"], snapshot=False)
+        runtime = _runtime(follower, _Client(), safe_ipc_write_routing=True)
+        result = await runtime.start_turn("sess_1", THREAD, "hi")
+        assert not result.ok and result.code == "codex_ipc_owner_unreachable"
+        assert desktop.opened == [] and follower.follow_calls == [3000]
 
     asyncio.run(run())
 
@@ -482,5 +600,43 @@ def test_service_scans_once_without_periodic_rescan() -> None:
             await asyncio.sleep(0.01)
         assert service.scan_count == 2  # events still trigger a scan
         await service.stop()
+
+    asyncio.run(run())
+
+
+class _Sdk:
+    def __init__(self, loaded: tuple[str, ...] = ()) -> None:
+        self.loaded = set(loaded)
+
+    def thread_loaded(self, thread_id: str) -> bool:
+        return thread_id in self.loaded
+
+
+def test_safe_write_route_follows_a_window_held_thread_that_aa_only_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    desktop = _Desktop()
+    desktop.install(monkeypatch)
+
+    async def run() -> None:
+        follower = _Follower(["following"])
+        client = _Client()
+        runtime = _runtime(follower, client, safe_ipc_write_routing=True)
+        runtime.ipc_owner = CodexIpcOwnerService(
+            client=client,  # type: ignore[arg-type]
+            sdk=_Sdk(),  # type: ignore[arg-type]
+            session_states=runtime._session_states,
+            notices=runtime._notices,
+            active_turn_ids={},
+            session_id_for=lambda thread_id: "sess_1",
+        )
+        # A state AA read or synced is not ownership; the window holds the lock.
+        await runtime._session_states.update(
+            "sess_1", THREAD, status="idle", metadata={"source": "codex.thread/read.state"}
+        )
+
+        result = await runtime.start_turn("sess_1", THREAD, "hi")
+
+        assert result.ok and result.result["transport"] == "ipc"
+        assert client.calls == ["thread-follower-start-turn"]
+        assert desktop.opened == []
 
     asyncio.run(run())

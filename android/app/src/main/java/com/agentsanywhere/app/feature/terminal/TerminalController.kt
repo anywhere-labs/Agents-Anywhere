@@ -1,16 +1,19 @@
 package com.agentsanywhere.app.feature.terminal
 
 import com.agentsanywhere.app.api.ApiException
+import com.agentsanywhere.app.api.AuthApi
 import com.agentsanywhere.app.api.RemoteTerminal
 import com.agentsanywhere.app.api.TerminalApi
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
 import com.agentsanywhere.app.model.AgentSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.Request
 
 class TerminalController(
     private val terminalApi: TerminalApi,
     private val sessionStore: AuthSessionStore,
+    private val authApi: AuthApi,
 ) {
     suspend fun openWorkspaceTerminal(
         session: AgentSession,
@@ -38,11 +41,12 @@ class TerminalController(
                     ephemeralGroupId = ephemeralGroupId,
                     label = label,
                 )
+                val streamAuth = authSession()
                 WorkspaceTerminalConnection(
                     connectorId = session.connectorId,
                     terminal = terminal,
-                    streamUrl = terminalApi.streamUrl(auth.serverUrl, auth.accessToken, session.connectorId, terminal.terminalId),
-                    authorizationToken = auth.accessToken,
+                    streamUrl = terminalApi.streamUrl(streamAuth.serverUrl, streamAuth.accessToken, session.connectorId, terminal.terminalId),
+                    authorizationToken = streamAuth.accessToken,
                 )
             }.recoverCatching { error ->
                 if (error is ApiException) throw error
@@ -75,15 +79,40 @@ class TerminalController(
                     ephemeralGroupId = ephemeralGroupId,
                     label = label,
                 )
+                val streamAuth = authSession()
                 WorkspaceTerminalConnection(
                     connectorId = connectorId,
                     terminal = terminal,
-                    streamUrl = terminalApi.streamUrl(auth.serverUrl, auth.accessToken, connectorId, terminal.terminalId),
-                    authorizationToken = auth.accessToken,
+                    streamUrl = terminalApi.streamUrl(streamAuth.serverUrl, streamAuth.accessToken, connectorId, terminal.terminalId),
+                    authorizationToken = streamAuth.accessToken,
                 )
             }.recoverCatching { error ->
                 if (error is ApiException) throw error
                 throw IllegalStateException(error.message ?: "Could not open terminal.", error)
+            }
+        }
+    }
+
+    internal suspend fun prepareStreamConnection(streamUrl: String): Result<TerminalStreamConnection> {
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val endpoint = Request.Builder().url(streamUrl).build().url
+                val auth = authSession()
+                val streamOrigin = endpoint.newBuilder().encodedPath("/").query(null).fragment(null).build()
+                check(streamOrigin == Request.Builder().url(auth.serverUrl).build().url) {
+                    "The terminal belongs to a different server."
+                }
+                val user = authApi.me(auth.serverUrl, auth.accessToken)
+                val current = authSession()
+                check(current.serverUrl == auth.serverUrl && sessionStore.readUserId() == user.userId) {
+                    "The auth session changed while connecting to the terminal."
+                }
+                TerminalStreamConnection(
+                    streamUrl = endpoint.newBuilder()
+                        .setQueryParameter("token", current.accessToken)
+                        .build().toString(),
+                    authorizationToken = current.accessToken,
+                )
             }
         }
     }
@@ -166,6 +195,11 @@ class TerminalController(
 data class WorkspaceTerminalConnection(
     val connectorId: String,
     val terminal: RemoteTerminal,
+    val streamUrl: String,
+    val authorizationToken: String,
+)
+
+internal data class TerminalStreamConnection(
     val streamUrl: String,
     val authorizationToken: String,
 )

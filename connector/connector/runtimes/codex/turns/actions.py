@@ -73,6 +73,9 @@ class CodexTurnActions:
         }:
             return _source_failure_result(cached_source)
         await self.ensure_started()
+        entered = await self.host.prepare_planning_turn(session_id, external_session_id)
+        if entered and not content.strip() and not attachments:
+            return RuntimeOperationResult(ok=True, result={"externalSessionId": external_session_id, "created": True, "messageAccepted": False})
         effective_selections = dict(selections or {})
         if not effective_selections:
             cached = self.session_states.get(session_id)
@@ -106,7 +109,10 @@ class CodexTurnActions:
             external_session_id=external_session_id,
             status="waiting",
             selections=effective_selections,
-            metadata={"source": "codex.turn/start.requested"},
+            metadata={
+                "source": "codex.turn/start.requested",
+                "pendingSelectionScopes": [],
+            },
         )
         self.pending_messages.register(
             external_session_id=external_session_id,
@@ -119,6 +125,7 @@ class CodexTurnActions:
                 self.host,
                 session_id,
                 attachments,
+                self.notices,
             )
             result = await self.client.start_turn(
                 CodexStartTurnRequest(
@@ -264,6 +271,7 @@ class CodexTurnActions:
             self.host,
             session_id,
             attachments,
+            self.notices,
         )
         effective_content = content_with_codex_attachment_notes(
             content,

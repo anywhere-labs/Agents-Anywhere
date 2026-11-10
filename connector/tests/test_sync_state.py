@@ -63,6 +63,17 @@ def test_json_sync_state_rejects_invalid_document(tmp_path) -> None:
         raise AssertionError("invalid state should not be silently replaced")
 
 
+def test_json_sync_state_accepts_empty_legacy_placeholder(tmp_path) -> None:
+    path = tmp_path / "connector.sqlite3"
+    path.touch()
+    store = JsonSyncStateStore(path)
+    assert store.get("dsh", "connector-1", "thread-1") is None
+    assert path.read_bytes() == b""
+    store.set("dsh", "connector-1", "thread-1", cursor={"position": 1})
+    assert store.flush() is True
+    assert JsonSyncStateStore(path).get("dsh", "connector-1", "thread-1").cursor == {"position": 1}
+
+
 def test_json_sync_state_reads_file_once_and_skips_unchanged_flush(tmp_path) -> None:
     path = tmp_path / "connector-state.json"
     initial = JsonSyncStateStore(path)

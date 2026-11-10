@@ -2,14 +2,14 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { SessionPromptRequest } from '@deepseek-ai/dsh-api-session-controller'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionRecord } from '@deepseek-ai/dsh-session-query'
+import type { SessionLogSnapshot, SessionRecord } from '@deepseek-ai/dsh-session-query'
 import type {} from '@deepseek-ai/dsh-workspace'
 import type {} from '@deepseek-ai/dsh-storage-domain'
 import type {} from '@deepseek-ai/dsh-permission-presets'
 import { realpath, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { canonicalJson, digest, userMessageId } from './identity.js'
-import { BridgeError } from './errors.js'
+import { BridgeError, CreationNotStartedError } from './errors.js'
 import { ClientPresence } from './visibility.js'
 import { NativeSessionSource } from './sessions/source.js'
 import { record } from './types.js'
@@ -19,6 +19,7 @@ import { RuntimeDiagnostics } from './diagnostics.js'
 import { RuntimeCatalogs } from './catalogs.js'
 import { RuntimeConfiguration } from './configuration.js'
 import { RuntimeCommands } from './commands.js'
+import { RuntimePlanning } from './planning.js'
 import type { Selections } from './selections.js'
 import { capabilities } from './capabilities.js'
 import { CreationIntents } from './creation-intents.js'
@@ -30,10 +31,13 @@ declare module '@deepseek-ai/cordis' {
 export type NativeChange = { type: 'stream', id: string, turn: number, step: number, chunk: StreamChunk, time: number, throughSeq: number }
   | { type: 'event', id: string, event: SessionEvent }
   | { type: 'session', id: string } | { type: 'status', id: string }
-  | { type: 'refresh', id: string }
+  // `resume` recalibrates from the session's committed checkpoint when it still matches.
+  | { type: 'refresh', id: string, interrupted?: boolean, resume?: boolean }
   | { type: 'question', id: string } | { type: 'approval', id: string } | { type: 'capabilities' }
   | { type: 'visibility' } | { type: 'catalogs', catalogType: 'model' | 'permission' } | { type: 'commands' }
 export interface NativeWorkspace { id: string, title: string, path: string, sessionIds: string[] }
+
+export const MAX_RETAINED_FACTS = 128
 
 /** Configuration facts a session state read needs, without retaining the event log. */
 export interface SessionFacts {
@@ -56,6 +60,7 @@ export class NativeRuntime {
   readonly source: NativeSessionSource
   readonly catalogs: RuntimeCatalogs
   readonly configuration: RuntimeConfiguration
+  readonly planning: RuntimePlanning
   readonly commands: RuntimeCommands
   private writes = new Map<string, Promise<unknown>>()
   private closed = false
@@ -70,6 +75,7 @@ export class NativeRuntime {
     this.attachments = new RuntimeAttachments(join(dirname(creationDirectory), 'attachments'), legacyAttachmentStaging)
     this.catalogs = new RuntimeCatalogs(ctx, () => this.emit({ type: 'catalogs', catalogType: 'model' }))
     this.configuration = new RuntimeConfiguration(ctx)
+    this.planning = new RuntimePlanning(ctx, this.configuration)
     this.source = new NativeSessionSource(ctx, diagnostics)
     this.commands = new RuntimeCommands(ctx, this.configuration, this.source, () => this.emit({ type: 'commands' }))
     ctx.on('llm/adapters-updated', () => this.catalogs.invalidate(), { global: true })
@@ -97,7 +103,10 @@ export class NativeRuntime {
       this.approvals.observe(session.id, event)
       this.emit({ type: 'event', id: session.id, event })
     }, { global: true })
-    ctx.on('session/disposed', session => this.emit({ type: 'session', id: session.id }), { global: true })
+    ctx.on('session/disposed', session => {
+      this.source.release(session.id)
+      this.emit({ type: 'session', id: session.id })
+    }, { global: true })
     const attempts = new Map<string, { attemptId: string, turn: number, step: number }>()
     ctx.on('agent/assistant-stream', ({ agent, frame }) => {
       if (frame.type === 'start') attempts.set(agent.id, frame)
@@ -108,7 +117,7 @@ export class NativeRuntime {
           turn: attempt.turn, step: attempt.step, chunk: frame.chunk, time: frame.time, throughSeq: Number(agent.session.seq) - 1 })
         else {
           attempts.delete(agent.id)
-          if (frame.outcome.kind === 'abandoned') this.emit({ type: 'refresh', id: agent.id })
+          if (frame.outcome.kind === 'abandoned') this.emit({ type: 'refresh', id: agent.id, interrupted: true })
         }
       }
     }, { global: true })
@@ -158,6 +167,12 @@ export class NativeRuntime {
       { model, effort, approval: this.approvals.available, attachments: Boolean(this.ctx.get('attachments')), files: Boolean(this.ctx.get('fileUploads')),
         permission: this.configuration.canSelectPermission && (!id || !this.ctx.get('agents')?.get(id) || Boolean(this.ctx.get('commands')!.find(this.ctx.get('agents')!.get(id)!, 'permission'))),
         commands: await this.commands.capability(id) })
+    // The Bridge reports native facts; only a Connector with the unified
+    // Planning application may advertise the end-to-end capability.
+    const planning = Boolean(this.planning.service())
+    Object.assign(result.capabilities.find(item => item.capabilityId === 'session.planning')!, { capabilityId: 'session.planning', scope: platformId ? 'session' : 'runtime',
+      ...(platformId ? { sessionId: platformId } : {}), runtime: 'dsh', version: '1', supported: false,
+      available: false, allowed: true, metadata: { nativePlanningAvailable: planning, contentStreaming: 'native_delta' } })
     return { ...result, metadata: { ...result.metadata,
       ...(catalog ? { modelCatalogFailures: catalog.metadata.failures } : {}) } }
   }
@@ -183,6 +198,8 @@ export class NativeRuntime {
     if (this.source.records.has(id) || this.ctx.sessions.get(id as SessionId) !== undefined) return
     await this.source.initialize(signal)
   }
+  get retainedFactCount(): number { return this.facts.size }
+
   /**
    * Read the configuration facts of one session.
    *
@@ -190,22 +207,33 @@ export class NativeRuntime {
    * from an unchanged log are reused. The key is the log identity, never wall time,
    * and nothing but the derived facts is retained.
    */
-  async stateFacts(id: SessionId): Promise<SessionFacts> {
-    const revision = await this.source.freshRevisionOf(id)
+  async stateFacts(id: SessionId, snapshot?: SessionLogSnapshot & { bridgeRevision?: string }): Promise<SessionFacts> {
+    const revision = snapshot?.bridgeRevision ?? await this.source.freshRevisionOf(id)
     if (revision !== undefined) {
       const cached = this.facts.get(id)
-      if (cached !== undefined && cached.revision === revision) return cached.value
+      if (cached !== undefined && cached.revision === revision) {
+        this.facts.delete(id)
+        this.facts.set(id, cached)
+        return cached.value
+      }
     }
     const live = this.ctx.sessions.get(id)
-    const snapshot = live !== undefined ? undefined : await this.source.readLog(id)
-    const configuration = await this.configuration.state(id, snapshot)
-    const events = live?.snapshotEvents() ?? snapshot!.events
+    const log = snapshot ?? (live !== undefined ? undefined : await this.source.readLog(id))
+    const configuration = await this.configuration.state(id, log)
+    const events = live?.snapshotEvents() ?? log!.events
     const value: SessionFacts = {
       configuration,
       lastTurnEndKind: lastTurnEndKind(events),
     }
-    if (revision !== undefined) {
-      this.facts.delete(id); this.facts.set(id, { revision, value })
+    const actualRevision = log && 'bridgeRevision' in log && typeof log.bridgeRevision === 'string' ? log.bridgeRevision : revision
+    if (actualRevision !== undefined) {
+      this.facts.delete(id)
+      this.facts.set(id, { revision: actualRevision, value })
+      while (this.facts.size > MAX_RETAINED_FACTS) {
+        const oldest = this.facts.keys().next().value
+        if (oldest === undefined) break
+        this.facts.delete(oldest)
+      }
     }
     return value
   }
@@ -226,8 +254,8 @@ export class NativeRuntime {
 
   async send(id: SessionId, text: string, requestId: string, cwd?: string, create = false,
     selections: Selections = {}, agentPreset?: string, signal = new AbortController().signal,
-    images: readonly StagedAttachment[] = [], platformId?: string): Promise<void> {
-    if ((!text.trim() && !images.length) || text.length > 1_000_000 || !requestId || requestId.length > 512) {
+    images: readonly StagedAttachment[] = [], platformId?: string, planningIntent = false): Promise<void> {
+    if ((!text.trim() && !images.length && !planningIntent) || text.length > 1_000_000 || !requestId || requestId.length > 512) {
       throw new BridgeError('INVALID_PARAMS', 'A text message and stable client message ID are required.')
     }
     await this.write(id, signal, async () => {
@@ -253,7 +281,7 @@ export class NativeRuntime {
           path = await realpath(cwd)
           if (!(await stat(path)).isDirectory()) throw new Error('not a directory')
         } catch { throw new BridgeError('INVALID_PARAMS', 'The workspace must be an accessible directory on the DSH device.') }
-        fingerprint = digest(canonicalJson({ requestId, content: text, cwd: path, agentPreset: agentPreset ?? null,
+        fingerprint = digest(canonicalJson({ requestId, content: text, planningIntent, cwd: path, agentPreset: agentPreset ?? null,
           model: selections.model ?? null, permission: selections.permission ?? null,
           ...(images.length ? { attachments: attachmentReferences(images).map(image => ({ ...image })) } : {}) }))
         if (intent && (intent.requestId !== requestId || intent.fingerprint !== fingerprint)) {
@@ -271,17 +299,27 @@ export class NativeRuntime {
       }
       const store = this.ctx.get('attachments')
       if (images.length && (!store || !platformId)) throw new BridgeError('UNSUPPORTED_OPERATION', 'DSH attachments are unavailable.')
-      await this.configuration.validate(selections, create)
+      let preset: string | undefined
+      try {
+        await this.configuration.validate(selections, create)
+        if (create) preset = await this.configuration.validatePreset(agentPreset)
+      } catch (error) {
+        if (create && !log && !intent && error instanceof BridgeError) throw new CreationNotStartedError(error)
+        throw error
+      }
       if (create) {
         if (log?.events.some(event => event.type === 'turn/start')) throw new BridgeError('INVALID_PARAMS', 'This session has already started. Continue it with a new message.')
-        const preset = await this.configuration.validatePreset(agentPreset)
         if (!intent) await this.creations.write(id, { requestId, fingerprint: fingerprint! })
-        await this.configuration.controller().create({ sessionId: id, cwd: path!, agentPreset: preset })
+        await this.configuration.controller().create({ sessionId: id, cwd: path!, agentPreset: preset! })
         const workspace = await this.ctx.workspaceRegistry.create(path!)
         await workspace.attachSession(id)
       }
       const agent = await this.configuration.agent(id)
       await this.configuration.apply(agent, selections, create, signal)
+      if (planningIntent) {
+        await this.planning.set(id, true)
+        if (!text.trim() && !images.length) return
+      }
       if (this.source.archived.has(id)) await this.source.requireAvailable(id)
       if (this.closed || (!create && !await this.visible(id))) throw new BridgeError('SESSION_NOT_FOUND', 'The session is no longer visible in DSH.')
       const imageParts = images.length ? await this.attachments.prepare(images, store!, signal,

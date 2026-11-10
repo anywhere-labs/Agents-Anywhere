@@ -1,6 +1,7 @@
+import type { ConnectorEnvironmentState } from "../shared/connector-environment";
 import { windowMaterial } from "./window-material";
 import type { OwnershipState } from "./local-runtime";
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { DesktopUpdateState } from "../shared/desktop-updates";
 import { BACKEND_API_PREFIX, BACKEND_TOKEN_HEADER } from "./backend/protocol";
 import type {
@@ -62,7 +63,14 @@ async function api<T>(route: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body !== undefined && !headers.has("content-type")) headers.set("content-type", "application/json");
   if (target.token) headers.set(BACKEND_TOKEN_HEADER, target.token);
-  const response = await fetch(`${target.base}${route}`, { ...init, headers });
+  let response: Response;
+  try {
+    response = await fetch(`${target.base}${route}`, { ...init, headers });
+  } catch (error) {
+    // A restarted backend listens on a new port with a new token.
+    devTarget = null;
+    throw error;
+  }
   const text = await response.text();
   let payload: unknown = null;
   if (text) {
@@ -113,7 +121,8 @@ function ensureEventStream(): void {
           }
         }
       } catch {
-        // The backend restarts with the app; reconnect below.
+        // A restarted backend listens on a new port with a new token; reconnect below.
+        devTarget = null;
       }
       if (controller.signal.aborted) return;
       await new Promise((resolve) => setTimeout(resolve, 1_000));
@@ -146,15 +155,35 @@ function onEvent(name: string, listener: (data: unknown) => void): () => void {
 
 contextBridge.exposeInMainWorld("desktopWorkbench", {
   platform: process.platform,
+  files: {
+    droppedFolderPath: (file: File): Promise<string | null> => {
+      try {
+        const value = webUtils.getPathForFile(file);
+        return value ? ipcRenderer.invoke("workbench:files:droppedFolderPath", value) : Promise.resolve(null);
+      } catch {
+        return Promise.resolve(null);
+      }
+    },
+  },
   windowMaterial: windowMaterial(),
   window: {
     setTheme: (theme: "light" | "dark"): Promise<void> => ipcRenderer.invoke("workbench:window:setTheme", theme),
     setTitleBarColors: (colors: { color: string; symbolColor: string }): Promise<void> =>
       ipcRenderer.invoke("workbench:window:setTitleBarColors", colors),
   },
+  environment: {
+    getState: (): Promise<ConnectorEnvironmentState> => api("/environment"),
+    prepare: (): Promise<ConnectorEnvironmentState> => api("/environment/prepare", { method: "POST", body: "{}" }),
+    cancel: (): Promise<ConnectorEnvironmentState> => api("/environment/cancel", { method: "POST", body: "{}" }),
+    reset: (): Promise<unknown> => api("/environment/reset", { method: "POST", body: "{}" }),
+    onState: (callback: (state: ConnectorEnvironmentState) => void) => onEvent("environment", state => callback(state as ConnectorEnvironmentState)),
+  },
   ownership: {
     getState: (): Promise<OwnershipState> => ipcRenderer.invoke("workbench:ownership:getState"),
     recheck: (): Promise<OwnershipState> => ipcRenderer.invoke("workbench:ownership:recheck"),
+    /** Deletes the downloaded Connector environment; the next recheck downloads it again. */
+    resetEnvironment: (): Promise<void> =>
+      api<unknown>("/environment/reset", { method: "POST", body: "{}" }).then(() => undefined),
     quit: (): Promise<void> => ipcRenderer.invoke("workbench:ownership:quit"),
     onState: (callback: (state: OwnershipState) => void): (() => void) => subscribe("workbench:ownership:state", callback),
   },

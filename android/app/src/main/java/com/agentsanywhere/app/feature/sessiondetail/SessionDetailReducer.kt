@@ -11,11 +11,18 @@ internal fun reduceRealtimeEvent(
     event: RemoteSessionEventEnvelope,
     devices: List<AgentDevice>,
 ): SessionDetailState {
-    if (event.protocolVersion != "1.0" || event.sessionId != current.session?.id) return current
+    if (event.protocolVersion !in setOf("1.0", "1.1") || event.sessionId != current.session?.id) return current
     if (event.eventId in current.realtime.processedEventIds) return current
 
     var next = current.copy(realtime = current.realtime.rememberEvent(event.eventId, event.cursor))
     when (event.type) {
+        "planning.state.updated" -> event.payload.planning?.let { observed ->
+            val previous = next.planning
+            if (previous == null || previous.epoch != observed.epoch || observed.revision >= previous.revision) {
+                val docs = (previous?.documents.orEmpty() + listOfNotNull(observed.proposal)).distinctBy { it.planId to it.revision }
+                next = next.copy(planning = observed.copy(documents = docs, actions = observed.actions ?: previous?.actions))
+            }
+        }
         "session.subscribed" -> Unit
         "session.meta.updated" -> event.payload.session?.let { session ->
             val observed = session.toAgentSession(devices.associateBy { it.id })
@@ -112,7 +119,7 @@ internal fun reduceRealtimeEvents(
         if (pendingTimeline.isEmpty()) return
         val seen = mutableSetOf<String>()
         val accepted = pendingTimeline.filter { event ->
-            event.protocolVersion == "1.0" &&
+            event.protocolVersion in setOf("1.0", "1.1") &&
                 event.sessionId == next.session?.id &&
                 event.eventId !in next.realtime.processedEventIds &&
                 seen.add(event.eventId)
@@ -213,6 +220,7 @@ internal fun reduceRuntimeLiveState(
 internal fun reduceSnapshotWithLiveState(
     snapshot: SessionDetailState,
     live: SessionDetailState,
+    requestState: SessionDetailState,
 ): SessionDetailState {
     if (!live.initialized) {
         return snapshot.copy(
@@ -243,7 +251,11 @@ internal fun reduceSnapshotWithLiveState(
     } else {
         snapshot.runtime
     }
-    val capabilities = if (live.capabilities.isLoaded && live.capabilities.revision >= snapshot.capabilities.revision) {
+    // Capability revisions are not comparable (see applyCapabilitiesObservation).
+    // Facts observed after the snapshot request started are newer than it.
+    val capabilitiesObserved = live.capabilities.withoutRequestStatus() !=
+        requestState.capabilities.withoutRequestStatus()
+    val capabilities = if (live.capabilities.isLoaded && capabilitiesObserved) {
         live.capabilities
     } else {
         snapshot.capabilities
@@ -298,14 +310,15 @@ private fun SessionDetailState.applyTimelineRealtimeItems(
     replace: Boolean,
     cursor: String,
 ): SessionDetailState {
-    val currentReal = messages.filterNot { it.optimistic }
+    val hasOptimistic = messages.any { it.optimistic }
+    val currentReal = if (hasOptimistic) messages.filterNot { it.optimistic } else messages
     val projection = mergeRemoteTimelineItems(
         currentOrdering = timeline.orderingItems,
         currentMessages = currentReal,
         incoming = incoming,
         replace = replace,
     )
-    val messages = mergeReducerOptimistic(
+    val messages = if (!hasOptimistic) projection.messages else mergeReducerOptimistic(
         projection.messages,
         this.messages,
         projection.orderingItems,
@@ -369,13 +382,18 @@ internal fun SessionDetailState.applyRuntimeObservation(
 internal fun SessionDetailState.applyCapabilitiesObservation(
     observed: EffectiveCapabilities,
 ): SessionDetailState {
-    val nextCapabilities = if (!capabilities.isLoaded || observed.revision >= capabilities.revision) {
-        observed
-    } else {
-        capabilities.copy(isLoading = false, errorMessage = null)
-    }
-    return copy(capabilities = nextCapabilities)
+    // Revisions are not comparable across sources: live reads carry the session
+    // sequence, stored connector facts a microsecond clock. As on Web and iOS,
+    // the latest observation wins; identical facts keep the current object.
+    val sameFacts = capabilities.isLoaded &&
+        capabilities.capabilities == observed.capabilities &&
+        capabilities.connectorId == observed.connectorId
+    return copy(capabilities = if (sameFacts) capabilities.withoutRequestStatus() else observed)
 }
+
+// Loading and error flags describe a request, not the capability facts.
+private fun EffectiveCapabilities.withoutRequestStatus(): EffectiveCapabilities =
+    copy(isLoading = false, errorMessage = null)
 
 internal fun SessionDetailState.applyNoticeObservation(
     incoming: List<RemoteRuntimeNotice>,

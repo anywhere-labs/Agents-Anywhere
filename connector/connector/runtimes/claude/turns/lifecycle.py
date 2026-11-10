@@ -242,6 +242,10 @@ class ClaudeTurnRunner:
             )(tool_name, tool_input, context)
 
         async def tool_result(data, *args):
+            from connector.runtimes.claude.planning import observe_claude_tool_result
+            plan_result = await observe_claude_tool_result(self.host, session, data)
+            if plan_result:
+                return plan_result
             result = await connection.tool_result(data, *args)
             native_id = data.get("session_id")
             if session.external_session_id is None and isinstance(native_id, str):
@@ -254,6 +258,12 @@ class ClaudeTurnRunner:
             if self.connections.get(session.session_id) is connection:
                 self.connections.pop(session.session_id)
 
+        async def before_native_tool(data):
+            from connector.runtimes.claude.planning import remember_native_plan_path
+            if data.get("tool_name") == "Write":
+                remember_native_plan_path(self.host, session.session_id, (data.get("tool_input") or {}).get("file_path"))
+            return await connection.before_tool(data)
+
         try:
             client = new_sdk_client(
                 sdk=sdk,
@@ -265,7 +275,7 @@ class ClaudeTurnRunner:
                 settings_path=settings_path,
                 cli_models=self.catalogs.cli_models,
                 on_tool_result=tool_result,
-                before_tool=lambda data: connection.before_tool(data),
+                before_tool=before_native_tool,
             )
         except BaseException:
             remove_gateway_settings_file(settings_path)
@@ -360,6 +370,7 @@ class ClaudeTurnRunner:
                 self.host,
                 session.session_id,
                 attachments,
+                self.notifications.notices,
             )
             effective_content = content_with_attachment_notes(
                 content,
@@ -389,6 +400,12 @@ class ClaudeTurnRunner:
             emitted_final_assistant_content = False
             stream_accumulator = ClaudeStreamAccumulator()
             async for message in receive_response_messages(client):
+                retry_item = self.timeline.retry_item_for_message(session, turn_id, message)
+                if retry_item is not None:
+                    await self.notifications.timeline_activity.timeline_item_upsert(retry_item)
+                goal_port = getattr(self.host, "_goal_port", None)
+                if goal_port is not None:
+                    goal_port.observe_message(session.session_id, message)
                 external_session_id = message_session_id(message)
                 if external_session_id is not None:
                     await self._update_external_session_id(session, external_session_id)
@@ -406,7 +423,12 @@ class ClaudeTurnRunner:
                 role = message_role(message)
                 text = message_text(message)
                 native_message_id = message_id(message)
-                synthetic_control = is_synthetic_control_message(message)
+                goal_control = getattr(
+                    getattr(self.host, "_goal_port", None), "is_control_message", None
+                )
+                synthetic_control = is_synthetic_control_message(message) or (
+                    callable(goal_control) and goal_control(message)
+                )
                 if (
                     role == "user"
                     and text
@@ -427,6 +449,8 @@ class ClaudeTurnRunner:
                                 already_published=user_message_published,
                             )
                         )
+                from connector.runtimes.claude.planning import observe_claude_plan
+                await observe_claude_plan(self.host, session, turn_id, message)
                 stream_item = stream_accumulator.item_from_stream_event(
                     session=session,
                     turn_id=turn_id,
@@ -800,6 +824,9 @@ class ClaudeTurnRunner:
         update_state: bool = True,
     ) -> None:
         reason = terminal.reason or execution.interrupt_reason
+        retry_item = self.timeline.finish_retry(session, execution.turn_id, terminal.status)
+        if retry_item is not None:
+            await self.notifications.timeline_activity.timeline_item_upsert(retry_item)
         if terminal.status == "failed":
             metadata = {
                 "source": "claude.turn.failed",

@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os'
 import { LocalRouter, Mesh, Router } from 'meshcall'
 import { acquireManagerLock, writeJson } from '../../src/host/storage/files.js'
 import { bridgePath, nativeRuntime } from '../fixtures/native-runtime.js'
+import { ownerPeer } from '../fixtures/gateway-host.js'
 import type { OnboardingSnapshot } from '../../src/contracts/index.js'
 import type { BridgeStatus } from '../../src/contracts/bridge-status.js'
 import type { StartupFailureDiagnostic } from '../../src/contracts/logs.js'
@@ -36,8 +37,8 @@ test('a busy local bridge keeps the management gateway available and can restart
   try {
     fixture = await nativeRuntime(home)
     for (let i = 0; i < 100 && !fixture.ctx.get('agentsAnywhereOnboarding'); i++) await delay(5)
-    const gateway = fixture.ctx.typertGateway
-    const invoke = (method: string) => gateway.invoke({ namespace: 'agentsAnywhereOnboarding', method, args: {} })
+    const gateway = fixture.ctx.typertGateway, peer = ownerPeer(fixture.ctx)
+    const invoke = (method: string) => gateway.invoke({ namespace: 'agentsAnywhereOnboarding', method, args: {}, peer })
     const snapshot = await invoke('inspect') as OnboardingSnapshot
     assert.equal(snapshot.bridge?.state, 'failed')
     assert.equal(snapshot.bridge?.code, 'BRIDGE_IN_USE')
@@ -97,7 +98,8 @@ test('permission failures remain readable through the management RPC without Con
     const logs = join(home, 'account', 'logs')
     await rm(logs, { recursive: true, force: true })
     await writeFile(logs, 'not a log directory')
-    const invoke = (method: string) => fixture.ctx.typertGateway.invoke({ namespace: 'agentsAnywhereOnboarding', method, args: {} })
+    const peer = ownerPeer(fixture.ctx)
+    const invoke = (method: string) => fixture.ctx.typertGateway.invoke({ namespace: 'agentsAnywhereOnboarding', method, args: {}, peer })
     await assert.rejects(invoke('readConnectorLogs'))
     const failures = await invoke('readStartupDiagnostics') as StartupFailureDiagnostic[]
     assert.equal(failures.length, 1)

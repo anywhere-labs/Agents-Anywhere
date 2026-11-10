@@ -80,6 +80,7 @@ from agent_server.deps import (
     get_catalog_service,
     get_device_runtime_service,
     get_event_recovery_service,
+    get_model_channel_service,
     get_rpc,
     get_session_run_service,
     get_session_runtime_state_cache,
@@ -112,6 +113,7 @@ from agent_server.services.effective_capabilities import (
     read_session_capability_facts,
 )
 from agent_server.services.event_recovery import EventRecoveryService
+from agent_server.services.model_channels import ModelChannelService
 from agent_server.services.session_meta_projection import (
     project_session_meta_for_dashboard,
 )
@@ -238,6 +240,7 @@ def runtime_state_semantically_equal(
         and left.externalSessionId == right.externalSessionId
         and left.statusReason == right.statusReason
         and left.error == right.error
+        and left.metadata == right.metadata
     )
 
 
@@ -731,6 +734,7 @@ async def session_runtime_model_catalog(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
+    channels: ModelChannelService = Depends(get_model_channel_service),
 ) -> ProtocolModelCatalogResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
@@ -750,7 +754,7 @@ async def session_runtime_model_catalog(
         limit=200,
     )
     return ProtocolModelCatalogResponse(
-        catalog=parse_runtime_model_catalog_response(result),
+        catalog=await channels.channel_catalog(session.connectorId, _session_runtime_id(session), parse_runtime_model_catalog_response(result), user_id=user_id),
         serverTime=utc_now(),
     )
 
@@ -810,6 +814,7 @@ async def patch_session_selections(
         )
     except SessionRunError as exc:
         _raise_session_run_error(exc)
+    await runtime_state_cache.put(state)
     await _best_effort_publish_session_protocol_update(
         db,
         broker,
@@ -990,6 +995,7 @@ async def session_snapshot(
         previous_state=runtime_state,
     )
     return ProtocolSessionSnapshotResponse(
+        goalState=await db.read_goal(session_id),
         session=session.model_dump(mode="json"),
         state=(
             runtime_state.model_dump(mode="json")
@@ -1307,6 +1313,19 @@ async def execute_session_command(
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
+    if payload.command == "plan":
+        from uuid import uuid4
+        from agent_server.core.capabilities import SESSION_PLANNING
+        from agent_server.core.planning.commands import parse_plan_command
+        from agent_server.core.planning.models import PlanningRequest
+        from agent_server.services.planning.service import PlanningService
+        await _require_session_action_capability(db, manager, session, SESSION_PLANNING, user_id=user_id)
+        intent = parse_plan_command(payload.raw if payload.raw is not None else "/plan" + (" " + " ".join(payload.args) if payload.args else ""))
+        if intent is None:
+            raise HTTPException(422, "raw must invoke /plan")
+        result = await PlanningService(db, manager).execute(session, PlanningRequest(**intent, operationId=payload.operationId or str(uuid4())), user_id=user_id)
+        return SessionCommandResponse(command="plan", ok=result.ok, code=result.code, message=result.message,
+            result={"planning": result.model_dump(mode="json"), "executionState": "unknown" if result.outcome == "unknown" else "accepted" if result.ok else "completed", "retryable": False}, serverTime=utc_now())
     await _require_session_action_capability(
         db,
         manager,
@@ -1582,6 +1601,10 @@ async def respond_interaction(
         session_id,
         user_id=user_id,
     )
+    if isinstance(result, dict) and result.get("ok") is False:
+        return RpcResponsePayload(ok=False, result=result, error=RpcError(
+            code=str(result.get("code") or "runtime_operation_failed"),
+            message=str(result.get("message") or "Runtime 未接受该回答。")))
     return RpcResponsePayload(ok=True, result=result)
 
 
@@ -1763,6 +1786,7 @@ async def request_session_runtime_catalog(
                 "runtime": session.runtime,
                 "runtimeId": _session_runtime_id(session),
                 "limit": limit,
+                "sessionId": session.id,
             },
             timeout=30,
         )
