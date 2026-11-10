@@ -75,6 +75,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.feature.files.inlineCodeFilePath
+import com.agentsanywhere.app.feature.files.normalizeSpacedLinkDestinations
+import com.agentsanywhere.app.feature.files.sessionFileLinkPath
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import java.util.UUID
@@ -164,7 +167,7 @@ internal fun AgentMarkdownText(
     }
     val uriHandler = LocalUriHandler.current
     val (mathSource, document) = remember(text) {
-        val raw = text.ifBlank { "_(no content)_" }
+        val raw = normalizeSpacedLinkDestinations(text.ifBlank { "_(no content)_" })
         val extracted = MarkdownMathSource.parse(raw)
         val parsed = markdownParser.parse(normalizeMarkdownTables(extracted.markdown)) as Document
         extracted to parsed
@@ -211,7 +214,7 @@ private fun MarkdownBlocks(
                         if (codeLiteral.needsWrappingCode()) {
                             MarkdownWrappingCodeChip(
                                 code = codeLiteral,
-                                path = parseFileRef(codeLiteral),
+                                path = inlineCodeFilePath(codeLiteral),
                                 styles = styles,
                                 onOpenFile = onOpenFile,
                             )
@@ -551,7 +554,7 @@ private fun buildMarkdownInline(
                     is HardLineBreak -> append("\n")
                     is Code -> {
                         val codeLiteral = mathSource.restoreLiteral(node.literal)
-                        val path = parseFileRef(codeLiteral)
+                        val path = inlineCodeFilePath(codeLiteral)
                         if (codeLiteral.needsWrappingCode()) {
                             if (path != null) pushStringAnnotation(AnnotationFile, path)
                             withSpan(
@@ -591,7 +594,7 @@ private fun buildMarkdownInline(
                     }
                     is Link -> {
                         val destination = mathSource.restoreLiteral(node.destination)
-                        val filePath = if (isFilePath(destination)) stripLine(destination) else null
+                        val filePath = sessionFileLinkPath(destination)
                         pushStringAnnotation(if (filePath != null) AnnotationFile else AnnotationUrl, filePath ?: destination)
                         withSpan(SpanStyle(color = styles.linkColor, textDecoration = TextDecoration.Underline)) {
                             appendNodes(node.children())
@@ -602,7 +605,7 @@ private fun buildMarkdownInline(
                         val wrapper = node.styleNode
                         if (wrapper is Link) {
                             val destination = mathSource.restoreLiteral(wrapper.destination)
-                            val filePath = if (isFilePath(destination)) stripLine(destination) else null
+                            val filePath = sessionFileLinkPath(destination)
                             pushStringAnnotation(if (filePath != null) AnnotationFile else AnnotationUrl, filePath ?: destination)
                         }
                         val span = when (wrapper) {
@@ -1119,24 +1122,6 @@ private fun splitTableRowCells(line: String): List<String> {
 private fun String.isMarkdownFenceBoundary(): Boolean {
     val trimmed = trimStart()
     return trimmed.startsWith("```") || trimmed.startsWith("~~~")
-}
-
-private fun stripLine(path: String): String = path.replace(Regex(""":\d+(:\d+)?$"""), "")
-
-private fun parseFileRef(text: String): String? {
-    if (text.isBlank() || text.contains(" ") || text.contains("://")) return null
-    if (!text.contains("/")) return null
-    if (!Regex("""\.[a-zA-Z0-9]+(?::\d+(?::\d+)?)?$""").containsMatchIn(text)) return null
-    return stripLine(text)
-}
-
-private fun isFilePath(href: String): Boolean {
-    if (href.isBlank()) return false
-    return !href.startsWith("http://") &&
-        !href.startsWith("https://") &&
-        !href.startsWith("mailto:") &&
-        !href.startsWith("#") &&
-        !href.startsWith("//")
 }
 
 private val latexExtensionsRegistered = AtomicBoolean(false)

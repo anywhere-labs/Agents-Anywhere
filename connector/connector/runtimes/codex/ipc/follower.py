@@ -200,6 +200,16 @@ class ThreadFollower:
         if thread is not None and thread.owner_client_id and self.client.initialized:
             await self._announce(thread_id, thread.owner_client_id, following=False)
 
+    async def owner_unavailable(self, thread: FollowedThread) -> None:
+        """Discard a definitively rejected route without discarding a newer owner."""
+        current = self._threads.get(thread.thread_id)
+        if current is None or current.owner_client_id != thread.owner_client_id:
+            return
+        await self._set(
+            thread.thread_id, status="owner_lost", owner_client_id=None,
+            error="owner no longer handles this thread",
+        )
+
     async def wait_until_state(
         self,
         thread_id: str,

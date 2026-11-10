@@ -323,6 +323,10 @@ internal fun MessageList(
     DisposableEffect(sessionId) {
         onDispose { returnToLatestJob?.cancel() }
     }
+    DisposableEffect(reading, listState, scope) {
+        reading.attach(listState, scope)
+        onDispose { reading.detach(listState) }
+    }
 
     fun observeUserScroll(deltaY: Float) {
         if (deltaY == 0f) return
@@ -1268,7 +1272,10 @@ private fun AgentMessageContent(
     onOpenFile: (String) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (message.text.isNotBlank()) AgentMarkdownText(message.text, darkMode, onOpenFile = onOpenFile)
+        if (message.text.isNotBlank()) {
+            AgentMarkdownText(message.text, darkMode, onOpenFile = onOpenFile)
+            GeneratedFileCards(markdown = message.text, onOpenFile = onOpenFile)
+        }
         UserAttachmentStrip(
             attachments = message.attachments,
             darkMode = darkMode,
@@ -2307,6 +2314,25 @@ private fun TimelineShimmerText(
 }
 
 @Composable
+private fun modelRetryText(message: TimelineMessage): String? {
+    val content = remember(message.rawContent) {
+        runCatching { org.json.JSONObject(message.rawContent) }.getOrNull()
+    } ?: return null
+    if (content.optString("code") != "model_request_retry") return null
+    return when (content.optString("state")) {
+        "completed" -> stringResource(R.string.session_model_retry_completed)
+        "interrupted" -> stringResource(R.string.session_model_retry_interrupted)
+        "failed" -> stringResource(R.string.session_model_retry_failed)
+        else -> listOfNotNull(
+            stringResource(if (content.optString("reason") == "rate_limit") R.string.session_model_retry_busy else R.string.session_model_retry_unavailable),
+            if (content.has("maxAttempts")) stringResource(R.string.session_model_retry_progress, content.optInt("attempt", 1), content.optInt("maxAttempts"))
+            else stringResource(R.string.session_model_retry_attempt, content.optInt("attempt", 1)),
+            if (content.has("retryInMs")) stringResource(R.string.session_model_retry_delay, kotlin.math.ceil(content.optDouble("retryInMs") / 1000).toInt()) else null,
+        ).joinToString(" ")
+    }
+}
+
+@Composable
 private fun ToolPlaceholder(
     message: TimelineMessage,
     darkMode: Boolean,
@@ -2323,7 +2349,9 @@ private fun ToolPlaceholder(
         )
         return
     }
+    val retryText = modelRetryText(message)
     val displayText = when {
+        retryText != null -> retryText
         message.kind == TimelineMessageKind.Diagnostic -> stringResource(
             R.string.session_timeline_unknown_item,
             listOf(message.type, message.contentKind).filter(String::isNotBlank).joinToString(" / "),

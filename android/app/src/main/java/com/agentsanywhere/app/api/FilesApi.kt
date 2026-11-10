@@ -11,6 +11,9 @@ class FilesApi(
 ) {
     companion object {
         const val MAX_DOWNLOAD_BYTES = 64L * 1024 * 1024
+
+        /** Upper bound for files the preview page downloads to share or save. */
+        const val MAX_SAVE_BYTES = 512L * 1024 * 1024
         private const val DOWNLOAD_BUFFER_BYTES = 64 * 1024
     }
 
@@ -92,8 +95,9 @@ class FilesApi(
         transfer: RemoteFileTransfer,
         destination: File,
         maxBytes: Long = MAX_DOWNLOAD_BYTES,
+        onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> },
     ): File {
-        val limit = minOf(maxBytes, MAX_DOWNLOAD_BYTES)
+        val limit = minOf(maxBytes, MAX_SAVE_BYTES)
         if (transfer.size > limit) {
             throw ApiException("The file is too large to preview.", 413)
         }
@@ -124,6 +128,7 @@ class FilesApi(
                         }
                         digest.update(buffer, 0, read)
                         output.write(buffer, 0, read)
+                        onProgress(total, transfer.size)
                     }
                 }
                 if (transfer.size > 0 && total != transfer.size) {
@@ -162,8 +167,9 @@ class FilesApi(
     private fun absoluteDownloadUrl(serverUrl: String, downloadUrl: String): String {
         if (downloadUrl.startsWith("http://") || downloadUrl.startsWith("https://")) return downloadUrl
         val base = serverUrl.trimEnd('/')
-        if (base.endsWith("/api/v2") && downloadUrl.startsWith("/api/v2")) {
-            return base.removeSuffix("/api/v2") + downloadUrl
+        val namespace = "/api/v2"
+        if (base.endsWith(namespace) && downloadUrl.startsWith(namespace)) {
+            return base.removeSuffix(namespace) + downloadUrl
         }
         return base + "/" + downloadUrl.trimStart('/')
     }

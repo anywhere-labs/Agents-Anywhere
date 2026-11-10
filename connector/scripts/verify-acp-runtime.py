@@ -137,6 +137,10 @@ async def main():
                 lambda: app.creation_view("create")["messageAccepted"] is True,
                 "accepted creation",
             )
+            # Acceptance means the Agent started on the input, not that the turn finished.
+            first = store.require("prompt", fingerprint(["session", "first"]))
+            assert first["evidence"] == "agent_execution_observed", first
+            await until(lambda: app.state("session")["status"] == "idle", "finished first turn")
             assert marker.read_text() == "first message\n"
             result = await app.submit("session", "first", "first message")
             assert result["messageAccepted"] is True
@@ -147,10 +151,15 @@ async def main():
             except AcpError as error:
                 assert error.code == "operation_input_conflict"
             items = list(app.sessions["session"]["projection"].items.values())
+            users = [item for item in items if item["role"] == "user"]
+            replies = [item for item in items if item["role"] == "assistant"]
+            # The engine records the user's input once, with its stable identity.
+            assert [item["content"]["clientMessageId"] for item in users] == ["first"], users
+            assert users[0]["content"]["text"] == "first message"
             assert (
-                len(items) == 1
-                and items[0]["content"]["text"] == "受控 输出\u2028完成"
-                and items[0]["status"] == "done"
+                len(replies) == 1
+                and replies[0]["content"]["text"] == "受控 输出\u2028完成"
+                and replies[0]["status"] == "done"
             )
             assert store.pending()
             try:
@@ -220,8 +229,9 @@ async def main():
                     ]
                     is True
                 ),
-                "form turn completion",
+                "form turn acceptance",
             )
+            await until(lambda: app.state("session")["status"] == "idle", "form turn completion")
             assert json.loads(marker.read_text().splitlines()[1]) == form
             await app.submit("session", "hang", "hang")
             await until(

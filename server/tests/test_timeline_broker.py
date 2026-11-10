@@ -23,6 +23,59 @@ def test_dashboard_events_are_debounced() -> None:
     asyncio.run(exercise())
 
 
+def test_dashboard_delivery_is_throttled_per_user_with_leading_and_trailing_edges() -> None:
+    async def exercise() -> None:
+        broker = TimelineBroker(dashboard_min_interval_seconds=0.2)
+        first_socket = await broker.register_dashboard("user1")
+        second_socket = await broker.register_dashboard("user1")
+        other_user = await broker.register_dashboard("user2")
+
+        # The first change after a quiet period reaches every socket at once.
+        await broker.publish_dashboard("user1", {"serverTime": "t1"})
+        leading = first_socket.get_nowait()
+        assert json.loads(leading)["serverTime"] == "t1"
+        # Both sockets share one message, so they share one snapshot build.
+        assert second_socket.get_nowait() is leading
+
+        # Changes inside the interval merge into one trailing delivery.
+        for stamp in ("t2", "t3", "t4"):
+            await broker.publish_dashboard("user1", {"serverTime": stamp})
+        assert first_socket.empty() and second_socket.empty()
+        # Another user is not held back by this user's interval.
+        await broker.publish_dashboard("user2", {"serverTime": "u1"})
+        assert json.loads(other_user.get_nowait())["serverTime"] == "u1"
+
+        trailing = await asyncio.wait_for(first_socket.get(), timeout=1)
+        assert json.loads(trailing)["serverTime"] == "t4"
+        assert second_socket.get_nowait() is trailing
+        assert first_socket.empty()
+        await broker.close()
+
+    asyncio.run(exercise())
+
+
+def test_dashboard_throttle_forgets_users_without_sockets() -> None:
+    async def exercise() -> None:
+        broker = TimelineBroker(dashboard_min_interval_seconds=60)
+        await broker.publish_dashboard("nobody", {"serverTime": "t0"})
+        queue = await broker.register_dashboard("user1")
+        await broker.publish_dashboard("user1", {"serverTime": "t1"})
+        assert json.loads(queue.get_nowait())["serverTime"] == "t1"
+        await broker.publish_dashboard("user1", {"serverTime": "t2"})
+        assert queue.empty()
+        await broker.unregister_dashboard("user1", queue)
+
+        # A reconnect after every socket closed is not held to the old interval.
+        reconnected = await broker.register_dashboard("user1")
+        await broker.publish_dashboard("user1", {"serverTime": "t3"})
+        assert json.loads(reconnected.get_nowait())["serverTime"] == "t3"
+        await broker.close()
+        assert not broker._dashboard_throttle_tasks
+        assert not broker._dashboard_delivered_at
+
+    asyncio.run(exercise())
+
+
 def test_oversized_unicode_envelope_requests_durable_recovery() -> None:
     async def exercise() -> None:
         broker = TimelineBroker()

@@ -161,6 +161,17 @@ struct V2DeviceManagementService {
         try await connectorAPI.preferences(connectorId: connectorId).preferences
     }
 
+    func deviceSettings(connectorId: V2ConnectorID) async throws -> V2ConnectorDeviceSettingsResponse {
+        try await connectorAPI.deviceSettings(connectorId: connectorId)
+    }
+
+    func updateDeviceSettings(
+        connectorId: V2ConnectorID,
+        _ patch: V2ConnectorDeviceSettingsPatch
+    ) async throws -> V2ConnectorDeviceSettingsResponse {
+        try await connectorAPI.updateDeviceSettings(connectorId: connectorId, request: patch)
+    }
+
     func configSchema(runtime: V2DeviceRuntime) throws -> V2RuntimeConfigSchema {
         guard let schema = runtime.schema else { throw V2BusinessError.invalidRuntimeConfigSchema }
         return try V2RuntimeConfigSchema(schema: schema, uiSchema: runtime.uiSchema, defaults: runtime.defaults)

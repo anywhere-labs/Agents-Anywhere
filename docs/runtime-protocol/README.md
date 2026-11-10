@@ -18,6 +18,10 @@
 
 默认 Runtime 为 Codex、Claude、DSH、Pi。Pi 的 Provider 身份为 `pi`，通过通用 ACP 适配启动托管安装的 `@openma/pi-acp`。运行环境使用 npm 安装器管理。
 
+## 方案（未实施）
+
+- [统一 ACP 接入方案](acp-unified-integration-proposal.md)：类型化 Agent 定义、公共会话引擎、可选的方言钩子，以及统一的事件和错误码（阶段 1–4 已实施）。
+
 ## 早期重构参考
 
 以下文件保留了通用 Runtime 重构的设计与迁移背景，其中的 draft、target、实施记录及验证结果属于相应阶段。查阅行为或接口时应先查看上面的当前定义。

@@ -3,6 +3,7 @@ import { PlanDrafts } from './plan-draft.js'
 import { randomUUID } from 'node:crypto'
 import { receiptKey } from './attachments.js'
 import type { SnapshotPage, SnapshotRequest, SnapshotResult, SyncBatch as WireBatch } from '../generated/dsh-sync.js'
+import { MeshCallError } from 'meshcall'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
@@ -17,7 +18,7 @@ export type SyncOperation = { kind: string, [key: string]: unknown }
 export interface SyncCheckpoint { version: 1, projectionVersion: typeof PROJECTION_VERSION, throughSeq: number, historyHash: string, settled: boolean }
 /** What the feed needs from the Connector; one call per batch, checkpoint or capture. */
 export interface SyncTransport {
-  ingestBatch(batch: WireBatch, signal: AbortSignal): Promise<void>
+  ingestBatch(batch: WireBatch, signal: AbortSignal, attempt?: number): Promise<void>
   loadCheckpoint(externalSessionId: string): Promise<Record<string, unknown> | null>
   saveCheckpoint(externalSessionId: string, checkpoint: SyncCheckpoint): Promise<void>
   deleteCheckpoint(externalSessionId: string): Promise<void>
@@ -40,6 +41,10 @@ export const MAX_RETAINED_PROJECTIONS = 8
 export const SYNC_FLUSH_MS = Math.ceil(1000 / 30)
 
 class SyncTransportError extends Error {}
+/** The Connector's code for a Server it cannot reach; see contracts/dsh-bridge/2.0. */
+const BACKEND_UNAVAILABLE = 'backend_unavailable'
+const BATCH_RETRY_BASE_MS = 1_000
+const BATCH_RETRY_MAX_MS = 30_000
 
 /** One ordered subscription. A batch's delivery call returns only after the Connector ingested it. */
 export class SyncFeed {
@@ -212,11 +217,20 @@ export class SyncFeed {
     if (jsonBytes(batch) > MAX_BYTES) throw new Error('DSH sync batch exceeds the transport limit')
     this.lastSentAt = performance.now()
     this.native.diagnostics.log('debug', 'sync.batch', { streamId: this.id, batchSeq: batch.batchSeq, operations: operations.length, kinds: operations.map(op => op.kind).join(',') })
-    try {
-      // No deadline: a slow upload is a slow answer, and MeshCall keepalives watch the connection.
-      await this.transport.ingestBatch(batch, this.abort.signal)
-    } catch (error) {
-      throw new SyncTransportError('DSH event delivery failed', { cause: error })
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        // No deadline: a slow upload is a slow answer, and MeshCall keepalives watch the connection.
+        await this.transport.ingestBatch(batch, this.abort.signal, attempt)
+        break
+      } catch (error) {
+        // An unreachable Server says nothing about the feed. Ending it would rescan
+        // every session on reconnect, and on a slow network that scan fails the same way.
+        if (this.closed || !(error instanceof MeshCallError) || error.code !== BACKEND_UNAVAILABLE) {
+          throw new SyncTransportError('DSH event delivery failed', { cause: error })
+        }
+        this.native.diagnostics.log('warn', 'sync.batch_retry', { streamId: this.id, batchSeq: batch.batchSeq, attempt: attempt + 1 }, error)
+        await delay(Math.min(BATCH_RETRY_BASE_MS * 2 ** attempt, BATCH_RETRY_MAX_MS), undefined, { signal: this.abort.signal })
+      }
     }
     this.native.diagnostics.log('debug', 'sync.ack', { streamId: this.id, batchSeq: batch.batchSeq, elapsedMs: Math.round(performance.now() - this.lastSentAt) })
   }
@@ -408,7 +422,47 @@ export class SyncFeed {
       this.native.diagnostics.log('error', 'sync.runtime_update_failed', { streamId: this.id, phase }, error)
     }
   }
-  private async changes(changes: NativeChange[]): Promise<void> {
+  /**
+   * Delivers the queued changes of individual sessions while the startup scan
+   * still runs, so a session someone is working in streams after its own
+   * baseline instead of after the whole inventory (#504). A session that has
+   * no baseline yet gets one first; runtime-wide changes and visibility
+   * reconciliation wait for the end of the scan.
+   */
+  private async liveChanges(): Promise<void> {
+    const live = this.queue.filter((change): change is Extract<NativeChange, { id: string }> => 'id' in change)
+    if (!live.length) return
+    this.queue = this.queue.filter(change => !('id' in change))
+    const ids = new Set(live.map(change => change.id))
+    for (const id of ids) {
+      // Later chunks must not merge into a change that is already being delivered.
+      this.lastQueued.delete(id)
+      for (const kind of SESSION_INVALIDATIONS) this.queuedInvalidations.delete(`${kind}:${id}`)
+    }
+    this.queuedBytes = this.queue.reduce((total, change) => total + jsonBytes(change), 0)
+    // Imported sessions first: another session's capture must not hold up their updates.
+    const imported = live.filter(change => this.published.has(change.id))
+    const pending = live.filter(change => !this.published.has(change.id))
+    let reconcile = await this.deliverLive(imported)
+    for (const id of new Set(pending.map(change => change.id))) {
+      if (!this.published.has(id) && await this.native.visible(id)) await this.baseline(id, true)
+    }
+    if (await this.deliverLive(pending)) reconcile = true
+    if (reconcile && !this.queuedInvalidations.has('visibility')) {
+      this.queuedInvalidations.add('visibility')
+      this.queue.push({ type: 'visibility' })
+    }
+  }
+  private async deliverLive(changes: NativeChange[]): Promise<boolean> {
+    if (!changes.length) return false
+    this.bufferedOperations = []
+    const reconcile = await this.changes(changes, false)
+    await this.flushOperations()
+    this.bufferedOperations = undefined
+    return reconcile
+  }
+  /** Applies changes; returns whether a visibility reconciliation is still due when `reconcileNow` is false. */
+  private async changes(changes: NativeChange[], reconcileNow = true): Promise<boolean> {
     const touched = new Set<string>(), statuses = new Set<string>(), capabilities = new Set<string>()
     const ended: [string, Record<string, unknown>][] = []
     let reconcile = false, runtimeCapabilities = false, allSessionCapabilities = false
@@ -510,12 +564,16 @@ export class SyncFeed {
     for (const id of capabilities) await this.sessionOperation(id, 'capabilities', async () => {
       if (this.published.has(id)) await this.notification('session.capability.updated', await this.native.capabilities(this.published.get(id), id as SessionId))
     })
+    if (!reconcileNow) return reconcile
     if (reconcile) await this.reconcile()
+    return false
   }
   private async run(): Promise<void> {
     await this.notification('session.inventory.begin', { scanToken: this.id })
     await this.native.inventory(this.abort.signal, async entry => {
-      await this.baseline(entry.header.id, true)
+      // A session the live changes below already imported needs no second capture.
+      if (!this.published.has(entry.header.id)) await this.baseline(entry.header.id, true)
+      await this.liveChanges()
       await this.rememberCheckpoints()
       this.trimProjections()
     })

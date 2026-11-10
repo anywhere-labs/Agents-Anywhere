@@ -14,7 +14,7 @@
 ./local-up.sh
 ```
 
-它启动 Docker PostgreSQL/Redis、迁移数据库，再在前台运行 Server 和 Web。默认 Web 为 `http://127.0.0.1:5174`，Server 为 `http://127.0.0.1:8000`，PostgreSQL/Redis 端口为 `55432` / `56379`。日志在 `.local-dev/logs/`。按 Ctrl-C 停止本次启动的服务。
+它启动 Docker PostgreSQL/Redis、迁移数据库，再在前台运行 Server 和 Web。默认 Web 为 `http://127.0.0.1:5174`，Server 为 `http://127.0.0.1:8000`，PostgreSQL/Redis 端口为 `55432` / `56379`。日志在 `.local-dev/logs/`。按 Ctrl-C 停止本次启动的应用进程；两个启动脚本共用的 PostgreSQL/Redis 保持运行，下次启动直接复用，避免旧启动器退出时中断新实例。应用关闭超过 5 秒时，启动器会强制结束残留进程，避免旧 Server 长期占用会话锁。需要手动停止基础设施时运行 `docker compose -f docker/docker-compose.local.yml stop`（保留数据）。
 
 - `--skip-install`：复用依赖。
 - `--with-connector`：一起启动 Connector；默认不启动。
@@ -22,6 +22,8 @@
 - `--access-log`：打印 uvicorn 逐请求访问日志；默认关闭。Server 日志级别默认为 INFO，可用 `LOGURU_LEVEL=DEBUG` 查看调试日志（`desktop-local-up.sh` 同样适用）。
 - `--listen`：监听局域网地址；默认只监听回环。
 - `--reset-data`：删除本地数据库数据卷，仅在明确不要这些数据时使用。
+
+两个本地启动脚本都会读取根目录的 `.env.local`（可用 `--env-file` 指定其他文件）。未设置 `AGENT_SERVER_SECRET` 时，首次启动会自动生成随机密钥并保存到该文件，文件权限设为仅当前用户可读写；后续启动复用它，可直接测试模型 Key 的加密保存。已有的有效密钥会保留，过短或使用开发默认值时会提示修正。不要删除或更换密钥，否则原有登录令牌和已保存的加密凭据可能失效；不要提交本地配置文件。
 
 ## Desktop
 
@@ -40,7 +42,7 @@ yarn dev
 ./desktop-local-up.sh down
 ```
 
-此启动器使用 Server `8000`、Web `5174`（Desktop 开发模式的登录页）和 Desktop `5184`，会释放这三个应用端口的既有监听者，然后像 `local-up.sh` 一样在前台运行 Server、Web 和 Desktop，并带前缀输出日志（同时写入 `.local-dev/logs/`）。按 Ctrl-C 停止本次启动的服务和数据库容器；`down` 用于停止另一个终端里仍在运行的启动器。更多环境变量与生命周期见 [Desktop README](../desktop-workbench/README.md)。
+此启动器使用 Server `8000`、Web `5174`（Desktop 开发模式的登录页）和 Desktop `5184`，会释放这三个应用端口的既有监听者，然后像 `local-up.sh` 一样在前台运行 Server、Web 和 Desktop，并带前缀输出日志（同时写入 `.local-dev/logs/`）。按 Ctrl-C 停止本次启动的应用进程，关闭超时后强制结束残留进程，共用的 PostgreSQL/Redis 容器保持运行；`down` 用于停止另一个终端里仍在运行的启动器。更多环境变量与生命周期见 [Desktop README](../desktop-workbench/README.md)。
 
 ## Headless 检查
 
@@ -141,6 +143,14 @@ Desktop 的所有 Pi 实例共用应用数据目录下的 `pi-npm-runtimes` 缓�
 
 Connector 重连时，Server 保存并校验能力后即可继续恢复运行时；历史会话的能力广播由应用级后台任务完成，同一设备的新刷新替代旧刷新，断线和重连使用最新在线状态重新广播，服务退出时取消任务后再关闭存储。
 
+## 渠道对账升级与排查
+
+渠道对账使用 `v2_52` 迁移。升级时先停止所有旧 Server worker，执行迁移后启动新 Server，再升级 Connector；不要让旧、新切换执行器共同运行。`channelReconcileFence` 是自动切换的必需能力，旧 Connector 继续保留现有配置并显示升级要求。Redis 丢失标记后由数据库补偿和上线完整对账恢复，无需人工重新选择渠道。
+
+排查时比较 `runtime_channel_sync` 的目标与已应用版本、`runtime_channel_switches` 的操作身份及租约、`channel_sync_outbox` 的投递进度；通知已投递不代表设备已经应用。日志中的渠道对账统计包含待同步数、最老待更新记录、待投递数及恢复失败数。不要在日志或工单中粘贴解密配置。
+
+回退前停止新执行器并导出新增表及加密快照。存在同步或恢复记录时，迁移拒绝自动降级，避免删除仍可恢复的切换记录；空库支持正常回退；保留新增结构后再进行协调回退。
+
 ### Server 按改动选择测试与并行运行
 
 Server 可用 `scripts.check_tests` 运行测试。需要先安装 Server 开发依赖，
@@ -200,3 +210,24 @@ GitHub Actions 手动运行 `CI` 时，可选 `scope=server`，只执行 Server 
 手动运行还可选 `server_mode=affected`，只执行公共检查和相关用例，用于快速诊断。
 该模式的 job 名称为 `Server affected diagnostics`，不冒充必需的完整 `Server tests` 检查；
 PR/push 仍执行带全量兜底的影子对照。JSON 报告目录是隐藏目录，上传步骤明确包含该目录。
+
+## 并行 PR 的数据库迁移
+
+迁移是一条线性链：每个 `v2_N` 只有一个 `down_revision`，Server 启动时要求数据库正好处于 `CURRENT_SCHEMA_REVISION`。并行开发的 PR 都会取「现有最大值 + 1」，所以**编号只有合入 `main` 后才算确定**。先合入的 PR 保留编号，后合入的改号；已合入 `main` 的迁移不能改。
+
+撞号有两个容易忽略的地方：
+
+- **冲突出现得晚。** 两个 PR 各自和 `main` 比较都能合并，CI 也都能通过。前一个合入后，后一个才会在迁移文件、版本常量、测试和文档上同时冲突。
+- **Alembic 只比较 revision ID，不比较内容。** 开发库跑过一个分支的 `v2_N` 后，切到另一个同号分支不会再执行它的 DDL，启动时的版本检查还能通过，缺失的表或索引要到运行时才暴露。所以切换到同号的另一个分支时，要换一个新的本地库。
+
+后合入的 PR 按下面的步骤处理：
+
+1. 合并最新的 `main`。迁移文件冲突时保留 `main` 的版本，不要合并两边的内容，也不要二选一丢掉自己的迁移。
+2. 把自己的迁移改为新的最大编号，同时修改文件名、文档字符串里的 `Revision ID` 和 `Revises`、`revision`、`down_revision`。
+3. `CURRENT_SCHEMA_REVISION` 和 `CURRENT_SCHEMA_VERSION` 不是选 `main` 或选自己，而是设成新编号。`docs/upgrading.md` 里的当前 revision 同理。
+4. 用 `git grep -n 'v2_N'` 找出其余引用并逐条判断：测试名、加载迁移的测试、代码注释、`docs/api/`、CHANGELOG 的「升级须知」要跟着改；指向 `main` 上同号迁移的引用不要动。
+5. 如果迁移在无版本数据库的判定逻辑（`server/agent_server/infra/db/migrations.py`）里加了分支，同步其中的 revision 和前后顺序。
+6. 检查 git 报不出来的问题：迁移是否依赖或影响 `main` 新增的表和字段；回填或汇总类迁移，还要确认 `main` 没有新增绕过它的写入路径。
+7. 运行 `tests/test_database_migrations.py` 和相关测试，确认能从 `main` 的最新 revision 升级，并能降级回去。
+
+叠加 PR 也适用这些规则：基础 PR 改号后，依赖它的迁移要同步修改 `down_revision`；叠加 PR 合进基础分支时，要重新核对编号是否仍然接在 `main` 之后。

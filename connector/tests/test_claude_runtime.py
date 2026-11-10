@@ -2498,6 +2498,94 @@ async def _test_claude_runtime_projects_tool_blocks_to_timeline() -> None:
     assert history_tool.status == "done"
 
 
+_INLINE_IMAGE_DATA = "iVBORw0KGgo" + "A" * 3989
+
+
+def _read_image_messages(session_id: str, *, history: bool) -> list[SimpleNamespace]:
+    def message(kind: str, uuid: str, role: str, content: Any, **extra: Any) -> SimpleNamespace:
+        fields = {"uuid": uuid} if history else {}
+        return SimpleNamespace(
+            type=kind,
+            session_id=session_id,
+            message={"role": role, "content": content},
+            **fields,
+            **extra,
+        )
+
+    image = {
+        "type": "image",
+        "source": {"type": "base64", "media_type": "image/png", "data": _INLINE_IMAGE_DATA},
+    }
+    messages = [
+        message(
+            "assistant", "image_tool_call", "assistant",
+            [
+                {"type": "tool_use", "id": "read_1", "name": "Read", "input": {"file_path": "/tmp/shot.png"}},
+                {"type": "tool_use", "id": "mcp_1", "name": "mcp__browser__screenshot", "input": {}},
+            ],
+        ),
+        message(
+            "user", "image_tool_result", "user",
+            [
+                {"type": "tool_result", "tool_use_id": "read_1", "content": [image]},
+                {
+                    "type": "tool_result", "tool_use_id": "mcp_1",
+                    "content": [{"type": "text", "text": "page loaded"}, image],
+                },
+            ],
+            toolUseResult={
+                "type": "image",
+                "file": {"base64": _INLINE_IMAGE_DATA, "type": "image/png", "originalSize": 3000},
+            },
+        ),
+    ]
+    if history:
+        messages.insert(0, message("user", "image_tool_user", "user", "show me the page"))
+    return messages
+
+
+def test_claude_tool_results_omit_inline_images() -> None:
+    asyncio.run(_test_claude_tool_results_omit_inline_images())
+
+
+async def _test_claude_tool_results_omit_inline_images() -> None:
+    host = _RecordingHost()
+    sdk = _HistorySdk(
+        messages={"claude_image_session": _read_image_messages("claude_image_session", history=True)}
+    )
+    client = _FakeClaudeClient(
+        messages=[
+            *_read_image_messages("claude_image_session", history=False),
+            SimpleNamespace(type="result", session_id="claude_image_session"),
+        ]
+    )
+    runtime = _runtime(host=host, client=client, sdk=sdk)
+
+    result = await runtime.start_turn("sess_images", "claude_image_session", "show me the page")
+    task = runtime._sessions["sess_images"].active_task
+    assert result.ok is True
+    assert task is not None
+    await task
+    handled = await runtime.sync_session_timeline("sess_images", "claude_image_session")
+    assert handled is True
+
+    live = [item for item in host.timeline_item_upserts if item.type == "tool" and item.status == "done"]
+    history = [item for item in host.timeline_syncs[-1]["items"] if item.type == "tool"]
+    for items in (live, history):
+        by_tool = {item.content["toolName"]: item.content for item in items}
+        read, screenshot = by_tool["Read"], by_tool["mcp__browser__screenshot"]
+        assert read["output"] == "[Image omitted: image/png, 2.9 KB]"
+        assert read["outputText"] == read["output"]
+        assert read["outputLength"] == len(read["output"])
+        assert read["result"] == [
+            {"type": "image", "source": {"type": "omitted", "byteSize": 3000, "media_type": "image/png"}},
+        ]
+        assert screenshot["output"] == "page loaded"
+        assert screenshot["result"][1]["source"]["type"] == "omitted"
+        for content in (read, screenshot):
+            assert "AAAA" not in json.dumps(content, default=str)
+
+
 def test_claude_runtime_closes_history_tool_calls_without_results() -> None:
     asyncio.run(_test_claude_runtime_closes_history_tool_calls_without_results())
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
-from connector.runtime_protocol.host import runtime_kv_store
 
+import asyncio
 import sys
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -20,7 +20,12 @@ from connector.runtime_protocol import (
     RuntimeUnavailableError,
 )
 from connector.runtime_protocol.filesystem import filesystem_resource_key
-from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtime_protocol.host import RuntimeHostClient, runtime_kv_store
+from connector.runtime_protocol.model_connection import (
+    ModelConnectionCapability,
+    ModelConnectionStatus,
+    applied_status,
+)
 from connector.runtimes.codex import provider_config
 from connector.runtimes.codex.runtime import CodexRuntime
 from connector.runtimes.codex.sdk.binary import (
@@ -32,6 +37,17 @@ from connector.runtimes.codex.sdk.client import sdk_client_from_config
 from connector.runtimes.codex.sdk.discovery import check_codex_sdk
 from connector.runtimes.custom_models import normalize_custom_models
 from connector.runtimes.model_gateway import model_gateway_from_config
+from connector.runtimes.runtime_model import runtime_model_from_config
+
+# Codex takes the connection as a Responses model provider for the threads its
+# own app-server runs. Threads a Codex App window owns keep the App's config.
+MODEL_CONNECTION = ModelConnectionCapability(
+    maturity="stable",
+    protocols=("openai_responses",),
+    scope="instance",
+    apply="restart",
+    model_field="model",
+)
 
 SdkChecker = Callable[[], dict[str, Any]]
 SdkClientFactory = Callable[[RuntimeConfig], Any]
@@ -85,8 +101,9 @@ class CodexProvider(RuntimeProvider):
 
         sdk = self._sdk_checker()
         self._discovered_sdk = sdk
-        runtime_environment, shell_path = codex_runtime_environment(None)
-        binary_selection = select_codex_runtime_binary(
+        runtime_environment, shell_path = await asyncio.to_thread(codex_runtime_environment, None)
+        binary_selection = await asyncio.to_thread(
+            select_codex_runtime_binary,
             "prefer_system",
             runtime_environment,
             shell_path,
@@ -103,6 +120,8 @@ class CodexProvider(RuntimeProvider):
             config_schema=await self.get_config_schema(),
             instance_policy=self.instance_policy,
             max_instances=self.max_instances,
+            maturity="stable",
+            model_connection=MODEL_CONNECTION,
             metadata={
                 "configured": True,
                 "sdk": sdk,
@@ -200,11 +219,13 @@ class CodexProvider(RuntimeProvider):
         binary_mode = provider_config.runtime_binary_mode_for_system_preference(
             use_system_codex
         )
-        runtime_environment, shell_path = codex_runtime_environment(
+        runtime_environment, shell_path = await asyncio.to_thread(
+            codex_runtime_environment,
             raw_values.get("environment"),
             codex_home=codex_home,
         )
-        binary_selection = select_codex_runtime_binary(
+        binary_selection = await asyncio.to_thread(
+            select_codex_runtime_binary,
             binary_mode,
             runtime_environment,
             shell_path,
@@ -221,6 +242,8 @@ class CodexProvider(RuntimeProvider):
         }
         if model_gateway is not None:
             normalized_values["modelGateway"] = model_gateway.to_config_values()
+        if (model := runtime_model_from_config(normalized_values | {"model": raw_values.get("model")})) is not None:
+            normalized_values["model"] = model.to_config_values()
         if codex_executable_path is not None:
             normalized_values["codexExecutablePath"] = codex_executable_path
 
@@ -277,6 +300,20 @@ class CodexProvider(RuntimeProvider):
                 key=filesystem_resource_key(codex_home),
                 label=f"Codex Home {codex_home!r}",
             ),
+        )
+
+    @property
+    def model_connection(self) -> ModelConnectionCapability:
+        return MODEL_CONNECTION
+
+    def model_connection_status(self, config: RuntimeConfig) -> ModelConnectionStatus:
+        # With IPC on, threads a Codex App window owns use the App's own
+        # model settings, so the report names that owner.
+        ipc = config.values.get("ipcEnabled", True) is not False
+        return applied_status(
+            MODEL_CONNECTION,
+            config.values,
+            external_owner="codex_app" if ipc else None,
         )
 
     def session_source_key(self, config: RuntimeConfig) -> RuntimeSourceKey:

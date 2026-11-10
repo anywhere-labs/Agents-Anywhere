@@ -35,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.ui.screens.modelconfig.runtimeMaturityLabel
 import com.agentsanywhere.app.feature.files.canonicalRemoteDirectoryPath
 import com.agentsanywhere.app.feature.files.displayRemotePath
 import com.agentsanywhere.app.feature.files.isSelectableRemoteDirectory
@@ -45,6 +46,9 @@ import com.agentsanywhere.app.feature.files.remoteParentPath
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.sessions.NewSessionDirectory
 import com.agentsanywhere.app.feature.sessions.NewSessionDraft
+import com.agentsanywhere.app.feature.modelconfig.ModelConfigState
+import com.agentsanywhere.app.feature.modelconfig.channelRowFor
+import com.agentsanywhere.app.feature.modelconfig.runtimeChannelKey
 import com.agentsanywhere.app.feature.sessions.NewSessionModelCatalog
 import com.agentsanywhere.app.feature.sessions.NewSessionPathEntry
 import com.agentsanywhere.app.feature.sessions.NewSessionPermissionCatalog
@@ -88,6 +92,7 @@ fun NewSessionScreen(
     onPrepareRuntimeWorkspace: suspend (String, String, String) -> Result<com.agentsanywhere.app.feature.sessions.PreparedRuntimeWorkspace> = { _, _, _ -> Result.failure(com.agentsanywhere.app.feature.sessiondetail.PlanningFailure(com.agentsanywhere.app.feature.sessiondetail.PlanningFailure.Reason.WorkspaceUnavailable)) },
     onLoadModelCatalog: suspend (String, String) -> Result<NewSessionModelCatalog>,
     onLoadPermissionCatalog: suspend (String, String) -> Result<NewSessionPermissionCatalog>,
+    modelConfigState: ModelConfigState = ModelConfigState(),
     onPrepareSession: (NewSessionDraft) -> Unit,
     onRefreshDevices: () -> Unit,
     devicesRefreshing: Boolean,
@@ -317,11 +322,19 @@ fun NewSessionScreen(
         }
     }
 
-    var preparedRuntimeWorkspace by remember(selectedDevice?.id, selectedRuntime?.id, selectedWorkspacePath, selectedProjectId) { mutableStateOf<com.agentsanywhere.app.feature.sessions.PreparedRuntimeWorkspace?>(null) }
+    // A runtime that switched channels offers other models; prepare and read its catalog again.
+    val runtimeChannel = runtimeChannelKey(
+        selectedDevice?.id?.let { deviceId ->
+            selectedRuntime?.id?.let { runtimeId -> modelConfigState.channelRowFor(deviceId, runtimeId) }
+        },
+    )
+    var preparedRuntimeWorkspace by remember(selectedDevice?.id, selectedRuntime?.id, selectedWorkspacePath, selectedProjectId, runtimeChannel) { mutableStateOf<com.agentsanywhere.app.feature.sessions.PreparedRuntimeWorkspace?>(null) }
     var preparingRuntime by remember { mutableStateOf(false) }
-    var preparationError by remember(selectedDevice?.id, selectedRuntime?.id, selectedWorkspacePath, selectedProjectId) { mutableStateOf<String?>(null) }
+    var preparationError by remember(selectedDevice?.id, selectedRuntime?.id, selectedWorkspacePath, selectedProjectId, runtimeChannel) { mutableStateOf<String?>(null) }
     var preparationRetry by remember { mutableStateOf(0) }
     val needsWorkspacePreparation = runtimeSelection.capabilities.data?.find("runtime.workspace.prepare", selectedRuntime?.id.orEmpty(), selectedRuntime?.type)?.usable == true
+    // Prepare only after the capabilities of this request settle, so a re-read cannot overtake the prepared catalog.
+    val capabilitiesSettled = runtimeSelection.capabilities.loaded && !runtimeSelection.capabilities.loading
 
     suspend fun loadRuntimeDetails() {
         val connectorId = runtimeSelection.connectorId ?: return
@@ -392,7 +405,7 @@ fun NewSessionScreen(
         }
     }
 
-    LaunchedEffect(selectedDevice?.id, runtimeSelection.connectorId, selectedRuntime?.id, selectedRuntime?.type, creatingProject, setupState?.reason) {
+    LaunchedEffect(selectedDevice?.id, runtimeSelection.connectorId, selectedRuntime?.id, selectedRuntime?.type, creatingProject, setupState?.reason, runtimeChannel) {
         if (!creatingProject && setupState == null && selectedDevice != null && selectedRuntime != null && runtimeSelection.connectorId == selectedDevice.id) {
             loadRuntimeDetails()
         }
@@ -500,8 +513,8 @@ fun NewSessionScreen(
     } else {
         effectiveWorkspacePath.isNotBlank()
     }
-    LaunchedEffect(selectedDevice?.id, selectedRuntime?.id, effectiveWorkspacePath, selectedProjectId, needsWorkspacePreparation, workspaceReady, preparationRetry) {
-        if (needsWorkspacePreparation && workspaceReady && selectedDevice != null && selectedRuntime != null) {
+    LaunchedEffect(selectedDevice?.id, selectedRuntime?.id, effectiveWorkspacePath, selectedProjectId, needsWorkspacePreparation, capabilitiesSettled, workspaceReady, preparationRetry, runtimeChannel) {
+        if (needsWorkspacePreparation && capabilitiesSettled && workspaceReady && selectedDevice != null && selectedRuntime != null) {
             preparingRuntime = true
             preparationError = null
             try {
@@ -575,6 +588,7 @@ fun NewSessionScreen(
                     NewSessionConfigurationOption(
                         id = runtime.id,
                         label = runtime.labels.primary,
+                        description = runtimeMaturityLabel(runtime.maturity),
                     )
                 },
                 enabled = !creatingProject && selectedDevice != null && runtimeSelection.runtimes.isNotEmpty(),

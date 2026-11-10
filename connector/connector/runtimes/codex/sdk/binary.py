@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
@@ -137,6 +138,7 @@ def select_codex_runtime_binary(
     shell_path: LoginShellPathResult,
     *,
     configured_path: str | None = None,
+    model_gateway: bool = False,
 ) -> CodexRuntimeBinarySelection:
     candidate = configured_path
     if candidate is not None:
@@ -151,7 +153,9 @@ def select_codex_runtime_binary(
         reason = "system codex binary was not found on PATH"
 
     if candidate is not None:
-        error = codex_version_error(candidate, environment)
+        error = codex_version_error(
+            candidate, environment, model_gateway=model_gateway
+        )
         if error is None:
             return CodexRuntimeBinarySelection(
                 mode=mode,
@@ -176,31 +180,63 @@ def select_codex_runtime_binary(
     )
 
 
-def codex_version_error(candidate: str, environment: Mapping[str, str]) -> str | None:
+def codex_version_error(
+    candidate: str,
+    environment: Mapping[str, str],
+    *,
+    model_gateway: bool = False,
+) -> str | None:
     """Validate the executable with the same environment used by the SDK."""
     try:
-        result = subprocess.run(
-            codex_launch_command(candidate, ["--version"], environment),
-            env=dict(environment),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-            timeout=5.0,
-        )
+        # On Windows, PIPE capture starts reader threads before checking the
+        # timeout. A stuck Thread.start() can therefore outlive timeout=5.0.
+        with tempfile.TemporaryFile() as output:
+            result = subprocess.run(
+                codex_launch_command(candidate, ["--version"], environment),
+                env=dict(environment),
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=5.0,
+            )
+            output.seek(0)
+            stdout = output.read().decode("utf-8", errors="replace")
     except (OSError, subprocess.SubprocessError) as exc:
         return str(exc) or exc.__class__.__name__
     if result.returncode != 0:
         return f"exited with code {result.returncode}"
-    if (
-        re.search(
-            r"(?m)^codex(?:-cli)? \d+\.\d+\.\d+(?:[-+][\w.-]+)?\s*$", result.stdout
-        )
-        is None
-    ):
+    match = re.search(
+        r"(?m)^codex(?:-cli)? (\d+\.\d+\.\d+(?:[-+][\w.-]+)?)\s*$", stdout
+    )
+    if match is None:
         return "missing or invalid Codex version output"
+    if model_gateway and codex_rejects_other_thread_providers(match.group(1)):
+        return (
+            f"Codex {match.group(1)} cannot continue model gateway threads while "
+            "another provider is the default; upgrade Codex past 0.167"
+        )
     return None
+
+
+def codex_rejects_other_thread_providers(version: str) -> bool:
+    """Codex 0.166 and 0.167 refuse threads whose provider is not the default.
+
+    Their app-server checks a thread's saved provider against the provider
+    selected by config.toml and launch flags, ignoring per-request overrides
+    (openai/codex#57840). One app-server can then serve either gateway threads
+    or the user's own threads, never both. openai/codex#59503 removed the
+    check in 0.168.0-alpha.7.
+    """
+
+    match = re.fullmatch(r"0\.(\d+)\.\d+(?:-alpha\.(\d+))?(?:[-+.][\w.-]*)?", version)
+    if match is None:
+        return False
+    minor = int(match.group(1))
+    if minor in (166, 167):
+        return True
+    alpha = match.group(2)
+    return minor == 168 and alpha is not None and int(alpha) < 7
 
 
 def codex_launch_command(

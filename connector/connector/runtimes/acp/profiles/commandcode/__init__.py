@@ -1,3 +1,3 @@
-from .profile import COMMAND_CODE_PROFILE
+from .definition import COMMAND_CODE
 
-__all__ = ["COMMAND_CODE_PROFILE"]
+__all__ = ["COMMAND_CODE"]

@@ -32,6 +32,10 @@ struct ChatShellView: View {
             guard let model = appState.nativeChatServices?.newSession else { return }
             await model.refresh(connectors: appState.connectors)
         }
+        // Like Web's runtimeChannelKey: a runtime on another channel offers other models.
+        .task(id: appState.nativeChatServices?.newSession.runtimeChannel) {
+            await appState.nativeChatServices?.newSession.prepareAfterChannelChange()
+        }
         .alert(String(localized: "Could not update session"), isPresented: sessionActionErrorBinding) {
             Button(String(localized: "OK"), role: .cancel) {
                 appState.dismissSessionActionError()

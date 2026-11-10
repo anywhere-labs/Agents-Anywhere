@@ -21,7 +21,6 @@ SHUTTING_DOWN=false
 SERVICE_PIDS=()
 SERVICE_NAMES=()
 OUTPUT_PIDS=()
-INFRA_STARTED=false
 
 readonly SERVER_PORT=8000
 readonly DESKTOP_PORT=5184
@@ -47,7 +46,8 @@ The launcher starts Docker Desktop when needed, brings up PostgreSQL and Redis,
 releases fixed ports 8000, 5174, and 5184, then runs the backend, Web, and
 Desktop in the foreground. Desktop always sends API requests to the local
 backend at http://127.0.0.1:8000 and signs in through the Web app at
-http://127.0.0.1:5174. Press Ctrl-C to stop everything it started.
+http://127.0.0.1:5174. Press Ctrl-C to stop the applications. Shared
+PostgreSQL and Redis stay running for the next launch.
 
 Options:
   --env-file PATH  Load additional application settings from PATH
@@ -259,6 +259,22 @@ elif [[ "${ENV_FILE_EXPLICIT}" == true ]]; then
   fail "environment file not found: ${ENV_FILE}"
 fi
 
+# Keep one local encryption key across restarts; never print it or regenerate it.
+if [[ -z "${AGENT_SERVER_SECRET:-}" ]]; then
+  command -v openssl >/dev/null 2>&1 || fail "openssl is required to generate the local Server secret"
+  AGENT_SERVER_SECRET="$(openssl rand -hex 32)"
+  (
+    umask 077
+    touch "${ENV_FILE}"
+    chmod 600 "${ENV_FILE}"
+    printf '\nAGENT_SERVER_SECRET=%s\n' "${AGENT_SERVER_SECRET}" >>"${ENV_FILE}"
+  )
+  printf '[local] Generated and saved the Server secret to %s\n' "${ENV_FILE}"
+elif [[ ${#AGENT_SERVER_SECRET} -lt 32 || "${AGENT_SERVER_SECRET}" == "agent-server-dev-secret" ]]; then
+  fail "AGENT_SERVER_SECRET must contain at least 32 characters and must not use the development default"
+fi
+export AGENT_SERVER_SECRET
+
 for required in curl docker lsof mkfifo perl pgrep ps sort tee uv; do
   require_command "${required}"
 done
@@ -369,11 +385,12 @@ start_service() {
 
 stop_process_tree() {
   local pid="$1"
+  local signal="${2:-TERM}"
   local child
   for child in $(pgrep -P "${pid}" 2>/dev/null || true); do
-    stop_process_tree "${child}"
+    stop_process_tree "${child}" "${signal}"
   done
-  kill -TERM "${pid}" >/dev/null 2>&1 || true
+  kill -"${signal}" "${pid}" >/dev/null 2>&1 || true
 }
 
 cleanup() {
@@ -389,7 +406,23 @@ cleanup() {
   for pid in "${SERVICE_PIDS[@]-}"; do
     [[ -n "${pid}" ]] && stop_process_tree "${pid}"
   done
+  # A graceful Server shutdown can stall on in-flight work. Bound the wait
+  # so a later launcher cannot inherit orphaned workers and renewed Redis locks.
+  local tick alive
+  for ((tick = 0; tick < 50; tick++)); do
+    alive=false
+    for pid in "${SERVICE_PIDS[@]-}"; do
+      if [[ -n "${pid}" ]] && kill -0 "${pid}" >/dev/null 2>&1; then
+        alive=true
+      fi
+    done
+    [[ "${alive}" == false ]] && break
+    sleep 0.1
+  done
   for pid in "${SERVICE_PIDS[@]-}"; do
+    if [[ -n "${pid}" ]] && kill -0 "${pid}" >/dev/null 2>&1; then
+      stop_process_tree "${pid}" KILL
+    fi
     [[ -n "${pid}" ]] && wait "${pid}" >/dev/null 2>&1 || true
   done
   for pid in "${OUTPUT_PIDS[@]-}"; do
@@ -404,11 +437,7 @@ cleanup() {
   if [[ -f "${PID_FILE}" ]] && [[ "$(<"${PID_FILE}")" == "$$" ]]; then
     rm -f "${PID_FILE}"
   fi
-  if [[ "${INFRA_STARTED}" == true ]] && docker info >/dev/null 2>&1; then
-    AGENTS_ANYWHERE_POSTGRES_PORT="${POSTGRES_PORT}" \
-    AGENTS_ANYWHERE_REDIS_PORT="${REDIS_PORT}" \
-      docker compose -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
-  fi
+  # PostgreSQL and Redis are shared by both launchers and survive restarts.
   exit "${status}"
 }
 
@@ -481,7 +510,6 @@ printf '%s[setup]%s Starting PostgreSQL and Redis...\n' "${CYAN}" "${RESET}"
 AGENTS_ANYWHERE_POSTGRES_PORT="${POSTGRES_PORT}" \
 AGENTS_ANYWHERE_REDIS_PORT="${REDIS_PORT}" \
   docker compose -f "${COMPOSE_FILE}" up -d --wait
-INFRA_STARTED=true
 
 readonly DB_URL="postgresql+asyncpg://agents_anywhere:agents_anywhere_dev_password@127.0.0.1:${POSTGRES_PORT}/agents_anywhere"
 readonly REDIS_URL="redis://127.0.0.1:${REDIS_PORT}/0"

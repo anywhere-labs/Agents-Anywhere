@@ -92,6 +92,7 @@ import {
   type NewSessionSelectionPreference,
 } from "@/features/dashboard/new-session-preferences"
 import { watchNewSessionRuntimeInventory } from "@/features/dashboard/new-session-runtime-inventory"
+import { channelRowFor, runtimeChannelKey } from "@/features/model-config/channel"
 
 const NEW_SESSION_PREFERENCE_KEY = "aa-new-session-preference-v1"
 const TITLE_WRITE_MS = 58
@@ -134,6 +135,8 @@ export function TaskComposer() {
   const { session: authSession } = useAuth()
   const { isMobile, state: sidebarState } = useSidebar()
   const {
+    modelConfig,
+    runtimes: workspaceRuntimes,
     startSessionCreation,
     creationEditorDraft,
     discardCreationEditor,
@@ -272,9 +275,16 @@ export function TaskComposer() {
     const project = await resolveProject({ connectorId: selectedConnectorId, workspacePath: workspace.path })
     return { connectorId: selectedConnectorId, runtimeId: selectedAgent, projectId: project.id }
   }, [resolveProject, selectedConnectorId, selectedAgent, workspace?.path, tWorkspace])
+  // A runtime that switched channels offers other models; prepare and read its catalog again.
+  const runtimeChannel = runtimeChannelKey(channelRowFor(
+    modelConfig?.channel,
+    workspaceRuntimes,
+    modelConfig?.assignments ?? [],
+    { connectorId: selectedConnectorId, runtimeId: selectedAgent },
+  ))
   const preparation = useWorkspacePreparation(
     authSession?.accessToken,
-    JSON.stringify([selectedConnectorId, selectedAgent, workspace?.path ?? ""]),
+    JSON.stringify([selectedConnectorId, selectedAgent, workspace?.path ?? "", runtimeChannel]),
     needsPreparation && !catalogsLoading && workspace?.path && workspace.connectorId === selectedConnectorId ? prepareRequest : undefined,
   )
   const preparedConfiguration = preparation.operation?.state.configuration
@@ -478,7 +488,7 @@ export function TaskComposer() {
     return () => {
       cancelled = true
     }
-  }, [authSession?.accessToken, selectedAgent, selectedConnectorId, selectedRuntime?.runtimeType, selectedRuntime?.status, catalogRefreshKey])
+  }, [authSession?.accessToken, selectedAgent, selectedConnectorId, selectedRuntime?.runtimeType, selectedRuntime?.status, catalogRefreshKey, runtimeChannel, modelConfig?.profiles])
 
   // A failed cold-start read is not an authoritative empty catalog. Recover in place.
   React.useEffect(() => {
@@ -1046,7 +1056,6 @@ export function TaskComposer() {
             {preparation.operation && (preparation.error || preparationStopped) ? <Button variant="outline" size="sm" disabled={preparation.pending} onClick={preparation.retry}>{tCommon("retry")}</Button> : null}
           </div>
         ) : null}
-        {preparingWorkspace ? <p role="status" className="mb-3 text-sm text-muted-foreground">{tCommon("loading")}</p> : null}
         <div
           ref={composerRef}
           className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20"
@@ -1130,6 +1139,13 @@ export function TaskComposer() {
                     onSecondaryChange={handleAgentChange}
                     secondaryLabel={t("agent")}
                   />
+                ) : null}
+
+                {preparingWorkspace ? (
+                  <span role="status" className="flex min-w-0 items-center gap-1.5 px-2 text-sm text-muted-foreground">
+                    <Spinner aria-hidden="true" />
+                    <span className="truncate">{t("modelCatalogLoading")}</span>
+                  </span>
                 ) : null}
 
                 {compactSelectors && hasSelectionSettings ? (

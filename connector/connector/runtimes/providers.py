@@ -4,6 +4,7 @@ from connector.runtime_protocol import RuntimeProvider
 from connector.runtimes.acp.profiles.commandcode.provider import (
     command_code_acp_provider,
 )
+from connector.runtimes.acp.profiles.hermes.provider import hermes_acp_provider
 from connector.runtimes.acp.profiles.pi.provider import pi_acp_provider
 from connector.runtimes.claude.provider import ClaudeProvider
 from connector.runtimes.codex.provider import CodexProvider
@@ -17,4 +18,5 @@ def default_runtime_providers() -> tuple[RuntimeProvider, ...]:
         DshProvider(),
         command_code_acp_provider(),
         pi_acp_provider(),
+        hermes_acp_provider(),
     )

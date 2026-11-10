@@ -108,7 +108,10 @@ struct SessionTimelineEventView: View {
                 TimelineFold(id: row.id, title: value.title, symbol: value.symbol, status: row.value.status, disclosures: disclosures) {
                     TimelineCodePanel(label: String(localized: "Details"), code: detail.formattedJSON).clipShape(.rect(cornerRadius: 14))
                 }
-            } else { TimelineMarkerRow(title: value.title, symbol: value.symbol, status: row.value.status) }
+            } else {
+                TimelineMarkerRow(title: value.title, symbol: value.symbol, status: row.value.status,
+                    wrapsText: row.value.raw["content"]?["code"]?.stringValue == "model_request_retry")
+            }
         }
     }
 }
@@ -119,11 +122,12 @@ struct TimelineMarkerRow: View {
     let status: V2TimelineItemStatus
     var expanded: Bool?
     var accessory: String?
+    var wrapsText: Bool = false
     var body: some View {
         HStack(spacing: 8) {
             if let expanded { AppSymbol(expanded ? "chevron.down" : "chevron.right", size: 10).frame(width: 10) }
             AppSymbol(symbol, size: 15).frame(width: 18)
-            Text(title).font(.system(.subheadline, design: .monospaced)).lineLimit(1).truncationMode(.tail)
+            Text(title).font(.system(.subheadline, design: .monospaced)).lineLimit(wrapsText ? nil : 1).truncationMode(.tail)
                 .modifier(TimelineMarkerShimmer(active: status.isActive && !status.isFailure))
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let accessory { AppSymbol(accessory, size: 14) }

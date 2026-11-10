@@ -9,25 +9,27 @@ from typing import Any
 import pytest
 from acp import RequestError
 
-from connector.runtime_protocol import (
-    RuntimeConfig,
+from connector.runtime_protocol import RuntimeConfig
+from connector.runtime_protocol.errors import (
     RuntimeInvalidRequestError,
     RuntimeUnavailableError,
 )
+from connector.runtimes.acp.domain.agents import check_definition
 from connector.runtimes.acp.domain.definitions import AcpError
 from connector.runtimes.acp.infrastructure.acp.client import AgentClient
-from connector.runtimes.acp.profiles.commandcode import COMMAND_CODE_PROFILE
+from connector.runtimes.acp.profiles.commandcode import COMMAND_CODE
+from connector.runtimes.acp.profiles.commandcode import definition as definition_module
 from connector.runtimes.acp.profiles.commandcode import provider as provider_module
-from connector.runtimes.acp.profiles.commandcode.client import CommandCodeClient
+from connector.runtimes.acp.profiles.commandcode.definition import (
+    COMMAND_CODE_PERMISSION_MODES,
+    CommandCodeDialect,
+)
 from connector.runtimes.acp.profiles.commandcode.installation import (
     CommandCodeInstallation,
     CommandCodeUnavailableError,
     resolve_command_code,
 )
-from connector.runtimes.acp.profiles.commandcode.provider import (
-    CommandCodeProvider,
-)
-from connector.runtimes.acp.runtime import AcpRuntime
+from connector.runtimes.acp.profiles.commandcode.provider import CommandCodeProvider
 from connector.runtimes.providers import default_runtime_providers
 
 
@@ -51,23 +53,48 @@ def _installation(
     )
 
 
-def test_command_code_is_fifth_default_provider() -> None:
-    assert [provider.runtime for provider in default_runtime_providers()] == [
+def client(**connection):
+    updates = []
+
+    async def on_update(_session_id, value):
+        updates.append(value)
+
+    async def on_interaction(_session_id, _kind, _request):
+        return {}
+
+    instance = AgentClient(on_update, on_interaction, dialect=CommandCodeDialect())
+    instance.connection = SimpleNamespace(**connection)
+    return instance, updates
+
+
+def test_command_code_is_registered_default_provider() -> None:
+    assert [provider.runtime_type for provider in default_runtime_providers()] == [
         "codex",
         "claude",
         "dsh",
         "commandcode",
         "pi",
+        "hermes",
     ]
 
 
-def test_profile_uses_command_code_identity() -> None:
-    assert COMMAND_CODE_PROFILE.id == "commandcode"
-    assert COMMAND_CODE_PROFILE.title == "Command Code"
-    assert "runtime.attachment" in COMMAND_CODE_PROFILE.runtime_capabilities
+def test_definition_is_valid_and_exposes_identity() -> None:
+    check_definition(COMMAND_CODE)
+    assert COMMAND_CODE.runtime_type == "commandcode"
+    assert COMMAND_CODE.display_name == "Command Code"
+    assert COMMAND_CODE.profile.permission_options == COMMAND_CODE_PERMISSION_MODES
+    assert "runtime.attachment" in COMMAND_CODE.runtime_capabilities
 
 
-def test_discover_reports_configurable_acp_descriptor(monkeypatch) -> None:
+def test_config_schema_has_only_the_cli_path() -> None:
+    schema = asyncio.run(CommandCodeProvider().get_config_schema())
+    assert list(schema.schema["properties"]) == ["cliPath"]
+    assert schema.schema["additionalProperties"] is False
+    assert schema.ui_schema["fields"]["cliPath"]["component"] == "path"
+    assert schema.defaults == {"cliPath": ""}
+
+
+def test_discover_reports_acp_descriptor(monkeypatch) -> None:
     monkeypatch.setattr(
         provider_module, "resolve_command_code", lambda *_: _installation()
     )
@@ -75,14 +102,11 @@ def test_discover_reports_configurable_acp_descriptor(monkeypatch) -> None:
     descriptor = asyncio.run(CommandCodeProvider().discover())
 
     assert descriptor.runtime_type == "commandcode"
-    assert descriptor.display_name == "Command Code"
     assert descriptor.implementation_type == "acp-stdio"
-    assert descriptor.instance_policy == "single"
     assert descriptor.available is True
+    assert descriptor.instance_policy == "single"
     assert descriptor.config_schema is not None
-    assert descriptor.config_schema.runtime == "commandcode"
-    assert descriptor.capabilities["modelCatalog"] is True
-    assert descriptor.capabilities["steerTurn"] is False
+    assert descriptor.capabilities["attachments"] is True
     assert descriptor.metadata["binary"]["found"] is True
 
 
@@ -98,69 +122,58 @@ def test_discover_stays_visible_when_cli_is_missing(monkeypatch) -> None:
     assert descriptor.metadata["binary"]["found"] is False
 
 
-def test_validate_config_rejects_wrong_types() -> None:
+def test_config_rejects_unknown_fields() -> None:
     with pytest.raises(RuntimeInvalidRequestError):
-        asyncio.run(CommandCodeProvider().validate_config({"cliPath": 3}))
+        asyncio.run(CommandCodeProvider().validate_config({"modelGateway": {}}))
 
 
-def test_validate_config_reports_missing_cli(monkeypatch) -> None:
+def test_config_reports_missing_cli(monkeypatch) -> None:
     def missing(*_: Any) -> CommandCodeInstallation:
         raise CommandCodeUnavailableError("Command Code CLI was not found")
 
-    monkeypatch.setattr(provider_module, "resolve_command_code", missing)
+    monkeypatch.setattr(definition_module, "resolve_command_code", missing)
 
     with pytest.raises(RuntimeUnavailableError) as error:
-        asyncio.run(CommandCodeProvider().validate_config({"cliPath": ""}))
+        asyncio.run(CommandCodeProvider().validate_config({}))
 
-    assert "not found" in str(error.value)
+    assert error.value.code == "commandcode_cli_missing"
 
 
-def test_validate_config_keeps_user_path_and_reports_binary(monkeypatch) -> None:
+def test_config_keeps_the_configured_cli_path(monkeypatch) -> None:
     monkeypatch.setattr(
-        provider_module,
-        "resolve_command_code",
-        lambda *_: _installation(),
+        definition_module, "resolve_command_code", lambda *_: _installation()
     )
 
     config = asyncio.run(
-        CommandCodeProvider().validate_config({"cliPath": "  D:/tools/cmdc.cmd  "})
+        CommandCodeProvider().validate_config({"cliPath": "D:/tools/cmdc.cmd"})
     )
 
     assert config.runtime == "commandcode"
     assert config.values["cliPath"] == "D:/tools/cmdc.cmd"
-    assert config.metadata["binary"]["version"] == "1.2.3"
 
 
-def test_create_runtime_builds_command_code_launch(monkeypatch, tmp_path: Path) -> None:
+def test_prepare_launch_builds_node_entry(monkeypatch) -> None:
     monkeypatch.setattr(
-        provider_module,
+        definition_module,
         "resolve_command_code",
         lambda *_: _installation(executable="node.exe", entry="entry.mjs"),
     )
-    host = SimpleNamespace(
-        session_namespace="test",
-        runtime_kv=SimpleNamespace(path=tmp_path / "kv.json"),
-    )
-    config = RuntimeConfig(
-        runtime="commandcode",
-        revision=1,
-        values={"cliPath": ""},
-        runtime_id="commandcode",
+    context = SimpleNamespace(
+        config=RuntimeConfig(
+            runtime="commandcode",
+            revision=1,
+            values={"cliPath": ""},
+            runtime_id="commandcode",
+        )
     )
 
-    async def run() -> AcpRuntime:
-        runtime = await CommandCodeProvider().create_runtime(config, host)
-        await runtime.stop()
-        return runtime
+    prepare = COMMAND_CODE.prepare_launch(context)
+    launch = asyncio.run(prepare())
 
-    runtime = asyncio.run(run())
-
-    assert isinstance(runtime, AcpRuntime)
-    assert runtime.profile is COMMAND_CODE_PROFILE
-    assert runtime.launch.executable == "node.exe"
-    assert runtime.launch.arguments == ("entry.mjs", "--no-auto-update", "acp")
-    assert runtime.launch.release_id == "command-code-1.2.3"
-    assert runtime.app.client_factory is CommandCodeClient
+    assert launch.executable == "node.exe"
+    assert launch.arguments == ("entry.mjs", "--no-auto-update", "acp")
+    assert launch.release_id == "command-code-1.2.3"
+    assert launch.environment == ()
 
 
 def test_resolve_configured_script_uses_node(tmp_path: Path) -> None:
@@ -283,85 +296,88 @@ def test_resolve_npm_entry_without_node_raises(tmp_path: Path) -> None:
         )
 
 
-def test_client_maps_model_and_effort_categories() -> None:
-    async def on_update(*_: Any) -> None:
-        return None
+def test_dialect_adds_permission_modes_and_engine_maps_effort() -> None:
+    instance, _ = client()
+    adapted = {
+        item["id"]: item
+        for item in instance.adapt(
+            "s",
+            [
+                {"id": "model", "category": "model", "type": "select"},
+                {"id": "effort", "category": "thought_level", "type": "select"},
+            ],
+        )
+    }
 
-    async def on_interaction(*_: Any) -> dict:
-        return {}
-
-    client = CommandCodeClient(on_update, on_interaction)
-    client.connection = SimpleNamespace(set_session_mode=lambda *_: None)
-
-    options = client.options(
-        "session",
-        [
-            {"id": "model", "category": "model", "type": "select"},
-            {"id": "effort", "category": "thought_level", "type": "select"},
-        ],
-    )
-
-    assert options[0]["_meta"]["aa"]["selectionCategory"] == "model"
-    assert options[1]["_meta"]["aa"]["selectionCategory"] == "effort"
-    permission = next(item for item in options if item["id"] == "aa-permission")
+    assert adapted["model"]["category"] == "model"
+    assert adapted["effort"]["category"] == "effort"
+    permission = adapted["aa-permission"]
     assert permission["category"] == "permission"
     assert permission["currentValue"] == "default"
+    assert len(permission["options"]) == len(COMMAND_CODE_PERMISSION_MODES)
 
 
-def test_client_switches_permission_mode() -> None:
-    calls: list[tuple[str, str]] = []
+def test_dialect_switches_permission_mode() -> None:
+    calls = []
 
-    async def on_update(*_: Any) -> None:
-        return None
-
-    async def on_interaction(*_: Any) -> dict:
-        return {}
-
-    async def set_session_mode(session_id: str, mode_id: str) -> None:
+    async def set_session_mode(session_id, mode_id):
         calls.append((session_id, mode_id))
 
-    client = CommandCodeClient(on_update, on_interaction)
-    client.connection = SimpleNamespace(set_session_mode=set_session_mode)
+    instance, _ = client(set_session_mode=set_session_mode)
+    instance.configuration["s"] = [
+        {"id": "model", "category": "model", "type": "select"}
+    ]
 
-    result = asyncio.run(client.configure("session", "aa-permission", "plan"))
+    result = asyncio.run(instance.configure("s", "aa-permission", "plan"))
 
-    assert calls == [("session", "plan")]
+    assert calls == [("s", "plan")]
     permission = next(
         item for item in result["configOptions"] if item["id"] == "aa-permission"
     )
     assert permission["currentValue"] == "plan"
 
 
-def test_client_rejects_unknown_permission_mode() -> None:
-    async def on_update(*_: Any) -> None:
+def test_dialect_rejects_unknown_permission_mode() -> None:
+    async def set_session_mode(*_args):
         return None
 
-    async def on_interaction(*_: Any) -> dict:
-        return {}
-
-    client = CommandCodeClient(on_update, on_interaction)
-    client.connection = SimpleNamespace(set_session_mode=lambda *_: None)
+    instance, _ = client(set_session_mode=set_session_mode)
 
     with pytest.raises(AcpError) as error:
-        asyncio.run(client.configure("session", "aa-permission", "sometimes"))
+        asyncio.run(instance.configure("s", "aa-permission", "sometimes"))
 
     assert error.value.code == "invalid_permission"
 
 
-def test_client_synthesizes_user_message_and_receipt() -> None:
-    updates: list[dict] = []
+def test_dialect_seeds_mode_from_session() -> None:
+    dialect = CommandCodeDialect()
+    dialect.verify_session("s", {"modes": {"currentModeId": "plan"}})
+    options = dialect.adapt_configuration("s", [])
+    assert options[-1]["currentValue"] == "plan"
 
-    async def on_update(_session_id: str, value: dict) -> None:
-        updates.append(value)
 
-    async def on_interaction(*_: Any) -> dict:
-        return {}
+def test_dialect_classifies_authentication_error() -> None:
+    dialect = CommandCodeDialect()
+    error = dialect.classify_error(
+        RequestError(-32000, "Not authenticated. Run `cmd login` first."), "open"
+    )
+    assert error is not None
+    assert error.code == "commandcode_authentication_required"
 
-    client = CommandCodeClient(on_update, on_interaction)
 
-    async def prompt(**_: Any) -> dict:
-        await client.callbacks.session_update(
-            "session",
+def test_dialect_classifies_disabled_acp() -> None:
+    dialect = CommandCodeDialect()
+    error = dialect.classify_error(RequestError(-32000, "the acp mod is disabled"), "open")
+    assert error is not None
+    assert error.code == "commandcode_acp_disabled"
+
+
+def test_engine_synthesizes_user_message() -> None:
+    instance, updates = client()
+
+    async def prompt(**_values):
+        await instance.callbacks.session_update(
+            "s",
             {
                 "sessionUpdate": "agent_message_chunk",
                 "content": {"type": "text", "text": "hello"},
@@ -369,76 +385,35 @@ def test_client_synthesizes_user_message_and_receipt() -> None:
         )
         return {"stopReason": "end_turn"}
 
-    client.connection = SimpleNamespace(prompt=prompt)
+    instance.connection = SimpleNamespace(prompt=prompt)
 
-    asyncio.run(client.prompt("session", "do work", "op_1"))
+    asyncio.run(instance.prompt("s", "do work", "op_1"))
 
     assert updates[0]["sessionUpdate"] == "user_message_chunk"
     assert updates[0]["messageId"] == "op_1"
     assert updates[0]["_meta"]["aa"]["clientMessageId"] == "op_1"
-    assert updates[0]["_meta"]["aa"]["boundary"] is True
     assert updates[1] == {
         "sessionUpdate": "aa_execution_observed",
         "clientMessageId": "op_1",
     }
+    assert updates[2]["sessionUpdate"] == "agent_message_chunk"
 
 
-def test_client_maps_authentication_error() -> None:
-    async def on_update(*_: Any) -> None:
-        return None
-
-    async def on_interaction(*_: Any) -> dict:
-        return {}
-
-    client = CommandCodeClient(on_update, on_interaction)
-
-    async def new_session(**_: Any) -> dict:
-        raise RequestError(-32000, "Not authenticated. Run `cmd login` first.")
-
-    client.connection = SimpleNamespace(new_session=new_session)
-
-    with pytest.raises(AcpError) as error:
-        asyncio.run(client.open_session("."))
-
-    assert error.value.code == "commandcode_authentication_required"
-
-
-def test_client_maps_disabled_acp_mod() -> None:
-    async def on_update(*_: Any) -> None:
-        return None
-
-    async def on_interaction(*_: Any) -> dict:
-        return {}
-
-    client = CommandCodeClient(on_update, on_interaction)
-
-    async def new_session(**_: Any) -> dict:
-        raise RequestError(-32000, "the acp mod is disabled")
-
-    client.connection = SimpleNamespace(new_session=new_session)
-
-    with pytest.raises(AcpError) as error:
-        asyncio.run(client.open_session("."))
-
-    assert error.value.code == "commandcode_acp_disabled"
-
-
-def test_client_advertises_attachment_capability(monkeypatch) -> None:
-    async def on_update(*_: Any) -> None:
-        return None
-
-    async def on_interaction(*_: Any) -> dict:
-        return {}
-
-    async def fake_start(self, _launch, _cwd):
-        self.capabilities = {"promptCapabilities": {"image": True}}
-        return {"protocolVersion": 1}
-
-    monkeypatch.setattr(AgentClient, "start", fake_start)
-    client = CommandCodeClient(on_update, on_interaction)
-
-    asyncio.run(client.start(None, "."))
-
-    assert client.capabilities["_meta"]["aa"]["capabilities"] == [
-        "runtime.attachment"
-    ]
+def test_engine_declares_attachment_and_commands() -> None:
+    instance, _ = client()
+    instance.initialized(
+        {"agentCapabilities": {"promptCapabilities": {"image": True}}}
+    )
+    asyncio.run(
+        instance.receive_update(
+            "s",
+            {
+                "sessionUpdate": "available_commands_update",
+                "availableCommands": [{"name": "help"}],
+            },
+        )
+    )
+    declared = instance.capabilities["_meta"]["aa"]["capabilities"]
+    assert "runtime.attachment" in declared
+    assert "session.commands" in declared
+    assert instance.commands["s"] == [{"name": "help"}]
