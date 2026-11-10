@@ -212,7 +212,7 @@ nonisolated private final class InterceptingURLProtocol: URLProtocol, @unchecked
         let replies: [InterceptedRequests.Reply] = try [
             .response(201, fixtureData("modelProfile")), .response(204, Data()),
             .response(200, channel), .response(200, channel), .response(200, channel), .response(200, channel),
-            .response(200, channel), .response(200, channel), .response(200, channel),
+            .response(200, channel), .response(200, channel),
             .response(200, fixtureData("tokensLinkStart")), .response(200, fixtureData("modelProfile")),
             .response(200, fixtureData("tokensUnlink")), .response(200, channel),
             .response(409, fixtureData("modelConfigError")),
@@ -228,7 +228,6 @@ nonisolated private final class InterceptingURLProtocol: URLProtocol, @unchecked
         _ = try await model.setChannel("tokens")
         _ = try await model.setRuntimeChannel(target, channel: nil, confirmNativeGlobal: false)
         _ = try await model.setRuntimeChannel(target, channel: "tokens", confirmNativeGlobal: true)
-        _ = try await model.switchNow(target)
         _ = try await model.retryChannel()
         _ = try await model.retryChannel(target)
         #expect(try await model.beginTokensLink().startUrl.hasPrefix("https://example.test/"))
@@ -243,7 +242,6 @@ nonisolated private final class InterceptingURLProtocol: URLProtocol, @unchecked
             ("POST", "/model-profiles"), ("DELETE", "/model-profiles/mpr_test"),
             ("GET", "/model-config/channel"), ("PUT", "/model-config/channel"),
             ("PUT", "/model-config/channel/runtimes/device/rti_gateway"), ("PUT", "/model-config/channel/runtimes/device/rti_gateway"),
-            ("POST", "/model-config/channel/runtimes/device/rti_gateway/switch-now"),
             ("POST", "/model-config/channel/retry"), ("POST", "/model-config/channel/retry"),
             ("POST", "/integrations/tokens/link"), ("POST", "/integrations/tokens/sync"), ("DELETE", "/integrations/tokens/link"),
             ("POST", "/model-profiles/mpr_tokens/rotate-key"), ("DELETE", "/model-profiles/mpr_test"),
@@ -263,16 +261,16 @@ nonisolated private final class InterceptingURLProtocol: URLProtocol, @unchecked
             }, "\(expected.0) \(expected.1) is not a backend route")
         }
         let bodies = try fixtureObject("requests")
-        for (index, key) in [(3, "setChannel"), (4, "followChannel"), (5, "confirmRuntimeChannel"), (7, "retryAll"), (8, "retryRuntime")] {
+        for (index, key) in [(3, "setChannel"), (4, "followChannel"), (5, "confirmRuntimeChannel"), (6, "retryAll"), (7, "retryRuntime")] {
             let body = try JSONDecoder().decode(JSONValue.self, from: #require(requests[index].httpBody))
             let backend = try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: bodies[key]!))
             #expect(body == backend, "Request \(key) differs from the backend model")
         }
         let created = try JSONDecoder().decode(JSONValue.self, from: #require(requests[0].httpBody))
         #expect(created["apiKey"]?.stringValue == "sk-test" && created["offers"]?.configArray?.count == 1)
-        let rotate = try JSONDecoder().decode(JSONValue.self, from: #require(requests[12].httpBody))
+        let rotate = try JSONDecoder().decode(JSONValue.self, from: #require(requests[11].httpBody))
         #expect(rotate == .object(["allowInterrupt": .bool(false)]))
-        #expect(requests[2].httpBody == nil && requests[6].httpBody == nil && requests[9].httpBody == nil && requests[10].httpBody == nil)
+        #expect(requests[2].httpBody == nil && requests[8].httpBody == nil && requests[9].httpBody == nil)
     }
 
     @Test func profileCreationSendsEitherTheAddressOrTheOffers() async throws {
@@ -305,6 +303,43 @@ nonisolated private final class InterceptingURLProtocol: URLProtocol, @unchecked
         for request in requests {
             #expect(request.httpMethod == "POST" && request.url?.path == "/api/v2/model-profiles")
         }
+    }
+
+    @Test func deviceSettingsRoutesBodiesAndRollbackMatchTheBackend() async throws {
+        let session = session(); defer { session.invalidateAndCancel() }
+        let api = V2APIClient(serverURL: URL(string: "https://example.test")!, tokenProvider: StaticAuthTokenProvider(token: "test-token"), urlSession: session)
+        let error = Data(#"{"detail":{"code":"validation_error","message":"Rejected"}}"#.utf8)
+        InterceptingURLProtocol.state.reset(try [
+            .response(200, fixtureData("deviceSettings")), .response(200, fixtureData("deviceSettingsSaved")),
+            .response(422, error),
+        ])
+        let model = DeviceSettingsModel()
+        let service = V2DeviceManagementService(connectorAPI: api.connectors)
+        await model.load(connectorId: "device", service: service)
+        #expect(model.settings?.confirmQuitOnShutdown == false && model.loadError == nil)
+        #expect(await model.setConfirmQuitOnShutdown(true, connectorId: "device", service: service) == .pendingDelivery,
+                "delivered=false is saved on the Server and applied once the device is online")
+        #expect(model.settings?.confirmQuitOnShutdown == true && !model.isSaving)
+        #expect(await model.setConfirmQuitOnShutdown(true, connectorId: "device", service: service) == nil, "An unchanged value sends nothing")
+        guard case .failed = await model.setConfirmQuitOnShutdown(false, connectorId: "device", service: service) else {
+            Issue.record("Expected the rejected write to fail"); return
+        }
+        #expect(model.settings?.confirmQuitOnShutdown == true, "A failed write puts the previous value back")
+
+        let requests = InterceptingURLProtocol.state.requests
+        #expect(requests.map(\.httpMethod) == ["GET", "PATCH", "PATCH"])
+        let routes: [[String: String]] = try JSONDecoder().decode([[String: String]].self, from: fixtureData("routes"))
+        for request in requests {
+            #expect(request.url?.path == "/api/v2/connectors/device/device-settings")
+            #expect(routes.contains { $0["method"] == request.httpMethod && $0["path"] == "/api/v2/connectors/{connector_id}/device-settings" })
+        }
+        #expect(requests[0].httpBody == nil)
+        let bodies = try fixtureObject("requests")
+        let body = try JSONDecoder().decode(JSONValue.self, from: #require(requests[1].httpBody))
+        let backend = try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: bodies["patchDeviceSettings"]!))
+        #expect(body == backend, "The patch differs from the backend model")
+        let omitted = try JSONEncoder().encode(V2ConnectorDeviceSettingsPatch(confirmQuitOnShutdown: nil))
+        #expect(try JSONDecoder().decode(JSONValue.self, from: omitted) == .object([:]), "Unchanged fields are omitted")
     }
 
     private func query(_ request: URLRequest) -> [String: String] {

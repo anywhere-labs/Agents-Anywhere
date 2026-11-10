@@ -56,6 +56,9 @@ from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.attachments import AttachmentService
+from agent_server.services.connector_device_settings import (
+    deliver_stored_device_settings,
+)
 from agent_server.services.connector_ingest import ConnectorIngestService
 from agent_server.services.connector_notifications import (
     ConnectorNotificationService,
@@ -616,6 +619,7 @@ async def connector_ws(
     completion_task: asyncio.Task[None] | None = None
     reader_task: asyncio.Task[None] | None = None
     capabilities_task: asyncio.Task[None] | None = None
+    device_settings_task: asyncio.Task[bool] | None = None
     try:
         # Usage statistics: the device is online once the socket is ready. This
         # runs inside the main try so a disconnect during the write still
@@ -650,6 +654,10 @@ async def connector_ws(
         capabilities_task = asyncio.create_task(
             _publish_connection_presence(db, manager, timeline_broker, connector_id, websocket.app.state.capability_refresh),
             name=f"connector-presence-{connection.connection_id}",
+        )
+        device_settings_task = asyncio.create_task(
+            deliver_stored_device_settings(db, manager, connector_id),
+            name=f"connector-device-settings-{connection.connection_id}",
         )
         done, _pending = await asyncio.wait(
             {reader_task, discovery_task, notification_pump.task},
@@ -724,6 +732,9 @@ async def connector_ws(
             if capabilities_task is not None:
                 capabilities_task.cancel()
                 await asyncio.gather(capabilities_task, return_exceptions=True)
+            if device_settings_task is not None:
+                device_settings_task.cancel()
+                await asyncio.gather(device_settings_task, return_exceptions=True)
             try:
                 if await manager.begin_drain(connection):
                     # The lease remains reserved until accepted work has settled.

@@ -11,6 +11,7 @@ const SETTINGS: DesktopSettings = {
   startConnectorOnLaunch: true,
   silentLaunch: true,
   notificationsEnabled: true,
+  confirmQuitOnShutdown: false,
   uvPath: "",
   pythonPath: "",
   uvPypiIndexUrl: "",

@@ -263,7 +263,6 @@
             "message": null,
             "override": null,
             "reason": "model_connection_unsupported",
-            "runningSessions": 0,
             "runtimeId": "rti_work",
             "state": "unsupported",
             "step": null,
@@ -276,7 +275,6 @@
             "message": null,
             "override": null,
             "reason": null,
-            "runningSessions": 0,
             "runtimeId": "rti_gateway",
             "state": "applied",
             "step": null,
@@ -289,7 +287,6 @@
             "message": "runtime did not confirm in time",
             "override": "tokens",
             "reason": "verify_timeout",
-            "runningSessions": 0,
             "runtimeId": "rti_global",
             "state": "restored",
             "step": null,
@@ -590,6 +587,22 @@
     ],
     "type": "dashboard.snapshot"
   },
+  "deviceSettings": {
+    "connectorId": "device",
+    "delivered": null,
+    "serverTime": "2026-09-05T12:00:00Z",
+    "settings": {
+      "confirmQuitOnShutdown": false
+    }
+  },
+  "deviceSettingsSaved": {
+    "connectorId": "device",
+    "delivered": false,
+    "serverTime": "2026-09-05T12:00:00Z",
+    "settings": {
+      "confirmQuitOnShutdown": true
+    }
+  },
   "download": {
     "contentBase64": "SGVsbG8=",
     "createdAt": "2026-09-05T12:00:00Z",
@@ -694,7 +707,6 @@
         "message": null,
         "override": null,
         "reason": "model_connection_unsupported",
-        "runningSessions": 0,
         "runtimeId": "rti_work",
         "state": "unsupported",
         "step": null,
@@ -707,7 +719,6 @@
         "message": null,
         "override": null,
         "reason": null,
-        "runningSessions": 0,
         "runtimeId": "rti_gateway",
         "state": "applied",
         "step": null,
@@ -720,7 +731,6 @@
         "message": "runtime did not confirm in time",
         "override": "tokens",
         "reason": "verify_timeout",
-        "runningSessions": 0,
         "runtimeId": "rti_global",
         "state": "restored",
         "step": null,
@@ -1024,6 +1034,9 @@
         "confirmed": true
       }
     },
+    "patchDeviceSettings": {
+      "confirmQuitOnShutdown": true
+    },
     "patchProject": {
       "pinned": true
     },
@@ -1182,6 +1195,14 @@
       "path": "/api/v2/connectors/{connector_id}"
     },
     {
+      "method": "GET",
+      "path": "/api/v2/connectors/{connector_id}/device-settings"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v2/connectors/{connector_id}/device-settings"
+    },
+    {
       "method": "POST",
       "path": "/api/v2/connectors/{connector_id}/fs/list"
     },
@@ -1332,10 +1353,6 @@
     {
       "method": "PUT",
       "path": "/api/v2/model-config/channel/runtimes/{connector_id}/{runtime_id}"
-    },
-    {
-      "method": "POST",
-      "path": "/api/v2/model-config/channel/runtimes/{connector_id}/{runtime_id}/switch-now"
     },
     {
       "method": "GET",
@@ -1814,6 +1831,7 @@
       "revision": 10
     },
     "eventCursor": "seq:10",
+    "goalState": null,
     "notices": [
       {
         "actions": [

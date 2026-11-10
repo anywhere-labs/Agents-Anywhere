@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
+import httpx
 from pydantic import ValidationError
 
 from connector.core.config import ConnectorConfig
@@ -29,11 +30,13 @@ from connector.runtime_protocol import (
     SessionState,
 )
 from connector.server.errors import ConnectorNetworkError
+from connector.server.ingest import ConnectorIngestRejectedError
 from connector.server.runtime_host import _drop_none, _timeline_item_payload
 from connector.server.runtime_rpc_payloads import session_notice_payload
 
 NotificationSender = Callable[[str, dict[str, Any]], Awaitable[None]]
 IngestNotificationSender = Callable[[list[dict[str, Any]]], Awaitable[None]]
+SnapshotIngester = Callable[..., Awaitable[None]]
 PreferencesReader = Callable[[], dict[str, Any]]
 SyncStateFlusher = Callable[[], Awaitable[bool]]
 ACTIVE_SESSION_SYNC_SKIP_STATUSES: frozenset[RuntimeStatus] = frozenset(
@@ -50,12 +53,26 @@ INVENTORY_RECONCILE_SECONDS = 600.0
 # Forced timeline syncs per scan after a reconnect. The rest wait for later scans;
 # sessions with local changes still sync on their normal path.
 RECOVERY_SESSIONS_PER_SCAN = 100
+# A session whose timeline the Server refused for good (for example 413 after
+# the pages could not be cut any smaller) is not read or uploaded again until
+# this delay has passed. It doubles with every further refusal, up to the cap,
+# so one session cannot hold up every scan of its runtime.
+TIMELINE_REJECTION_BACKOFF_SECONDS = 600.0
+TIMELINE_REJECTION_BACKOFF_MAX_SECONDS = 6 * 3600.0
 
 
 @dataclass(frozen=True)
 class _InventoryReport:
     fingerprint: str
     reconcile_at: float
+
+
+@dataclass(frozen=True)
+class _TimelineBackoff:
+    failures: int
+    retry_at: float
+    # The meta and state last published while the timeline waits.
+    published: tuple[SessionMeta, SessionState | None] | None = None
 
 
 class RuntimeSyncRunner:
@@ -70,6 +87,7 @@ class RuntimeSyncRunner:
         send_notification: NotificationSender,
         ingest_notifications: IngestNotificationSender | None = None,
         flush_sync_state: SyncStateFlusher | None = None,
+        ingest_snapshot: SnapshotIngester | None = None,
     ) -> None:
         self.config = config
         self.supervisor = supervisor
@@ -77,6 +95,7 @@ class RuntimeSyncRunner:
         self.preferences_reader = preferences_reader
         self.send_notification = send_notification
         self.ingest_notifications = ingest_notifications
+        self.ingest_snapshot = ingest_snapshot
         self.flush_sync_state = flush_sync_state
         self._recovery_generation = 0
         self._recovered: dict[str, int] = {}
@@ -86,6 +105,7 @@ class RuntimeSyncRunner:
         self._last_active_session_updates: dict[
             str, tuple[SessionMeta, SessionState]
         ] = {}
+        self._timeline_backoffs: dict[str, _TimelineBackoff] = {}
 
     async def sync_existing_loop(self) -> None:
         if not self.config.sync_existing_on_connect:
@@ -115,7 +135,14 @@ class RuntimeSyncRunner:
                 runtime = self.supervisor.resolve_runtime(runtime_id)
                 if runtime.sync_mode == "events":
                     await runtime.resynchronize()
-            except Exception:
+            except RuntimeUnavailableError as exc:
+                if not self.runtime_stopped(runtime_id):
+                    logger.info(
+                        "runtime event recovery skipped runtime={} reason={}",
+                        runtime_id,
+                        exc,
+                    )
+            except Exception:  # noqa: BLE001
                 logger.exception("runtime event recovery deferred runtime={}", runtime_id)
 
     async def sync_existing_once(self) -> None:
@@ -242,7 +269,7 @@ class RuntimeSyncRunner:
                     (time.monotonic() - runtime_started_at) * 1000,
                 )
             except RuntimeUnavailableError:
-                if self.runtime_has_config(runtime_id):
+                if self.runtime_has_config(runtime_id) and not self.runtime_stopped(runtime_id):
                     logger.info(
                         "existing session sync runtime unavailable runtime={}",
                         runtime_id,
@@ -344,15 +371,6 @@ class RuntimeSyncRunner:
                 [_session_meta_notification(session)]
             )
             return
-        logger.info(
-            "existing session timeline sync started runtime={} session_id={} external_session_id={}",
-            session.runtime,
-            session.session_id,
-            session.external_session_id,
-        )
-        read_elapsed_ms = 0.0
-        publish_elapsed_ms = 0.0
-        synced_items = 0
         state = await runtime.get_session_state(
             session.session_id,
             session.external_session_id,
@@ -386,6 +404,47 @@ class RuntimeSyncRunner:
             )
             return
         self._last_active_session_updates.pop(session.session_id, None)
+        backoff = self._timeline_backoffs.get(session.session_id)
+        if backoff is not None and time.monotonic() < backoff.retry_at:
+            logger.debug(
+                "existing session timeline sync backing off runtime={} session_id={} retry_in_seconds={:.0f}",
+                session.runtime,
+                session.session_id,
+                backoff.retry_at - time.monotonic(),
+            )
+            await self._publish_while_backing_off(session, state, backoff)
+            return None
+        try:
+            completed = await self._sync_session_timeline(
+                runtime, session, state, active=active, recovering=recovering
+            )
+        except Exception as exc:
+            if not _permanently_rejected(exc):
+                raise
+            backoff = self._back_off_timeline(session, backoff, exc)
+            await self._publish_while_backing_off(session, state, backoff)
+            return None
+        self._timeline_backoffs.pop(session.session_id, None)
+        return completed
+
+    async def _sync_session_timeline(
+        self,
+        runtime: AgentRuntime,
+        session: SessionMeta,
+        state: SessionState | None,
+        *,
+        active: bool,
+        recovering: bool,
+    ) -> bool:
+        logger.info(
+            "existing session timeline sync started runtime={} session_id={} external_session_id={}",
+            session.runtime,
+            session.session_id,
+            session.external_session_id,
+        )
+        read_elapsed_ms = 0.0
+        publish_elapsed_ms = 0.0
+        synced_items = 0
         read_started_at = time.monotonic()
         prepared = await runtime.prepare_session_timeline_sync(
             session.session_id,
@@ -419,19 +478,35 @@ class RuntimeSyncRunner:
             session.session_id,
             session.external_session_id,
         )
-        notifications = [_session_meta_notification(session)]
-        if snapshot is not None:
-            notifications.append(
-                _timeline_sync_notification(
-                    snapshot,
-                    fallback_item_time=session.ordering_time,
-                )
-            )
+        trailing = []
         if state is not None:
-            notifications.append(_session_state_notification(state))
-        notifications.extend(_notice_notification(notice) for notice in notices)
+            trailing.append(_session_state_notification(state))
+        trailing.extend(_notice_notification(notice) for notice in notices)
         publish_started_at = time.monotonic()
-        await self._ingest_scanner_notifications(notifications)
+        if snapshot is not None and self.ingest_snapshot is not None:
+            # Paged by size: a history above the request limit goes out as
+            # several requests instead of one the Server refuses.
+            meta = _session_meta_notification(session)["params"]
+            await self.ingest_snapshot(
+                snapshot.runtime,
+                snapshot.runtime_id or session.runtime_id or snapshot.runtime,
+                snapshot.session_id,
+                {key: value for key, value in meta.items() if key not in {"runtime", "runtimeId", "sessionId"}},
+                _timeline_sync_items(snapshot, fallback_item_time=session.ordering_time),
+                complete=snapshot.complete,
+                trailing=trailing,
+            )
+        else:
+            notifications = [_session_meta_notification(session)]
+            if snapshot is not None:
+                notifications.append(
+                    _timeline_sync_notification(
+                        snapshot,
+                        fallback_item_time=session.ordering_time,
+                    )
+                )
+            notifications.extend(trailing)
+            await self._ingest_scanner_notifications(notifications)
         publish_elapsed_ms = (time.monotonic() - publish_started_at) * 1000
         if prepared is not None and prepared.commit is not None and not deferred_replacement:
             await prepared.commit()
@@ -455,6 +530,46 @@ class RuntimeSyncRunner:
         # Keep this recovery generation pending until deletion reconciliation is
         # safe; otherwise an unchanged inventory marker could suppress its retry.
         return not deferred_replacement
+
+    def _back_off_timeline(
+        self,
+        session: SessionMeta,
+        previous: _TimelineBackoff | None,
+        error: Exception,
+    ) -> _TimelineBackoff:
+        failures = (previous.failures if previous is not None else 0) + 1
+        delay = min(
+            TIMELINE_REJECTION_BACKOFF_MAX_SECONDS,
+            TIMELINE_REJECTION_BACKOFF_SECONDS * 2 ** (failures - 1),
+        ) * random.uniform(1 - SYNC_INTERVAL_JITTER, 1 + SYNC_INTERVAL_JITTER)
+        backoff = _TimelineBackoff(failures=failures, retry_at=time.monotonic() + delay)
+        self._timeline_backoffs[session.session_id] = backoff
+        logger.warning(
+            "existing session timeline rejected; skipping it for {:.0f}s runtime={} session_id={} external_session_id={} failures={} error={}",
+            delay,
+            session.runtime,
+            session.session_id,
+            session.external_session_id,
+            failures,
+            error,
+        )
+        return backoff
+
+    async def _publish_while_backing_off(
+        self,
+        session: SessionMeta,
+        state: SessionState | None,
+        backoff: _TimelineBackoff,
+    ) -> None:
+        """Keep the session and its status current while its timeline waits."""
+        update = (session, state)
+        if backoff.published == update:
+            return
+        notifications = [_session_meta_notification(session)]
+        if state is not None:
+            notifications.append(_session_state_notification(state))
+        await self._ingest_scanner_notifications(notifications)
+        self._timeline_backoffs[session.session_id] = replace(backoff, published=update)
 
     async def _ingest_scanner_notifications(
         self,
@@ -513,6 +628,11 @@ class RuntimeSyncRunner:
     def runtime_has_config(self, runtime_id: str) -> bool:
         entry = self.supervisor.entry(runtime_id)
         return entry.config is not None
+
+    def runtime_stopped(self, runtime_id: str) -> bool:
+        # The supervisor keeps stopped (and server-deleted) instances registered
+        # so they can be restarted; their absence is intentional, not a failure.
+        return self.supervisor.entry(runtime_id).status == "stopped"
 
 
 def validation_error_summary(error: ValidationError) -> str:
@@ -679,13 +799,31 @@ def _inventory_source_state(session: SessionMeta) -> str | dict[str, Any]:
     )
 
 
+def _permanently_rejected(error: Exception) -> bool:
+    """Whether sending the same timeline again would be refused again."""
+    if isinstance(error, ConnectorIngestRejectedError):
+        return True
+    if isinstance(error, httpx.HTTPStatusError):
+        status = error.response.status_code
+        return 400 <= status < 500 and status not in {401, 408, 429}
+    return False
+
+
+def _timeline_sync_items(
+    snapshot: RuntimeTimelineSnapshot,
+    fallback_item_time: str | None = None,
+) -> list[dict[str, Any]]:
+    return [
+        _runtime_timeline_item_payload(item, fallback_time=fallback_item_time)
+        for item in snapshot.items
+        if item.type not in {"turn.start", "turn.end"}
+    ]
+
+
 def _timeline_sync_notification(
     snapshot: RuntimeTimelineSnapshot,
     fallback_item_time: str | None = None,
 ) -> dict[str, Any]:
-    server_items = tuple(
-        item for item in snapshot.items if item.type not in {"turn.start", "turn.end"}
-    )
     return {
         "method": "timeline.sync",
         "params": _drop_none(
@@ -694,13 +832,7 @@ def _timeline_sync_notification(
                 "runtime": snapshot.runtime,
                 "runtimeId": snapshot.runtime_id,
                 "externalSessionId": snapshot.external_session_id,
-                "items": [
-                    _runtime_timeline_item_payload(
-                        item,
-                        fallback_time=fallback_item_time,
-                    )
-                    for item in server_items
-                ],
+                "items": _timeline_sync_items(snapshot, fallback_item_time),
                 "complete": snapshot.complete,
                 "metadata": dict(snapshot.metadata),
             }

@@ -76,6 +76,7 @@ import { authApi } from "@/features/auth/api"
 import { accountDisplayName } from "@/features/auth/account-profile"
 import { normalizeAuthMe } from "@/features/auth/normalize-me"
 import type { AuthMe } from "@/features/auth/types"
+import { useDeviceSettings } from "@/features/dashboard/device-settings"
 import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
 import { PYPI_MIRROR_OPTIONS, PYTHON_MIRROR_OPTIONS } from "@/features/desktop/package-mirrors"
 import {
@@ -765,6 +766,9 @@ function DesktopTab() {
 function StartupTab() {
   const t = useTranslations("pages.settings")
   const { supported, loading, busy, state, saveSettings } = useDesktopConnector()
+  const { session: authSession } = useAuth()
+  // The server owns this device setting so other devices can change it too.
+  const deviceSettings = useDeviceSettings(state?.connectorId || null, authSession?.accessToken)
 
   if (!supported) return <DesktopUnavailable title={t("startup")} />
   if (loading && !state) return <LoadingState className="min-h-64" />
@@ -798,6 +802,13 @@ function StartupTab() {
             checked={Boolean(state?.silentLaunch)}
             disabled={busy}
             onCheckedChange={(checked) => void saveSettings({ silentLaunch: checked })}
+          />
+          <DesktopSettingSwitch
+            label={t("desktopConfirmQuitOnShutdown")}
+            description={t("desktopConfirmQuitOnShutdownDescription")}
+            checked={deviceSettings.settings?.confirmQuitOnShutdown ?? Boolean(state?.confirmQuitOnShutdown)}
+            disabled={busy || deviceSettings.saving || !deviceSettings.settings}
+            onCheckedChange={(checked) => void deviceSettings.update({ confirmQuitOnShutdown: checked })}
           />
         </FieldGroup>
       </section>

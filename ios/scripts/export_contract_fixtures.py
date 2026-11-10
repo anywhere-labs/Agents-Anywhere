@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "server"))
 
 from agent_server.core import device_runtime as d
+from agent_server.core import device_settings as ds
 from agent_server.core import model_channel as mch
 from agent_server.core import model_config as mc
 from agent_server.core import models as m
@@ -89,6 +90,9 @@ def fixtures() -> dict:
         "runtimes": d.DeviceRuntimeListResponse(connectorId="device", runtimes=[runtime], serverTime=NOW),
         "runtimeTypes": d.RuntimeTypeListResponse(connectorId="device", runtimeTypes=[runtime_type], serverTime=NOW),
         "preferences": m.ConnectorPreferencesResponse(connectorId="device", preferences={"cwd": "/workspace"}, serverTime=NOW),
+        # A read never reports delivery; a write to an offline device is kept and applied later.
+        "deviceSettings": ds.ConnectorDeviceSettingsResponse(connectorId="device", settings=ds.ConnectorDeviceSettings(), serverTime=NOW),
+        "deviceSettingsSaved": ds.ConnectorDeviceSettingsResponse(connectorId="device", settings=ds.ConnectorDeviceSettings(confirmQuitOnShutdown=True), delivered=False, serverTime=NOW),
         "session": m.SessionResponse(session=session, serverTime=NOW),
         "sessions": {"sessions": [session.model_dump()], "hasMore": False, "nextCursor": None, "serverTime": NOW},
         "takeover": m.TakeoverResponse(session=session),
@@ -139,6 +143,7 @@ def fixtures() -> dict:
         "notice": m.InteractionRespondRequest(actionId="approve", input={"confirmed": True}),
         "ticket": p.ProtocolWsTicketRequest(clientId="client", scope=p.ProtocolWsTicketScope(sessionId="session")),
         "readText": m.FsReadTextRequest(path="test.txt"),
+        "patchDeviceSettings": ds.ConnectorDeviceSettingsPatch(confirmQuitOnShutdown=True),
         "createModelProfile": mc.ManualProfileRequest(name="Gateway", apiKey="sk-test", offers=[mc.Offer(format="openai_chat", baseUrl="https://gateway.example/v1", models=[mc.ModelSpec(id="gpt-test")])]),
         "detectModelProfile": mc.ManualProfileRequest(name="Gateway", apiKey="sk-test", baseUrl="https://gateway.example/v1"),
     }

@@ -39,6 +39,7 @@ def test_dsh_is_third_default_provider() -> None:
         "claude",
         "dsh",
         "pi",
+        "hermes",
     ]
 
 
