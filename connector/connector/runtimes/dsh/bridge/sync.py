@@ -86,20 +86,33 @@ class _Quarantine:
                 "observedAt": _observed_now(), "observationOrigin": "event"}
 
 
-def _with_activity_time(items: Iterator[dict[str, Any]], activity: Any) -> Iterator[dict[str, Any]]:
-    """Date replayed items with the session's last activity when they carry no time.
+def _with_event_time(items: Iterator[dict[str, Any]], activity: Any) -> Iterator[dict[str, Any]]:
+    """Date replayed items with their own DSH event time when they carry no time.
 
     DSH items keep their event time only inside ``source``, so the backend dates an
     untimed item with the moment it was ingested. For a complete capture that is
     the sync moment: a first import, or any re-capture, would sort every session
     by the order this relay happened to walk them instead of by when it was used.
-    The polling path fills the same fields from the session's ordering time.
+    An item without an event time falls back to the session's last activity, as
+    the polling path does with the session's ordering time. Items that already
+    carry a time keep it.
     """
-    if not isinstance(activity, str) or not activity:
-        yield from items
-        return
+    fallback = activity if isinstance(activity, str) and activity else None
     for item in items:
-        yield {"createdAt": activity, "updatedAt": activity, **item}
+        source = item.get("source")
+        time = (_event_time(source.get("time")) if isinstance(source, Mapping) else None) or fallback
+        yield item if time is None else {"createdAt": time, "updatedAt": time, **item}
+
+
+def _event_time(value: Any) -> str | None:
+    """Turn a DSH event time (epoch milliseconds) into the backend's ISO form."""
+    if isinstance(value, bool) or not isinstance(value, int | float) or not value > 0:
+        return None
+    try:
+        moment = datetime.fromtimestamp(value / 1000, UTC)
+    except (OverflowError, OSError, ValueError):
+        return None
+    return moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _checkpoint(value: Any) -> dict[str, Any] | None:
@@ -257,7 +270,7 @@ class SyncRelay:
 
     async def deliver_snapshot(self, session_id: str, snapshot: dict[str, Any]) -> None:
         meta = snapshot["meta"]
-        items = _with_activity_time(self.iter_items(), meta.get("lastActivityAt"))
+        items = _with_event_time(self.iter_items(), meta.get("lastActivityAt"))
         try:
             # With durable checkpoints every earlier notification of the feed has
             # landed before its capture, so the upload need not queue behind, or

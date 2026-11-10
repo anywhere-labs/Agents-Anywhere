@@ -69,22 +69,30 @@ def test_snapshot_replacement_waits_for_complete_capture_and_preserves_empty_sna
     asyncio.run(exercise())
 
 
-def test_snapshot_items_are_dated_by_session_activity_not_by_the_sync_moment():
+def test_snapshot_items_are_dated_by_their_event_time_not_by_the_sync_moment():
     """#277: an untimed item is dated at ingest, so a first import sorted by sync order."""
     async def exercise():
         receiver = host()
         relay = ready_relay(receiver)
         try:
-            dated = {**item("dated"), "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-02T00:00:00Z"}
+            evented = {**item("evented"), "source": {"runtime": "dsh", "time": 1779096600000}}
+            odd_time = {**item("odd"), "source": {"runtime": "dsh", "time": "yesterday"}}
+            dated = {**item("dated"), "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-02T00:00:00Z",
+                     "source": {"runtime": "dsh", "time": 1779096600000}}
             await begin_snapshot(relay, meta={"externalSessionId": "native", "lastActivityAt": "2026-05-20T15:00:00.000Z"})
-            await add_page(relay, [item(), dated])
+            await add_page(relay, [evented, item(), odd_time, dated])
             await relay.commit_snapshot()
             items = receiver.publish_runtime_notifications.call_args.args[1][1]["params"]["items"]
-            assert [(i["createdAt"], i["updatedAt"]) for i in items] == [
-                ("2026-05-20T15:00:00.000Z", "2026-05-20T15:00:00.000Z"),
-                ("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"),
+            assert [(i["id"], i["createdAt"], i["updatedAt"]) for i in items] == [
+                # Each message keeps its own DSH event time.
+                ("evented", "2026-05-18T09:30:00.000Z", "2026-05-18T09:30:00.000Z"),
+                # Without one, the session's last activity is the best estimate.
+                ("one", "2026-05-20T15:00:00.000Z", "2026-05-20T15:00:00.000Z"),
+                ("odd", "2026-05-20T15:00:00.000Z", "2026-05-20T15:00:00.000Z"),
+                # Items that already carry a time keep it.
+                ("dated", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"),
             ]
-            # Without an activity time there is nothing better than the backend's own stamp.
+            # Without any time there is nothing better than the backend's own stamp.
             await begin_snapshot(relay, meta={"externalSessionId": "native"})
             await add_page(relay, [item()])
             await relay.commit_snapshot()
