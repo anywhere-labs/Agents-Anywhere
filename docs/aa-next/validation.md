@@ -45,3 +45,11 @@ node --test --test-concurrency=1 dist/test/e2e/e2e.test.js dist/test/e2e/router-
 - 旧数据清理/账号注销、任何生产部署和线上抓包；Cloud 历史验证记录只作来源证据。
 
 以上限制不妨碍形成复用评估，但必须在 T48 定稿及实施验收中继续处理。
+
+## T48 文档补全（2026-11-10 UTC）
+
+在 AA `849c1ed2` 上承接 T81 文档，并核对 Effi D3/D4 原始答复、#266 正文/负责人评论、当前数据库/Goal schema、Redis 协调、现行 Runtime/工作流/本机/DSH 契约。新增完整架构与数据保留/切换方案；期限、首版限制及存储/授权取舍待方案审阅确认。
+
+本轮只运行 Markdown 本地相对链接有效性和 `git diff --check`，不重跑 T81 的编译/测试；结果在本轮 PR 中记录。未实现配对签名与握手绑定、JSON 耐久补强、删除/迁移程序；未进行密码协议安全评审、四端真机、负载测量、生产抓包或旧数据清理。新增协议的 exporter/transcript 接口、跨端向量、真实部署备份期限和私有源码再分发许可均为后续明确门槛。
+
+用户要求优先参考 Effi Cloud 后，额外检查 Cloud `46221a4ac213176673073ecfacc009e8c0621dd2` 的 agentd README、conversation/manager/sync、MeshCall 接入、附件与服务，以及生成客户端目录和相对 T81 基线的差异。直接复用现有 JSON 布局、ACP/watch/幂等/附件/Unix 终端与生成工具，取消提前选择 SQLite 与未经测量的 1 秒耐久承诺。新基线仅做源码检查，不继承旧基线的运行验证结论。
