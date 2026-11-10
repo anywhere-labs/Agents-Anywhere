@@ -587,6 +587,22 @@
     ],
     "type": "dashboard.snapshot"
   },
+  "deviceSettings": {
+    "connectorId": "device",
+    "delivered": null,
+    "serverTime": "2026-09-05T12:00:00Z",
+    "settings": {
+      "confirmQuitOnShutdown": false
+    }
+  },
+  "deviceSettingsSaved": {
+    "connectorId": "device",
+    "delivered": false,
+    "serverTime": "2026-09-05T12:00:00Z",
+    "settings": {
+      "confirmQuitOnShutdown": true
+    }
+  },
   "download": {
     "contentBase64": "SGVsbG8=",
     "createdAt": "2026-09-05T12:00:00Z",
@@ -1018,6 +1034,9 @@
         "confirmed": true
       }
     },
+    "patchDeviceSettings": {
+      "confirmQuitOnShutdown": true
+    },
     "patchProject": {
       "pinned": true
     },
@@ -1174,6 +1193,14 @@
     {
       "method": "PATCH",
       "path": "/api/v2/connectors/{connector_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/connectors/{connector_id}/device-settings"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v2/connectors/{connector_id}/device-settings"
     },
     {
       "method": "POST",

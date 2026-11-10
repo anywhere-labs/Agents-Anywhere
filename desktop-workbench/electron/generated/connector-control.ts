@@ -5,6 +5,10 @@ import type { MeshCallRpc, CallOptions, RpcStream, JsonSchema } from "meshcall" 
 export interface ControlServiceGetStateRequest {
 }
 
+export interface DeviceSettings {
+  confirmQuitOnShutdown?: boolean;
+}
+
 export interface ConnectorState {
   status: "running" | "expired credential" | "error" | "stopped";
   running: boolean;
@@ -14,9 +18,24 @@ export interface ConnectorState {
   configPath: string;
   runtimePath: string;
   hasConfig: boolean;
+  deviceSettings?: DeviceSettings | null;
 }
 
 export const ConnectorStateSchema: JsonSchema = {
+  "$defs": {
+    "DeviceSettings": {
+      "description": "User-chosen device settings the server handed over (docs/api/device-settings.md).",
+      "properties": {
+        "confirmQuitOnShutdown": {
+          "default": false,
+          "title": "Confirmquitonshutdown",
+          "type": "boolean"
+        }
+      },
+      "title": "DeviceSettings",
+      "type": "object"
+    }
+  },
   "properties": {
     "status": {
       "enum": [
@@ -63,6 +82,17 @@ export const ConnectorStateSchema: JsonSchema = {
     "hasConfig": {
       "title": "Hasconfig",
       "type": "boolean"
+    },
+    "deviceSettings": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DeviceSettings"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "required": [
@@ -377,6 +407,7 @@ export interface ControlEventConnectorState {
   configPath: string;
   runtimePath: string;
   hasConfig: boolean;
+  deviceSettings?: DeviceSettings | null;
 }
 
 export interface ControlEventPairingStatus {
@@ -497,6 +528,17 @@ export const ControlEventSchema: JsonSchema = {
         "hasConfig": {
           "title": "Hasconfig",
           "type": "boolean"
+        },
+        "deviceSettings": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeviceSettings"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -509,6 +551,18 @@ export const ControlEventSchema: JsonSchema = {
         "hasConfig"
       ],
       "title": "ConnectorState",
+      "type": "object"
+    },
+    "DeviceSettings": {
+      "description": "User-chosen device settings the server handed over (docs/api/device-settings.md).",
+      "properties": {
+        "confirmQuitOnShutdown": {
+          "default": false,
+          "title": "Confirmquitonshutdown",
+          "type": "boolean"
+        }
+      },
+      "title": "DeviceSettings",
       "type": "object"
     },
     "PairingStatus": {

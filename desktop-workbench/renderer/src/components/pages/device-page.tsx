@@ -53,6 +53,7 @@ import type {
 import { useWorkspace } from "@/components/workspace-context"
 import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
+import { DeviceSettingsSection } from "@/features/dashboard/device-settings"
 import { PairDeviceDialog } from "@/components/pair-device-dialog"
 import type { ConnectorRevokeResponse } from "@/features/dashboard/types"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -1036,6 +1037,10 @@ export function DevicePage() {
             </TooltipProvider>
           )}
         </section>
+
+        {isDesktopConnector && (
+          <DeviceSettingsSection connectorId={connector.id} token={authSession?.accessToken} />
+        )}
 
         {/* Projects */}
         <section className="mb-8">

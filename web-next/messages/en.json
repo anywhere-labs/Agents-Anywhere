@@ -592,6 +592,13 @@
       "waitingForScan": "Waiting for phone to scan"
     },
     "device": {
+      "deviceSettings": "Device settings",
+      "confirmQuitOnShutdown": "Ask before quitting on shutdown",
+      "confirmQuitOnShutdownDescription": "When on, Agents Anywhere asks before quitting when the computer shuts down or restarts. When off, it quits right away and never blocks shutdown.",
+      "deviceSettingsPending": "Saved. It takes effect when the device comes online.",
+      "deviceSettingsSaveFailed": "Device settings were not saved",
+      "deviceSettingsLoadFailed": "Couldn't load device settings.",
+      "deviceSettingsRetry": "Retry",
       "sessionCount": "{count, plural, one {# session} other {# sessions}}",
       "newSession": "New session",
       "active": "Active",

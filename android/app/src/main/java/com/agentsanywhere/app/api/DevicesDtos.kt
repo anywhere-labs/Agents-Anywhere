@@ -12,6 +12,17 @@ data class RemoteDevice(
     val lastSeenAt: String?,
     val createdAt: String?,
     val updatedAt: String?,
+    /** "cli", "desktop" and so on; null when the Server does not say. */
+    val connectorKind: String? = null,
+)
+
+/** Behaviour switches the user chose for one device; see docs/api/device-settings.md. */
+data class RemoteDeviceSettings(
+    val connectorId: String,
+    val confirmQuitOnShutdown: Boolean,
+    /** Whether a change reached the online Connector; null for reads. */
+    val delivered: Boolean?,
+    val serverTime: String?,
 )
 
 data class RemoteDeviceCredential(

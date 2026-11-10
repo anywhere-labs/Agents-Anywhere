@@ -195,6 +195,12 @@
     <string name="device_detail_all_active_sessions">所有活跃会话</string>
     <string name="device_detail_all_archived_sessions">所有已归档会话</string>
     <string name="device_detail_all_sessions">所有会话</string>
+    <string name="device_detail_settings_section">设备设置</string>
+    <string name="device_settings_confirm_quit_title">关机时询问是否退出</string>
+    <string name="device_settings_confirm_quit_description">开启后，电脑关机或重启时先弹窗确认再退出；关闭时直接退出，不阻止关机。</string>
+    <string name="device_settings_saved_offline">设备离线，上线后生效</string>
+    <string name="device_settings_load_failed">无法读取设备设置。</string>
+    <string name="device_settings_save_failed">无法保存设备设置。</string>
     <string name="device_setup_page_title">添加新设备</string>
     <string name="device_setup_name_title">命名设备</string>
     <string name="device_setup_name_description">给这个设备起一个名字，方便之后识别。</string>

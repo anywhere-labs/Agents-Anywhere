@@ -592,6 +592,13 @@
       "waitingForScan": "等待手机扫码"
     },
     "device": {
+      "deviceSettings": "设备设置",
+      "confirmQuitOnShutdown": "关机时询问是否退出",
+      "confirmQuitOnShutdownDescription": "开启后，电脑关机或重启时先弹窗确认再退出；关闭时直接退出，不阻止关机。",
+      "deviceSettingsPending": "已保存，设备上线后生效",
+      "deviceSettingsSaveFailed": "设备设置未保存",
+      "deviceSettingsLoadFailed": "无法读取设备设置。",
+      "deviceSettingsRetry": "重试",
       "sessionCount": "{count, plural, one {# 个会话} other {# 个会话}}",
       "newSession": "新会话",
       "active": "活跃",

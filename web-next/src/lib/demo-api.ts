@@ -36,6 +36,7 @@ export type ConnectorView = {
   userId: string
   name: string
   deviceOs?: "macos" | "windows" | "linux" | null
+  connectorKind?: "desktop" | "cli" | null
   status: ConnectorStatus
   lastSeenAt?: string | null
 }

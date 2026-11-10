@@ -88,6 +88,8 @@ type ConnectorSupervisorOptions = {
   onLog: (entry: ConnectorLogEntry) => void;
   onRuntimeLog?: (entry: ConnectorLogEntry) => void;
   onLogSourceChanged?: () => void;
+  /** The Connector reported device settings the server handed over. */
+  onDeviceSettings?: (settings: { confirmQuitOnShutdown: boolean }) => void;
   /** Test seam; production connects a Mesh to the Connector's Router. */
   connectControl?: (rendezvous: Rendezvous) => Promise<ConnectorChannel>;
 };
@@ -1066,6 +1068,7 @@ export class ConnectorSupervisor {
     | "startConnectorOnLaunch"
     | "silentLaunch"
     | "notificationsEnabled"
+    | "confirmQuitOnShutdown"
     | "uvPath"
     | "pythonPath"
     | "uvPypiIndexUrl"
@@ -1081,6 +1084,7 @@ export class ConnectorSupervisor {
       startConnectorOnLaunch: settings.startConnectorOnLaunch,
       silentLaunch: settings.silentLaunch,
       notificationsEnabled: settings.notificationsEnabled,
+      confirmQuitOnShutdown: settings.confirmQuitOnShutdown,
       uvPath: settings.uvPath,
       pythonPath: settings.pythonPath,
       uvPypiIndexUrl: settings.uvPypiIndexUrl,
@@ -1103,6 +1107,10 @@ export class ConnectorSupervisor {
     if (typeof next.configPath === "string") this.state.configPath = next.configPath;
     if (typeof next.runtimePath === "string") this.state.runtimePath = next.runtimePath;
     if (typeof next.logsPath === "string" && next.logsPath.trim()) this.state.logsPath = next.logsPath;
+    const deviceSettings = next.deviceSettings as Record<string, unknown> | null | undefined;
+    if (deviceSettings && typeof deviceSettings.confirmQuitOnShutdown === "boolean") {
+      this.options.onDeviceSettings?.({ confirmQuitOnShutdown: deviceSettings.confirmQuitOnShutdown });
+    }
     if (this.state.authFailed) this.clearRestartTimer();
     if (this.state.running) this.crashCount = 0;
     this.refreshBindingState();

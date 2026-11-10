@@ -305,6 +305,43 @@ nonisolated private final class InterceptingURLProtocol: URLProtocol, @unchecked
         }
     }
 
+    @Test func deviceSettingsRoutesBodiesAndRollbackMatchTheBackend() async throws {
+        let session = session(); defer { session.invalidateAndCancel() }
+        let api = V2APIClient(serverURL: URL(string: "https://example.test")!, tokenProvider: StaticAuthTokenProvider(token: "test-token"), urlSession: session)
+        let error = Data(#"{"detail":{"code":"validation_error","message":"Rejected"}}"#.utf8)
+        InterceptingURLProtocol.state.reset(try [
+            .response(200, fixtureData("deviceSettings")), .response(200, fixtureData("deviceSettingsSaved")),
+            .response(422, error),
+        ])
+        let model = DeviceSettingsModel()
+        let service = V2DeviceManagementService(connectorAPI: api.connectors)
+        await model.load(connectorId: "device", service: service)
+        #expect(model.settings?.confirmQuitOnShutdown == false && model.loadError == nil)
+        #expect(await model.setConfirmQuitOnShutdown(true, connectorId: "device", service: service) == .pendingDelivery,
+                "delivered=false is saved on the Server and applied once the device is online")
+        #expect(model.settings?.confirmQuitOnShutdown == true && !model.isSaving)
+        #expect(await model.setConfirmQuitOnShutdown(true, connectorId: "device", service: service) == nil, "An unchanged value sends nothing")
+        guard case .failed = await model.setConfirmQuitOnShutdown(false, connectorId: "device", service: service) else {
+            Issue.record("Expected the rejected write to fail"); return
+        }
+        #expect(model.settings?.confirmQuitOnShutdown == true, "A failed write puts the previous value back")
+
+        let requests = InterceptingURLProtocol.state.requests
+        #expect(requests.map(\.httpMethod) == ["GET", "PATCH", "PATCH"])
+        let routes: [[String: String]] = try JSONDecoder().decode([[String: String]].self, from: fixtureData("routes"))
+        for request in requests {
+            #expect(request.url?.path == "/api/v2/connectors/device/device-settings")
+            #expect(routes.contains { $0["method"] == request.httpMethod && $0["path"] == "/api/v2/connectors/{connector_id}/device-settings" })
+        }
+        #expect(requests[0].httpBody == nil)
+        let bodies = try fixtureObject("requests")
+        let body = try JSONDecoder().decode(JSONValue.self, from: #require(requests[1].httpBody))
+        let backend = try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: bodies["patchDeviceSettings"]!))
+        #expect(body == backend, "The patch differs from the backend model")
+        let omitted = try JSONEncoder().encode(V2ConnectorDeviceSettingsPatch(confirmQuitOnShutdown: nil))
+        #expect(try JSONDecoder().decode(JSONValue.self, from: omitted) == .object([:]), "Unchanged fields are omitted")
+    }
+
     private func query(_ request: URLRequest) -> [String: String] {
         Dictionary(uniqueKeysWithValues: URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!.map { ($0.name, $0.value ?? "") })
     }

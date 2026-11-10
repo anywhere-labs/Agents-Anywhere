@@ -30,6 +30,7 @@ import com.agentsanywhere.app.feature.devices.observingChanges
 import com.agentsanywhere.app.feature.devices.DevicePairingStatus
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
+import com.agentsanywhere.app.feature.devices.DeviceSettingsOperations
 import com.agentsanywhere.app.feature.files.FilesController
 import com.agentsanywhere.app.feature.modelconfig.ModelConfigController
 import com.agentsanywhere.app.feature.modelconfig.ModelConfigState
@@ -132,6 +133,7 @@ internal fun AgentsAnywhereNavHost(
     onDevicePairingComplete: () -> Unit,
     onListDeviceRuntimes: suspend (String) -> Result<DeviceRuntimeList>,
     deviceAgents: DeviceAgentOperations,
+    deviceSettings: DeviceSettingsOperations,
     onBulkSetSessionsArchived: suspend (List<String>, Boolean) -> Result<SessionBatchUpdate>,
     onArchiveAllDeviceSessions: suspend (String, Boolean, String) -> Result<List<AgentSession>>,
     onRenameSession: suspend (String, String) -> Result<AgentSession>,
@@ -371,6 +373,7 @@ internal fun AgentsAnywhereNavHost(
                     onDeleteDevice = onDeleteDevice,
                     onPrepareDeviceSetup = onPrepareDeviceSetup,
                     agentOperations = agentOperations,
+                    deviceSettings = deviceSettings,
                     agentsRefreshKey = agentSetupFinishedCount,
                     onBulkSetSessionsArchived = onBulkSetSessionsArchived,
                     onArchiveAllDeviceSessions = onArchiveAllDeviceSessions,
