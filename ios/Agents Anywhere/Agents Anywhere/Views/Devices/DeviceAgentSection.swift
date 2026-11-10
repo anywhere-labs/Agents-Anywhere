@@ -78,9 +78,12 @@ struct DeviceAgentSection: View {
                     DeviceStatusDot(tone: tone(runtime), isLoading: model.busyID == runtime.id)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(runtime.sessionDisplayName).font(.body.weight(.semibold)).lineLimit(1)
-                        Text(verbatim: "\(runtime.typeDisplayName) · \(statusLabel(runtime))")
-                            .font(.footnote).lineLimit(1)
-                            .foregroundStyle(tone(runtime) == .error ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                        HStack(spacing: 6) {
+                            Text(verbatim: "\(runtime.typeDisplayName) · \(statusLabel(runtime))")
+                                .font(.footnote).lineLimit(1)
+                                .foregroundStyle(tone(runtime) == .error ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                            RuntimeMaturityBadge(maturity: runtime.maturity)
+                        }
                     }
                     Spacer(minLength: 0)
                 }

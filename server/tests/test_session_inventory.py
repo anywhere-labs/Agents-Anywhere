@@ -171,19 +171,19 @@ def test_unchanged_source_fast_path_preserves_seq_archive_and_scan_order(tmp_pat
         # Repeated observations must not re-archive a session the user restored.
         from sqlalchemy import update
         async with store.engine.begin() as conn:
-            await conn.execute(update(sessions_t).where(sessions_t.c.id == session_id).values(archived=0, source_scan_token="current-scan"))
+            await conn.execute(update(sessions_t).where(sessions_t.c.id == session_id).values(archived=0, source_changed_seq=-1))
         observation = {"connector_id": connector_id, "runtime": first.runtime, "runtime_id": first.runtimeId,
             "availability": "archived", "reason": "archive", "observation_origin": "inventory"}
         assert await store.refresh_unchanged_session_source(session_id, observed_at="2026-09-11T00:00:00Z", **observation)
         async with store.engine.connect() as conn:
             row = (await conn.execute(select(sessions_t).where(sessions_t.c.id == session_id))).mappings().one()
-        assert row["source_scan_token"] == "current-scan"
+        assert row["source_changed_seq"] == -1
         assert row["source_state_at"] == "2026-09-11T00:00:01Z"
         assert row["updated_seq"] == initial_seq and row["archived"] == 0
         assert await store.refresh_unchanged_session_source(session_id, observed_at="2026-09-11T00:00:02Z", **observation)
         async with store.engine.connect() as conn:
             row = (await conn.execute(select(sessions_t).where(sessions_t.c.id == session_id))).mappings().one()
-        assert row["source_scan_token"] is None
+        assert row["source_changed_seq"] not in (None, -1)
         assert row["source_state_at"] == "2026-09-11T00:00:02Z"
         assert row["updated_seq"] == initial_seq and row["archived"] == 0
         observation["reason"] = "changed reason"
@@ -257,3 +257,188 @@ def test_inventory_derives_untitled_session_titles_in_constant_queries(tmp_path)
         # only, one transaction that stores the derived title.
         assert first_count <= 6
         assert second_count <= 3
+
+
+_COMPUTED_LATEST = """
+SELECT t.id, t.item_time, t.order_seq, t.updated_seq,
+       coalesce(nullif(CAST(t.payload_json AS json) ->> 'updatedAt', ''),
+                nullif(CAST(t.payload_json AS json) ->> 'completedAt', ''),
+                nullif(CAST(t.payload_json AS json) ->> 'createdAt', ''))
+FROM timeline_items AS t
+WHERE t.session_id = :session_id
+ORDER BY coalesce(t.item_time, '') DESC, t.order_seq DESC, t.updated_seq DESC
+LIMIT 1
+"""
+
+
+async def _latest_summary(store, session_id: str) -> tuple[tuple, tuple]:
+    """Return the stored summary and the one recomputed from timeline rows."""
+    from sqlalchemy import select, text
+
+    from agent_server.infra.db import sessions as sessions_t
+
+    async with store.engine.connect() as conn:
+        stored = (
+            await conn.execute(
+                select(
+                    sessions_t.c.latest_item_id,
+                    sessions_t.c.latest_item_time,
+                    sessions_t.c.latest_item_order_seq,
+                    sessions_t.c.latest_item_updated_seq,
+                    sessions_t.c.latest_item_at,
+                ).where(sessions_t.c.id == session_id)
+            )
+        ).one()
+        computed = (
+            await conn.execute(text(_COMPUTED_LATEST), {"session_id": session_id})
+        ).first()
+    return tuple(stored), tuple(computed) if computed else (None,) * 5
+
+
+def test_timeline_writes_keep_the_session_latest_item_summary_current(tmp_path):
+    with make_client(tmp_path) as client:
+        _, _, session_id, _ = create_connector_and_session(client)
+        store = client.app.state.store
+
+        def item(item_id: str, order_seq: int, item_time: str, **extra) -> TimelineItemIn:
+            return _timeline_item(
+                session_id, item_id, order_seq=order_seq, item_time=item_time
+            ).model_copy(update=extra)
+
+        async def check(expected_id: str | None) -> tuple:
+            stored, computed = await _latest_summary(store, session_id)
+            assert stored == computed
+            assert stored[0] == expected_id
+            return stored
+
+        async def run() -> None:
+            await check(None)
+            await store.sync_timeline_items(
+                session_id=session_id,
+                items=[
+                    item("a", 1, "2026-01-01T00:00:00Z"),
+                    item("b", 2, "2026-01-02T00:00:00Z"),
+                ],
+            )
+            await check("b")
+
+            # Updating the newest item moves its revision and display time.
+            await store.sync_timeline_items(
+                session_id=session_id,
+                items=[
+                    item(
+                        "b", 2, "2026-01-02T00:00:00Z",
+                        status="running",
+                        updatedAt="2026-01-03T00:00:00Z",
+                        contentHash="sha256:b2",
+                    )
+                ],
+            )
+            stored = await check("b")
+            assert stored[4] == "2026-01-03T00:00:00Z"
+
+            # An update to an older item leaves the summary on the newest one.
+            await store.upsert_timeline_item(
+                session_id=session_id,
+                item=item("a", 1, "2026-01-01T00:00:00Z", contentHash="sha256:a2"),
+            )
+            await check("b")
+
+            # A snapshot that drops the newest item falls back to the older
+            # stored row, whose display time is read from its payload.
+            await store.replace_timeline_snapshot(
+                session_id=session_id,
+                items=[item("a", 1, "2026-01-01T00:00:00Z", contentHash="sha256:a2")],
+            )
+            stored = await check("a")
+            assert stored[4] == "2026-01-01T00:00:00Z"
+
+            await store.replace_timeline_snapshot(session_id=session_id, items=[])
+            await check(None)
+
+        asyncio.run(run())
+
+
+def test_session_lists_do_not_read_timeline_rows(tmp_path):
+    from sqlalchemy import event
+
+    with make_client(tmp_path) as client:
+        connector_id, _, first_id, headers = create_connector_and_session(client)
+        second_id = _create_extra_session(client, headers, connector_id, "second", title="Second")
+        store = client.app.state.store
+
+        async def seed() -> None:
+            for session_id in (first_id, second_id):
+                await store.sync_timeline_items(
+                    session_id=session_id,
+                    items=[
+                        _timeline_item(
+                            session_id, f"tl_{session_id}", order_seq=1,
+                            item_time="2026-01-01T00:00:00Z",
+                        )
+                    ],
+                )
+
+        asyncio.run(seed())
+        user_id = client.get("/auth/me", headers=headers).json()["userId"]
+        asyncio.run(store.list_session_inventory(user_id=user_id))
+        statements: list[str] = []
+
+        def record(_conn, _cursor, statement, *_args) -> None:
+            statements.append(statement)
+
+        sync_engine = store.engine.sync_engine
+        event.listen(sync_engine, "before_cursor_execute", record)
+        try:
+            inventory = asyncio.run(store.list_session_inventory(user_id=user_id))
+            page, _, _ = asyncio.run(
+                store.list_sessions_page(archived=False, user_id=user_id)
+            )
+        finally:
+            event.remove(sync_engine, "before_cursor_execute", record)
+
+        assert {session.id for session in inventory} == {first_id, second_id}
+        assert {session.id for session in page} == {first_id, second_id}
+        assert all(session.lastItemOrderSeq == 1 for session in inventory)
+        assert statements
+        assert not [statement for statement in statements if "timeline_items" in statement]
+
+
+def test_goal_markers_update_the_session_latest_item_summary(tmp_path):
+    with make_client(tmp_path) as client:
+        connector_id, _, session_id, _ = create_connector_and_session(client)
+        store = client.app.state.store
+
+        async def run() -> None:
+            await store.sync_timeline_items(
+                session_id=session_id,
+                items=[
+                    _timeline_item(
+                        session_id, "before_goal", order_seq=1,
+                        item_time="2026-01-01T00:00:00Z",
+                    )
+                ],
+            )
+            session = await store.get_session(session_id)
+            await store.save_goal(
+                session_id,
+                {
+                    "runtime": session.runtime,
+                    "runtimeId": session.runtimeId,
+                    "externalSessionId": session.externalSessionId,
+                    "sourceEpoch": "epoch",
+                    "sourceRevision": 1,
+                    "goal": {
+                        "id": "goal_1", "status": "active", "objective": "Ship",
+                        "createdAt": "2026-01-02T00:00:00Z",
+                        "updatedAt": "2026-01-02T00:00:00Z",
+                    },
+                },
+                connector_id=connector_id,
+            )
+            stored, computed = await _latest_summary(store, session_id)
+            assert stored == computed
+            assert stored[0].startswith("goal_")
+            assert stored[2] == 2
+
+        asyncio.run(run())

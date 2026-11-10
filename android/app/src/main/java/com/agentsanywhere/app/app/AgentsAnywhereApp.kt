@@ -41,6 +41,10 @@ import com.agentsanywhere.app.feature.devices.DevicesController
 import com.agentsanywhere.app.feature.devices.DevicePairingMonitor
 import com.agentsanywhere.app.feature.files.FilesController
 import com.agentsanywhere.app.feature.realtime.DashboardRealtimeController
+import com.agentsanywhere.app.feature.modelconfig.ModelConfigController
+import com.agentsanywhere.app.feature.modelconfig.ModelConfigState
+import com.agentsanywhere.app.feature.modelconfig.toModelConfigState
+import com.agentsanywhere.app.api.ModelConfigApi
 import com.agentsanywhere.app.feature.realtime.RealtimeClientIdStore
 import com.agentsanywhere.app.feature.realtime.SessionRealtimeController
 import com.agentsanywhere.app.feature.sessions.SessionsController
@@ -146,6 +150,12 @@ fun AgentsAnywhereApp(
             sessionStore = sessionStore,
         )
     }
+    val modelConfigController = remember(sessionStore, apiClient) {
+        ModelConfigController(
+            api = ModelConfigApi(apiClient),
+            sessionStore = sessionStore,
+        )
+    }
     val devicesController = remember(context, sessionStore, apiClient) {
         DevicesController(
             devicesApi = DevicesApi(apiClient),
@@ -209,6 +219,7 @@ fun AgentsAnywhereApp(
             }.sortedWith(com.agentsanywhere.app.feature.sessions.sessionListComparator(now)))
         }
     }
+    var modelConfigState by remember(sessionsController) { mutableStateOf(ModelConfigState()) }
     var isRefreshingSessions by remember { mutableStateOf(false) }
     var projectSessionsById by remember { mutableStateOf<Map<String, List<AgentSession>>>(emptyMap()) }
     var loadingProjectRequests by remember { mutableStateOf<Set<ProjectSessionLoadKey>>(emptySet()) }
@@ -263,6 +274,7 @@ fun AgentsAnywhereApp(
         appUpdateViewModel.syncSession(false)
         remoteTerminalPool.disposeLocal()
         sessionsState = SessionsState()
+        modelConfigState = ModelConfigState()
         isRefreshingSessions = false
         projectSessionsById = emptyMap()
         loadingProjectRequests = emptySet()
@@ -466,6 +478,7 @@ fun AgentsAnywhereApp(
     ) {
         if (!hasAuthSession) {
             sessionsState = SessionsState()
+            modelConfigState = ModelConfigState()
             return@LaunchedEffect
         }
         if (!appVisible) return@LaunchedEffect
@@ -480,6 +493,7 @@ fun AgentsAnywhereApp(
                     sessionsState = sessionsState.replacedByDashboardSnapshot(
                         sessionsController.dashboardSnapshotState(snapshot),
                     )
+                    modelConfigState = snapshot.toModelConfigState()
                 }
             },
             onInitialFailure = {
@@ -508,6 +522,8 @@ fun AgentsAnywhereApp(
     AgentsAnywhereNavHost(
         currentDestination = currentDestination,
         sessionsState = sessionsState,
+        modelConfigState = modelConfigState,
+        modelConfigController = modelConfigController,
         isRefreshingSessions = isRefreshingSessions,
         selectedSessionId = selectedSessionId,
         preparedSessionDraft = preparedSessionDraft,
@@ -665,6 +681,7 @@ fun AgentsAnywhereApp(
             }
         },
         deviceAgents = devicesController,
+        deviceSettings = devicesController,
         onBulkSetSessionsArchived = { ids, archived ->
             if (!hasAuthSession) {
                 Result.failure(IllegalStateException("Sign in again to update sessions."))

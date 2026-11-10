@@ -1896,6 +1896,20 @@ fun SessionDetailScreen(
                                         onSelect = ::chooseCommand,
                                     )
                                 }
+                                val recoveryGeneration = state.runtime.metadata["ownerGeneration"] as? String
+                                if (state.runtime.metadata["nativeHistory"] != true && sessionId != null && !recoveryGeneration.isNullOrEmpty() &&
+                                    state.capabilities.find("session.recover", runtimeId, runtimeType)?.let {
+                                        it.supported && it.available && (it.allowed || it.unavailableReason == "session_not_taken_over")
+                                    } == true
+                                ) {
+                                    AgentRecoveryControls(
+                                        sessionId = sessionId,
+                                        generation = recoveryGeneration,
+                                        enabled = connectorOnline,
+                                        onRecover = { body -> controller.nativeHistoryAction(sessionId, body, false) },
+                                        onSettled = { loadInitialSnapshot() },
+                                    )
+                                }
                                 if (state.runtime.metadata["nativeHistory"] == true && sessionId != null) {
                                     NativeHistoryControls(
                                         sessionId = sessionId,

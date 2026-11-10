@@ -73,6 +73,19 @@ export type SessionSnapshotRequestOptions = {
   reason?: string;
 };
 
+/** User-chosen device settings; see docs/api/device-settings.md. */
+export type ConnectorDeviceSettings = {
+  confirmQuitOnShutdown: boolean;
+};
+
+export type ConnectorDeviceSettingsResponse = {
+  connectorId: string;
+  settings: ConnectorDeviceSettings;
+  /** Only set by a write: whether the online device confirmed the change. */
+  delivered: boolean | null;
+  serverTime: string;
+};
+
 export class DashboardApi {
   constructor(private readonly client: ApiClient = apiClient) {}
 
@@ -212,6 +225,25 @@ export class DashboardApi {
 
   listSessionInventory(token: string): Promise<Pick<SessionListResponse, "sessions" | "serverTime">> {
     return this.client.get("/sessions/list", { token });
+  }
+
+  getConnectorDeviceSettings(token: string, connectorId: string): Promise<ConnectorDeviceSettingsResponse> {
+    return this.client.get<ConnectorDeviceSettingsResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/device-settings`,
+      { token },
+    );
+  }
+
+  updateConnectorDeviceSettings(
+    token: string,
+    connectorId: string,
+    body: Partial<ConnectorDeviceSettings>,
+  ): Promise<ConnectorDeviceSettingsResponse> {
+    return this.client.patch<ConnectorDeviceSettingsResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/device-settings`,
+      body,
+      { token },
+    );
   }
 
   archiveConnectorSessions(

@@ -36,6 +36,36 @@ class ConnectorRepositoryMixin:
                 raise KeyError(connector_id)
         return preferences
 
+    async def get_connector_device_settings(self, connector_id: str) -> dict[str, Any]:
+        async with read_connection(self._engine) as conn:
+            row = (
+                await conn.execute(
+                    select(connectors_t.c.device_settings).where(
+                        connectors_t.c.id == connector_id,
+                        connectors_t.c.revoked == 0,
+                    )
+                )
+            ).first()
+        if row is None:
+            raise KeyError(connector_id)
+        value = _json_loads(row.device_settings)
+        return value if isinstance(value, dict) else {}
+
+    async def update_connector_device_settings(
+        self,
+        connector_id: str,
+        settings: dict[str, Any],
+    ) -> dict[str, Any]:
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                update(connectors_t)
+                .where(connectors_t.c.id == connector_id, connectors_t.c.revoked == 0)
+                .values(device_settings=_json_dumps(settings), updated_at=utc_now())
+            )
+            if result.rowcount == 0:
+                raise KeyError(connector_id)
+        return settings
+
     async def record_fs_preview_token(
         self,
         *,
@@ -476,6 +506,13 @@ class ConnectorRepositoryMixin:
                 raise KeyError(connector_id)
         return await self.get_connector(connector_id)
 
+
+    async def list_user_connector_ids(self, user_id: str) -> list[str]:
+        """Every connector the user owns, including revoked and pending ones."""
+        async with self._engine.connect() as conn:
+            return list((await conn.execute(
+                select(connectors_t.c.id).where(connectors_t.c.user_id == user_id)
+            )).scalars())
 
     async def pending_connector_deletions(self) -> list[tuple[str, str]]:
         async with read_connection(self._engine) as conn:

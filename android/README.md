@@ -56,6 +56,33 @@ prevents an in-place update of an installed app signed with another key.
 `local.properties` remains machine-specific and ignored. The manifest allows
 HTTP for local/self-hosted addresses; use HTTPS for public service endpoints.
 
+## 内置登录页视口回归
+
+内置浏览器直接加载 `app/src/main/assets/web-login-viewport.js`，对顶层页面及跳转后的
+身份提供方修正视口高度；API 请求重写仍仅注册到登录站点的 origin。
+整屏登录层继续补高度，内部登录卡片仅在高度为零且有可见内容时补高度；普通容器还需确实
+裁剪内容才修复，保留正常页头、页脚、卡片、悬浮层锚点和空挂载点的布局。
+登录 URL 和第三方 console 不转发到应用日志。
+
+在仓库根目录运行隔离检查：
+
+```bash
+docker build -t aa-web-login-test -f android/scripts/Dockerfile.web-login-test .
+docker run --rm --network none \
+  --mount type=bind,src="$PWD",dst=/workspace,readonly \
+  aa-web-login-test
+```
+
+入口先检查 Chromium、脚本读取和 JavaScript 语法；工具缺失或语法错误时输出
+`{"doctor":"failed",...}`，以状态码 1 退出。各用例与汇总输出 JSON，任一失败即返回 1。
+可用 `CHROMIUM_PATH` 指定浏览器，用 `AA_WEBVIEW_SCRIPT` 指向待验证的脚本版本。
+JVM 单测 `WebLoginModelsTest` 验证生产注册函数：视口脚本允许所有源，API 桥接仅允许
+当前登录源（包括自建站点的端口），非法来源在任何脚本注册前被拒绝。
+
+浏览器夹具覆盖正常布局、塌陷恢复、Shadow DOM、延迟布局、异步表单、iframe 和日志。
+这些验证不依赖真实账号，不代表真机 WebView、OAuth 跳转、软键盘或旋转已验收。
+APK 构建和 JVM 单测也必须在容器或虚机内执行。
+
 ## Application updates
 
 After entering the signed-in app, Android reads the saved server's

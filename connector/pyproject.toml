@@ -13,8 +13,9 @@ dependencies = [
     "jsonschema>=4.26.0",
     "loguru>=0.7.3",
     "meshcall==0.3.0",
-    "openai-codex>=0.144.4",
-    "openai-codex-cli-bin>=0.144.4",
+    # 0.166 and 0.167 refuse threads off the default provider (openai/codex#57840).
+    "openai-codex>=0.144.4,!=0.166.*,!=0.167.*",
+    "openai-codex-cli-bin>=0.144.4,!=0.166.*,!=0.167.*",
     "pexpect>=4.9.0; sys_platform != 'win32'",
     "psutil>=7.2.2",
     "ptyprocess>=0.7.0; sys_platform != 'win32'",

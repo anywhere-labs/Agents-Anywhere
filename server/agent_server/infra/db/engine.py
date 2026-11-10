@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+
+from anyio import CancelScope
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
@@ -131,3 +133,32 @@ def _env_float(name: str, default: float, *, minimum: float) -> float:
     if value < minimum:
         raise ValueError(f"{name} must be at least {minimum}")
     return value
+
+
+@asynccontextmanager
+async def closing_connection(
+    engine: AsyncEngine, *, write: bool = False
+) -> AsyncIterator[AsyncConnection]:
+    """Finish transaction cleanup in the owning task before its ASGI scope exits.
+
+    AsyncConnection.__aexit__ detaches close into another task. A short-lived
+    ASGI portal can cancel that child before rollback completes. Close directly,
+    shielding cleanup only; queries and caller work remain cancellable.
+    """
+    connection = await engine.connect()
+    try:
+        if write:
+            await connection.begin()
+        try:
+            yield connection
+        except BaseException:
+            with CancelScope(shield=True):
+                await connection.rollback()
+            raise
+        else:
+            if write:
+                with CancelScope(shield=True):
+                    await connection.commit()
+    finally:
+        with CancelScope(shield=True):
+            await connection.close()

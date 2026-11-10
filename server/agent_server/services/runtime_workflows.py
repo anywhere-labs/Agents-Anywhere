@@ -3,10 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 from pydantic import ValidationError
 
+from agent_server.core.protocol import ProtocolModelCatalog
 from agent_server.core.runtime_workflows import (
     BeginCreationRequest,
     PrepareWorkspaceRequest,
@@ -51,12 +53,19 @@ class RuntimeWorkflowService:
         store: WorkflowRepository,
         rpc: WorkflowRpc,
         runtimes: DeviceRuntimeService,
+        *,
+        prepare_model_channel: Callable[..., Awaitable[str]] | None = None,
+        model_channel_catalog: Callable[..., Awaitable[ProtocolModelCatalog]] | None = None,
     ) -> None:
         self.store, self.rpc, self.runtimes = store, rpc, runtimes
+        self.prepare_model_channel = prepare_model_channel
+        self.model_channel_catalog = model_channel_catalog
 
     async def prepare(
         self, payload: PrepareWorkspaceRequest, *, user_id: str
     ) -> WorkflowView:
+        if self.prepare_model_channel is not None:
+            payload.runtimeId = await self.prepare_model_channel(payload.connectorId, payload.runtimeId, user_id=user_id)
         runtime = await self.runtimes.get_runtime(
             payload.connectorId, payload.runtimeId, user_id=user_id
         )
@@ -123,6 +132,10 @@ class RuntimeWorkflowService:
         prep = await self.store.get_runtime_workflow(
             payload.preparationId, user_id=user_id, kind="preparation"
         )
+        if self.prepare_model_channel is not None:
+            resolved = await self.prepare_model_channel(prep["connector_id"], prep["runtime_id"], user_id=user_id)
+            if resolved != prep["runtime_id"]:
+                raise WorkflowError("preparation_stale", "The model channel changed; prepare the workspace again.")
         request = payload.model_dump(exclude_none=True)
         if not payload.attachments:
             request.pop("attachments", None)
@@ -261,6 +274,10 @@ class RuntimeWorkflowService:
             raise WorkflowError(
                 "invalid_runtime_response", "Runtime 返回的操作结果无效。", 502
             )
+        if result.get("catalog") is not None and self.model_channel_catalog is not None:
+            catalog = ProtocolModelCatalog.model_validate(result["catalog"])
+            result = {**result, "catalog": (await self.model_channel_catalog(row["connector_id"], row["runtime_id"],
+                       catalog, user_id=row["user_id"])).model_dump(mode="json")}
         if "catalog" in result:
             try:
                 WorkflowState.model_validate(result)

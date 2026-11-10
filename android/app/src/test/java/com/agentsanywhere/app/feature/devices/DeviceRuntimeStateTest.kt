@@ -44,4 +44,29 @@ class DeviceRuntimeStateTest {
         assertEquals(true, runtimes.withRuntime(runtime("b").copy(active = true)).last().active)
         assertEquals(listOf("a", "b", "c"), runtimes.withRuntime(runtime("c")).map { it.id })
     }
+
+    @Test
+    fun savingLeavesOutABlankGatewayKeySoTheServerKeepsIt() {
+        val draft = runtime("pi").copy(
+            schema = mapOf("properties" to mapOf("modelGateway" to emptyMap<String, Any?>())),
+            config = mapOf(
+                "modelGateway" to mapOf("baseUrl" to "https://gate.example/v1", "apiKey" to "  "),
+                "other" to mapOf("apiKey" to null),
+            ),
+        ).toConfigDraft()
+
+        val config = draft.toConfig()
+
+        assertEquals(mapOf("baseUrl" to "https://gate.example/v1"), config["modelGateway"])
+        assertEquals(emptyMap<String, Any?>(), config["other"])
+    }
+
+    @Test
+    fun savingKeepsAnEnteredGatewayKeyAndConfigWithoutOne() {
+        val entered = mapOf("modelGateway" to mapOf("baseUrl" to "https://gate.example/v1", "apiKey" to "sk-new"))
+        assertEquals(entered, withoutBlankSecrets(entered))
+
+        val redacted = mapOf("modelGateway" to mapOf("baseUrl" to "https://gate.example/v1"))
+        assertEquals(redacted, withoutBlankSecrets(redacted))
+    }
 }

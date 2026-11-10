@@ -83,3 +83,21 @@ test("the Connector network setting keeps usable values and follows the system o
     assert.equal(store.save({ connectorProxy: value }).connectorProxy, "");
   }
 });
+
+test("shutdown confirmation is off by default and only the Connector's device settings change it", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "aa-desktop-device-settings-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const filePath = path.join(directory, "desktop-settings.json");
+
+  const store = new DesktopSettingsStore(filePath);
+  assert.equal(store.get().confirmQuitOnShutdown, false);
+
+  // A local settings save cannot turn it on; the server owns it.
+  store.save({ confirmQuitOnShutdown: true } as never);
+  assert.equal(store.get().confirmQuitOnShutdown, false);
+
+  assert.equal(store.saveDeviceSettings({ confirmQuitOnShutdown: true }), true);
+  assert.equal(store.saveDeviceSettings({ confirmQuitOnShutdown: true }), false);
+  // The last value survives a restart, so an offline shutdown follows it.
+  assert.equal(new DesktopSettingsStore(filePath).get().confirmQuitOnShutdown, true);
+});

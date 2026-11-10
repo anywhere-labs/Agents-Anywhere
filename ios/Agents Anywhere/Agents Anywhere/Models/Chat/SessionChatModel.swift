@@ -40,7 +40,7 @@ final class SessionChatModel {
     var settingsError: String?
     private(set) var nativeHistoryBusy = false
     var nativeHistoryError: String?
-    @ObservationIgnored private var nativeRecovery: (id: String, generation: String, revision: String)?
+    @ObservationIgnored private var nativeRecovery: (id: String, generation: String, revision: String?)?
     var hasNativeRecovery: Bool { nativeRecovery != nil }
     private(set) var isOpeningPrepared = false
     var isOpeningReady: Bool { isOpeningPrepared && timeline.hasPresentedSnapshot }
@@ -296,8 +296,10 @@ final class SessionChatModel {
         defer { nativeHistoryBusy = false }
         do {
             if nativeRecovery == nil {
-                guard let generation = state.metadata["ownerGeneration"]?.stringValue,
-                      let revision = state.metadata["sourceRevision"]?.stringValue else { return }
+                guard let generation = state.metadata["ownerGeneration"]?.stringValue else { return }
+                // Only native history binds recovery to a source revision.
+                let revision = state.metadata["sourceRevision"]?.stringValue
+                if state.metadata["nativeHistory"] == .bool(true), revision == nil { return }
                 if session.metadata?.takeover != true { try await repository.setTakeover(sessionId: session.id, enabled: true) }
                 nativeRecovery = (UUID().uuidString, generation, revision)
             }

@@ -10,6 +10,7 @@ struct V2APIClient {
     let planning: V2PlanningAPI
     let runtime: V2RuntimeAPI
     let attachments: V2AttachmentAPI
+    let modelConfig: V2ModelConfigAPI
     let realtime: V2RealtimeAPI
     private let ownedURLSession: URLSession?
 
@@ -34,6 +35,7 @@ struct V2APIClient {
         goals = V2GoalAPI(transport: transport)
         planning = V2PlanningAPI(transport: transport)
         attachments = V2AttachmentAPI(transport: transport)
+        modelConfig = V2ModelConfigAPI(transport: transport)
         realtime = V2RealtimeAPI(
             serverURL: serverURL,
             transport: transport,

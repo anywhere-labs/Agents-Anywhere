@@ -48,6 +48,9 @@ import com.agentsanywhere.app.feature.devices.DeviceDetailState
 import com.agentsanywhere.app.feature.devices.DeviceAgentOperations
 import com.agentsanywhere.app.feature.devices.deviceDetailState
 import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
+import com.agentsanywhere.app.feature.devices.DeviceSettingsOperations
+import com.agentsanywhere.app.feature.devices.DeviceSettingsState
+import com.agentsanywhere.app.feature.devices.hasDeviceSettings
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.feature.sessions.SessionBatchUpdate
 import com.agentsanywhere.app.model.AgentDevice
@@ -80,6 +83,7 @@ fun DeviceDetailScreen(
     onDeleteDevice: suspend (String) -> Result<Unit>,
     onPrepareDeviceSetup: suspend (String) -> Result<DeviceSetupCredential>,
     agentOperations: DeviceAgentOperations,
+    deviceSettings: DeviceSettingsOperations,
     /** Changes when Agents may have changed elsewhere, e.g. in the setup sheet over this page. */
     agentsRefreshKey: Long = 0L,
     onBulkSetSessionsArchived: suspend (List<String>, Boolean) -> Result<SessionBatchUpdate>,
@@ -108,11 +112,43 @@ fun DeviceDetailScreen(
     var sessionBulkBusy by remember { mutableStateOf(false) }
     var sessionBulkMessage by remember { mutableStateOf<String?>(null) }
     var pendingArchiveAll by remember { mutableStateOf<DeviceArchiveAllRequest?>(null) }
+    val settingsDeviceId = detail.device?.takeIf { it.hasDeviceSettings }?.id
+    var deviceSettingsState by remember(settingsDeviceId) { mutableStateOf(DeviceSettingsState()) }
 
     fun showToast(message: String, isError: Boolean = false) {
         scope.launch {
             snackbarHostState.currentSnackbarData?.dismiss()
             snackbarHostState.showSnackbar(AAToastVisuals(message = message, isError = isError))
+        }
+    }
+
+    suspend fun loadDeviceSettings(connectorId: String) {
+        deviceSettingsState = deviceSettingsState.loadStarted()
+        deviceSettings.getDeviceSettings(connectorId)
+            .onSuccess { result -> deviceSettingsState = deviceSettingsState.loaded(result) }
+            .onFailure { deviceSettingsState = deviceSettingsState.loadFailed() }
+    }
+
+    LaunchedEffect(settingsDeviceId) {
+        settingsDeviceId?.let { loadDeviceSettings(it) }
+    }
+
+    fun setConfirmQuitOnShutdown(connectorId: String, value: Boolean) {
+        if (!deviceSettingsState.canEdit) return
+        val previous = deviceSettingsState.settings
+        deviceSettingsState = deviceSettingsState.saveStarted(value)
+        scope.launch {
+            deviceSettings.updateDeviceSettings(connectorId, value)
+                .onSuccess { result ->
+                    deviceSettingsState = deviceSettingsState.saved(result)
+                    if (result.delivered == false) {
+                        showToast(context.getString(R.string.device_settings_saved_offline))
+                    }
+                }
+                .onFailure { error ->
+                    deviceSettingsState = deviceSettingsState.saveFailed(previous)
+                    showToast(error.message ?: context.getString(R.string.device_settings_save_failed), isError = true)
+                }
         }
     }
 
@@ -220,6 +256,15 @@ fun DeviceDetailScreen(
                                 online = detail.device.online,
                                 onMessage = ::showToast,
                                 scope = scope,
+                            )
+                        }
+                    }
+                    settingsDeviceId?.let { connectorId ->
+                        item("device-settings") {
+                            DeviceSettingsSection(
+                                state = deviceSettingsState,
+                                onConfirmQuitOnShutdownChange = { setConfirmQuitOnShutdown(connectorId, it) },
+                                onRetry = { scope.launch { loadDeviceSettings(connectorId) } },
                             )
                         }
                     }

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 from collections.abc import Callable, Mapping
 from contextlib import suppress
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -24,12 +26,17 @@ from connector.runtime_protocol import (
     RuntimeSupervisor as AgentRuntimeSupervisor,
 )
 from connector.runtime_protocol.host import UploadProgress
+from connector.runtime_protocol.switch_fence import (
+    RuntimeSwitchFenceStore,
+    safe_file_stem,
+)
 from connector.runtimes import default_runtime_providers
 from connector.server.auth import ConnectorAuthenticationError, ConnectorAuthenticator
 from connector.server.capabilities import protocol_capabilities_from_runtime_types
 from connector.server.dispatch import (
     ConnectorRequestDispatcher,
     ConnectorRequestSession,
+    DeviceSettingsSink,
 )
 from connector.server.errors import ConnectorNetworkError
 from connector.server.ingest import ConnectorIngestClient
@@ -42,6 +49,7 @@ from connector.server.rpc import ConnectorRpcChannel, ConnectorWebSocketFrameToo
 from connector.server.runtime_host import ConnectorRuntimeHost
 from connector.server.runtime_rpc_payloads import (
     DeferredServerPayload,
+    model_connection_result,
     server_payload_without_turn_data,
 )
 from connector.server.runtime_sync import RuntimeSyncRunner
@@ -71,6 +79,7 @@ class BackendRpcClient:
         agent_runtime_host: RuntimeHostClient | None = None,
         preferences_reader: Callable[[], dict[str, Any]] | None = None,
         sync_state_store: SyncStateStore | None = None,
+        device_settings_sink: DeviceSettingsSink | None = None,
     ) -> None:
         self.config = config
         self.sync_state_store = sync_state_store
@@ -93,6 +102,9 @@ class BackendRpcClient:
             providers=agent_runtime_providers,
             host=self.agent_runtime_host,
             status_sink=self._publish_agent_runtime_status,
+            switch_fence=RuntimeSwitchFenceStore(
+                lambda: runtime_switch_directory(config)
+            ),
         )
         self._preferences_reader = preferences_reader or read_local_preferences
         self.local_ops = create_local_ops(notify=self.send_backend_notification)
@@ -128,6 +140,7 @@ class BackendRpcClient:
             upload_prepared_download=self.upload_prepared_download,
             start_terminal_relay=self.start_terminal_relay,
             schedule_background=self._schedule_background,
+            device_settings_sink=device_settings_sink,
         )
         self._runtime_sync = RuntimeSyncRunner(
             config=config,
@@ -137,8 +150,13 @@ class BackendRpcClient:
             send_notification=self.send_backend_notification,
             ingest_notifications=self.ingest_notifications,
             flush_sync_state=self._flush_sync_state,
+            ingest_snapshot=self.ingest_snapshot,
         )
         self._runtime_sync_task: asyncio.Task[None] | None = None
+
+    def _reconnect_delay(self) -> float:
+        """Stop connectors dropped together from reconnecting in lockstep."""
+        return self.config.reconnect_seconds * random.uniform(1, 2)
 
     async def run_forever(self) -> None:
         await self._egress.refresh()
@@ -179,34 +197,34 @@ class BackendRpcClient:
                             "connector credential no longer valid"
                         )
                     logger.warning(
-                        "backend websocket closed code={} reason={!r}; reconnecting in {}s",
+                        "backend websocket closed code={} reason={!r}; reconnecting in at least {}s",
                         close_code,
                         close_reason,
                         self.config.reconnect_seconds,
                     )
-                    await asyncio.sleep(self.config.reconnect_seconds)
+                    await asyncio.sleep(self._reconnect_delay())
                 except ConnectorNetworkError as exc:
                     logger.warning(
-                        "connector backend network unavailable error={}; reconnecting in {}s",
+                        "connector backend network unavailable error={}; reconnecting in at least {}s",
                         exc,
                         self.config.reconnect_seconds,
                     )
-                    await asyncio.sleep(self.config.reconnect_seconds)
+                    await asyncio.sleep(self._reconnect_delay())
                 except OSError as exc:
                     logger.warning(
-                        "connector backend connection failed error={}; reconnecting in {}s",
+                        "connector backend connection failed error={}; reconnecting in at least {}s",
                         certificate_hint(exc, self.config.server_url) or exc,
                         self.config.reconnect_seconds,
                     )
-                    await asyncio.sleep(self.config.reconnect_seconds)
+                    await asyncio.sleep(self._reconnect_delay())
                 except Exception:
                     if ingest_flush_task.done():
                         raise
                     logger.exception(
-                        "connector loop failed; reconnecting in {}s",
+                        "connector loop failed; reconnecting in at least {}s",
                         self.config.reconnect_seconds,
                     )
-                    await asyncio.sleep(self.config.reconnect_seconds)
+                    await asyncio.sleep(self._reconnect_delay())
         finally:
             relay_tasks = [task for _, task in self._terminal_relay_tasks.values()]
             for task in relay_tasks:
@@ -421,6 +439,8 @@ class BackendRpcClient:
         status: str,
         error: Mapping[str, Any] | None,
         phase: Mapping[str, Any] | None = None,
+        model_connection: Mapping[str, Any] | None = None,
+        config_digest: str | None = None,
     ) -> None:
         payload: dict[str, Any] = {
             "runtime": runtime_type,
@@ -431,6 +451,12 @@ class BackendRpcClient:
             payload["error"] = error
         if phase is not None:
             payload["phase"] = phase
+        if model_connection is not None:
+            # Adapters that apply the connection after start (DSH) report it here.
+            payload["modelConnection"] = model_connection
+        if config_digest is not None:
+            # Matches the switch the Server verifies against the loaded config.
+            payload["configDigest"] = config_digest
         await self.send_notification("runtime.statusChanged", payload)
 
     async def _publish_agent_runtime_status(
@@ -442,7 +468,13 @@ class BackendRpcClient:
     ) -> None:
         entry = self.agent_runtime_supervisor.entry(runtime_id)
         await self._publish_runtime_status(
-            entry.runtime_type, runtime_id, status, error, phase
+            entry.runtime_type,
+            runtime_id,
+            status,
+            error,
+            phase,
+            model_connection_result(entry).get("modelConnection"),
+            self.agent_runtime_supervisor.config_digest(runtime_id),
         )
 
     async def ingest_snapshot(self, *args, **kwargs) -> None:
@@ -559,3 +591,14 @@ def _close_reason(exc: ConnectionClosed) -> str:
 
 def main() -> None:
     asyncio.run(BackendRpcClient(ConnectorConfig.load()).run_forever())
+
+
+def runtime_switch_directory(config: ConnectorConfig) -> Path:
+    """Where the last accepted runtime switch per instance is kept."""
+
+    state_path = Path(config.state_path or JsonSyncStateStore.default_path())
+    return (
+        state_path.expanduser().parent
+        / "runtime-switch"
+        / safe_file_stem(config.connector_id or "default")
+    )

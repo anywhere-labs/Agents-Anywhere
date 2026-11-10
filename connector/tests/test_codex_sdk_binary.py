@@ -253,3 +253,45 @@ def test_windows_script_version_failure_falls_back(monkeypatch, suffix):
     )
     assert selection.source == "sdk_bundled"
     assert "exited with code 7" in selection.reason
+
+
+@pytest.mark.parametrize(
+    ("version", "rejects"),
+    [
+        ("0.163.0", False),
+        ("0.166.0", True),
+        ("0.167.0", True),
+        ("0.167.0-alpha.4.1", True),
+        ("0.168.0-alpha.6", True),
+        ("0.168.0-alpha.7", False),
+        ("0.168.0", False),
+        ("0.169.0-alpha.1", False),
+    ],
+)
+def test_codex_versions_that_reject_other_thread_providers(version, rejects):
+    assert binary.codex_rejects_other_thread_providers(version) is rejects
+
+
+@pytest.mark.parametrize("model_gateway", [False, True])
+def test_gateway_avoids_codex_that_rejects_other_thread_providers(
+    monkeypatch, model_gateway
+):
+    monkeypatch.setattr(binary, "find_executable_on_path", lambda *_: "codex.exe")
+
+    def run(command, **kwargs):
+        kwargs["stdout"].write(b"codex-cli 0.167.0\n")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(binary.subprocess, "run", run)
+    selection = binary.select_codex_runtime_binary(
+        "prefer_system",
+        {},
+        binary.LoginShellPathResult(None, None),
+        model_gateway=model_gateway,
+    )
+    if model_gateway:
+        assert selection.source == "sdk_bundled"
+        assert "0.167.0" in selection.reason
+    else:
+        assert selection.source == "system"
+        assert selection.codex_bin == "codex.exe"
