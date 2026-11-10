@@ -232,7 +232,7 @@ test('a runtime offers retry only after a failed switch, and says why it cannot 
   assert.deepEqual(retried, ['c/claude'])
 })
 
-test('a linked Tokens Anywhere account offers to be applied, signs out and counts its runtimes', async (t) => {
+test('a linked Tokens Anywhere account has no apply button, signs out and counts its runtimes', async (t) => {
   const container = await renderTab(t, { secretConfigured: true, profiles: [tokensProfile], assignments: [], tokens: linked, channel: channelState([
     row('c', 'codex', 'pending', { desired: 'native', actual: 'tokens' }),
   ], { channel: 'native' }) })
@@ -240,7 +240,7 @@ test('a linked Tokens Anywhere account offers to be applied, signs out and count
   await click(navItem(container, 'Tokens Anywhere'))
   const pane = container.querySelector('section')
   assert.match(pane.textContent, /Tokens Anywhere 账户/)
-  assert.equal(buttons(pane, '应用').length, 1)
+  assert.equal(buttons(pane, '应用').length, 0)
   assert.equal(buttons(pane, '退出').length, 1)
   assert.equal(buttons(pane, '切换账号').length, 0)
   assert.match(pane.textContent, /1 个 Runtime 在用/)
