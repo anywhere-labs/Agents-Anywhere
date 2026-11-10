@@ -3,7 +3,10 @@ package com.agentsanywhere.app.feature.devices
 import com.agentsanywhere.app.api.RemoteDeviceRuntime
 import com.agentsanywhere.app.api.RemoteDeviceRuntimeList
 import com.agentsanywhere.app.api.RemoteDeviceRuntimeStatus
+import com.agentsanywhere.app.model.ModelConnectionCapability
+import com.agentsanywhere.app.model.ModelConnectionStatus
 import com.agentsanywhere.app.model.RuntimeInstanceLabels
+import com.agentsanywhere.app.model.SecretFieldState
 import com.agentsanywhere.app.model.runtimeInstanceLabels
 
 data class DeviceRuntimeList(
@@ -33,6 +36,11 @@ data class DeviceRuntime(
     val phase: Map<String, Any?>? = null,
     val lastDiscoveredAt: String?,
     val updatedAt: String?,
+    val maturity: String? = null,
+    val modelConnection: ModelConnectionCapability? = null,
+    val modelConnectionStatus: ModelConnectionStatus? = null,
+    val secretFields: Map<String, SecretFieldState> = emptyMap(),
+    val managedBy: String? = null,
 ) {
     val name: String
         get() = displayName
@@ -88,6 +96,124 @@ internal fun List<DeviceRuntime>.afterRuntimeDeletion(deletedId: String, respons
     return if (response.id == deletedId) remaining else remaining + response
 }
 
+sealed interface DeviceRuntimeSetupResult {
+    data class Success(val runtime: DeviceRuntime) : DeviceRuntimeSetupResult
+    data class SaveFailed(val cause: Throwable) : DeviceRuntimeSetupResult
+    data class StartFailed(
+        val configuredRuntime: DeviceRuntime,
+        val cause: Throwable,
+    ) : DeviceRuntimeSetupResult
+}
+
+internal suspend fun configureAndStartRuntime(
+    saveConfig: suspend () -> Result<DeviceRuntime>,
+    startRuntime: suspend () -> Result<DeviceRuntime>,
+): DeviceRuntimeSetupResult {
+    val configured = saveConfig().getOrElse { return DeviceRuntimeSetupResult.SaveFailed(it) }
+    return startRuntime().fold(
+        onSuccess = { DeviceRuntimeSetupResult.Success(it) },
+        onFailure = { DeviceRuntimeSetupResult.StartFailed(configured, it) },
+    )
+}
+
+data class RuntimeEnvironmentVariable(
+    val key: String,
+    val value: String,
+    val removeInheritedValue: Boolean = false,
+)
+
+data class DeviceRuntimeConfigDraft(
+    val baseConfig: Map<String, Any?>,
+    val fieldOrder: List<String>,
+    val supportsExecutablePath: Boolean,
+    val supportsEnvironment: Boolean,
+    val executablePath: String,
+    val environment: List<RuntimeEnvironmentVariable>,
+) {
+    fun validationError(): RuntimeConfigValidationError? {
+        if (!supportsEnvironment) return null
+        if (environment.any { it.key.isBlank() }) return RuntimeConfigValidationError.BlankName
+        if (environment.any { '=' in it.key || '\u0000' in it.key }) {
+            return RuntimeConfigValidationError.InvalidName
+        }
+        if (environment.map { it.key }.distinct().size != environment.size) {
+            return RuntimeConfigValidationError.DuplicateName
+        }
+        return null
+    }
+
+    fun toConfig(): Map<String, Any?> {
+        val next = withoutBlankSecrets(baseConfig).toMutableMap()
+        if (supportsExecutablePath) {
+            executablePath.trim().takeIf(String::isNotEmpty)?.let {
+                next["executablePath"] = it
+            } ?: next.remove("executablePath")
+        }
+        if (supportsEnvironment) {
+            next["environment"] = environment.associate { variable ->
+                variable.key to if (variable.removeInheritedValue) null else variable.value
+            }
+        }
+        return next
+    }
+}
+
+/**
+ * Write-only values such as `modelGateway.apiKey` never come back from the Server.
+ * A save leaves them out so the Server keeps the stored value; a blank one would
+ * read as clearing it.
+ */
+internal fun withoutBlankSecrets(config: Map<String, Any?>): Map<String, Any?> {
+    return config.mapValues { (_, value) ->
+        val nested = value as? Map<*, *> ?: return@mapValues value
+        val secret = nested[WRITE_ONLY_KEY]
+        if (WRITE_ONLY_KEY in nested && (secret == null || (secret as? String)?.isBlank() == true)) {
+            nested.filterKeys { it != WRITE_ONLY_KEY }
+        } else {
+            value
+        }
+    }
+}
+
+private const val WRITE_ONLY_KEY = "apiKey"
+
+enum class RuntimeConfigValidationError {
+    BlankName,
+    InvalidName,
+    DuplicateName,
+}
+
+fun DeviceRuntime.toConfigDraft(): DeviceRuntimeConfigDraft {
+    val properties = schema?.get("properties") as? Map<*, *>
+    val supportedFields = properties
+        ?.keys
+        ?.mapNotNull { it as? String }
+        .orEmpty()
+    val requestedOrder = (uiSchema["order"] as? List<*>)
+        ?.mapNotNull { it as? String }
+        .orEmpty()
+    val fieldOrder = (requestedOrder + supportedFields).distinct()
+    val environment = (config?.get("environment") as? Map<*, *>)
+        ?.mapNotNull { (key, value) ->
+            val name = key as? String ?: return@mapNotNull null
+            when (value) {
+                null -> RuntimeEnvironmentVariable(name, "", removeInheritedValue = true)
+                is String -> RuntimeEnvironmentVariable(name, value)
+                else -> null
+            }
+        }
+        ?.sortedBy { it.key.lowercase() }
+        .orEmpty()
+    return DeviceRuntimeConfigDraft(
+        baseConfig = config.orEmpty(),
+        fieldOrder = fieldOrder,
+        supportsExecutablePath = "executablePath" in supportedFields,
+        supportsEnvironment = "environment" in supportedFields,
+        executablePath = config?.get("executablePath") as? String
+            ?: ((properties?.get("executablePath") as? Map<*, *>)?.get("default") as? String).orEmpty(),
+        environment = environment,
+    )
+}
 internal fun List<DeviceRuntime>.withRuntime(runtime: DeviceRuntime): List<DeviceRuntime> =
     if (any { it.id == runtime.id }) map { if (it.id == runtime.id) runtime else it } else this + runtime
 
@@ -120,6 +246,11 @@ internal fun RemoteDeviceRuntime.toDeviceRuntime(): DeviceRuntime {
         phase = phase,
         lastDiscoveredAt = lastDiscoveredAt,
         updatedAt = updatedAt,
+        maturity = maturity,
+        modelConnection = modelConnection,
+        modelConnectionStatus = modelConnectionStatus,
+        secretFields = secretFields,
+        managedBy = managedBy,
     )
 }
 

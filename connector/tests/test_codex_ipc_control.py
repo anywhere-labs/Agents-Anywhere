@@ -175,6 +175,12 @@ class _Host(RuntimeHostClient):
     async def session_meta_upsert(self, session_id, runtime, external_session_id=None, title=None, cwd=None, ordering_time=None, metadata=None):
         self.meta.append({"session_id": session_id, "title": title})
 
+    async def publish_runtime_notifications(self, runtime, notifications, runtime_id=None, on_progress=None):
+        for notification in notifications:
+            if notification["method"] == "session.meta.upsert":
+                params = notification["params"]
+                await self.session_meta_upsert(params["sessionId"], runtime, external_session_id=params.get("externalSessionId"), title=params.get("title"), cwd=params.get("cwd"), ordering_time=params.get("orderingTime"), metadata=params.get("metadata"))
+
     async def session_state_update(self, session_id, runtime, status=None, selections=None, external_session_id=None, status_reason=None, error=None, metadata=None):
         self.states.append({"session_id": session_id, "status": status, "metadata": dict(metadata or {}), "error": error})
 

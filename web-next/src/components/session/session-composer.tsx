@@ -128,6 +128,8 @@ export function SessionComposer({
   const tSession = useTranslations("dashboard.session")
   const tNew = useTranslations("dashboard.new")
   const tPlanning = useTranslations("planning")
+  const tGoal = useTranslations("goal")
+  const [goalMode,setGoalMode]=React.useState(false)
   const composerRef = React.useRef<HTMLDivElement | null>(null)
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null)
   const valueRef = React.useRef(value)
@@ -148,6 +150,7 @@ export function SessionComposer({
   const [menuDismissedFor, setMenuDismissedFor] = React.useState<string | null>(null)
   const commandMenuId = React.useId()
   React.useEffect(() => {
+    setGoalMode(false)
     setCommandFeedback(null)
     setCommandInputError(null)
     setMenuDismissedFor(null)
@@ -388,7 +391,9 @@ export function SessionComposer({
                 ? tSession("errorPlaceholder")
                 : tSession("replyPlaceholder")
   const planningIntent = parsePlanningCommand(value)
-  const slashIntent = planningIntent ? null : parseSlashIntent(value)
+  const goalUsable = capabilityIsUsable(effectiveCapabilities, "session.goal", runtimeScope) && connectorOnline
+  const goalIntent = goalUsable && /^\/goal(?:\s|$)/.test(value.trimStart())
+  const slashIntent = planningIntent || goalIntent ? null : parseSlashIntent(value)
   // "/Users/me/file.ts" and other non-command slash text never opens the menu.
   const slashCandidate = slashIntent && commandLikeToken(slashIntent) ? slashIntent : null
   const commandQuery = slashCandidate?.command ?? null
@@ -401,10 +406,11 @@ export function SessionComposer({
     enabled: true, disabledReason: null, acceptsArgs: true, argsSchema: null,
     metadata: { ui: { kind: "execute", argumentHint: tPlanning("commandHint") } },
   }), [tPlanning])
-  const offeredCommands = React.useMemo(
+  const baseOfferedCommands = React.useMemo(
     () => planningUsable && !runtimeCommands.some((command) => command.id === "plan") ? [planCommand, ...runtimeCommands] : runtimeCommands,
     [planCommand, planningUsable, runtimeCommands],
   )
+  const offeredCommands:RuntimeCommand[] = goalUsable ? [{...planCommand,id:"goal",title:"/goal",description:tGoal("commandDescription"),metadata:{ui:{kind:"execute",argumentHint:tGoal("objective")}}},...baseOfferedCommands.filter(command=>command.id!=="goal")] : baseOfferedCommands
   const commandSuggestions = React.useMemo(
     () => (commandQuery === null ? [] : offeredCommands.filter((command) => commandMatchesQuery(command, commandQuery))),
     [commandQuery, offeredCommands],
@@ -423,7 +429,7 @@ export function SessionComposer({
   const showUnavailableMenu = commandsUnavailable !== null && attachments.length === 0 && menuDismissedFor !== value
   const showCommandMenu =
     slashCandidate !== null &&
-    (catalogUsable || planningUsable) &&
+    (catalogUsable || planningUsable || goalUsable) &&
     slashCandidate.suffix === "" &&
     attachments.length === 0 &&
     menuDismissedFor !== value &&
@@ -432,12 +438,12 @@ export function SessionComposer({
     ? commandSuggestions[Math.min(activeCommandIndex, commandSuggestions.length - 1)]
     : null
   React.useEffect(() => { setActiveCommandIndex(0) }, [commandQuery])
-  const showInterruptAction = showInterrupt && mode.kind === "message" && !showCommandMenu
+  const showInterruptAction = showInterrupt && (mode.kind === "message" || goalIntent || goalMode) && !showCommandMenu
   React.useEffect(() => {
     onCommandQueryChange(commandQuery)
   }, [commandQuery, onCommandQueryChange])
   const commandBusy = sending || interrupting || commandPending
-  const blockOf = (command: RuntimeCommand): CommandBlock | null => command === planCommand ? null : commandBusy ? "busy" : commandBlock(command, runtimeStatus, {
+  const blockOf = (command: RuntimeCommand): CommandBlock | null => (command === planCommand || (command.id === "goal" && goalUsable)) ? null : commandBusy ? "busy" : commandBlock(command, runtimeStatus, {
     capability: canUseCommands,
     writable: session.takeover && !sourceUnavailable && !creatingSession,
     online: connectorOnline,
@@ -453,7 +459,7 @@ export function SessionComposer({
     tSession.has(`commandDescription_${command.id}`) ? tSession(`commandDescription_${command.id}`) : command.description || command.title
   const canSubmitCommand = mode.kind === "command" && !commandPending && connectorOnline
   const canSubmitMessage =
-    (canSend || Boolean(planningIntent && capabilityIsUsable(effectiveCapabilities, CAPABILITY.planning, runtimeScope) && !sending && !interrupting && !commandPending)) &&
+    (canSend || Boolean((goalMode || goalIntent) && goalUsable && !sending && !interrupting) || Boolean(planningIntent && capabilityIsUsable(effectiveCapabilities, CAPABILITY.planning, runtimeScope) && !sending && !interrupting && !commandPending)) &&
     session.takeover &&
     hasInput &&
     attachmentsReady &&
@@ -466,6 +472,7 @@ export function SessionComposer({
   }, [onValueChange])
 
   const chooseCommand = (command: RuntimeCommand) => {
+    if(command.id==="goal" && goalUsable){setGoalMode(true);updateValue("");textareaRef.current?.focus();return}
     const block = blockOf(command)
     if (block) { setCommandInputError(blockMessage(command, block)); return }
     const sourceDraft = valueRef.current
@@ -479,6 +486,7 @@ export function SessionComposer({
     void runCommand(command, raw, sourceDraft)
   }
   const completeCommand = (command: RuntimeCommand) => {
+    if(command.id==="goal" && goalUsable){setGoalMode(true);updateValue("");textareaRef.current?.focus();return}
     updateValue(`/${command.id}${command.acceptsArgs ? " " : ""}`)
     textareaRef.current?.focus()
   }
@@ -538,6 +546,15 @@ export function SessionComposer({
   }
 
   const submit = async () => {
+    if(goalIntent && !value.trimStart().slice(5).trim() && goalUsable){setGoalMode(true);updateValue("");return}
+    if((goalMode || goalIntent) && goalUsable && !sending && !interrupting && attachmentsReady && session.takeover){
+      const text=value,files=attachments,currentVisit=sessionVisitRef.current
+      const objective=goalIntent?text.trimStart().slice(5).trim():text.trim()
+      if(!objective)return
+      const sent=await onSend("/goal "+objective,files,{})
+      if(sent && sessionVisitRef.current===currentVisit){if(valueRef.current===text)updateValue("");files.forEach(file=>remove(file.id));setGoalMode(false)}
+      return
+    }
     if (!hasInput) return
     if (mode.kind === "pending") {
       setCommandInputError(tSession(commandsError ? "commandCatalogError" : "commandLoading"))
@@ -650,6 +667,7 @@ export function SessionComposer({
       onDragOver={onDragOver}
       onDrop={onDrop}
     >
+      {goalMode && <Badge variant="outline">{tGoal("title")}<Button type="button" variant="ghost" size="icon-sm" aria-label={tGoal("clearMode")} onClick={()=>setGoalMode(false)}><X/></Button></Badge>}
       <DragOverlay isDragging={isDragging} />
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
         {commandFeedback ? (

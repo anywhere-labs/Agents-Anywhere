@@ -196,8 +196,12 @@ class CodexRuntime(AgentRuntime):
     async def start(self) -> None:
         await self._lifecycle.start()
         await self._start_ipc()
+        if self.goals is not None:
+            await self.goals.recover()
 
     async def stop(self) -> None:
+        if self.goals is not None:
+            await self.goals.close()
         if self.ipc_owner is not None:
             self.ipc_owner.detach()
         if self.ipc_service is not None:
@@ -757,6 +761,13 @@ class CodexRuntime(AgentRuntime):
             },
         )
 
+    async def apply_model_setting(self, config: RuntimeConfig) -> bool:
+        # Only the catalog reads ``model``; new sessions take it from there.
+        self.config = config
+        self._catalogs.config = config
+        await self.host.model_catalog_update(await self.list_model_catalog(limit=200))
+        return True
+
     async def get_config(self) -> RuntimeConfig:
         return self.config
 
@@ -1036,6 +1047,25 @@ class CodexRuntime(AgentRuntime):
         session_id: str,
         reason: str | None = None,
     ) -> RuntimeOperationResult:
+        pause_error = None
+        if self.goals is not None:
+            try:
+                await self.goals.pause_before_stop(session_id)
+            except Exception as error:  # noqa: BLE001 - interruption remains available after a failed pause
+                pause_error = error
+        result = await self._interrupt_session(session_id, reason)
+        if pause_error is not None:
+            return RuntimeOperationResult(
+                ok=False,
+                code="goal_pause_unknown",
+                message=str(pause_error),
+                result={**result.result, "interrupted": result.ok},
+            )
+        return result
+
+    async def _interrupt_session(
+        self, session_id: str, reason: str | None = None,
+    ) -> RuntimeOperationResult:
         cached = self._session_states.get(session_id)
         if cached is not None:
             state = await self.get_session_state(session_id, cached.external_session_id)
@@ -1236,6 +1266,23 @@ class CodexRuntime(AgentRuntime):
     async def _after_notification(self, message: Any) -> None:
         """Let the IPC owner republish after a native notification was projected."""
 
+        from connector.runtimes.codex.sdk.command_notifications import (
+            notification_parts,
+        )
+
+        method, params = notification_parts(message)
+        if self.goals is not None and method.startswith("thread/goal/"):
+            thread_id = params.get("threadId")
+            cached = (
+                self._session_states.get_by_external_session_id(thread_id)
+                if thread_id
+                else None
+            )
+            if cached:
+                try:
+                    self.goals.notify(cached.session_id, thread_id)
+                except ValueError:
+                    pass  # A late native event cannot revive an explicitly deleted AA session.
         if self.ipc_owner is not None:
             try:
                 thread_id = notification_event(message).thread_id

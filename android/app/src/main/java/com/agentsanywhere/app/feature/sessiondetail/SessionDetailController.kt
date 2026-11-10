@@ -44,6 +44,33 @@ class SessionDetailController(
 
     fun clearPlanningEntry(sessionId: String) { optimisticStore.clear(sessionId) }
 
+    suspend fun loadGoal(sessionId:String) = withContext(Dispatchers.IO) {
+        runCatching {
+            val auth=authSession()
+            var snapshot=sessionsApi.goal(auth.serverUrl,auth.accessToken,sessionId)
+            snapshot.pendingOperationId?.let { id ->
+                sessionsApi.goalOperation(auth.serverUrl,auth.accessToken,sessionId,id)
+                snapshot=sessionsApi.goal(auth.serverUrl,auth.accessToken,sessionId)
+            }
+            snapshot
+        }
+    }
+    suspend fun executeGoal(sessionId:String,revision:Long,action:String,objective:String?=null,attachments:List<TimelineAttachment> = emptyList()) = withContext(Dispatchers.IO) {
+        runCatching {
+            val auth=authSession();val id=java.util.UUID.randomUUID().toString()
+            val request=JSONObject().put("operationId",id).put("expectedRevision",revision).put("action",action)
+            if(objective!=null)request.put("objective",objective)
+            request.put("attachments",org.json.JSONArray(attachments.map{JSONObject().put("fileId",it.fileId)}))
+            var result=sessionsApi.executeGoal(auth.serverUrl,auth.accessToken,sessionId,request)
+            var tries=0
+            while(result.optString("outcome") in listOf("pending","unknown") && tries++<10) {
+                kotlinx.coroutines.delay(300);result=sessionsApi.goalOperation(auth.serverUrl,auth.accessToken,sessionId,id)
+            }
+            if(!result.optBoolean("ok"))throw GoalFailure(result.optString("code","goal_outcome_unknown"),result.optString("message").takeIf{it.isNotBlank()&&it!="null"})
+            sessionsApi.goal(auth.serverUrl,auth.accessToken,sessionId)
+        }
+    }
+    class GoalFailure(val code:String,override val message:String?):RuntimeException(message)
     suspend fun loadPlanning(sessionId: String) = withContext(Dispatchers.IO) {
         runCatching { val auth = authSession(); sessionsApi.planning(auth.serverUrl, auth.accessToken, sessionId) }
     }

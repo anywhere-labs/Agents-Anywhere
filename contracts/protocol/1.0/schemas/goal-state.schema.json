@@ -1,0 +1,293 @@
+{
+  "$defs": {
+    "Goal": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAt": {
+          "title": "Createdat",
+          "type": "string"
+        },
+        "endedAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Endedat"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "iterations": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Iterations"
+        },
+        "lastReason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lastreason"
+        },
+        "objective": {
+          "title": "Objective",
+          "type": "string"
+        },
+        "sourceTurnId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sourceturnid"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "paused",
+            "blocked",
+            "usageLimited",
+            "budgetLimited",
+            "complete",
+            "failed",
+            "cleared",
+            "replaced"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "timeUsedSeconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeusedseconds"
+        },
+        "tokenBudget": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tokenbudget"
+        },
+        "tokensUsed": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tokensused"
+        },
+        "updatedAt": {
+          "title": "Updatedat",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "objective",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ],
+      "title": "Goal",
+      "type": "object"
+    },
+    "GoalCapabilities": {
+      "properties": {
+        "actions": {
+          "items": {
+            "enum": [
+              "set",
+              "edit",
+              "pause",
+              "resume",
+              "clear"
+            ],
+            "type": "string"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "supported": {
+          "default": false,
+          "title": "Supported",
+          "type": "boolean"
+        }
+      },
+      "title": "GoalCapabilities",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:protocol:1.0:goal-state",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "bindingGeneration": {
+      "default": 0,
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Bindinggeneration",
+      "type": "integer"
+    },
+    "capabilities": {
+      "$ref": "#/$defs/GoalCapabilities"
+    },
+    "externalSessionId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Externalsessionid"
+    },
+    "freshness": {
+      "default": "unknown",
+      "enum": [
+        "fresh",
+        "stale",
+        "unknown"
+      ],
+      "title": "Freshness",
+      "type": "string"
+    },
+    "goal": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Goal"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "lastOutcome": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Goal"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "pendingOperationId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pendingoperationid"
+    },
+    "revision": {
+      "default": 0,
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "runtime": {
+      "title": "Runtime",
+      "type": "string"
+    },
+    "runtimeId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtimeid"
+    },
+    "sessionId": {
+      "title": "Sessionid",
+      "type": "string"
+    },
+    "sourceEpoch": {
+      "default": "",
+      "title": "Sourceepoch",
+      "type": "string"
+    },
+    "sourceRevision": {
+      "default": 0,
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Sourcerevision",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "sessionId",
+    "runtime"
+  ],
+  "title": "GoalState",
+  "type": "object",
+  "x-direction": "egress",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "serialization"
+}

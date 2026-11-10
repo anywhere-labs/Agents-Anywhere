@@ -1,0 +1,14 @@
+{
+  "configDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "instanceId": "5f0c1d2e-0000-4000-8000-000000000001",
+  "probe": {
+    "code": null,
+    "latencyMs": 812,
+    "message": null,
+    "model": "gpt-5",
+    "protocol": "openai_responses",
+    "state": "passed"
+  },
+  "runtime": "codex",
+  "runtimeId": "rti_codex_work_01"
+}

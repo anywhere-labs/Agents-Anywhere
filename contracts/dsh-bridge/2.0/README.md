@@ -64,6 +64,7 @@ API key 形如 `mk_<id>_<随机 hex>`，Router 按 id 查表并比对 SHA-256。
 | `ingestSnapshot` | 客户端流 | 请求 `{captureId, subscriptionId, sessionId, meta, throughSeq}` + 页流 `{captureId, items[]}` → `{accepted, quarantined, reason?}` |
 
 - 批次按 `batchSeq` 严格递增；乱序或 `subscriptionId` 未知是错误，由插件重新订阅。
+- Connector 连不上 Server 时，`ingestBatch` 和 `ingestSnapshot` 以应用错误码 `backend_unavailable`（`retryable: true`）失败，订阅不受影响。插件对 `ingestBatch` 退避后重发同一批，不结束同步流；不认识这个错误码的旧版插件按其他错误处理，重新订阅。
 - 检查点只在覆盖的历史被 Server 接受之后保存；被隔离的会话不保存检查点。
 - 快照页流可取消（调用取消即中止）；`captureId` 让被取消的旧流无法污染下一次捕获。提交被永久拒绝时返回 `accepted:false` 并给出隔离原因 `history_too_large` / `history_rejected`。
 - 隔离、退避重捕（30 s 起，超大 5 min 起，上限 30 min）、健康上报（`starting/syncing → running`）、单会话失败隔离与 1.0 相同。

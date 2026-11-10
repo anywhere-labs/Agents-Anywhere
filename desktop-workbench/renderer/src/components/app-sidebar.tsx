@@ -50,6 +50,9 @@ import { defaultFilter } from "@/lib/demo-api"
 import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
 import { availableProjectName, findWorkspaceProject, workspaceName } from "@/features/dashboard/project-workspaces"
 import type { ProjectView } from "@/features/dashboard/types"
+import { useTokensAnywhereUrl } from "@/features/tokens-anywhere/address"
+import { TokensAnywhereWordmark } from "@/features/tokens-anywhere/brand"
+import { useTokensAnywhereSidebarVisibility } from "@/features/tokens-anywhere/sidebar-visibility"
 import { useMobileConnectionsSidebarVisibility } from "@/features/mobile-connections/sidebar-visibility"
 import { useTranslations } from "next-intl"
 
@@ -82,6 +85,8 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   } = useWorkspace()
   const { signOut, me, session: authSession } = useAuth()
   const { isLocalConnector, binding, state: localConnectorState } = useDesktopConnector()
+  const [tokensAnywhereSidebarVisible] = useTokensAnywhereSidebarVisibility()
+  const tokensAnywhereUrl = useTokensAnywhereUrl()
   const [mobileConnectionsSidebarVisible] = useMobileConnectionsSidebarVisibility()
   const t = useTranslations("dashboard")
   const [pairOpen, setPairOpen] = React.useState(false)
@@ -367,6 +372,15 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
               >
                 <Smartphone />
                 <span>{t("actions.mobileConnections")}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ) : null}
+          {tokensAnywhereUrl && tokensAnywhereSidebarVisible ? (
+            <SidebarMenuItem>
+              {/* Branded like the Tokens Anywhere site itself. */}
+              <SidebarMenuButton className="h-10 font-medium"
+                isActive={page === "tokens-anywhere"} onClick={() => navigate("tokens-anywhere")}>
+                <TokensAnywhereWordmark label={t("actions.tokensAnywhere")} className="shrink-0 text-[20px]" />
               </SidebarMenuButton>
             </SidebarMenuItem>
           ) : null}

@@ -5,8 +5,10 @@ endpoints, which recomputed statistics from raw timeline rows on every request.
 
 Usage statistics are **event-driven**: the Server appends a usage fact the moment
 platform activity happens, and the report only reads those facts plus a daily
-inventory snapshot. Nothing is backfilled from history, so a deployment's report
-starts on the day the `v2_42` migration was applied (see `range.dataSince`).
+inventory snapshot. Migration `v2_53` backfills the hourly rollup tables from
+usage events already recorded. It does not create usage events from timeline
+history before `v2_42`, so a deployment's report still starts on the day that
+migration was applied (see `range.dataSince`).
 
 ## Endpoints
 
@@ -49,7 +51,31 @@ deleted; `user_id` is set to `NULL` when the user is deleted.
 Writes are buffered in memory and flushed once per second
 (`AGENT_SERVER_USAGE_FLUSH_INTERVAL_SECONDS`); a failed write is logged and never
 fails the user's request. Rows older than `AGENT_SERVER_USAGE_RETENTION_DAYS`
-(default 400) are pruned by the maintenance loop.
+(default 400) are pruned by the maintenance loop, together with the rollups
+below.
+
+### Hourly rollups
+
+The report does not scan raw events. Every flush also adds the events it
+actually inserted (after the `dedupe_key` check) to hourly rollup tables in the
+same transaction, so the rollups always match `usage_events`, including events
+that arrive late for an hour that has already passed (approval events carry the
+Connector's notice timestamps):
+
+| Table | Key | Values |
+| --- | --- | --- |
+| `usage_hourly_counts` | hour, event type, runtime type, outcome | event count, `duration_ms` sum |
+| `usage_hourly_users` | hour, user | messages (a row exists for any event of the user) |
+| `usage_hourly_sessions` | hour, session | messages, views |
+| `usage_hourly_runtime_sessions` | hour, runtime type, session | sessions that received a message for the runtime |
+| `usage_hourly_runtime_users` | hour, runtime type, user | users who sent such a message |
+| `usage_hourly_connectors` | hour, connector | highest `device_os` of its `connector.online` events |
+
+Missing runtime types and outcomes are stored as `""`. Rows keyed by user are
+deleted with the user, matching the raw events whose `user_id` becomes `NULL`.
+Duration percentiles cannot be rolled up exactly and still read `approval.resolved`
+/ `turn.ended` rows through `idx_usage_events_type_hour`. Migration `v2_53`
+creates the tables and fills them from the events recorded before it.
 
 ### Inventory snapshots
 
@@ -65,10 +91,12 @@ reported in `devices.inventoryAsOf` (`"live"` or the snapshot date).
 
 ### Timezone handling
 
-Events are aggregated per UTC hour in SQL; the service then maps each hour onto
-the local day of `tz`. Whole-hour timezones map exactly. Timezones with a
-30/45-minute offset attribute an edge hour to the day in which its UTC hour
-starts, so a day boundary can be off by up to that offset.
+The hourly rollups are mapped onto the local day and hour of `tz` with
+PostgreSQL's `AT TIME ZONE` and aggregated per local day in the same query, so the Server receives per-day totals (and, for the
+rolling windows, one row per user and active day) rather than per-event or
+per-hour detail. Whole-hour timezones map exactly. Timezones with a 30/45-minute
+offset attribute an edge hour to the day in which its UTC hour starts, so a day
+boundary can be off by up to that offset.
 
 ### Definitions
 
@@ -84,7 +112,7 @@ starts, so a day boundary can be off by up to that offset.
 | `summary.sessionsViewed` | Distinct sessions opened in the range. |
 | `summary.sessionsReadOnly` | Sessions opened in the range that received no platform message in it — the ones people only read. `daily[]` carries all three per local day. |
 | `summary.turns`, `turnFailureRate` | `turn.ended` events and the share with `outcome=failed` (`null` without turns). |
-| `summary.turnDurationMs` | Nearest-rank p50 / p90 / p99 over completed turns with a known duration (newest 200 000 samples). |
+| `summary.turnDurationMs` | Nearest-rank p50 / p90 / p99 (`percentile_disc`) over every completed turn in the range with a known duration. |
 | `summary.approvalsRequested` / `approvalsResolved` / `approvalWaitMs` | Approval events and percentiles of `approval.resolved` durations. |
 | `summary.runtimeErrors` | `runtime.error` events. |
 | `summary.connectorsOnline` | Distinct connectors with a `connector.online` event in the range. |
@@ -142,9 +170,12 @@ any date range:
 {"onlineConnectors": 3, "totalConnectors": 11, "runningTurns": 2, "activeUsers15m": 4, "serverTime": "..."}
 ```
 
-`onlineConnectors` comes from connector presence (not the SQL status column),
-`runningTurns` from `session_active_runs`, and `activeUsers15m` from distinct
-users with any usage event in the last 15 minutes.
+`onlineConnectors` comes from connector presence (not the SQL status column)
+for the ids of all non-revoked connectors, `totalConnectors` is the number of
+those ids, `runningTurns` comes from `session_active_runs`, and `activeUsers15m`
+from distinct users with any usage event in the last 15 minutes. Clients poll
+this endpoint, so it reads only connector ids and bounds the event scan by hour
+bucket.
 
 ## Client notes
 

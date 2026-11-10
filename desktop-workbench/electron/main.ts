@@ -8,6 +8,7 @@ import {
   net,
   Notification,
   nativeTheme,
+  powerMonitor,
   protocol,
   session,
   shell,
@@ -34,11 +35,13 @@ import {
   type DesktopOnboardingEntry,
 } from "./desktop-onboarding";
 import { DesktopUpdateService } from "./desktop-updates";
+import { nextSilentLaunchState, shouldLaunchSilently, type SilentLaunchState } from "./silent-launch";
 import { validateTitleBarColors } from "./title-bar";
 import type { BackendInit } from "./backend/protocol";
 import { DesktopBackendClient } from "./backend-client";
 import { readDesktopSettings } from "./desktop-settings";
 import { ConnectorLogStore } from "./log-store";
+import { allowWorkbenchFrame } from "./embedded-console";
 import { windowMaterialOptions } from "./window-material";
 import buildInfo from "../build-info.json";
 import { droppedFolderPath } from "./dropped-folder";
@@ -67,6 +70,10 @@ const APP_ID = "dev.agentsanywhere.workbench";
 const WEB_PROTOCOL = "aa-workbench";
 const WEB_HOST = "web";
 const LOGIN_ITEM_HIDDEN_ARG = "--hidden";
+// How long a system shutdown waits for the local Connector to stop.
+const SYSTEM_SHUTDOWN_QUIT_BUDGET_MS = 3_000;
+// How long a macOS quit request waits for the shutdown announcement.
+const SYSTEM_SHUTDOWN_SIGNAL_GRACE_MS = 300;
 const API_ROUTE_PREFIXES = [
   "/admin",
   "/agents",
@@ -74,6 +81,9 @@ const API_ROUTE_PREFIXES = [
   "/connector",
   "/connectors",
   "/health",
+  "/integrations",
+  "/model-config",
+  "/model-profiles",
   "/oauth",
   "/pairing",
   "/projects",
@@ -84,6 +94,8 @@ const API_ROUTE_PREFIXES = [
 /** `checking` until the backend's first probe answers; the renderer shows it as progress. */
 let ownership: OwnershipState = { status: "checking" };
 let recheckingOwnership: Promise<OwnershipState> | null = null;
+/** Only a silent login-item launch holds its window back; anything else is `settled`. */
+let silentLaunch: SilentLaunchState = "settled";
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -94,6 +106,8 @@ let isQuitting = false;
 let shutdownComplete = false;
 let shutdownPromise: Promise<void> | null = null;
 let quitConfirmationPromise: Promise<boolean> | null = null;
+// Set once the system announces a shutdown, restart or log-off.
+let systemShuttingDown = false;
 const activeNotifications = new Set<Notification>();
 let serverStore: DesktopServerStore | null = null;
 let startingDesktopOAuth = false;
@@ -271,6 +285,22 @@ function shouldProxyApiPath(pathname: string): boolean {
   );
 }
 
+/** Lets the workbench frame the Tokens Anywhere console its instance may frame; see embedded-console. */
+function registerEmbeddedConsoleFrames(): void {
+  session.defaultSession.webRequest.onHeadersReceived(
+    { urls: ["https://*/*", "http://*/*"] },
+    (details, callback) => {
+      if (details.resourceType !== "subFrame") {
+        callback({});
+        return;
+      }
+      const origins = [`${WEB_PROTOCOL}://${WEB_HOST}`, ...(devOrigin ? [devOrigin] : [])];
+      const responseHeaders = allowWorkbenchFrame(details.responseHeaders, origins);
+      callback(responseHeaders ? { responseHeaders } : {});
+    },
+  );
+}
+
 function registerStaticWebProtocol(): void {
   protocol.handle(WEB_PROTOCOL, (request) => {
     const url = new URL(request.url);
@@ -440,6 +470,21 @@ function createMainWindow(showOnReady = true, route = "/"): BrowserWindow {
     }
     void requestQuit({ confirm: true });
   });
+  // Windows asks every top-level window before a shutdown, restart or log-off.
+  window.on("query-session-end", (event) => {
+    if (event.reasons.includes("close-app") || !confirmsQuitOnShutdown()) {
+      // Installers and the restart manager close the app themselves, and the
+      // default is to let the session end without asking.
+      systemShuttingDown = true;
+      return;
+    }
+    event.preventDefault();
+    void requestQuit({ confirm: true });
+  });
+  window.on("session-end", () => {
+    systemShuttingDown = true;
+    void requestQuit({ systemShutdown: true });
+  });
   window.on("closed", () => {
     if (mainWindow === window) mainWindow = null;
   });
@@ -558,13 +603,16 @@ function appWindowIcon(): string {
   return path.join(app.getAppPath(), "build", "icon-mac-source.png");
 }
 
+/** A login item or an updater hands the app a hidden-launch argument. */
+function launchedInBackground(argv: readonly string[]): boolean {
+  return argv.includes(LOGIN_ITEM_HIDDEN_ARG) || argv.includes("--background");
+}
+
 function launchedAsLoginItem(): boolean {
   const login = app.getLoginItemSettings(loginItemOptions());
   return Boolean(
     login.wasOpenedAtLogin ||
-      login.wasOpenedAsHidden ||
-      process.argv.includes(LOGIN_ITEM_HIDDEN_ARG) ||
-      process.argv.includes("--background") ||
+      launchedInBackground(process.argv) ||
       process.argv.includes("--squirrel-firstrun"),
   );
 }
@@ -582,7 +630,6 @@ function applyLoginItemSettings(): void {
   if (!settings) return;
   app.setLoginItemSettings({
     openAtLogin: settings.openAtLogin,
-    openAsHidden: settings.silentLaunch,
     ...loginItemOptions(),
   });
 }
@@ -927,14 +974,22 @@ function publishOwnership(state: OwnershipState): void {
   ownership = state;
   sendToRenderer("workbench:ownership:state", ownership);
   if (ownership.status === "owned" && app.isPackaged) void drainDesktopOAuthCallbacks();
+  applyOwnershipToSilentLaunch(ownership);
 }
 
-/** Only a silent login-item launch has to wait for the first ownership result. */
-async function waitForOwnership(timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (ownership.status !== "owned" && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
+/**
+ * A silent login-item launch holds its window back until ownership settles, so a
+ * slow cold start no longer flashes it (a fixed 10 s wait used to show the
+ * window on every boot, because the Connector can take minutes to start).
+ * The window is only revealed for a result the user has to resolve.
+ */
+function applyOwnershipToSilentLaunch(state: OwnershipState): void {
+  const next = nextSilentLaunchState(silentLaunch, state.status);
+  const revealed = next === "revealed" && silentLaunch !== "revealed";
+  silentLaunch = next;
+  // A result that arrives before the launch window exists is applied again by
+  // the caller once it does.
+  if (revealed && mainWindow && !mainWindow.isDestroyed()) showMainWindow();
 }
 
 async function confirmQuit(): Promise<boolean> {
@@ -961,7 +1016,34 @@ async function confirmQuit(): Promise<boolean> {
   return quitConfirmationPromise;
 }
 
-async function requestQuit({ confirm = false }: { confirm?: boolean } = {}): Promise<void> {
+/** The device setting (docs/api/device-settings.md); asking is off until the server says otherwise. */
+function confirmsQuitOnShutdown(): boolean {
+  return backend?.getSettings()?.confirmQuitOnShutdown === true;
+}
+
+/**
+ * Every quit request that does not come from Desktop's own UI. During a
+ * shutdown it must not leave a dialog waiting, or the system reports that
+ * Agents Anywhere blocked it.
+ */
+async function handleAppQuitRequest(): Promise<void> {
+  // macOS asks each app to quit around the time it announces the shutdown;
+  // give that announcement a moment so a shutdown is not mistaken for a quit.
+  if (!systemShuttingDown && process.platform === "darwin") {
+    await new Promise((resolve) => setTimeout(resolve, SYSTEM_SHUTDOWN_SIGNAL_GRACE_MS));
+  }
+  if (systemShuttingDown && !confirmsQuitOnShutdown()) return requestQuit({ systemShutdown: true });
+  return requestQuit({ confirm: true });
+}
+
+function handleSystemShutdown(): void {
+  systemShuttingDown = true;
+  if (!confirmsQuitOnShutdown()) void requestQuit({ systemShutdown: true });
+}
+
+async function requestQuit(
+  { confirm = false, systemShutdown = false }: { confirm?: boolean; systemShutdown?: boolean } = {},
+): Promise<void> {
   if (shutdownComplete) {
     app.quit();
     return;
@@ -976,7 +1058,17 @@ async function requestQuit({ confirm = false }: { confirm?: boolean } = {}): Pro
       tray?.destroy();
       tray = null;
       quiesceRendererForShutdown();
-      await backend?.shutdown();
+      const stopping = backend?.shutdown();
+      if (systemShutdown) {
+        // The system is waiting on this process; leave whatever is left of the
+        // Connector to the system rather than hold up the shutdown.
+        await Promise.race([
+          stopping?.catch(() => undefined),
+          new Promise((resolve) => setTimeout(resolve, SYSTEM_SHUTDOWN_QUIT_BUDGET_MS)),
+        ]);
+      } else {
+        await stopping;
+      }
     } finally {
       shutdownComplete = true;
       app.quit();
@@ -1016,7 +1108,10 @@ if (hasSingleInstanceLock) {
   });
   app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
+    // macOS and Linux announce a shutdown here; Windows uses the window events.
+    powerMonitor.on("shutdown", handleSystemShutdown);
     registerStaticWebProtocol();
+    registerEmbeddedConsoleFrames();
     await initializeDesktopServices();
     updates = new DesktopUpdateService({
       directory: path.join(app.getPath("userData"), "updates"),
@@ -1034,17 +1129,28 @@ if (hasSingleInstanceLock) {
       onState: (state) => sendToRenderer("workbench:updates:state", state),
     });
     createWindowsTray();
-    // A silent login-item launch must not flash a window when this machine
-    // already owns the Connector, so it is the one case that waits.
-    const silentLoginLaunch = backend?.getSettings()?.silentLaunch === true
-      && launchedAsLoginItem()
-      && !process.env.WORKBENCH_WEB_URL;
-    let showOnLaunch = true;
-    if (silentLoginLaunch) {
-      await waitForOwnership(10_000);
-      showOnLaunch = ownership.status !== "owned";
-    }
+    // A silent login-item launch never reveals its window on its own: the tray is
+    // the entry point. It is only shown when ownership settles into a state the
+    // user has to resolve, so a slow cold start stays invisible.
+    //
+    // `backend.getSettings()` is null until the Connector reports its settings,
+    // which on a cold boot happens long after this decision. Reading it too early
+    // used to make every login-item launch look like a manual one and reveal the
+    // window immediately. The settings file is the same source, available now.
+    const launchSettings = backend?.getSettings() ?? readDesktopSettings(desktopSettingsPath());
+    const silentLoginLaunch = shouldLaunchSilently({
+      silentLaunch: launchSettings.silentLaunch,
+      openedAsLoginItem: launchedAsLoginItem(),
+      webUrlOverride: process.env.WORKBENCH_WEB_URL,
+    });
+    const showOnLaunch = !silentLoginLaunch;
     createMainWindow(showOnLaunch, await resolveLaunchRoute(silentLoginLaunch));
+    if (silentLoginLaunch) {
+      // Start holding after the window exists, then settle against the result
+      // the backend has already published (if any).
+      silentLaunch = "holding";
+      applyOwnershipToSilentLaunch(ownership);
+    }
     if (app.isPackaged && ownership.status === "owned") await drainDesktopOAuthCallbacks();
     if (process.platform === "darwin" && app.dock) app.dock.setIcon(appWindowIcon());
     if (!showOnLaunch) hideDockIfIdle();
@@ -1059,12 +1165,12 @@ if (hasSingleInstanceLock) {
   app.on("activate", () => showMainWindow());
   app.on("second-instance", (_event, argv) => {
     const onboarding = desktopOnboardingFromArgv(argv);
+    const rawUrl = onboarding ? null : app.isPackaged ? desktopOAuthUrlFromArgv(argv) : null;
     if (onboarding) queueDesktopOnboarding(onboarding);
-    else if (app.isPackaged) {
-      const rawUrl = desktopOAuthUrlFromArgv(argv);
-      if (rawUrl) queueDesktopOAuthCallback(rawUrl);
-    }
-    showMainWindow();
+    else if (rawUrl) queueDesktopOAuthCallback(rawUrl);
+    // A second background launch (another login item, an installer relaunch) must
+    // not pull the hidden window forward; a deep link still has to surface.
+    if (onboarding || rawUrl || !launchedInBackground(argv)) showMainWindow();
   });
   app.on("window-all-closed", () => {
     // Connector cleanup is handled by the explicit quit flow.
@@ -1072,6 +1178,6 @@ if (hasSingleInstanceLock) {
   app.on("before-quit", (event) => {
     if (shutdownComplete) return;
     event.preventDefault();
-    void requestQuit({ confirm: true });
+    void handleAppQuitRequest();
   });
 }

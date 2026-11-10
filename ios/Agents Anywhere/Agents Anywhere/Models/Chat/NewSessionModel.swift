@@ -44,6 +44,8 @@ final class NewSessionModel {
     private(set) var isValid = true
     private(set) var creationUncertain = false
     private(set) var network = V2NetworkStatus()
+    var goalCreation = false
+    var goalUsable: Bool { prepared?.capabilities.allows("session.goal") == true }
     var planningCreation = false
     var error: String?
     @ObservationIgnored var onStaged: ((NewSessionSubmission) async -> Void)?
@@ -62,6 +64,9 @@ final class NewSessionModel {
     @ObservationIgnored private var inventoryTasks: [String: Task<[V2DeviceRuntime], Error>] = [:]
     @ObservationIgnored private var homeTasks: [String: Task<String, Error>] = [:]
     @ObservationIgnored private var resolvedHomes: Set<String> = []
+    private(set) var modelChannel: NewSessionModelChannel?
+    /// The target and channel the last preparation was made for.
+    @ObservationIgnored private var preparedChannel: (target: V2ModelTarget, key: String?)?
 
     init(scope: V2ClientScope, devices: V2DeviceManagementService,
          preparation: V2SessionPreparationService, creation: V2SessionCreationService, projectAPI: V2ProjectAPI,
@@ -105,6 +110,31 @@ final class NewSessionModel {
         }
     }
 
+    /// The dashboard's channel state, and the runtimes that resolve managed instances to their row.
+    func updateModelChannel(_ overview: V2ModelConfigOverview?, runtimes: [V2DeviceRuntime]) {
+        guard isValid else { return }
+        let value = overview?.channel.map { NewSessionModelChannel(state: $0, runtimes: runtimes, assignments: overview?.assignments ?? []) }
+        if modelChannel != value { modelChannel = value }
+    }
+
+    /// The channel the selected runtime actually uses; nil until the dashboard reports channels.
+    var runtimeChannel: String? {
+        guard let modelChannel else { return nil }
+        return ChannelPresentation.runtimeKey(ChannelPresentation.row(for: .init(connectorId: connectorID, runtimeId: runtimeID),
+            in: modelChannel.state, runtimes: modelChannel.runtimes, assignments: modelChannel.assignments))
+    }
+
+    /// A runtime that switched channels offers other models: prepare it again and
+    /// read its catalog, also when its workspace preparation would otherwise be kept.
+    func prepareAfterChannelChange() async {
+        guard isValid, !isCreating, let current = runtimeChannel, let mark = preparedChannel,
+              mark.target == .init(connectorId: connectorID, runtimeId: runtimeID) else { return }
+        // A preparation made before channels were known is taken as made on the current one.
+        guard let previous = mark.key else { preparedChannel = (mark.target, current); return }
+        guard previous != current else { return }
+        await prepareTarget()
+    }
+
     func updateProjects(_ values: [V2Project]) {
         guard isValid else { return }
         if projects != values { projects = values }
@@ -118,8 +148,10 @@ final class NewSessionModel {
     @discardableResult func selectProject(_ id: String) -> Bool {
         guard !isCreating, isValid, let value = projects.first(where: { $0.id == id }) else { return false }
         if connectorID != value.connectorId { focusDevice(value.connectorId, workspace: nil) }
-        workspace = value.workspacePath
-        preparedWorkflow = nil; runtimeWorkflow = nil; prepared = nil; preparationVersion += 1
+        if workspace != value.workspacePath {
+            workspace = value.workspacePath
+            preparedWorkflow = nil; runtimeWorkflow = nil; prepared = nil; preparationVersion += 1
+        }
         identifyProject()
         return true
     }
@@ -134,8 +166,11 @@ final class NewSessionModel {
     @discardableResult func selectWorkspace(_ path: String) -> Bool {
         guard isValid, !isCreating, !connectorID.isEmpty,
               ProjectWorkspacePath.key(path, deviceOS: connector?.deviceOs) != nil else { return false }
-        workspace = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        preparedWorkflow = nil; runtimeWorkflow = nil; prepared = nil; preparationVersion += 1
+        let path = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        if workspace != path {
+            workspace = path
+            preparedWorkflow = nil; runtimeWorkflow = nil; prepared = nil; preparationVersion += 1
+        }
         identifyProject()
         return true
     }
@@ -204,7 +239,8 @@ final class NewSessionModel {
         saveSelections()
         connectorID = id
         runtimeID = preference.connectorID == id ? preference.runtimeID : ""
-        prepared = nil; preparationVersion += 1
+        // Another device's workspace preparation never carries over, even when the path is the same.
+        preparedWorkflow = nil; runtimeWorkflow = nil; prepared = nil; preparationVersion += 1
         restoreProjectForDevice()
         if let workspace { _ = selectWorkspace(workspace) }
     }
@@ -265,6 +301,7 @@ final class NewSessionModel {
 
     func prepareTarget() async {
         if hasPendingWorkflow && !isCreating { return }
+        preparedChannel = (.init(connectorId: connectorID, runtimeId: runtimeID), runtimeChannel)
         preparationVersion += 1
         let version = preparationVersion
         prepared = nil
@@ -360,12 +397,16 @@ final class NewSessionModel {
     }
 
     func create(text: String) async -> V2SessionMeta? {
-        let intent = V2PlanningCommand.parse(text)
+        let trimmed=text.trimmingCharacters(in:.whitespacesAndNewlines)
+        let rawGoal=goalUsable && trimmed.range(of:"^/goal(?:\\s|$)",options:.regularExpression) != nil
+        if rawGoal && String(trimmed.dropFirst(5)).trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {goalCreation=true;planningCreation=false;draft.text="";saveDraft();return nil}
+        let useGoal=goalCreation || rawGoal
+        let intent = useGoal ? nil : V2PlanningCommand.parse(text)
         if let intent, intent.command != "submit_task" {
             guard draft.attachments.isEmpty else { error = String(localized: "请填写附件对应的规划任务。"); return nil }
             planningCreation = intent.command == "enter_plan"; draft.text = ""; saveDraft(); return nil
         }
-        let usePlanning = planningCreation || intent?.command == "submit_task"
+        let usePlanning = !useGoal && (planningCreation || intent?.command == "submit_task")
         guard canCreate, let runtime else { return nil }
         draft.text = text
         guard draft.canAttemptSend else { return nil }
@@ -403,7 +444,7 @@ final class NewSessionModel {
             return nil
         }
         let submission = NewSessionSubmission(project: project, runtime: runtime, text: text, attachments: files)
-        draft.clear(); saveDraft()
+        if !useGoal {draft.clear(); saveDraft()}
         var completed = false
         defer {
             if !completed, isValid {
@@ -471,11 +512,13 @@ final class NewSessionModel {
             } else {
             response = try await creation.createAndStart(connectorId: connectorID, projectId: project.id, runtime: runtime.runtimeType,
                 runtimeId: runtime.id, title: nil, cwd: project.workspacePath,
-                content: usePlanning && intent == nil ? "/plan " + text : text, selections: settings.selections, attachments: files.map(\.local),
+                content: useGoal && !rawGoal ? "/goal " + text : usePlanning && intent == nil ? "/plan " + text : text, selections: settings.selections, attachments: files.map(\.local),
                 clientMessageId: submission.pending.id)
             }
             guard isValid else { return nil }
             completed = true
+            if useGoal && draft.text==text {draft.clear();saveDraft()}
+            goalCreation = false
             planningCreation = false
             onBound?(submission, response)
             return response.session
@@ -546,6 +589,12 @@ final class NewSessionModel {
 
 /// Session activity, device names and last-seen timestamps do not invalidate
 /// the target catalogs on every dashboard update.
+struct NewSessionModelChannel: Equatable {
+    let state: V2ModelChannelState
+    let runtimes: [V2DeviceRuntime]
+    let assignments: [V2ModelAssignment]
+}
+
 struct NewSessionRefreshKey: Equatable {
     let connectorID: String
     let isOnline: Bool
@@ -562,4 +611,10 @@ extension V2DeviceRuntime {
         return available ? nil : String(localized: "当前不可用")
     }
     var sessionDisplayName: String { name.isEmpty ? displayName : name }
+    /// Maturity beside the readiness reason: "Beta · Not ready".
+    var pickerDetail: String? {
+        let maturity = ModelConfigPresentation.maturityBadge(self.maturity).map(ModelConfigPresentation.maturityLabel)
+        let parts = [maturity, sessionUnavailableReason].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
 }

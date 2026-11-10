@@ -3,7 +3,10 @@ import Observation
 
 struct RuntimeGatewayDraft: Equatable {
     var baseURL = ""
+    /// Only what the user typed. A saved key never comes back from the Server.
     var apiKey = ""
+    /// Empty when the schema offers no protocol choice or none is chosen yet.
+    var protocolValue = ""
 }
 
 /// The editable draft keeps row identities and incomplete text independently
@@ -11,6 +14,8 @@ struct RuntimeGatewayDraft: Equatable {
 @MainActor @Observable
 final class RuntimeConfigurationModel {
     let schema: V2RuntimeConfigSchema
+    /// Write-only values the Server keeps, by config path (`modelGateway.apiKey`).
+    let secretFields: [String: V2RuntimeSecretField]
     var textValues: [String: String] = [:]
     var boolValues: [String: Bool] = [:]
     var choiceValues: [String: JSONValue] = [:]
@@ -47,8 +52,9 @@ final class RuntimeConfigurationModel {
             })
     }
 
-    init(schema: V2RuntimeConfigSchema, config: JSONValue?) {
+    init(schema: V2RuntimeConfigSchema, config: JSONValue?, secretFields: [String: V2RuntimeSecretField] = [:]) {
         self.schema = schema
+        self.secretFields = secretFields
         let initial = schema.initialValues(config: config)
         original = initial
         base = initial
@@ -66,6 +72,21 @@ final class RuntimeConfigurationModel {
         load(values)
     }
 
+    /// The saved gateway key, when the Server keeps one for this field.
+    func storedGatewayKey(_ fieldID: String) -> V2RuntimeSecretField? {
+        storedSecret("\(fieldID).apiKey")
+    }
+
+    func storedSecret(_ path: String) -> V2RuntimeSecretField? {
+        guard let field = secretFields[path], field.isSet else { return nil }
+        return field
+    }
+
+    /// Protocols the gateway schema lets the user choose, in schema order.
+    func gatewayProtocols(_ field: V2RuntimeConfigField) -> [String] {
+        field.schema["properties"]?.configObject?["protocol"]?.configObject?["enum"]?.configArray?.compactMap(\.stringValue) ?? []
+    }
+
     func removeEnvironmentRow(_ id: UUID, fieldID: String) {
         environments[fieldID]?.removeAll { $0.id == id }
     }
@@ -78,10 +99,18 @@ final class RuntimeConfigurationModel {
         var result = base
         errors = [:]
         for field in schema.fields {
+            // A kept write-only value is not required again.
+            var keptSecret = false
+            var validationSchema = field.schema
             switch field.kind {
             case .text:
                 let value = textValues[field.id] ?? ""
-                result[field.id] = value.isEmpty && !field.isRequired ? nil : .string(value)
+                if value.isEmpty, storedSecret(field.id) != nil {
+                    // Present but empty keeps the saved value on the Server.
+                    result[field.id] = .string(""); keptSecret = true
+                } else {
+                    result[field.id] = value.isEmpty && !field.isRequired ? nil : .string(value)
+                }
             case .boolean:
                 result[field.id] = .bool(boolValues[field.id] ?? false)
             case .choice:
@@ -94,7 +123,29 @@ final class RuntimeConfigurationModel {
             case .modelGateway:
                 let draft = gateways[field.id] ?? .init()
                 if draft.baseURL.isEmpty && draft.apiKey.isEmpty { result[field.id] = nil }
-                else { result[field.id] = .object(["baseUrl": .string(draft.baseURL), "apiKey": .string(draft.apiKey)]) }
+                else {
+                    var object = base[field.id]?.configObject ?? [:]
+                    object["baseUrl"] = .string(draft.baseURL)
+                    object["apiKey"] = nil
+                    if !draft.apiKey.isEmpty {
+                        object["apiKey"] = .string(draft.apiKey)
+                    } else if storedGatewayKey(field.id) != nil {
+                        // An empty key keeps the saved one, but only on the same
+                        // origin: a new address must not receive the old key.
+                        let previous = original[field.id]?.configObject?["baseUrl"]?.stringValue
+                        if Self.sameOrigin(draft.baseURL, previous) {
+                            keptSecret = true
+                            let required = field.schema["required"]?.configArray?.filter { $0 != .string("apiKey") }
+                            if let required { validationSchema["required"] = .array(required) }
+                        } else {
+                            errors[field.id] = String(localized: "The address changed. Enter the API key again.")
+                        }
+                    }
+                    if !gatewayProtocols(field).isEmpty {
+                        object["protocol"] = draft.protocolValue.isEmpty ? nil : .string(draft.protocolValue)
+                    }
+                    result[field.id] = .object(object)
+                }
             case .keyValue:
                 var values: [String: JSONValue] = [:]
                 for row in environments[field.id] ?? [] {
@@ -131,9 +182,9 @@ final class RuntimeConfigurationModel {
                     result[field.id] = value
                 } else { errors[field.id] = String(localized: "Enter valid JSON.") }
             }
-            if errors[field.id] == nil {
+            if errors[field.id] == nil, !(keptSecret && field.kind != .modelGateway) {
                 if let value = result[field.id] {
-                    errors[field.id] = RuntimeConfigValidation.error(value, schema: field.schema)
+                    errors[field.id] = RuntimeConfigValidation.error(value, schema: validationSchema)
                 } else if field.isRequired { errors[field.id] = String(localized: "This field is required.") }
             }
         }
@@ -152,7 +203,8 @@ final class RuntimeConfigurationModel {
             case .choice: choiceValues[field.id] = value
             case .modelGateway:
                 let object = value?.configObject ?? [:]
-                gateways[field.id] = .init(baseURL: object["baseUrl"]?.stringValue ?? "", apiKey: object["apiKey"]?.stringValue ?? "")
+                gateways[field.id] = .init(baseURL: object["baseUrl"]?.stringValue ?? "", apiKey: object["apiKey"]?.stringValue ?? "",
+                    protocolValue: object["protocol"]?.stringValue ?? "")
             case .keyValue:
                 environments[field.id] = (value?.configObject ?? [:]).sorted { $0.key < $1.key }.map { key, item in
                     .init(key: key, value: item == .null ? "" : item.stringValue ?? "", removesInherited: item == .null)
@@ -174,6 +226,21 @@ final class RuntimeConfigurationModel {
         }
     }
 }
+extension RuntimeConfigurationModel {
+    /// Same rule as the Server: scheme, host and port must all match.
+    nonisolated static func sameOrigin(_ left: String?, _ right: String?) -> Bool {
+        func origin(_ value: String?) -> String? {
+            guard let value, let components = URLComponents(string: value.trimmingCharacters(in: .whitespacesAndNewlines)),
+                  let scheme = components.scheme?.lowercased(), let host = components.host?.lowercased(), !host.isEmpty else { return nil }
+            // A default port written out or left off is the same origin.
+            let port = components.port ?? (scheme == "https" ? 443 : scheme == "http" ? 80 : nil)
+            return "\(scheme)://\(host):\(port.map(String.init) ?? "")"
+        }
+        guard let left = origin(left), let right = origin(right) else { return false }
+        return left == right
+    }
+}
+
 struct RuntimeConfigurationValidationError: LocalizedError {
     var errorDescription: String? { String(localized: "Review the highlighted configuration fields.") }
 }

@@ -168,3 +168,28 @@ test('a late full inventory cannot undo a completed project edit', async (t) => 
   assert.equal(view.state.projects[0].name, 'Edited')
   assert.equal(view.state.isLoading, false)
 })
+
+test('an HTTP refresh keeps the runtimes and model configuration a push delivered', async (t) => {
+  const view = await render(t)
+  const runtime = { connectorId: 'conn', runtimeId: 'codex', runtimeType: 'codex', displayName: 'Codex', present: true, configured: true, active: true, status: 'running', discovery: {}, metadata: {}, schema: null, uiSchema: {}, config: null, error: null, lastDiscoveredAt: time, updatedAt: time }
+  const modelConfig = { secretConfigured: true, profiles: [{ id: 'mpr_1', source: 'manual', name: 'Relay', originHost: 'relay.example', offers: [], keyHint: 'sk-…1234', strategyName: null, state: 'active', etag: '1', updatedAt: time }], assignments: [] }
+  await view.emit({ ...snapshot(), runtimes: [runtime], modelConfig })
+  assert.equal(view.state.modelConfig.profiles.length, 1)
+
+  await act(async () => { await view.state.refreshData() })
+
+  assert.equal(view.state.modelConfig.profiles[0].id, 'mpr_1')
+  assert.deepEqual(view.state.runtimes.map(item => item.runtimeId), ['codex'])
+})
+
+test('the model configuration can be read without waiting for a push', async (t) => {
+  const { modelConfigApi } = await import('../src/features/model-config/api.ts')
+  t.mock.method(modelConfigApi, 'overview', async () => ({ secretConfigured: true, profiles: [], assignments: [] }))
+  t.mock.method(modelConfigApi, 'tokensStatus', async () => ({ available: false, tokensUrl: null, secretConfigured: true, link: null }))
+  const view = await render(t)
+  assert.equal(view.state.modelConfig, null)
+
+  await act(async () => { await view.state.refreshModelConfig() })
+
+  assert.deepEqual(view.state.modelConfig, { secretConfigured: true, profiles: [], assignments: [], tokens: { available: false, tokensUrl: null, secretConfigured: true, link: null } })
+})
