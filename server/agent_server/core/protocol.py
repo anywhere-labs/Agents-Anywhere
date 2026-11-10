@@ -222,7 +222,11 @@ class ProtocolTimelineResponse(ProtocolWireModel):
     serverTime: str
 
 
+from agent_server.core.goal.models import GoalState, GoalRequest, GoalResponse
+
+
 class ProtocolSessionSnapshotResponse(ProtocolWireModel):
+    goalState: GoalState | None = None
     session: SessionView
     state: SessionRuntimeState | None = None
     timeline: ProtocolTimelineSnapshot

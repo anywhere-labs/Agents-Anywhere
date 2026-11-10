@@ -11,8 +11,10 @@ import sys
 import tarfile
 import tempfile
 import zipfile
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
+from typing import TextIO
 
 import httpx
 
@@ -72,7 +74,7 @@ def _node_pair(executable: Path) -> tuple[Path, Path] | None:
     return None
 
 
-def node_runtime(root: Path) -> tuple[Path, Path]:
+def node_runtime(root: Path, *, on_install: Callable[[], None] | None = None) -> tuple[Path, Path]:
     system = shutil.which("node")
     if system and (pair := _node_pair(Path(system))):
         return pair
@@ -87,6 +89,8 @@ def node_runtime(root: Path) -> tuple[Path, Path]:
     executable = destination / ("node.exe" if target == "win" else "bin/node")
     if pair := _node_pair(executable):
         return pair
+    if on_install:
+        on_install()
     suffix = ".zip" if target == "win" else ".tar.gz"
     filename = name + suffix
     base = f"https://nodejs.org/dist/v{NODE_VERSION}/"
@@ -129,23 +133,25 @@ def node_runtime(root: Path) -> tuple[Path, Path]:
     return _node_pair(executable)
 
 
-def install_npm_runtime(root: Path, dependencies: dict[str, str], entry: str) -> tuple[Path, Path]:
+def install_npm_runtime(root: Path, dependencies: dict[str, str], entry: str, *, output: TextIO | None = None, on_install: Callable[[], None] | None = None) -> tuple[Path, Path]:
     """Use npm's registry integrity checks; never build application source here."""
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     identity = hashlib.sha256(json.dumps(dependencies, sort_keys=True).encode()).hexdigest()[:20]
     with installation_lock(root / ".install.lock"):
-        node, npm = node_runtime(root)
+        node, npm = node_runtime(root, on_install=on_install)
         destination = root / identity
         script = destination / "node_modules" / entry
         if script.is_file() and (destination / ".ready").is_file():
             return node, script
+        if on_install:
+            on_install()
         with tempfile.TemporaryDirectory(prefix=".npm-", dir=root) as temporary:
             staging = Path(temporary) / "runtime"
             staging.mkdir(mode=0o700)
             (staging / "package.json").write_text(json.dumps({"private": True, "dependencies": dependencies}))
             env = {key: value for key, value in os.environ.items() if key not in {"NODE_OPTIONS", "NODE_PATH"}}
             env["PATH"] = str(node.parent) + os.pathsep + env.get("PATH", "")
-            result = subprocess.run([str(node), str(npm), "install", "--omit=dev", "--ignore-scripts", "--package-lock=false", "--no-audit", "--no-fund"], cwd=staging, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300, check=False)
+            result = subprocess.run([str(node), str(npm), "install", "--omit=dev", "--ignore-scripts", "--package-lock=false", "--no-audit", "--no-fund"], cwd=staging, env=env, stdout=output if output is not None else subprocess.DEVNULL, stderr=output if output is not None else subprocess.DEVNULL, timeout=300, check=False)
             if result.returncode or not (staging / "node_modules" / entry).is_file():
                 raise AcpError("agent_install_failed", "Agent 运行环境安装失败，请检查网络后重试。")
             (staging / ".ready").write_text(identity)

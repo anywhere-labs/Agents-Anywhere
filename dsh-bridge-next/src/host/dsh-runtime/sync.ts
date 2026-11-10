@@ -3,6 +3,7 @@ import { PlanDrafts } from './plan-draft.js'
 import { randomUUID } from 'node:crypto'
 import { receiptKey } from './attachments.js'
 import type { SnapshotPage, SnapshotRequest, SnapshotResult, SyncBatch as WireBatch } from '../generated/dsh-sync.js'
+import { MeshCallError } from 'meshcall'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
@@ -17,7 +18,7 @@ export type SyncOperation = { kind: string, [key: string]: unknown }
 export interface SyncCheckpoint { version: 1, projectionVersion: typeof PROJECTION_VERSION, throughSeq: number, historyHash: string, settled: boolean }
 /** What the feed needs from the Connector; one call per batch, checkpoint or capture. */
 export interface SyncTransport {
-  ingestBatch(batch: WireBatch, signal: AbortSignal): Promise<void>
+  ingestBatch(batch: WireBatch, signal: AbortSignal, attempt?: number): Promise<void>
   loadCheckpoint(externalSessionId: string): Promise<Record<string, unknown> | null>
   saveCheckpoint(externalSessionId: string, checkpoint: SyncCheckpoint): Promise<void>
   deleteCheckpoint(externalSessionId: string): Promise<void>
@@ -40,6 +41,10 @@ export const MAX_RETAINED_PROJECTIONS = 8
 export const SYNC_FLUSH_MS = Math.ceil(1000 / 30)
 
 class SyncTransportError extends Error {}
+/** The Connector's code for a Server it cannot reach; see contracts/dsh-bridge/2.0. */
+const BACKEND_UNAVAILABLE = 'backend_unavailable'
+const BATCH_RETRY_BASE_MS = 1_000
+const BATCH_RETRY_MAX_MS = 30_000
 
 /** One ordered subscription. A batch's delivery call returns only after the Connector ingested it. */
 export class SyncFeed {
@@ -212,11 +217,20 @@ export class SyncFeed {
     if (jsonBytes(batch) > MAX_BYTES) throw new Error('DSH sync batch exceeds the transport limit')
     this.lastSentAt = performance.now()
     this.native.diagnostics.log('debug', 'sync.batch', { streamId: this.id, batchSeq: batch.batchSeq, operations: operations.length, kinds: operations.map(op => op.kind).join(',') })
-    try {
-      // No deadline: a slow upload is a slow answer, and MeshCall keepalives watch the connection.
-      await this.transport.ingestBatch(batch, this.abort.signal)
-    } catch (error) {
-      throw new SyncTransportError('DSH event delivery failed', { cause: error })
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        // No deadline: a slow upload is a slow answer, and MeshCall keepalives watch the connection.
+        await this.transport.ingestBatch(batch, this.abort.signal, attempt)
+        break
+      } catch (error) {
+        // An unreachable Server says nothing about the feed. Ending it would rescan
+        // every session on reconnect, and on a slow network that scan fails the same way.
+        if (this.closed || !(error instanceof MeshCallError) || error.code !== BACKEND_UNAVAILABLE) {
+          throw new SyncTransportError('DSH event delivery failed', { cause: error })
+        }
+        this.native.diagnostics.log('warn', 'sync.batch_retry', { streamId: this.id, batchSeq: batch.batchSeq, attempt: attempt + 1 }, error)
+        await delay(Math.min(BATCH_RETRY_BASE_MS * 2 ** attempt, BATCH_RETRY_MAX_MS), undefined, { signal: this.abort.signal })
+      }
     }
     this.native.diagnostics.log('debug', 'sync.ack', { streamId: this.id, batchSeq: batch.batchSeq, elapsedMs: Math.round(performance.now() - this.lastSentAt) })
   }

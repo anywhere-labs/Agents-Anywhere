@@ -33,6 +33,32 @@ export type Version = string
 export type Capabilities = ProtocolCapability[]
 export type Revision = number
 export type Eventcursor = string
+export type Bindinggeneration = number
+export type Actions = ("set" | "edit" | "pause" | "resume" | "clear")[]
+export type Reason = string | null
+export type Supported1 = boolean
+export type Externalsessionid = string | null
+export type Freshness = "fresh" | "stale" | "unknown"
+export type Createdat1 = string
+export type Endedat = string | null
+export type Id1 = string
+export type Iterations = number | null
+export type Lastreason = string | null
+export type Objective = string
+export type Sourceturnid = string | null
+export type Status1 =
+  "active" | "paused" | "blocked" | "usageLimited" | "budgetLimited" | "complete" | "failed" | "cleared" | "replaced"
+export type Timeusedseconds = number | null
+export type Tokenbudget = number | null
+export type Tokensused = number | null
+export type Updatedat = string
+export type Pendingoperationid = string | null
+export type Revision1 = number
+export type Runtime2 = string
+export type Runtimeid = string | null
+export type Sessionid3 = string
+export type Sourceepoch = string
+export type Sourcerevision = number
 export type Actionid = string
 export type Required = boolean
 export type Schema = {
@@ -43,25 +69,25 @@ export type Uischema = {
 } | null
 export type Label = string
 export type Style = "primary" | "secondary" | "danger"
-export type Actions = NoticeAction[]
+export type Actions1 = NoticeAction[]
 export type Scope1 = "session"
 export type Targetid = string
-export type Createdat1 = string | null
+export type Createdat2 = string | null
 export type Expiresat = string | null
 export type Interactiontype = ("approval" | "execution_error" | "confirmation" | "input_request" | "unknown") | null
 export type Message = string | null
 export type Noticeid = string
 export type Resolvedat1 = string | null
 export type Responserequired = boolean
-export type Revision1 = number
-export type Sessionid3 = string
+export type Revision2 = number
+export type Sessionid4 = string
 export type Severity = "info" | "success" | "warning" | "error"
 export type Approvalid = string | null
 export type Component = string | null
 export type Operationid = string | null
-export type Runtime2 = string | "platform" | null
+export type Runtime3 = string | "platform" | null
 export type Timelineitemid = string | null
-export type Status1 =
+export type Status2 =
   "open" | "responding" | "response_accepted" | "resolving" | "resolved" | "closed" | "expired" | "cancelled" | "failed"
 export type Title1 = string
 export type Type = "notification" | "interaction"
@@ -73,8 +99,8 @@ export type Archivedat = string | null
 export type Connectorid = string
 export type Connectorstatus = "offline" | "online"
 export type Cwd = string | null
-export type Externalsessionid = string | null
-export type Id1 = string
+export type Externalsessionid1 = string | null
+export type Id2 = string
 export type Lastactivityat = string | null
 export type Lastitemat = string | null
 export type Lastitemorderseq = number | null
@@ -84,49 +110,49 @@ export type Latestturnendseq = number
 export type Pinned = boolean
 export type Pinnedat = string | null
 export type Projectid = string | null
-export type Runtime3 = string
+export type Runtime4 = string
 export type Sortat = string | null
 export type Sourceavailability = "available" | "archived" | "unavailable" | "deleted" | "missing" | "unknown"
 export type Sourceavailabilityreason = string | null
 export type Sourceavailabilityupdatedat = string | null
 export type Sourceobservationorigin = ("event" | "inventory" | "operation") | null
 export type Sourceobservedat = string | null
-export type Status2 = "idle" | "waiting" | "pending" | "running" | "stopping" | "waiting_approval" | "error" | "blocked"
+export type Status3 = "idle" | "waiting" | "pending" | "running" | "stopping" | "waiting_approval" | "error" | "blocked"
 export type Takeover = boolean
 export type Title2 = string | null
 export type Unread = boolean
 export type Updatedseq1 = number
 export type Userarchived = boolean
-export type Createdat2 = string
+export type Createdat3 = string
 export type Error = {
   [k: string]: unknown
 } | null
-export type Externalsessionid1 = string | null
-export type Runtime4 = string
-export type Sessionid4 = string
-export type Status3 = "idle" | "waiting" | "pending" | "running" | "stopping" | "waiting_approval" | "error" | "blocked"
+export type Externalsessionid2 = string | null
+export type Runtime5 = string
+export type Sessionid5 = string
+export type Status4 = "idle" | "waiting" | "pending" | "running" | "stopping" | "waiting_approval" | "error" | "blocked"
 export type Statusreason = string | null
-export type Updatedat = string
+export type Updatedat1 = string
 export type Updatedseq2 = number
 export type Hasmore = boolean
 export type Completedat = string | null
 export type Contenthash = string
-export type Createdat3 = string
-export type Id2 = string
+export type Createdat4 = string
+export type Id3 = string
 export type Orderseq = number
-export type Revision2 = number
+export type Revision3 = number
 export type Role = ("user" | "assistant" | "system" | "tool") | null
-export type Sessionid5 = string
+export type Sessionid6 = string
 export type Clientmessageid = string | null
 export type Derivedkey = string | null
 export type Event = string | null
 export type Itemid1 = string | null
 export type Itemtype = string | null
-export type Runtime5 = string | "platform"
-export type Sessionid6 = string | null
-export type Status4 = "pending" | "running" | "waiting_approval" | "done" | "failed" | "cancelled" | "interrupted"
+export type Runtime6 = string | "platform"
+export type Sessionid7 = string | null
+export type Status5 = "pending" | "running" | "waiting_approval" | "done" | "failed" | "cancelled" | "interrupted"
 export type Type1 = "message" | "tool" | "artifact" | "marker" | "system"
-export type Updatedat1 = string
+export type Updatedat2 = string
 export type Updatedseq3 = number
 export type Items = TimelineItem[]
 export type Nextseq = number
@@ -136,6 +162,7 @@ export interface ProtocolSessionSnapshotResponse {
   catalogs: Catalogs
   effectiveCapabilities: ProtocolCapabilitySet
   eventCursor: Eventcursor
+  goalState: GoalState | null
   notices: Notices
   runtimeCapabilities: ProtocolCapabilitySet
   serverTime: Servertime
@@ -195,11 +222,46 @@ export interface ProtocolCapability {
 export interface Parameters {
   [k: string]: unknown
 }
-export interface NoticeIn {
+export interface GoalState {
+  bindingGeneration?: Bindinggeneration
+  capabilities?: GoalCapabilities
+  externalSessionId?: Externalsessionid
+  freshness?: Freshness
+  goal?: Goal | null
+  lastOutcome?: Goal | null
+  pendingOperationId?: Pendingoperationid
+  revision?: Revision1
+  runtime: Runtime2
+  runtimeId?: Runtimeid
+  sessionId: Sessionid3
+  sourceEpoch?: Sourceepoch
+  sourceRevision?: Sourcerevision
+}
+export interface GoalCapabilities {
   actions?: Actions
+  reason?: Reason
+  supported?: Supported1
+  [k: string]: unknown
+}
+export interface Goal {
+  createdAt: Createdat1
+  endedAt?: Endedat
+  id: Id1
+  iterations?: Iterations
+  lastReason?: Lastreason
+  objective: Objective
+  sourceTurnId?: Sourceturnid
+  status: Status1
+  timeUsedSeconds?: Timeusedseconds
+  tokenBudget?: Tokenbudget
+  tokensUsed?: Tokensused
+  updatedAt: Updatedat
+}
+export interface NoticeIn {
+  actions?: Actions1
   blocking?: NoticeBlocking | null
   context?: Context
-  createdAt?: Createdat1
+  createdAt?: Createdat2
   expiresAt?: Expiresat
   interactionType?: Interactiontype
   message?: Message
@@ -207,11 +269,11 @@ export interface NoticeIn {
   noticeId: Noticeid
   resolvedAt?: Resolvedat1
   responseRequired?: Responserequired
-  revision?: Revision1
-  sessionId: Sessionid3
+  revision?: Revision2
+  sessionId: Sessionid4
   severity?: Severity
   source?: NoticeSource
-  status?: Status1
+  status?: Status2
   title: Title1
   type: Type
   [k: string]: unknown
@@ -244,7 +306,7 @@ export interface NoticeSource {
   approvalId?: Approvalid
   component?: Component
   operationId?: Operationid
-  runtime?: Runtime2
+  runtime?: Runtime3
   timelineItemId?: Timelineitemid
   [k: string]: unknown
 }
@@ -255,8 +317,8 @@ export interface SessionView {
   connectorId: Connectorid
   connectorStatus: Connectorstatus
   cwd?: Cwd
-  externalSessionId?: Externalsessionid
-  id: Id1
+  externalSessionId?: Externalsessionid1
+  id: Id2
   lastActivityAt?: Lastactivityat
   lastItemAt?: Lastitemat
   lastItemOrderSeq?: Lastitemorderseq
@@ -266,14 +328,14 @@ export interface SessionView {
   pinned?: Pinned
   pinnedAt?: Pinnedat
   projectId?: Projectid
-  runtime: Runtime3
+  runtime: Runtime4
   sortAt?: Sortat
   sourceAvailability?: Sourceavailability
   sourceAvailabilityReason?: Sourceavailabilityreason
   sourceAvailabilityUpdatedAt?: Sourceavailabilityupdatedat
   sourceObservationOrigin?: Sourceobservationorigin
   sourceObservedAt?: Sourceobservedat
-  status: Status2
+  status: Status3
   takeover: Takeover
   title?: Title2
   unread?: Unread
@@ -282,16 +344,16 @@ export interface SessionView {
   [k: string]: unknown
 }
 export interface SessionRuntimeState {
-  createdAt: Createdat2
+  createdAt: Createdat3
   error?: Error
-  externalSessionId?: Externalsessionid1
+  externalSessionId?: Externalsessionid2
   metadata?: Metadata1
-  runtime: Runtime4
+  runtime: Runtime5
   selections?: Selections
-  sessionId: Sessionid4
-  status?: Status3
+  sessionId: Sessionid5
+  status?: Status4
   statusReason?: Statusreason
-  updatedAt: Updatedat
+  updatedAt: Updatedat1
   updatedSeq: Updatedseq2
   [k: string]: unknown
 }
@@ -311,16 +373,16 @@ export interface TimelineItem {
   completedAt?: Completedat
   content?: Content
   contentHash: Contenthash
-  createdAt: Createdat3
-  id: Id2
+  createdAt: Createdat4
+  id: Id3
   orderSeq: Orderseq
-  revision?: Revision2
+  revision?: Revision3
   role?: Role
-  sessionId: Sessionid5
+  sessionId: Sessionid6
   source: TimelineSource
-  status: Status4
+  status: Status5
   type: Type1
-  updatedAt: Updatedat1
+  updatedAt: Updatedat2
   updatedSeq: Updatedseq3
   [k: string]: unknown
 }
@@ -333,7 +395,7 @@ export interface TimelineSource {
   event?: Event
   itemId?: Itemid1
   itemType?: Itemtype
-  runtime: Runtime5
-  sessionId?: Sessionid6
+  runtime: Runtime6
+  sessionId?: Sessionid7
   [k: string]: unknown
 }

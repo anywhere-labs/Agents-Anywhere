@@ -16,9 +16,11 @@ struct V2SessionCreationService {
         attachments: [V2LocalAttachment],
         clientMessageId: String
     ) async throws -> V2SessionCreateResponse {
-        let intent = V2PlanningCommand.parse(content)
+        let trimmed = content.trimmingCharacters(in:.whitespacesAndNewlines)
+        let goal = trimmed.range(of:"^/goal(?:\\s|$)", options:.regularExpression) != nil
+        let intent = goal ? nil : V2PlanningCommand.parse(content)
         if intent?.command == "exit_plan" || intent?.command == "enter_plan" { throw V2BusinessError.emptyMessage }
-        let normalizedContent = intent == nil ? content.trimmingCharacters(in: .whitespacesAndNewlines) : intent?.content ?? ""
+        let normalizedContent = goal ? String(trimmed.dropFirst(5)).trimmingCharacters(in:.whitespacesAndNewlines) : intent == nil ? content.trimmingCharacters(in: .whitespacesAndNewlines) : intent?.content ?? ""
         if normalizedContent.isEmpty, attachments.isEmpty, intent == nil {
             throw V2BusinessError.emptyMessage
         }
@@ -46,6 +48,7 @@ struct V2SessionCreationService {
                 runtimeId: runtimeId,
                 title: title,
                 cwd: cwd,
+                goalIntent: goal ? V2GoalCreationIntent(operationId:clientMessageId) : nil,
                 planningIntent: intent == nil ? nil : V2PlanningIntent(operationId: clientMessageId),
                 content: normalizedContent,
                 selections: selections,

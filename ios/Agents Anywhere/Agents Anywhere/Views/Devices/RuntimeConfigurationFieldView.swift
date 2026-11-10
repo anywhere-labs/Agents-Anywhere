@@ -33,7 +33,7 @@ struct RuntimeConfigurationFieldView: View {
         switch field.kind {
         case let .text(_, _, secure):
             if secure {
-                RuntimeSecretInput(title: title, text: binding(\.textValues, default: ""))
+                RuntimeSecretInput(title: model.storedSecret(field.id)?.hint ?? title, text: binding(\.textValues, default: ""))
             } else {
                 TextField(field.defaultValue?.stringValue ?? title, text: binding(\.textValues, default: ""))
                     .runtimeConfigInput().accessibilityLabel(title)
@@ -65,6 +65,17 @@ struct RuntimeConfigurationFieldView: View {
             let properties = field.schema["properties"]?.configObject ?? [:]
             let urlSchema = properties["baseUrl"]?.configObject ?? [:]
             let keySchema = properties["apiKey"]?.configObject ?? [:]
+            let protocols = model.gatewayProtocols(field)
+            let storedKey = model.storedGatewayKey(field.id)
+            if !protocols.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(String(localized: "dashboard.device.modelGatewayProtocol")).font(.subheadline.weight(.medium))
+                    Picker(String(localized: "dashboard.device.modelGatewayProtocol"), selection: binding(\.gateways, default: .init()).protocolValue) {
+                        Text(String(localized: "Choose an option")).tag("")
+                        ForEach(protocols, id: \.self) { Text(ModelConfigPresentation.protocolLabel($0)).tag($0) }
+                    }.pickerStyle(.menu).runtimeConfigInput()
+                }
+            }
             VStack(alignment: .leading, spacing: 8) {
                 Text(RuntimeConfigCopy.schemaText(urlSchema, key: "labelKey", fallback: String(localized: "Gateway URL"), locale: locale))
                     .font(.subheadline.weight(.medium))
@@ -76,12 +87,18 @@ struct RuntimeConfigurationFieldView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(RuntimeConfigCopy.schemaText(keySchema, key: "labelKey", fallback: String(localized: "Gateway API key"), locale: locale))
                     .font(.subheadline.weight(.medium))
-                RuntimeSecretInput(title: RuntimeConfigCopy.lookup(String(localized: "Gateway API key"), locale: locale),
-                    text: binding(\.gateways, default: .init()).apiKey,
-                    showTitle: String(localized: "dashboard.device.showModelGatewayApiKey"),
-                    hideTitle: String(localized: "dashboard.device.hideModelGatewayApiKey"))
-                Text(RuntimeConfigCopy.schemaText(keySchema, key: "descriptionKey", fallback: keySchema["description"]?.stringValue ?? "", locale: locale))
-                    .font(.footnote).foregroundStyle(.secondary)
+                // Write-only: no reveal control, and a saved key is never shown.
+                SecureField(storedKey.map { $0.hint ?? "••••" } ?? RuntimeConfigCopy.lookup(String(localized: "Gateway API key"), locale: locale),
+                    text: binding(\.gateways, default: .init()).apiKey)
+                    .textContentType(nil).runtimeConfigInput()
+                    .accessibilityLabel(String(localized: "Gateway API key"))
+                if let storedKey {
+                    Text(String(format: String(localized: "dashboard.device.modelGatewayApiKeyKept"), storedKey.hint ?? "••••"))
+                        .font(.footnote).foregroundStyle(.secondary)
+                } else {
+                    Text(RuntimeConfigCopy.schemaText(keySchema, key: "descriptionKey", fallback: keySchema["description"]?.stringValue ?? "", locale: locale))
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
             }
         }.padding(.vertical, 8)
     }

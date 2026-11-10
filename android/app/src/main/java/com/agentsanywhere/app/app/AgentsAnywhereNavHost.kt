@@ -9,6 +9,11 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.res.stringResource
+import com.agentsanywhere.app.R
+import com.agentsanywhere.app.ui.screens.devices.DeviceConfirmDialog
+import kotlinx.coroutines.CancellationException
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -19,11 +24,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.agentsanywhere.app.feature.auth.WebLoginViewModel
-import com.agentsanywhere.app.feature.devices.DeviceRuntime
+import com.agentsanywhere.app.feature.devices.DeviceAgentOperations
+import com.agentsanywhere.app.feature.devices.hasConfiguredDeviceAgents
+import com.agentsanywhere.app.feature.devices.observingChanges
 import com.agentsanywhere.app.feature.devices.DevicePairingStatus
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
+import com.agentsanywhere.app.feature.devices.DeviceSettingsOperations
 import com.agentsanywhere.app.feature.files.FilesController
+import com.agentsanywhere.app.feature.modelconfig.ModelConfigController
+import com.agentsanywhere.app.feature.modelconfig.ModelConfigState
 import com.agentsanywhere.app.feature.realtime.SessionRealtimeController
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessions.NewSessionCreateDraft
@@ -50,6 +60,7 @@ import com.agentsanywhere.app.ui.screens.auth.QrLoginScreen
 import com.agentsanywhere.app.ui.screens.auth.QrWaitingScreen
 import com.agentsanywhere.app.ui.screens.auth.WebLoginHostScreen
 import com.agentsanywhere.app.ui.screens.devices.AddDeviceScreen
+import com.agentsanywhere.app.ui.screens.devices.DeviceAgentSetupSheet
 import com.agentsanywhere.app.ui.screens.devices.DeviceDetailScreen
 import com.agentsanywhere.app.ui.screens.devices.DevicesScreen
 import com.agentsanywhere.app.ui.screens.devices.rememberDeviceAgentPreviews
@@ -58,6 +69,7 @@ import com.agentsanywhere.app.ui.screens.home.ArchivedSessionsScreen
 import com.agentsanywhere.app.ui.screens.home.HomeScreen
 import com.agentsanywhere.app.ui.screens.home.HomeTab
 import com.agentsanywhere.app.ui.screens.home.NewSessionScreen
+import com.agentsanywhere.app.ui.screens.modelconfig.ModelConfigScreen
 import com.agentsanywhere.app.ui.screens.sessiondetail.SessionComposerDraftStore
 import com.agentsanywhere.app.ui.screens.sessiondetail.SessionDetailScreen
 import com.agentsanywhere.app.ui.screens.terminal.TerminalScreen
@@ -66,6 +78,8 @@ import com.agentsanywhere.app.ui.screens.terminal.TerminalScreen
 internal fun AgentsAnywhereNavHost(
     currentDestination: AppDestination,
     sessionsState: SessionsState,
+    modelConfigState: ModelConfigState,
+    modelConfigController: ModelConfigController,
     isRefreshingSessions: Boolean,
     selectedSessionId: String?,
     preparedSessionDraft: NewSessionDraft?,
@@ -118,8 +132,8 @@ internal fun AgentsAnywhereNavHost(
     onClearDevicePairing: (String) -> Unit,
     onDevicePairingComplete: () -> Unit,
     onListDeviceRuntimes: suspend (String) -> Result<DeviceRuntimeList>,
-    onSetDeviceRuntimeActive: suspend (String, String, Boolean) -> Result<DeviceRuntime>,
-    onDeleteDeviceRuntimeConfig: suspend (String, String) -> Result<DeviceRuntime>,
+    deviceAgents: DeviceAgentOperations,
+    deviceSettings: DeviceSettingsOperations,
     onBulkSetSessionsArchived: suspend (List<String>, Boolean) -> Result<SessionBatchUpdate>,
     onArchiveAllDeviceSessions: suspend (String, Boolean, String) -> Result<List<AgentSession>>,
     onRenameSession: suspend (String, String) -> Result<AgentSession>,
@@ -155,6 +169,71 @@ internal fun AgentsAnywhereNavHost(
         refreshKey = deviceAgentPreviewRefreshKey,
         onListDeviceRuntimes = onListDeviceRuntimes,
     )
+    // Agent counts on the device list follow every Agent change made in this app.
+    val agentOperations = remember(deviceAgents) {
+        deviceAgents.observingChanges { deviceAgentPreviewRefreshKey += 1L }
+    }
+    val checkAgents: suspend () -> Result<Boolean> = {
+        runCatching { hasConfiguredDeviceAgents(sessionsState.devices, onListDeviceRuntimes) }
+    }
+    var agentSetupDeviceIds by remember(serverUrl, userId) { mutableStateOf(emptyList<String>()) }
+    // A device page under the setup sheet reads its Agents again once the sheet closes.
+    var agentSetupFinishedCount by remember(serverUrl, userId) { mutableLongStateOf(0L) }
+    val showsWorkspace = currentDestination in workspaceDestinations
+    var agentReminderChecked by remember(serverUrl, userId) { mutableStateOf(false) }
+    var agentReminderOpen by remember(serverUrl, userId) { mutableStateOf(false) }
+    LaunchedEffect(currentDestination, sessionsState.hasLoaded, sessionsState.devices, isRefreshingSessions, serverUrl, userId) {
+        if (currentDestination == AppDestination.DeviceSetup) agentReminderChecked = false
+        if (currentDestination != AppDestination.Sessions || !sessionsState.hasLoaded ||
+            sessionsState.isLoading || isRefreshingSessions || sessionsState.errorMessage != null || agentReminderChecked) return@LaunchedEffect
+        try {
+            val configured = hasConfiguredDeviceAgents(sessionsState.devices, onListDeviceRuntimes)
+            agentReminderChecked = true
+            agentReminderOpen = !configured
+        } catch (error: CancellationException) { throw error }
+        catch (_: Exception) { /* Unknown inventory must not be treated as empty. */ }
+    }
+    // A device that came online after its setup page was left is offered Agent setup here.
+    val onlinePairings = devicePairingStates.filterValues { it == DevicePairingStatus.Online }.keys
+    LaunchedEffect(onlinePairings, showsWorkspace, agentSetupDeviceIds) {
+        if (!showsWorkspace || agentSetupDeviceIds.isNotEmpty()) return@LaunchedEffect
+        val id = onlinePairings.firstOrNull() ?: return@LaunchedEffect
+        onClearDevicePairing(id)
+        if (sessionsState.devices.any { it.id == id }) agentSetupDeviceIds = listOf(id)
+    }
+    if (agentReminderOpen && currentDestination == AppDestination.Sessions && !profileOpen && agentSetupDeviceIds.isEmpty()) {
+        DeviceConfirmDialog(
+            title = stringResource(R.string.agent_reminder_title),
+            body = stringResource(R.string.agent_reminder_description),
+            confirmLabel = stringResource(R.string.agent_reminder_add),
+            dismissLabel = stringResource(R.string.agent_reminder_later),
+            onDismiss = { agentReminderOpen = false },
+            onConfirm = {
+                agentReminderOpen = false
+                val online = sessionsState.devices.filter { it.online }
+                when {
+                    online.isNotEmpty() -> agentSetupDeviceIds = online.map { it.id }
+                    sessionsState.devices.isNotEmpty() -> onOpenDevice(sessionsState.devices.first())
+                    else -> navigate(AppDestination.DeviceSetup)
+                }
+            },
+        )
+    }
+    val agentSetupDevices = agentSetupDeviceIds.mapNotNull { id -> sessionsState.devices.firstOrNull { it.id == id } }
+    if (agentSetupDevices.isNotEmpty() && showsWorkspace) {
+        DeviceAgentSetupSheet(
+            devices = agentSetupDevices,
+            operations = agentOperations,
+            onCheckAgents = checkAgents,
+            onFinish = {
+                agentSetupDeviceIds = emptyList()
+                agentSetupFinishedCount += 1L
+            },
+        )
+    } else if (agentSetupDeviceIds.isNotEmpty() && agentSetupDevices.isEmpty()) {
+        // The devices were deleted or the account changed while the setup was pending.
+        LaunchedEffect(Unit) { agentSetupDeviceIds = emptyList() }
+    }
     val sessionComposerDraftStore = remember(context, userId) {
         SessionComposerDraftStore(context.applicationContext, userId)
     }
@@ -220,6 +299,7 @@ internal fun AgentsAnywhereNavHost(
                     profileOpen = profileOpen,
                     onProfileOpenChange = { profileOpen = it },
                     onOpenArchivedSessions = { navigate(AppDestination.ArchivedSessions) },
+                    onOpenModelConfig = { navigate(AppDestination.ModelConfig) },
                     onLoadAccount = onLoadAccount,
                     onLoadAccountAuthConfig = onLoadAccountAuthConfig,
                     onUpdateDisplayName = onUpdateDisplayName,
@@ -253,6 +333,7 @@ internal fun AgentsAnywhereNavHost(
                     onLoadModelCatalog = onLoadNewSessionModelCatalog,
                     onPrepareRuntimeWorkspace = onPrepareRuntimeWorkspace,
                     onLoadPermissionCatalog = onLoadNewSessionPermissionCatalog,
+                    modelConfigState = modelConfigState,
                     onPrepareSession = onPrepareSession,
                     onRefreshDevices = onRefreshSessions,
                     devicesRefreshing = isRefreshingSessions,
@@ -291,17 +372,9 @@ internal fun AgentsAnywhereNavHost(
                     onRenameDevice = onRenameDevice,
                     onDeleteDevice = onDeleteDevice,
                     onPrepareDeviceSetup = onPrepareDeviceSetup,
-                    onListDeviceRuntimes = onListDeviceRuntimes,
-                    onSetDeviceRuntimeActive = { connectorId, runtime, active ->
-                        onSetDeviceRuntimeActive(connectorId, runtime, active).onSuccess {
-                            deviceAgentPreviewRefreshKey += 1L
-                        }
-                    },
-                    onDeleteDeviceRuntimeConfig = { connectorId, runtime ->
-                        onDeleteDeviceRuntimeConfig(connectorId, runtime).onSuccess {
-                            deviceAgentPreviewRefreshKey += 1L
-                        }
-                    },
+                    agentOperations = agentOperations,
+                    deviceSettings = deviceSettings,
+                    agentsRefreshKey = agentSetupFinishedCount,
                     onBulkSetSessionsArchived = onBulkSetSessionsArchived,
                     onArchiveAllDeviceSessions = onArchiveAllDeviceSessions,
                 )
@@ -328,6 +401,8 @@ internal fun AgentsAnywhereNavHost(
                 )
                 AppDestination.DeviceSetup -> androidx.compose.runtime.key(serverUrl, userId) {
                     AddDeviceScreen(
+                        agentOperations = agentOperations,
+                        onCheckAgents = checkAgents,
                         devices = sessionsState.devices,
                         pairingStates = devicePairingStates,
                         onBack = { navigate(deviceSetupReturnDestination) },
@@ -351,7 +426,24 @@ internal fun AgentsAnywhereNavHost(
                         onBack = { navigate(AppDestination.Sessions) },
                     )
                 }
+                AppDestination.ModelConfig -> androidx.compose.runtime.key(serverUrl, userId) {
+                    ModelConfigScreen(
+                        state = modelConfigState,
+                        devices = sessionsState.devices,
+                        controller = modelConfigController,
+                        onBack = { navigate(AppDestination.Sessions) },
+                    )
+                }
             }
         }
     }
 }
+
+/** Destinations of a signed-in workspace, where Agent setup can be offered over the page. */
+private val workspaceDestinations = AppDestination.entries.toSet() - setOf(
+    AppDestination.LoginMethods,
+    AppDestination.ServerSetup,
+    AppDestination.QrLogin,
+    AppDestination.QrWaiting,
+    AppDestination.DeviceSetup,
+)

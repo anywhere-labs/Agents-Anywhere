@@ -93,6 +93,7 @@ class ConnectorNotificationService:
             RuntimeCatalogNotificationHandler(store),
             SessionStateNotificationHandler(store),
             PlanningNotificationHandler(store),
+            GoalNotificationHandler(store),
             SessionTurnEndedNotificationHandler(
                 store, timeline_write_buffer, usage_recorder=usage
             ),
@@ -840,6 +841,7 @@ class TimelineNotificationHandler:
             TimelineItemIn.model_validate(item) for item in params.get("items", [])
         ]
         _require_storable_order_seq(items)
+        snapshot_range = _snapshot_range(params.get("snapshotRange"))
         runtime, runtime_id = await timeline_runtime_identity_from_params(
             self._store,
             params,
@@ -857,38 +859,31 @@ class TimelineNotificationHandler:
             return IngestEffect()
         items = [_timeline_item_for_session(item, session_id) for item in items]
         replace_snapshot = params.get("complete") is True
+
+        async def write():
+            common = {
+                "session_id": session_id,
+                "source_observed_at": params.get("sourceObservedAt"),
+                "items": items,
+                "mark_read_on_change": True,
+            }
+            if snapshot_range is not None:
+                after_order_seq, through_order_seq = snapshot_range
+                return await self._store.replace_timeline_range(
+                    **common,
+                    after_order_seq=after_order_seq,
+                    through_order_seq=through_order_seq,
+                )
+            if replace_snapshot:
+                return await self._store.replace_timeline_snapshot(**common)
+            return await self._store.sync_timeline_items(**common)
+
         try:
             if self._timeline_write_buffer is None:
-                if replace_snapshot:
-                    result = await self._store.replace_timeline_snapshot(
-                        session_id=session_id,
-                        source_observed_at=params.get("sourceObservedAt"),
-                        items=items,
-                        mark_read_on_change=True,
-                    )
-                else:
-                    result = await self._store.sync_timeline_items(
-                        session_id=session_id,
-                        source_observed_at=params.get("sourceObservedAt"),
-                        items=items,
-                        mark_read_on_change=True,
-                    )
+                result = await write()
             else:
                 async with self._timeline_write_buffer.session_fence(session_id):
-                    if replace_snapshot:
-                        result = await self._store.replace_timeline_snapshot(
-                            session_id=session_id,
-                            source_observed_at=params.get("sourceObservedAt"),
-                            items=items,
-                            mark_read_on_change=True,
-                        )
-                    else:
-                        result = await self._store.sync_timeline_items(
-                            session_id=session_id,
-                            source_observed_at=params.get("sourceObservedAt"),
-                            items=items,
-                            mark_read_on_change=True,
-                        )
+                    result = await write()
         finally:
             if self._timeline_write_buffer is not None:
                 await self._timeline_write_buffer.invalidate(session_id)
@@ -900,8 +895,16 @@ class TimelineNotificationHandler:
             items=[item.model_dump(mode="json") for item in changed_items]
             if push_items
             else None,
-            timeline_reset=replace_snapshot and result.changed and push_items,
-            needs_refetch=not push_items,
+            # One page of a paged snapshot holds only part of the timeline,
+            # so it never resets clients to its items; a page that deleted or
+            # moved rows makes them refetch instead.
+            timeline_reset=(
+                replace_snapshot
+                and snapshot_range is None
+                and result.changed
+                and push_items
+            ),
+            needs_refetch=not push_items or result.reordered,
             accepted_sequence=(
                 await self._store.get_session_seq(session_id)
                 if timeline_published
@@ -1664,6 +1667,48 @@ def _require_storable_order_seq(items: list[TimelineItemIn]) -> None:
             )
 
 
+def _snapshot_range(value: Any) -> tuple[int | None, int | None] | None:
+    """Parse the ``orderSeq`` range one page of a paged snapshot covers.
+
+    ``{"afterOrderSeq": a, "throughOrderSeq": b}`` says the request carries
+    every snapshot item with ``a < orderSeq <= b``; a missing or null bound is
+    unbounded, and ``a == b`` is an empty range that deletes nothing. Without
+    it, ``complete: true`` replaces the whole timeline.
+    """
+
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise NotificationValidationError(
+            "invalid_snapshot_range", "snapshotRange must be an object"
+        )
+    bounds: list[int | None] = []
+    for key in ("afterOrderSeq", "throughOrderSeq"):
+        bound = value.get(key)
+        if bound is not None and (
+            isinstance(bound, bool)
+            or not isinstance(bound, int)
+            or not timeline_order_seq_in_range(bound)
+        ):
+            raise NotificationValidationError(
+                "invalid_snapshot_range",
+                f"snapshotRange.{key} must be null or an integer within "
+                f"{TIMELINE_ORDER_SEQ_MIN}..{TIMELINE_ORDER_SEQ_MAX}",
+            )
+        bounds.append(bound)
+    after_order_seq, through_order_seq = bounds
+    if (
+        after_order_seq is not None
+        and through_order_seq is not None
+        and after_order_seq > through_order_seq
+    ):
+        raise NotificationValidationError(
+            "invalid_snapshot_range",
+            "snapshotRange.afterOrderSeq must not exceed throughOrderSeq",
+        )
+    return after_order_seq, through_order_seq
+
+
 def _timeline_item_for_session(
     item: TimelineItemIn,
     session_id: str,
@@ -1704,3 +1749,29 @@ class PlanningNotificationHandler:
         if not await self._store.save_planning(state.sessionId, payload):
             return IngestEffect()
         return IngestEffect(session_id=state.sessionId, planning_state=payload)
+
+
+class GoalNotificationHandler:
+    def __init__(self, store):
+        self._store = store
+
+    async def apply(self, *, connector_id, method, params):
+        if method != "session.goal.updated":
+            return None
+        from agent_server.core.goal.models import GoalState
+
+        state = GoalState.model_validate(params)
+        if not state.runtimeId or not await _session_matches_runtime(
+            self._store,
+            state.sessionId,
+            state.runtime,
+            state.runtimeId,
+            connector_id=connector_id,
+        ):
+            raise NotificationValidationError(
+                "goal_binding_invalid", "Goal session binding is invalid"
+            )
+        await self._store.save_goal(
+            state.sessionId, state.model_dump(mode="json"), connector_id=connector_id
+        )
+        return IngestEffect()

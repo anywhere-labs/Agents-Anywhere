@@ -1,5 +1,7 @@
 package com.agentsanywhere.app.api
 
+import com.agentsanywhere.app.model.ModelConfigOverview
+
 data class RemoteWsTicket(
     val ticket: String,
     val expiresAt: String,
@@ -13,6 +15,10 @@ data class RemoteDashboardSnapshot(
     val activePage: RemoteSessionPageInfo,
     val archivedPage: RemoteSessionPageInfo,
     val serverTime: String?,
+    /** Every runtime instance the user can see, across devices. */
+    val runtimes: List<RemoteDeviceRuntime> = emptyList(),
+    /** Null when the Server does not send model configuration. */
+    val modelConfig: ModelConfigOverview? = null,
 )
 
 data class RemoteSessionPageInfo(
@@ -32,6 +38,7 @@ data class RemoteSessionEventEnvelope(
 )
 
 data class RemoteSessionEventPayload(
+    val goal: RemoteGoalState? = null,
     val planning: RemotePlanningState? = null,
     val session: RemoteSession? = null,
     val item: RemoteTimelineItem? = null,

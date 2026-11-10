@@ -1,12 +1,13 @@
 [project]
 name = "anywhere-cli"
-version = "2.1.0"
+version = "2.2.0"
 description = "Local runtime connector for Agents Anywhere"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "agent-client-protocol==0.12.1",
     "asyncer>=0.0.18",
+    "certifi",
     "claude-agent-sdk",
     "httpx[socks]>=0.28.1",
     "jsonschema>=4.26.0",
@@ -21,6 +22,7 @@ dependencies = [
     "pyte>=0.8.2",
     "python-socks>=2.8.1",
     "pywinpty>=2.0.13; sys_platform == 'win32'",
+    "truststore>=0.10",
     "websockets>=16.0",
 ]
 
@@ -50,3 +52,6 @@ packages = ["connector"]
 
 [tool.uv]
 package = true
+# cryptography 49+ publishes no Intel macOS wheel, so uv falls back to a source
+# build that needs Rust and stalls first-time setup for many minutes.
+constraint-dependencies = ["cryptography<49; sys_platform == 'darwin' and platform_machine == 'x86_64'"]

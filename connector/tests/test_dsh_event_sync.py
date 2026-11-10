@@ -185,6 +185,46 @@ def test_replayed_batch_after_a_lost_acknowledgement_is_idempotent():
     asyncio.run(exercise())
 
 
+def test_a_streaming_reply_is_posted_at_most_once_per_interval():
+    def upsert(status, text):
+        content = {"text": text, "format": "markdown"}
+        return {"method": "timeline.itemUpsert", "params": {"sessionId": "session", "item": {
+            **item("reply"), "status": status, "content": content,
+            "contentHash": timeline_content_hash("message", status, "assistant", content)}}}
+
+    async def exercise():
+        loop = asyncio.get_running_loop()
+        receiver = host()
+        posted = []
+        receiver.publish_runtime_notifications.side_effect = lambda runtime, notices, **kwargs: posted.append(
+            (loop.time(), [n["params"].get("item", n["params"])["status"] for n in notices]))
+        relay = ready_relay(receiver)
+        relay.streaming_post_interval = 0.1
+        try:
+            for text in ("a", "ab", "abc"):
+                await ingest(relay, {"kind": "notifications", "notifications": [upsert("running", text)]})
+            # A batch that finishes an item is never held, and neither is any other notification.
+            await ingest(relay, {"kind": "notifications", "notifications": [upsert("running", "abcd"), upsert("done", "abcde")]})
+            await ingest(relay, {"kind": "notifications", "notifications": [
+                {"method": "session.state.updated", "params": {"sessionId": "session", "status": "idle"}}]})
+            # Nor is a lone draft after other work (another session's baseline, say).
+            await ingest(relay, {"kind": "notifications", "notifications": [upsert("running", "x")]})
+            await ingest(relay, {"kind": "notifications", "notifications": [upsert("running", "xy")]})
+            returned = loop.time()
+        finally:
+            await relay.close()
+        times = [at for at, _ in posted]
+        assert [statuses for _, statuses in posted] == [
+            ["running"], ["running"], ["running"], ["running", "done"], ["idle"], ["running"], ["running"]]
+        gaps = [later - earlier for earlier, later in zip(times, times[1:], strict=False)]
+        assert gaps[0] < 0.05, "a single draft batch is acknowledged at once"
+        assert gaps[1] >= 0.09 and gaps[2] >= 0.09, "a streaming reply waits for the interval"
+        assert gaps[3] < 0.05 and gaps[4] < 0.05 and gaps[5] < 0.05
+        # Each post goes out as soon as it arrives; the acknowledgement is what waits.
+        assert returned - times[6] >= 0.09
+    asyncio.run(exercise())
+
+
 def test_event_runtime_is_not_scanned_and_reconnect_is_explicit():
     async def exercise():
         runtime = SimpleNamespace(sync_mode="events", resynchronize=AsyncMock())

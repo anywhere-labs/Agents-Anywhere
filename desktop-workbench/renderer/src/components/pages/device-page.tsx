@@ -53,6 +53,7 @@ import type {
 import { useWorkspace } from "@/components/workspace-context"
 import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
+import { DeviceSettingsSection } from "@/features/dashboard/device-settings"
 import { PairDeviceDialog } from "@/components/pair-device-dialog"
 import type { ConnectorRevokeResponse } from "@/features/dashboard/types"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -60,6 +61,7 @@ import { useLocale, useTranslations } from "next-intl"
 import { toast } from "sonner"
 import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
 import { RuntimeAddDialog } from "@/components/runtime-add-dialog"
+import { RuntimeMaturityBadge } from "@/components/runtime-maturity-badge"
 import { RuntimeConfigDialog } from "@/components/runtime-config-dialog"
 import { RuntimeInstanceNameDialog } from "@/components/runtime-instance-name-dialog"
 import {
@@ -918,6 +920,7 @@ export function DevicePage() {
                           <div className="min-w-0 flex-1">
                             <div className="flex min-w-0 items-center gap-2">
                               <span className="truncate text-sm font-medium">{runtimeInstanceName(runtime)}</span>
+                              <RuntimeMaturityBadge maturity={runtime.maturity} className="shrink-0 font-normal" />
                               <Badge variant="outline" className="shrink-0 font-normal">
                                 {runtimeStatusLabel(runtime)}
                               </Badge>
@@ -1010,6 +1013,7 @@ export function DevicePage() {
                           <div className="min-w-0 flex-1">
                             <div className="flex min-w-0 items-center gap-1">
                               <p className="truncate text-sm font-medium">{runtimeType.displayName}</p>
+                              <RuntimeMaturityBadge maturity={runtimeType.maturity} className="shrink-0 font-normal" />
                             </div>
                             <p className="truncate text-xs text-muted-foreground">
                               {runtimeType.reason || runtimeType.description || runtimeType.implementationType}
@@ -1033,6 +1037,10 @@ export function DevicePage() {
             </TooltipProvider>
           )}
         </section>
+
+        {isDesktopConnector && (
+          <DeviceSettingsSection connectorId={connector.id} token={authSession?.accessToken} />
+        )}
 
         {/* Projects */}
         <section className="mb-8">
@@ -1174,6 +1182,7 @@ export function DevicePage() {
           schema={configRuntime.schema}
           uiSchema={configRuntime.uiSchema}
           config={configRuntime.config}
+          secretFields={configRuntime.secretFields}
           defaults={configRuntime.defaults}
           requiredFields={configRuntime.runtimeId === configRuntime.runtimeType
             ? []

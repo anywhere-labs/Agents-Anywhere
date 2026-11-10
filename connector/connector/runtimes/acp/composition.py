@@ -9,11 +9,16 @@ from .infrastructure.persistence import Store
 from .infrastructure.projection import Projection
 
 
-def build_services(config, host, profile, launch, *, preparation_driver=None, client_factory=AgentClient):
+def runtime_root(config, host):
+    """Private state directory of one Runtime instance."""
     namespace = hashlib.sha256(
         f"{host.session_namespace}:{config.runtime_id}".encode()
     ).hexdigest()
-    root = host.runtime_kv.path.parent / "acp" / namespace
+    return host.runtime_kv.path.parent / "acp" / namespace
+
+
+def build_services(config, host, profile, launch, *, preparation_driver=None, client_factory=AgentClient):
+    root = runtime_root(config, host)
     store = Store(root / "coordination.sqlite")
     app = SessionService(
         store,

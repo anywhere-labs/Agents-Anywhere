@@ -8,6 +8,7 @@ import {
   net,
   Notification,
   nativeTheme,
+  powerMonitor,
   protocol,
   session,
   shell,
@@ -67,6 +68,10 @@ const APP_ID = "dev.agentsanywhere.workbench";
 const WEB_PROTOCOL = "aa-workbench";
 const WEB_HOST = "web";
 const LOGIN_ITEM_HIDDEN_ARG = "--hidden";
+// How long a system shutdown waits for the local Connector to stop.
+const SYSTEM_SHUTDOWN_QUIT_BUDGET_MS = 3_000;
+// How long a macOS quit request waits for the shutdown announcement.
+const SYSTEM_SHUTDOWN_SIGNAL_GRACE_MS = 300;
 const API_ROUTE_PREFIXES = [
   "/admin",
   "/agents",
@@ -74,6 +79,9 @@ const API_ROUTE_PREFIXES = [
   "/connector",
   "/connectors",
   "/health",
+  "/integrations",
+  "/model-config",
+  "/model-profiles",
   "/oauth",
   "/pairing",
   "/projects",
@@ -94,6 +102,8 @@ let isQuitting = false;
 let shutdownComplete = false;
 let shutdownPromise: Promise<void> | null = null;
 let quitConfirmationPromise: Promise<boolean> | null = null;
+// Set once the system announces a shutdown, restart or log-off.
+let systemShuttingDown = false;
 const activeNotifications = new Set<Notification>();
 let serverStore: DesktopServerStore | null = null;
 let startingDesktopOAuth = false;
@@ -439,6 +449,21 @@ function createMainWindow(showOnReady = true, route = "/"): BrowserWindow {
       return;
     }
     void requestQuit({ confirm: true });
+  });
+  // Windows asks every top-level window before a shutdown, restart or log-off.
+  window.on("query-session-end", (event) => {
+    if (event.reasons.includes("close-app") || !confirmsQuitOnShutdown()) {
+      // Installers and the restart manager close the app themselves, and the
+      // default is to let the session end without asking.
+      systemShuttingDown = true;
+      return;
+    }
+    event.preventDefault();
+    void requestQuit({ confirm: true });
+  });
+  window.on("session-end", () => {
+    systemShuttingDown = true;
+    void requestQuit({ systemShutdown: true });
   });
   window.on("closed", () => {
     if (mainWindow === window) mainWindow = null;
@@ -961,7 +986,34 @@ async function confirmQuit(): Promise<boolean> {
   return quitConfirmationPromise;
 }
 
-async function requestQuit({ confirm = false }: { confirm?: boolean } = {}): Promise<void> {
+/** The device setting (docs/api/device-settings.md); asking is off until the server says otherwise. */
+function confirmsQuitOnShutdown(): boolean {
+  return backend?.getSettings()?.confirmQuitOnShutdown === true;
+}
+
+/**
+ * Every quit request that does not come from Desktop's own UI. During a
+ * shutdown it must not leave a dialog waiting, or the system reports that
+ * Agents Anywhere blocked it.
+ */
+async function handleAppQuitRequest(): Promise<void> {
+  // macOS asks each app to quit around the time it announces the shutdown;
+  // give that announcement a moment so a shutdown is not mistaken for a quit.
+  if (!systemShuttingDown && process.platform === "darwin") {
+    await new Promise((resolve) => setTimeout(resolve, SYSTEM_SHUTDOWN_SIGNAL_GRACE_MS));
+  }
+  if (systemShuttingDown && !confirmsQuitOnShutdown()) return requestQuit({ systemShutdown: true });
+  return requestQuit({ confirm: true });
+}
+
+function handleSystemShutdown(): void {
+  systemShuttingDown = true;
+  if (!confirmsQuitOnShutdown()) void requestQuit({ systemShutdown: true });
+}
+
+async function requestQuit(
+  { confirm = false, systemShutdown = false }: { confirm?: boolean; systemShutdown?: boolean } = {},
+): Promise<void> {
   if (shutdownComplete) {
     app.quit();
     return;
@@ -976,7 +1028,17 @@ async function requestQuit({ confirm = false }: { confirm?: boolean } = {}): Pro
       tray?.destroy();
       tray = null;
       quiesceRendererForShutdown();
-      await backend?.shutdown();
+      const stopping = backend?.shutdown();
+      if (systemShutdown) {
+        // The system is waiting on this process; leave whatever is left of the
+        // Connector to the system rather than hold up the shutdown.
+        await Promise.race([
+          stopping?.catch(() => undefined),
+          new Promise((resolve) => setTimeout(resolve, SYSTEM_SHUTDOWN_QUIT_BUDGET_MS)),
+        ]);
+      } else {
+        await stopping;
+      }
     } finally {
       shutdownComplete = true;
       app.quit();
@@ -1016,6 +1078,8 @@ if (hasSingleInstanceLock) {
   });
   app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
+    // macOS and Linux announce a shutdown here; Windows uses the window events.
+    powerMonitor.on("shutdown", handleSystemShutdown);
     registerStaticWebProtocol();
     await initializeDesktopServices();
     updates = new DesktopUpdateService({
@@ -1072,6 +1136,6 @@ if (hasSingleInstanceLock) {
   app.on("before-quit", (event) => {
     if (shutdownComplete) return;
     event.preventDefault();
-    void requestQuit({ confirm: true });
+    void handleAppQuitRequest();
   });
 }

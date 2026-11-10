@@ -32,6 +32,12 @@ T = TypeVar("T")
 CONNECTOR_ERROR = "connector_error"
 
 
+class DeviceSettings(BaseModel):
+    """User-chosen device settings the server handed over (docs/api/device-settings.md)."""
+
+    confirmQuitOnShutdown: bool = False
+
+
 class ConnectorState(BaseModel):
     status: Literal["running", "expired credential", "error", "stopped"]
     running: bool
@@ -41,6 +47,8 @@ class ConnectorState(BaseModel):
     configPath: str
     runtimePath: str
     hasConfig: bool
+    # None until the server has handed settings to this process.
+    deviceSettings: DeviceSettings | None = None
 
 
 class ConnectorPaths(BaseModel):

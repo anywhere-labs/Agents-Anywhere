@@ -1,6 +1,8 @@
 "use client"
 
 import { useRuntimeErrorText } from "@/lib/runtime-error-text"
+import { useSessionGoal } from "@/features/goals/use-session-goal"
+import { GoalPanel } from "@/components/session/goal-panel"
 import { useSessionPlanning } from "@/features/planning/use-session-planning"
 import { parsePlanningCommand } from "@/features/planning/commands"
 import { PlanningPanel, PlanningReviewPanel, PlanningReader, PlanTimelineEntry, usePlanReader, getPlanReviewTarget } from "@/components/session/planning-panel"
@@ -56,6 +58,7 @@ import { needsOlderTimelinePage } from "@/components/session/timeline-autofill"
 import { createTimelineScrollFollow } from "@/components/session/timeline-scroll-follow"
 import { createSessionEventBuffer } from "@/components/session/session-event-buffer"
 import { RuntimeCreationStatus } from "@/components/session/runtime-creation-status"
+import { AgentRecoveryNotice } from "@/components/session/agent-recovery-notice"
 import { NativeSessionHandoff } from "@/components/session/native-session-handoff"
 import { CAPABILITY, capabilityIsUsable, findCapability } from "@/components/session/capabilities"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
@@ -434,6 +437,7 @@ export function SessionDetail({
     ? { runtimeId: sessionRuntimeId(session), runtimeType: sessionRuntimeType(session) }
     : undefined
   const effectiveCapabilities = state?.effectiveCapabilities ?? null
+  const goals = useSessionGoal(token, sessionId, Boolean(session?.takeover && !session.archived && session.connectorStatus === "online" && capabilityIsUsable(effectiveCapabilities,"session.goal",sessionRuntimeScope)))
   const canUseModelCatalog = Boolean(
     sessionRuntime &&
       effectiveCapabilities &&
@@ -928,6 +932,7 @@ export function SessionDetail({
 
     const applyEvent = (event: ProtocolEventEnvelope) => {
       if (cancelled || event.sessionId !== sessionId) return
+      if (event.type === "goal.state.updated") { goals.ingest(event.payload.state as import("@/generated/protocol/v1_1/goal-state").GoalState); return }
       if (event.type === "planning.state.updated") { planning.ingest(event.payload.state as import("@/generated/protocol/v1/planning-state").PlanningState); return }
       if (event.type === "keepalive") return
       const usesDurableEventIdDedup = sessionEventUsesDurableEventIdDedup(event)
@@ -1203,6 +1208,13 @@ export function SessionDetail({
     _selections: { model?: string; permission?: string },
   ): Promise<boolean> => {
     if (!session || (!content.trim() && attachments.length === 0)) return false
+    if (capabilityIsUsable(effectiveCapabilities,"session.goal",sessionRuntimeScope) && /^\/goal(?:\s|$)/.test(content.trimStart())) {
+      const objective=content.trimStart().slice(5).trim()
+      const refs=attachments.flatMap(file=>file.uploaded?[file.uploaded]:[])
+      if(!objective || refs.length!==attachments.length)return false
+      try { await selectionWritesRef.current.get(session.id) } catch { return false }
+      return goals.set(objective,refs)
+    }
     const planIntent = parsePlanningCommand(content)
     if (planIntent) {
       const uploaded = attachments.flatMap(file => file.uploaded ? [file.uploaded] : [])
@@ -1823,6 +1835,12 @@ export function SessionDetail({
               setState(current => current?.session.id === sessionId ? refreshed : current)
               onSessionUpdated?.(refreshed.session)
             }} />
+          <AgentRecoveryNotice key={`recovery:${sessionId}`} token={token} session={session} state={runtimeState}
+            capabilities={state?.effectiveCapabilities ?? null} onSettled={async () => {
+              const refreshed = await loadInitialSessionState(token, sessionId, { reason: "agent.recovery" })
+              setState(current => current?.session.id === sessionId ? refreshed : current)
+              onSessionUpdated?.(refreshed.session)
+            }} />
           {creationFailed ? (
             <div className="mx-auto w-full max-w-3xl p-4">
               <Alert>
@@ -1843,13 +1861,14 @@ export function SessionDetail({
           ) : <>
           {planReview && <PlanningReviewPanel planning={planning} target={planReview} />}
           <div hidden={planReview !== null}>
+          <GoalPanel goals={goals}/>
           <SessionComposer
             token={token}
             session={session}
             runtimeState={runtimeState}
             pendingInteractionCount={blockingInteractionCount}
             creatingSession={isLocalOptimisticSession}
-            sending={sending || planning.busy}
+            sending={sending || planning.busy || goals.busy}
             interrupting={interrupting}
             takeoverBusy={takeoverBusy}
             value={composerDraft}

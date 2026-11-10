@@ -2,9 +2,25 @@
   "version": "1.0",
   "description": "User-facing text for stable runtime and workflow error codes. Clients show the entry for a known code in the UI language and fall back to the server or Connector message only for unknown codes.",
   "messages": {
+    "agent_acp_unavailable": {
+      "zh-CN": "Agent 的 ACP 入口不可用，请确认它安装完整，并能在本机运行它的 ACP 检查命令。",
+      "en": "The agent's ACP entry point is unavailable. Make sure the agent is fully installed and its ACP check runs on this device."
+    },
+    "agent_authentication_required": {
+      "zh-CN": "Agent 需要先在本机完成登录或模型配置。",
+      "en": "Sign in to the agent or configure its model on this device first."
+    },
     "agent_capability_unsupported": {
       "zh-CN": "Agent 未提供此能力。",
       "en": "The agent does not provide this capability."
+    },
+    "agent_cli_missing": {
+      "zh-CN": "未找到本机的 Agent 命令行。请先安装该 Agent，或在实例配置中填写它的路径。",
+      "en": "The agent's command-line tool was not found on this device. Install the agent, or set its path in the instance configuration."
+    },
+    "agent_cli_unsupported": {
+      "zh-CN": "无法直接启动该 Agent 的批处理入口，请在实例配置中填写实际可执行文件的路径。",
+      "en": "The agent's batch-file launcher cannot be started directly. Set the path of the actual executable in the instance configuration."
     },
     "agent_configuration_failed": {
       "zh-CN": "配置或提交尚未完成，请先查询原操作。",
@@ -34,6 +50,10 @@
       "zh-CN": "Agent 未提供会话恢复能力。",
       "en": "The agent does not support resuming sessions."
     },
+    "agent_session_failed": {
+      "zh-CN": "Agent 无法创建会话，请在本机检查它的模型与认证配置。",
+      "en": "The agent could not create a session. Check its model and sign-in settings on this device."
+    },
     "agent_session_mismatch": {
       "zh-CN": "原生会话身份不一致，已停止操作。",
       "en": "The native session identity does not match. The operation was stopped."
@@ -41,6 +61,18 @@
     "agent_session_missing": {
       "zh-CN": "原操作尚未确认原生会话身份。",
       "en": "The original operation has not confirmed the native session yet."
+    },
+    "agent_session_unavailable": {
+      "zh-CN": "Agent 无法恢复此会话：原会话可能已不存在，或 Agent 配置已变化。",
+      "en": "The agent could not resume this session. The original session may no longer exist, or the agent's configuration changed."
+    },
+    "agent_steer_attachments_unsupported": {
+      "zh-CN": "当前 Agent 运行中追加指令暂不支持附件。",
+      "en": "This agent does not accept attachments when adding instructions to a running turn."
+    },
+    "agent_version_unsupported": {
+      "zh-CN": "当前 Agent 版本不受支持，请升级后重试。",
+      "en": "This agent version is not supported. Upgrade it and try again."
     },
     "attachment_cache_invalid": {
       "zh-CN": "本机附件缓存校验失败。",
@@ -62,6 +94,10 @@
       "zh-CN": "该会话当前不能执行此操作。",
       "en": "This session cannot perform this action right now."
     },
+    "command_unavailable": {
+      "zh-CN": "命令目录已变化，请刷新。",
+      "en": "The command list has changed. Refresh it."
+    },
     "configuration_changed": {
       "zh-CN": "配置选项已不可用。",
       "en": "The configuration option is no longer available."
@@ -73,6 +109,10 @@
     "configuration_mapping_unavailable": {
       "zh-CN": "该旧选择没有唯一且无损的 Agent 配置映射。",
       "en": "This earlier selection has no exact agent configuration mapping."
+    },
+    "image_input_unsupported": {
+      "zh-CN": "当前模型声明不支持图片输入，请移除图片或切换支持图片的模型。",
+      "en": "The current model does not declare image input. Remove the image or switch to a model that supports images."
     },
     "initialization_interrupted": {
       "zh-CN": "初始化执行者已退出，首条消息尚未提交，请重新准备。",
@@ -105,6 +145,10 @@
     "invalid_attachment": {
       "zh-CN": "附件身份无效或重复。",
       "en": "An attachment identity is invalid or duplicated."
+    },
+    "invalid_command": {
+      "zh-CN": "命令与原始输入不一致。",
+      "en": "The command does not match the original input."
     },
     "invalid_configuration_value": {
       "zh-CN": "配置值不在当前可用范围。",

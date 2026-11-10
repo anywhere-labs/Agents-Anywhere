@@ -21,6 +21,7 @@ struct DeviceManagementView: View {
     let onSetSessionsArchived: ([V2SessionID], Bool) async -> Bool
 
     @State private var model = DeviceManagementModel()
+    @State private var deviceSettings = DeviceSettingsModel()
     @AppStorage(ProjectSidebarPreferences.sessionListKey) private var showsSessionList = false
     @State private var showsToolbarTitle = false
     @State private var toasts = ChatToastStore()
@@ -57,6 +58,10 @@ struct DeviceManagementView: View {
                 VStack(alignment: .leading, spacing: 32) {
                     header
                     DeviceAgentSection(model: agents, showsConnectionNotice: false) { report($0, source: "agents") }
+                    if connector.supportsDeviceSettings {
+                        DeviceSettingsSection(model: deviceSettings, canWrite: dashboard.canWrite,
+                            onConfirmQuitOnShutdownChange: setConfirmQuitOnShutdown)
+                    }
                     if showsSessionList {
                         DeviceWorkspaceList(workspaces: workspaceChoices, canReadFiles: canReadFiles,
                             onBrowse: { choosesDirectory = true }, onOpen: openWorkspace,
@@ -91,7 +96,7 @@ struct DeviceManagementView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .scrollIndicators(.hidden).scrollEdgeEffectStyle(.soft, for: .all)
-        .refreshable { await dashboard.refresh(); await agents.refresh() }
+        .refreshable { await dashboard.refresh(); await agents.refresh(); await loadDeviceSettings() }
         .modifier(ChatPageToolbar(title: showsToolbarTitle ? connector.name : "",
             subtitle: showsToolbarTitle ? connectionDescription : nil, onMenu: onMenu))
         .toolbar {
@@ -123,6 +128,13 @@ struct DeviceManagementView: View {
         .onChange(of: allSessions, initial: true) { _, values in model.updateSessions(connectorId: connector.id, allSessions: values) }
         .onChange(of: model.errorMessage, initial: true) { _, error in report(error, source: "device") }
         .onChange(of: dashboard.error, initial: true) { _, error in report(error, source: "sync") }
+        .onChange(of: deviceSettings.loadError) { _, failure in
+            // While the page shows cached content, the sync toast already explains why.
+            toasts.update(source: DeviceSettingsToast.load, failure: dashboard.canWrite ? failure : nil,
+                title: String(localized: "Couldn't load device settings."))
+        }
+        // Reads again when the phone regains a fresh connection to the Server.
+        .task(id: dashboard.canWrite) { await loadDeviceSettings() }
         .sheet(isPresented: $createsProject) { ProjectEditorSheet(repository: dashboard, connectorID: connector.id) }
         .sheet(item: $editingProject) { ProjectEditorSheet(repository: dashboard, project: $0) }
         .sheet(item: $selectedWorkspace) {
@@ -200,6 +212,27 @@ struct DeviceManagementView: View {
     private func report(_ message: String?, source: String) {
         toasts.update(source: source, failure: message.map { .init(kind: .rejected, message: $0) })
     }
+    private func loadDeviceSettings() async {
+        guard connector.supportsDeviceSettings else { return }
+        await deviceSettings.load(connectorId: connector.id, service: service)
+    }
+    private func setConfirmQuitOnShutdown(_ value: Bool) {
+        guard dashboard.canWrite else { return }
+        toasts.update(source: DeviceSettingsToast.save, failure: nil)
+        Task {
+            switch await deviceSettings.setConfirmQuitOnShutdown(value, connectorId: connector.id, service: service) {
+            case .pendingDelivery:
+                toasts.update(source: DeviceSettingsToast.save,
+                    failure: .init(kind: .unavailable, message: String(localized: "Saved. It takes effect when the device comes online.")),
+                    title: String(localized: "Device settings"))
+            case let .failed(failure):
+                toasts.update(source: DeviceSettingsToast.save, failure: failure,
+                    title: String(localized: "Couldn't save the device setting."))
+            case .applied, nil:
+                break
+            }
+        }
+    }
     private func openProjectSessions(_ project: V2Project) {
         model.selectProject(project.id); model.setSessionFilter(.active)
     }
@@ -262,3 +295,7 @@ struct DeviceManagementView: View {
 }
 
 private enum DeviceSessionAnchor { static let id = "device.sessions" }
+private enum DeviceSettingsToast {
+    static let load = "deviceSettings.load"
+    static let save = "deviceSettings.save"
+}

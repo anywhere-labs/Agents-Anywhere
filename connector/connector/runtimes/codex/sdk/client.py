@@ -724,6 +724,24 @@ class CodexSdkClient:
         async with lock:
             await self._resume_thread(low_level_client, request)
 
+    async def _persisted_thread_model(self, low_level_client: Any, thread_id: str) -> str | None:
+        """The model a thread last used, read without taking its writer lock."""
+        read = getattr(low_level_client, "request", None)
+        if not callable(read):
+            return None
+        try:
+            result = await read(
+                "thread/read",
+                {"threadId": thread_id, "includeTurns": False},
+                response_model=CodexRawThreadReadResponse,
+            )
+        except Exception:  # noqa: BLE001 -- resuming without it falls back to Codex's choice
+            logger.exception("codex thread model read failed thread_id={}", thread_id)
+            return None
+        thread = result.thread
+        model = thread.get("model") if isinstance(thread, Mapping) else getattr(thread, "model", None)
+        return model if isinstance(model, str) and model else None
+
     async def _resume_thread(
         self, low_level_client: Any, request: CodexResumeThreadRequest
     ) -> None:
@@ -733,6 +751,10 @@ class CodexSdkClient:
         if not callable(thread_resume):
             return
         generation = self._generation
+        if request.model is None and self._model_gateway is not None:
+            # Passing the gateway provider makes Codex resume on config.toml's
+            # model; keep the thread on the model it last used instead.
+            request = replace(request, model=await self._persisted_thread_model(low_level_client, request.thread_id))
         try:
             params = codex_permission_params(
                 codex_thread_resume_params(request, self._model_gateway),

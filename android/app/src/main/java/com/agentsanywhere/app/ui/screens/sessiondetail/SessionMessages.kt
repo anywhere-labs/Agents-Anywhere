@@ -1177,6 +1177,15 @@ private fun TimelineMessageRow(
     noticeResponseErrors: Map<String, String> = emptyMap(),
     onRespondNotice: (RuntimeNotice, RuntimeNoticeAction, Map<String, Any?>?) -> Unit = { _, _, _ -> },
 ) {
+    if(message.contentKind=="goal") {
+        val goal=runCatching { org.json.JSONObject(message.rawContent).optJSONObject("goal") }.getOrNull()
+        val status=goal?.optString("status")
+        if(status=="complete" || status=="failed") {
+            val title=if(status=="failed") stringResource(R.string.goal_failed) else if(goal?.has("timeUsedSeconds")==true && !goal.isNull("timeUsedSeconds")) stringResource(R.string.goal_achieved,goal.optLong("timeUsedSeconds").toString()) else stringResource(R.string.goal_achieved_unknown_time)
+            Text(title,style=androidx.compose.material3.MaterialTheme.typography.labelSmall)
+        }
+        return
+    }
     when (message.kind) {
         TimelineMessageKind.Reasoning -> ReasoningSection(
             message = message,
@@ -2298,6 +2307,25 @@ private fun TimelineShimmerText(
 }
 
 @Composable
+private fun modelRetryText(message: TimelineMessage): String? {
+    val content = remember(message.rawContent) {
+        runCatching { org.json.JSONObject(message.rawContent) }.getOrNull()
+    } ?: return null
+    if (content.optString("code") != "model_request_retry") return null
+    return when (content.optString("state")) {
+        "completed" -> stringResource(R.string.session_model_retry_completed)
+        "interrupted" -> stringResource(R.string.session_model_retry_interrupted)
+        "failed" -> stringResource(R.string.session_model_retry_failed)
+        else -> listOfNotNull(
+            stringResource(if (content.optString("reason") == "rate_limit") R.string.session_model_retry_busy else R.string.session_model_retry_unavailable),
+            if (content.has("maxAttempts")) stringResource(R.string.session_model_retry_progress, content.optInt("attempt", 1), content.optInt("maxAttempts"))
+            else stringResource(R.string.session_model_retry_attempt, content.optInt("attempt", 1)),
+            if (content.has("retryInMs")) stringResource(R.string.session_model_retry_delay, kotlin.math.ceil(content.optDouble("retryInMs") / 1000).toInt()) else null,
+        ).joinToString(" ")
+    }
+}
+
+@Composable
 private fun ToolPlaceholder(
     message: TimelineMessage,
     darkMode: Boolean,
@@ -2314,7 +2342,9 @@ private fun ToolPlaceholder(
         )
         return
     }
+    val retryText = modelRetryText(message)
     val displayText = when {
+        retryText != null -> retryText
         message.kind == TimelineMessageKind.Diagnostic -> stringResource(
             R.string.session_timeline_unknown_item,
             listOf(message.type, message.contentKind).filter(String::isNotBlank).joinToString(" / "),

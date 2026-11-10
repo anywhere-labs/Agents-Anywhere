@@ -144,6 +144,16 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
     else:
         events = timeline_events_from_items(session_id, items)
 
+    goal = payload.get("goalState")
+    if isinstance(goal, dict):
+        events.append(
+            protocol_event(
+                session_id,
+                sequence=max(next_sequence, 0),
+                event_type="goal.state.updated",
+                payload={"state": goal},
+            )
+        )
     planning = payload.get("planningState")
     if isinstance(planning, dict):
         events.append(protocol_event(session_id, sequence=max(next_sequence, 0), event_type="planning.state.updated", payload={"state": planning}))

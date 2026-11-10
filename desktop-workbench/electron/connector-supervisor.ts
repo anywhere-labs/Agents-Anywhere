@@ -35,6 +35,8 @@ import { LogsServiceClient, type LogEntry, type LogPage } from "./generated/conn
 /** The Connector restarts its Router within a couple of seconds; wait it out. */
 const CONTROL_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_RPC_TIMEOUT_MS = 30_000;
+const HEALTH_CHECK_INTERVAL_MS = 30_000;
+const HEALTH_CHECK_TIMEOUT_MS = 10_000;
 const PYTHON_BUILDS_GITHUB = "https://github.com/astral-sh/python-build-standalone/releases/download";
 const PYPI_SIMPLE = "https://pypi.org/simple";
 const UV_HTTP_TIMEOUT_SECONDS = "60";
@@ -86,6 +88,8 @@ type ConnectorSupervisorOptions = {
   onLog: (entry: ConnectorLogEntry) => void;
   onRuntimeLog?: (entry: ConnectorLogEntry) => void;
   onLogSourceChanged?: () => void;
+  /** The Connector reported device settings the server handed over. */
+  onDeviceSettings?: (settings: { confirmQuitOnShutdown: boolean }) => void;
   /** Test seam; production connects a Mesh to the Connector's Router. */
   connectControl?: (rendezvous: Rendezvous) => Promise<ConnectorChannel>;
 };
@@ -193,7 +197,8 @@ export class ConnectorSupervisor {
       previous.uvPath !== current.uvPath ||
       previous.pythonPath !== current.pythonPath ||
       previous.uvPypiIndexUrl !== current.uvPypiIndexUrl ||
-      previous.uvPythonInstallMirror !== current.uvPythonInstallMirror;
+      previous.uvPythonInstallMirror !== current.uvPythonInstallMirror ||
+      previous.connectorProxy !== current.connectorProxy;
     this.refreshLocalState();
     if (!launcherChanged) return this.emitState();
     if (!this.resolveLauncher()) {
@@ -334,6 +339,7 @@ export class ConnectorSupervisor {
       if (fs.existsSync(path.join(context.environment, "pyvenv.cfg"))) {
         fs.rmSync(context.environment, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
       }
+      fs.rmSync(path.join(this.options.dataPath, "pi-npm-runtimes"), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
       if (this.options.packaged) {
         for (const name of ["uv-cache", "connector-source"]) fs.rmSync(path.join(this.options.dataPath, name), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
         this.projectDir = null;
@@ -679,6 +685,30 @@ export class ConnectorSupervisor {
   private watchStreams(channel: ConnectorChannel): void {
     const controller = new AbortController();
     this.streams = controller;
+    const child = this.rpcProcess;
+    let probing = false;
+    let failures = 0;
+    // A live process can lose its control service or block its event loop.
+    // Stream resubscription alone cannot recover that process.
+    const healthCheck = setInterval(() => {
+      if (probing || controller.signal.aborted || this.shuttingDown || this.maintenance || !this.keepRuntimeRunning || this.state.authFailed) return;
+      probing = true;
+      void (async () => {
+        try {
+          await channel.control.getState({ timeoutMs: HEALTH_CHECK_TIMEOUT_MS });
+          failures = 0;
+        } catch (error) {
+          if (controller.signal.aborted || this.rpcProcess !== child || this.shuttingDown || this.maintenance || !this.keepRuntimeRunning || this.state.authFailed) return;
+          if (++failures < 2) return;
+          this.log({ level: "WARNING", message: `Connector control service is unresponsive; restarting RPC: ${errorMessage(error)}` });
+          await this.terminateRpcProcess();
+        } finally {
+          probing = false;
+        }
+      })().catch(error => this.logError(error));
+    }, HEALTH_CHECK_INTERVAL_MS);
+    healthCheck.unref();
+    controller.signal.addEventListener("abort", () => clearInterval(healthCheck), { once: true });
     this.options.onLogSourceChanged?.();
     const follow = async <T>(name: string, open: (since: number | null, signal: AbortSignal) => AsyncIterable<T>) => {
       let since: number | null = null;
@@ -943,6 +973,7 @@ export class ConnectorSupervisor {
       ...process.env,
       ...this.shellEnvironment,
       AA_CONNECTOR_OWNER_KIND: "desktop-workbench",
+      AA_PI_NPM_ROOT: path.join(this.options.dataPath, "pi-npm-runtimes"),
       PATH: [...new Set(entries)].join(path.delimiter),
       PYTHONUNBUFFERED: "1",
       PYTHONDONTWRITEBYTECODE: "1",
@@ -967,6 +998,9 @@ export class ConnectorSupervisor {
     // Without a bundled or saved interpreter uv downloads CPython itself; the default is GitHub.
     environment.UV_PYTHON_INSTALL_MIRROR = settings.uvPythonInstallMirror || PYTHON_BUILDS_GITHUB;
     environment.UV_HTTP_TIMEOUT ||= UV_HTTP_TIMEOUT_SECONDS;
+    // The setting decides, so a value inherited from the shell cannot contradict the UI.
+    if (settings.connectorProxy) environment.AA_CONNECTOR_PROXY = settings.connectorProxy;
+    else delete environment.AA_CONNECTOR_PROXY;
     if (process.platform === "win32") {
       delete environment.Path;
       delete environment.path;
@@ -1034,10 +1068,12 @@ export class ConnectorSupervisor {
     | "startConnectorOnLaunch"
     | "silentLaunch"
     | "notificationsEnabled"
+    | "confirmQuitOnShutdown"
     | "uvPath"
     | "pythonPath"
     | "uvPypiIndexUrl"
     | "uvPythonInstallMirror"
+    | "connectorProxy"
     | "logChunkSizeKb"
     | "logRetainChunks"
     | "logRetentionDays"
@@ -1048,10 +1084,12 @@ export class ConnectorSupervisor {
       startConnectorOnLaunch: settings.startConnectorOnLaunch,
       silentLaunch: settings.silentLaunch,
       notificationsEnabled: settings.notificationsEnabled,
+      confirmQuitOnShutdown: settings.confirmQuitOnShutdown,
       uvPath: settings.uvPath,
       pythonPath: settings.pythonPath,
       uvPypiIndexUrl: settings.uvPypiIndexUrl,
       uvPythonInstallMirror: settings.uvPythonInstallMirror,
+      connectorProxy: settings.connectorProxy,
       logChunkSizeKb: settings.logChunkSizeKb,
       logRetainChunks: settings.logRetainChunks,
       logRetentionDays: settings.logRetentionDays,
@@ -1069,6 +1107,10 @@ export class ConnectorSupervisor {
     if (typeof next.configPath === "string") this.state.configPath = next.configPath;
     if (typeof next.runtimePath === "string") this.state.runtimePath = next.runtimePath;
     if (typeof next.logsPath === "string" && next.logsPath.trim()) this.state.logsPath = next.logsPath;
+    const deviceSettings = next.deviceSettings as Record<string, unknown> | null | undefined;
+    if (deviceSettings && typeof deviceSettings.confirmQuitOnShutdown === "boolean") {
+      this.options.onDeviceSettings?.({ confirmQuitOnShutdown: deviceSettings.confirmQuitOnShutdown });
+    }
     if (this.state.authFailed) this.clearRestartTimer();
     if (this.state.running) this.crashCount = 0;
     this.refreshBindingState();
