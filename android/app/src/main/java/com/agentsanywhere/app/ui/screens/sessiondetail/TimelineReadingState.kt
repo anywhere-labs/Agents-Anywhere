@@ -22,14 +22,21 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.TextLayoutResult
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 internal val LocalTimelineReading = staticCompositionLocalOf<TimelineReadingState?> { null }
 internal val LocalReadingMessage = staticCompositionLocalOf { "" }
 internal val LocalReadingPart = staticCompositionLocalOf { "body" }
 
-/** Session-owned UI state. Layout callbacks only observe; one coroutine owns scroll corrections. */
+/**
+ * Session-owned UI state. Layout callbacks observe; one coroutine owns scroll corrections, except
+ * that positioned callbacks restore the anchor before a frame is drawn ([placed]).
+ */
 @Stable
 internal class TimelineReadingState {
     val expanded = mutableStateMapOf<String, Boolean>()
@@ -48,12 +55,17 @@ internal class TimelineReadingState {
     private val regions = linkedMapOf<String, Region>()
     private var owners = emptyMap<String, Pair<Int, String>>()
     private var correcting = false
+    private var list: LazyListState? = null
+    private var scope: CoroutineScope? = null
+    /** Far (upper) edge of each visible row, measured from the list's start, as of the last check. */
+    private var rowTops = emptyMap<Any, Int>()
 
     private data class Region(
         val bounds: Rect,
         val layout: TextLayoutResult? = null,
         val text: String = "",
         val row: String,
+        val coordinates: LayoutCoordinates? = null,
     )
     private data class Anchor(val key: String, val row: String, val offset: Int, val context: String, val y: Float)
 
@@ -83,7 +95,7 @@ internal class TimelineReadingState {
 
     fun observe(key: String, row: String, coordinates: LayoutCoordinates, layout: TextLayoutResult? = null, text: String = "") {
         if (!coordinates.isAttached) return
-        val next = Region(Rect(coordinates.positionInWindow(), coordinates.size.toSize()), layout, text, row)
+        val next = Region(Rect(coordinates.positionInWindow(), coordinates.size.toSize()), layout, text, row, coordinates)
         if (regions[key] != next) {
             regions[key] = next
             invalidate()
@@ -91,6 +103,21 @@ internal class TimelineReadingState {
     }
 
     fun remove(key: String) { regions.remove(key); invalidate() }
+
+    fun attach(list: LazyListState, scope: CoroutineScope) {
+        this.list = list
+        this.scope = scope
+    }
+
+    fun detach(list: LazyListState) {
+        if (this.list === list) {
+            this.list = null
+            scope = null
+        }
+    }
+
+    /** A region's positioned callback ran: this frame is laid out but not drawn. Never call it while measuring. */
+    fun placed() = holdInFrame()
 
     fun groupExpanded(kind: String, members: List<String>): Boolean {
         val explicit = members.mapNotNull { groupMembers["$kind:$it"] }
@@ -184,6 +211,53 @@ internal class TimelineReadingState {
             invalidate()
             return
         }
+        val delta = held.y - anchoredLineY(held, region, region.bounds.top)
+        if (abs(delta) <= 1f) return
+        correcting = true
+        val consumed = try { list.scrollBy(delta) } finally { correcting = false }
+        // A list boundary cannot satisfy an arbitrary coordinate. Rebase instead of retrying forever.
+        if (abs(consumed - delta) > 1f) anchor = capture()
+    }
+
+    /**
+     * In a reversed list a growing row keeps its bottom edge, so streamed text pushes the line being
+     * read upward. [settle] runs a frame later, which showed that displaced frame on every update.
+     */
+    private fun holdInFrame() {
+        val list = list ?: return
+        val scope = scope ?: return
+        val previousTops = rowTops
+        val visible = list.layoutInfo.visibleItemsInfo
+        rowTops = visible.associate { it.key to it.offset + it.size }
+        if (correcting || following || viewport == Rect.Zero) return
+        if (touching || selecting || selectionReaders.values.any { it() } || list.isScrollInProgress) return
+        val held = anchor ?: return
+        val region = regions[held.key]
+        val coordinates = region?.coordinates?.takeIf { it.isAttached }
+        val row = owners[held.row]?.first ?: return
+        val delta = if (region != null && coordinates != null && visible.any { it.index == row }) {
+            held.y - anchoredLineY(held, region, coordinates.positionInWindow().y)
+        } else {
+            // The growth pushed the anchored row out of the viewport, where it keeps reporting its
+            // last placement. Rows are stacked on the far edge of the nearest row below them, so
+            // the anchored row moved exactly as far as that edge did.
+            val below = visible.lastOrNull { it.index < row && it.key in previousTops } ?: return
+            (rowTops.getValue(below.key) - previousTops.getValue(below.key)).toFloat()
+        }
+        if (abs(delta) <= 1f) return
+        correcting = true
+        // scrollToItem remeasures synchronously; undispatched, it completes before this frame draws.
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                list.scrollToItem(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset + delta.roundToInt())
+            } finally {
+                correcting = false
+                rowTops = list.layoutInfo.visibleItemsInfo.associate { it.key to it.offset + it.size }
+            }
+        }
+    }
+
+    private fun anchoredLineY(held: Anchor, region: Region, top: Float): Float {
         var offset = held.offset
         if (offset >= 0 && held.context.isNotEmpty() && !region.text.drop(offset).startsWith(held.context)) {
             val found = region.text.indexOf(held.context)
@@ -193,12 +267,7 @@ internal class TimelineReadingState {
         val localY = if (offset >= 0 && layout != null && layout.lineCount > 0) {
             layout.getLineTop(layout.getLineForOffset(offset.coerceIn(0, region.text.length)))
         } else 0f
-        val delta = held.y - (region.bounds.top + localY)
-        if (abs(delta) <= 1f) return
-        correcting = true
-        val consumed = try { list.scrollBy(delta) } finally { correcting = false }
-        // A list boundary cannot satisfy an arbitrary coordinate. Rebase instead of retrying forever.
-        if (abs(consumed - delta) > 1f) anchor = capture()
+        return top + localY
     }
 
     companion object {
@@ -236,7 +305,7 @@ internal fun Modifier.readingRegion(key: String): Modifier = composed {
     val state = LocalTimelineReading.current
     val row = LocalReadingMessage.current
     DisposableEffect(state, key) { onDispose { state?.remove(key) } }
-    onGloballyPositioned { state?.observe(key, row, it) }
+    onGloballyPositioned { state?.observe(key, row, it); state?.placed() }
 }
 
 /** Register the actual visible text line, not the height of its growing Markdown parent. */
@@ -256,7 +325,8 @@ internal class ReadingTextRegistration(private val state: TimelineReadingState?,
     var text: String = ""
     private var coordinates: LayoutCoordinates? = null
     private var layout: TextLayoutResult? = null
-    fun positioned(value: LayoutCoordinates) { coordinates = value; publish() }
+    fun positioned(value: LayoutCoordinates) { coordinates = value; publish(); state?.placed() }
+    // onTextLayout runs during measurement, where the list cannot be scrolled.
     fun laidOut(value: TextLayoutResult) { layout = value; publish() }
     private fun publish() { coordinates?.let { state?.observe(key, row, it, layout, text) } }
 }

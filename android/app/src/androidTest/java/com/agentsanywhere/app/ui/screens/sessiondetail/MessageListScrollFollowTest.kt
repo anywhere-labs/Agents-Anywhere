@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performSemanticsAction
@@ -223,6 +224,75 @@ class MessageListScrollFollowTest {
         }
         compose.waitForIdle()
         compose.runOnIdle { assertEquals(beforeY, findEditor(compose.activity.window.decorView)!!.offsetY) }
+    }
+
+    /** Reading just below the reply's start: the rows above it hold the reading position. */
+    @Test
+    fun streamingReplyKeepsRowsAboveItInTheFrameItGrows() = assertStreamingKeepsReadingLine(minY = 600f, swipe = .35f)
+
+    /** Reading near the top of the viewport: the reply's own earlier paragraphs hold the position. */
+    @Test
+    fun streamingReplyKeepsItsOwnLineInTheFrameItGrows() = assertStreamingKeepsReadingLine(minY = 250f, swipe = .15f)
+
+    /** The reply's end and the working indicator stay on screen, so the bottom row is not the one growing. */
+    @Test
+    fun streamingReplyKeepsEarlierRowsWhenItsEndIsOnScreen() {
+        val line = "Synthetic user message 7"
+        val session = TestSession(initialMessages())
+        showMessageList(session)
+        compose.onNode(hasScrollAction()).performTouchInput {
+            swipeDown(startY = height * .4f, endY = height * .5f, durationMillis = 400)
+        }
+        assertReadingLineHoldsWhileStreaming(session, line, minY = 600f)
+    }
+
+    private fun assertStreamingKeepsReadingLine(minY: Float, swipe: Float) {
+        val marker = "QA_STREAM_READING_LINE"
+        val paragraphs = (1..12).map { "Paragraph $it of a long streamed reply. " + "Steady words for reading. ".repeat(8) }
+        val reply = (paragraphs.take(2) + "$marker the reader stops here. ${paragraphs[2]}" + paragraphs.drop(3)).joinToString("\n\n")
+        val session = TestSession(initialMessages().map {
+            if (it.id == "assistant-last") it.copy(text = reply) else it
+        })
+        showMessageList(session)
+        // Read the start of the reply while its end is still below the viewport and growing.
+        var swipes = 0
+        while (swipes++ < 30 && compose.onAllNodesWithText(marker, substring = true).fetchSemanticsNodes()
+                .firstOrNull()?.let { it.positionInRoot.y > minY } != true) {
+            compose.onNode(hasScrollAction()).performTouchInput {
+                swipeDown(startY = height * .25f, endY = height * (.25f + swipe), durationMillis = 400)
+            }
+            compose.waitForIdle()
+        }
+        assertReadingLineHoldsWhileStreaming(session, marker, minY)
+    }
+
+    /** Streams paragraphs into the last reply one frame at a time; [line] must not move in any drawn frame. */
+    private fun assertReadingLineHoldsWhileStreaming(session: TestSession, line: String, minY: Float) {
+        // Let the fling end and the reading state record what is on screen.
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.waitForIdle()
+        val before = textLineY(line, 0)
+        assertTrue("The reading line must be on screen, was $before", before > minY && before < 1800f)
+
+        compose.mainClock.autoAdvance = false
+        repeat(4) { index ->
+            compose.runOnIdle {
+                session.messages = session.messages.map { message ->
+                    if (message.id == "assistant-last") message.copy(
+                        text = message.text + "\n\nStreamed paragraph $index. " + "More generated words. ".repeat(12),
+                        revision = message.revision + 1,
+                    ) else message
+                }
+                session.streamRequest += 1
+            }
+            compose.mainClock.advanceTimeByFrame()
+            // Positioned callbacks run on the UI thread before the frame is drawn; read after them.
+            compose.waitForIdle()
+            assertEquals("The frame that shows new output must not move the reading line", before, textLineY(line, 0), 2f)
+            compose.mainClock.advanceTimeByFrame()
+            assertEquals("The reading line must stay put after the update settles", before, textLineY(line, 0), 2f)
+        }
+        compose.mainClock.autoAdvance = true
     }
 
     private fun textLayout(marker: String): TextLayoutResult {

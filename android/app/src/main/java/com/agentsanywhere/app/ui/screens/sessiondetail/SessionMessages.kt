@@ -323,6 +323,10 @@ internal fun MessageList(
     DisposableEffect(sessionId) {
         onDispose { returnToLatestJob?.cancel() }
     }
+    DisposableEffect(reading, listState, scope) {
+        reading.attach(listState, scope)
+        onDispose { reading.detach(listState) }
+    }
 
     fun observeUserScroll(deltaY: Float) {
         if (deltaY == 0f) return

@@ -96,6 +96,8 @@
 
   [#567](https://github.com/anywhere-labs/Agents-Anywhere/pull/567)
 
+- Agent 还在输出时往上翻看长回复或之前的消息，正在读的内容不再随新输出反复跳动闪烁。（[#567](https://github.com/anywhere-labs/Agents-Anywhere/pull/567)）
+
 ### iOS
 
 - Desktop 设备的详情页新增「设备设置」，可以远程打开或关闭「关机时询问是否退出」。（[#596](https://github.com/anywhere-labs/Agents-Anywhere/pull/596)）
