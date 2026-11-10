@@ -5,6 +5,7 @@ import base64
 import hashlib
 import os
 import time
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -86,17 +87,65 @@ router = APIRouter(tags=["connector-ingress"])
 DEFAULT_NOTIFICATION_CONCURRENCY = 4
 
 
+_Notification = tuple[str, dict[str, Any], int]
+_CoalescingKey = tuple[str, str]
+
+
+class _NotificationQueue:
+    """FIFO that physically removes superseded snapshots at insertion time.
+
+    Replacements go at the tail, in their arrival position. Removing only the
+    old payload while leaving tombstones would still grow with stream length.
+    Both admission and session lanes use this queue so bursts cannot retain
+    every revision before the dispatcher gets its next turn.
+    """
+
+    def __init__(self) -> None:
+        self._entries: OrderedDict[
+            int, tuple[_CoalescingKey | None, _Notification | None]
+        ] = OrderedDict()
+        self._latest: dict[_CoalescingKey, int] = {}
+        self._sequence = 0
+        self._available = asyncio.Event()
+
+    def put_nowait(
+        self, notification: _Notification | None, key: _CoalescingKey | None = None,
+    ) -> bool:
+        replaced = False
+        if key is not None:
+            previous = self._latest.pop(key, None)
+            if previous is not None:
+                del self._entries[previous]
+                replaced = True
+        self._sequence += 1
+        self._entries[self._sequence] = (key, notification)
+        if key is not None:
+            self._latest[key] = self._sequence
+        self._available.set()
+        return replaced
+
+    def empty(self) -> bool:
+        return not self._entries
+
+    def get_nowait(self) -> _Notification | None:
+        if not self._entries:
+            raise asyncio.QueueEmpty
+        _, (key, notification) = self._entries.popitem(last=False)
+        if key is not None:
+            self._latest.pop(key)
+        if not self._entries:
+            self._available.clear()
+        return notification
+
+    async def get(self) -> _Notification | None:
+        while self.empty():
+            await self._available.wait()
+        return self.get_nowait()
+
+
 @dataclass(slots=True)
 class _NotificationLane:
-    """FIFO work for one ordering key, with superseded entries dropped."""
-
-    queue: asyncio.Queue[tuple[str, dict[str, Any], str | None, int, int]] = field(
-        default_factory=asyncio.Queue
-    )
-    # Highest queued version per stable item ID. A queued entry whose version is
-    # no longer the latest for its item has been fully replaced and is skipped.
-    latest: dict[str, int] = field(default_factory=dict)
-    version: int = 0
+    queue: _NotificationQueue = field(default_factory=_NotificationQueue)
 
 
 class _ConnectorNotificationPump:
@@ -135,9 +184,7 @@ class _ConnectorNotificationPump:
         self._accepting = True
         self._abort_task: asyncio.Task[None] | None = None
         self._lane_tasks: set[asyncio.Task[None]] = set()
-        self._queue: asyncio.Queue[tuple[str, dict[str, Any], int] | None] = (
-            asyncio.Queue()
-        )
+        self._queue = _NotificationQueue()
         self._task: asyncio.Task[None] | None = None
         self._lanes: dict[str, _NotificationLane] = {}
         self._active_lanes: set[str] = set()
@@ -194,7 +241,7 @@ class _ConnectorNotificationPump:
                 return
             generation = self._runtime_generations.get(notification_runtime_id(params), 0)
             self._mark_pending(1)
-            self._queue.put_nowait((method, params, generation))
+            self._enqueue(self._queue, (method, params, generation))
 
     async def close(self) -> None:
         self._accepting = False
@@ -278,20 +325,22 @@ class _ConnectorNotificationPump:
             )
             raise
 
+    def _enqueue(self, queue: _NotificationQueue, notification: _Notification) -> None:
+        method, params, _ = notification
+        item_key = self._item_key(method, params)
+        key = (self._lane_key(params), item_key) if item_key is not None else None
+        if queue.put_nowait(notification, key):
+            self.coalesced += 1
+            self._mark_pending(-1)
+
     async def _dispatch(self, method: str, params: dict[str, Any], generation: int) -> None:
         key = self._lane_key(params)
-        item_key = self._item_key(method, params)
         async with self._lane_guard:
             lane = self._lanes.get(key)
             if lane is None:
                 lane = _NotificationLane()
                 self._lanes[key] = lane
-            version = 0
-            if item_key is not None:
-                lane.version += 1
-                version = lane.version
-                lane.latest[item_key] = version
-            lane.queue.put_nowait((method, params, item_key, version, generation))
+            self._enqueue(lane.queue, (method, params, generation))
             if key not in self._active_lanes:
                 self._active_lanes.add(key)
                 task = asyncio.create_task(
@@ -305,7 +354,9 @@ class _ConnectorNotificationPump:
         try:
             while True:
                 try:
-                    method, params, item_key, version, generation = lane.queue.get_nowait()
+                    notification = lane.queue.get_nowait()
+                    assert notification is not None  # Only admission receives a close sentinel.
+                    method, params, generation = notification
                 except asyncio.QueueEmpty:
                     async with self._lane_guard:
                         if lane.queue.empty():
@@ -314,11 +365,6 @@ class _ConnectorNotificationPump:
                             return
                         continue
                 try:
-                    if item_key is not None:
-                        if lane.latest.get(item_key) != version:
-                            self.coalesced += 1
-                            continue
-                        lane.latest.pop(item_key, None)
                     async with self._slots:
                         if not self._runtime_current(method, params, generation):
                             self.obsolete += 1
