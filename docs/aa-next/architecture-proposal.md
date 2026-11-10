@@ -25,8 +25,8 @@
 
 | 决策 | 推荐 | 未确认前的约束 |
 | --- | --- | --- |
-| 代码复用方式 | 共享 TS 对话/同步内核，两套宿主适配；保留 AA Runtime 并先桥接 | 不直接改写 Connector 或删除原 Runtime |
-| 端点信任目标 | 本机配对 pin + 客户端设备证明 + 本机授权；云侧做发现与转发 | 不把当前 Cloud 的 issuer 公钥分发/Router principal 宣称为完整本机信任方案 |
+| D3 代码复用方式（已发给 t4wefan，待答复） | 共享 TS 对话/同步内核，两套宿主适配；保留 AA Runtime 并先桥接 | 不直接改写 Connector 或删除原 Runtime |
+| D4 端点信任目标（已发给 t4wefan，待答复） | 本机配对 pin + 客户端设备证明 + 本机授权；云侧做发现与转发 | 不把当前 Cloud 的 issuer 公钥分发/Router principal 宣称为完整本机信任方案 |
 
 ## T48 定稿仍需补齐
 
