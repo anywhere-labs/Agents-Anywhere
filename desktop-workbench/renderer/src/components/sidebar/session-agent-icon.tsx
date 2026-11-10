@@ -1,4 +1,4 @@
-import { Bot } from "lucide-react"
+import { Bot, SquareTerminal } from "lucide-react"
 
 // Paths from the supplied agent SVGs; currentColor follows the sidebar theme.
 const agentIcons = {
@@ -23,6 +23,9 @@ const agentIcons = {
 
 export function SessionAgentIcon({ runtime, runtimeType }: { runtime: string; runtimeType?: string }) {
   const type = (runtimeType?.trim() || runtime).toLowerCase().replace(/[\s_-]/g, "")
+  if (type === "commandcode") {
+    return <SquareTerminal aria-label="Command Code" role="img" data-icon="inline-start" />
+  }
   const agent = type === "pi" ? "pi"
     : type === "codex" ? "codex"
     : type === "claude" || type === "claudecode" ? "claude"

@@ -22,6 +22,9 @@ fun runtimeErrorRes(code: String?): Int? = when (code) {
     "attachments_too_large" -> R.string.runtime_error_attachments_too_large
     "attachments_unsupported" -> R.string.runtime_error_attachments_unsupported
     "capability_unavailable" -> R.string.runtime_error_capability_unavailable
+    "commandcode_acp_disabled" -> R.string.runtime_error_commandcode_acp_disabled
+    "commandcode_authentication_required" -> R.string.runtime_error_commandcode_authentication_required
+    "commandcode_cli_missing" -> R.string.runtime_error_commandcode_cli_missing
     "configuration_changed" -> R.string.runtime_error_configuration_changed
     "configuration_conflict" -> R.string.runtime_error_configuration_conflict
     "configuration_mapping_unavailable" -> R.string.runtime_error_configuration_mapping_unavailable

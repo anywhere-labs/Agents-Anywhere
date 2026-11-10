@@ -55,6 +55,8 @@
 
 - 修复接入 Codex 已有会话后，补入的旧消息出现在最新消息下方、历史消息交错或重排后顺序没有更新的问题；升级后同步会自动校准已有记录。（[#480](https://github.com/anywhere-labs/Agents-Anywhere/pull/480)）
 
+- 设备页可以添加 Command Code，使用本机 `cmdc` 的 ACP 接入：支持流式回复、工具调用与审批、模型和推理强度选择、附件，以及结束后继续同一会话。本机需要安装并登录 Command Code；未安装、未登录或 ACP 模块被禁用时会提示对应原因。
+
 - Pi 接入：
   - Web、Desktop、Android 和 iOS 会话列表统一显示 Pi 官方单色图标，并随应用主题着色。（[#514](https://github.com/anywhere-labs/Agents-Anywhere/pull/514)）
   - 沿用 Codex 的 Agent、模型、权限和发送入口，各端自动加载工作区模型；

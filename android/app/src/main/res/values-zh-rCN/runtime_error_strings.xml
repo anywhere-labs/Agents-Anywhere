@@ -16,6 +16,9 @@
     <string name="runtime_error_attachments_too_large">附件超过上限：每条消息最多 16 个，总大小不超过 32 MiB。</string>
     <string name="runtime_error_attachments_unsupported">当前执行者不支持首条附件。</string>
     <string name="runtime_error_capability_unavailable">该会话当前不能执行此操作。</string>
+    <string name="runtime_error_commandcode_acp_disabled">Command Code 的 ACP 模块被禁用：请从 settings.json 的 mods.disabled 中移除 acp。</string>
+    <string name="runtime_error_commandcode_authentication_required">Command Code 未登录：请先在终端运行 cmdc login，或设置 COMMAND_CODE_API_KEY。</string>
+    <string name="runtime_error_commandcode_cli_missing">未找到 Command Code CLI：请安装 command-code，或指定 CLI 路径。</string>
     <string name="runtime_error_configuration_changed">配置选项已不可用。</string>
     <string name="runtime_error_configuration_conflict">选择之间不一致，请重新选择模型和推理强度。</string>
     <string name="runtime_error_configuration_mapping_unavailable">该旧选择没有唯一且无损的 Agent 配置映射。</string>

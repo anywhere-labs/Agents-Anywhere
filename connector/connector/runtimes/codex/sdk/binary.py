@@ -2,16 +2,15 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 import subprocess
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal
 
 from connector.launch import launch_target
 from connector.logging import logger
+from connector.runtimes.executables import find_executable_on_path
 
 CodexRuntimeBinaryMode = Literal["prefer_system", "sdk_bundled"]
 CodexRuntimeBinarySource = Literal["configured", "system", "sdk_bundled"]
@@ -202,33 +201,6 @@ def codex_version_error(candidate: str, environment: Mapping[str, str]) -> str |
     ):
         return "missing or invalid Codex version output"
     return None
-
-
-def find_executable_on_path(name: str, path_value: str | None) -> str | None:
-    if path_value is None:
-        return None
-    if sys.platform == "win32":
-        # PowerShell scripts are normally absent from PATHEXT. Do not select
-        # npm's extensionless POSIX shim, even when Python's which returns it.
-        suffixes = (
-            ("",) if Path(name).suffix else (".exe", ".com", ".cmd", ".bat", ".ps1")
-        )
-        for directory in path_value.split(";"):
-            if not directory:
-                continue
-            for suffix in suffixes:
-                candidate = Path(os.path.expanduser(directory.strip('"'))) / (
-                    name + suffix
-                )
-                if candidate.is_file():
-                    return str(candidate)
-        return None
-    search_path = os.pathsep.join(
-        os.path.expanduser(directory)
-        for directory in path_value.split(os.pathsep)
-        if directory
-    )
-    return shutil.which(name, path=search_path)
 
 
 def codex_launch_command(

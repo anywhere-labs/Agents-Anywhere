@@ -22,7 +22,7 @@ hooks.deregister()
 function typeFor(runtimeType) {
   return {
     connectorId: "conn_fixture", runtimeType,
-    displayName: { codex: "Codex", claude: "Claude", dsh: "DeepSeek Harness" }[runtimeType],
+    displayName: { codex: "Codex", claude: "Claude", dsh: "DeepSeek Harness", commandcode: "Command Code" }[runtimeType],
     available: true, present: true, instancePolicy: "single", maxInstances: 1,
     schema: { type: "object", properties: { customPath: { type: "string", title: "Custom path" } } },
     uiSchema: {}, defaults: { customPath: "/default" },
@@ -102,7 +102,7 @@ async function fill(input, value) {
   })
 }
 
-for (const runtimeType of ["codex", "claude", "dsh"]) {
+for (const runtimeType of ["codex", "claude", "dsh", "commandcode"]) {
   for (const cleared of [false, true]) {
     test(`${runtimeType}: ${cleared ? "cleared" : "new"} instances use the same name and actions dialog`, async (t) => {
       const initialRuntimes = cleared ? [instance(runtimeType)] : []

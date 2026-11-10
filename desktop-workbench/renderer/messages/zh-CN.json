@@ -640,6 +640,10 @@
         "unsupportedField": "配置中包含不支持的字段。"
       },
       "runtimeConfigFields": {
+        "commandCodeCliPath": {
+          "label": "Command Code CLI 路径（可选）",
+          "description": "可选。自动检测失败时，填写 cmdc、command-code 或安装包中的 dist/index.mjs。留空则自动检测。"
+        },
         "claudeExecutablePath": {
           "label": "Claude 可执行文件路径（可选）",
           "description": "可选。只有 Claude Code 不在默认 PATH 时才需要填写。"
@@ -2277,6 +2281,9 @@
     "attachments_too_large": "附件超过上限：每条消息最多 16 个，总大小不超过 32 MiB。",
     "attachments_unsupported": "当前执行者不支持首条附件。",
     "capability_unavailable": "该会话当前不能执行此操作。",
+    "commandcode_acp_disabled": "Command Code 的 ACP 模块被禁用：请从 settings.json 的 mods.disabled 中移除 acp。",
+    "commandcode_authentication_required": "Command Code 未登录：请先在终端运行 cmdc login，或设置 COMMAND_CODE_API_KEY。",
+    "commandcode_cli_missing": "未找到 Command Code CLI：请安装 command-code，或指定 CLI 路径。",
     "configuration_changed": "配置选项已不可用。",
     "configuration_conflict": "选择之间不一致，请重新选择模型和推理强度。",
     "configuration_mapping_unavailable": "该旧选择没有唯一且无损的 Agent 配置映射。",

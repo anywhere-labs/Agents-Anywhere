@@ -673,6 +673,10 @@
         "unsupportedField": "The configuration contains an unsupported field."
       },
       "runtimeConfigFields": {
+        "commandCodeCliPath": {
+          "label": "Command Code CLI path (optional)",
+          "description": "Optional. Point to cmdc, command-code, or the package's dist/index.mjs when automatic detection fails. Leave it empty to detect the CLI."
+        },
         "claudeExecutablePath": {
           "label": "Claude executable path (optional)",
           "description": "Optional. Fill this only when Claude Code is not available on the default PATH."
@@ -2072,6 +2076,9 @@
     "attachments_too_large": "Attachments exceed the limit: up to 16 per message and 32 MiB in total.",
     "attachments_unsupported": "The current agent does not support attachments on the first message.",
     "capability_unavailable": "This session cannot perform this action right now.",
+    "commandcode_acp_disabled": "Command Code's ACP module is disabled. Remove `acp` from `mods.disabled` in settings.json.",
+    "commandcode_authentication_required": "Command Code is not signed in. Run `cmdc login` in a terminal, or set COMMAND_CODE_API_KEY.",
+    "commandcode_cli_missing": "No Command Code CLI was found. Install `command-code`, or set the CLI path.",
     "configuration_changed": "The configuration option is no longer available.",
     "configuration_conflict": "The selections conflict. Choose the model and reasoning effort again.",
     "configuration_mapping_unavailable": "This earlier selection has no exact agent configuration mapping.",

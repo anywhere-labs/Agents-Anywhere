@@ -135,8 +135,8 @@ atomic file transactions and legacy migration.
 
 ## Runtime Discovery
 
-The default providers are Codex, Claude and DSH. The connector reports attached runtime
-capabilities to the server. Codex is discovered through the official
+The default providers are Codex, Claude, DSH, Command Code and Pi. The connector reports
+attached runtime capabilities to the server. Codex is discovered through the official
 `openai-codex` SDK package for sessions the connector starts itself. In addition,
 the Codex runtime joins the Codex IDE/desktop IPC router at `$CODEX_HOME/ipc/ipc.sock`
 and follows threads that are open in the Codex desktop app or the VS Code
@@ -160,8 +160,10 @@ CLAUDE_BIN=/path/to/claude
 ```
 
 DSH requires the bridge integration described in
-[DSH Bridge Next](../dsh-bridge-next/README.md). Legacy ACP adapters are not part
-of the default provider registry.
+[DSH Bridge Next](../dsh-bridge-next/README.md). Command Code runs through the generic
+ACP adapter with `cmdc acp`; the connector resolves the CLI from an optional `cliPath`,
+PATH, npm, or the Command Code Desktop bundle. Legacy ACP adapters are not part of the
+default provider registry.
 
 Connected sessions expose native slash commands through a live runtime catalog.
 See [runtime slash commands](docs/runtime-commands.md) for Codex commands, DSH
@@ -212,9 +214,13 @@ uv run pytest -q
 
 DSH 插件默认将私有数据存放在 `~/.agents-anywhere/dsh-bridge-next/`，其托管 Connector 通过 `AGENT_CONNECTOR_DATA_DIR` 使用其中的 `connector/` 子目录。插件首次启动负责迁移旧 `.agentsanywhere/dsh-bridge-next/` 数据；通用 Connector 的默认路径和自定义环境变量行为不变。
 
+## Command Code Runtime
+
+Command Code 通过通用 ACP 适配启动 `cmdc acp`，实例、会话和事件保持 `runtimeType=commandcode`，ACP 是内部对接协议。CLI 解析优先使用配置项 `cliPath`，其次 PATH 中的 `cmdc` / `command-code`、npm 全局包和 Command Code Desktop 内置包；Windows 不搜索 `cmd`，避免命中系统 `cmd.exe`。`.cmd` / `.ps1` 启动器会解析为 Node 加 `dist/index.mjs`，没有 Node 时使用 Desktop 的 Electron 二进制。模型、推理强度、五个会话模式和附件由 Command Code 的 ACP 能力提供；运行中 steer 和 AA 斜杠命令扩展尚不支持。
+
 ## Pi Runtime
 
-Pi 通过通用 ACP 适配启动第三方 `@openma/pi-acp` 发布包，并优先绑定本机 Pi 安装提供的 SDK，不依赖 DSH。默认 Provider 为 Codex、Claude、DSH、Pi；Pi 的实例、会话和事件保持 `runtimeType=pi`，ACP 是内部对接协议。
+Pi 通过通用 ACP 适配启动第三方 `@openma/pi-acp` 发布包，并优先绑定本机 Pi 安装提供的 SDK，不依赖 DSH。默认 Provider 为 Codex、Claude、DSH、Command Code、Pi；Pi 的实例、会话和事件保持 `runtimeType=pi`，ACP 是内部对接协议。
 
 创建 Pi 实例时默认优先复用本机 Pi 1.4.0 npm 安装的模型、认证和配置，可指定 CLI 路径、配置目录及额外历史目录。未安装或不兼容时明确报错，用户可选择需要模型网关的受管环境；已有受管配置保持隔离。四端可只读浏览原生历史，退出对应 CLI 会话后使用「继续任务」恢复同一原生会话；AA 接手后暂不展示状态卡片及其中的结束执行按钮，恢复与释放能力仍保留，执行实例实际释放后可切回 `pi`。不支持两个独立实例同时写入同一历史。
 

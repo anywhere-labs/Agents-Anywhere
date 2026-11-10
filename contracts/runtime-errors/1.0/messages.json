@@ -74,6 +74,18 @@
       "zh-CN": "该旧选择没有唯一且无损的 Agent 配置映射。",
       "en": "This earlier selection has no exact agent configuration mapping."
     },
+    "commandcode_acp_disabled": {
+      "zh-CN": "Command Code 的 ACP 模块被禁用：请从 settings.json 的 mods.disabled 中移除 acp。",
+      "en": "Command Code's ACP module is disabled. Remove `acp` from `mods.disabled` in settings.json."
+    },
+    "commandcode_authentication_required": {
+      "zh-CN": "Command Code 未登录：请先在终端运行 cmdc login，或设置 COMMAND_CODE_API_KEY。",
+      "en": "Command Code is not signed in. Run `cmdc login` in a terminal, or set COMMAND_CODE_API_KEY."
+    },
+    "commandcode_cli_missing": {
+      "zh-CN": "未找到 Command Code CLI：请安装 command-code，或指定 CLI 路径。",
+      "en": "No Command Code CLI was found. Install `command-code`, or set the CLI path."
+    },
     "initialization_interrupted": {
       "zh-CN": "初始化执行者已退出，首条消息尚未提交，请重新准备。",
       "en": "The initializing agent exited before the first message was submitted. Prepare again."

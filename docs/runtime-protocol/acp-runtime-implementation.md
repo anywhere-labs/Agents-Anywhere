@@ -17,7 +17,7 @@ Web / Desktop / Android / iOS
   → Pi SDK
 ```
 
-默认 Provider 为 Codex、Claude、DSH、Pi。Pi 使用 `runtimeType=pi`、`implementationType=acp-stdio`，ACP 是内部对接协议。通用 `AcpRuntime` 通过注入 `AgentProfile`、启动配置、准备策略复用协调逻辑，其他 Agent 可以有自己的 Provider 身份；默认列表没有单独名为 ACP 的入口。
+默认 Provider 为 Codex、Claude、DSH、Command Code、Pi。Command Code 与 Pi 使用 `implementationType=acp-stdio`，ACP 是内部对接协议。通用 `AcpRuntime` 通过注入 `AgentProfile`、启动配置、准备策略复用协调逻辑，其他 Agent 可以有自己的 Provider 身份；默认列表没有单独名为 ACP 的入口。
 
 Pi 的 `PiProvider` 直接实现 `RuntimeProvider` 的配置、发现和启动流程，优先复用本机 npm 安装的 Pi SDK，第三方 `@openma/pi-acp` 提供 ACP 入口并在自己的进程内调用该 SDK。
 
@@ -122,6 +122,14 @@ Connector 显式加载 `permissions.mjs`，在首次加载、恢复及重载后�
 
 会话使用独立进程，执行配额和超时由协调层管理。关闭先阻止新请求并失效交互，实际释放进程后收敛状态；异常退出进入恢复状态。进程监督实现包括 POSIX 进程组和 Windows Job，相关受控检查入口见下文。
 
+## Command Code 接入
+
+Command Code 使用 `runtimeType=commandcode`、`implementationType=acp-stdio`，通过 `cmdc acp` 启动。Connector 自动解析 CLI：优先配置项 `cliPath`，其次 PATH 中的 `cmdc` / `command-code`（Windows 不搜索 `cmd`，避免命中 `cmd.exe`），再次 npm 全局包与 Command Code Desktop 内置的 `node_modules/command-code/dist/index.mjs`。ACP 进程层不能直接执行 `.cmd` / `.ps1` 启动器，因此解析结果总是 Node 可执行文件加 `dist/index.mjs`，找不到 Node 时使用 Desktop 的 Electron 二进制并设置 `ELECTRON_RUN_AS_NODE=1`。启动参数为 `--no-auto-update acp`，避免后台更新在会话期间替换进程。
+
+CommandCodeClient 把 ACP 的 `model` 与 `thought_level` 配置映射为 AA 的模型与推理目录，并把五个会话模式（标准、自动接受编辑、计划、不询问、跳过权限）作为合成的 `aa-permission` 配置项，通过 `session/set_mode` 切换。Command Code 不在实时回合里回显用户消息，Client 在首个助手或工具事件前补发带稳定 `clientMessageId` 的用户消息与 `aa_execution_observed` 回执。附件按图片块或 `resource_link` 发送，Command Code 的 ACP 均在 `promptCapabilities` 中声明支持。
+
+当前不支持运行中 steer 和 AA 的 `aa/list_commands` 扩展，因此不宣告 `session.steer` 与 `session.commands`。`sessionUpdate: "plan"` 与 `available_commands_update` 已由 ACP 发出，但通用投影暂未把它们转成 AA 计划卡片或斜杠菜单。
+
 ## 通用 ACP 与运行环境管理
 
 通用 ACP 适配、协调和同步服务由各 Agent Profile 复用。Pi 直接使用 npm 发布包。
@@ -133,6 +141,7 @@ TUI 协作、最终模型请求守卫、持久接纳回执和原生位置选择�
 - [默认 Provider 注册](../../connector/connector/runtimes/providers.py)
 - [Pi Provider 与固定依赖](../../connector/connector/runtimes/acp/profiles/pi/provider.py)、[配置生成](../../connector/connector/runtimes/acp/profiles/pi/settings.py)
 - [PiClient](../../connector/connector/runtimes/acp/profiles/pi/client.py)、[工具权限扩展](../../connector/connector/runtimes/acp/profiles/pi/permissions.mjs)
+- [Command Code Provider](../../connector/connector/runtimes/acp/profiles/commandcode/provider.py)、[CLI 解析](../../connector/connector/runtimes/acp/profiles/commandcode/installation.py)、[Client](../../connector/connector/runtimes/acp/profiles/commandcode/client.py)
 - [npm / Node 安装器](../../connector/connector/runtimes/acp/infrastructure/npm.py)
 - [通用 Runtime](../../connector/connector/runtimes/acp/runtime.py)、[会话用例](../../connector/connector/runtimes/acp/application/sessions.py)、[同步](../../connector/connector/runtimes/acp/application/synchronization.py)
 - [工作流契约](../../contracts/runtime-workflows/1.2/manifest.json)、[ACP 增强契约说明](../../contracts/acp-runtime/1.1/README.md)

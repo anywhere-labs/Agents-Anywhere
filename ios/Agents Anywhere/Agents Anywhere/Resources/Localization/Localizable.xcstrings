@@ -19410,6 +19410,57 @@
           }
         }
       }
+    },
+    "Command Code 的 ACP 模块被禁用：请从 settings.json 的 mods.disabled 中移除 acp。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Command Code's ACP module is disabled. Remove `acp` from `mods.disabled` in settings.json."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Command Code 的 ACP 模块被禁用：请从 settings.json 的 mods.disabled 中移除 acp。"
+          }
+        }
+      }
+    },
+    "Command Code 未登录：请先在终端运行 cmdc login，或设置 COMMAND_CODE_API_KEY。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Command Code is not signed in. Run `cmdc login` in a terminal, or set COMMAND_CODE_API_KEY."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Command Code 未登录：请先在终端运行 cmdc login，或设置 COMMAND_CODE_API_KEY。"
+          }
+        }
+      }
+    },
+    "未找到 Command Code CLI：请安装 command-code，或指定 CLI 路径。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No Command Code CLI was found. Install `command-code`, or set the CLI path."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未找到 Command Code CLI：请安装 command-code，或指定 CLI 路径。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
