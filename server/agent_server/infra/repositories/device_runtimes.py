@@ -21,8 +21,8 @@ from agent_server.infra.db import connectors as connectors_t
 from agent_server.infra.db import device_runtimes as device_runtimes_t
 from agent_server.infra.db import retired_device_runtimes as retired_runtimes_t
 from agent_server.infra.db import sessions as sessions_t
-from agent_server.infra.repositories.channel_reconciliation import channel_connection
 from agent_server.infra.db.engine import read_connection
+from agent_server.infra.repositories.channel_reconciliation import channel_connection
 
 _CONTROL_V2_DESCRIPTOR_KEY = "__runtimeControlV2Descriptor"
 
@@ -442,7 +442,7 @@ class DeviceRuntimeRepositoryMixin:
         )
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
-        async with read_connection(self._engine) as conn:
+        async with channel_connection(self) as conn:
             row = (await conn.execute(query)).mappings().first()
         if row is None:
             raise KeyError(runtime_id)

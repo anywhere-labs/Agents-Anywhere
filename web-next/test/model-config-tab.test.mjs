@@ -45,9 +45,9 @@ test('a model profile labels each detail and shows it in full', async (t) => {
   const root = createRoot(container)
   await act(async () => root.render(h(NextIntlClientProvider, { locale: 'zh-CN', messages, timeZone: 'Asia/Shanghai' }, h(ModelConfigsTab, { token: 'fixture', connectors: [] }))))
   t.after(async () => { await act(async () => root.unmount()); container.remove() })
-  // Without a channel reported, the page opens on the device's own configuration.
+  // Without a channel reported, the page opens on the first channel listed.
   const nav = container.querySelector('nav')
-  assert.equal(nav.querySelector('[aria-current="true"]').textContent, '设备自带配置')
+  assert.equal(nav.querySelector('[aria-current="true"]').textContent, '通用模型网关（演示）')
   await act(async () => { [...nav.querySelectorAll('button')].find((button) => button.textContent.includes('通用模型网关')).click() })
 
   // The selected channel's summary comes first; its offers are listed open below it.
@@ -122,7 +122,8 @@ test('channels are listed on the left with the applied one marked and opened fir
 
   const nav = container.querySelector('nav')
   const names = [...nav.querySelectorAll('button[type="button"]')].map((button) => button.textContent)
-  assert.deepEqual(names, ['设备自带配置', 'Tokens Anywhere', '通用模型网关（演示）', '公司网关已应用'])
+  // The device's own configuration is not listed; signing out of Tokens Anywhere returns to it.
+  assert.deepEqual(names, ['Tokens Anywhere', '通用模型网关（演示）', '公司网关已应用'])
   // The page opens on the applied channel; there is no channel card above the list.
   assert.equal(nav.querySelector('[aria-current="true"]').textContent, '公司网关已应用')
   const pane = container.querySelector('section')
@@ -137,12 +138,6 @@ test('channels are listed on the left with the applied one marked and opened fir
   await click(navItem(container, 'Tokens Anywhere'))
   assert.equal(buttons(container, '链接账户').length, 1)
   assert.equal(buttons(container, '应用').length, 0)
-
-  // The device's own configuration is a channel like the others.
-  await click(navItem(container, '设备自带配置'))
-  assert.equal(nav.querySelector('[aria-current="true"]').textContent, '设备自带配置')
-  assert.match(container.querySelector('section').textContent, /Runtime 使用设备上它自己的模型配置/)
-  assert.equal(buttons(container, '应用').length, 1)
 })
 
 test('a channel chosen in the list is applied from its page', async (t) => {
@@ -150,7 +145,9 @@ test('a channel chosen in the list is applied from its page', async (t) => {
   t.mock.method(modelConfigApi, 'setChannel', async (_token, channel) => { calls.push(channel); return channelState([], { channel, revision: 9 }) })
   const container = await renderTab(t, { secretConfigured: true, profiles: [profile], assignments: [], channel: channelState([], { channel: 'native', switch: null }) })
 
-  assert.equal(container.querySelector('nav [aria-current="true"]').textContent, '设备自带配置已应用')
+  // On the device's own configuration, nothing in the list is marked applied.
+  assert.equal(navItem(container, '设备自带配置'), undefined)
+  assert.equal([...container.querySelectorAll('nav button')].some((button) => button.textContent.endsWith('已应用')), false)
   await click(navItem(container, '通用模型网关'))
   const pane = container.querySelector('section')
   assert.equal(pane.querySelector('button[aria-label="删除配置"]').disabled, false)
@@ -183,14 +180,13 @@ test('each channel counts its own runtimes switching, done or failed', async (t)
   assert.equal(statusText(done), '已在 2 个 Runtime 生效')
   assert.equal(done.querySelector('[role=progressbar]'), null)
   assert.equal(done.querySelector('[data-runtime="c/claude"]'), null)
-  assert.match(navItem(done, '设备自带配置').textContent, /1$/)
 
   const retried = []
   t.mock.method(modelConfigApi, 'retryChannel', async (_token, target) => { retried.push(target); return channelState([]) })
   const attention = await renderTab(t, { secretConfigured: true, profiles: [profile], assignments: [], channel: channelState([
     row('c', 'codex', 'applied'), row('d', 'codex', 'restored', { reason: 'verify_failed' }),
   ], { switch: { revision: 4, state: 'attention', startedAt: '', finishedAt: '' } }) })
-  assert.equal(statusText(attention), '1/2 已生效 · 1 个切换失败，已恢复原渠道')
+  assert.equal(statusText(attention), '1/2 已生效 · 1 个切换失败，已恢复原网关')
   assert.ok(navItem(attention, '通用模型网关').querySelector('[aria-label="有 Runtime 需要处理"]'))
   await click(buttons(runtimesRegion(attention), '重试')[0])
   assert.deepEqual(retried, [undefined])
@@ -230,27 +226,25 @@ test('a runtime offers retry only after a failed switch, and says why it cannot 
   ], { switch: { revision: 4, state: 'attention', startedAt: '', finishedAt: '' } }) })
 
   assert.equal(buttons(container.querySelector('[data-runtime="c/codex"]'), '重试').length, 0)
-  assert.match(container.querySelector('[data-runtime="c/claude"]').textContent, /切换失败，已恢复原渠道 · Runtime 回报的连接与目标不一致/)
+  assert.match(container.querySelector('[data-runtime="c/claude"]').textContent, /切换失败，已恢复原网关 · Runtime 回报的连接与目标不一致/)
   assert.match(container.querySelector('[data-runtime="c/dsh"]').textContent, /需要单独指定并确认/)
   await click(buttons(container.querySelector('[data-runtime="c/claude"]'), '重试')[0])
   assert.deepEqual(retried, ['c/claude'])
 })
 
-test('a linked Tokens Anywhere account offers to be applied, signs out and counts its runtimes', async (t) => {
+test('a linked Tokens Anywhere account has no apply button, signs out and counts its runtimes', async (t) => {
   const container = await renderTab(t, { secretConfigured: true, profiles: [tokensProfile], assignments: [], tokens: linked, channel: channelState([
     row('c', 'codex', 'pending', { desired: 'native', actual: 'tokens' }),
   ], { channel: 'native' }) })
 
-  // The runtime leaving Tokens Anywhere belongs to the device's own configuration now.
-  assert.match(navItem(container, '设备自带配置').textContent, /1$/)
   await click(navItem(container, 'Tokens Anywhere'))
   const pane = container.querySelector('section')
   assert.match(pane.textContent, /Tokens Anywhere 账户/)
-  assert.equal(buttons(pane, '应用').length, 1)
+  assert.equal(buttons(pane, '应用').length, 0)
   assert.equal(buttons(pane, '退出').length, 1)
   assert.equal(buttons(pane, '切换账号').length, 0)
   assert.match(pane.textContent, /1 个 Runtime 在用/)
-  assert.match(runtimesRegion(container).textContent, /还没有 Runtime 使用这个渠道/)
+  assert.match(runtimesRegion(container).textContent, /还没有 Runtime 使用这个网关/)
 })
 
 test('signing out moves the runtimes on Tokens Anywhere to the default first, then unlinks', async (t) => {

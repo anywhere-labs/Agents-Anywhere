@@ -222,7 +222,7 @@ private fun ConfiguredAgentRow(
                 text = listOfNotNull(
                     runtime.labels.secondary,
                     runtimeStatusLabel(runtime),
-                    runtime.phaseMessage?.takeIf { runtime.status == DeviceRuntimeStatus.Starting },
+                    runtime.phaseMessage?.takeIf { runtime.status == DeviceRuntimeStatus.Starting || runtime.status == DeviceRuntimeStatus.Running },
                 ).joinToString(" · "),
                 color = if (runtime.status == DeviceRuntimeStatus.Error && !warning) colors.errorText else colors.muted,
                 fontSize = 11.5.sp,
