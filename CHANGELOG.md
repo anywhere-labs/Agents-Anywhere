@@ -43,6 +43,7 @@
 ### 本机连接
 
 - 电脑关机、重启或注销时，Desktop 不再弹出「退出 Agents Anywhere？」阻止关机，而是直接停止本机连接并退出；需要确认的用户可以打开「关机时询问是否退出」。在 Desktop 里手动退出时仍会确认。（[#596](https://github.com/anywhere-labs/Agents-Anywhere/pull/596)）
+- 打开「登录时打开」和「登录时静默启动」后，开机登录时 Desktop 不再弹出主窗口，即使本机连接要过很久才就绪；只有本机连接被其他程序占用或启动出错时才显示窗口。更新后由安装器重新启动时，隐藏的窗口也不再被拉到前台。（[#403](https://github.com/anywhere-labs/Agents-Anywhere/pull/403)）
 - Desktop 和 DSH 插件的设置里新增「Connector 网络」，可选跟随系统、直连或自定义代理；Connector 的接口请求、实时连接和终端都走同一条路，日志里记录实际走的路径。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
 - 在系统代理里把服务器地址加入例外现在对 Connector 生效；只设置 `NO_PROXY` 不再让 Connector 绕过系统代理。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
 - 系统代理开关开着但本机代理软件已退出时，Connector 改为直连，不再一直连不上服务器。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
