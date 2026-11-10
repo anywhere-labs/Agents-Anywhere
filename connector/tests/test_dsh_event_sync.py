@@ -476,6 +476,29 @@ def test_rejected_batch_logs_the_facts_that_decided_it(monkeypatch):
     asyncio.run(exercise())
 
 
+
+def test_unreachable_backend_is_not_logged_as_a_rejected_batch(monkeypatch):
+    from connector.runtimes.dsh.bridge import sync as sync_module
+    from connector.server.errors import ConnectorNetworkError
+
+    async def exercise():
+        warnings = []
+        monkeypatch.setattr(sync_module.logger, "warning", lambda message, *args: warnings.append(message.format(*args)))
+        relay = ready_relay(host())
+
+        async def unreachable(_batch):
+            raise ConnectorNetworkError("backend ingest temporarily unavailable: HTTP 503")
+
+        monkeypatch.setattr(relay, "_ingest_locked", unreachable)
+        try:
+            with pytest.raises(ConnectorNetworkError):
+                await relay.ingest(SyncBatch(subscriptionId="sub", batchSeq=1, projectionVersion=3,
+                                             operations=[{"kind": "workspace.inventory"}]))
+            assert warnings == []
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
 def test_backend_reconnect_does_not_restart_a_sync_that_is_building_its_baseline():
     async def exercise():
         runtime = DshRuntime.__new__(DshRuntime)

@@ -37,6 +37,7 @@ from connector.runtimes.dsh.bridge.models import (
     timeline_item,
 )
 from connector.runtimes.dsh.bridge.models import notice as session_notice
+from connector.server.errors import ConnectorNetworkError
 from connector.server.ingest import ConnectorIngestRejectedError
 
 # Consecutive subscription failures back off up to this long between attempts.
@@ -539,7 +540,8 @@ class SyncRelay:
         try:
             await self._await_subscription()
             await self._ingest_locked(batch)
-        except (asyncio.CancelledError, MeshCallError):
+        except (asyncio.CancelledError, MeshCallError, ConnectorNetworkError):
+            # An unreachable Server is retried by the plugin, not a rejected batch.
             raise
         except Exception as error:
             # The plugin only sees an internal error; keep the facts that decided it.
