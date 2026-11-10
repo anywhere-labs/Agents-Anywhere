@@ -36,6 +36,7 @@ from connector.server.capabilities import protocol_capabilities_from_runtime_typ
 from connector.server.dispatch import (
     ConnectorRequestDispatcher,
     ConnectorRequestSession,
+    DeviceSettingsSink,
 )
 from connector.server.errors import ConnectorNetworkError
 from connector.server.ingest import ConnectorIngestClient
@@ -78,6 +79,7 @@ class BackendRpcClient:
         agent_runtime_host: RuntimeHostClient | None = None,
         preferences_reader: Callable[[], dict[str, Any]] | None = None,
         sync_state_store: SyncStateStore | None = None,
+        device_settings_sink: DeviceSettingsSink | None = None,
     ) -> None:
         self.config = config
         self.sync_state_store = sync_state_store
@@ -138,6 +140,7 @@ class BackendRpcClient:
             upload_prepared_download=self.upload_prepared_download,
             start_terminal_relay=self.start_terminal_relay,
             schedule_background=self._schedule_background,
+            device_settings_sink=device_settings_sink,
         )
         self._runtime_sync = RuntimeSyncRunner(
             config=config,

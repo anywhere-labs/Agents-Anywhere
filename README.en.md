@@ -43,7 +43,7 @@ See the [download page](https://www.agents-anywhere.com/en/download) for platfor
 <details>
 <summary>Platform requirements, installers and updates</summary>
 
-- macOS: Universal for Apple Silicon / Intel; signed and notarized; requires macOS 12 or later.
+- macOS: Universal for Apple Silicon / Intel; signed and notarized; requires macOS 13 or later.
 - Windows: x64 desktop workbench with a managed Connector; the current installer is not code signed.
 - Android: Android 8.0 or later.
 - iOS / iPadOS: download from the App Store, or install the beta through TestFlight; beta availability is shown on the invitation page.

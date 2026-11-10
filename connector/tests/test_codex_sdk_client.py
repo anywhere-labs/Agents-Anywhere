@@ -852,6 +852,48 @@ async def _test_codex_sdk_client_applies_gateway_to_thread_start_and_resume() ->
     ] == "gateway-secret"
 
 
+@pytest.mark.parametrize(
+    ("saved_route", "expected_provider", "expected_model"),
+    [
+        (
+            {"modelProvider": "agents_anywhere_gateway", "model": "gateway-model"},
+            "agents_anywhere_gateway",
+            "gateway-model",
+        ),
+        ({"modelProvider": "kimi", "model": "kimi-k2"}, None, None),
+        ({}, "agents_anywhere_gateway", None),
+    ],
+    ids=["gateway-thread", "own-provider-thread", "unknown-provider"],
+)
+def test_codex_sdk_client_resumes_threads_on_their_saved_provider(
+    saved_route: dict[str, str],
+    expected_provider: str | None,
+    expected_model: str | None,
+) -> None:
+    async def scenario() -> dict[str, Any]:
+        native = _FakeLowLevelAsyncCodex()
+        native.low_level.saved_thread_route = saved_route
+        client = CodexSdkClient(
+            native,
+            sdk=_FakeLowLevelSdkModule(),
+            model_gateway=ModelGateway(
+                base_url="https://gateway.example/v1",
+                api_key="gateway-secret",
+            ),
+        )
+        await client.start_turn(
+            CodexStartTurnRequest(thread_id="thread_existing", content="hello")
+        )
+        return native.low_level.thread_resume_params[0]
+
+    resume = asyncio.run(scenario())
+
+    assert resume.get("modelProvider") == expected_provider
+    assert resume.get("model") == expected_model
+    if expected_provider is None:
+        assert "config" not in resume or resume["config"] is None
+
+
 class _NativeSdkClient:
     def __init__(self) -> None:
         self.started = False
@@ -1048,6 +1090,7 @@ class _FakeLowLevelClient:
         self.turn_start_params: list[dict[str, Any]] = []
         self.fail_next_turn_start: Exception | None = None
         self.raw_requests: list[tuple[str, dict[str, Any]]] = []
+        self.saved_thread_route: dict[str, str] = {}
 
     async def request(
         self,
@@ -1062,6 +1105,7 @@ class _FakeLowLevelClient:
                 {
                     "thread": {
                         "id": params["threadId"],
+                        **self.saved_thread_route,
                         "turns": (
                             [
                                 {

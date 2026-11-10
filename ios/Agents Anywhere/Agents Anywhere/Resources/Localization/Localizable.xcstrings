@@ -1,6 +1,193 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "未找到本机的 Agent 命令行。请先安装该 Agent，或在实例配置中填写它的路径。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The agent's command-line tool was not found on this device. Install the agent, or set its path in the instance configuration."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未找到本机的 Agent 命令行。请先安装该 Agent，或在实例配置中填写它的路径。"
+          }
+        }
+      }
+    },
+    "无法直接启动该 Agent 的批处理入口，请在实例配置中填写实际可执行文件的路径。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The agent's batch-file launcher cannot be started directly. Set the path of the actual executable in the instance configuration."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法直接启动该 Agent 的批处理入口，请在实例配置中填写实际可执行文件的路径。"
+          }
+        }
+      }
+    },
+    "Agent 的 ACP 入口不可用，请确认它安装完整，并能在本机运行它的 ACP 检查命令。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The agent's ACP entry point is unavailable. Make sure the agent is fully installed and its ACP check runs on this device."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent 的 ACP 入口不可用，请确认它安装完整，并能在本机运行它的 ACP 检查命令。"
+          }
+        }
+      }
+    },
+    "当前 Agent 版本不受支持，请升级后重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This agent version is not supported. Upgrade it and try again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前 Agent 版本不受支持，请升级后重试。"
+          }
+        }
+      }
+    },
+    "Agent 需要先在本机完成登录或模型配置。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign in to the agent or configure its model on this device first."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent 需要先在本机完成登录或模型配置。"
+          }
+        }
+      }
+    },
+    "Agent 无法创建会话，请在本机检查它的模型与认证配置。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The agent could not create a session. Check its model and sign-in settings on this device."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent 无法创建会话，请在本机检查它的模型与认证配置。"
+          }
+        }
+      }
+    },
+    "Agent 无法恢复此会话：原会话可能已不存在，或 Agent 配置已变化。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The agent could not resume this session. The original session may no longer exist, or the agent's configuration changed."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent 无法恢复此会话：原会话可能已不存在，或 Agent 配置已变化。"
+          }
+        }
+      }
+    },
+    "当前 Agent 运行中追加指令暂不支持附件。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This agent does not accept attachments when adding instructions to a running turn."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前 Agent 运行中追加指令暂不支持附件。"
+          }
+        }
+      }
+    },
+    "当前模型声明不支持图片输入，请移除图片或切换支持图片的模型。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The current model does not declare image input. Remove the image or switch to a model that supports images."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前模型声明不支持图片输入，请移除图片或切换支持图片的模型。"
+          }
+        }
+      }
+    },
+    "命令目录已变化，请刷新。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The command list has changed. Refresh it."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "命令目录已变化，请刷新。"
+          }
+        }
+      }
+    },
+    "命令与原始输入不一致。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The command does not match the original input."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "命令与原始输入不一致。"
+          }
+        }
+      }
+    },
     "": {
       "extractionState": "manual",
       "localizations": {
@@ -1733,6 +1920,23 @@
         }
       }
     },
+    "Ask before quitting on shutdown": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ask before quitting on shutdown"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关机时询问是否退出"
+          }
+        }
+      }
+    },
     "Attach no more than %lld files.": {
       "extractionState": "manual",
       "localizations": {
@@ -2885,6 +3089,23 @@
         }
       }
     },
+    "Couldn't load device settings.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't load device settings."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法读取设备设置。"
+          }
+        }
+      }
+    },
     "Couldn't read the Tokens Anywhere account right now.": {
       "comment": "Shared with Web: pages.settings.modelConfigs.account.loadFailed. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -2917,6 +3138,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "暂时读不到用量。"
+          }
+        }
+      }
+    },
+    "Couldn't save the device setting.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't save the device setting."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备设置未保存。"
           }
         }
       }
@@ -4373,6 +4611,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "列表项不能重复。"
+          }
+        }
+      }
+    },
+    "Loading device settings…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Loading device settings…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在读取设备设置…"
           }
         }
       }
@@ -6927,6 +7182,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "已保存，正在应用到使用 Tokens Anywhere 的 Runtime。"
+          }
+        }
+      }
+    },
+    "Saved. It takes effect when the device comes online.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved. It takes effect when the device comes online."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备离线，上线后生效"
           }
         }
       }
@@ -9814,6 +10086,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "等待确认"
+          }
+        }
+      }
+    },
+    "When on, Agents Anywhere asks before quitting when the computer shuts down or restarts. When off, it quits right away and never blocks shutdown.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When on, Agents Anywhere asks before quitting when the computer shuts down or restarts. When off, it quits right away and never blocks shutdown."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "开启后，电脑关机或重启时先弹窗确认再退出；关闭时直接退出，不阻止关机。"
           }
         }
       }

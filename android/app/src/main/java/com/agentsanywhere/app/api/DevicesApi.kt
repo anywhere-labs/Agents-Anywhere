@@ -90,6 +90,33 @@ class DevicesApi(
         )
     }
 
+    fun getDeviceSettings(
+        serverUrl: String,
+        authorizationToken: String,
+        deviceId: String,
+    ): RemoteDeviceSettings {
+        return client.getJson(
+            serverUrl = serverUrl,
+            path = "/connectors/${deviceId.urlEncode()}/device-settings",
+            authorizationToken = authorizationToken,
+        ).toRemoteDeviceSettings(deviceId)
+    }
+
+    /** Saves the given switches only; the Server keeps the others. */
+    fun updateDeviceSettings(
+        serverUrl: String,
+        authorizationToken: String,
+        deviceId: String,
+        confirmQuitOnShutdown: Boolean,
+    ): RemoteDeviceSettings {
+        return client.patchJson(
+            serverUrl = serverUrl,
+            path = "/connectors/${deviceId.urlEncode()}/device-settings",
+            body = JSONObject().put("confirmQuitOnShutdown", confirmQuitOnShutdown),
+            authorizationToken = authorizationToken,
+        ).toRemoteDeviceSettings(deviceId)
+    }
+
     fun listDeviceRuntimes(
         serverUrl: String,
         authorizationToken: String,
@@ -283,6 +310,9 @@ class DevicesApi(
 
     internal fun parseDevice(value: JSONObject): RemoteDevice = value.toRemoteDevice()
 
+    internal fun parseDeviceSettings(value: JSONObject, fallbackConnectorId: String): RemoteDeviceSettings =
+        value.toRemoteDeviceSettings(fallbackConnectorId)
+
     /** One runtime from the dashboard snapshot, or null when its identity is not valid. */
     internal fun parseDeviceRuntime(value: JSONObject): RemoteDeviceRuntime? {
         val connectorId = value.optString("connectorId")
@@ -302,6 +332,17 @@ class DevicesApi(
             lastSeenAt = optNullableString("lastSeenAt"),
             createdAt = optNullableString("createdAt"),
             updatedAt = optNullableString("updatedAt"),
+            connectorKind = optNullableString("connectorKind"),
+        )
+    }
+
+    private fun JSONObject.toRemoteDeviceSettings(fallbackConnectorId: String): RemoteDeviceSettings {
+        val settings = optJSONObject("settings")
+        return RemoteDeviceSettings(
+            connectorId = optString("connectorId", fallbackConnectorId).ifBlank { fallbackConnectorId },
+            confirmQuitOnShutdown = settings?.optNullableBoolean("confirmQuitOnShutdown") ?: false,
+            delivered = optNullableBoolean("delivered"),
+            serverTime = optNullableString("serverTime"),
         )
     }
 

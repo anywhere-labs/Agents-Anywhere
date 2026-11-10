@@ -53,6 +53,9 @@ connectors = Table(
     # preferences (e.g. ~/.claude/settings.json fields). Read-only from the
     # backend's perspective; the daemon owns the write loop.
     Column("user_preferences", Text),
+    # JSON object of user-chosen device settings (see docs/api/device-settings.md).
+    # Clients write it through the API; the server hands it to the connector.
+    Column("device_settings", Text),
     Index("idx_connectors_user_revoked", "user_id", "revoked"),
 )
 

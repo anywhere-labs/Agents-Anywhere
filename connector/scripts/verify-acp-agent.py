@@ -1,4 +1,8 @@
-"""Actual `hermes acp` execution against a local model fixture, without paid requests."""
+"""Actual ACP Agent execution against a local model fixture, without paid requests.
+
+Each registered Agent says how to point it at the local model; the scenarios
+are shared. ``--record`` saves the raw ACP traffic as replay fixtures.
+"""
 
 import argparse
 import asyncio
@@ -12,7 +16,7 @@ import sys
 import tempfile
 import threading
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from socketserver import TCPServer
@@ -20,24 +24,87 @@ from types import SimpleNamespace
 
 from connector.runtime_protocol.models import RuntimeAttachmentContent
 from connector.runtime_protocol.workflows import RuntimeWorkflowRequest
+from connector.runtimes.acp.infrastructure.acp.client import AgentClient
 from connector.runtimes.acp.profiles.hermes.provider import HermesProvider
 
 SCENARIOS = ("allow", "deny", "attachment", "image", "steer", "interrupt", "resume")
-RUNTIME_ID = "rti_hermesfixture000000000000000001"
-REPLY = "AA_HERMES_OK"
-PROOF = "AA_HERMES_TOOL_OK"
-STEER = "AA_HERMES_STEER_MARKER"
-TEXT_ATTACHMENT = b"AA_HERMES_ATTACHMENT_PROOF_41c7"
+RUNTIME_ID = "rti_acpagentfixture0000000000000001"
+REPLY = "AA_AGENT_OK"
+PROOF = "AA_AGENT_TOOL_OK"
+STEER = "AA_AGENT_STEER_MARKER"
+TEXT_ATTACHMENT = b"AA_AGENT_ATTACHMENT_PROOF_41c7"
 # 1x1 transparent PNG.
 PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 )
 
+
+
+@dataclass(frozen=True)
+class AgentFixture:
+    """How one Agent is pointed at the local model and cleaned up afterwards."""
+
+    runtime_type: str
+    display_name: str
+    command: str
+    provider: object
+    write_tool: str
+    permissions: tuple[str, ...]
+    configure: object
+    cleanup: object
+
+
+def hermes_configure(home: Path, model_url: str, executable: Path) -> dict:
+    (home / "config.yaml").write_text(
+        json.dumps(
+            {
+                "model": {
+                    "default": "fixture",
+                    "provider": "custom",
+                    "base_url": model_url,
+                    "api_key": "fixture-key",
+                },
+                "compression": {"enabled": False},
+                "memory": {"memory_enabled": False, "user_profile_enabled": False},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return {"cliPath": str(executable), "hermesHome": str(home)}
+
+
+def hermes_cleanup(home: Path, executable: Path) -> None:
+    # Hermes' gateway daemon idles for minutes; the temporary home must not outlive us.
+    subprocess.run(
+        [str(executable), "gateway", "stop"],
+        check=False,
+        env={**os.environ, "HERMES_HOME": str(home)},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=60,
+    )
+
+
+AGENTS = {
+    "hermes": AgentFixture(
+        "hermes",
+        "Hermes",
+        "hermes",
+        HermesProvider,
+        "write_file",
+        ("ask", "workspace_session", "session"),
+        hermes_configure,
+        hermes_cleanup,
+    ),
+}
+
 parser = argparse.ArgumentParser(
-    description="Verify a local Hermes through AA's ACP runtime; no provider credentials are used."
+    description="Verify a local ACP Agent through AA's runtime; no provider credentials are used."
 )
+parser.add_argument("--definition", choices=sorted(AGENTS), default="hermes")
 parser.add_argument("--scenario", choices=[*SCENARIOS, "all"], default="all")
-parser.add_argument("--hermes", help="hermes executable; defaults to the one on PATH")
+parser.add_argument("--executable", help="Agent executable; defaults to the one on PATH")
+parser.add_argument("--record", type=Path, help="save each scenario's ACP traffic in this directory")
 args = parser.parse_args()
 
 
@@ -53,7 +120,7 @@ class FixtureServer(ThreadingHTTPServer):
             super().handle_error(request, client_address)
 
 
-def make_model(scenario, root):
+def make_model(scenario, root, tool):
     agent_requests = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -111,7 +178,7 @@ def make_model(scenario, root):
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             if not body.get("tools"):
-                # Hermes' auxiliary calls, such as session titles.
+                # Agents' auxiliary calls, such as session titles.
                 self.reply(body, {"role": "assistant", "content": "Fixture title"}, "stop")
                 return
             agent_requests.append(body)
@@ -126,7 +193,7 @@ def make_model(scenario, root):
                 "id": f"call_fixture_{len(agent_requests)}",
                 "type": "function",
                 "function": {
-                    "name": "write_file",
+                    "name": tool,
                     "arguments": json.dumps(
                         {"path": str(root / "workspace" / "proof.txt"), "content": PROOF}
                     ),
@@ -147,30 +214,21 @@ async def wait(predicate, seconds=120):
             await asyncio.sleep(0.03)
 
 
-async def run_scenario(scenario, hermes):
+async def run_scenario(scenario, fixture, executable):
     started = time.monotonic()
-    print(f"Hermes scenario {scenario}: starting", flush=True)
-    root = Path(tempfile.mkdtemp(prefix="aa-hermes-qa-"))
+    print(f"{fixture.display_name} scenario {scenario}: starting", flush=True)
+    root = Path(tempfile.mkdtemp(prefix=f"aa-{fixture.runtime_type}-qa-"))
     (root / "workspace").mkdir()
     (root / "state").mkdir()
-    home = root / "hermes"
+    home = root / "agent-home"
     home.mkdir()
-    server, requests = make_model(scenario, root)
-    (home / "config.yaml").write_text(
-        json.dumps(
-            {
-                "model": {
-                    "default": "fixture",
-                    "provider": "custom",
-                    "base_url": f"http://127.0.0.1:{server.server_port}/v1",
-                    "api_key": "fixture-key",
-                },
-                "compression": {"enabled": False},
-                "memory": {"memory_enabled": False, "user_profile_enabled": False},
-            }
-        ),
-        encoding="utf-8",
-    )
+    server, requests = make_model(scenario, root, fixture.write_tool)
+    instance = fixture.configure(home, f"http://127.0.0.1:{server.server_port}/v1", executable)
+    recording = []
+    if args.record:
+        AgentClient.stream_observers = (
+            lambda event: recording.append({"direction": event.direction.value, "message": event.message}),
+        )
     content = PNG if scenario == "image" else TEXT_ATTACHMENT
     name, media = ("pixel.png", "image/png") if scenario == "image" else ("proof.txt", "text/plain")
 
@@ -187,11 +245,8 @@ async def run_scenario(scenario, hermes):
         publish_runtime_notifications=publish,
         attachment_download=download,
     )
-    provider = HermesProvider()
-    config = replace(
-        await provider.validate_config({"cliPath": str(hermes), "hermesHome": str(home)}),
-        runtime_id=RUNTIME_ID,
-    )
+    provider = fixture.provider()
+    config = replace(await provider.validate_config(instance), runtime_id=RUNTIME_ID)
     runtime = await provider.create_runtime(config, host)
     app = runtime.app
     try:
@@ -206,7 +261,7 @@ async def run_scenario(scenario, hermes):
         for effort in models[0]["reasoningItems"]:
             assert effort["id"] and effort["displayName"] and effort["selectionId"], effort
         permissions = await runtime.list_permission_catalog()
-        assert [item.id for item in permissions.permissions] == ["ask", "workspace_session", "session"]
+        assert tuple(item.id for item in permissions.permissions) == fixture.permissions
         common = {
             "preparationId": "prepare",
             "createOperationId": "create",
@@ -292,9 +347,9 @@ async def run_scenario(scenario, hermes):
         snapshot = await runtime.get_session_snapshot("session")
         if scenario != "interrupt":
             assert any(REPLY in str(item.content) for item in snapshot.items), snapshot
-        assert all(item.source["runtime"] == "hermes" for item in snapshot.items)
+        assert all(item.source["runtime"] == fixture.runtime_type for item in snapshot.items)
         if scenario == "allow":
-            # One write_file call; the approval card must not add a second tool item.
+            # One tool call; an approval card must not add a second tool item.
             assert sum(1 for item in snapshot.items if item.role == "tool") == 1, snapshot
         users = [item for item in snapshot.items if item.role == "user"]
         assert any(user.content.get("clientMessageId") == "first" for user in users), users
@@ -323,30 +378,42 @@ async def run_scenario(scenario, hermes):
             assert any(item.content.get("clientMessageId") == "second" for item in final.items if item.role == "user")
             assert sum(1 for item in final.items if item.content.get("clientMessageId") == "first") == 1
             print("Continue after resume keeps model history: PASSED", flush=True)
-        print(f"Hermes scenario {scenario}: PASSED ({time.monotonic() - started:.1f}s)", flush=True)
+        print(f"{fixture.display_name} scenario {scenario}: PASSED ({time.monotonic() - started:.1f}s)", flush=True)
     finally:
         await runtime.stop()
-        # Its idle exit outlives this script; the temporary home must not.
-        await asyncio.to_thread(
-            subprocess.run,
-            [str(hermes), "gateway", "stop"],
-            check=False,
-            env={**os.environ, "HERMES_HOME": str(home)},
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            timeout=60,
-        )
+        AgentClient.stream_observers = ()
+        await asyncio.to_thread(fixture.cleanup, home, executable)
         server.shutdown()
         await asyncio.sleep(0.2)
+        if args.record:
+            save_recording(recording, fixture, scenario, root, executable)
         shutil.rmtree(root, ignore_errors=True)
 
 
+def save_recording(recording, fixture, scenario, root, executable):
+    """Replay fixtures must not carry machine paths."""
+    text = "\n".join(json.dumps(item, ensure_ascii=False, sort_keys=True) for item in recording)
+    replacements = {
+        str(root.resolve()): "<root>",
+        str(root): "<root>",
+        str(executable.parent): "<bin>",
+        str(Path.home()): "<home>",
+    }
+    for value, placeholder in sorted(replacements.items(), key=lambda item: -len(item[0])):
+        text = text.replace(json.dumps(value)[1:-1], placeholder)
+    args.record.mkdir(parents=True, exist_ok=True)
+    target = args.record / f"{fixture.runtime_type}-{scenario}.jsonl"
+    target.write_text(text + "\n", encoding="utf-8")
+    print(f"Recorded {len(recording)} ACP messages to {target}", flush=True)
+
+
 async def main():
-    hermes = args.hermes or shutil.which("hermes")
-    if not hermes:
-        raise SystemExit("hermes not found; pass --hermes")
+    fixture = AGENTS[args.definition]
+    executable = args.executable or shutil.which(fixture.command)
+    if not executable:
+        raise SystemExit(f"{fixture.command} not found; pass --executable")
     for scenario in SCENARIOS if args.scenario == "all" else (args.scenario,):
-        await run_scenario(scenario, Path(hermes).resolve())
+        await run_scenario(scenario, fixture, Path(executable).resolve())
 
 
 asyncio.run(main())

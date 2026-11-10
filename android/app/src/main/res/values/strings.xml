@@ -196,6 +196,12 @@
     <string name="device_detail_all_active_sessions">all active sessions</string>
     <string name="device_detail_all_archived_sessions">all archived sessions</string>
     <string name="device_detail_all_sessions">all sessions</string>
+    <string name="device_detail_settings_section">DEVICE SETTINGS</string>
+    <string name="device_settings_confirm_quit_title">Ask before quitting on shutdown</string>
+    <string name="device_settings_confirm_quit_description">When on, Agents Anywhere asks before quitting when the computer shuts down or restarts. When off, it quits right away and never blocks shutdown.</string>
+    <string name="device_settings_saved_offline">Saved. It takes effect when the device comes online.</string>
+    <string name="device_settings_load_failed">Could not load device settings.</string>
+    <string name="device_settings_save_failed">Could not save device settings.</string>
     <string name="device_setup_page_title">Add a new device</string>
     <string name="device_setup_name_title">Name your device</string>
     <string name="device_setup_name_description">Give this device a name so you can identify it later.</string>

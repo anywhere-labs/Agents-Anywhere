@@ -189,10 +189,10 @@ def test_codex_resumes_a_gateway_thread_on_the_model_it_last_used() -> None:
         assert low.reads == [{"threadId": "t1", "includeTurns": False}]
         assert low.resumes[0]["model"] == "model-a"
 
-        # An explicit model is never second-guessed.
+        # An explicit model is never second-guessed; the read only learns the provider.
         low = _ResumeClient("model-a")
         await CodexSdkClient(None, model_gateway=gateway)._resume_thread(low, CodexResumeThreadRequest(thread_id="t1", model="model-b"))
-        assert low.reads == [] and low.resumes[0]["model"] == "model-b"
+        assert low.resumes[0]["model"] == "model-b"
 
         # Without a gateway Codex already keeps the thread's model.
         low = _ResumeClient("model-a")

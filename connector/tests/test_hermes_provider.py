@@ -1,6 +1,7 @@
 import asyncio
 import stat
 import sys
+from types import SimpleNamespace
 
 import pytest
 from acp import RequestError
@@ -10,9 +11,9 @@ from connector.runtimes.acp.domain.definitions import (
     AcpError,
     PromptRejectedBeforeDispatch,
 )
+from connector.runtimes.acp.infrastructure import launch
 from connector.runtimes.acp.infrastructure.acp.client import AgentClient
-from connector.runtimes.acp.profiles.hermes import installation
-from connector.runtimes.acp.profiles.hermes.client import HermesClient, adapt_options
+from connector.runtimes.acp.profiles.hermes import HERMES, HermesDialect
 from connector.runtimes.acp.profiles.hermes.provider import HermesProvider
 from connector.runtimes.providers import default_runtime_providers
 
@@ -24,7 +25,7 @@ OPTIONS = [
 ]
 
 
-def client():
+def client(**connection):
     updates = []
 
     async def on_update(session_id, value):
@@ -33,7 +34,9 @@ def client():
     async def on_interaction(session_id, kind, value):
         return {"action": "accept", "optionId": "allow_once"}
 
-    return HermesClient(on_update, on_interaction), updates
+    hermes = AgentClient(on_update, on_interaction, dialect=HermesDialect())
+    hermes.connection = SimpleNamespace(**connection)
+    return hermes, updates
 
 
 def test_registered_as_default_provider():
@@ -51,8 +54,14 @@ def test_config_rejects_unknown_fields():
         asyncio.run(HermesProvider().validate_config({"modelGateway": {}}))
 
 
+def test_config_keeps_the_previous_fields():
+    schema = asyncio.run(HermesProvider().get_config_schema())
+    assert list(schema.schema["properties"]) == ["cliPath", "hermesHome"]
+
+
 def test_adapts_only_categories_and_keeps_hermes_choices():
-    adapted = {item["id"]: item for item in adapt_options(OPTIONS)}
+    hermes, _ = client()
+    adapted = {item["id"]: item for item in hermes.adapt("s", OPTIONS)}
     assert adapted["edit_approval_policy"]["category"] == "permission"
     assert adapted["edit_approval_policy"]["name"] == "Edits"
     assert adapted["reasoning_effort"]["category"] == "effort"
@@ -61,73 +70,58 @@ def test_adapts_only_categories_and_keeps_hermes_choices():
 
 
 def test_unrelated_mode_option_is_not_a_permission():
-    adapted = adapt_options([{"id": "planner", "category": "mode", "type": "select"}])
-    assert adapted[0]["category"] == "mode"
+    hermes, _ = client()
+    assert hermes.adapt("s", [{"id": "planner", "category": "mode", "type": "select"}])[0]["category"] == "mode"
 
 
 def test_session_without_model_option_is_rejected():
-    hermes, _ = client()
-    with pytest.raises(AcpError) as error:
-        hermes.adapt_session({"sessionId": "s", "configOptions": []})
-    assert error.value.code == "hermes_version_unsupported"
+    async def new_session(**_values):
+        return {"sessionId": "s", "configOptions": []}
 
-
-def test_open_session_failure_names_the_local_setup(monkeypatch):
-    hermes, _ = client()
-
-    async def refused(self, cwd, **metadata):
-        raise RequestError(-32603, "no provider")
-
-    monkeypatch.setattr(AgentClient, "open_session", refused)
+    hermes, _ = client(new_session=new_session)
     with pytest.raises(AcpError) as error:
         asyncio.run(hermes.open_session("/tmp"))
-    assert error.value.code == "hermes_session_failed"
+    assert error.value.code == "agent_version_unsupported"
 
 
-def test_prompt_is_projected_once_with_its_identity(monkeypatch):
+def test_open_session_failure_is_a_common_error():
+    async def refused(**_values):
+        raise RequestError(-32603, "no provider")
+
+    hermes, _ = client(new_session=refused)
+    with pytest.raises(AcpError) as error:
+        asyncio.run(hermes.open_session("/tmp"))
+    assert error.value.code == "agent_session_failed"
+
+
+def test_answered_approval_card_is_not_a_timeline_tool():
     hermes, updates = client()
 
-    async def prompt(self, session_id, text, operation_id, blocks=None):
-        await self.callbacks.on_update(
-            session_id, {"sessionUpdate": "agent_message_chunk", "content": {}}
+    async def scenario():
+        await hermes.request_interaction(
+            "s", "permission", {"toolCall": {"toolCallId": "edit-approval-1"}, "options": []}
         )
-        await self.callbacks.on_update(
-            session_id, {"sessionUpdate": "tool_call", "toolCallId": "call"}
+        await hermes.receive_update(
+            "s",
+            {"sessionUpdate": "tool_call_update", "toolCallId": "edit-approval-1", "status": "completed"},
         )
-        return {"stopReason": "end_turn"}
+        await hermes.receive_update(
+            "s", {"sessionUpdate": "tool_call_update", "toolCallId": "call_real", "status": "completed"}
+        )
 
-    monkeypatch.setattr(AgentClient, "prompt", prompt)
-    asyncio.run(hermes.prompt("s", "hello", "message-1"))
-    users = [item for item in updates if item["sessionUpdate"] == "user_message_chunk"]
-    assert [item["messageId"] for item in users] == ["message-1"]
-    assert updates[1] == {
-        "sessionUpdate": "aa_execution_observed",
-        "clientMessageId": "message-1",
-    }
+    asyncio.run(scenario())
+    assert [item["toolCallId"] for item in updates] == ["call_real"]
+    assert hermes.dialect.approval_cards == set()
 
 
-def test_prompt_rejected_by_hermes_is_not_projected(monkeypatch):
-    hermes, updates = client()
-
-    async def prompt(self, session_id, text, operation_id, blocks=None):
-        raise RequestError(-32603, "refused")
-
-    monkeypatch.setattr(AgentClient, "prompt", prompt)
-    with pytest.raises(RequestError):
-        asyncio.run(hermes.prompt("s", "hello", "message-1"))
-    assert updates == []
-    assert hermes.turns == {}
-
-
-def test_steer_uses_hermes_command_and_records_user_message(monkeypatch):
-    hermes, updates = client()
+def test_steer_uses_hermes_command_and_records_user_message():
     sent = []
 
-    async def prompt(self, session_id, text, operation_id, blocks=None):
-        sent.append(text)
+    async def prompt(**values):
+        sent.append(values["prompt"][0].text)
         return {"stopReason": "end_turn"}
 
-    monkeypatch.setattr(AgentClient, "prompt", prompt)
+    hermes, updates = client(prompt=prompt)
     result = asyncio.run(
         hermes.extension(
             "aa/steer", {"sessionId": "s", "content": "turn left", "clientMessageId": "steer-1"}
@@ -136,99 +130,51 @@ def test_steer_uses_hermes_command_and_records_user_message(monkeypatch):
     assert result["outcome"] == "injected"
     assert sent == ["/steer turn left"]
     assert updates[0]["content"]["text"] == "turn left"
+    assert updates[0]["_meta"]["aa"]["clientMessageId"] == "steer-1"
 
 
 def test_steer_with_attachments_is_rejected_before_dispatch():
     hermes, _ = client()
-    with pytest.raises(PromptRejectedBeforeDispatch):
+    with pytest.raises(PromptRejectedBeforeDispatch) as error:
         asyncio.run(
             hermes.extension(
                 "aa/steer",
-                {
-                    "sessionId": "s",
-                    "content": "see",
-                    "clientMessageId": "m",
-                    "blocks": [{"type": "image"}],
-                },
+                {"sessionId": "s", "content": "see", "clientMessageId": "m", "blocks": [{"type": "image"}]},
             )
         )
+    assert error.value.code == "agent_steer_attachments_unsupported"
 
 
-def test_unknown_command_is_rejected_before_dispatch():
+def test_steer_capability_follows_the_dialect():
     hermes, _ = client()
-    hermes.commands["s"] = [{"name": "status"}]
-    with pytest.raises(PromptRejectedBeforeDispatch):
-        asyncio.run(
-            hermes.extension("aa/execute_command", {"sessionId": "s", "command": "nope"})
-        )
+    hermes.initialized({"agentCapabilities": {"promptCapabilities": {"image": True}}})
+    declared = hermes.capabilities["_meta"]["aa"]["capabilities"]
+    assert {"session.steer", "runtime.attachment"} <= set(declared)
+    assert "session.commands" not in declared
 
 
-def test_commands_come_from_hermes():
-    hermes, updates = client()
-    catalog = [{"name": "status", "description": "Show status"}]
-    asyncio.run(
-        hermes.callbacks.on_update(
-            "s", {"sessionUpdate": "available_commands_update", "availableCommands": catalog}
-        )
+def test_hermes_home_is_passed_to_the_agent(tmp_path):
+    assert launch.launch_environment(HERMES, {"hermesHome": str(tmp_path)}) == (
+        ("HERMES_HOME", str(tmp_path)),
     )
-    assert asyncio.run(
-        hermes.extension("aa/list_commands", {"sessionId": "s"})
-    ) == {"commands": catalog}
-    assert updates
-
-
-def test_answered_approval_card_is_not_a_timeline_tool():
-    hermes, updates = client()
-
-    async def scenario():
-        await hermes.callbacks.on_interaction(
-            "s", "permission", {"toolCall": {"toolCallId": "edit-approval-1"}, "options": []}
-        )
-        await hermes.callbacks.on_update(
-            "s",
-            {"sessionUpdate": "tool_call_update", "toolCallId": "edit-approval-1", "status": "completed"},
-        )
-        await hermes.callbacks.on_update(
-            "s", {"sessionUpdate": "tool_call_update", "toolCallId": "call_real", "status": "completed"}
-        )
-
-    asyncio.run(scenario())
-    assert [item["toolCallId"] for item in updates] == ["call_real"]
-    assert hermes.approval_cards == set()
-
-
-def test_config_updates_are_adapted():
-    hermes, updates = client()
-    asyncio.run(
-        hermes.callbacks.on_update(
-            "s", {"sessionUpdate": "config_option_update", "configOptions": OPTIONS}
-        )
-    )
-    assert updates[0]["configOptions"][0]["category"] == "permission"
+    assert launch.launch_environment(HERMES, {}) == ()
 
 
 def test_missing_explicit_cli_is_a_definite_failure(tmp_path):
     with pytest.raises(AcpError) as error:
-        installation.resolve_executable({"cliPath": str(tmp_path / "hermes")})
-    assert error.value.code == "hermes_cli_missing"
+        launch.resolve_executable(HERMES, {"cliPath": str(tmp_path / "hermes")})
+    assert error.value.code == "agent_cli_missing"
 
 
 def test_no_local_install_is_a_definite_failure(monkeypatch):
-    monkeypatch.setattr(installation, "candidates", list)
+    monkeypatch.setattr(launch, "candidates", lambda _definition: [])
     with pytest.raises(AcpError) as error:
-        installation.resolve_executable({})
-    assert error.value.code == "hermes_cli_missing"
-
-
-def test_hermes_home_is_passed_to_the_agent(tmp_path):
-    assert installation.launch_environment({"hermesHome": str(tmp_path)}) == (
-        ("HERMES_HOME", str(tmp_path)),
-    )
-    assert installation.launch_environment({}) == ()
+        launch.resolve_executable(HERMES, {})
+    assert error.value.code == "agent_cli_missing"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell fixture")
-def test_prepare_launch_reports_version_and_keeps_aa_secrets_out(tmp_path, monkeypatch):
+def test_launch_reports_version_and_keeps_aa_secrets_out(tmp_path, monkeypatch):
     log = tmp_path / "env.txt"
     script = tmp_path / "hermes"
     script.write_text(
@@ -237,10 +183,10 @@ def test_prepare_launch_reports_version_and_keeps_aa_secrets_out(tmp_path, monke
     )
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setenv("AGENT_SERVER_TOKEN", "secret")
-    launch = installation.prepare_launch({"cliPath": str(script)})
-    assert launch.executable == str(script)
-    assert launch.arguments == ("acp",)
-    assert launch.release_id == "hermes-git.abc"
+    definition = launch.local_launch(HERMES, {"cliPath": str(script)})
+    assert definition.executable == str(script)
+    assert definition.arguments == ("acp",)
+    assert definition.release_id == "hermes-git.abc"
     assert "AGENT_SERVER_TOKEN" not in log.read_text(encoding="utf-8")
 
 
@@ -250,5 +196,5 @@ def test_failing_acp_check_is_a_definite_failure(tmp_path):
     script.write_text("#!/bin/sh\nexit 3\n", encoding="utf-8")
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
     with pytest.raises(AcpError) as error:
-        installation.prepare_launch({"cliPath": str(script)})
-    assert error.value.code == "hermes_acp_unavailable"
+        launch.local_launch(HERMES, {"cliPath": str(script)})
+    assert error.value.code == "agent_acp_unavailable"

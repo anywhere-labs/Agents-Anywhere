@@ -281,6 +281,7 @@ def test_v2_0_database_upgrades_through_current_revision(fresh_database_url) -> 
         ("v2_51", "v2_52"),
         ("v2_52", "v2_53"),
         ("v2_53", "v2_54"),
+        ("v2_54", "v2_55"),
     ],
 )
 def test_every_adjacent_schema_upgrade(tmp_path,
@@ -1021,9 +1022,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_54() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_54"
-    assert CURRENT_SCHEMA_VERSION == "2.54"
+def test_current_schema_version_is_v2_55() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_55"
+    assert CURRENT_SCHEMA_VERSION == "2.55"
 
 
 def test_v2_49_tracks_inventory_scans_without_rewriting_sessions(
@@ -2588,7 +2589,7 @@ def test_v2_54_stores_newest_timeline_row_on_sessions(fresh_database_url) -> Non
     finally:
         engine.dispose()
 
-    upgrade_database(db_url=url)
+    upgrade_database(db_url=url, revision="v2_54")
 
     engine = create_engine(_sync_url(url))
     try:
@@ -2621,5 +2622,28 @@ def test_v2_54_stores_newest_timeline_row_on_sessions(fresh_database_url) -> Non
     try:
         columns = {column["name"] for column in inspect(engine).get_columns("sessions")}
         assert "latest_item_id" not in columns
+    finally:
+        engine.dispose()
+
+
+def test_v2_55_adds_connector_device_settings(fresh_database_url) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_55")
+    engine = create_engine(_sync_url(url))
+    try:
+        columns = {column["name"] for column in inspect(engine).get_columns("connectors")}
+        assert "device_settings" in columns
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE alembic_version"))
+    finally:
+        engine.dispose()
+    assert asyncio.run(classify_database(url)) == UnversionedDatabase("v2", "v2_55")
+
+    command.stamp(_alembic_config(url), "v2_55")
+    command.downgrade(_alembic_config(url), "v2_54")
+    engine = create_engine(_sync_url(url))
+    try:
+        columns = {column["name"] for column in inspect(engine).get_columns("connectors")}
+        assert "device_settings" not in columns
     finally:
         engine.dispose()
