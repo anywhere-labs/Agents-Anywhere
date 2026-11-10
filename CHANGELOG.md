@@ -25,7 +25,7 @@
 
 - Codex 的定时会话扫描只写入真正变化的会话，会话数量较多的部署数据库写入明显下降，并减少这些写入拖慢其他请求的情况。（[#557](https://github.com/anywhere-labs/Agents-Anywhere/pull/557)）
 - Connector 的 Codex 会话清单没有变化时不再重复上报，只每隔约 10 分钟核对一次；重连和启动时的扫描也会错开，故障恢复时不再集中冲击 Server。（[#555](https://github.com/anywhere-labs/Agents-Anywhere/pull/555)）
-- Codex 回合失败后只显示错误卡片，不再锁住输入框：可以直接继续发送或重试，下一轮开始时卡片自动消失。（[6e258ea](https://github.com/wkcaeser/Agents-Anywhere/commit/6e258eadd06c26f4a84a91d52ff75a23716ad817)）
+- Codex 回合失败后只显示错误卡片，不再锁住输入框：可以直接继续发送或重试，下一轮开始时卡片自动消失。（[#581](https://github.com/anywhere-labs/Agents-Anywhere/pull/581)）
 - Web、Desktop、Android 和 iOS 可用 `/goal` 设置目标，在输入区上方编辑、暂停、恢复或清除；停止时阻止自动续跑，完成结果留在会话历史中，长目标栏与输入框保持同宽并自动截断正文。（[#539](https://github.com/anywhere-labs/Agents-Anywhere/pull/539)）
 - 在 Codex App 或 IDE 窗口里处理审批后，Agents Anywhere 里的会话不再一直显示「等待批准」。（[#532](https://github.com/anywhere-labs/Agents-Anywhere/pull/532)）
 - Claude 工具结果里的图片（例如读取截图）不再以原文同步到云端，会话中改为显示 `[Image omitted: image/png, 1.2 MB]` 这样的摘要，不再显示一大段乱码；含大量截图的历史会话不再因请求过大（413）而每轮同步失败。（[#548](https://github.com/anywhere-labs/Agents-Anywhere/pull/548)）
