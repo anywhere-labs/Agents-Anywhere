@@ -53,3 +53,7 @@ node --test --test-concurrency=1 dist/test/e2e/e2e.test.js dist/test/e2e/router-
 本轮只运行 Markdown 本地相对链接有效性和 `git diff --check`，不重跑 T81 的编译/测试；结果在本轮 PR 中记录。未实现配对签名与握手绑定、JSON 耐久补强、删除/迁移程序；未进行密码协议安全评审、四端真机、负载测量、生产抓包或旧数据清理。新增协议的 exporter/transcript 接口、跨端向量、真实部署备份期限和私有源码再分发许可均为后续明确门槛。
 
 用户要求优先参考 Effi Cloud 后，额外检查 Cloud `46221a4ac213176673073ecfacc009e8c0621dd2` 的 agentd README、conversation/manager/sync、MeshCall 接入、附件与服务，以及生成客户端目录和相对 T81 基线的差异。直接复用现有 JSON 布局、ACP/watch/幂等/附件/Unix 终端与生成工具，取消提前选择 SQLite 与未经测量的 1 秒耐久承诺。新基线仅做源码检查，不继承旧基线的运行验证结论。
+
+## T48 核心目标补充（M72）
+
+按用户明确的优先级，补充本机长期离线/账号失效/远程租约到期仍可使用的验收，以及同负载下云端合计 CPU、内存、服务器规格和费用对照；流量作为次级成本指标。预期 CPU/内存成本大幅下降来自中央业务处理退出的架构变化，具体降幅尚未测量。本轮仍仅做文档链接及 diff 检查，没有运行离线原型或性能测试。
