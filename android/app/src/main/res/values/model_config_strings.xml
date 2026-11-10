@@ -117,7 +117,7 @@
         <item quantity="one">%1$d unsaved changes</item>
         <item quantity="other">%1$d unsaved changes</item>
     </plurals>
-    <string name="model_config_channel_description">Link a Tokens Anywhere account, then apply the Tokens Anywhere gateway to give the runtimes on every device the models Tokens Anywhere provides.</string>
+    <string name="model_config_channel_description">Linking a Tokens Anywhere account automatically applies its gateway to runtimes without a gateway override and interrupts their running tasks.</string>
     <string name="model_config_channel_link">Link account</string>
     <string name="model_config_channel_native">Device\'s own configuration</string>
     <string name="model_config_channel_tokens">Tokens Anywhere</string>

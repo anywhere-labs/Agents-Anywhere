@@ -289,7 +289,6 @@ function ModelChannels({
             <TokensChannel
               token={token}
               overview={modelConfig}
-              currentAction={currentAction(TOKENS_CHANNEL)}
               signOut={(
                 <TokensSignOut
                   fallback={channelLabel(modelConfig, inUse && inUse !== TOKENS_CHANNEL ? inUse : NATIVE_CHANNEL, t)}
@@ -324,8 +323,8 @@ function ModelChannels({
           ) : null}
           {/* With no runtime on a custom configuration, "Apply" above is all the page needs. */}
           {channel && current
-            && !(current === TOKENS_CHANNEL && modelConfig.tokens?.link?.status === "linked")
-            && (current === TOKENS_CHANNEL || channelRows(channel, current).length > 0)
+            && current !== TOKENS_CHANNEL
+            && channelRows(channel, current).length > 0
             ? runtimesOf(current) : null}
         </section>
       </div>

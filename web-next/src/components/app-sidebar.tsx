@@ -47,7 +47,7 @@ import { dashboardApi } from "@/features/dashboard/api"
 import { defaultFilter } from "@/lib/demo-api"
 import type { ProjectView } from "@/features/dashboard/types"
 import { useTokensAnywhereUrl } from "@/features/tokens-anywhere/address"
-import { TokensAnywhereIcon, TokensAnywhereWordmark } from "@/features/tokens-anywhere/brand"
+import { TokensAnywhereWordmark } from "@/features/tokens-anywhere/brand"
 import { useTokensAnywhereSidebarVisibility } from "@/features/tokens-anywhere/sidebar-visibility"
 import { useMobileConnectionsSidebarVisibility } from "@/features/mobile-connections/sidebar-visibility"
 import { useTranslations } from "next-intl"
@@ -267,7 +267,6 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
               {/* Branded like the Tokens Anywhere site itself. */}
               <SidebarMenuButton className="h-10 font-medium"
                 isActive={page === "tokens-anywhere"} onClick={() => navigate("tokens-anywhere")}>
-                <TokensAnywhereIcon />
                 <TokensAnywhereWordmark label={t("actions.tokensAnywhere")} className="shrink-0 text-[20px]" />
               </SidebarMenuButton>
             </SidebarMenuItem>

@@ -73,11 +73,11 @@
 ### Web 与 Desktop 界面
 
 - 新建 ACP 会话时，模型加载状态显示在 Agent 旁边，不再出现在输入框上方。（[#606](https://github.com/anywhere-labs/Agents-Anywhere/pull/606)）
-- Desktop 设备的详情页和 Desktop 的「设置 → 启动与通知」新增「关机时询问是否退出」开关，在任一设备上修改都会同步；设备离线时修改，会在它下次上线时生效。（[#596](https://github.com/anywhere-labs/Agents-Anywhere/pull/596)）
+- Desktop 的「关机时询问是否退出」开关统一放在「设置 → 启动与通知」，不再出现在 Desktop 设备详情页；其他客户端修改的设置仍会同步，设备离线时修改，会在它下次上线时生效。（[#596](https://github.com/anywhere-labs/Agents-Anywhere/pull/596)、[#598](https://github.com/anywhere-labs/Agents-Anywhere/pull/598)）
 - Agent 连接断开后，没有原生历史的会话会显示「恢复会话」，不用新建会话就能接着用，未确认的消息不会自动重发。（[#591](https://github.com/anywhere-labs/Agents-Anywhere/pull/591)）
 - Tokens Anywhere 可以用 Agents Anywhere 账号登录：Web 会先显示「登录 Tokens Anywhere」确认页，确认后才向 Tokens Anywhere 提供名称、邮箱和头像，选「取消」则不提供任何信息。部署者设置 `AGENT_SERVER_TOKENS_ANYWHERE_CLIENT_SECRET` 和 `AGENT_SERVER_TOKENS_ANYWHERE_REDIRECT_URI` 后开启。（[#571](https://github.com/anywhere-labs/Agents-Anywhere/pull/571)）
-- 侧边栏新增 Tokens Anywhere 入口，使用官网的图标和字标：已链接账户时直接在页面里打开 Tokens Anywhere 控制台，不用再登录；未链接时点「授权 Tokens Anywhere」一次即可完成链接。不需要时可以在页面上或「设置 → 外观」里隐藏。实例设置了 Tokens Anywhere 地址后才会出现这个入口，自部署实例不需要重新构建。（[#571](https://github.com/anywhere-labs/Agents-Anywhere/pull/571)、[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)、[#598](https://github.com/anywhere-labs/Agents-Anywhere/pull/598)）
-- 「设置 → 模型网关」可以选择默认网关，也可以手动添加模型服务；列表不单列「设备自带配置」，退出 Tokens Anywhere 后会自动切回设备自带配置。保存时自动识别协议和模型，不调用模型。地址在内网、连不上或识别不出协议时可以改为手动选择，部署者也可以设置 `AGENT_SERVER_ALLOW_PRIVATE_MODEL_GATEWAYS=1` 允许识别内网地址。离线期间多次切换会在上线后追到最终网关。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)、[#598](https://github.com/anywhere-labs/Agents-Anywhere/pull/598)）
+- 侧边栏新增 Tokens Anywhere 入口，仅显示官网手写体字标：已链接账户时直接在页面里打开 Tokens Anywhere 控制台，不用再登录；未链接时点「授权 Tokens Anywhere」一次即可完成链接，Desktop 页面不再重复显示侧栏折叠按钮。不需要时可以在页面上或「设置 → 外观」里隐藏。实例设置了 Tokens Anywhere 地址后才会出现这个入口，自部署实例不需要重新构建。（[#571](https://github.com/anywhere-labs/Agents-Anywhere/pull/571)、[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)、[#598](https://github.com/anywhere-labs/Agents-Anywhere/pull/598)）
+- 「设置 → 模型网关」可以选择默认网关，也可以手动添加模型服务；列表不单列「设备自带配置」，登录授权 Tokens Anywhere 后自动应用其网关，各端不再显示该账户的「应用」按钮，未登录时隐藏 Runtime 区域，退出后会自动切回设备自带配置；修复旧 Pi 受管实例重复切换及更新网关后仍以旧配置启动、核验失败的问题。保存时自动识别协议和模型，不调用模型。地址在内网、连不上或识别不出协议时可以改为手动选择，部署者也可以设置 `AGENT_SERVER_ALLOW_PRIVATE_MODEL_GATEWAYS=1` 允许识别内网地址。离线期间多次切换会在上线后追到最终网关。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)、[#598](https://github.com/anywhere-labs/Agents-Anywhere/pull/598)）
 - 管理员可以在「管理 → 常规」里填写或清空 Tokens Anywhere 地址；已有账户链接时地址会锁定，全部断开后才能修改。Anywhere 账户用「退出」结束链接：使用该网关的 Runtime 先切回默认网关，全部完成后再撤销授权。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - Beta 和实验性的 Runtime 会在状态旁显示「Beta」「实验性」标记。模型网关的 Key 保存后只保留开头和结尾几位；不改 Key 时可以留空，更换地址时需要重新填写。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 新建会话输入框下方不再显示模型加载时返回的原始错误提示，保留模型状态和重试入口。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）

@@ -746,7 +746,8 @@ class ModelChannelService:
                 same_target = switch.get("targetGeneration") == (sync or {}).get("desired_generation")
                 upgrade = (reconnect and switch.get("reason") == "connector_upgrade_required"
                            and await self._runtimes.connector_supports(runtime.connectorId, "channelReconcileFence"))
-                if same_target and not upgrade and not (sync and sync["next_retry_at"] and sync["next_retry_at"] <= utc_now()):
+                configured = switch.get("reason") == "not_configured" and runtime.configured
+                if same_target and not upgrade and not configured and not (sync and sync["next_retry_at"] and sync["next_retry_at"] <= utc_now()):
                     continue
             if sync and sync["next_retry_at"] and sync["next_retry_at"] > utc_now() and not reconnect:
                 continue
@@ -794,6 +795,10 @@ class ModelChannelService:
     # Driving one runtime.
 
     async def _drive(self, connector_id: str, runtime_id: str, user_id: str) -> None:
+        runtime = await self._owned(connector_id, runtime_id, user_id=user_id)
+        if runtime.managedBy == MANAGED_BY:
+            await self._wake.clear(connector_id, runtime_id)
+            return
         for _ in range(4):
             if await self._store.channel_discovery_gated(connector_id):
                 return

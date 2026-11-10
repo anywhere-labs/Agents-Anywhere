@@ -189,7 +189,7 @@ Tokens Anywhere 是 OAuth 授权服务器，每个 AA 实例是公共 PKCE 客�
 | GET | `/integrations/tokens` | `{available, tokensUrl, secretConfigured, link}` |
 | POST | `/integrations/tokens/link` | 返回一次性的 `startUrl`（60 秒有效）；已绑定时用于切换账号 |
 | GET | `/integrations/tokens/start?ticket=` | 浏览器打开；把链接绑定到这个浏览器的 cookie 后跳到 Tokens 授权页 |
-| GET | `/integrations/tokens/callback` | Tokens 回跳；校验 state、浏览器 cookie 和 `iss`，换取 token，首次绑定同步模型、切换账号保存绑定并排队更新 Key 后跳到 `{Tokens}/oauth/done/`；失败时跳回 `/?tokensLink=<code>#/settings/model-configs` |
+| GET | `/integrations/tokens/callback` | Tokens 回跳；校验 state、浏览器 cookie 和 `iss`，换取 token，首次绑定同步模型并自动应用 Tokens Anywhere 网关、切换账号保存绑定并排队更新 Key 后自动应用该网关，再跳到 `{Tokens}/oauth/done/`；失败时跳回 `/?tokensLink=<code>#/settings/model-configs` |
 | POST | `/integrations/tokens/sync` | 重新读取托管 Key 能用的模型，更新 Tokens 配置 |
 | DELETE | `/integrations/tokens/link` | 撤销授权并删除链接；还有 Runtime 想要或实际在用 `tokens` 时返回 409 `channel_in_use`，需要先切换到其他渠道 |
 | POST | `/model-profiles/{id}/rotate-key` | `{allowInterrupt}`；轮换托管 Key，再按切换流程把新 Key 写入所有使用 Anywhere 渠道的 Runtime。旧 Key 立即失效，所以有任务运行且没有 `allowInterrupt: true` 时先返回 409 `busy`，不轮换 |
@@ -199,7 +199,7 @@ Tokens Anywhere 是 OAuth 授权服务器，每个 AA 实例是公共 PKCE 客�
 
 四端的「切换账号」直接打开现有授权页，用户可选择其他账号后授权。取消授权、获取新 Key 或读取新账户失败时，原绑定保持可用；同一次授权发起后若账户已被另一授权替换，旧回调会被拒绝。
 
-切换时在同一事务中替换绑定、更新原 Tokens 配置的 Key 标识和连接版本；访问令牌缓存绑定当前账号链接的创建时间，旧链接的缓存不能用于新账号。随后让使用 Anywhere 渠道的 Runtime 重新走一次切换流程写入新 Key。网关地址、模型目录、当前渠道、别名、默认模型、实例启用状态和会话不变；不调用解绑接口，也不撤销旧账号授权，以免影响尚未切换的任务。旧授权可在 Tokens Anywhere 的已连接应用中管理。
+切换时在同一事务中替换绑定、更新原 Tokens 配置的 Key 标识和连接版本；访问令牌缓存绑定当前账号链接的创建时间，旧链接的缓存不能用于新账号。随后自动选择 Anywhere 网关，并让使用它的 Runtime 走切换流程写入新 Key，单独指定其他网关的 Runtime 保持原选择。网关地址、模型目录、别名、默认模型和实例启用状态不变；不调用解绑接口，也不撤销旧账号授权，以免影响尚未切换的任务。旧授权可在 Tokens Anywhere 的已连接应用中管理。
 
 在线 Runtime 立即写入并重建，运行中的任务会被中断；离线设备上线后写入，失败时恢复原配置并可重试；客户端在渠道状态里看到每个 Runtime 的进度。
 
@@ -249,3 +249,7 @@ Server 保存加密的 refresh token，access token 放在 Redis（没有 Redis 
 自动切换要求 Connector 声明 `channelReconcileFence`；缺失时返回 `unsupported` / `connector_upgrade_required`，升级重连后自动评估。切换失败恢复成功后允许使用原渠道；恢复失败阻止新任务。升级必须停净旧 Server worker 后执行迁移，再启动新 Server 并升级 Connector。
 
 Key 轮换在发出外部请求前持久化待确认意图；结果未知时后台仅查询和同步最新远端状态，不重复发出轮换。尚有待确认意图时再次轮换返回 409 `rotation_pending`。受管实例身份按逻辑 Runtime 稳定分配，并在派发前保存到加密执行计划，重复创建不会新增另一实例。
+
+受管实例使用按设备和逻辑 Runtime 派生的固定身份；旧数据缺少受管归属标记时，Server 核对同设备、同 Runtime 类型及固定身份后恢复标记，受管实例不作为独立网关切换目标，避免两个流程同时改写同一实例。
+
+切换配置的事务内写入和读回使用同一数据库连接，启动请求使用事务刚保存的完整配置，避免已存在的受管实例重新启动旧网关后触发核验失败。

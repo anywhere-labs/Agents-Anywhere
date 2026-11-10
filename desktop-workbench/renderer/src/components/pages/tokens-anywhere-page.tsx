@@ -65,7 +65,7 @@ export function TokensAnywherePage() {
     return (
       <div className="flex h-full min-h-0 flex-col bg-background">
         <div className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
-          <DashboardSidebarToggle showOnDesktop />
+          <DashboardSidebarToggle />
           <TokensAnywhereIcon className="size-4 shrink-0" />
           <TokensAnywhereWordmark label={t("title")} className="shrink-0 text-[20px]" />
           <div className="ml-auto flex items-center gap-1">
@@ -109,7 +109,7 @@ export function TokensAnywherePage() {
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-background">
       <div className="absolute left-3 top-3.5 z-10">
-        <DashboardSidebarToggle showOnDesktop />
+        <DashboardSidebarToggle />
       </div>
       <div className="absolute right-3 top-3 z-10 rounded-md bg-background">{visibilityButton}</div>
 

@@ -1307,7 +1307,7 @@
       "description": "Call models in the OpenAI, Anthropic or Gemini format, with the SDK you already use.\nConnect Claude Code, Codex or DeepSeek Harness in minutes.",
       "authorize": "Authorize Tokens Anywhere",
       "reauthorize": "Authorize again",
-      "authorizeHint": "Once authorized, your Tokens Anywhere console opens right here, and runtimes can use the Tokens Anywhere gateway.",
+      "authorizeHint": "Authorization opens your Tokens Anywhere console here and automatically applies its gateway, interrupting running tasks on affected runtimes.",
       "reauthHint": "The authorization expired. Authorize again to open the console.",
       "waiting": "Waiting for authorization in the browser…",
       "loadFailed": "Couldn't open the Tokens Anywhere console right now.",
@@ -1846,7 +1846,7 @@
         "channel": {
           "link": "Link account",
           "title": "Tokens Anywhere gateway",
-          "description": "Link a Tokens Anywhere account, then apply the Tokens Anywhere gateway to give the runtimes on every device the models Tokens Anywhere provides.",
+          "description": "Linking a Tokens Anywhere account automatically applies its gateway to runtimes without a gateway override and interrupts their running tasks.",
           "waiting": "Waiting for browser authorization"
         },
         "channels": {

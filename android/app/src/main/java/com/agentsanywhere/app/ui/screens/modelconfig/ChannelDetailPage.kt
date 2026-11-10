@@ -98,7 +98,6 @@ internal fun ChannelDetailPage(
                 channel = channel,
                 controller = controller,
                 pendingBar = pendingBar,
-                applyCard = applyCard,
                 runtimesBlock = runtimesBlock,
                 exiting = exiting,
                 exited = exited,

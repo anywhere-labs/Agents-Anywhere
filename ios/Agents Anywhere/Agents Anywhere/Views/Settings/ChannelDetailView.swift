@@ -131,7 +131,7 @@ struct ChannelDetailView: View {
         } footer: {
             VStack(alignment: .leading, spacing: 4) {
                 Text(about)
-                if model.channel.map({ $0.channel != channelId }) == true {
+                if channelId != V2ModelChannel.tokens && model.channel.map({ $0.channel != channelId }) == true {
                     Text(String(localized: "pages.settings.modelConfigs.current.description"))
                 }
             }
@@ -147,7 +147,7 @@ struct ChannelDetailView: View {
                 } icon: {
                     AppSymbol("checkmark.circle", size: 16).foregroundStyle(.green)
                 }
-            } else {
+            } else if channelId != V2ModelChannel.tokens {
                 Button {
                     Task { await model.setChannel(channelId) }
                 } label: {

@@ -14,11 +14,9 @@ import { modelConfigApi } from "@/features/model-config/api"
 import { useTokensLink } from "@/features/model-config/use-tokens-link"
 
 /** The Anywhere channel: link an account first, then its account, models and connection. */
-export function TokensChannel({ token, overview, currentAction, signOut, connection, runtimes, errorText, onChanged }: {
+export function TokensChannel({ token, overview, signOut, connection, runtimes, errorText, onChanged }: {
   token: string
   overview: ModelConfigOverview
-  /** Offered when Anywhere is not the default channel. */
-  currentAction: React.ReactNode
   /** Leaves the linked account, moving its runtimes off it first. */
   signOut: React.ReactNode
   /** How runtimes reach the account: its address, key and their actions. */
@@ -70,7 +68,6 @@ export function TokensChannel({ token, overview, currentAction, signOut, connect
       onSync={() => void sync()} onChanged={onChanged} errorText={errorText}
       action={(
         <>
-          {currentAction}
           {signOut}
         </>
       )}

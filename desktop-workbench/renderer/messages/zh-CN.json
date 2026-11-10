@@ -1392,7 +1392,7 @@
       "description": "用你熟悉的 SDK，以 OpenAI、Anthropic 或 Gemini 格式调用模型。\n几分钟接入 Claude Code、Codex 或 DeepSeek Harness。",
       "authorize": "授权 Tokens Anywhere",
       "reauthorize": "重新授权",
-      "authorizeHint": "授权后，这里会直接显示你的 Tokens Anywhere 控制台，Runtime 也可以使用 Tokens Anywhere 网关。",
+      "authorizeHint": "授权后，这里会显示你的 Tokens Anywhere 控制台并自动应用其网关，相关 Runtime 的运行中任务会被中断。",
       "reauthHint": "授权已失效，重新授权后才能打开控制台。",
       "waiting": "正在浏览器中等待授权…",
       "loadFailed": "暂时打不开 Tokens Anywhere 控制台。",
@@ -2025,7 +2025,7 @@
         "channel": {
           "link": "链接账户",
           "title": "Tokens Anywhere 网关",
-          "description": "链接 Tokens Anywhere 账户后，可以应用 Tokens Anywhere 网关，各设备的 Runtime 会自动接入 Tokens Anywhere 提供的模型。",
+          "description": "链接 Tokens Anywhere 账户后自动应用其网关，未单独指定网关的 Runtime 会切换，运行中的任务会被中断。",
           "waiting": "等待浏览器授权"
         },
         "channels": {

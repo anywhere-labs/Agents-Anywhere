@@ -114,7 +114,7 @@
     <plurals name="model_config_account_pending">
         <item quantity="other">有 %1$d 项改动未保存</item>
     </plurals>
-    <string name="model_config_channel_description">链接 Tokens Anywhere 账户后，可以应用 Tokens Anywhere 网关，各设备的 Runtime 会自动接入 Tokens Anywhere 提供的模型。</string>
+    <string name="model_config_channel_description">链接 Tokens Anywhere 账户后自动应用其网关，未单独指定网关的 Runtime 会切换，运行中的任务会被中断。</string>
     <string name="model_config_channel_link">链接账户</string>
     <string name="model_config_channel_native">设备自带配置</string>
     <string name="model_config_channel_tokens">Tokens Anywhere</string>

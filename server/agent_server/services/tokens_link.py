@@ -359,10 +359,12 @@ class TokensLinkService:
             # The new key identity outdates every runtime on Anywhere; they are
             # rewritten through the switch, waiting for running tasks.
             await self._channels().refresh(user_id=user_id, rewrite=TOKENS)
+            await self._channels().set_channel(TOKENS, user_id=user_id)
             await self._publish(user_id)
             return row["issuer"]
         try:
             await self.sync(user_id=user_id)
+            await self._channels().set_channel(TOKENS, user_id=user_id)
         except (TokensLinkError, TokensError, ModelConfigError):
             # The link stands; the page offers to sync again.
             logger.warning("tokens catalog sync failed after linking user_id={}", user_id)

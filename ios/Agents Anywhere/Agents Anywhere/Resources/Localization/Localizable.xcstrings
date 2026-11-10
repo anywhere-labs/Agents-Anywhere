@@ -23215,13 +23215,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Link a Tokens Anywhere account, then apply the Tokens Anywhere gateway to give the runtimes on every device the models Tokens Anywhere provides."
+            "value": "Linking a Tokens Anywhere account automatically applies its gateway to runtimes without a gateway override and interrupts their running tasks."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "链接 Tokens Anywhere 账户后，可以应用 Tokens Anywhere 网关，各设备的 Runtime 会自动接入 Tokens Anywhere 提供的模型。"
+            "value": "链接 Tokens Anywhere 账户后自动应用其网关，未单独指定网关的 Runtime 会切换，运行中的任务会被中断。"
           }
         }
       }
