@@ -1056,7 +1056,6 @@ export function TaskComposer() {
             {preparation.operation && (preparation.error || preparationStopped) ? <Button variant="outline" size="sm" disabled={preparation.pending} onClick={preparation.retry}>{tCommon("retry")}</Button> : null}
           </div>
         ) : null}
-        {preparingWorkspace ? <p role="status" className="mb-3 text-sm text-muted-foreground">{tCommon("loading")}</p> : null}
         <div
           ref={composerRef}
           className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20"
@@ -1140,6 +1139,13 @@ export function TaskComposer() {
                     onSecondaryChange={handleAgentChange}
                     secondaryLabel={t("agent")}
                   />
+                ) : null}
+
+                {preparingWorkspace ? (
+                  <span role="status" className="flex min-w-0 items-center gap-1.5 px-2 text-sm text-muted-foreground">
+                    <Spinner aria-hidden="true" />
+                    <span className="truncate">{t("modelCatalogLoading")}</span>
+                  </span>
                 ) : null}
 
                 {compactSelectors && hasSelectionSettings ? (
