@@ -17,6 +17,8 @@
 | 接入无图形界面的机器 | [Connector](../connector/README.md) |
 | Android 构建 | [Android](../android/README.md) |
 | 架构和 API | [Server 架构](server-architecture.md)、[API](api/README.md) |
+| AA NEXT（V3）方案评估 | [方案草稿（T48）](aa-next/architecture-proposal.md)、[MeshCall 与守护进程复用评估（T81）](aa-next/meshcall-daemon-evaluation.md)（待定稿） |
+| AA NEXT 直接复用与旧数据处置 | [Effi Cloud 复用与 AA 差异](aa-next/effi-cloud-reuse.md)、[设备双模式与信任](aa-next/device-trust.md)、[配对握手草案](aa-next/e2ee-protocol-draft.md)、[数据保留、自助删除与旧版切换](aa-next/data-retention-and-cutover.md)（T48 待定稿） |
 | 使用统一原生 Plan、流式卡片和执行确认 | [Plan 使用与 API](api/planning.md)；[设计与实施计划](runtime-protocol/unified-plan-implementation-plan.md) |
 | 使用 Codex、Claude Code 目标模式 | [Goal 使用、API 与持久化](api/goals.md) |
 | DSH 大历史内存 | [实现与验证](dsh-snapshot-uploads.md) |
