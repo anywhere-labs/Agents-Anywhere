@@ -299,7 +299,7 @@ import Testing
         let state: V2ModelChannelState = try decode([
             "channel": "mpr_new", "revision": 9, "switch": ["revision": 9, "state": "paused", "startedAt": 7],
             "runtimes": [
-                ["connectorId": "c", "runtimeId": "a", "desired": "tokens", "actual": "native", "state": "hibernating", "step": "warming", "runningSessions": "two"],
+                ["connectorId": "c", "runtimeId": "a", "desired": "tokens", "actual": "native", "state": "hibernating", "step": "warming"],
                 ["runtimeId": "orphan"],
                 ["connectorId": "c", "runtimeId": "b"],
             ],
@@ -307,7 +307,7 @@ import Testing
         #expect(state.channel == "mpr_new" && state.revision == 9)
         #expect(state.progress?.state == "paused" && state.progress?.startedAt == nil)
         #expect(state.runtimes.map(\.runtimeId) == ["a", "b"])
-        #expect(state.runtimes[0].state == "hibernating" && state.runtimes[0].runningSessions == 0)
+        #expect(state.runtimes[0].state == "hibernating")
         #expect(ChannelPresentation.stateLabel(state.runtimes[0]) == "hibernating")
         #expect(ChannelPresentation.stateLabel(entry("x", "switching")) == String(localized: "pages.settings.modelConfigs.state.switching"))
         #expect(ChannelPresentation.tone("hibernating") == .neutral)
@@ -340,6 +340,48 @@ import Testing
         #expect(ChannelPresentation.rows(state, for: "mpr_other").isEmpty && ChannelPresentation.rows(nil, for: "tokens").isEmpty)
     }
 
+    @Test func managedInstancesTakeTheChannelOfTheRuntimeTheyServe() throws {
+        var object = try fixtureObject("dashboard")
+        var runtimes = object["runtimes"] as! [[String: Any]]
+        var served = runtimes[1]; served["runtimeId"] = "rti_pi"; served["managedBy"] = NSNull()
+        var far = served; far["runtimeId"] = "rti_far"; far["connectorId"] = "elsewhere"
+        var made = runtimes[0]; made["runtimeId"] = "rti_made"
+        runtimes += [far, served, made]; object["runtimes"] = runtimes
+        var config = object["modelConfig"] as! [String: Any]
+        var assignments = config["assignments"] as! [[String: Any]]
+        var created = assignments[0]; created["runtimeId"] = "rti_made"; created["createdRuntime"] = true
+        assignments.append(created); config["assignments"] = assignments; object["modelConfig"] = config
+        let snapshot: V2DashboardSnapshot = try decode(object)
+        let all = try #require(snapshot.runtimes), given = try #require(snapshot.modelConfig).assignments
+        let state = V2ModelChannelState(channel: "tokens", revision: 2, runtimes: [
+            entry("rti_far", "applied", connector: "elsewhere", actual: "mpr_far"),
+            entry("rti_work", "applied", actual: "native"), entry("rti_pi", "applied", actual: "tokens"),
+        ])
+        func row(_ id: String) -> V2ChannelRuntime? {
+            ChannelPresentation.row(for: .init(connectorId: "device", runtimeId: id), in: state, runtimes: all, assignments: given)
+        }
+        #expect(row("rti_work")?.runtimeId == "rti_work")
+        // Marked by the model configuration, or created by an assignment; served on the same device only.
+        #expect(row("rti_gateway")?.runtimeId == "rti_pi")
+        #expect(row("rti_made")?.runtimeId == "rti_work")
+        #expect(row("rti_unknown") == nil)
+        #expect(ChannelPresentation.row(for: .init(connectorId: "device", runtimeId: "rti_work"), in: nil, runtimes: all, assignments: given) == nil)
+    }
+
+    @Test func runtimeChannelKeyFollowsOnlyTheChannelInUse() {
+        func row(_ actual: String, _ state: String, generation: Int?, message: String? = nil) -> V2ChannelRuntime {
+            .init(connectorId: "device", runtimeId: "a", desired: "tokens", actual: actual, state: state, message: message,
+                  updatedAt: message, appliedGeneration: generation)
+        }
+        let key = ChannelPresentation.runtimeKey(row("native", "switching", generation: 1))
+        #expect(key == "native:1:false" && ChannelPresentation.runtimeKey(nil) == "")
+        #expect(ChannelPresentation.runtimeKey(row("native", "switching", generation: 1, message: "verifying")) == key)
+        #expect(ChannelPresentation.runtimeKey(row("tokens", "switching", generation: 1)) != key)
+        #expect(ChannelPresentation.runtimeKey(row("native", "switching", generation: 2)) != key)
+        #expect(ChannelPresentation.runtimeKey(row("native", "applied", generation: 1)) != key)
+        #expect(ChannelPresentation.runtimeKey(row("native", "applied", generation: nil)) == "native::true")
+    }
+
     @Test func runtimesGroupByDeviceAndCapability() throws {
         let runtimes: [V2DeviceRuntime] = try fixture("dashboard", as: V2DashboardSnapshot.self).runtimes ?? []
         let connectors: [V2Connector] = try fixture("dashboard", as: V2DashboardSnapshot.self).connectors
@@ -352,7 +394,7 @@ import Testing
         let groups = ChannelPresentation.groups(state, runtimes: runtimes, connectors: connectors)
         #expect(groups.devices.map(\.name) == ["Mac", "elsewhere"])
         #expect(groups.devices[0].rows.map(\.runtimeName) == ["Gateway"])
-        #expect(groups.devices[0].rows[0].maturity == "beta" && groups.devices[0].rows[0].canSwitchNow)
+        #expect(groups.devices[0].rows[0].maturity == "beta")
         // A runtime that writes its own global settings waits for a confirmed choice.
         let global = groups.devices[1].rows[0]
         #expect(global.changesGlobalSettings && !global.isUnsupported)
@@ -392,7 +434,7 @@ import Testing
         await model.setChannel("tokens")
         #expect(transport.calls.last?.method == .put && transport.calls.last?.path == "/model-config/channel")
         #expect(transport.calls.last?.body == .object(["channel": .string("tokens")]))
-        #expect(model.channel?.channel == "tokens" && model.channelSummary?.phase == .running)
+        #expect(model.channel?.channel == "tokens")
         #expect(model.channelBusyKey == nil)
         // Choosing the current channel again sends nothing.
         await model.setChannel("tokens")
@@ -423,7 +465,7 @@ import Testing
         let rows = ChannelPresentation.groups(channel, runtimes: dashboard.runtimes, connectors: dashboard.connectors).devices.flatMap(\.rows)
         let gateway = try #require(rows.first { $0.entry.runtimeId == "rti_gateway" })
         let restored = try #require(rows.first { $0.entry.runtimeId == "rti_global" })
-        #expect(restored.canRetry && !restored.canSwitchNow && restored.entry.override == "tokens")
+        #expect(restored.canRetry && restored.entry.override == "tokens")
 
         await model.setRuntimeChannel(gateway, channel: nil)
         #expect(transport.calls.last?.method == .put && transport.calls.last?.path == "/model-config/channel/runtimes/device/rti_gateway")
@@ -431,9 +473,6 @@ import Testing
         // Confirmation is sent only for a runtime that changes its own global settings.
         await model.setRuntimeChannel(gateway, channel: "tokens", confirmNativeGlobal: true)
         #expect(transport.calls.last?.body == .object(["channel": .string("tokens")]))
-        await model.switchNow(gateway)
-        #expect(transport.calls.last?.method == .post && transport.calls.last?.path == "/model-config/channel/runtimes/device/rti_gateway/switch-now")
-        #expect(transport.calls.last?.body == nil)
         await model.retryChannel(restored)
         #expect(transport.calls.last?.body == .object(["connectorId": .string("device"), "runtimeId": .string("rti_global")]))
         #expect(model.channel?.revision == 6)

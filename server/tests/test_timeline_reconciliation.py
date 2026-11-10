@@ -246,3 +246,68 @@ async def test_complete_snapshot_only_writes_changed_items(
         } == {"item_1"}
     finally:
         await store.close()
+
+
+@pytest.mark.anyio
+async def test_snapshot_range_page_fences_only_deletions_and_moves(tmp_path) -> None:
+    store = Store()
+    try:
+        connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
+        session = await create_session_with_project(store, connector_id=connector.id)
+
+        def page(*specs: tuple[int, str]) -> list[TimelineItemIn]:
+            return [
+                timeline_input(
+                    f"item_{order_seq}",
+                    order_seq=order_seq,
+                    content_hash=f"sha256:{text}",
+                    text=text,
+                ).model_copy(update={"sessionId": session.id})
+                for order_seq, text in specs
+            ]
+
+        await store.replace_timeline_snapshot(
+            session_id=session.id,
+            items=page(*((order_seq, "v1") for order_seq in range(1, 7))),
+        )
+        reset_seq = await store.get_timeline_reset_seq(session.id)
+        before = {item.id: item for item in await store.timeline.read(session.id)}
+
+        # Nothing in (2, 4] changed: no write, no revision.
+        seq = await store.get_session_seq(session.id)
+        unchanged = await store.replace_timeline_range(
+            session_id=session.id,
+            items=page((3, "v1"), (4, "v1")),
+            after_order_seq=2,
+            through_order_seq=4,
+        )
+        assert unchanged.changed is False
+        assert await store.get_session_seq(session.id) == seq
+
+        # Edits only: one consecutive revision per item and no reset fence.
+        edited = await store.replace_timeline_range(
+            session_id=session.id,
+            items=page((3, "v2"), (4, "v2")),
+            after_order_seq=2,
+            through_order_seq=4,
+        )
+        assert edited.changed is True and edited.reordered is False
+        assert [item.updatedSeq for item in edited.items] == [seq + 1, seq + 2]
+        assert await store.get_timeline_reset_seq(session.id) == reset_seq
+
+        # Retracting item_5 raises the fence; rows outside (4, 6] stay as they were.
+        retracted = await store.replace_timeline_range(
+            session_id=session.id,
+            items=page((6, "v1")),
+            after_order_seq=4,
+            through_order_seq=None,
+        )
+        assert retracted.changed is True and retracted.reordered is True
+        assert retracted.items == ()
+        assert await store.get_timeline_reset_seq(session.id) == seq + 3
+        after = {item.id: item for item in await store.timeline.read(session.id)}
+        assert sorted(after) == ["item_1", "item_2", "item_3", "item_4", "item_6"]
+        for item_id in ("item_1", "item_2", "item_6"):
+            assert after[item_id].updatedSeq == before[item_id].updatedSeq
+    finally:
+        await store.close()

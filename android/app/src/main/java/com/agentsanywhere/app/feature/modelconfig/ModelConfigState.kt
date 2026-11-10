@@ -8,6 +8,7 @@ import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.CHANNEL_NATIVE
 import com.agentsanywhere.app.model.CHANNEL_TOKENS
 import com.agentsanywhere.app.model.ChannelRuntime
+import com.agentsanywhere.app.model.ModelAssignment
 import com.agentsanywhere.app.model.ModelChannelState
 import com.agentsanywhere.app.model.ModelConfigOverview
 import com.agentsanywhere.app.model.ModelOffer
@@ -128,6 +129,35 @@ fun ModelChannelState.updating(channel: String): Boolean =
 /** The Server refuses to delete a service that is current, chosen for a runtime or still used. */
 fun ModelChannelState?.uses(channel: String): Boolean = this != null &&
     (this.channel == channel || runtimes.any { it.override == channel || it.desired == channel || it.actual == channel })
+
+/** Instances configuration management created; the channel lists the runtime they serve instead. */
+const val MODEL_CONFIG_MANAGER = "model-config"
+
+private fun DeviceRuntime.isManagedInstance(assignments: List<ModelAssignment>): Boolean =
+    managedBy == MODEL_CONFIG_MANAGER ||
+        assignments.any { it.createdRuntime && it.connectorId == connectorId && it.runtimeId == id }
+
+/**
+ * The channel row for a runtime. A managed instance is not listed itself:
+ * its row is the one of the runtime of the same type it serves on that device.
+ */
+fun ModelConfigState.channelRowFor(connectorId: String, runtimeId: String): ChannelRuntime? {
+    val overview = overview ?: return null
+    val channel = overview.channel ?: return null
+    channel.runtimes.firstOrNull { it.connectorId == connectorId && it.runtimeId == runtimeId }?.let { return it }
+    val runtime = runtimes.firstOrNull { it.connectorId == connectorId && it.id == runtimeId } ?: return null
+    if (!runtime.isManagedInstance(overview.assignments)) return null
+    return channel.runtimes.firstOrNull { row ->
+        row.connectorId == connectorId && runtimes.any {
+            it.connectorId == row.connectorId && it.id == row.runtimeId &&
+                it.type == runtime.type && !it.isManagedInstance(overview.assignments)
+        }
+    }
+}
+
+/** Changes whenever the channel a runtime actually uses changes, or settles. */
+fun runtimeChannelKey(row: ChannelRuntime?): String =
+    row?.let { "${it.actual}:${it.appliedGeneration ?: ""}:${it.state == "applied"}" }.orEmpty()
 
 /** A runtime's channel row, with what the runtime itself declares; capability fields decide, never names. */
 data class ChannelRuntimeRow(
