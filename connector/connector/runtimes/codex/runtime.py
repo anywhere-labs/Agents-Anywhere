@@ -179,6 +179,7 @@ class CodexRuntime(AgentRuntime):
             list_permission_catalog=self._catalogs.list_permission_catalog,
             pending_messages=self._pending_messages,
             timeline=self._timeline,
+            turn_lifecycle=self._notifications.turn_lifecycle,
         )
         # Async answers are ordinary start/steer writes and must use the same
         # owner routing as messages, including after a Connector restart.
@@ -238,6 +239,7 @@ class CodexRuntime(AgentRuntime):
                 read_model_catalog=self._ipc_model_catalog,
                 read_permission_catalog=self._ipc_permission_catalog,
                 async_submissions=self._async_submissions,
+                turn_lifecycle=self._notifications.turn_lifecycle,
             )
             self.ipc_service = CodexIpcService(
                 client=self.ipc,
@@ -361,6 +363,14 @@ class CodexRuntime(AgentRuntime):
         """
 
         thread = self._ipc_attached_thread(session_id, external_session_id)
+        if thread is not None and self.safe_ipc_write_routing:
+            lock_probe = getattr(self.ipc_service, "thread_is_held", None)
+            local_owner = self.ipc_owner is not None and self.ipc_owner.owns(thread.thread_id)
+            if local_owner or (callable(lock_probe) and not lock_probe(thread.thread_id)):
+                controller = self._ipc_controller()
+                assert controller is not None
+                await controller.follower.owner_unavailable(thread)
+                return _CodexIpcWriteRoute(kind="local")
         if thread is not None:
             return _CodexIpcWriteRoute(kind="followed", thread=thread)
         controller = self._ipc_controller()
@@ -811,10 +821,12 @@ class CodexRuntime(AgentRuntime):
         await self._bind_state_session(session_id, external_session_id)
         # Reads never resume: thread/resume takes the writer lock and would lock
         # Codex Desktop out of a thread that AA only displayed or synced.
-        return await self._session_reader.get_session_state(
+        expected = self._session_states.get(session_id)
+        state = await self._session_reader.get_session_state(
             session_id,
             external_session_id,
         )
+        return await self._turns.reconcile_history_state(state, expected)
 
     async def get_session_notices(
         self,
@@ -976,13 +988,24 @@ class CodexRuntime(AgentRuntime):
         if route.thread is not None:
             controller = self._ipc_controller()
             assert controller is not None
-            return await controller.start_turn(
+            result = await controller.start_turn(
                 session_id=session_id,
                 thread=route.thread,
                 content=content,
                 attachments=attachments,
                 client_message_id=client_message_id,
             )
+            if result.code != "codex_ipc_no_client_found":
+                return result
+            # Retry only a definite non-delivery, never a timeout/unknown result.
+            route = await self._ipc_route_for_write(session_id, external_session_id)
+            if route.kind == "blocked":
+                return self._ipc_blocked_operation(route, external_session_id)
+            if route.thread is not None:
+                return await controller.start_turn(
+                    session_id=session_id, thread=route.thread, content=content,
+                    attachments=attachments, client_message_id=client_message_id,
+                )
         return await self._turns.start_turn(
             session_id=session_id,
             external_session_id=external_session_id,
@@ -1033,17 +1056,7 @@ class CodexRuntime(AgentRuntime):
                 await self.goals.pause_before_stop(session_id)
             except Exception as error:  # noqa: BLE001 - interruption remains available after a failed pause
                 pause_error = error
-        thread = self._ipc_attached_thread(session_id)
-        if thread is not None:
-            controller = self._ipc_controller()
-            assert controller is not None
-            result = await controller.interrupt_session(
-                session_id=session_id, thread=thread
-            )
-        else:
-            result = await self._turns.interrupt_session(
-                session_id=session_id, reason=reason
-            )
+        result = await self._interrupt_session(session_id, reason)
         if pause_error is not None:
             return RuntimeOperationResult(
                 ok=False,
@@ -1052,6 +1065,33 @@ class CodexRuntime(AgentRuntime):
                 result={**result.result, "interrupted": result.ok},
             )
         return result
+
+    async def _interrupt_session(
+        self, session_id: str, reason: str | None = None,
+    ) -> RuntimeOperationResult:
+        cached = self._session_states.get(session_id)
+        if cached is not None:
+            state = await self.get_session_state(session_id, cached.external_session_id)
+            if state is not None and state.status == "idle" and session_id not in self._active_turn_ids:
+                return await self._turns.interrupt_session(session_id=session_id, reason=reason)
+        route = await self._ipc_route_for_write(session_id)
+        if route.kind == "blocked":
+            return self._ipc_blocked_operation(route, None)
+        if route.thread is not None:
+            controller = self._ipc_controller()
+            assert controller is not None
+            result = await controller.interrupt_session(session_id=session_id, thread=route.thread)
+            if result.code != "codex_ipc_no_client_found":
+                return result
+            route = await self._ipc_route_for_write(session_id)
+            if route.kind == "blocked":
+                return self._ipc_blocked_operation(route, None)
+            if route.thread is not None:
+                return await controller.interrupt_session(session_id=session_id, thread=route.thread)
+        return await self._turns.interrupt_session(
+            session_id=session_id,
+            reason=reason,
+        )
 
     async def update_session_selections(
         self,

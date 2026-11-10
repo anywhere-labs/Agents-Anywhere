@@ -30,6 +30,7 @@
 
 ### Codex 与 Claude
 
+- 修复 Codex 接管后原客户端离线导致发送失败、停止无效，以及任务已完成却仍显示运行中的问题；发送结果未知时不会自动重发消息，恢复旧任务状态时不会结束新回合或重复报告完成。（[#541](https://github.com/anywhere-labs/Agents-Anywhere/pull/541)）
 - Codex 的定时会话扫描只写入真正变化的会话，会话数量较多的部署数据库写入明显下降，并减少这些写入拖慢其他请求的情况。（[#557](https://github.com/anywhere-labs/Agents-Anywhere/pull/557)）
 - Connector 的 Codex 会话清单没有变化时不再重复上报，只每隔约 10 分钟核对一次；重连和启动时的扫描也会错开，故障恢复时不再集中冲击 Server。（[#555](https://github.com/anywhere-labs/Agents-Anywhere/pull/555)）
 - Codex 回合失败后只显示错误卡片，不再锁住输入框：可以直接继续发送或重试，下一轮开始时卡片自动消失。（[#581](https://github.com/anywhere-labs/Agents-Anywhere/pull/581)）
