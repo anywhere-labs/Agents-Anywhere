@@ -86,12 +86,14 @@ export function createSessionController(options: SessionControllerOptions) {
   let disposed = false
   let socket: WebSocket | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  let recoveryRetryTimer: ReturnType<typeof setTimeout> | null = null
   let snapshotReady = options.hasSnapshot
   let connection = 0
   let recoveredConnection = 0
   let recoveryPromise: Promise<void> | null = null
   let recoveryStarting = false
-  let refetchPromise: Promise<void> | null = null
+  let recoveryRequired = true
+  let refetchPromise: Promise<boolean> | null = null
   let bufferedEvents: ProtocolEventEnvelope[] = []
   let processedIds = new Set<string>()
   const liveReads = new Map<RuntimeDomain, LiveRead>()
@@ -128,6 +130,7 @@ export function createSessionController(options: SessionControllerOptions) {
       renderBuffer.clear()
       bufferedEvents = []
       if (reconnectTimer !== null) clearTimeout(reconnectTimer)
+      if (recoveryRetryTimer !== null) clearTimeout(recoveryRetryTimer)
       publish({
         state: null,
         error: error.message,
@@ -344,13 +347,18 @@ export function createSessionController(options: SessionControllerOptions) {
     callbacks.onSessionUpdated?.(next.session)
   }
 
-  function refetch(reason: string) {
+  function refetch(reason: string, recoveringConnection: number) {
     if (refetchPromise) return refetchPromise
     refetchPromise = loadInitialSessionState(token, sessionId, { reason })
       .then((next) => {
-        if (!disposed && !snapshot.invalidated) replaceSnapshot(next, true)
+        if (disposed || snapshot.invalidated || recoveringConnection !== connection || !snapshot.subscribed) return false
+        replaceSnapshot(next, true)
+        return true
       })
-      .catch((error) => recordError("snapshot", error))
+      .catch((error) => {
+        if (!disposed && recoveringConnection === connection && snapshot.subscribed) recordError("snapshot", error)
+        return false
+      })
       .finally(() => {
         refetchPromise = null
       })
@@ -361,50 +369,75 @@ export function createSessionController(options: SessionControllerOptions) {
     if (recoveryPromise) return recoveryPromise
     if (recoveryStarting) return Promise.resolve()
     if (disposed || snapshot.invalidated || !snapshotReady || !snapshot.subscribed) return Promise.resolve()
+    if (recoveryRetryTimer !== null) clearTimeout(recoveryRetryTimer)
+    recoveryRetryTimer = null
     recoveryStarting = true
-    // Projections queued before the request precede the recovered projection,
-    // including when both carry the same durable sequence. Refetch signals
-    // in this drain join the recovery instead of recursively starting one.
+    recoveryRequired = true
+    // A live event proves only its own receipt, not coverage of the gap before
+    // it. Keep pre-request traffic behind the recovery barrier as well.
     const previous = bufferedEvents
     bufferedEvents = []
-    drainSessionEventBuffer(previous, applyEvent)
+    let previousConsumed = false
+    const after = `seq:${cursor.current(sessionId)}`
     const recoveringConnection = connection
     publish({ recovered: false })
     let recovered = false
+    async function recoverSnapshot(reason: string) {
+      const replaced = await refetch(reason, recoveringConnection)
+      if (replaced) {
+        previousConsumed = true
+        for (const event of previous) {
+          if (event.type === "goal.state.updated" || event.type === "planning.state.updated") applyEvent(event)
+        }
+      }
+      return replaced
+    }
     // Set the gate before invoking APIs, including synchronous test doubles.
     recoveryPromise = Promise.resolve()
-      .then(() => dashboardApi.getSessionEvents(token, sessionId, `seq:${cursor.current(sessionId)}`))
+      .then(() => dashboardApi.getSessionEvents(token, sessionId, after))
       .then(async (recovery) => {
-        if (disposed || recoveringConnection !== connection || snapshot.invalidated) return
+        if (disposed || recoveringConnection !== connection || snapshot.invalidated || !snapshot.subscribed) return
         if (recovery.snapshotRequired) {
-          await refetch("websocket.recovery:snapshot-required")
-          recovered = !errors.has("snapshot")
+          recovered = await recoverSnapshot("websocket.recovery:snapshot-required")
         } else {
-          for (const event of recovery.events) applyEvent(event)
+          // Sort together so newer buffered timeline items cannot hide older
+          // recovered ones; at equal sequences the authoritative read wins.
+          drainSessionEventBuffer([...previous, ...recovery.events], applyEvent)
+          previousConsumed = true
           cursor.advance(sessionId, cursorSequence(recovery.nextCursor))
           renderBuffer.flush()
           refreshRuntime()
+          if (snapshot.hasSnapshot) clearError("snapshot")
           recovered = true
         }
         clearError("recovery")
       })
       .catch(async (error) => {
-        if (disposed || recoveringConnection !== connection) return
+        if (disposed || recoveringConnection !== connection || !snapshot.subscribed) return
         if (isApiError(error) && (error.status === 403 || error.status === 404)) recordError("recovery", error)
         else {
-          await refetch("websocket.recovery:failed")
-          recovered = !errors.has("snapshot")
+          recovered = await recoverSnapshot("websocket.recovery:failed")
         }
       })
       .finally(() => {
         recoveryPromise = null
         if (disposed || snapshot.invalidated) return
-        drainBufferedEvents()
-        renderBuffer.flush()
+        if (!previousConsumed) bufferedEvents = [...previous, ...bufferedEvents]
         if (recovered && recoveringConnection === connection && snapshot.subscribed) {
+          recoveryRequired = false
+          drainBufferedEvents()
+          renderBuffer.flush()
           const reconnect = connection > 1 && recoveredConnection !== connection
           recoveredConnection = connection
-          publish({ recovered: true, recoveryGeneration: snapshot.recoveryGeneration + (reconnect ? 1 : 0) })
+          if (!recoveryRequired)
+            publish({ recovered: true, recoveryGeneration: snapshot.recoveryGeneration + (reconnect ? 1 : 0) })
+        } else if (recoveringConnection === connection && snapshot.subscribed) {
+          // Retry from the confirmed cursor without consuming traffic past a
+          // gap. A subscription acknowledgement can also retry immediately.
+          recoveryRetryTimer = setTimeout(() => {
+            recoveryRetryTimer = null
+            if (recoveringConnection === connection) void recoverEvents()
+          }, 1200)
         }
       })
     recoveryStarting = false
@@ -435,11 +468,16 @@ export function createSessionController(options: SessionControllerOptions) {
           clearError("connection")
           publish({ subscribed: true })
           if (snapshotReady) void recoverAfterSubscription(currentConnection)
-        } else if (!snapshotReady || recoveryPromise) bufferedEvents.push(event)
-        else applyEvent(event)
+        } else if (!snapshotReady || recoveryRequired || recoveryPromise) {
+          bufferedEvents.push(event)
+          if (event.type === "session.refetch_required") void recoverEvents()
+        } else applyEvent(event)
       }
       currentSocket.onclose = () => {
         if (disposed || snapshot.invalidated || currentConnection !== connection) return
+        recoveryRequired = true
+        if (recoveryRetryTimer !== null) clearTimeout(recoveryRetryTimer)
+        recoveryRetryTimer = null
         releaseLiveReads()
         publish({ subscribed: false, recovered: false })
         reconnectTimer = setTimeout(() => {
@@ -489,7 +527,6 @@ export function createSessionController(options: SessionControllerOptions) {
             snapshotReady = true
             publish({ initialLoadComplete: true })
             if (snapshot.subscribed) void recoverAfterSubscription(connection)
-            else drainBufferedEvents()
           })
     },
     dispose() {
@@ -501,6 +538,7 @@ export function createSessionController(options: SessionControllerOptions) {
       liveReads.clear()
       listeners.clear()
       if (reconnectTimer !== null) clearTimeout(reconnectTimer)
+      if (recoveryRetryTimer !== null) clearTimeout(recoveryRetryTimer)
       socket?.close()
     },
   }
