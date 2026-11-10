@@ -2,17 +2,18 @@
 //
 // The plugin pins schemastery exactly in devDependencies and mirrors the same
 // exact version under "resolutions": the transitive dependency
-// @deepseek-ai/dsh-session-title declares schemastery as a range (~3.18.4),
+// @deepseek-ai/dsh-session-title declares schemastery as a range (e.g. ~3.18.4 at the time),
 // and the repo intentionally commits no lockfile, so every fresh install
 // resolves that range against the newest matching release. When the release
 // drifts away from the devDependency pin, Yarn nests a second copy and the
 // typecheck dies with an opaque TS6200 conflict between the two
 // lib/types/index.d.ts files (issue #374).
 //
-// Note that resolutions does not override the root package's own
-// devDependencies, so the pin and the mirror must be bumped together. This
-// check fails early with an actionable message when they drift apart, and
-// after install if a nested copy exists anyway.
+// Yarn applies resolutions to the root package's own devDependencies too, so
+// a stale resolutions entry silently installs a version different from the
+// declared pin. This check keeps the two in sync (bump them together), and
+// after install fails with an actionable message if a nested copy exists
+// anyway.
 import { existsSync, readdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
@@ -33,7 +34,7 @@ assert.equal(
   resolutionPin,
   devPin,
   `resolutions "${packageName}" (${resolutionPin}) must equal the devDependencies pin (${devPin}); `
-  + 'resolutions does not override the root devDependency, so bump both together',
+  + 'resolutions overrides the devDependency at install time, so a stale one silently installs another version; bump both together',
 )
 
 const scope = 'node_modules/@deepseek-ai/'
