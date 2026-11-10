@@ -64,6 +64,7 @@
 ### 本机连接、所有权与日志
 
 - 管理员删除用户时，会先删除该用户的设备及其项目和会话，不再留下无主设备；用户项目里还有会话时返回冲突提示，不再报服务器错误。（[#550](https://github.com/anywhere-labs/Agents-Anywhere/pull/550)）
+- 在 Web 里停止或删除运行时实例后，Connector 不再每 30 秒为它打一条日志，重连服务器时也不再为每个这样的实例输出带 traceback 的 ERROR；因其他原因不可用的实例改为一条说明原因的 INFO。（[#398](https://github.com/anywhere-labs/Agents-Anywhere/pull/398)）
 
 ### Web 与 Desktop 界面
 
