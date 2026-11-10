@@ -679,6 +679,7 @@ internal fun rememberPreviewLabels(): PreviewLabels {
             simplifiedNotice = simplified,
             rowsTruncated = { context.resources.getQuantityString(R.plurals.file_preview_rows_truncated, it, it) },
             columnsTruncated = { context.resources.getQuantityString(R.plurals.file_preview_columns_truncated, it, it) },
+            slidesTruncated = { shown, total -> context.getString(R.string.file_preview_slides_truncated, shown, total) },
         )
     }
 }

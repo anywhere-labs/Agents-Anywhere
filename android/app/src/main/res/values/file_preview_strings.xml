@@ -45,4 +45,8 @@
     <string name="file_preview_file_type">File</string>
     <string name="file_preview_open_files">Download, share, or open with another app</string>
     <string name="file_preview_card_hint">Tap to preview</string>
+    <string name="file_preview_document_damaged">This document is damaged or has an invalid format. You can still download it or open it in another app.</string>
+    <string name="file_preview_document_too_large">This document is too large to preview. Download it or open it in another app.</string>
+    <string name="file_preview_document_protected">This document is password protected. Open it in another app.</string>
+    <string name="file_preview_slides_truncated">Showing the first %1$d of %2$d slides. Download the file or open it in another app to see all slides.</string>
 </resources>

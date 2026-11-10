@@ -80,7 +80,7 @@ object LegacyOfficeConverter {
     }
 
     private fun readCompoundFile(file: File): CompoundFile {
-        if (file.length() > MAX_LEGACY_FILE_BYTES) throw PreviewUnavailableException("The document is too large to preview.")
+        if (file.length() > MAX_LEGACY_FILE_BYTES) throw PreviewUnavailableException(PreviewFailureReason.TooLarge)
         return CompoundFile.parse(file.readBytes())
     }
 }
@@ -120,13 +120,13 @@ internal class CompoundFile private constructor(
 
         fun parse(data: ByteArray): CompoundFile {
             if (data.size < 512 || !data.copyOfRange(0, 8).contentEquals(Signature)) {
-                throw PreviewUnavailableException("The file is damaged or not a legacy Office document.")
+                throw PreviewUnavailableException(PreviewFailureReason.Damaged)
             }
             val header = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
             val sectorShift = header.getShort(0x1E).toInt()
             val miniShift = header.getShort(0x20).toInt()
             if (sectorShift !in 7..16 || miniShift !in 2..sectorShift) {
-                throw PreviewUnavailableException("The file is damaged or not a legacy Office document.")
+                throw PreviewUnavailableException(PreviewFailureReason.Damaged)
             }
             val sectorSize = 1 shl sectorShift
             val miniSectorSize = 1 shl miniShift
@@ -153,7 +153,7 @@ internal class CompoundFile private constructor(
                 difatSector = header.getInt(offset + perSector * 4)
             }
             if (fatSectors.isEmpty() || fatSectorCount <= 0) {
-                throw PreviewUnavailableException("The file is damaged or not a legacy Office document.")
+                throw PreviewUnavailableException(PreviewFailureReason.Damaged)
             }
             val fat = IntArray(fatSectors.size * sectorSize / 4)
             fatSectors.forEachIndexed { fatIndex, sector ->
@@ -177,7 +177,7 @@ internal class CompoundFile private constructor(
                 )
             }
             val root = entries.firstOrNull { it.type == ROOT }
-                ?: throw PreviewUnavailableException("The file is damaged or not a legacy Office document.")
+                ?: throw PreviewUnavailableException(PreviewFailureReason.Damaged)
             val miniStream = if (root.size > 0) readChain(data, fat, root.startSector, sectorSize, root.size, 1) else ByteArray(0)
             val miniFatBytes = if (firstMiniFatSector >= 0) {
                 readChain(data, fat, firstMiniFatSector, sectorSize, null, offsetSectors = 1)
@@ -221,17 +221,17 @@ internal class CompoundFile private constructor(
 /** Main document text of a Word 97-2003 file, read through its piece table ([MS-DOC]). */
 internal fun extractWordText(compound: CompoundFile): String {
     val document = compound.stream("WordDocument")
-        ?: throw PreviewUnavailableException("The file is damaged or not a Word 97-2003 document.")
-    if (document.size < 0x1AA) throw PreviewUnavailableException("The file is damaged or not a Word 97-2003 document.")
+        ?: throw PreviewUnavailableException(PreviewFailureReason.Damaged)
+    if (document.size < 0x1AA) throw PreviewUnavailableException(PreviewFailureReason.Damaged)
     val fib = ByteBuffer.wrap(document).order(ByteOrder.LITTLE_ENDIAN)
     if ((fib.getShort(0).toInt() and 0xFFFF) != 0xA5EC) {
-        throw PreviewUnavailableException("The file is damaged or not a Word 97-2003 document.")
+        throw PreviewUnavailableException(PreviewFailureReason.Damaged)
     }
     val flags = fib.getShort(0x0A).toInt()
-    if (flags and 0x0100 != 0) throw PreviewUnavailableException("The document is password protected.")
+    if (flags and 0x0100 != 0) throw PreviewUnavailableException(PreviewFailureReason.PasswordProtected)
     val tableName = if (flags and 0x0200 != 0) "1Table" else "0Table"
     val table = compound.stream(tableName)
-        ?: throw PreviewUnavailableException("The file is damaged or not a Word 97-2003 document.")
+        ?: throw PreviewUnavailableException(PreviewFailureReason.Damaged)
     val textLength = fib.getInt(0x4C).coerceAtLeast(0)
     val clxOffset = fib.getInt(0x01A2)
     val clxLength = fib.getInt(0x01A6)
@@ -239,7 +239,7 @@ internal fun extractWordText(compound: CompoundFile): String {
         readPieces(document, table, clxOffset, clxLength, textLength)
     } else {
         null
-    } ?: throw PreviewUnavailableException("The file is damaged or not a Word 97-2003 document.")
+    } ?: throw PreviewUnavailableException(PreviewFailureReason.Damaged)
     return cleanWordText(raw)
 }
 
@@ -328,9 +328,9 @@ internal data class LegacySlide(val title: String?, val blocks: List<String>)
 
 /** Slide texts of a PowerPoint 97-2003 file ([MS-PPT]). */
 internal fun extractPowerPointSlides(compound: CompoundFile): List<LegacySlide> {
-    if (compound.hasStream("EncryptedSummary")) throw PreviewUnavailableException("The presentation is password protected.")
+    if (compound.hasStream("EncryptedSummary")) throw PreviewUnavailableException(PreviewFailureReason.PasswordProtected)
     val stream = compound.stream("PowerPoint Document")
-        ?: throw PreviewUnavailableException("The file is damaged or not a PowerPoint 97-2003 presentation.")
+        ?: throw PreviewUnavailableException(PreviewFailureReason.Damaged)
     val collector = PptTextCollector(stream)
     collector.walk(0, stream.size, inSlideList = false, inSlide = false)
     return collector.slides()

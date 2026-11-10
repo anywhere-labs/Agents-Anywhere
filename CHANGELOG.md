@@ -98,7 +98,7 @@
 - 点击会话中的文件链接可直接预览 Agent 生成的 PDF、Word、PowerPoint、Excel、CSV、HTML、Markdown、图片和文本文件，预览页底部提供「下载」「分享」「其他应用打开」，暂不支持预览的格式也可以下载原文件；Agent 回复提到的报告、演示文稿等文件会在消息下方显示为文件卡片。
   - 下载的文件保存到手机「下载/Agents Anywhere」，分享和用其他应用打开时保留原始文件名和扩展名，支持中文文件名和带空格的路径。
   - 设备和会话的文件浏览里点开文档同样进入预览页，文本文件预览页右上角也可以下载、分享或用其他应用打开。
-  - Word 和 PowerPoint 97-2003（`.doc`、`.ppt`）只显示文字内容，`.docx`、`.pptx`、`.xlsx` 为简化排版；Markdown 中引用工作设备上的图片会一并显示。
+  - Word 和 PowerPoint 97-2003（`.doc`、`.ppt`）只显示文字内容，`.docx`、`.pptx`、`.xlsx` 为简化排版；Markdown 中引用工作设备上的图片会一并显示；Excel 保留原始数值精度，PowerPoint 超过 300 页时提示预览范围，文档损坏、过大或受密码保护时按当前语言显示提示。
 
   [#567](https://github.com/anywhere-labs/Agents-Anywhere/pull/567)
 

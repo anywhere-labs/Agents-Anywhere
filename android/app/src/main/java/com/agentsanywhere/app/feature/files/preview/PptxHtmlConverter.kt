@@ -18,7 +18,7 @@ object PptxHtmlConverter {
                 ?.target?.takeIf(pkg::has)
                 ?: "ppt/presentation.xml"
             val presentation = pkg.xml(presentationPart)
-                ?: throw PreviewUnavailableException("The file is damaged or not a valid PowerPoint presentation.")
+                ?: throw PreviewUnavailableException(PreviewFailureReason.Damaged)
             val presentationRels = pkg.relationships(presentationPart)
             val slideParts = presentation.child("sldIdLst")?.childElements("sldId").orEmpty()
                 .mapNotNull { slide -> slide.relAttr("id")?.let { presentationRels[it] } }
@@ -31,6 +31,9 @@ object PptxHtmlConverter {
             val slideHeight = presentation.child("sldSz")?.attr("cy")?.toLongOrNull() ?: 6_858_000L
             val media = MediaRegistry()
             val body = StringBuilder(noticeHtml(labels.simplifiedNotice))
+            if (slideParts.size > MAX_SLIDES) {
+                body.append(noticeHtml(labels.slidesTruncated(MAX_SLIDES, slideParts.size)))
+            }
             slideParts.take(MAX_SLIDES).forEachIndexed { index, part ->
                 val slide = pkg.xml(part) ?: return@forEachIndexed
                 val renderer = PptxSlideRenderer(pkg.relationships(part), media, labels, slideHeight)

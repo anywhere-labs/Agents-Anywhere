@@ -150,7 +150,7 @@ class OfficeConvertersTest {
                 <worksheet xmlns="$S"><sheetData>
                   <row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="inlineStr"><is><t>日期</t></is></c></row>
                   <row r="2"><c r="A2" t="s"><v>1</v></c><c r="B2" s="1"><v>45658</v></c><c r="C2"><v>0.30000000000000004</v></c></row>
-                  <row r="4"><c r="A4" t="b"><v>1</v></c></row>
+                  <row r="4"><c r="A4" t="b"><v>1</v></c><c r="B4"><v>1e-11</v></c><c r="C4"><v>-1e-12</v></c><c r="D4"><v>0.123456789012345</v></c></row>
                 </sheetData><mergeCells><mergeCell ref="B1:C1"/></mergeCells></worksheet>
             """.trimIndent(),
         )
@@ -160,7 +160,10 @@ class OfficeConvertersTest {
         assertTrue(html.contains(">华东</td>"))
         assertTrue(html.contains("<td colspan=\"2\">日期</td>"))
         assertTrue(html.contains(">2025-01-01</td>"))
-        assertTrue(html.contains(">0.3</td>"))
+        assertTrue(html.contains(">0.30000000000000004</td>"))
+        assertTrue(html.contains(">0.00000000001</td>"))
+        assertTrue(html.contains(">-0.000000000001</td>"))
+        assertTrue(html.contains(">0.123456789012345</td>"))
         assertTrue(html.contains(">TRUE</td>"))
         assertTrue("row numbers follow the sheet", html.contains("<th class=\"row\">4</th>"))
     }

@@ -75,6 +75,7 @@ import com.agentsanywhere.app.feature.files.preview.PREVIEW_FILE_PATH
 import com.agentsanywhere.app.feature.files.preview.PREVIEW_HOST
 import com.agentsanywhere.app.feature.files.preview.PREVIEW_OPEN_PATH
 import com.agentsanywhere.app.feature.files.preview.PptxHtmlConverter
+import com.agentsanywhere.app.feature.files.preview.PreviewFailureReason
 import com.agentsanywhere.app.feature.files.preview.PreviewLabels
 import com.agentsanywhere.app.feature.files.preview.PreviewTextContent
 import com.agentsanywhere.app.feature.files.preview.PreviewUnavailableException
@@ -189,8 +190,14 @@ private fun ConvertedWebPreview(
     when {
         result == null -> PreviewProgress(stringResource(R.string.file_preview_rendering), modifier)
         result.isFailure -> PreviewFailure(
-            message = (result.exceptionOrNull() as? PreviewUnavailableException)?.message
-                ?: stringResource(R.string.file_preview_render_failed),
+            message = stringResource(
+                when ((result.exceptionOrNull() as? PreviewUnavailableException)?.reason) {
+                    PreviewFailureReason.Damaged -> R.string.file_preview_document_damaged
+                    PreviewFailureReason.TooLarge -> R.string.file_preview_document_too_large
+                    PreviewFailureReason.PasswordProtected -> R.string.file_preview_document_protected
+                    null -> R.string.file_preview_render_failed
+                },
+            ),
             modifier = modifier,
         )
         else -> when (val web = result.getOrThrow()) {

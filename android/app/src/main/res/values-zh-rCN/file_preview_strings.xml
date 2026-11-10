@@ -43,4 +43,8 @@
     <string name="file_preview_file_type">文件</string>
     <string name="file_preview_open_files">下载、分享或用其他应用打开</string>
     <string name="file_preview_card_hint">点击预览</string>
+    <string name="file_preview_document_damaged">文档已损坏或格式无效，仍可下载或用其他应用打开。</string>
+    <string name="file_preview_document_too_large">文档过大，无法生成预览，请下载或用其他应用打开。</string>
+    <string name="file_preview_document_protected">文档受密码保护，请用其他应用打开。</string>
+    <string name="file_preview_slides_truncated">仅显示前 %1$d 页，共 %2$d 页。下载文件或用其他应用打开可查看全部幻灯片。</string>
 </resources>

@@ -13,7 +13,7 @@ object DocxHtmlConverter {
         OfficePackage(file).use { pkg ->
             val documentPart = documentPartName(pkg)
             val document = pkg.xml(documentPart)
-                ?: throw PreviewUnavailableException("The file is damaged or not a valid Word document.")
+                ?: throw PreviewUnavailableException(PreviewFailureReason.Damaged)
             val body = document.child("body") ?: document
             val media = MediaRegistry()
             val renderer = DocxRenderer(

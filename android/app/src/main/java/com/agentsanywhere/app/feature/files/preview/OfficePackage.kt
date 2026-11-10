@@ -14,8 +14,10 @@ import javax.xml.parsers.DocumentBuilderFactory
 internal const val MAX_XML_PART_BYTES = 48L * 1024 * 1024
 internal const val MAX_MEDIA_PART_BYTES = 24L * 1024 * 1024
 
-/** Raised when a file cannot be turned into a preview; the message is shown as-is. */
-class PreviewUnavailableException(message: String) : IOException(message)
+/** Structured failures mapped to localized text by the Android UI. */
+enum class PreviewFailureReason { Damaged, TooLarge, PasswordProtected }
+
+class PreviewUnavailableException(val reason: PreviewFailureReason) : IOException(reason.name)
 
 /**
  * HTML produced for an Office document. [media] maps the relative URLs used in
@@ -36,6 +38,9 @@ data class PreviewLabels(
     val simplifiedNotice: String = "Simplified preview. Open the file in another app for full formatting.",
     val rowsTruncated: (Int) -> String = { "Showing the first $it rows." },
     val columnsTruncated: (Int) -> String = { "Showing the first $it columns." },
+    val slidesTruncated: (shown: Int, total: Int) -> String = { shown, total ->
+        "Showing the first $shown of $total slides. Download the file or open it in another app to see all slides."
+    },
 )
 
 internal data class Relationship(
@@ -50,14 +55,14 @@ internal class OfficePackage(file: File) : Closeable {
     private val zip = try {
         ZipFile(file)
     } catch (error: IOException) {
-        throw PreviewUnavailableException("The file is damaged or not a valid Office document.")
+        throw PreviewUnavailableException(PreviewFailureReason.Damaged)
     }
 
     fun has(name: String): Boolean = zip.getEntry(name) != null
 
     fun readBytes(name: String, limit: Long): ByteArray? {
         val entry = zip.getEntry(name) ?: return null
-        if (entry.size > limit) throw PreviewUnavailableException("The document is too large to preview.")
+        if (entry.size > limit) throw PreviewUnavailableException(PreviewFailureReason.TooLarge)
         return zip.getInputStream(entry).use { input ->
             val output = java.io.ByteArrayOutputStream(entry.size.coerceIn(0, 1L shl 20).toInt())
             val buffer = ByteArray(64 * 1024)
@@ -66,7 +71,7 @@ internal class OfficePackage(file: File) : Closeable {
                 val read = input.read(buffer)
                 if (read < 0) break
                 total += read
-                if (total > limit) throw PreviewUnavailableException("The document is too large to preview.")
+                if (total > limit) throw PreviewUnavailableException(PreviewFailureReason.TooLarge)
                 output.write(buffer, 0, read)
             }
             output.toByteArray()
@@ -131,7 +136,7 @@ internal fun parseXml(bytes: ByteArray): Document {
     return try {
         factory.newDocumentBuilder().parse(ByteArrayInputStream(bytes))
     } catch (error: Exception) {
-        throw PreviewUnavailableException("The file is damaged or not a valid Office document.")
+        throw PreviewUnavailableException(PreviewFailureReason.Damaged)
     }
 }
 

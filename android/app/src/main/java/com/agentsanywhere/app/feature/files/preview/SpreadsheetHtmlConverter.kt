@@ -20,7 +20,7 @@ object SpreadsheetHtmlConverter {
                 ?.target?.takeIf(pkg::has)
                 ?: "xl/workbook.xml"
             val workbook = pkg.xml(workbookPart)
-                ?: throw PreviewUnavailableException("The file is damaged or not a valid Excel workbook.")
+                ?: throw PreviewUnavailableException(PreviewFailureReason.Damaged)
             val relationships = pkg.relationships(workbookPart)
             val date1904 = workbook.child("workbookPr")?.attr("date1904").let { it == "1" || it == "true" }
             val sharedStrings = relationships.values.firstOrNull { it.type.endsWith("/sharedStrings") }
@@ -286,9 +286,8 @@ private fun cellText(
 
 private fun formatNumber(raw: String): String {
     val value = raw.toBigDecimalOrNull() ?: return raw
-    // Floating point noise such as 0.30000000000000004 reads better rounded.
-    val rounded = if (value.scale() > 10) value.setScale(10, java.math.RoundingMode.HALF_UP) else value
-    return rounded.stripTrailingZeros().let { if (it.scale() < 0) it.setScale(0) else it }.toPlainString()
+    // Preserve the stored value, including small nonzero numbers and all significant digits.
+    return value.stripTrailingZeros().let { if (it.scale() < 0) it.setScale(0) else it }.toPlainString()
 }
 
 internal fun excelDate(serial: Double, date1904: Boolean): String? {
