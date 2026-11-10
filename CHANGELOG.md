@@ -73,6 +73,7 @@
 
 - 新建 ACP 会话时，模型加载状态显示在 Agent 旁边，不再出现在输入框上方。（[#606](https://github.com/anywhere-labs/Agents-Anywhere/pull/606)）
 - Desktop 设备的详情页和 Desktop 的「设置 → 启动与通知」新增「关机时询问是否退出」开关，在任一设备上修改都会同步；设备离线时修改，会在它下次上线时生效。（[#596](https://github.com/anywhere-labs/Agents-Anywhere/pull/596)）
+- Desktop 切回最近查看的会话时立即显示消息并恢复阅读位置，随后补齐新消息和运行信息，修复切换会话或刷新登录凭据时消息、审批与模型和权限选择的状态错乱。
 - Agent 连接断开后，没有原生历史的会话会显示「恢复会话」，不用新建会话就能接着用，未确认的消息不会自动重发。（[#591](https://github.com/anywhere-labs/Agents-Anywhere/pull/591)）
 - Tokens Anywhere 可以用 Agents Anywhere 账号登录：Web 会先显示「登录 Tokens Anywhere」确认页，确认后才向 Tokens Anywhere 提供名称、邮箱和头像，选「取消」则不提供任何信息。部署者设置 `AGENT_SERVER_TOKENS_ANYWHERE_CLIENT_SECRET` 和 `AGENT_SERVER_TOKENS_ANYWHERE_REDIRECT_URI` 后开启。（[#571](https://github.com/anywhere-labs/Agents-Anywhere/pull/571)）
 - 侧边栏新增 Tokens Anywhere 入口，介绍页可以直接前往获取 API 密钥；不需要时可以在页面上或「设置 → 外观」里隐藏。实例设置了 Tokens Anywhere 地址后才会出现这个入口，自部署实例不需要重新构建。（[#571](https://github.com/anywhere-labs/Agents-Anywhere/pull/571)、[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
