@@ -31,6 +31,7 @@ class CodexTurnLifecycleHandler:
 
         Side effects:
         - binds the active turn id when present
+        - closes open execution_error notices from earlier turns
         - updates SessionState.status to running
         """
 
@@ -38,12 +39,14 @@ class CodexTurnLifecycleHandler:
         if turn_id is not None:
             self.active_turn_ids[session_id] = turn_id
             self.timeline.begin_turn(thread_id, turn_id)
+        await self.notice_handler.close_execution_errors_for_started_turn(session_id)
         await self.session_states.update(
             session_id=session_id,
             external_session_id=thread_id,
             status="running",
             metadata={
                 "source": "codex.turn/started",
+                "pendingSelectionScopes": [],
                 **({"turn_id": turn_id} if turn_id else {}),
             },
         )

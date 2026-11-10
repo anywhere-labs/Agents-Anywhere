@@ -1,5 +1,13 @@
 "use client"
 
+import { useRuntimeErrorText } from "@/lib/runtime-error-text"
+import { useSessionGoal } from "@/features/goals/use-session-goal"
+import { GoalPanel } from "@/components/session/goal-panel"
+import { useSessionPlanning } from "@/features/planning/use-session-planning"
+import { parsePlanningCommand } from "@/features/planning/commands"
+import { PlanningPanel, PlanningReviewPanel, PlanningReader, PlanTimelineEntry, usePlanReader, getPlanReviewTarget } from "@/components/session/planning-panel"
+import { latestPlanRevisions, placePlanDocuments, planEchoFilter } from "@/features/planning/timeline"
+
 import * as React from "react"
 import { ArrowDown, ChevronDown, CircleAlert, Loader2, WifiOff } from "lucide-react"
 import { toast } from "sonner"
@@ -49,6 +57,9 @@ import { timelineRunCounts } from "@/components/session/timeline-summary"
 import { needsOlderTimelinePage } from "@/components/session/timeline-autofill"
 import { createTimelineScrollFollow } from "@/components/session/timeline-scroll-follow"
 import { createSessionEventBuffer } from "@/components/session/session-event-buffer"
+import { RuntimeCreationStatus } from "@/components/session/runtime-creation-status"
+import { AgentRecoveryNotice } from "@/components/session/agent-recovery-notice"
+import { NativeSessionHandoff } from "@/components/session/native-session-handoff"
 import { CAPABILITY, capabilityIsUsable, findCapability } from "@/components/session/capabilities"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
 import { commandResult, commandTransportFailure, type CommandOutcome } from "@/components/session/runtime-command-model"
@@ -326,6 +337,7 @@ export function SessionDetail({
   onStreamProgress,
 }: SessionDetailProps) {
   const tSession = useTranslations("dashboard.session")
+  const tPlanning = useTranslations("planning")
   const tNew = useTranslations("dashboard.new")
   const tCommon = useTranslations("common")
   const {
@@ -336,6 +348,11 @@ export function SessionDetail({
     getOptimisticItems,
     getOptimisticSessionState,
     isOptimisticSession,
+    sessionCreations,
+    retrySessionCreation,
+    editSessionCreation,
+    navigateToDevice,
+    openSession,
     markOptimisticMessageFailed,
     replaceHome,
   } = useWorkspace()
@@ -345,6 +362,9 @@ export function SessionDetail({
   )
   const [loading, setLoading] = React.useState(() => !initialOptimisticState)
   const [error, setError] = React.useState<string | null>(null)
+  const planning = useSessionPlanning(token, sessionId)
+  const runtimeErrorText = useRuntimeErrorText()
+  const planReader = usePlanReader(sessionId)
   const [sending, setSending] = React.useState(false)
   const [interrupting, setInterrupting] = React.useState(false)
   const [takeoverBusy, setTakeoverBusy] = React.useState(false)
@@ -417,6 +437,7 @@ export function SessionDetail({
     ? { runtimeId: sessionRuntimeId(session), runtimeType: sessionRuntimeType(session) }
     : undefined
   const effectiveCapabilities = state?.effectiveCapabilities ?? null
+  const goals = useSessionGoal(token, sessionId, Boolean(session?.takeover && !session.archived && session.connectorStatus === "online" && capabilityIsUsable(effectiveCapabilities,"session.goal",sessionRuntimeScope)))
   const canUseModelCatalog = Boolean(
     sessionRuntime &&
       effectiveCapabilities &&
@@ -470,6 +491,8 @@ export function SessionDetail({
 
   const composerDraft = composerDraftState.sessionId === sessionId ? composerDraftState.value : ""
   const isLocalOptimisticSession = isOptimisticSession(sessionId)
+  const creation = sessionCreations[sessionId]
+  const creationFailed = creation?.status === "failed"
   const hasInitialSessionState = state !== null
 
   React.useEffect(() => {
@@ -550,9 +573,7 @@ export function SessionDetail({
       return true
     } catch (err) {
       // An official operation can partially succeed. Read the actual selection before rolling back.
-      const actual = sessionRuntimeType(session) === "dsh"
-        ? await dashboardApi.getSessionRuntimeState(token, session.id).catch(() => null)
-        : null
+      const actual = await dashboardApi.getSessionRuntimeState(token, session.id).catch(() => null)
       if (selectionUpdateSeqRef.current === selectionUpdateSeq) {
         setState((current) =>
           current
@@ -911,6 +932,8 @@ export function SessionDetail({
 
     const applyEvent = (event: ProtocolEventEnvelope) => {
       if (cancelled || event.sessionId !== sessionId) return
+      if (event.type === "goal.state.updated") { goals.ingest(event.payload.state as import("@/generated/protocol/v1_1/goal-state").GoalState); return }
+      if (event.type === "planning.state.updated") { planning.ingest(event.payload.state as import("@/generated/protocol/v1/planning-state").PlanningState); return }
       if (event.type === "keepalive") return
       const usesDurableEventIdDedup = sessionEventUsesDurableEventIdDedup(event)
       if (!eventSequenceCursor.accepts(sessionId, event.sequence)) return
@@ -1182,9 +1205,30 @@ export function SessionDetail({
   const handleSend = async (
     content: string,
     attachments: AttachedFile[],
-    selections: { model?: string; permission?: string },
+    _selections: { model?: string; permission?: string },
   ): Promise<boolean> => {
     if (!session || (!content.trim() && attachments.length === 0)) return false
+    if (capabilityIsUsable(effectiveCapabilities,"session.goal",sessionRuntimeScope) && /^\/goal(?:\s|$)/.test(content.trimStart())) {
+      const objective=content.trimStart().slice(5).trim()
+      const refs=attachments.flatMap(file=>file.uploaded?[file.uploaded]:[])
+      if(!objective || refs.length!==attachments.length)return false
+      try { await selectionWritesRef.current.get(session.id) } catch { return false }
+      return goals.set(objective,refs)
+    }
+    const planIntent = parsePlanningCommand(content)
+    if (planIntent) {
+      const uploaded = attachments.flatMap(file => file.uploaded ? [file.uploaded] : [])
+      if (uploaded.length !== attachments.length) return false
+      if (planIntent.command !== "submit_task" && attachments.length) { toast.error(tPlanning("commandAttachments")); return false }
+      try {
+        // Selections are written when changed; only wait for a pending write.
+        await selectionWritesRef.current.get(session.id)
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : tSession("updateSelectionsFailed")); return false
+      }
+      if (planIntent.command === "submit_task") timelineFollowRef.current?.resume()
+      return planning.execute({ ...planIntent, attachments: uploaded })
+    }
     const uploadedAttachments = attachments.flatMap((attachment) =>
       attachment.uploaded ? [attachment.uploaded] : [],
     )
@@ -1216,23 +1260,7 @@ export function SessionDetail({
     })
     setSending(true)
     try {
-      const selectionPatch = selectionPatchFromComposerSelections(runtimeState?.selections ?? {}, selections)
-      if (Object.keys(selectionPatch).length > 0) {
-        const selectionResult = await dashboardApi.updateSessionSelections(token, session.id, selectionPatch)
-        setState((current) =>
-          current
-            ? {
-                ...current,
-                state: runtimeStateWithSelectionResult(
-                  current.state,
-                  current.session,
-                  selectionPatch,
-                  selectionResult.state,
-                ),
-              }
-            : current,
-        )
-      }
+      await selectionWritesRef.current.get(session.id)
       await dashboardApi.sendSessionMessage(token, session.id, messageText, {
         attachments: uploadedAttachments.map((attachment) => ({ fileId: attachment.fileId })),
         clientMessageId,
@@ -1596,10 +1624,23 @@ export function SessionDetail({
     resizeObserver.observe(node)
     return () => resizeObserver.disconnect()
   }, [session?.id])
+  const planEcho = React.useMemo(() => planEchoFilter(planning.state, planning.documents), [planning.state, planning.documents])
   const timelineGroups = React.useMemo(
-    () => groupTimelineItems((state?.items ?? []).filter(isVisibleTimelineItem), interactionTargetIds),
-    [interactionTargetIds, state?.items],
+    () => groupTimelineItems(
+      (state?.items ?? []).filter(item => isVisibleTimelineItem(item) && planEcho(item, messageText(item))),
+      interactionTargetIds,
+    ),
+    [interactionTargetIds, planEcho, state?.items],
   )
+  const planPlacement = React.useMemo(
+    () => placePlanDocuments(planning.documents, timelineGroups.map(group => ({ key: timelineGroupKey(group), items: timelineGroupItems(group) }))),
+    [planning.documents, timelineGroups],
+  )
+  const latestPlanRevision = React.useMemo(() => latestPlanRevisions(planning.documents), [planning.documents])
+  const renderPlanEntries = (documents: typeof planning.documents) => documents.map(document => (
+    <PlanTimelineEntry key={`plan:${document.planId}:${document.revision}`} planning={planning} document={document}
+      latestRevision={latestPlanRevision.get(document.planId) ?? document.revision} onRead={planReader.open} />
+  ))
   const selectTurnReviewDisplay = React.useMemo(() => createTurnReviewDisplaySelector(), [sessionId])
   const turnReviewDisplay = React.useMemo(() => {
     return selectTurnReviewDisplay(state?.session.id === sessionId ? state.items.filter(isVisibleTimelineItem) : [], {
@@ -1652,8 +1693,10 @@ export function SessionDetail({
   // DSH syncs with Agents Anywhere in real time, so the restart-to-sync caveats do not apply.
   const takeoverIsDsh = sessionRuntimeType(session) === "dsh"
 
+  const planReview = getPlanReviewTarget(planning.state, capabilityIsUsable(effectiveCapabilities, CAPABILITY.planReview, sessionRuntimeScope))
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden overscroll-none">
+    <div className="@container/plan-layout flex h-full min-h-0 min-w-0 overflow-hidden">
+    <div className={cn("relative h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden overscroll-none", planReader.document ? "hidden @min-[48rem]/plan-layout:flex" : "flex")}>
       {error ? (
         <Alert variant="destructive" className="mx-auto mt-4 w-[calc(100%-2rem)] max-w-3xl">
           <CircleAlert />
@@ -1670,7 +1713,7 @@ export function SessionDetail({
         >
           <div
             ref={timelineContentRef}
-            aria-busy={runtimeStatus === "waiting" || runtimeStatus === "pending" || runtimeStatus === "running"}
+            aria-busy={!creationFailed && (runtimeStatus === "waiting" || runtimeStatus === "pending" || runtimeStatus === "running")}
             className={cn(
               "mx-auto flex w-full min-w-0 max-w-[calc(48rem+2rem)] flex-col gap-3 overflow-hidden px-4 pb-44 pt-20",
             )}
@@ -1684,6 +1727,7 @@ export function SessionDetail({
             {loading && !state ? <SessionSkeletonInline /> : null}
             {state &&
             timelineGroups.length === 0 &&
+            !planning.state?.draft && planning.documents.length === 0 && planning.state?.effectiveMode !== "plan" &&
             detachedInteractions.length === 0 &&
             detachedNotifications.length === 0 &&
             blockingInteractionList.length === 0 ? (
@@ -1697,6 +1741,7 @@ export function SessionDetail({
                 .find((turn) => turn !== undefined)
               return (
                 <React.Fragment key={groupKey}>
+                  {renderPlanEntries(planPlacement.before.get(groupKey) ?? [])}
                   <LiveTimelineGroupEntry
                     group={group}
                     token={token}
@@ -1730,6 +1775,8 @@ export function SessionDetail({
                 </React.Fragment>
               )
             })}
+            {renderPlanEntries(planPlacement.end)}
+            <PlanningPanel key={session.id} planning={planning} canReview={capabilityIsUsable(effectiveCapabilities, CAPABILITY.planReview, sessionRuntimeScope)} />
             {detachedInteractions.map((notice) => (
               <InteractionCard
                 key={notice.noticeId}
@@ -1742,7 +1789,7 @@ export function SessionDetail({
             {detachedNotifications.map((notice) => (
               <NotificationCard key={notice.noticeId} notice={notice} />
             ))}
-            {runtimeStatus === "waiting" || runtimeStatus === "pending" || runtimeStatus === "running" ? (
+            {!creationFailed && (runtimeStatus === "waiting" || runtimeStatus === "pending" || runtimeStatus === "running") ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" />
                 <span>
@@ -1781,13 +1828,47 @@ export function SessionDetail({
           {onOpenReview && turnReviewDisplay.activeReview ? (
             <SessionReviewTag files={turnReviewDisplay.activeReview.files} onReview={() => onOpenReview()} />
           ) : null}
+          <RuntimeCreationStatus sessionId={sessionId} />
+          <NativeSessionHandoff key={sessionId} token={token} session={session} state={runtimeState}
+            capabilities={state?.effectiveCapabilities ?? null} onSettled={async () => {
+              const refreshed = await loadInitialSessionState(token, sessionId, { reason: "native-history.handoff" })
+              setState(current => current?.session.id === sessionId ? refreshed : current)
+              onSessionUpdated?.(refreshed.session)
+            }} />
+          <AgentRecoveryNotice key={`recovery:${sessionId}`} token={token} session={session} state={runtimeState}
+            capabilities={state?.effectiveCapabilities ?? null} onSettled={async () => {
+              const refreshed = await loadInitialSessionState(token, sessionId, { reason: "agent.recovery" })
+              setState(current => current?.session.id === sessionId ? refreshed : current)
+              onSessionUpdated?.(refreshed.session)
+            }} />
+          {creationFailed ? (
+            <div className="mx-auto w-full max-w-3xl p-4">
+              <Alert>
+                <CircleAlert />
+                <AlertTitle>{tSession(creation.resultUnknown ? "creationUnconfirmed" : "creationFailed")}</AlertTitle>
+                <AlertDescription>
+                  <p>{runtimeErrorText(creation, tSession("creationFailed"))}</p>
+                  <p>{tSession(creation.resultUnknown ? "creationCheckFirst" : "creationDraftRetained")}</p>
+                  <div className="flex flex-wrap gap-2 pt-2">
+                    {creation.retryable ? <Button onClick={() => retrySessionCreation(sessionId)}>{tSession("retryCreation")}</Button> : null}
+                    {!creation.resultUnknown ? <Button variant="outline" onClick={() => editSessionCreation(sessionId)}>{tSession("editCreation")}</Button> : null}
+                    {creation.resultUnknown && creation.serverSessionId ? <Button variant="outline" onClick={() => openSession(creation.serverSessionId!)}>{tSession("checkCreatedSession")}</Button> : null}
+                    <Button variant="outline" onClick={() => navigateToDevice(session.connectorId)}>{tSession("checkDeviceSessions")}</Button>
+                  </div>
+                </AlertDescription>
+              </Alert>
+            </div>
+          ) : <>
+          {planReview && <PlanningReviewPanel planning={planning} target={planReview} />}
+          <div hidden={planReview !== null}>
+          <GoalPanel goals={goals}/>
           <SessionComposer
             token={token}
             session={session}
             runtimeState={runtimeState}
             pendingInteractionCount={blockingInteractionCount}
             creatingSession={isLocalOptimisticSession}
-            sending={sending}
+            sending={sending || planning.busy || goals.busy}
             interrupting={interrupting}
             takeoverBusy={takeoverBusy}
             value={composerDraft}
@@ -1805,6 +1886,8 @@ export function SessionDetail({
             onCommand={handleSessionCommand}
             onToggleTakeover={() => setPendingTakeover(!session.takeover)}
           />
+          </div>
+          </>}
         </div>
       </div>
       <Dialog
@@ -1865,6 +1948,8 @@ export function SessionDetail({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+    <PlanningReader reader={planReader} className="pt-14" />
     </div>
   )
 }

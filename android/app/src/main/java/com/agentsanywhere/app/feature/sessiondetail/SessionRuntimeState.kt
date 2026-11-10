@@ -1,6 +1,8 @@
 package com.agentsanywhere.app.feature.sessiondetail
 
+import com.agentsanywhere.app.api.RemoteRuntimeModel
 import com.agentsanywhere.app.api.RemoteRuntimeModelCatalog
+import com.agentsanywhere.app.api.RemoteRuntimeModelGroup
 import com.agentsanywhere.app.api.RemoteRuntimeNoticeAction
 import com.agentsanywhere.app.api.RemoteRuntimePermissionCatalog
 import com.agentsanywhere.app.api.RemoteSessionCommand
@@ -103,6 +105,7 @@ data class EffectiveCapability(
     val parameters: Map<String, Any?>,
     val runtimeId: String? = null,
     val runtimeType: String? = runtime,
+    val metadata: Map<String, Any?> = emptyMap(),
 ) {
     val usable: Boolean
         get() = supported && available && allowed
@@ -357,6 +360,12 @@ data class RuntimeSelectionOption(
     val default: Boolean,
     val enabled: Boolean = true,
     val disabledReason: String? = null,
+    /** Catalog model id; set only for model options, so the model sheet can group without parsing [label]. */
+    val modelId: String? = null,
+    val modelLabel: String? = null,
+    /** Reasoning effort display name; null when the model has no reasoning items. */
+    val effortLabel: String? = null,
+    val group: RemoteRuntimeModelGroup? = null,
 )
 
 internal enum class RuntimePermissionTranslation {
@@ -433,8 +442,13 @@ private fun permissionTranslationByLabelKey(labelKey: String?): RuntimePermissio
         else -> null
     }
 
-internal fun RemoteRuntimeModelCatalog.selectionOptions(): List<RuntimeSelectionOption> {
-    return models.flatMap { model ->
+internal fun RemoteRuntimeModelCatalog.selectionOptions(): List<RuntimeSelectionOption> =
+    models.modelSelectionOptions()
+
+internal fun List<RemoteRuntimeModel>.modelSelectionOptions(): List<RuntimeSelectionOption> {
+    return flatMap { model ->
+        val modelId = model.id.takeIf(String::isNotBlank)
+        val modelLabel = model.displayName.ifBlank { model.id }.takeIf(String::isNotBlank)
         val reasoning = model.reasoningItems.filter { it.selectionId.isNotBlank() }
         if (reasoning.isNotEmpty()) {
             reasoning.map { item ->
@@ -445,6 +459,10 @@ internal fun RemoteRuntimeModelCatalog.selectionOptions(): List<RuntimeSelection
                     default = item.default || (model.default && reasoning.first() == item),
                     enabled = model.enabled && item.enabled,
                     disabledReason = item.disabledReason ?: model.disabledReason,
+                    modelId = modelId,
+                    modelLabel = modelLabel,
+                    effortLabel = item.displayName.takeIf(String::isNotBlank),
+                    group = model.group,
                 )
             }
         } else {
@@ -457,6 +475,9 @@ internal fun RemoteRuntimeModelCatalog.selectionOptions(): List<RuntimeSelection
                         default = model.default,
                         enabled = model.enabled,
                         disabledReason = model.disabledReason,
+                        modelId = modelId,
+                        modelLabel = modelLabel,
+                        group = model.group,
                     ),
                 )
             }.orEmpty()
@@ -479,14 +500,17 @@ internal fun RemoteRuntimePermissionCatalog.selectionOptions(): List<RuntimeSele
         }
         .distinctBy { it.selectionId }
 
-internal fun List<RuntimeSelectionOption>.validatedSelection(hint: String?): String? {
+internal fun List<RuntimeSelectionOption>.validatedSelection(
+    hint: String?,
+    defaultWhenMissing: Boolean = false,
+): String? {
     val explicitSelection = hint?.takeIf(String::isNotBlank)
     return if (explicitSelection != null) {
         firstOrNull { it.enabled && it.selectionId == explicitSelection }?.selectionId
-    } else {
+    } else if (defaultWhenMissing) {
         firstOrNull { it.enabled && it.default }?.selectionId
             ?: firstOrNull { it.enabled }?.selectionId
-    }
+    } else null
 }
 
 internal fun sessionComposerEnabled(

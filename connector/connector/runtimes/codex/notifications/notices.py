@@ -1,15 +1,24 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from connector.logging import logger
-from connector.runtime_protocol import RuntimeSessionStateCache, SessionNotice
+from connector.runtime_protocol import (
+    RuntimeSessionStateCache,
+    RuntimeTimelineItem,
+    SessionNotice,
+)
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain import sessions as codex_sessions
 from connector.runtimes.codex.domain.approvals import approval_notice_from_request
+from connector.runtimes.codex.domain.async_inputs import AsyncInputSubmissions
 from connector.runtimes.codex.domain.input_requests import (
+    CodexAsyncInputCall,
+    async_input_notice_id,
+    async_user_input_notice,
+    codex_async_input_call,
     codex_input_request,
     user_input_notice,
 )
@@ -22,6 +31,98 @@ class CodexNoticeHandler:
     session_states: RuntimeSessionStateCache
     active_turn_ids: dict[str, str]
     notices: CodexNoticeRegistry
+    async_submissions: AsyncInputSubmissions | None = None
+
+    async def sync_async_input_items(
+        self,
+        session_id: str,
+        thread_id: str,
+        items: tuple[RuntimeTimelineItem, ...],
+        *,
+        transport: str | None = None,
+    ) -> None:
+        """Rebuild async questionnaire notices from live or replayed Timeline items."""
+
+        calls: list[tuple[CodexAsyncInputCall, RuntimeTimelineItem]] = []
+        answered_call_ids: set[str] = set()
+        for item in items:
+            raw = item.metadata.get("raw")
+            if not isinstance(raw, Mapping):
+                continue
+            call = codex_async_input_call(raw)
+            if call is not None:
+                calls.append((call, item))
+            reply_call_ids = raw.get("_asyncInputReplyCallIds")
+            if isinstance(reply_call_ids, list):
+                answered_call_ids.update(
+                    call_id
+                    for call_id in reply_call_ids
+                    if isinstance(call_id, str) and call_id
+                )
+
+        for call_id in answered_call_ids:
+            if self.async_submissions is not None:
+                self.async_submissions.record(call_id, "answered")
+            notice_id = async_input_notice_id(call_id)
+            existing = self.notices.get(notice_id)
+            if existing is None or existing.status not in {"open", "responding"}:
+                continue
+            resolved = self.notices.transition(
+                notice_id,
+                status="resolved",
+                response_required=False,
+                blocking=None,
+                actions=(),
+                context={"inputStatus": "resolved", "decision": "answered"},
+                metadata={"source": "codex.async_input/replayed_answer"},
+            )
+            if resolved is not None:
+                await self.host.notice_upsert(resolved)
+
+        for call, item in calls:
+            existing = self.notices.get(call.notice_id)
+            submitted = (
+                self.async_submissions.status(call.call_id)
+                if self.async_submissions is not None
+                else None
+            )
+            resolved = (
+                call.call_id in answered_call_ids
+                or (
+                    existing is not None
+                    and existing.status
+                    in {"closed", "resolved", "cancelled", "expired"}
+                )
+                or submitted in {"answered", "cancelled"}
+            )
+            notice = async_user_input_notice(
+                session_id=session_id,
+                thread_id=thread_id,
+                turn_id=item.turn_id,
+                item_id=item.id,
+                call=call,
+                resolved=resolved,
+            )
+            if transport is not None:
+                notice = replace(
+                    notice,
+                    metadata={**dict(notice.metadata), "transport": transport},
+                )
+            if existing is None or existing.session_id != session_id:
+                self.notices.upsert(notice)
+                await self.host.notice_upsert(notice)
+            elif resolved and existing.status in {"open", "responding"}:
+                resolved_notice = self.notices.transition(
+                    existing.notice_id,
+                    status="resolved",
+                    response_required=False,
+                    blocking=None,
+                    actions=(),
+                    context={"inputStatus": "resolved", "decision": "answered"},
+                    metadata={"source": "codex.async_input/replayed_answer"},
+                )
+                if resolved_notice is not None:
+                    await self.host.notice_upsert(resolved_notice)
 
     async def handle_approval_request(
         self,
@@ -95,9 +196,9 @@ class CodexNoticeHandler:
         """
 
         request = codex_input_request(params)
-        turn_id = _first_string(params, "turnId", "turn_id") or self.active_turn_ids.get(
-            session_id
-        )
+        turn_id = _first_string(
+            params, "turnId", "turn_id"
+        ) or self.active_turn_ids.get(session_id)
         if turn_id is not None:
             self.active_turn_ids[session_id] = turn_id
         is_blocking = params.get("isBlocking", True) is not False
@@ -155,6 +256,17 @@ class CodexNoticeHandler:
             status=status,
             reason=reason,
             source=source,
+        ):
+            await self.host.notice_upsert(notice)
+
+    async def close_execution_errors_for_started_turn(self, session_id: str) -> None:
+        """Dismiss stale failed-turn cards once a new turn starts."""
+
+        for notice in self.notices.close_execution_errors_for_session(
+            session_id=session_id,
+            status="closed",
+            reason="turn_started",
+            source="codex.turn/started",
         ):
             await self.host.notice_upsert(notice)
 

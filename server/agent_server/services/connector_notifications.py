@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, ClassVar
 
 from loguru import logger
@@ -23,6 +25,11 @@ from agent_server.core.protocol import (
     ProtocolPermissionCatalog,
 )
 from agent_server.core.runtime_identity import RuntimeIdentity, RuntimeIdentityError
+from agent_server.core.timeline import (
+    TIMELINE_ORDER_SEQ_MAX,
+    TIMELINE_ORDER_SEQ_MIN,
+    timeline_order_seq_in_range,
+)
 from agent_server.infra.repositories.projects import MissingWorkspaceError
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.ingest_effects import IngestEffect
@@ -85,6 +92,8 @@ class ConnectorNotificationService:
             ConnectorProtocolNotificationHandler(store),
             RuntimeCatalogNotificationHandler(store),
             SessionStateNotificationHandler(store),
+            PlanningNotificationHandler(store),
+            GoalNotificationHandler(store),
             SessionTurnEndedNotificationHandler(
                 store, timeline_write_buffer, usage_recorder=usage
             ),
@@ -416,8 +425,11 @@ class SessionSourceNotificationHandler:
             except KeyError:
                 pass
         if await self._store.refresh_unchanged_session_source(
-            session_id, connector_id=connector_id, runtime=runtime,
-            runtime_id=runtime_id, **observation,
+            session_id,
+            connector_id=connector_id,
+            runtime=runtime,
+            runtime_id=runtime_id,
+            **observation,
         ):
             return IngestEffect()
         try:
@@ -694,7 +706,29 @@ class SessionTurnEndedNotificationHandler:
                 "invalid_turn_outcome",
                 "session.turnEnded outcome must be completed, interrupted, cancelled, or failed",
             )
-        turn_id = params.get("turnId")
+        source_event_id = params.get("sourceEventId")
+        if source_event_id is not None and (
+            not isinstance(source_event_id, str)
+            or not source_event_id
+            or len(source_event_id) > 160
+        ):
+            raise NotificationValidationError(
+                "invalid_source_event_id",
+                "sourceEventId must be a non-empty bounded string",
+            )
+        source_event = (
+            {
+                "source_event_id": source_event_id,
+                "source_event_digest": hashlib.sha256(
+                    json.dumps(
+                        [outcome, params.get("sourceObservedAt")], sort_keys=True
+                    ).encode()
+                ).hexdigest(),
+            }
+            if source_event_id
+            else {}
+        )
+        turn_id = params.get("turnId") or source_event_id
         if turn_id is not None and (not isinstance(turn_id, str) or not turn_id):
             raise NotificationValidationError(
                 "invalid_turn_id",
@@ -746,6 +780,7 @@ class SessionTurnEndedNotificationHandler:
                 session_id=session_id,
                 source_observed_at=_string_or_none(params.get("sourceObservedAt")),
                 mark_read_on_change=False,
+                **source_event,
             )
         else:
             async with self._timeline_write_buffer.session_fence(session_id):
@@ -753,6 +788,7 @@ class SessionTurnEndedNotificationHandler:
                     session_id=session_id,
                     source_observed_at=_string_or_none(params.get("sourceObservedAt")),
                     mark_read_on_change=False,
+                    **source_event,
                 )
         if session.takeover:
             # Only platform-driven sessions count as usage; a turn started from
@@ -804,6 +840,8 @@ class TimelineNotificationHandler:
         items = [
             TimelineItemIn.model_validate(item) for item in params.get("items", [])
         ]
+        _require_storable_order_seq(items)
+        snapshot_range = _snapshot_range(params.get("snapshotRange"))
         runtime, runtime_id = await timeline_runtime_identity_from_params(
             self._store,
             params,
@@ -821,38 +859,31 @@ class TimelineNotificationHandler:
             return IngestEffect()
         items = [_timeline_item_for_session(item, session_id) for item in items]
         replace_snapshot = params.get("complete") is True
+
+        async def write():
+            common = {
+                "session_id": session_id,
+                "source_observed_at": params.get("sourceObservedAt"),
+                "items": items,
+                "mark_read_on_change": True,
+            }
+            if snapshot_range is not None:
+                after_order_seq, through_order_seq = snapshot_range
+                return await self._store.replace_timeline_range(
+                    **common,
+                    after_order_seq=after_order_seq,
+                    through_order_seq=through_order_seq,
+                )
+            if replace_snapshot:
+                return await self._store.replace_timeline_snapshot(**common)
+            return await self._store.sync_timeline_items(**common)
+
         try:
             if self._timeline_write_buffer is None:
-                if replace_snapshot:
-                    result = await self._store.replace_timeline_snapshot(
-                        session_id=session_id,
-                        source_observed_at=params.get("sourceObservedAt"),
-                        items=items,
-                        mark_read_on_change=True,
-                    )
-                else:
-                    result = await self._store.sync_timeline_items(
-                        session_id=session_id,
-                        source_observed_at=params.get("sourceObservedAt"),
-                        items=items,
-                        mark_read_on_change=True,
-                    )
+                result = await write()
             else:
                 async with self._timeline_write_buffer.session_fence(session_id):
-                    if replace_snapshot:
-                        result = await self._store.replace_timeline_snapshot(
-                            session_id=session_id,
-                            source_observed_at=params.get("sourceObservedAt"),
-                            items=items,
-                            mark_read_on_change=True,
-                        )
-                    else:
-                        result = await self._store.sync_timeline_items(
-                            session_id=session_id,
-                            source_observed_at=params.get("sourceObservedAt"),
-                            items=items,
-                            mark_read_on_change=True,
-                        )
+                    result = await write()
         finally:
             if self._timeline_write_buffer is not None:
                 await self._timeline_write_buffer.invalidate(session_id)
@@ -864,8 +895,16 @@ class TimelineNotificationHandler:
             items=[item.model_dump(mode="json") for item in changed_items]
             if push_items
             else None,
-            timeline_reset=replace_snapshot and result.changed and push_items,
-            needs_refetch=not push_items,
+            # One page of a paged snapshot holds only part of the timeline,
+            # so it never resets clients to its items; a page that deleted or
+            # moved rows makes them refetch instead.
+            timeline_reset=(
+                replace_snapshot
+                and snapshot_range is None
+                and result.changed
+                and push_items
+            ),
+            needs_refetch=not push_items or result.reordered,
             accepted_sequence=(
                 await self._store.get_session_seq(session_id)
                 if timeline_published
@@ -886,6 +925,7 @@ class TimelineNotificationHandler:
                 "turn lifecycle markers must use dedicated session notifications",
             )
         item = TimelineItemIn.model_validate(params["item"])
+        _require_storable_order_seq([item])
         resolution = await self._store.resolve_connector_session_binding(
             connector_id=connector_id,
             session_id=params["sessionId"],
@@ -1610,6 +1650,65 @@ def runtime_state_from_session_state_params(
     }
 
 
+def _require_storable_order_seq(items: list[TimelineItemIn]) -> None:
+    """Refuse an item the timeline table cannot store before it is buffered.
+
+    An out-of-range ``orderSeq`` accepted into the shared pending projection
+    used to fail every later flush of the session, and later new items were
+    placed after it, so they could not be stored either.
+    """
+
+    for item in items:
+        if not timeline_order_seq_in_range(item.orderSeq):
+            raise NotificationValidationError(
+                "invalid_order_seq",
+                f"timeline item {item.id} orderSeq {item.orderSeq} is outside "
+                f"{TIMELINE_ORDER_SEQ_MIN}..{TIMELINE_ORDER_SEQ_MAX}",
+            )
+
+
+def _snapshot_range(value: Any) -> tuple[int | None, int | None] | None:
+    """Parse the ``orderSeq`` range one page of a paged snapshot covers.
+
+    ``{"afterOrderSeq": a, "throughOrderSeq": b}`` says the request carries
+    every snapshot item with ``a < orderSeq <= b``; a missing or null bound is
+    unbounded, and ``a == b`` is an empty range that deletes nothing. Without
+    it, ``complete: true`` replaces the whole timeline.
+    """
+
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise NotificationValidationError(
+            "invalid_snapshot_range", "snapshotRange must be an object"
+        )
+    bounds: list[int | None] = []
+    for key in ("afterOrderSeq", "throughOrderSeq"):
+        bound = value.get(key)
+        if bound is not None and (
+            isinstance(bound, bool)
+            or not isinstance(bound, int)
+            or not timeline_order_seq_in_range(bound)
+        ):
+            raise NotificationValidationError(
+                "invalid_snapshot_range",
+                f"snapshotRange.{key} must be null or an integer within "
+                f"{TIMELINE_ORDER_SEQ_MIN}..{TIMELINE_ORDER_SEQ_MAX}",
+            )
+        bounds.append(bound)
+    after_order_seq, through_order_seq = bounds
+    if (
+        after_order_seq is not None
+        and through_order_seq is not None
+        and after_order_seq > through_order_seq
+    ):
+        raise NotificationValidationError(
+            "invalid_snapshot_range",
+            "snapshotRange.afterOrderSeq must not exceed throughOrderSeq",
+        )
+    return after_order_seq, through_order_seq
+
+
 def _timeline_item_for_session(
     item: TimelineItemIn,
     session_id: str,
@@ -1631,3 +1730,48 @@ def _without_runtime_turn_ids(value: Any) -> Any:
     if isinstance(value, list):
         return [_without_runtime_turn_ids(item) for item in value]
     return value
+
+
+class PlanningNotificationHandler:
+    def __init__(self, store):
+        self._store = store
+
+    async def apply(self, *, connector_id, method, params):
+        if method != "session.planning.updated":
+            return None
+        from agent_server.core.planning.models import PlanningState
+        state = PlanningState.model_validate(params)
+        if not state.runtimeId or not await _session_matches_runtime(self._store, state.sessionId, state.runtime, state.runtimeId, connector_id=connector_id):
+            raise NotificationValidationError("planning_binding_invalid", "Plan session binding is invalid")
+        payload = state.model_dump(mode="json", exclude_unset=True)
+        if state.draft is not None:
+            return IngestEffect(session_id=state.sessionId, planning_state=payload)
+        if not await self._store.save_planning(state.sessionId, payload):
+            return IngestEffect()
+        return IngestEffect(session_id=state.sessionId, planning_state=payload)
+
+
+class GoalNotificationHandler:
+    def __init__(self, store):
+        self._store = store
+
+    async def apply(self, *, connector_id, method, params):
+        if method != "session.goal.updated":
+            return None
+        from agent_server.core.goal.models import GoalState
+
+        state = GoalState.model_validate(params)
+        if not state.runtimeId or not await _session_matches_runtime(
+            self._store,
+            state.sessionId,
+            state.runtime,
+            state.runtimeId,
+            connector_id=connector_id,
+        ):
+            raise NotificationValidationError(
+                "goal_binding_invalid", "Goal session binding is invalid"
+            )
+        await self._store.save_goal(
+            state.sessionId, state.model_dump(mode="json"), connector_id=connector_id
+        )
+        return IngestEffect()

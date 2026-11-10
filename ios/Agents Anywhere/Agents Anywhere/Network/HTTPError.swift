@@ -27,7 +27,7 @@ nonisolated enum HTTPError: LocalizedError {
         case .unauthorized:
             return String(localized: "You are not signed in.")
         case let .server(_, message, _):
-            return message
+            return RuntimeErrorText.text(code: serverCode, fallback: message)
         case let .decoding(message):
             return message
         case .streamOverflow:

@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
-import { access, mkdir } from 'node:fs/promises'
+import { access, chmod, copyFile, mkdir, rename } from 'node:fs/promises'
 import { userInfo } from 'node:os'
-import { delimiter, dirname, isAbsolute, join } from 'node:path'
+import { basename, delimiter, dirname, isAbsolute, join } from 'node:path'
 import { createRequire } from 'node:module'
 import { promisify } from 'node:util'
 import type { ResolvedConfig } from '../config.js'
@@ -26,6 +26,50 @@ export async function systemLanguages(): Promise<string[]> {
   return languages
 }
 
+const PYPI_SIMPLE = 'https://pypi.org/simple'
+
+/**
+ * The chosen PyPI mirror is uv's first index and the official PyPI its
+ * fallback: uv takes each package from the first index that has it, so a
+ * mirror that filters large wheels (TUNA, USTC and BFSU carry no
+ * openai-codex) still installs. Every index is set explicitly, because the
+ * bundled project and the inherited environment may declare others; an
+ * inherited `UV_INDEX` is dropped when no mirror is chosen. Desktop applies
+ * the same rule (desktop-workbench/electron/connector-supervisor.ts).
+ */
+export function withPackageIndexes(environment: NodeJS.ProcessEnv, pypiIndexUrl: string): NodeJS.ProcessEnv {
+  const mirror = pypiIndexUrl.trim().replace(/\/+$/, '')
+  const { UV_INDEX: _inherited, ...rest } = environment
+  return {
+    ...rest,
+    UV_DEFAULT_INDEX: PYPI_SIMPLE,
+    UV_INDEX_URL: PYPI_SIMPLE,
+    ...(mirror && mirror !== PYPI_SIMPLE ? { UV_INDEX: mirror } : {}),
+    PIP_INDEX_URL: mirror || PYPI_SIMPLE,
+  }
+}
+
+/**
+ * Some package managers unpack the bundled uv without its executable bit. Restore
+ * it in place, or use a private copy when the install directory is read-only.
+ */
+export async function ensureExecutable(file: string, fallbackDirectory: string, setMode: typeof chmod = chmod): Promise<string> {
+  try { await access(file, constants.X_OK); return file } catch { await access(file, constants.F_OK) }
+  try {
+    await setMode(file, 0o755)
+    await access(file, constants.X_OK)
+    return file
+  } catch { /* Not ours to change: fall back to a copy. */ }
+  const target = join(fallbackDirectory, basename(file))
+  await mkdir(fallbackDirectory, { recursive: true })
+  // A rename can replace a uv that is currently running; copying over it cannot.
+  const partial = `${target}.${process.pid}`
+  await copyFile(file, partial)
+  await chmod(partial, 0o755)
+  await rename(partial, target)
+  return target
+}
+
 export async function resolveUv(config: ResolvedConfig, settings: ConnectorSettings): Promise<string | null> {
   const command = settings.uvPath || config.uvPath
   if (!settings.uvPath && config.uvPath === 'uv') {
@@ -36,8 +80,7 @@ export async function resolveUv(config: ResolvedConfig, settings: ConnectorSetti
       const provider = require.resolve('@dataiku/uv/package.json')
       const binaryPackage = createRequire(provider).resolve(`@dataiku/uv-${process.platform}-${process.arch}/package.json`)
       const bundled = join(dirname(binaryPackage), 'bin', process.platform === 'win32' ? 'uv.exe' : 'uv')
-      await access(bundled, constants.X_OK)
-      return bundled
+      return await ensureExecutable(bundled, join(config.stateRoot, 'bin'))
     } catch { /* Missing optional dependency or unsupported platform: try system uv. */ }
   }
   const home = userInfo().homedir

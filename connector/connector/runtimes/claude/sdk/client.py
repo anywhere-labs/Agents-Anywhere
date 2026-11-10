@@ -93,6 +93,8 @@ def build_sdk_options(
     permission_mode = permission_mode_from_selection_id(
         session.selections.get("permission")
     )
+    if session.planning_mode:
+        permission_mode = "plan"
     if permission_mode is not None:
         kwargs["permission_mode"] = permission_mode
     executable_path = values.get("executablePath")
@@ -211,7 +213,8 @@ def _permission_hooks(
     }
     if on_tool_result is not None:
         hooks["PostToolUse"] = [
-            hook_matcher(matcher="^Cron(Create|Delete|List)$", hooks=[on_tool_result])
+            hook_matcher(matcher="^Cron(Create|Delete|List)$", hooks=[on_tool_result]),
+            hook_matcher(matcher="^(Write|Edit|EnterPlanMode|ExitPlanMode)$", hooks=[on_tool_result])
         ]
     return hooks
 

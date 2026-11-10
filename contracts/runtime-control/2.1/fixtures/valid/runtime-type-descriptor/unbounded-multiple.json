@@ -1,0 +1,30 @@
+{
+  "available": true,
+  "capabilities": {
+    "runtime.config": true,
+    "session.send_message": true
+  },
+  "configSchema": {
+    "defaults": {},
+    "metadata": {},
+    "revision": 9007199254740991,
+    "schema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "uiSchema": null
+  },
+  "description": null,
+  "displayName": "Example Runtime",
+  "implementationType": "remote-service",
+  "instancePolicy": "multiple",
+  "maxInstances": null,
+  "metadata": {
+    "vendor": "example"
+  },
+  "reason": null,
+  "recommended": false,
+  "recommendationRank": 7,
+  "runtimeType": "example-runtime"
+}

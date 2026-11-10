@@ -16,7 +16,8 @@ import { acquireManagerLock, readJson, writeJson } from '../storage/files.js'
 import { migrateStateRoot } from '../storage/migration.js'
 import { LoopbackFlow } from './loopback.js'
 import type { ConnectorAction, ConnectorFolder, ConnectorSettings } from '../../contracts/connector.js'
-import type { RuntimeLogPage, RuntimeLogQuery } from '../../contracts/logs.js'
+import type { RuntimeLogPage, RuntimeLogQuery, StartupFailureDiagnostic } from '../../contracts/logs.js'
+import { startupFailure, startupFailureDiagnostic } from '../dsh-runtime/startup-status.js'
 import { ConnectorSettingsStore, validateConnectorSettings } from '../connector/settings.js'
 import { canOpenFolders, openFolder, resolveUv } from '../connector/environment.js'
 import { MobileLogin } from '../account/mobile.js'
@@ -41,6 +42,20 @@ interface Dependencies {
 }
 
 export class OnboardingManager {
+  private connectionFailure: StartupFailureDiagnostic | null = null
+  startupDiagnostic(): StartupFailureDiagnostic | null { return this.connectionFailure ? { ...this.connectionFailure } : null }
+
+  /** Connection-phase failures only; earlier errors are answered by the call that raised them. */
+  private recordConnectionFailure(error: unknown): void {
+    const status = startupFailure(error)
+    const invalidState = error instanceof Error && 'code' in error && error.code === 'CONNECTOR_SYNC_STATE_INVALID'
+    this.connectionFailure = startupFailureDiagnostic(error, 'plugin', 'connector.start_failed', {
+      ...status, code: invalidState ? 'CONNECTOR_SYNC_STATE_INVALID' : 'CONNECTOR_START_FAILED',
+      message: invalidState ? 'Connector 同步状态文件无效。终端输出中列出了文件路径；请在“设置 → 维护”中打开数据目录，移走该文件后重新启动 Connector。'
+        : 'Connector 连接失败，详情见下方错误信息和终端输出。',
+    })
+    this.diagnostics.log('error', 'connector.start_failed', {}, error)
+  }
   private settings: ConnectionSettings
   private account: Account | null = null
   private binding: BoundDevice | null = null
@@ -372,6 +387,7 @@ export class OnboardingManager {
   }
 
   private async connectionFailed(error: unknown): Promise<void> {
+    this.recordConnectionFailure(error)
     if (error instanceof DeviceRecoveryRequired) this.setRecovery(error.connectorId, error.reason, error.message)
     else if (error instanceof ConnectorCredentialError && this.binding) await this.checkDeviceRecovery(this.binding.connectorId)
     else if (error instanceof ApiError && error.status === 401 && this.binding) this.setRecovery(this.binding.connectorId, 'login_required', '账号登录已失效，请重新登录后恢复设备连接。')
@@ -416,6 +432,7 @@ export class OnboardingManager {
         if (!controller.signal.aborted) {
           if (error instanceof DeviceRecoveryRequired || error instanceof ConnectorCredentialError) await this.connectionFailed(error)
           else {
+            this.recordConnectionFailure(error)
             this.setRecovery(this.binding?.connectorId ?? recovery.connectorId,
               error instanceof ApiError && error.status === 401 ? 'login_required' : 'unavailable',
               error instanceof ApiError && error.status === 401 ? '账号登录已失效，请重新登录后恢复设备连接。' : '恢复连接失败，请检查设备状态后重试。')
@@ -562,6 +579,24 @@ export class OnboardingManager {
     })
   }
 
+  /** Rebuilds the Connector's dependency environment; account, device binding and settings stay. */
+  resetConnectorEnvironment(): Promise<null> {
+    // A stuck installation holds the queue, and clearing it is the reason to be here.
+    if (!this.disposed && this.desktop.status === 'absent') this.controller?.abort()
+    return this.serial(async () => {
+      await this.requireStandalone()
+      await this.cancelFlow()
+      await this.connector.resetEnvironment()
+      if (this.recovery || !this.account || this.account.expiresAt <= Date.now()) {
+        this.setProgress('idle', '依赖环境已清空，下次连接时会重新安装。')
+        return null
+      }
+      await this.connector.prepare()
+      await this.startConnector()
+      return null
+    })
+  }
+
   createMobileLogin(): Promise<MobileLoginSnapshot> {
     return this.serial(async () => {
       await this.requireStandalone()
@@ -678,6 +713,7 @@ export class OnboardingManager {
   }
 
   private setProgress(stage: FlowStage, message: string): void {
+    if (stage === 'ready' || (stage === 'idle' && !this.account)) this.connectionFailure = null
     const changed = this.stage !== stage || this.message !== message
     this.stage = stage
     this.message = message

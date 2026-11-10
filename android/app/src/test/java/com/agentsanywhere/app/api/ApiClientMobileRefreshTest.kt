@@ -54,6 +54,20 @@ class ApiClientMobileRefreshTest {
     }
 
     @Test
+    fun downloadStreamAlsoRefreshesAndRetries() = withServer { server ->
+        val consumed = AtomicInteger()
+        val text = server.client().downloadStream(server.origin, "${server.origin}/fs/transfers/t?token=x", "expired") {
+            consumed.incrementAndGet()
+            it.readBytes().toString(Charsets.UTF_8)
+        }
+        assertEquals("""{"ok":true}""", text)
+        assertEquals(1, consumed.get())
+        assertEquals(listOf("GET", "GET"), server.methods)
+        assertEquals(listOf("Bearer expired", "Bearer renewed"), server.authorizations)
+        assertTrue(server.unauthorized.isEmpty())
+    }
+
+    @Test
     fun concurrent401sShareOneRefresh() = withServer { server ->
         server.expiredRequests = CountDownLatch(2)
         val client = server.client()

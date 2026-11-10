@@ -104,6 +104,8 @@ class CodexNotificationProjector:
     async def _project_event(
         self, session_id: str, thread_id: str, event: CodexSdkEvent
     ) -> None:
+        from connector.runtimes.codex.planning import observe_codex_plan
+        await observe_codex_plan(self.host, session_id, thread_id, event)
         source_availability = {
             "thread/archived": "archived",
             "thread/unarchived": "available",
@@ -177,6 +179,11 @@ class CodexNotificationProjector:
                 thread_id=thread_id,
                 event=event,
                 item=item,
+            )
+            await self.notice_handler.sync_async_input_items(
+                session_id=session_id,
+                thread_id=thread_id,
+                items=(item,),
             )
         if (
             event.event_type == "thread/compacted"

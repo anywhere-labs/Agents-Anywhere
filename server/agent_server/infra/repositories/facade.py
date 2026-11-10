@@ -7,6 +7,9 @@ from typing import Any
 
 from agent_server.infra.repositories.active_runs_facade import ActiveRunRepositoryMixin
 from agent_server.infra.repositories.attachments import AttachmentRepositoryMixin
+from agent_server.infra.repositories.channel_reconciliation import (
+    ChannelReconciliationRepositoryMixin,
+)
 from agent_server.infra.repositories.connectors import ConnectorRepositoryMixin
 from agent_server.infra.repositories.device_runtimes import DeviceRuntimeRepositoryMixin
 from agent_server.infra.repositories.instance_settings_facade import (
@@ -28,7 +31,24 @@ _MAX_TRACKED_LOCKS = 4096
 _TRACKED_LOCK_IDLE_SECONDS = 900.0
 
 
+from agent_server.infra.repositories.goals import GoalRepositoryMixin
+from agent_server.infra.repositories.model_channels import ModelChannelRepositoryMixin
+from agent_server.infra.repositories.model_config import ModelConfigRepositoryMixin
+from agent_server.infra.repositories.planning import PlanningRepositoryMixin
+from agent_server.infra.repositories.runtime_workflows import (
+    RuntimeWorkflowRepositoryMixin,
+)
+from agent_server.infra.repositories.tokens_links import TokensLinkRepositoryMixin
+
+
 class Store(
+    GoalRepositoryMixin,
+    ChannelReconciliationRepositoryMixin,
+    ModelChannelRepositoryMixin,
+    ModelConfigRepositoryMixin,
+    TokensLinkRepositoryMixin,
+    PlanningRepositoryMixin,
+    RuntimeWorkflowRepositoryMixin,
     DeviceRuntimeRepositoryMixin,
     ProtocolCatalogRepositoryMixin,
     UserRepositoryMixin,

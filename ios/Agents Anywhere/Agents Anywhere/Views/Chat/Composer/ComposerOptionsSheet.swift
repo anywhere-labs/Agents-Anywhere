@@ -42,12 +42,20 @@ struct ComposerOptionsSheet: View {
                     }
                     VStack(spacing: 0) {
                         NavigationLink(value: Page.models) {
-                            optionRow(String(localized: "dashboard.new.modelAndReasoning"), icon: "sparkles", value: settings.modelLabel)
+                            optionRow(
+                                String(localized: "dashboard.new.modelAndReasoning"),
+                                icon: "sparkles",
+                                value: pendingLabel(settings.modelLabel, scope: .model)
+                            )
                         }
                         .disabled(isLoading || !canSelectModel || settings.catalog.models.isEmpty)
                         Divider().padding(.leading, 52)
                         NavigationLink(value: Page.permissions) {
-                            optionRow(String(localized: "权限"), icon: "checkmark.shield", value: settings.permission?.title ?? String(localized: "默认"))
+                            optionRow(
+                                String(localized: "权限"),
+                                icon: "checkmark.shield",
+                                value: pendingLabel(settings.permissionLabel, scope: .permission)
+                            )
                         }
                         .disabled(isLoading || !canSelectPermission || settings.catalog.permissions.isEmpty)
                     }
@@ -97,6 +105,11 @@ struct ComposerOptionsSheet: View {
         } message: { Text(applyError() ?? String(localized: "当前设置未保存，请稍后重试。")) }
     }
 
+    private func pendingLabel(_ value: String, scope: V2RuntimeSelectionScope) -> String {
+        guard sessionChat?.pendingSelectionScopes.contains(scope) == true else { return value }
+        return "\(value) · \(String(localized: "下一轮生效"))"
+    }
+
     private func attachmentTile(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 12) {
@@ -127,36 +140,44 @@ struct ComposerOptionsSheet: View {
 
     private var models: some View {
         List {
-            Section {
-                ForEach(settings.catalog.models) { model in
-                    if model.reasoning.isEmpty {
-                        InlineSelectionButton(title: model.option.title, detail: detail(model.option),
-                            isSelected: settings.modelID == model.id) {
-                            apply { settings.selectModel(model.id) }
-                        }
-                        .disabled(!model.option.isEnabled)
-                    } else {
-                        InlineSelectionGroup(title: model.option.title, detail: detail(model.option),
-                            isSelected: settings.modelID == model.id,
-                            isExpanded: Binding(get: { expandedModelID == model.id }, set: { expandedModelID = $0 ? model.id : nil })) {
-                            Text(String(localized: "思考强度"))
-                                .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                            ForEach(model.reasoning) { option in
-                                InlineSelectionButton(title: option.title, detail: detail(option),
-                                    isSelected: settings.modelID == model.id && settings.reasoningID == option.id) {
-                                    apply { settings.selectModel(model.id, reasoning: option.id) }
-                                }
-                                .disabled(!option.isEnabled)
-                            }
-                        }
-                        .disabled(!model.option.isEnabled)
+            ForEach(settings.catalog.modelSections) { section in
+                Section {
+                    ForEach(section.models) { model in
+                        modelRow(model, title: section.rowTitle(model))
                     }
+                } header: {
+                    if let title = section.title { Text(title) }
                 }
             }
         }
         .disabled(isLoading || !canSelectModel)
         .navigationTitle(String(localized: "模型"))
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    @ViewBuilder private func modelRow(_ model: ChatModelOption, title: String) -> some View {
+        if model.reasoning.isEmpty {
+            InlineSelectionButton(title: title, detail: detail(model.option),
+                isSelected: settings.modelID == model.id) {
+                apply { settings.selectModel(model.id) }
+            }
+            .disabled(!model.option.isEnabled)
+        } else {
+            InlineSelectionGroup(title: title, detail: detail(model.option),
+                isSelected: settings.modelID == model.id,
+                isExpanded: Binding(get: { expandedModelID == model.id }, set: { expandedModelID = $0 ? model.id : nil })) {
+                Text(String(localized: "思考强度"))
+                    .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                ForEach(model.reasoning) { option in
+                    InlineSelectionButton(title: option.title, detail: detail(option),
+                        isSelected: settings.modelID == model.id && settings.reasoningID == option.id) {
+                        apply { settings.selectModel(model.id, reasoning: option.id) }
+                    }
+                    .disabled(!option.isEnabled)
+                }
+            }
+            .disabled(!model.option.isEnabled)
+        }
     }
 
     private var permissions: some View {

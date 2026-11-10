@@ -56,6 +56,33 @@ prevents an in-place update of an installed app signed with another key.
 `local.properties` remains machine-specific and ignored. The manifest allows
 HTTP for local/self-hosted addresses; use HTTPS for public service endpoints.
 
+## 内置登录页视口回归
+
+内置浏览器直接加载 `app/src/main/assets/web-login-viewport.js`，对顶层页面及跳转后的
+身份提供方修正视口高度；API 请求重写仍仅注册到登录站点的 origin。
+整屏登录层继续补高度，内部登录卡片仅在高度为零且有可见内容时补高度；普通容器还需确实
+裁剪内容才修复，保留正常页头、页脚、卡片、悬浮层锚点和空挂载点的布局。
+登录 URL 和第三方 console 不转发到应用日志。
+
+在仓库根目录运行隔离检查：
+
+```bash
+docker build -t aa-web-login-test -f android/scripts/Dockerfile.web-login-test .
+docker run --rm --network none \
+  --mount type=bind,src="$PWD",dst=/workspace,readonly \
+  aa-web-login-test
+```
+
+入口先检查 Chromium、脚本读取和 JavaScript 语法；工具缺失或语法错误时输出
+`{"doctor":"failed",...}`，以状态码 1 退出。各用例与汇总输出 JSON，任一失败即返回 1。
+可用 `CHROMIUM_PATH` 指定浏览器，用 `AA_WEBVIEW_SCRIPT` 指向待验证的脚本版本。
+JVM 单测 `WebLoginModelsTest` 验证生产注册函数：视口脚本允许所有源，API 桥接仅允许
+当前登录源（包括自建站点的端口），非法来源在任何脚本注册前被拒绝。
+
+浏览器夹具覆盖正常布局、塌陷恢复、Shadow DOM、延迟布局、异步表单、iframe 和日志。
+这些验证不依赖真实账号，不代表真机 WebView、OAuth 跳转、软键盘或旋转已验收。
+APK 构建和 JVM 单测也必须在容器或虚机内执行。
+
 ## Application updates
 
 After entering the signed-in app, Android reads the saved server's
@@ -64,8 +91,9 @@ numerically. This also runs on launch with an existing login and when the saved
 server changes. Login screens and sessions without a saved server never check
 for updates; no default server is substituted. Signing out cancels pending
 checks and downloads and clears the visible update state.
-`AppConfig.UPDATE_DOWNLOAD_URL` is the fixed APK address and currently contains
-an explicit `.invalid` placeholder that must be replaced before distribution.
+`AppConfig.UPDATE_DOWNLOAD_URL` is the fixed APK address,
+`https://www.agents-anywhere.com/api/download/android/latest`, which the official
+site redirects to the latest release APK.
 
 **Ignore this version** saves the target version per server in the private
 `app-updates` SharedPreferences file. The same version stays quiet on later
@@ -74,3 +102,20 @@ red dot beside **Check for updates** whenever a newer version exists. Tapping it
 reopens the dialog even for an ignored version. Outside taps and Back do not
 close the prompt. Downloads show progress and continue through the existing APK
 installer flow.
+
+## 会话流式生成期间的阅读位置
+
+Android 会话列表在最新位置自动跟随生成；上翻或展开思维链、工具详情后，切换为阅读状态。
+新增消息、工具组追加、审批导致的重新分组和历史快照更新会按已有内容锚点保持阅读位置。
+展开状态按会话和消息身份保存，单条转分组、滚出视口再返回不会自动收起；代码输出增长保留内部滚动位置。
+点击回到底部、发送消息或手动滚回最新位置后恢复跟随。切换会话隔离展开和阅读状态。
+
+相关 Compose 真机回归位于 `app/src/androidTest/.../MessageListScrollFollowTest.kt`，验证可见文字行的像素坐标、
+分组状态及代码输出滚动；构建和 JVM 单测通过仍不等同于真实 DSH/Connector/Server 的流式链路验收。
+
+## 会话图片
+
+会话中的 Markdown 图片（`![描述](https://example.com/image.png)`）和 HTML 图片
+（`<img src="https://example.com/image.png" alt="描述">`）会直接显示，支持 HTTP、HTTPS
+和内嵌的 `data:image/` 地址。点击图片可全屏查看并双指缩放，加载失败可重试。
+图片地址需要手机可访问；工作设备上的本地路径不会作为手机文件读取。

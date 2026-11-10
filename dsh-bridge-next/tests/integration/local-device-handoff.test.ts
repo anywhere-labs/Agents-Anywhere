@@ -79,6 +79,7 @@ for (const entry of ['first-login', 'deleted-local-device'] as const) {
       prepare: async () => {},
       start: async binding => { await recordConnectorId(home, binding.connectorId); server.devices.get(binding.connectorId)!.status = 'online'; pluginRunning = true },
       stop: async () => { pluginRunning = false },
+      resetEnvironment: async () => { pluginRunning = false },
       assertHealthy: async () => { assert.equal(pluginRunning, true) },
     }
     const manager = new OnboardingManager({

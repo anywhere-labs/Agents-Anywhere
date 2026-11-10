@@ -73,6 +73,9 @@ struct AccountSettingsSheet: View {
                     NavigationLink { SettingsServerView() } label: {
                         SettingsRow(title: String(localized: "Server"), symbol: "server.rack", value: appState.serverURL?.host)
                     }
+                    NavigationLink { ModelConfigSettingsView() } label: {
+                        SettingsRow(title: String(localized: "Model configuration"), symbol: "slider.horizontal.3")
+                    }
                 }
                 Section {
                     NavigationLink {

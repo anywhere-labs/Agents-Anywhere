@@ -1,5 +1,39 @@
 {
   "$defs": {
+    "ProtocolModelGroup": {
+      "description": "Where a model is routed from, e.g. a DSH provider or relay.",
+      "properties": {
+        "displayName": {
+          "minLength": 1,
+          "title": "Displayname",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "itemDisplayName": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Itemdisplayname"
+        }
+      },
+      "required": [
+        "id",
+        "displayName"
+      ],
+      "title": "ProtocolModelGroup",
+      "type": "object"
+    },
     "ProtocolModelItem": {
       "properties": {
         "default": {
@@ -22,6 +56,17 @@
         "displayName": {
           "title": "Displayname",
           "type": "string"
+        },
+        "group": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProtocolModelGroup"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "id": {
           "title": "Id",

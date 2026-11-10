@@ -49,6 +49,11 @@ from connector.runtimes.codex.sdk.runtime_client import (
 from connector.runtimes.codex.sessions.reader import thread_with_raw_turns
 
 DEFAULT_PUBLISH_DELAY = 0.3
+QUEUE_DRAIN_STATUSES = frozenset({"idle", "error"})
+# A failed queued follow-up stays queued; retry without waiting for another
+# state event (the App may never send one while it is unresponsive).
+QUEUE_RETRY_DELAYS = (2.0, 5.0, 15.0, 30.0)
+NEW_THREAD_SOURCE = "codex.thread/start"
 STATE_VERSION_NOTE = "agents-anywhere-owner"
 
 FOLLOWER_METHODS = (
@@ -93,6 +98,19 @@ class CodexIpcOwnerService:
     apply_selections: ApplySelections | None = None
     followers: dict[str, set[str]] = field(default_factory=dict, init=False)
     revisions: dict[str, int] = field(default_factory=dict, init=False)
+    # Follow-ups a window queued on a thread AA owns. A follower window never
+    # starts a turn itself: it hands its queue to the owner
+    # (thread-follower-set-queued-follow-ups-state), and the owner sends each
+    # message once the thread is idle and broadcasts the remaining queue.
+    queues: dict[str, list[dict[str, Any]]] = field(default_factory=dict, init=False)
+    _draining: set[str] = field(default_factory=set, init=False)
+    _queue_retries: dict[str, asyncio.TimerHandle] = field(default_factory=dict, init=False)
+    _queue_failures: dict[str, int] = field(default_factory=dict, init=False)
+    # Threads AA's app-server created, mapped to the status they were last
+    # announced with. The App loads its thread list once at startup and only
+    # learns about its own new threads afterwards; a thread-unarchived
+    # broadcast makes it read the thread and add it to the sidebar.
+    _new_threads: dict[str, str | None] = field(default_factory=dict, init=False)
     _publish_handles: dict[str, asyncio.TimerHandle] = field(default_factory=dict, init=False)
     _publish_tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False)
     _unsubscribe: list[Callable[[], None]] = field(default_factory=list, init=False)
@@ -137,6 +155,12 @@ class CodexIpcOwnerService:
         for task in list(self._publish_tasks):
             task.cancel()
         self._publish_tasks.clear()
+        for handle in self._queue_retries.values():
+            handle.cancel()
+        self._queue_retries.clear()
+        self._queue_failures.clear()
+        self._draining.clear()
+        self.queues.clear()
         self.followers.clear()
         self._attached = False
 
@@ -145,18 +169,18 @@ class CodexIpcOwnerService:
     def owns(self, thread_id: str) -> bool:
         """Whether this Connector's app-server is the holder of ``thread_id``.
 
-        Threads reached through the IPC follower belong to another window. Any
-        other thread this runtime has projected from its own app-server events
-        counts as ours; if the app-server unloaded it meanwhile, follower
-        requests simply resume it here.
+        Threads reached through the IPC follower belong to another window.
+        Ownership needs positive evidence that our app-server started or resumed
+        the thread: a cached state from a read, a sync or a selection update is
+        not enough. Claiming such a thread would answer owner discovery that a
+        Codex window should resolve by resuming it, and would route AA writes
+        into the window's writer lock. If the app-server unloaded a thread it
+        loaded, follower requests simply resume it here.
         """
 
         if self.is_followed_elsewhere(thread_id):
             return False
-        state = self.session_states.get_by_external_session_id(thread_id)
-        if state is None:
-            return False
-        return state.metadata.get("attachment") != "ipc"
+        return self.sdk.thread_loaded(thread_id)
 
     def owned_threads_with_followers(self) -> list[str]:
         return [thread_id for thread_id, clients in self.followers.items() if clients]
@@ -166,6 +190,11 @@ class CodexIpcOwnerService:
     def notify_state(self, state: SessionState) -> None:
         if state.external_session_id:
             self.notify_thread(state.external_session_id)
+            self._track_new_thread(state)
+            if state.status in QUEUE_DRAIN_STATUSES and self.queues.get(state.external_session_id):
+                task = asyncio.create_task(self._drain_queue(state.external_session_id))
+                self._publish_tasks.add(task)
+                task.add_done_callback(self._publish_tasks.discard)
 
     def notify_thread(self, thread_id: str) -> None:
         """Schedule a snapshot re-publish for followers of ``thread_id``."""
@@ -245,6 +274,7 @@ class CodexIpcOwnerService:
             active_turn_id=self.active_turn_ids.get(session_id),
             model_settings=model,
             permission_settings=permission,
+            collaboration_mode=getattr(self.sdk, "_planning_modes", {}).get(thread_id),
         )
 
     async def _settings_from_selections(
@@ -374,17 +404,199 @@ class CodexIpcOwnerService:
         elif method == "thread-follower-compact-thread":
             await self.sdk.compact_thread(thread_id)
             result = {"ok": True}
-        elif method in {
-            "thread-follower-update-daybreak",
-            "thread-follower-set-queued-follow-ups-state",
-            "thread-follower-remove-queued-message",
-            "thread-follower-clear-queued-messages",
-        }:
+        elif method == "thread-follower-set-queued-follow-ups-state":
+            state = params.get("state")
+            messages = state.get(thread_id) if isinstance(state, Mapping) else None
+            discarded = params.get("discardedMessageIds")
+            discarded_ids = (
+                {item for item in discarded if isinstance(item, str)}
+                if isinstance(discarded, list)
+                else set()
+            )
+            await self._accept_queue(
+                thread_id,
+                messages if isinstance(messages, list) else [],
+                discarded_ids,
+            )
+            result = {"ok": True}
+        elif method == "thread-follower-remove-queued-message":
+            message_id = params.get("messageId")
+            queue = self.queues.get(thread_id, [])
+            kept = [message for message in queue if message.get("id") != message_id]
+            await self._set_queue(thread_id, kept)
+            result = {"removed": len(kept) != len(queue)}
+        elif method == "thread-follower-clear-queued-messages":
+            cleared = list(self.queues.get(thread_id, []))
+            await self._set_queue(thread_id, [])
+            result = {"messages": cleared}
+        elif method == "thread-follower-update-daybreak":
             result = {"ok": True}
         else:
             raise RuntimeError(f"unsupported follower request {method}")
         self.notify_thread(thread_id)
         return {"method": method, **result}
+
+    # -- threads AA created --------------------------------------------------
+
+    def _track_new_thread(self, state: SessionState) -> None:
+        """Show a thread AA created in the App sidebar without restarting the App.
+
+        The rollout exists once the first turn started, so the App can read the
+        thread then; a second announcement after that turn picks up its title.
+        """
+
+        thread_id = state.external_session_id
+        if thread_id is None:
+            return
+        if state.metadata.get("source") == NEW_THREAD_SOURCE:
+            self._new_threads.setdefault(thread_id, None)
+            return
+        announced = self._new_threads.get(thread_id, "absent")
+        if announced == "absent":
+            return
+        if state.status == "running" and announced is None:
+            self._new_threads[thread_id] = "running"
+        elif state.status in QUEUE_DRAIN_STATUSES and announced == "running":
+            self._new_threads.pop(thread_id, None)
+        else:
+            return
+        task = asyncio.create_task(self._announce_new_thread(thread_id, state.status))
+        self._publish_tasks.add(task)
+        task.add_done_callback(self._publish_tasks.discard)
+
+    async def _announce_new_thread(self, thread_id: str, status: str) -> None:
+        try:
+            await self.client.broadcast(
+                "thread-unarchived", {"hostId": self.host_id, "conversationId": thread_id}
+            )
+        except Exception as exc:  # noqa: BLE001 - the App still sees it after a restart
+            logger.warning("codex ipc new thread announce failed thread={} error={}", thread_id, exc)
+            return
+        logger.info("codex ipc new thread announced to codex app thread={} status={}", thread_id, status)
+
+    # -- queued follow-ups ----------------------------------------------------
+
+    async def _accept_queue(
+        self, thread_id: str, messages: list[Any], discarded: set[str]
+    ) -> None:
+        """Take over a follower window's queue for ``thread_id``, as the App owner does."""
+
+        kept = [
+            dict(message)
+            for message in messages
+            if isinstance(message, Mapping)
+            and isinstance(message.get("id"), str)
+            and message["id"] not in discarded
+        ]
+        # A new hand-off is a fresh user action: retry immediately instead of
+        # inheriting the backoff from a previous failure.
+        self._queue_failures.pop(thread_id, None)
+        await self._set_queue(thread_id, kept)
+        logger.info(
+            "codex ipc owner queue accepted thread={} messages={} discarded={}",
+            thread_id,
+            len(kept),
+            len(discarded),
+        )
+        await self._drain_queue(thread_id)
+
+    async def _set_queue(self, thread_id: str, messages: list[dict[str, Any]]) -> None:
+        if messages:
+            self.queues[thread_id] = messages
+        else:
+            self.queues.pop(thread_id, None)
+            self._cancel_queue_retry(thread_id)
+            self._queue_failures.pop(thread_id, None)
+        try:
+            await self.client.broadcast(
+                "thread-queued-followups-changed",
+                {"conversationId": thread_id, "hostId": self.host_id, "messages": messages},
+            )
+        except Exception as exc:  # noqa: BLE001 - followers resync on their next request
+            logger.warning("codex ipc owner queue broadcast failed thread={} error={}", thread_id, exc)
+
+    def _thread_idle(self, thread_id: str) -> bool:
+        session_id = self.session_id_for(thread_id)
+        if session_id in self.active_turn_ids:
+            return False
+        state = self.session_states.get(session_id)
+        return state is None or state.status in QUEUE_DRAIN_STATUSES
+
+    async def _drain_queue(self, thread_id: str) -> None:
+        """Send the first queued follow-up once the thread is idle."""
+
+        if thread_id in self._draining:
+            return
+        self._cancel_queue_retry(thread_id)
+        while True:
+            queue = self.queues.get(thread_id)
+            if not queue or not self._thread_idle(thread_id) or queue[0].get("pausedReason"):
+                return
+            message = queue[0]
+            text = message.get("text")
+            if isinstance(text, str) and text.strip():
+                break
+            # A malformed entry must not block the rest of the queue forever.
+            logger.warning(
+                "codex ipc owner queued follow-up has no text thread={} message={}",
+                thread_id,
+                message["id"],
+            )
+            await self._set_queue(thread_id, queue[1:])
+        self._draining.add(thread_id)
+        try:
+            result = await self.sdk.start_turn(
+                CodexStartTurnRequest(
+                    thread_id=thread_id,
+                    content=text,
+                    client_message_id=message["id"],
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - keep the message queued for a retry
+            logger.warning(
+                "codex ipc owner queued follow-up failed thread={} message={} error={}",
+                thread_id,
+                message["id"],
+                exc,
+            )
+            self._schedule_queue_retry(thread_id)
+            return
+        finally:
+            self._draining.discard(thread_id)
+        self._queue_failures.pop(thread_id, None)
+        remaining = [item for item in self.queues.get(thread_id, []) if item.get("id") != message["id"]]
+        await self._set_queue(thread_id, remaining)
+        self.notify_thread(thread_id)
+        logger.info(
+            "codex ipc owner queued follow-up started thread={} message={} turn={} remaining={}",
+            thread_id,
+            message["id"],
+            result.turn_id,
+            len(remaining),
+        )
+
+    def _cancel_queue_retry(self, thread_id: str) -> None:
+        handle = self._queue_retries.pop(thread_id, None)
+        if handle is not None:
+            handle.cancel()
+
+    def _schedule_queue_retry(self, thread_id: str) -> None:
+        if thread_id in self._queue_retries:
+            return
+        failures = self._queue_failures.get(thread_id, 0)
+        delay = QUEUE_RETRY_DELAYS[min(failures, len(QUEUE_RETRY_DELAYS) - 1)]
+        self._queue_failures[thread_id] = failures + 1
+        loop = asyncio.get_running_loop()
+        self._queue_retries[thread_id] = loop.call_later(delay, self._retry_queue, thread_id)
+
+    def _retry_queue(self, thread_id: str) -> None:
+        self._queue_retries.pop(thread_id, None)
+        if not self.queues.get(thread_id):
+            self._queue_failures.pop(thread_id, None)
+            return
+        task = asyncio.create_task(self._drain_queue(thread_id))
+        self._publish_tasks.add(task)
+        task.add_done_callback(self._publish_tasks.discard)
 
     async def _start_turn(self, thread_id: str, params: Mapping[str, Any]) -> dict[str, Any]:
         turn_start = params.get("turnStart")
@@ -442,9 +654,18 @@ class CodexIpcOwnerService:
         if not isinstance(request_id, str | int):
             raise TypeError("requestId is required")
         await self.sdk.respond(request_id, dict(payload))
-        await self._resolve_notice(request_id, payload)
+        notice_id = await self._resolve_notice(request_id, payload)
+        thread_id = params.get("conversationId")
+        if isinstance(thread_id, str):
+            await self._settle_approval_state(
+                thread_id=thread_id,
+                request_id=request_id,
+                notice_id=notice_id,
+                payload=payload,
+            )
 
-    async def _resolve_notice(self, request_id: str | int, payload: Mapping[str, Any]) -> None:
+    async def _resolve_notice(self, request_id: str | int, payload: Mapping[str, Any]) -> str | None:
+        resolved_notice_id: str | None = None
         for thread_id in list(self.followers):
             session_id = self.session_id_for(thread_id)
             for notice in self.notices.open_blocking_for_session(session_id):
@@ -460,13 +681,67 @@ class CodexIpcOwnerService:
                     context={"approvalStatus": "resolved", "responsePayload": dict(payload)},
                     metadata={"source": "codex.ipc.owner/responded"},
                 )
-                if updated is not None and self.host is not None:
-                    await self.host.notice_upsert(updated)
+                if updated is not None:
+                    resolved_notice_id = updated.notice_id
+                    if self.host is not None:
+                        await self.host.notice_upsert(updated)
+        return resolved_notice_id
+
+    async def _settle_approval_state(
+        self,
+        *,
+        thread_id: str,
+        request_id: str | int,
+        notice_id: str | None,
+        payload: Mapping[str, Any],
+    ) -> None:
+        """Leave waiting_approval when another window resolves the approval.
+
+        Codex App / IDE windows answer approvals through the follower request
+        path, not through AA's interaction API. Resolving the notice there
+        removes the card, so the session state must also leave
+        waiting_approval; otherwise the UI keeps the badge and the
+        "waiting for your response" placeholder with no card to act on.
+        """
+
+        session_id = self.session_id_for(thread_id)
+        cached_state = self.session_states.get(session_id)
+        if cached_state is None or cached_state.status not in {
+            "waiting_approval",
+            "blocked",
+        }:
+            return
+        next_status = (
+            "waiting_approval"
+            if self.notices.open_blocking_for_session(session_id)
+            else "running"
+            if self.active_turn_ids.get(session_id) is not None
+            else "idle"
+        )
+        if next_status == cached_state.status:
+            return
+        decision = payload.get("decision")
+        await self.session_states.update(
+            session_id=session_id,
+            external_session_id=cached_state.external_session_id,
+            status=next_status,
+            metadata={
+                "source": "codex.ipc.owner/responded",
+                "request_id": request_id,
+                **({"notice_id": notice_id} if notice_id else {}),
+                **({"decision": decision} if isinstance(decision, str) else {}),
+            },
+        )
 
     async def _update_thread_settings(
         self, session_id: str, thread_id: str, params: Mapping[str, Any]
     ) -> bool:
-        """Apply a window's thread settings as our next-turn selections."""
+        """Apply a window's thread settings as our selections.
+
+        The selection update changes our app-server's thread settings at once,
+        as the desktop owner does. Windows send the permission by profile name
+        (``permissions``) or as ``sandboxPolicy``.
+        """
 
         settings = params.get("threadSettings")
         if (
@@ -477,7 +752,14 @@ class CodexIpcOwnerService:
         ):
             return False
         flat: dict[str, Any] = {}
-        for key in ("model", "approvalPolicy", "approvalsReviewer", "sandboxPolicy"):
+        for key in (
+            "model",
+            "approvalPolicy",
+            "approvalsReviewer",
+            "sandboxPolicy",
+            "permissions",
+            "activePermissionProfile",
+        ):
             if settings.get(key) is not None:
                 flat[key] = settings[key]
         effort = settings.get("effort")
@@ -490,8 +772,16 @@ class CodexIpcOwnerService:
         selections = await selections_from_thread_state(
             flat, self.read_model_catalog, self.read_permission_catalog
         )
+        collaboration = settings.get("collaborationMode")
+        applied_mode = False
+        if isinstance(collaboration, Mapping) and collaboration.get("mode") in {"plan", "default"}:
+            setter = getattr(self.sdk, "set_collaboration_mode", None)
+            if not callable(setter):
+                return False
+            await setter(thread_id, dict(collaboration))
+            applied_mode = True
         if not selections:
-            return False
+            return applied_mode
         result = await self.apply_selections(session_id, thread_id, selections)
         return bool(getattr(result, "ok", True))
 
@@ -523,6 +813,7 @@ def conversation_state_from_thread(
     now: Clock = time.time,
     model_settings: CodexModelSettings | None = None,
     permission_settings: CodexPermissionSettings | None = None,
+    collaboration_mode: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a v11-shaped ``conversationState`` from app-server thread data.
 
@@ -591,11 +882,11 @@ def conversation_state_from_thread(
         "paginatedHistory": {"itemsBackwardsCursor": None},
         "latestModel": model,
         "latestReasoningEffort": effort,
-        "latestCollaborationMode": {
+        "latestCollaborationMode": dict(collaboration_mode) if collaboration_mode is not None else {
             "mode": "default",
             "settings": {"model": model, "reasoning_effort": effort, "developer_instructions": None},
         },
-        "latestThreadSettings": _latest_thread_settings(permissions, cwd, model, effort),
+        "latestThreadSettings": {**_latest_thread_settings(permissions, cwd, model, effort), **({"collaborationMode": dict(collaboration_mode)} if collaboration_mode is not None else {})},
         "latestTokenUsageInfo": None,
         "latestTurnStartMessageId": None,
         "previousTurnModel": None,

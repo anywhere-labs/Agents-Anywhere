@@ -99,6 +99,8 @@ function TimelineEntryContextMenu({ item, children }: { item: TimelineItem; chil
   const tSession = useTranslations("dashboard.session")
   const tCommon = useTranslations("common")
   const text = timelineItemCopyText(item)
+  // 鼠标右键时如果已有选中文字，交给浏览器原生菜单；触屏长按仍走 Radix 的长按菜单。
+  const nativeMenuRef = React.useRef(false)
   const copyTimelineValue = async (value: string) => {
     if (!value) return
     try {
@@ -110,7 +112,19 @@ function TimelineEntryContextMenu({ item, children }: { item: TimelineItem; chil
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        <div className="min-w-0 max-w-full select-text">{children}</div>
+        <div
+          className="min-w-0 max-w-full select-text"
+          onPointerDownCapture={(event) => {
+            const secondary = event.button === 2 || (event.button === 0 && event.ctrlKey)
+            nativeMenuRef.current = event.pointerType === "mouse" && secondary && hasSelectionWithin(event.currentTarget)
+          }}
+          onContextMenuCapture={(event) => {
+            if (nativeMenuRef.current) event.stopPropagation()
+            nativeMenuRef.current = false
+          }}
+        >
+          {children}
+        </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-48">
         <ContextMenuItem disabled={!text} onSelect={() => copyTimelineValue(text)}>
@@ -129,6 +143,16 @@ function TimelineEntryContextMenu({ item, children }: { item: TimelineItem; chil
       </ContextMenuContent>
     </ContextMenu>
   )
+}
+
+// 在 pointerdown 时判断，避免 macOS 右键先自动选中单词导致误判。
+function hasSelectionWithin(element: HTMLElement): boolean {
+  const selection = window.getSelection()
+  if (!selection || selection.isCollapsed || !selection.toString().trim()) return false
+  for (let index = 0; index < selection.rangeCount; index += 1) {
+    if (selection.getRangeAt(index).intersectsNode(element)) return true
+  }
+  return false
 }
 
 function timelineItemCopyText(item: TimelineItem): string {
@@ -213,8 +237,10 @@ function MessageCard({
 
 function SystemCard({ token, session, item }: { token: string; session: SessionView; item: TimelineItem }) {
   const kind = textOf(item.content.kind) || "system"
+  if (item.content.code === "model_request_retry") return <ModelRetryMarker item={item} />
   if (kind === "reasoning") return <ReasoningEntry token={token} session={session} item={item} />
   if (kind === "compact") return <CompactMarker item={item} />
+  if (kind === "goal") return <GoalTimelineOutcome item={item} />
   const text = textOf(item.content.text) || textOf(item.content.message) || textOf(item.content.rawText)
   const failed = item.status === "failed" || kind === "error"
   const title = text ? `${kind}: ${text}` : `${kind}: ${item.status}`
@@ -229,8 +255,28 @@ function SystemCard({ token, session, item }: { token: string; session: SessionV
   )
 }
 
+function ModelRetryMarker({ item }: { item: TimelineItem }) {
+  const t = useTranslations("dashboard.session")
+  const state = textOf(item.content.state)
+  const attempt = typeof item.content.attempt === "number" ? item.content.attempt : 1
+  const maximum = typeof item.content.maxAttempts === "number" ? item.content.maxAttempts : undefined
+  const delay = typeof item.content.retryInMs === "number" ? Math.ceil(item.content.retryInMs / 1000) : undefined
+  const text = state === "retrying" ? [
+    t(item.content.reason === "rate_limit" ? "modelRetryBusy" : "modelRetryUnavailable"),
+    maximum === undefined ? t("modelRetryAttempt", { attempt }) : t("modelRetryProgress", { attempt, maximum }),
+    delay === undefined ? null : t("modelRetryDelay", { seconds: delay }),
+  ].filter(Boolean).join(" ") : t(state === "completed" ? "modelRetryCompleted" : state === "interrupted" ? "modelRetryInterrupted" : "modelRetryFailed")
+  return (
+    <Marker role="status" aria-live="polite" aria-atomic="true">
+      <MarkerIcon><Clock /></MarkerIcon>
+      <MarkerContent className="whitespace-normal overflow-visible text-clip">{text}</MarkerContent>
+    </Marker>
+  )
+}
+
 function MarkerCard({ item }: { item: TimelineItem }) {
   const kind = textOf(item.content.kind) || "system"
+  if (kind === "goal") return <GoalTimelineOutcome item={item} />
   if (kind === "compact") return <CompactMarker item={item} />
 
   const label = textOf(item.content.label) || textOf(item.content.title) || kind
@@ -474,4 +520,16 @@ function systemDetail(content: TimelineItem["content"]): Record<string, unknown>
   delete detail.message
   delete detail.rawText
   return detail
+}
+
+function GoalTimelineOutcome({ item }: { item: TimelineItem }) {
+  const t = useTranslations("goal")
+  const goal = item.content.goal as { status?: string; timeUsedSeconds?: number } | undefined
+  if (!goal || !["complete", "failed"].includes(goal.status ?? "")) return null
+  const label = goal.status === "complete"
+    ? goal.timeUsedSeconds == null
+      ? t("achievedUnknownTime")
+      : t("achieved", { time: new Intl.NumberFormat().format(goal.timeUsedSeconds) + t("secondsUnit") })
+    : t("failed")
+  return <div role="status" className="py-1 text-xs text-muted-foreground">{label}</div>
 }

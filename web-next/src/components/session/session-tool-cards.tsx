@@ -1,9 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { toast } from "sonner"
-import { copyText } from "@/lib/clipboard"
-import { Bot, Check, ChevronDown, Code2, Copy, FilePenLine, Hammer, Loader2, TerminalSquare } from "lucide-react"
+import { Bot, ChevronDown, Code2, FilePenLine, Hammer, Loader2, TerminalSquare } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -14,7 +12,7 @@ import { useSessionFilePreviewOpener } from "@/components/session/session-file-p
 import { MonacoCodeView, monacoLanguageForFile } from "@/components/monaco-code-view"
 import { openSessionFilePreview } from "@/components/markdown-text"
 import { cn } from "@/lib/utils"
-import { highlightCode } from "@/lib/code-highlight"
+import { SourceCodeBlock, SourceCodeContent } from "@/components/source-code-block"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { Notice, SessionView, TimelineItem } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
@@ -335,48 +333,13 @@ function CodePanelFrame({
   action?: React.ReactNode
   children: React.ReactNode
 }) {
-  const tCommon = useTranslations("common")
-  const tSession = useTranslations("dashboard.session")
-  const [copied, setCopied] = React.useState(false)
-  return (
-    <div className={cn("min-w-0 max-w-full overflow-hidden bg-background", !flush && "rounded-xl border border-border")}>
-      <div className="flex h-9 items-center justify-between border-b bg-muted/25 px-3">
-        <span className="code-mono text-xs text-muted-foreground">{label}</span>
-        <div className="flex items-center gap-1">
-          {action}
-          <button
-            type="button"
-            className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-            onClick={async () => {
-              setCopied(false)
-              try {
-                await copyText(code)
-                setCopied(true)
-                setTimeout(() => setCopied(false), 1200)
-              } catch {
-                toast.error(tCommon("copyFailed"))
-              }
-            }}
-            aria-label={copied ? tCommon("copied") : tSession("copyCode")}
-          >
-            {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-          </button>
-        </div>
-      </div>
-      {children}
-    </div>
-  )
+  return <SourceCodeBlock code={code} label={label} presentation="tool" flush={flush} action={action}>
+    {children}
+  </SourceCodeBlock>
 }
 
 function HighlightedCodeContent({ code, language, maxHeight }: { code: string; language: string; maxHeight: number }) {
-  return (
-    <ScrollArea contentWide className="min-w-0" style={{ height: maxHeight, maxHeight }}>
-      <pre className="code-mono min-w-full w-max px-3 py-2 text-xs leading-relaxed">
-        <code className="code-mono whitespace-pre">{highlightCode(code, language)}</code>
-      </pre>
-      <ScrollBar orientation="horizontal" />
-    </ScrollArea>
-  )
+  return <SourceCodeContent code={code} language={language} presentation="tool" maxHeight={maxHeight} />
 }
 
 export function JsonBlock({ value }: { value: unknown }) {

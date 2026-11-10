@@ -185,3 +185,56 @@ private fun windowsParentPath(
         else -> clean.take(slash).replace('/', '\\')
     }
 }
+
+/**
+ * Resolves [path] against [workspaceRoot] the way the Server does (relative
+ * paths join the root, `.` and `..` collapse, Windows accepts `\` and `/`) and
+ * returns the absolute path only when it stays inside the workspace. Paths
+ * starting with `~` are rejected because the client cannot expand them.
+ */
+fun resolvePathInWorkspace(workspaceRoot: String, path: String): String? {
+    val root = parseAbsoluteRemotePath(normalizeRemotePath(workspaceRoot).trim(), base = null) ?: return null
+    val target = parseAbsoluteRemotePath(normalizeRemotePath(path).trim(), base = root) ?: return null
+    val sameText: (String, String) -> Boolean = { a, b -> a.equals(b, ignoreCase = root.windows) }
+    if (target.windows != root.windows || !sameText(target.prefix, root.prefix)) return null
+    if (target.segments.size < root.segments.size) return null
+    if (!root.segments.indices.all { sameText(target.segments[it], root.segments[it]) }) return null
+    val separator = if (target.windows) "\\" else "/"
+    return target.prefix.replace("/", separator) + target.segments.joinToString(separator)
+}
+
+private data class AbsoluteRemotePath(
+    val windows: Boolean,
+    // "/" on POSIX, "C:/" for a drive, "//" for a UNC share.
+    val prefix: String,
+    val segments: List<String>,
+)
+
+private fun parseAbsoluteRemotePath(raw: String, base: AbsoluteRemotePath?): AbsoluteRemotePath? {
+    if (raw.isBlank() || raw.startsWith("~")) return null
+    val windows = base?.windows ?: (windowsDriveRoot(raw) != null || raw.startsWith("\\\\") || raw.startsWith("//"))
+    val value = if (windows) raw.replace('\\', '/') else raw
+    val drive = Regex("^([A-Za-z]:)(/|$)").find(value)
+    val (prefix, rest, inherited) = when {
+        windows && value.startsWith("//") -> Triple("//", value.removePrefix("//"), emptyList())
+        windows && drive != null -> Triple("${drive.groupValues[1].uppercase()}/", value.substring(drive.value.length), emptyList())
+        // A drive-relative path such as `C:foo` depends on per-drive state the client cannot see.
+        windows && Regex("^[A-Za-z]:").containsMatchIn(value) -> return null
+        windows && value.startsWith("/") -> {
+            val basePrefix = base?.prefix?.takeIf { it.endsWith(":/") } ?: return null
+            Triple(basePrefix, value, emptyList())
+        }
+        !windows && value.startsWith("/") -> Triple("/", value, emptyList())
+        base != null -> Triple(base.prefix, value, base.segments)
+        else -> return null
+    }
+    val segments = ArrayDeque(inherited)
+    rest.split('/').forEach { part ->
+        when (part) {
+            "", "." -> Unit
+            ".." -> segments.removeLastOrNull() ?: return null
+            else -> segments.addLast(part)
+        }
+    }
+    return AbsoluteRemotePath(windows = windows, prefix = prefix, segments = segments.toList())
+}

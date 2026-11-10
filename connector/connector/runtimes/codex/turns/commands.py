@@ -18,7 +18,10 @@ from connector.runtime_protocol import (
     RuntimeSessionStateCache,
 )
 from connector.runtimes.codex.domain.commands import list_codex_commands
-from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
+from connector.runtimes.codex.sdk.runtime_client import (
+    CodexCompactResult,
+    CodexRuntimeClient,
+)
 from connector.runtimes.codex.turns.command_input import command_input
 
 
@@ -28,6 +31,9 @@ class CodexCommandController:
     states: RuntimeSessionStateCache
     source_states: RuntimeSessionSourceStateCache
     ensure_started: Callable[[], Awaitable[None]]
+    # Routes compaction to the thread's writer, like a message: a thread held
+    # by Codex Desktop is compacted by its owner window over IPC.
+    compact_thread: Callable[[str, str], Awaitable[CodexCompactResult]] | None = None
 
     def catalog(
         self,
@@ -88,7 +94,10 @@ class CodexCommandController:
             )
         await self.ensure_started()
         try:
-            compact = await self.client.compact_thread(external_session_id)
+            if self.compact_thread is not None:
+                compact = await self.compact_thread(session_id, external_session_id)
+            else:
+                compact = await self.client.compact_thread(external_session_id)
             result = dict(compact.payload)
             if result.get("ok") is False or result.get("applied") is False:
                 return RuntimeCommandResult(

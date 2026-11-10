@@ -3,10 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from connector.runtime_protocol import RuntimeTimelineItem
-from connector.runtimes.codex.timeline.projection import (
-    timeline_item_from_projection,
-    timeline_projection_from_raw,
-)
 
 
 def timeline_items_from_thread(
@@ -16,24 +12,15 @@ def timeline_items_from_thread(
     limit: int | None,
     pending_messages: Any | None = None,
 ) -> tuple[RuntimeTimelineItem, ...]:
-    raw_items = raw_timeline_items(thread)
-    items: list[RuntimeTimelineItem] = []
-    for index, raw in enumerate(limit_items(raw_items, limit)):
-        if pending_messages is not None:
-            pending_messages.attach_to_raw_item(
-                external_session_id=external_session_id,
-                raw=raw,
-            )
-        codex_item = timeline_item_from_projection(
-            timeline_projection_from_raw(raw),
-            external_session_id=external_session_id,
-            fallback_index=index,
-            event="thread/read",
-        )
-        items.append(
-            codex_item.to_platform_item(session_id=session_id, order_seq=index)
-        )
-    return tuple(items)
+    # Imported lazily because the accumulator also uses raw_timeline_items.
+    from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
+
+    return CodexTimelineAccumulator(pending_messages).items_from_thread_snapshot(
+        session_id=session_id,
+        external_session_id=external_session_id,
+        thread=thread,
+        limit=limit,
+    )
 
 
 def limit_items[T](items: list[T], limit: int | None) -> list[T]:
