@@ -94,13 +94,13 @@ Web、Desktop、Android、iOS 复用既有新建、模型、权限、发送和�
 
 创建工作流分别记录平台会话、原生会话和首条消息接纳事实。消息使用稳定 `clientMessageId` 和输入摘要，同一 ID 的不同输入被拒绝。状态区分未发送、发送中、已接纳、确定拒绝和结果未知。
 
-PiClient 在观察到 Pi SDK 的运行开始标记，或助手、思考、工具及交互事件时发布执行观察，Connector 据此记录接纳；标准 ACP prompt 完成响应也是接纳证据。执行观察不等同于 Agent 的持久早期回执。连接丢失且没有确定证据时保留未知，不自动重投。
+接纳由公共引擎判定（见下文「通用接入」）：发出 prompt 后看到助手、思考、工具或交互事件，或 prompt 正常返回，即记为接纳；Pi 方言把 Pi SDK 的运行开始标记也算作证据。执行观察不等同于 Agent 的持久早期回执。连接丢失且没有确定证据时保留未知，不自动重投。
 
 首条及后续消息均已接入附件转换：Server 保存上传附件并传递引用，Connector 下载整批校验媒体类型、大小与摘要，图片转 ACP 图片块，其他文件提供本机资源链接。客户端仍按有效附件能力和限制控制入口。
 
 ## 权限、配置与命令
 
-PiClient 将 Pi 的模型和推理配置映射到现有目录，并补充三个权限选项：
+公共引擎把 ACP 的 `thought_level` 归为推理强度；Pi 方言补充三个权限选项：
 
 | 权限 | 扩展行为 |
 | --- | --- |
@@ -108,15 +108,15 @@ PiClient 将 Pi 的模型和推理配置映射到现有目录，并补充三个�
 | 全部工具审批（`ask_all`） | 每次工具调用均询问 |
 | 只读（`readonly`） | 允许上述读取工具，阻止其他工具 |
 
-Connector 显式加载 `permissions.mjs`，在首次加载、恢复及重载后将守卫放在扩展分发顺序首位，并核验加载报告，缺失则阻止执行。扩展冻结工具输入，通过 Pi 的确认请求等待用户回答；PiClient 将该请求转换为 AA 工具审批。权限配置按原生会话 ID 存储，缺失或无效配置默认询问；原生 `/bash` 命令另在适配层执行同一权限检查，确定拒绝不会把会话置为需要恢复。此机制是工具事件层控制，不是操作系统沙箱，也不代表已实现旧方案的全部资源信任、最终请求守卫或外部写入所有权保证。
+Connector 显式加载 `permissions.mjs`，在首次加载、恢复及重载后将守卫放在扩展分发顺序首位，并核验加载报告，缺失则阻止执行。扩展冻结工具输入，通过 Pi 的确认请求等待用户回答；Pi 方言将该请求转换为 AA 工具审批。权限配置按原生会话 ID 存储，缺失或无效配置默认询问；原生 `/bash` 命令另在适配层执行同一权限检查，确定拒绝不会把会话置为需要恢复。此机制是工具事件层控制，不是操作系统沙箱，也不代表已实现旧方案的全部资源信任、最终请求守卫或外部写入所有权保证。
 
 配置保存完整快照、内容摘要和单调 revision；逐项更新部分成功时保留真实结果。模型与权限选择通过会话配置更新。命令来自 Agent 的 `available_commands_update`，执行前再次核验命令仍在目录中，并保留原始输入的引号和换行，再交由 ACP prompt 处理。运行中追加指示复用既有 steer 入口，消息身份与普通发送共享去重记录。认证状态查询说明认证来自执行来源的原生配置与环境，资源查询返回当前命令；其他通用操作只在 Agent 明确提供对应能力时可用。
 
 ## 同步、恢复与进程
 
-通用应用层经 SQLite 事务保存操作事实与 outbox；同步服务按序发送，收到 ACK 后删除。投影将 ACP 文本、思考、工具与来源信息转换为平台 Timeline。PiClient 补充平台消息身份与附件元数据，使执行观察与用户消息投影关联。
+通用应用层经 SQLite 事务保存操作事实与 outbox；同步服务按序发送，收到 ACK 后删除。投影将 ACP 文本、思考、工具与来源信息转换为平台 Timeline。公共引擎在接纳时写入带 `clientMessageId` 和附件元数据的用户消息，使执行观察与用户消息投影关联。
 
-恢复创建新的连接代际，重新连接同一原生会话，核验 Agent 保证和返回身份，再更新配置与绑定。只有 Agent 宣告 `durable_prompt_receipts` 时才查询持久接纳回执；默认 PiClient 只宣告 `managed_tool_permissions`，没有该保证。不能以通用恢复分支存在推定未知消息已被确认。
+恢复创建新的连接代际，重新连接同一原生会话，核验 Agent 保证和返回身份，再更新配置与绑定。只有 Agent 宣告 `durable_prompt_receipts` 时才查询持久接纳回执；Pi 方言只宣告 `managed_tool_permissions`，没有该保证。不能以通用恢复分支存在推定未知消息已被确认。
 
 启动采用后台准备，沿用 Runtime 的「正在准备」状态与失败重试；环境就绪前不开放运行能力，下载不会占满启动 RPC 的等待时间。
 
@@ -128,9 +128,39 @@ Connector 显式加载 `permissions.mjs`，在首次加载、恢复及重载后�
 
 TUI 协作、最终模型请求守卫、持久接纳回执和原生位置选择未在默认路径开放。通用原生历史快照按来源完整性处理，不能用部分结果删除其他历史；默认 Pi 没有独立的原生位置选择界面。
 
+## 通用接入：Agent 定义、方言与公共引擎
+
+每个 ACP Agent 由三部分组成，Pi 和 Hermes 都按这个结构实现，新增 Agent 时一般只写前两部分：
+
+| 部分 | 位置 | 负责 |
+| --- | --- | --- |
+| Agent 定义 | `profiles/<agent>/definition.py`，类型见 `domain/agents.py` | 身份、本机可执行文件与固定启动参数、启动前检查、实例配置、能力上限、权限选项；需要时提供 `prepare_launch`（安装、补丁）和 `runtime`（后台准备、原生历史）钩子 |
+| 方言 | 同上，接口见 `domain/dialect.py` | 标准 ACP 没有规定的差异：配置项归类、私有更新的翻译或丢弃、额外接纳证据、交互转换、发送前校验、会话核验、运行中追加方式、错误识别 |
+| 公共引擎 | `infrastructure/acp/client.py`、`application/sessions.py`、`runtime.py` | 进程与连接、握手、新建与恢复、发送与中断、接纳判定、用户消息写入、能力推导、命令、交互、历史重放和同步 |
+
+`provider.py` 的 `AcpAgentProvider` 把定义装配成 RuntimeProvider；Pi 和 Hermes 的 Provider 只是它的薄封装。
+
+**接纳**：接纳表示 Agent 已在处理这条输入，不代表执行成功。发出 prompt 后，本轮第一个助手、思考、工具调用事件，Agent 在本轮发起的审批或表单，`session/prompt` 正常返回，以及方言声明的额外证据，都算接纳证据；子进程启动、请求写入 stdin、恢复时重放的历史都不算。确认接纳时，引擎写入带 `clientMessageId` 的用户消息；方言声明 Agent 会自行回显用户消息时，引擎不再写入。
+
+**能力**：定义给出能力上限，引擎按握手收窄：`promptCapabilities.image` 为真才开放附件，收到 `available_commands_update` 才开放命令，方言提供追加方式才开放 `session.steer`；恢复和关闭按 `loadSession`、`sessionCapabilities` 判断。方言可以补充额外能力。
+
+**配置**：ACP 的 `thought_level` 统一归为推理强度，其他归类由方言决定，选项和名称保持 Agent 原样。
+
+**错误**：常见 Agent 错误使用统一错误码，四端按界面语言显示：`agent_cli_missing`、`agent_cli_unsupported`、`agent_acp_unavailable`、`agent_version_unsupported`、`agent_authentication_required`（ACP 的 `auth_required`）、`agent_session_failed`、`agent_session_unavailable`、`agent_steer_attachments_unsupported`，以及 `image_input_unsupported`、`command_unavailable`、`invalid_command`。方言可以把 Agent 的具体错误识别成更准确的错误码，例如 Pi 的 `pi_authentication_required`。
+
+**安全**：实例配置可经 Server 修改，因此启动参数和注入的环境变量只由定义决定；注册时拒绝含 `command`、`args`、`env` 等字段或允许未知字段的配置结构。
+
+**验证**：
+
+| 层次 | 入口 |
+| --- | --- |
+| 公共引擎 | `scripts/verify-acp-runtime.py`、`scripts/verify-acp-generic-boundary.py`（受控 Agent，检查用户消息与接纳证据）；`tests/test_acp_engine.py` |
+| 方言 | `tests/test_acp_dialect_replay.py` 回放 `tests/fixtures/acp-recordings/` 中的真实录制，不需要安装 Agent |
+| 真实 Agent | `scripts/verify-acp-agent.py --definition <runtimeType> --executable <路径>`，本地模型夹具，不调用付费服务；`--record <目录>` 生成回放样本 |
+
 ## Hermes
 
-`HermesProvider` 使用 `runtimeType=hermes`、`implementationType=acp-stdio`，启动本机的 `hermes acp`，复用上述通用 ACP 层；专用逻辑只在 `profiles/hermes/`。第一期不做原生历史索引，旧会话浏览和「继续任务」不可用，只能恢复经 AA 创建的会话。
+Hermes 的定义与方言在 `profiles/hermes/definition.py`：`runtimeType=hermes`、`implementationType=acp-stdio`，启动本机的 `hermes acp`，其余全部使用公共引擎。第一期不做原生历史索引，旧会话浏览和「继续任务」不可用，只能恢复经 AA 创建的会话。
 
 | 配置 | 含义 |
 | --- | --- |
@@ -152,20 +182,21 @@ Agent 连接断开后会话进入 `blocked`。四端在 `session.recover` 可用
 | 运行中追加指示 | `/steer` 命令，不支持附件；Connector 已提供，Web 与 Desktop 暂无入口 |
 | 命令 | `available_commands_update` |
 
-Hermes 决定哪些命令需要审批，AA 不声明 `managed_tool_permissions`。没有模型配置项的 Hermes 视为版本过旧或未配置，不会开放会话。Hermes 专用错误码没有进入 `contracts/runtime-errors`，客户端显示 Connector 提供的中文文案。
+Hermes 决定哪些命令需要审批，AA 不声明 `managed_tool_permissions`。回答审批后 Hermes 会更新审批卡片自身，方言把这条更新丢弃，避免时间线多出一条工具记录。没有模型配置项的 Hermes 返回 `agent_version_unsupported`，不会开放会话；其他错误使用上文的统一错误码。
 
 真实验证脚本使用本地模型夹具和临时 `HERMES_HOME`，不调用付费服务；覆盖允许、拒绝、文本与图片附件、运行中追加、中断和恢复：
 
 ```sh
-PYTHONPATH=connector connector/.venv/bin/python connector/scripts/verify-hermes-acp.py --hermes "$(command -v hermes)"
+PYTHONPATH=connector connector/.venv/bin/python connector/scripts/verify-acp-agent.py --definition hermes --executable "$(command -v hermes)"
 ```
 
 ## 源码与维护入口
 
 - [默认 Provider 注册](../../connector/connector/runtimes/providers.py)
 - [Pi Provider 与固定依赖](../../connector/connector/runtimes/acp/profiles/pi/provider.py)、[配置生成](../../connector/connector/runtimes/acp/profiles/pi/settings.py)
-- [Hermes Provider](../../connector/connector/runtimes/acp/profiles/hermes/provider.py)、[HermesClient](../../connector/connector/runtimes/acp/profiles/hermes/client.py)
-- [PiClient](../../connector/connector/runtimes/acp/profiles/pi/client.py)、[工具权限扩展](../../connector/connector/runtimes/acp/profiles/pi/permissions.mjs)
+- [Agent 定义](../../connector/connector/runtimes/acp/domain/agents.py)、[方言接口](../../connector/connector/runtimes/acp/domain/dialect.py)、[通用 Provider](../../connector/connector/runtimes/acp/provider.py)、[公共引擎 Client](../../connector/connector/runtimes/acp/infrastructure/acp/client.py)
+- [Hermes 定义与方言](../../connector/connector/runtimes/acp/profiles/hermes/definition.py)
+- [Pi 定义](../../connector/connector/runtimes/acp/profiles/pi/definition.py)、[Pi 方言](../../connector/connector/runtimes/acp/profiles/pi/dialect.py)、[工具权限扩展](../../connector/connector/runtimes/acp/profiles/pi/permissions.mjs)
 - [npm / Node 安装器](../../connector/connector/runtimes/acp/infrastructure/npm.py)
 - [通用 Runtime](../../connector/connector/runtimes/acp/runtime.py)、[会话用例](../../connector/connector/runtimes/acp/application/sessions.py)、[同步](../../connector/connector/runtimes/acp/application/synchronization.py)
 - [工作流契约](../../contracts/runtime-workflows/1.2/manifest.json)、[ACP 增强契约说明](../../contracts/acp-runtime/1.1/README.md)
