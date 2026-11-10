@@ -587,7 +587,6 @@ function launchedAsLoginItem(): boolean {
   const login = app.getLoginItemSettings(loginItemOptions());
   return Boolean(
     login.wasOpenedAtLogin ||
-      login.wasOpenedAsHidden ||
       process.argv.includes(LOGIN_ITEM_HIDDEN_ARG) ||
       process.argv.includes("--background") ||
       process.argv.includes("--squirrel-firstrun"),
@@ -607,7 +606,6 @@ function applyLoginItemSettings(): void {
   if (!settings) return;
   app.setLoginItemSettings({
     openAtLogin: settings.openAtLogin,
-    openAsHidden: settings.silentLaunch,
     ...loginItemOptions(),
   });
 }

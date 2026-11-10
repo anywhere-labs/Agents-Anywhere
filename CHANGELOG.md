@@ -17,6 +17,7 @@
 - Server 执行 `v2_53` 数据库迁移：会按已经记录的使用事件回填按小时的汇总，事件多的实例迁移耗时会更长。（[#473](https://github.com/anywhere-labs/Agents-Anywhere/pull/473)）
 - Server 执行 `v2_54` 数据库迁移：为每个会话记下最新一条记录的摘要并从已有数据回填，耗时随会话数增长，请在停止 Server 和 worker 的维护窗口里运行；客户端无须升级，细节见[升级指南](docs/upgrading.md)。（[#595](https://github.com/anywhere-labs/Agents-Anywhere/pull/595)）
 - 设备设置需要 Server 执行 `v2_55` 数据库迁移（只给设备表加一列，不改写已有数据）；关机行为要等 Connector 和 Desktop 也升级后才按设置生效，旧版 Desktop 关机时仍会弹窗确认。（[#596](https://github.com/anywhere-labs/Agents-Anywhere/pull/596)）
+- Desktop 不再信任私钥已泄露的 eMudhra 中间证书，连接 Server、登录和下载更新时不会被用这些证书伪造的服务器冒充；Desktop 从此版本起需要 macOS 13 及以上，macOS 12 用户请停留在 2.1.x。
 
 ### 会话创建与消息交付
 

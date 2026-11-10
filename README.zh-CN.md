@@ -43,7 +43,7 @@
 <details>
 <summary>平台要求、安装包与更新说明</summary>
 
-- macOS：Apple Silicon / Intel 通用，已签名、公证；需要 macOS 12 及以上。
+- macOS：Apple Silicon / Intel 通用，已签名、公证；需要 macOS 13 及以上。
 - Windows：x64 桌面工作台，含本机 Connector；当前安装包未做代码签名。
 - Android：Android 8.0 及以上。
 - iOS / iPadOS：在 App Store 下载安装；也可以通过 TestFlight 安装测试版，以邀请页显示的可用状态为准。
