@@ -227,6 +227,8 @@ def test_upload_read_timeout_outlasts_a_proxy_that_buffers_the_body() -> None:
     # A real stall still fails: writing has no allowance for size.
     assert timeout.write == 60
     assert upload_timeout(0).read == 60
+    # Each retry after a read timeout waits twice as long.
+    assert upload_timeout(5_672_509, read_timeouts=2).read == timeout.read * 4
 
 
 def test_batch_timeout_scales_and_the_failure_says_what_happened() -> None:
@@ -253,6 +255,30 @@ def test_batch_timeout_scales_and_the_failure_says_what_happened() -> None:
     assert seen[0]["read"] > 60
     assert "ReadTimeout" in str(error)
     assert re.search(r"body \d{6} bytes, after \d+\.\ds", str(error))
+
+
+def test_a_batch_that_keeps_timing_out_waits_longer_on_each_retry(monkeypatch) -> None:
+    monkeypatch.setattr(ingest_module, "SYNC_BATCH_RETRY_BACKOFF_SECONDS", 0)
+
+    async def exercise() -> list[float]:
+        reads: list[float] = []
+
+        async def token(_force: bool) -> str:
+            return "token"
+
+        def transport(request: httpx.Request) -> httpx.Response:
+            reads.append(request.extensions["timeout"]["read"])
+            if len(reads) < 3:
+                raise httpx.ReadTimeout("", request=request)
+            return httpx.Response(200, json={"accepted": 1, "rejected": []})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+            ingest = ConnectorIngestClient("https://server.test", token, lambda: http, lambda timeout: http)
+            await ingest.post_batch([{"method": "timeline.itemUpsert", "params": {"text": "x" * 200_000}}])
+        return reads
+
+    reads = asyncio.run(exercise())
+    assert reads == [reads[0], reads[0] * 2, reads[0] * 4]
 
 
 def test_batch_with_a_lone_surrogate_still_uploads() -> None:

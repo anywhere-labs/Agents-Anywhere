@@ -55,6 +55,7 @@ import {
 } from "@/components/session/session-tool-cards"
 import { timelineRunCounts } from "@/components/session/timeline-summary"
 import { RuntimeCreationStatus } from "@/components/session/runtime-creation-status"
+import { AgentRecoveryNotice } from "@/components/session/agent-recovery-notice"
 import { NativeSessionHandoff } from "@/components/session/native-session-handoff"
 import { needsOlderTimelinePage } from "@/components/session/timeline-autofill"
 import { createTimelineScrollFollow } from "@/components/session/timeline-scroll-follow"
@@ -1831,6 +1832,12 @@ export function SessionDetail({
           <NativeSessionHandoff key={sessionId} token={token} session={session} state={runtimeState}
             capabilities={state?.effectiveCapabilities ?? null} onSettled={async () => {
               const refreshed = await loadInitialSessionState(token, sessionId, { reason: "native-history.handoff" })
+              setState(current => current?.session.id === sessionId ? refreshed : current)
+              onSessionUpdated?.(refreshed.session)
+            }} />
+          <AgentRecoveryNotice key={`recovery:${sessionId}`} token={token} session={session} state={runtimeState}
+            capabilities={state?.effectiveCapabilities ?? null} onSettled={async () => {
+              const refreshed = await loadInitialSessionState(token, sessionId, { reason: "agent.recovery" })
               setState(current => current?.session.id === sessionId ? refreshed : current)
               onSessionUpdated?.(refreshed.session)
             }} />

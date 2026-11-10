@@ -53,7 +53,11 @@ async def main():
             await wait_for(lambda: any(row["status"] == "open" for row in app.interactions.views("create")))
             answer_pending(app, "create")
             await wait_for(lambda: app.creation_view("create")["messageAccepted"] is True)
+            await wait_for(lambda: app.state("session")["status"] == "idle")
             assert marker.read_text() == "controlled non-Pi input\n"
+            # A standard Agent needs no profile code for its input to reach the Timeline.
+            users = [row for row in store.values("projection") if row.get("role") == "user"]
+            assert [row["content"]["clientMessageId"] for row in users] == ["first"], users
             assert store.pending()
         finally:
             await app.stop()

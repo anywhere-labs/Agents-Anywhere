@@ -22,11 +22,12 @@ from agent_server.core.timeline import (
 from agent_server.core.usage import (
     InventoryRow,
     InventorySnapshotRow,
-    UsageConnectorRow,
+    UsageConnectorTotalsRow,
     UsageCountRow,
-    UsageDurationRow,
-    UsageSessionRow,
-    UsageUserRow,
+    UsageDurationStatsRow,
+    UsageRuntimeReachRow,
+    UsageSessionTotalsRow,
+    UsageUserActivity,
 )
 
 
@@ -336,6 +337,17 @@ class ConnectorNotificationRepository(
         mark_read_on_change: bool = False,
     ) -> TimelineBatchWriteResult: ...
 
+    async def replace_timeline_range(
+        self,
+        *,
+        session_id: str,
+        items: list[TimelineItemIn],
+        after_order_seq: int | None,
+        through_order_seq: int | None,
+        source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
+    ) -> TimelineBatchWriteResult: ...
+
     async def sync_timeline_items(
         self,
         *,
@@ -502,6 +514,13 @@ class DeviceRuntimeRepository(
         config: dict[str, Any],
     ) -> dict[str, Any]: ...
 
+    async def set_device_runtime_model_connection(
+        self,
+        connector_id: str,
+        runtime_id: str,
+        report: dict[str, Any] | None,
+    ) -> dict[str, Any]: ...
+
     async def set_device_runtime_status(
         self,
         connector_id: str,
@@ -606,30 +625,40 @@ class UsageEventRepository(Protocol):
 
 class UsageReportRepository(Protocol):
     async def usage_event_counts(
-        self, *, start_hour: str, end_hour: str
+        self, *, start_hour: str, end_hour: str, timezone: str
     ) -> list[UsageCountRow]: ...
 
     async def usage_user_activity(
-        self, *, start_hour: str, end_hour: str
-    ) -> list[UsageUserRow]: ...
-
-    async def usage_session_activity(
-        self, *, start_hour: str, end_hour: str
-    ) -> list[UsageSessionRow]: ...
-
-    async def usage_connector_online(
-        self, *, start_hour: str, end_hour: str
-    ) -> list[UsageConnectorRow]: ...
-
-    async def usage_durations(
         self,
         *,
         start_hour: str,
         end_hour: str,
+        days_start_hour: str,
+        days_end_hour: str,
+        timezone: str,
+    ) -> UsageUserActivity: ...
+
+    async def usage_session_totals(
+        self, *, start_hour: str, end_hour: str, timezone: str
+    ) -> list[UsageSessionTotalsRow]: ...
+
+    async def usage_runtime_reach(
+        self, *, start_hour: str, end_hour: str
+    ) -> list[UsageRuntimeReachRow]: ...
+
+    async def usage_connector_totals(
+        self, *, start_hour: str, end_hour: str, timezone: str
+    ) -> list[UsageConnectorTotalsRow]: ...
+
+    async def usage_duration_stats(
+        self,
+        *,
+        start_hour: str,
+        end_hour: str,
+        timezone: str,
         event_type: str,
         outcomes: tuple[str, ...] | None = None,
-        limit: int = 200_000,
-    ) -> list[UsageDurationRow]: ...
+    ) -> list[UsageDurationStatsRow]: ...
 
     async def usage_first_event_date(self) -> str | None: ...
 
@@ -649,7 +678,7 @@ class UsageReportRepository(Protocol):
 
     async def count_active_usage_users(self, *, since: str) -> int: ...
 
-    async def list_connectors(self, *, user_id: str | None = None) -> list[ConnectorView]: ...
+    async def active_connector_ids(self) -> list[str]: ...
 
 
 class UsageMaintenanceRepository(Protocol):

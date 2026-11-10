@@ -15,6 +15,10 @@ from agent_server.core.models import (
     ConnectorUpdateRequest,
     ConnectorView,
 )
+from agent_server.core.device_settings import (
+    ConnectorDeviceSettingsPatch,
+    ConnectorDeviceSettingsResponse,
+)
 from agent_server.core.protocol import ProtocolCapabilitiesResponse
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
@@ -31,6 +35,10 @@ from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.connector_deletion import delete_connector_data
+from agent_server.services.connector_device_settings import (
+    get_device_settings,
+    update_device_settings,
+)
 from agent_server.services.connector_presence import (
     with_effective_connector_status,
     with_effective_connector_statuses,
@@ -236,6 +244,51 @@ async def get_connector_preferences(
     return ConnectorPreferencesResponse(
         connectorId=connector_id,
         preferences=preferences,
+        serverTime=utc_now(),
+    )
+
+
+@router.get(
+    "/{connector_id}/device-settings",
+    response_model=ConnectorDeviceSettingsResponse,
+)
+async def get_connector_device_settings(
+    connector_id: str,
+    user_id: str = Depends(current_user_id),
+    store: Store = Depends(get_store),
+) -> ConnectorDeviceSettingsResponse:
+    try:
+        settings = await get_device_settings(store, connector_id, user_id=user_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="connector not found") from None
+    return ConnectorDeviceSettingsResponse(
+        connectorId=connector_id,
+        settings=settings,
+        serverTime=utc_now(),
+    )
+
+
+@router.patch(
+    "/{connector_id}/device-settings",
+    response_model=ConnectorDeviceSettingsResponse,
+)
+async def patch_connector_device_settings(
+    connector_id: str,
+    payload: ConnectorDeviceSettingsPatch,
+    user_id: str = Depends(current_user_id),
+    store: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+) -> ConnectorDeviceSettingsResponse:
+    try:
+        settings, delivered = await update_device_settings(
+            store, manager, connector_id, payload, user_id=user_id
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="connector not found") from None
+    return ConnectorDeviceSettingsResponse(
+        connectorId=connector_id,
+        settings=settings,
+        delivered=delivered,
         serverTime=utc_now(),
     )
 

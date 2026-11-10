@@ -639,7 +639,7 @@ class NativePiRuntime(AcpRuntime):
         try:
             state = await self.app.recover(session_id)
             client = self.app.sessions[session_id]["client"]
-            file = client.native_files.get(self._source(session_id)["sessionId"])
+            file = client.dialect.native_files.get(self._source(session_id)["sessionId"])
             if (
                 not file
                 or Path(file).resolve()

@@ -276,6 +276,12 @@ def test_v2_0_database_upgrades_through_current_revision(fresh_database_url) -> 
         ("v2_32", "v2_33"),
         ("v2_47", "v2_48"),
         ("v2_48", "v2_49"),
+        ("v2_49", "v2_50"),
+        ("v2_50", "v2_51"),
+        ("v2_51", "v2_52"),
+        ("v2_52", "v2_53"),
+        ("v2_53", "v2_54"),
+        ("v2_54", "v2_55"),
     ],
 )
 def test_every_adjacent_schema_upgrade(tmp_path,
@@ -1016,9 +1022,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_49() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_49"
-    assert CURRENT_SCHEMA_VERSION == "2.49"
+def test_current_schema_version_is_v2_55() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_55"
+    assert CURRENT_SCHEMA_VERSION == "2.55"
 
 
 def test_v2_49_tracks_inventory_scans_without_rewriting_sessions(
@@ -1188,6 +1194,79 @@ def _insert_required(connection, table: str, values: dict) -> None:
     names = ", ".join(row)
     params = ", ".join(f":{name}" for name in row)
     connection.execute(text(f"INSERT INTO {table} ({names}) VALUES ({params})"), row)
+
+
+def test_v2_53_backfills_hourly_usage_rollups(fresh_database_url) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_52")
+    engine = create_engine(_sync_url(url))
+    try:
+        with engine.begin() as connection:
+            _insert_required(connection, "users", {"id": "alice"})
+            events = [
+                ("e1", "2026-10-01T09", "message.sent", "alice", None, "s1", "codex", None, None, None),
+                ("e2", "2026-10-01T09", "message.sent", "alice", None, "s1", "codex", None, None, None),
+                ("e3", "2026-10-01T09", "session.viewed", "alice", None, "s2", "codex", None, None, None),
+                ("e4", "2026-10-01T09", "turn.ended", None, None, "s1", "codex", None, "completed", 1500),
+                ("e5", "2026-10-01T10", "connector.online", None, "c1", None, None, None, None, None),
+                ("e6", "2026-10-01T10", "connector.online", None, "c1", None, None, "macos", None, None),
+                ("e7", "2026-10-01T10", "user.active", "alice", None, None, None, None, None, None),
+            ]
+            for event_id, hour, event_type, user, connector, session, runtime, os_name, outcome, duration in events:
+                connection.execute(
+                    text(
+                        "INSERT INTO usage_events (id, occurred_at, hour_bucket, event_type, user_id,"
+                        " connector_id, session_id, runtime_type, device_os, outcome, duration_ms)"
+                        " VALUES (:id, :at, :hour, :type, :user, :connector, :session, :runtime, :os,"
+                        " :outcome, :duration)"
+                    ),
+                    {
+                        "id": event_id, "at": f"{hour}:00:00Z", "hour": hour, "type": event_type,
+                        "user": user, "connector": connector, "session": session, "runtime": runtime,
+                        "os": os_name, "outcome": outcome, "duration": duration,
+                    },
+                )
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=url)
+
+    engine = create_engine(_sync_url(url))
+    try:
+        with engine.connect() as connection:
+            def rows(sql: str) -> list[tuple]:
+                return [tuple(row) for row in connection.execute(text(sql)).all()]
+
+            assert rows(
+                "SELECT hour_bucket, event_type, runtime_type, outcome, count, duration_sum"
+                " FROM usage_hourly_counts ORDER BY 1, 2"
+            ) == [
+                ("2026-10-01T09", "message.sent", "codex", "", 2, 0),
+                ("2026-10-01T09", "session.viewed", "codex", "", 1, 0),
+                ("2026-10-01T09", "turn.ended", "codex", "completed", 1, 1500),
+                ("2026-10-01T10", "connector.online", "", "", 2, 0),
+                ("2026-10-01T10", "user.active", "", "", 1, 0),
+            ]
+            assert rows("SELECT hour_bucket, user_id, messages FROM usage_hourly_users ORDER BY 1") == [
+                ("2026-10-01T09", "alice", 2),
+                ("2026-10-01T10", "alice", 0),
+            ]
+            assert rows("SELECT session_id, messages, views FROM usage_hourly_sessions ORDER BY 1") == [
+                ("s1", 2, 0),
+                ("s2", 0, 1),
+            ]
+            assert rows("SELECT runtime_type, session_id FROM usage_hourly_runtime_sessions") == [("codex", "s1")]
+            assert rows("SELECT runtime_type, user_id FROM usage_hourly_runtime_users") == [("codex", "alice")]
+            assert rows("SELECT connector_id, device_os FROM usage_hourly_connectors") == [("c1", "macos")]
+    finally:
+        engine.dispose()
+
+    command.downgrade(_alembic_config(url), "v2_52")
+    engine = create_engine(_sync_url(url))
+    try:
+        assert not inspect(engine).has_table("usage_hourly_counts")
+    finally:
+        engine.dispose()
 
 
 def test_v2_44_drops_unconfigured_runtime_placeholders(fresh_database_url) -> None:
@@ -2472,5 +2551,99 @@ def test_v2_35_replaces_the_session_item_time_index(fresh_database_url) -> None:
         assert "COALESCE(item_time, ''::text) DESC" in definition
         assert "order_seq DESC" in definition
         assert "updated_seq DESC" in definition
+    finally:
+        engine.dispose()
+
+
+def test_v2_54_stores_newest_timeline_row_on_sessions(fresh_database_url) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_53")
+    engine = create_engine(_sync_url(url))
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("SET LOCAL session_replication_role = 'replica'"))
+            for session_id in ("with_items", "empty"):
+                _insert_required(connection, "sessions", {
+                    "id": session_id, "connector_id": "conn", "runtime": "codex",
+                    "runtime_id": "codex",
+                })
+            # (id, item_time, order_seq, updated_seq, payload)
+            rows = [
+                ("old", "2026-10-01T09:00:00Z", 1, 1, {"updatedAt": "2026-10-01T09:00:00Z"}),
+                # Same time as "newest": the higher order_seq wins.
+                ("tie", "2026-10-01T10:00:00Z", 2, 2, {"updatedAt": "2026-10-01T10:00:00Z"}),
+                # An empty updatedAt falls back to completedAt.
+                ("newest", "2026-10-01T10:00:00Z", 3, 3, {
+                    "updatedAt": "", "completedAt": "2026-10-01T10:00:00Z",
+                    "createdAt": "2026-10-01T08:00:00Z",
+                }),
+                # No item_time sorts after every timed row.
+                ("untimed", None, 9, 9, {}),
+            ]
+            for item_id, item_time, order_seq, updated_seq, payload in rows:
+                _insert_required(connection, "timeline_items", {
+                    "session_id": "with_items", "id": item_id, "item_time": item_time,
+                    "order_seq": order_seq, "updated_seq": updated_seq,
+                    "payload_json": json.dumps(payload),
+                })
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=url, revision="v2_54")
+
+    engine = create_engine(_sync_url(url))
+    try:
+        with engine.connect() as connection:
+            stored = {
+                row.id: tuple(row)[1:]
+                for row in connection.execute(text(
+                    "SELECT id, latest_item_id, latest_item_time, latest_item_order_seq,"
+                    " latest_item_updated_seq, latest_item_at FROM sessions"
+                ))
+            }
+        assert stored == {
+            "with_items": ("newest", "2026-10-01T10:00:00Z", 3, 3, "2026-10-01T10:00:00Z"),
+            "empty": (None, None, None, None, None),
+        }
+    finally:
+        engine.dispose()
+
+    engine = create_engine(_sync_url(url))
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE alembic_version"))
+    finally:
+        engine.dispose()
+    assert asyncio.run(classify_database(url)) == UnversionedDatabase("v2", "v2_54")
+
+    command.stamp(_alembic_config(url), "v2_54")
+    command.downgrade(_alembic_config(url), "v2_53")
+    engine = create_engine(_sync_url(url))
+    try:
+        columns = {column["name"] for column in inspect(engine).get_columns("sessions")}
+        assert "latest_item_id" not in columns
+    finally:
+        engine.dispose()
+
+
+def test_v2_55_adds_connector_device_settings(fresh_database_url) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_55")
+    engine = create_engine(_sync_url(url))
+    try:
+        columns = {column["name"] for column in inspect(engine).get_columns("connectors")}
+        assert "device_settings" in columns
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE alembic_version"))
+    finally:
+        engine.dispose()
+    assert asyncio.run(classify_database(url)) == UnversionedDatabase("v2", "v2_55")
+
+    command.stamp(_alembic_config(url), "v2_55")
+    command.downgrade(_alembic_config(url), "v2_54")
+    engine = create_engine(_sync_url(url))
+    try:
+        columns = {column["name"] for column in inspect(engine).get_columns("connectors")}
+        assert "device_settings" not in columns
     finally:
         engine.dispose()

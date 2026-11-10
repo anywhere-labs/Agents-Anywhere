@@ -12,7 +12,7 @@ import kotlinx.coroutines.withContext
 class DevicesController(
     private val devicesApi: DevicesApi,
     private val sessionStore: AuthSessionStore,
-) : DeviceAgentOperations {
+) : DeviceAgentOperations, DeviceSettingsOperations {
     suspend fun getDevice(connectorId: String): Result<AgentDevice> {
         val auth = authSession()
             ?: return Result.failure(IllegalStateException("Sign in again to load this device."))
@@ -63,6 +63,46 @@ class DevicesController(
             }.recoverCatching { error ->
                 if (error is ApiException) throw error
                 throw IllegalStateException(error.message ?: "Could not delete device.", error)
+            }
+        }
+    }
+
+    override suspend fun getDeviceSettings(connectorId: String): Result<DeviceSettingsResult> {
+        val auth = authSession()
+            ?: return Result.failure(IllegalStateException("Sign in again to load device settings."))
+
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                devicesApi.getDeviceSettings(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    deviceId = connectorId,
+                ).toDeviceSettingsResult()
+            }.recoverCatching { error ->
+                if (error is ApiException) throw error
+                throw IllegalStateException(error.message ?: "Could not load device settings.", error)
+            }
+        }
+    }
+
+    override suspend fun updateDeviceSettings(
+        connectorId: String,
+        confirmQuitOnShutdown: Boolean,
+    ): Result<DeviceSettingsResult> {
+        val auth = authSession()
+            ?: return Result.failure(IllegalStateException("Sign in again to change device settings."))
+
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                devicesApi.updateDeviceSettings(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    deviceId = connectorId,
+                    confirmQuitOnShutdown = confirmQuitOnShutdown,
+                ).toDeviceSettingsResult()
+            }.recoverCatching { error ->
+                if (error is ApiException) throw error
+                throw IllegalStateException(error.message ?: "Could not save device settings.", error)
             }
         }
     }
@@ -357,5 +397,6 @@ fun RemoteDevice.toAgentDevice(): AgentDevice {
         online = status == "online",
         lastSeenAt = lastSeenAt,
         createdAt = createdAt,
+        connectorKind = connectorKind,
     )
 }

@@ -1,0 +1,16 @@
+{
+  "active": true,
+  "configured": true,
+  "createdAt": "2026-10-11T01:00:00Z",
+  "error": null,
+  "name": "DSH",
+  "phase": {
+    "code": "syncing"
+  },
+  "runtimeId": "rti_dsh_local_01",
+  "runtimeType": "dsh",
+  "startedAt": "2026-10-11T01:00:05Z",
+  "status": "starting",
+  "stoppedAt": null,
+  "updatedAt": "2026-10-11T01:00:06Z"
+}

@@ -65,6 +65,7 @@ import { Switch } from "@/components/ui/switch"
 import { AccountProfileCard } from "@/components/pages/account-profile-card"
 import { MobileConnectionDialog } from "@/components/pages/mobile-signin-panel"
 import { ArchivedSessionsTab } from "@/components/settings/archived-sessions-tab"
+import { ModelConfigsTab } from "@/components/settings/model-configs-tab"
 import { parseSettingsTab, settingsNavigation } from "@/components/settings/settings-navigation"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { useAuth } from "@/components/auth/auth-context"
@@ -75,6 +76,7 @@ import { authApi } from "@/features/auth/api"
 import { accountDisplayName } from "@/features/auth/account-profile"
 import { normalizeAuthMe } from "@/features/auth/normalize-me"
 import type { AuthMe } from "@/features/auth/types"
+import { useDeviceSettings } from "@/features/dashboard/device-settings"
 import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
 import { PYPI_MIRROR_OPTIONS, PYTHON_MIRROR_OPTIONS } from "@/features/desktop/package-mirrors"
 import {
@@ -82,6 +84,8 @@ import {
   type DesktopConnectorLog,
   type DesktopConnectorLogSource,
 } from "@/features/desktop/bridge"
+import { useTokensAnywhereUrl } from "@/features/tokens-anywhere/address"
+import { useTokensAnywhereSidebarVisibility } from "@/features/tokens-anywhere/sidebar-visibility"
 import { useMobileConnectionsSidebarVisibility } from "@/features/mobile-connections/sidebar-visibility"
 import { cn } from "@/lib/utils"
 
@@ -762,6 +766,9 @@ function DesktopTab() {
 function StartupTab() {
   const t = useTranslations("pages.settings")
   const { supported, loading, busy, state, saveSettings } = useDesktopConnector()
+  const { session: authSession } = useAuth()
+  // The server owns this device setting so other devices can change it too.
+  const deviceSettings = useDeviceSettings(state?.connectorId || null, authSession?.accessToken)
 
   if (!supported) return <DesktopUnavailable title={t("startup")} />
   if (loading && !state) return <LoadingState className="min-h-64" />
@@ -795,6 +802,13 @@ function StartupTab() {
             checked={Boolean(state?.silentLaunch)}
             disabled={busy}
             onCheckedChange={(checked) => void saveSettings({ silentLaunch: checked })}
+          />
+          <DesktopSettingSwitch
+            label={t("desktopConfirmQuitOnShutdown")}
+            description={t("desktopConfirmQuitOnShutdownDescription")}
+            checked={deviceSettings.settings?.confirmQuitOnShutdown ?? Boolean(state?.confirmQuitOnShutdown)}
+            disabled={busy || deviceSettings.saving || !deviceSettings.settings}
+            onCheckedChange={(checked) => void deviceSettings.update({ confirmQuitOnShutdown: checked })}
           />
         </FieldGroup>
       </section>
@@ -1556,6 +1570,8 @@ const themes: { id: AppearanceMode; labelKey: string; descKey: string }[] = [
 ]
 
 function AppearanceTab() {
+  const [tokensAnywhereVisible, setTokensAnywhereVisible] = useTokensAnywhereSidebarVisibility()
+  const tokensAnywhereUrl = useTokensAnywhereUrl()
   const t = useTranslations("pages.settings")
   const { theme, setTheme } = useTheme()
   const { sidebarShowsSessions, setSidebarShowsSessions, sidebarCompactSessions, setSidebarCompactSessions } = useWorkspace()
@@ -1591,6 +1607,15 @@ function AppearanceTab() {
 
       <SettingsSection title={t("desktopSidebar")} description={t("desktopSidebarDescription")}>
         <FieldGroup>
+          {tokensAnywhereUrl ? (
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="settings-tokens-anywhere-visible">{t("tokensAnywhereShow")}</FieldLabel>
+                <FieldDescription>{t("tokensAnywhereShowDescription")}</FieldDescription>
+              </FieldContent>
+              <Switch id="settings-tokens-anywhere-visible" checked={tokensAnywhereVisible} onCheckedChange={setTokensAnywhereVisible} />
+            </Field>
+          ) : null}
           <Field orientation="horizontal">
             <FieldContent>
               <FieldLabel htmlFor="settings-sidebar-shows-sessions">
@@ -1627,7 +1652,7 @@ function AppearanceTab() {
 }
 
 export function SettingsPage() {
-  const { openSession, projects, sessions, isLoading, refreshData, settingsTab, upsertSession } = useWorkspace()
+  const { connectors, openSession, projects, sessions, isLoading, refreshData, settingsTab, upsertSession } = useWorkspace()
   const { session, me: authMe, refreshMe } = useAuth()
   const t = useTranslations("pages.settings")
   // The section sidebar owns navigation; the route is the single source of truth.
@@ -1691,8 +1716,9 @@ export function SettingsPage() {
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 overflow-hidden px-5 pb-5 pt-4 sm:px-8 sm:pb-8 sm:pt-5">
-        <ScrollArea className="h-full min-h-0 min-w-0 flex-1" viewportProps={{ className: "pb-8" }}>
+      {/* The padding sits inside the scroll area so its scrollbar runs along the window edge. */}
+      <div className="flex min-h-0 flex-1 overflow-hidden pt-4 sm:pt-5">
+        <ScrollArea className="h-full min-h-0 min-w-0 flex-1" viewportProps={{ className: "px-5 pb-13 sm:px-8 sm:pb-16" }}>
           {tab === "account" && (
             loadingMe ? (
               <LoadingState className="h-full" />
@@ -1709,6 +1735,9 @@ export function SettingsPage() {
                 {t("unavailable")}
               </div>
             )
+          )}
+          {tab === "model-configs" && (
+            <ModelConfigsTab token={session?.accessToken ?? ""} connectors={connectors} />
           )}
           {tab === "mobile-connections" && (
             <MobileConnectionsTab

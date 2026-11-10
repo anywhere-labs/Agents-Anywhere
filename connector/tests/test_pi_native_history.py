@@ -13,7 +13,7 @@ from connector.runtimes.acp.domain.definitions import AcpError
 from connector.runtimes.acp.infrastructure.acp.client import AgentClient
 from connector.runtimes.acp.infrastructure.projection import Projection
 from connector.runtimes.acp.profiles.pi import adapter
-from connector.runtimes.acp.profiles.pi.client import PiClient
+from connector.runtimes.acp.profiles.pi.dialect import PiDialect
 from connector.runtimes.acp.profiles.pi.history import (
     read_history,
     scan_histories,
@@ -423,15 +423,15 @@ def test_preparation_failure_keeps_actionable_reason(tmp_path):
         ),
     ],
 )
-def test_new_session_without_model_or_login_asks_to_configure_pi(tmp_path, monkeypatch, error):
-    async def refuse(self, cwd, **metadata):
+def test_new_session_without_model_or_login_asks_to_configure_pi(tmp_path, error):
+    async def refuse(**_values):
         raise error
 
     async def ignore(*_args):
         return {}
 
-    monkeypatch.setattr(AgentClient, "open_session", refuse)
-    client = PiClient(ignore, ignore, agent_dir=tmp_path)
+    client = AgentClient(ignore, ignore, dialect=PiDialect(agent_dir=tmp_path))
+    client.connection = SimpleNamespace(new_session=refuse)
     with pytest.raises(AcpError, match="完成登录或模型配置") as raised:
         asyncio.run(client.open_session(str(tmp_path)))
     assert raised.value.code == "pi_authentication_required"
@@ -592,21 +592,20 @@ def test_native_attachment_presentation_survives_scan_without_execution_paths(tm
 
 def test_text_only_model_rejects_images_before_dispatch_and_tracks_model_changes(tmp_path):
     from connector.runtimes.acp.domain.definitions import PromptRejectedBeforeDispatch
-    from connector.runtimes.acp.profiles.pi.client import PiClient
 
     async def callback(*_args):
         raise AssertionError("Rejected input must not execute or publish a user message")
 
-    client = PiClient(callback, callback, agent_dir=tmp_path)
+    client = AgentClient(callback, callback, dialect=PiDialect(agent_dir=tmp_path))
     option = {"id": "model", "category": "model", "currentValue": "provider/text", "_meta": {"aa": {
         "modelInputModalities": {"provider/text": ["text"], "provider/vision": ["text", "image"]},
     }}}
     client.configuration["s"] = [option]
     with pytest.raises(PromptRejectedBeforeDispatch, match="不支持图片"):
         asyncio.run(client.prompt("s", "describe", "message", [{"type": "image"}]))
-    assert not client.active_messages
+    assert not client.turns
     option["currentValue"] = "provider/vision"
-    client.validate_input("s", [{"type": "image"}])
+    client.check_input("s", [{"type": "image"}])
     assert client.attachment_metadata("s")["inputModalities"] == ["text", "image"]
 
 

@@ -724,6 +724,32 @@ class CodexSdkClient:
         async with lock:
             await self._resume_thread(low_level_client, request)
 
+    async def _persisted_thread_route(
+        self, low_level_client: Any, thread_id: str
+    ) -> tuple[str | None, str | None]:
+        """The model and provider a thread last used, read without taking its writer lock."""
+        read = getattr(low_level_client, "request", None)
+        if not callable(read):
+            return None, None
+        try:
+            result = await read(
+                "thread/read",
+                {"threadId": thread_id, "includeTurns": False},
+                response_model=CodexRawThreadReadResponse,
+            )
+        except Exception:  # noqa: BLE001 -- resuming without it falls back to Codex's choice
+            logger.exception("codex thread model read failed thread_id={}", thread_id)
+            return None, None
+        thread = result.thread
+        if not isinstance(thread, Mapping):
+            return None, None
+        model = thread.get("model")
+        provider = thread.get("modelProvider") or thread.get("model_provider")
+        return (
+            model if isinstance(model, str) and model else None,
+            provider if isinstance(provider, str) and provider else None,
+        )
+
     async def _resume_thread(
         self, low_level_client: Any, request: CodexResumeThreadRequest
     ) -> None:
@@ -733,9 +759,23 @@ class CodexSdkClient:
         if not callable(thread_resume):
             return
         generation = self._generation
+        model_gateway = self._model_gateway
+        if model_gateway is not None:
+            saved_model, saved_provider = await self._persisted_thread_route(
+                low_level_client, request.thread_id
+            )
+            if saved_provider is not None and saved_provider != CODEX_MODEL_GATEWAY_PROVIDER_ID:
+                # Threads from Codex itself (or created before the gateway was
+                # configured) stay on their own provider; Codex refuses to move
+                # a thread to another provider on resume.
+                model_gateway = None
+            elif request.model is None:
+                # Passing the gateway provider makes Codex resume on config.toml's
+                # model; keep the thread on the model it last used instead.
+                request = replace(request, model=saved_model)
         try:
             params = codex_permission_params(
-                codex_thread_resume_params(request, self._model_gateway),
+                codex_thread_resume_params(request, model_gateway),
                 request.sandbox,
                 "sandbox",
             )
@@ -1404,6 +1444,7 @@ def _sdk_config(sdk: Any, config: RuntimeConfig) -> Any:
             if isinstance(values.get("codexExecutablePath"), str)
             else None
         ),
+        model_gateway=model_gateway_from_config(values.get("modelGateway")) is not None,
     )
     logger.info(
         "codex sdk runtime binary selected mode={} source={} codex_bin={} login_shell={}",
