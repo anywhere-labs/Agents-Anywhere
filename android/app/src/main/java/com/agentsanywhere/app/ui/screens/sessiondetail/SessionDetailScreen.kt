@@ -1768,7 +1768,9 @@ fun SessionDetailScreen(
             stringResource(R.string.session_busy_placeholder)
         runtimeStatus in setOf(SessionRuntimeStatus.WaitingApproval, SessionRuntimeStatus.Blocked) ->
             stringResource(R.string.session_waiting_approval_placeholder)
-        runtimeStatus == SessionRuntimeStatus.Error -> stringResource(R.string.session_error_placeholder)
+        runtimeStatus == SessionRuntimeStatus.Error ->
+            runtimeErrorText(context, state.runtime.error?.get("code") as? String, null)
+                ?: stringResource(R.string.session_error_placeholder)
         runtimeStatus == SessionRuntimeStatus.Disconnected -> stringResource(R.string.session_device_offline_placeholder)
         !canUseSendMessage && !canUseCommands -> stringResource(R.string.session_send_unavailable)
         inputEnabled -> stringResource(R.string.session_reply_to, replyTarget)

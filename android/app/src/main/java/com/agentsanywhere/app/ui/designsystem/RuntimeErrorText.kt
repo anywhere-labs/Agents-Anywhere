@@ -30,6 +30,7 @@ fun runtimeErrorRes(code: String?): Int? = when (code) {
     "attachments_too_large" -> R.string.runtime_error_attachments_too_large
     "attachments_unsupported" -> R.string.runtime_error_attachments_unsupported
     "capability_unavailable" -> R.string.runtime_error_capability_unavailable
+    "claude_resume_no_response" -> R.string.runtime_error_claude_resume_no_response
     "command_unavailable" -> R.string.runtime_error_command_unavailable
     "configuration_changed" -> R.string.runtime_error_configuration_changed
     "configuration_conflict" -> R.string.runtime_error_configuration_conflict

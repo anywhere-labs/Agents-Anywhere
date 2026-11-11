@@ -27589,6 +27589,23 @@
           }
         }
       }
+    },
+    "Claude 恢复会话后没有回复这条消息。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude did not reply to this message after resuming the session."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude 恢复会话后没有回复这条消息。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

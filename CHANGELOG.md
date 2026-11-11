@@ -30,6 +30,7 @@
 
 ### Codex 与 Claude
 
+- Claude 的动态唤醒在等待时会保留原进程，恢复会话后的首条消息会与旧后台任务通知区分，通知伴随消息且 Claude 未回复时会显示错误。（[#619](https://github.com/anywhere-labs/Agents-Anywhere/pull/619)）
 - 修复 Codex 接管后原客户端离线导致发送失败、停止无效，以及任务已完成却仍显示运行中的问题；发送结果未知时不会自动重发消息，恢复旧任务状态时不会结束新回合或重复报告完成。（[#541](https://github.com/anywhere-labs/Agents-Anywhere/pull/541)）
 - Codex 的定时会话扫描只写入真正变化的会话，会话数量较多的部署数据库写入明显下降，并减少这些写入拖慢其他请求的情况。（[#557](https://github.com/anywhere-labs/Agents-Anywhere/pull/557)）
 - Connector 的 Codex 会话清单没有变化时不再重复上报，只每隔约 10 分钟核对一次；重连和启动时的扫描也会错开，故障恢复时不再集中冲击 Server。（[#555](https://github.com/anywhere-labs/Agents-Anywhere/pull/555)）
@@ -310,6 +311,8 @@
 - 快速设置里每种 Agent 只显示一次；删除 Runtime 后会真正移除，不再占用配置名额。（[#290](https://github.com/anywhere-labs/Agents-Anywhere/pull/290)）
 
 ### Android
+
+- 会话里的 Markdown 表格以卡片显示，支持复制、下载带时间戳的 CSV 和全屏查看，两列表格按内容调整列宽，多列表格可横向滚动，点击号码可呼叫、复制号码或添加联系人。（[#486](https://github.com/anywhere-labs/Agents-Anywhere/pull/486)）
 
 - 扫码登录的 token 过期后自动续期，终端重连前也会刷新凭据，修复项目列表一直加载。（[#260](https://github.com/anywhere-labs/Agents-Anywhere/pull/260)）
 - 输入框随软键盘上移，不再被键盘挡住。（[#255](https://github.com/anywhere-labs/Agents-Anywhere/pull/255)）
