@@ -30,7 +30,7 @@
 
 ### Codex 与 Claude
 
-- 从 Agents Anywhere 新建的 Codex 会话，在 Codex App 里点开后不再从所属项目跳到无项目的对话里。
+- 从 Agents Anywhere 新建的 Codex 会话，在 Codex App 里点开后不再从所属项目跳到无项目的对话里。（[#620](https://github.com/anywhere-labs/Agents-Anywhere/pull/620)）
 - Claude 的动态唤醒在等待时会保留原进程，恢复会话后的首条消息会与旧后台任务通知区分，通知伴随消息且 Claude 未回复时会显示错误。（[#619](https://github.com/anywhere-labs/Agents-Anywhere/pull/619)）
 - 修复 Codex 接管后原客户端离线导致发送失败、停止无效，以及任务已完成却仍显示运行中的问题；发送结果未知时不会自动重发消息，恢复旧任务状态时不会结束新回合或重复报告完成。（[#541](https://github.com/anywhere-labs/Agents-Anywhere/pull/541)）
 - Codex 的定时会话扫描只写入真正变化的会话，会话数量较多的部署数据库写入明显下降，并减少这些写入拖慢其他请求的情况。（[#557](https://github.com/anywhere-labs/Agents-Anywhere/pull/557)）
