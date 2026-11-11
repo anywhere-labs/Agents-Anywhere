@@ -92,6 +92,8 @@
 
 ### Android
 
+- 折叠屏展开或使用宽窗口时，可以在左侧切换项目和会话、在右侧查看消息，并按需收起侧栏；窄窗口保留手机单栏导航，切换会话或窗口宽度时保留各会话草稿和阅读位置。（[#478](https://github.com/anywhere-labs/Agents-Anywhere/pull/478)）
+
 - Desktop 设备的详情页新增「设备设置」，可以远程打开或关闭「关机时询问是否退出」。（[#596](https://github.com/anywhere-labs/Agents-Anywhere/pull/596)）
 - Agent 连接断开后，没有原生历史的会话可以点「恢复会话」接着用。（[#591](https://github.com/anywhere-labs/Agents-Anywhere/pull/591)）
 - Android 的「模型网关」与 Web、Desktop 相同：首页列出网关和「已应用」（不单列「设备自带配置」，退出 Tokens Anywhere 后自动切回），点进网关后再应用、查看配置和 Runtime；Tokens Anywhere 按「账户／模型与连接／Runtime」分页，可以退出账户。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)、[#598](https://github.com/anywhere-labs/Agents-Anywhere/pull/598)）
