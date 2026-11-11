@@ -312,7 +312,7 @@
 
 ### Android
 
-- 表格改为卡片样式：顶部可以复制、下载 CSV、全屏查看，两列表格按内容自适应、三列及以上可以左右滑动（[#486](https://github.com/anywhere-labs/Agents-Anywhere/pull/486)）
+- 会话里的 Markdown 表格以卡片显示，支持复制、下载带时间戳的 CSV 和全屏查看，两列表格按内容调整列宽，多列表格可横向滚动，点击号码可呼叫、复制号码或添加联系人。（[#486](https://github.com/anywhere-labs/Agents-Anywhere/pull/486)）
 
 - 扫码登录的 token 过期后自动续期，终端重连前也会刷新凭据，修复项目列表一直加载。（[#260](https://github.com/anywhere-labs/Agents-Anywhere/pull/260)）
 - 输入框随软键盘上移，不再被键盘挡住。（[#255](https://github.com/anywhere-labs/Agents-Anywhere/pull/255)）
