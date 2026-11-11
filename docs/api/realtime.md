@@ -146,7 +146,19 @@ The current dashboard WebSocket sends:
 dashboard.snapshot
 ```
 
-on connect, and sends another full snapshot when a debounced `dashboard.changed` invalidation arrives.
+on connect, and sends another full snapshot when a `dashboard.changed` invalidation arrives.
+
+Invalidations are throttled per user on each Server worker. The first change after a
+quiet period is delivered at once; further changes within
+`AGENT_SERVER_DASHBOARD_MIN_INTERVAL_SECONDS` (default 2 seconds) collapse into one
+trailing delivery, and every Dashboard socket of that user on the worker shares one
+snapshot build. A client therefore sees the latest state at most one interval late
+and never misses the final change of a burst.
+
+The snapshot also carries the owned runtime instances (`runtimes`) and the model
+configuration overview (`modelConfig`: profiles, where they are applied and the
+Tokens Anywhere link). Neither contains API keys or tokens; see
+[Model configuration API](./model-config.md).
 
 Each snapshot contains the complete owned project and session metadata inventories,
 including both active and archived sessions. `sessionPages` reports no more pages.
@@ -154,6 +166,11 @@ Web and iOS group, filter and sort these sessions locally. Expanding a project,
 switching a device filter or opening archives does not fetch another session list.
 An explicit HTTP refresh reads `/projects` and `/sessions/list` once each, alongside
 the connector list; it does not issue a request for every project or archive state.
+
+Building the session inventory does not read the timeline. Each timeline write
+stores a summary of the session's newest timeline item (its order, `orderSeq` and
+display time) on the session in the same transaction, and the snapshot reads only
+session rows. `lastItemAt`, `lastItemOrderSeq` and `sortAt` keep their meaning.
 
 Project mutations refresh the shared project list. A session with an unknown or
 missing project binding also triggers a shared project refresh and remains visible
@@ -240,12 +257,14 @@ updates.
 The `runtime.start` reply and the `runtime.statusChanged` notification carry
 the instance lifecycle `status` plus an optional `error` (only meaningful for
 `error`) and an optional `phase` (`{code, message, retryable?}`) that names the
-step a non-error status is in, for example `syncing` while a DSH instance is
-`starting`. A phase is progress, not a fault: the Server stores it on the
-runtime instance (`phase` in `RuntimeInstanceStatus`), does not re-issue
-`runtime.start` while an instance reports a starting phase (session operations
-get a retryable `409 runtime_starting` instead), and clients render it as
-progress text next to the `starting` badge.
+step a non-error status is in, for example `waiting_bridge` while a DSH
+instance is `starting`, or `syncing` / `sync_interrupted` while a `running` DSH
+instance rebuilds its session baseline (session operations already work then).
+A phase is progress, not a fault: the Server stores it on the runtime instance
+(`phase` in `RuntimeInstanceStatus`), does not re-issue `runtime.start` while
+an instance reports a starting phase (session operations get a retryable
+`409 runtime_starting` instead), and clients render it as progress text next to
+the `starting` or `running` badge.
 
 `runtime.discover` includes runtime-native capability inputs. They are not the
 primary frontend contract. The frontend contract is effective capability:
@@ -265,6 +284,18 @@ Runtime host live events are sent as connector WebSocket notifications on
 explicit bulk sync and disconnected WebSocket fallback; it must still compute
 changed timeline items and publish session WebSocket events for frontend
 convergence.
+
+`timeline.sync` with `complete: true` replaces the whole session timeline: the
+Server writes only changed items and deletes items the snapshot no longer holds.
+A snapshot too large for one request is sent as pages, each carrying the optional
+`snapshotRange: {afterOrderSeq?, throughOrderSeq?}`. A page with a range holds every
+snapshot item with `afterOrderSeq < orderSeq <= throughOrderSeq` (a missing or null
+bound is unbounded), and the Server replaces only that range regardless of
+`complete`. Such a page never resets clients to its items: changed items are
+published incrementally, and a page that deletes or moves stored rows raises the
+timeline reset fence and asks clients to refetch. An inverted or out-of-range
+bound is rejected with `invalid_snapshot_range`. See
+[DSH snapshot uploads](../dsh-snapshot-uploads.md).
 
 `POST /api/v2/connector/ingest` isolates notification failures inside a batch.
 One malformed or conflicting notification must not produce HTTP 500 or prevent

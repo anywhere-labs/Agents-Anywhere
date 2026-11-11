@@ -73,6 +73,7 @@ class ApiClient(
         body: JSONObject,
         authorizationToken: String? = null,
         readTimeoutSeconds: Long? = null,
+        headers: Map<String, String> = emptyMap(),
     ): JSONObject {
         return requestJson(
             serverUrl = serverUrl,
@@ -81,6 +82,7 @@ class ApiClient(
             bodyText = body.toString(),
             authorizationToken = authorizationToken,
             readTimeoutSeconds = readTimeoutSeconds,
+            headers = headers,
         )
     }
 
@@ -249,9 +251,10 @@ class ApiClient(
         authorizationToken: String?,
         readTimeoutSeconds: Long? = null,
         requestBody: RequestBody? = null,
+        headers: Map<String, String> = emptyMap(),
     ): JSONObject {
         return withTokenRefresh(serverUrl, authorizationToken) { token ->
-            requestJsonOnce(serverUrl, path, method, bodyText, token, readTimeoutSeconds, requestBody)
+            requestJsonOnce(serverUrl, path, method, bodyText, token, readTimeoutSeconds, requestBody, headers)
         }
     }
 
@@ -263,6 +266,7 @@ class ApiClient(
         authorizationToken: String?,
         readTimeoutSeconds: Long?,
         requestBody: RequestBody?,
+        headers: Map<String, String> = emptyMap(),
     ): JSONObject {
         return try {
             val resolvedRequestBody = requestBody ?: when {
@@ -289,6 +293,7 @@ class ApiClient(
                         if (!authorizationToken.isNullOrBlank()) {
                             header("Authorization", "Bearer $authorizationToken")
                         }
+                        headers.forEach { (name, value) -> header(name, value) }
                     }
                     .build()
 

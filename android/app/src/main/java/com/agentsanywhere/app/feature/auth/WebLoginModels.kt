@@ -105,6 +105,20 @@ internal fun pkceChallenge(codeVerifier: String): String {
     return Base64.getUrlEncoder().withoutPadding().encodeToString(digest)
 }
 
+internal fun registerWebLoginScripts(
+    viewportScript: String,
+    webOrigin: String,
+    register: (String, Set<String>) -> Unit,
+) {
+    val origin = requireNotNull(normalizeServerOrigin(webOrigin)) {
+        "Web login URL must be an HTTP(S) origin."
+    }
+    // Layout recovery follows IdP redirects; network rewriting stays on our login origin.
+    val apiScript = webLoginApiOriginBridgeScript(origin)
+    register(viewportScript, setOf("*"))
+    register(apiScript, setOf(origin))
+}
+
 internal fun webLoginApiOriginBridgeScript(webOrigin: String): String {
     val origin = requireNotNull(normalizeServerOrigin(webOrigin)) {
         "Web login URL must be an HTTP(S) origin."
@@ -116,43 +130,6 @@ internal fun webLoginApiOriginBridgeScript(webOrigin: String): String {
            const webOrigin = ${JSONObject.quote(origin)};
            const apiNamespace = "/api/v2";
            const legacyApiRoute = $legacyApiRoute;
-           const viewportHeightProperty = "--agents-anywhere-android-viewport-height";
-           const installViewportHeightFix = () => {
-             const root = document.documentElement;
-             if (!root) {
-               window.setTimeout(installViewportHeightFix, 0);
-               return;
-             }
-
-             const style = document.createElement("style");
-             // Viewport units can resolve to zero in WebView even when innerHeight is valid.
-             // Cover the login form and OAuth/loading containers as well as the document.
-             style.textContent = `
-               html, body {
-                 height: var(${'$'}{viewportHeightProperty}) !important;
-                 min-height: var(${'$'}{viewportHeightProperty}) !important;
-               }
-               .h-dvh {
-                 height: var(${'$'}{viewportHeightProperty}) !important;
-               }
-               .min-h-screen {
-                 min-height: var(${'$'}{viewportHeightProperty}) !important;
-               }
-             `;
-             root.appendChild(style);
-
-             const updateViewportHeight = () => {
-               const height = window.visualViewport?.height || window.innerHeight;
-               if (height > 0) {
-                 root.style.setProperty(viewportHeightProperty, `${'$'}{Math.round(height)}px`);
-               }
-             };
-             updateViewportHeight();
-             window.addEventListener("resize", updateViewportHeight);
-             window.visualViewport?.addEventListener("resize", updateViewportHeight);
-           };
-           installViewportHeightFix();
-
            const rewriteApiUrl = (value) => {
             try {
               const url = new URL(String(value), window.location.href);

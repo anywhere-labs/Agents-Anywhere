@@ -68,5 +68,27 @@ nonisolated struct V2DashboardSnapshot: Decodable, Hashable {
     let projects: [V2Project]
     let sessionPages: V2DashboardSessionPages
     let sessions: [V2SessionMeta]
+    /// Every runtime instance; nil when the Server does not send the list.
+    let runtimes: [V2DeviceRuntime]?
+    /// Model profiles, assignments and the Tokens Anywhere link; nil when absent.
+    let modelConfig: V2ModelConfigOverview?
     let serverTime: String
+
+    private enum CodingKeys: String, CodingKey {
+        case type, connectors, projects, sessionPages, sessions, runtimes, modelConfig, serverTime
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        type = try container.decode(String.self, forKey: .type)
+        connectors = try container.decode([V2Connector].self, forKey: .connectors)
+        projects = try container.decode([V2Project].self, forKey: .projects)
+        sessionPages = try container.decode(V2DashboardSessionPages.self, forKey: .sessionPages)
+        sessions = try container.decode([V2SessionMeta].self, forKey: .sessions)
+        // Model configuration is additive: a shape this client does not know
+        // must never stop the device and session lists from updating.
+        runtimes = (try? container.decodeIfPresent(V2LossyArray<V2DeviceRuntime>.self, forKey: .runtimes))?.values
+        modelConfig = try? container.decodeIfPresent(V2ModelConfigOverview.self, forKey: .modelConfig)
+        serverTime = try container.decode(String.self, forKey: .serverTime)
+    }
 }

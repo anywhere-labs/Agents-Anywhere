@@ -42,6 +42,7 @@ import com.composables.icons.lucide.List as ListIcon
 import com.composables.icons.lucide.Moon
 import com.composables.icons.lucide.PackageCheck
 import com.composables.icons.lucide.Server
+import com.composables.icons.lucide.SlidersHorizontal
 import kotlinx.coroutines.launch
 
 private enum class ProfileDetailPage { None, Account, Language, Updates }
@@ -76,6 +77,7 @@ fun ProfileSettingsDrawer(
     onClearAvatar: suspend () -> Result<AuthMeResponse>,
     onChangePassword: suspend (String) -> Result<Unit>,
     onOpenArchivedSessions: () -> Unit,
+    onOpenModelConfig: () -> Unit,
     onSignOut: () -> Unit,
     onClose: () -> Unit,
     onNotice: (String, Boolean) -> Unit,
@@ -282,6 +284,15 @@ fun ProfileSettingsDrawer(
                                         appUpdateViewModel.checkForUpdate(showPrompt = false)
                                     }
                                 },
+                            )
+                        }
+                    }
+                    item("model-config") {
+                        ProfileCard {
+                            ProfileRow(
+                                icon = Lucide.SlidersHorizontal,
+                                title = stringResource(R.string.model_config_title),
+                                onClick = onOpenModelConfig,
                             )
                         }
                     }

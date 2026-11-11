@@ -9,9 +9,10 @@ from ...runtime import AcpRuntime
 
 
 class ManagedPiRuntime(AcpRuntime):
-    def __init__(self, *args, prepare_launch, **kwargs):
+    def __init__(self, *args, prepare_launch, settings_dir=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.prepare_launch = prepare_launch
+        self.settings_dir = settings_dir
         self.startup_task = None
         self.startup_error = None
         self.ready = False
@@ -40,6 +41,17 @@ class ManagedPiRuntime(AcpRuntime):
             self.startup_error = error
             await self.health("error", error={"code": getattr(error, "code", "pi_environment_failed"),
                                              "message": str(error) if isinstance(error, AcpError) else "Pi 运行环境准备失败，请检查配置和网络后重试。"})
+
+    async def apply_model_setting(self, config):
+        # settings.json only exists once the environment is prepared; until
+        # then the next start writes it from the new config anyway.
+        if not self.ready or self.settings_dir is None:
+            return False
+        from .settings import update_default_model
+
+        await asyncio.to_thread(update_default_model, self.settings_dir, dict(config.values))
+        self.config = config
+        return True
 
     async def wait_ready(self):
         await self.startup_task

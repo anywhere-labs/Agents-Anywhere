@@ -556,7 +556,7 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     setBusy(true)
     const restartsConnector = Boolean(
       state?.running && (
-        "uvPath" in settings || "pythonPath" in settings || "uvPypiIndexUrl" in settings || "uvPythonInstallMirror" in settings
+        "uvPath" in settings || "pythonPath" in settings || "uvPypiIndexUrl" in settings || "uvPythonInstallMirror" in settings || "connectorProxy" in settings
       ),
     )
     if (restartsConnector) setConnectionStatus("connecting")

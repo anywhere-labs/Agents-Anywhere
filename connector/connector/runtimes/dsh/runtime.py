@@ -36,7 +36,11 @@ from connector.runtimes.dsh.bridge.client import (
     BridgeUnavailableError,
 )
 from connector.runtimes.dsh.bridge.host import bridge_host
-from connector.runtimes.dsh.bridge.sync import SyncRelay
+from connector.runtimes.dsh.bridge.sync import (
+    SYNC_INTERRUPTED_PHASE,
+    SYNCING_PHASE,
+    SyncRelay,
+)
 
 BRIDGE_POLL_INTERVAL_SECONDS = 5.0
 # A relay that died from a bug is rebuilt after this pause, not in a tight loop.
@@ -64,6 +68,8 @@ class DshRuntime(AgentRuntime):
         self._restart_task: asyncio.Task[None] | None = None
         self._sync: SyncRelay | None = None
         self._relay_restart_task: asyncio.Task[None] | None = None
+        # Sessions whose history the backend refused, shared by every relay.
+        self._quarantined: dict[str, Any] = {}
         self._sync_mode = "events"
 
     @property
@@ -76,10 +82,16 @@ class DshRuntime(AgentRuntime):
             return
         await self._ensure_client()
         async with self._connect_lock:
+            if self._sync is not None and not self._sync.baseline_complete:
+                # A subscription still delivering its inventory, or about to
+                # resubscribe, already produces a fresh baseline. Restarting it
+                # on every backend reconnect could keep it from ever finishing.
+                logger.info("DSH resynchronize skipped; event sync is still building its baseline")
+                return
             if self._sync is not None:
                 await self._sync.close()
             if not self._stopping and self._client is not None and self.sync_mode == "events":
-                self._sync = SyncRelay(self._client, self.host, on_exit=self._relay_exited)
+                self._sync = SyncRelay(self._client, self.host, on_exit=self._relay_exited, quarantined=self._quarantined)
                 self._sync.start()
 
     @property
@@ -504,10 +516,9 @@ class DshRuntime(AgentRuntime):
             self._client = client
             self._sync_mode = "events" if result.get("features", {}).get("syncMode") == "events" else "polling"
             if self._sync_mode == "events":
-                await self.host.runtime_health_update("starting", phase={
-                    "code": "syncing", "message": "正在同步 DSH 会话…", "retryable": True,
-                })
-                self._sync = SyncRelay(client, self.host, on_exit=self._relay_exited)
+                # The Bridge answers now; the event feed catching up is progress, not unavailability.
+                await self.host.runtime_health_update("running", phase=SYNCING_PHASE)
+                self._sync = SyncRelay(client, self.host, on_exit=self._relay_exited, quarantined=self._quarantined)
                 self._sync.start()
             else:
                 with suppress(Exception):
@@ -574,11 +585,11 @@ class DshRuntime(AgentRuntime):
             client = self._client
             if self._stopping or self._sync is not failed or client is None or not client.connected:
                 return
+            # Its quarantine retries now belong to the replacement.
+            await failed.close()
             with suppress(Exception):
-                await self.host.runtime_health_update("starting", phase={
-                    "code": "sync_interrupted", "message": "DSH 会话同步中断，正在重试…", "retryable": True,
-                })
-            self._sync = SyncRelay(client, self.host, on_exit=self._relay_exited)
+                await self.host.runtime_health_update("running", phase=SYNC_INTERRUPTED_PHASE)
+            self._sync = SyncRelay(client, self.host, on_exit=self._relay_exited, quarantined=self._quarantined)
             self._sync.start()
 
     async def _handle_exit(self, error: BaseException | None) -> None:

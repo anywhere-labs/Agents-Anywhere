@@ -8,7 +8,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.agentsanywhere.app.R
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -18,7 +17,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -85,6 +83,10 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import com.agentsanywhere.app.R
+import com.agentsanywhere.app.feature.files.inlineCodeFilePath
+import com.agentsanywhere.app.feature.files.normalizeSpacedLinkDestinations
+import com.agentsanywhere.app.feature.files.sessionFileLinkPath
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import java.util.UUID
@@ -174,7 +176,7 @@ internal fun AgentMarkdownText(
     }
     val uriHandler = LocalUriHandler.current
     val (mathSource, document) = remember(text) {
-        val raw = text.ifBlank { "_(no content)_" }
+        val raw = normalizeSpacedLinkDestinations(text.ifBlank { "_(no content)_" })
         val extracted = MarkdownMathSource.parse(raw)
         val parsed = markdownParser.parse(normalizeMarkdownTables(extracted.markdown)) as Document
         extracted to parsed
@@ -221,7 +223,7 @@ private fun MarkdownBlocks(
                         if (codeLiteral.needsWrappingCode()) {
                             MarkdownWrappingCodeChip(
                                 code = codeLiteral,
-                                path = parseFileRef(codeLiteral),
+                                path = inlineCodeFilePath(codeLiteral),
                                 styles = styles,
                                 onOpenFile = onOpenFile,
                             )
@@ -296,7 +298,7 @@ private fun MarkdownBlocks(
                         .background(styles.border),
                 )
                 is HtmlBlock -> MarkdownInlineText(
-                    nodes = listOf(Text(mathSource.restoreLiteral(node.literal))),
+                    nodes = listOf(HtmlInline().apply { literal = mathSource.restoreLiteral(node.literal) }),
                     mathSource = mathSource,
                     textStyle = styles.body,
                     styles = styles,
@@ -491,8 +493,32 @@ private fun MarkdownTable(
 
         Column {
             rows.forEachIndexed { rowIndex, row ->
-                Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min), verticalAlignment = Alignment.Top) {
-                    row.children().filterIsInstance<TableCell>().forEachIndexed { columnIndex, cell ->
+                val cells = row.children().filterIsInstance<TableCell>()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        // Image cells use SubcomposeLayout, so draw the grid after normal row measurement.
+                        .drawBehind {
+                            val stroke = 0.5.dp.toPx()
+                            if (rowIndex == 0 || cells.firstOrNull()?.isHeader == true) {
+                                drawRect(styles.codeBackground)
+                            }
+                            if (rowIndex == 0) {
+                                drawLine(styles.border, Offset.Zero, Offset(size.width, 0f), stroke)
+                            }
+                            drawLine(styles.border, Offset(0f, size.height), Offset(size.width, size.height), stroke)
+                            drawLine(styles.border, Offset.Zero, Offset(0f, size.height), stroke)
+                            drawLine(styles.border, Offset(size.width, 0f), Offset(size.width, size.height), stroke)
+                            var edge = 0f
+                            for (columnIndex in 0 until cells.lastIndex) {
+                                edge += widths[columnIndex].dp.roundToPx()
+                                val x = if (layoutDirection == LayoutDirection.Ltr) edge else size.width - edge
+                                drawLine(styles.border, Offset(x, 0f), Offset(x, size.height), stroke)
+                            }
+                        },
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    cells.forEachIndexed { columnIndex, cell ->
                         CompositionLocalProvider(
                             LocalReadingPart provides "$parentPart/table:$rowIndex:$columnIndex",
                         ) {
@@ -508,10 +534,7 @@ private fun MarkdownTable(
                             }
                             Box(
                                 modifier = cellModifier
-                                    .fillMaxHeight()
                                     .clipToBounds()
-                                    .background(if (cell.isHeader || rowIndex == 0) styles.codeBackground else Color.Transparent)
-                                    .border(0.5.dp, styles.border)
                                     .padding(horizontal = 10.dp, vertical = 8.dp),
                             ) {
                                 val cellText = cell.children().joinToString("") { it.plainTableText() }
@@ -950,6 +973,30 @@ private fun MarkdownInlineText(
     phoneChips: Boolean = false,
     onPlainTap: (() -> Unit)? = null,
 ) {
+    val imageParts = remember(nodes, mathSource) {
+        splitMarkdownImages(nodes, mathSource::restoreLiteral)
+    }
+    if (imageParts.any { it is MarkdownImagePart.Picture }) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            imageParts.forEach { part ->
+                when (part) {
+                    is MarkdownImagePart.Picture -> MarkdownImage(part.source, part.description)
+                    is MarkdownImagePart.Words -> MarkdownInlineText(
+                        nodes = part.nodes,
+                        mathSource = mathSource,
+                        textStyle = textStyle,
+                        styles = styles,
+                        onOpenFile = onOpenFile,
+                        onOpenUrl = onOpenUrl,
+                        softBreakTokens = softBreakTokens,
+                        phoneChips = phoneChips,
+                        onPlainTap = onPlainTap,
+                    )
+                }
+            }
+        }
+        return
+    }
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
     val maxInlineMathWidthPx = with(density) { 280.dp.roundToPx() }
@@ -1063,7 +1110,7 @@ private fun buildMarkdownInline(
                     is HardLineBreak -> append("\n")
                     is Code -> {
                         val codeLiteral = mathSource.restoreLiteral(node.literal)
-                        val path = parseFileRef(codeLiteral)
+                        val path = inlineCodeFilePath(codeLiteral)
                         if (codeLiteral.needsWrappingCode()) {
                             if (path != null) pushStringAnnotation(AnnotationFile, path)
                             withSpan(
@@ -1103,12 +1150,28 @@ private fun buildMarkdownInline(
                     }
                     is Link -> {
                         val destination = mathSource.restoreLiteral(node.destination)
-                        val filePath = if (isFilePath(destination)) stripLine(destination) else null
+                        val filePath = sessionFileLinkPath(destination)
                         pushStringAnnotation(if (filePath != null) AnnotationFile else AnnotationUrl, filePath ?: destination)
                         withSpan(SpanStyle(color = styles.linkColor, textDecoration = TextDecoration.Underline)) {
                             appendNodes(node.children())
                         }
                         pop()
+                    }
+                    is ImageTextWrapper -> {
+                        val wrapper = node.styleNode
+                        if (wrapper is Link) {
+                            val destination = mathSource.restoreLiteral(wrapper.destination)
+                            val filePath = sessionFileLinkPath(destination)
+                            pushStringAnnotation(if (filePath != null) AnnotationFile else AnnotationUrl, filePath ?: destination)
+                        }
+                        val span = when (wrapper) {
+                            is Link -> SpanStyle(color = styles.linkColor, textDecoration = TextDecoration.Underline)
+                            is Emphasis -> SpanStyle(fontStyle = FontStyle.Italic)
+                            is StrongEmphasis -> SpanStyle(fontWeight = FontWeight.Bold)
+                            else -> SpanStyle(textDecoration = TextDecoration.LineThrough)
+                        }
+                        withSpan(span) { appendNodes(node.content) }
+                        if (wrapper is Link) pop()
                     }
                     is Image -> appendNodes(node.children())
                     is HtmlInline -> append(mathSource.restoreLiteral(node.literal))
@@ -1615,24 +1678,6 @@ private fun splitTableRowCells(line: String): List<String> {
 private fun String.isMarkdownFenceBoundary(): Boolean {
     val trimmed = trimStart()
     return trimmed.startsWith("```") || trimmed.startsWith("~~~")
-}
-
-private fun stripLine(path: String): String = path.replace(Regex(""":\d+(:\d+)?$"""), "")
-
-private fun parseFileRef(text: String): String? {
-    if (text.isBlank() || text.contains(" ") || text.contains("://")) return null
-    if (!text.contains("/")) return null
-    if (!Regex("""\.[a-zA-Z0-9]+(?::\d+(?::\d+)?)?$""").containsMatchIn(text)) return null
-    return stripLine(text)
-}
-
-private fun isFilePath(href: String): Boolean {
-    if (href.isBlank()) return false
-    return !href.startsWith("http://") &&
-        !href.startsWith("https://") &&
-        !href.startsWith("mailto:") &&
-        !href.startsWith("#") &&
-        !href.startsWith("//")
 }
 
 private val latexExtensionsRegistered = AtomicBoolean(false)

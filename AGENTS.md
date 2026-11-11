@@ -42,14 +42,14 @@ Agents Anywhere 是一个跨设备的 Agent 工作台。工作设备上的 **Con
 - 本地联调用 `./local-up.sh`（Server + Web，可加 `--with-connector`）或 `./desktop-local-up.sh`。**不要**使用 `--reset-data`，除非用户明确要求，因为它会删除本地数据库。
 - Server 测试需要 PostgreSQL：通过 `AGENT_SERVER_TEST_DB_URL` 指向一个名字含 `test` 的一次性数据库（本地用 `docker/docker-compose.local.yml` 的 postgres，建库和环境变量见[开发指南](docs/development.md)）；测试会清空该库的所有表，绝不能指向开发库或生产库，也不要把生产 URL 带进测试进程。
 - Headless 检查通过，不等于真实安装、OAuth 回调或远程 Runtime 会话已经验证。汇报时要说明哪些验证没有做。
-- CI（`.github/workflows/ci.yml`）按改动路径运行 Connector、Server、Web、Desktop 的 headless 检查和 DSH 插件检查：`connector/` 的改动会连带触发 Server 与插件，`server/` 的改动会连带触发插件，`contracts/` 与工作流文件触发全部。CI 不跑 ruff（仓库里还有历史 lint 问题），也不覆盖 Android / iOS，这些要靠本地检查。
+- CI（`.github/workflows/ci.yml`）按改动路径运行 Connector、Server、Web、Desktop 的 headless 检查和 DSH 插件检查：`connector/` 的改动会连带触发 Server 与插件，`server/` 的改动会连带触发插件，`contracts/`、主 CI 与未知工作流触发全部；`setup-yarn` 仅触发 Web、Desktop 和插件，独立工作流按各自范围验证。ACP/Pi 验证脚本仅触发对应验证，Connector 通用代码仍触发三平台 ACP。CI 不跑 ruff（仓库里还有历史 lint 问题），也不覆盖 Android / iOS，这些要靠本地检查。
 
 ## 跨端修改的规则
 
 - **契约优先**：修改 API 字段、实时事件或 Runtime 协议时，先更新 `contracts/` 或 `docs/api/`，再同步修改 Server、Connector 和所有受影响的客户端。Web / Desktop 的 `protocol:check` 用来发现契约偏差。
 - **能力驱动**：各 Runtime 支持的功能不同，客户端应当根据有效能力（见 [capabilities](docs/api/capabilities.md)）显示或隐藏功能，不要按 provider 名称写死判断。
 - **Server 分层**：`core` 不能导入外层；`services` 不能导入 FastAPI、API 模块或具体的 `Store`。这些规则由 `server/tests/test_architecture_boundaries.py` 强制检查。
-- **数据库**：schema 变化需要新增 Alembic 迁移 `server/migrations/versions/v2_N.py`，编号接着现有最大值递增，不要修改已发布的迁移。
+- **数据库**：schema 变化需要新增 Alembic 迁移 `server/migrations/versions/v2_N.py`，编号接着现有最大值递增，不要修改已发布的迁移。并行 PR 撞号时，后合入的 PR 改号，步骤见[开发指南](docs/development.md#并行-pr-的数据库迁移)。
 - 多端功能（例如排队消息、计划审阅）通常要同时修改 Web、Desktop、Android、iOS。如果只修改了其中一部分，要在 PR 中写明哪些端还没有跟进。
 
 ## 版本号
