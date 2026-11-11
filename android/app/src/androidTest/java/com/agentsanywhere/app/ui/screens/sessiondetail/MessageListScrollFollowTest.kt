@@ -438,18 +438,40 @@ class MessageListScrollFollowTest {
         )
     }
 
-    private fun showMessageList(session: TestSession) {
+    @Test
+    fun returningToACachedVisitRestoresExpandedDetailsAndReadingPosition() {
+        val session = TestSession(initialMessages())
+        val visit = controller.openVisit(session.id)
+        var visible by mutableStateOf(true)
+        showMessageList(session, visit = visit, visible = { visible })
+        expandRunningDetails()
+        val before = compose.onNodeWithText(reasoningTitle).fetchSemanticsNode().boundsInRoot.top
+        compose.runOnIdle { visible = false }
+        compose.waitForIdle()
+        compose.runOnIdle { visible = true }
+        compose.waitForIdle()
+        assertEquals("Returning to a cached history must preserve the expanded reader",
+            before, compose.onNodeWithText(reasoningTitle).fetchSemanticsNode().boundsInRoot.top, 2f)
+        assertReasoningVisible()
+    }
+
+    private fun showMessageList(
+        session: TestSession,
+        visit: com.agentsanywhere.app.feature.sessiondetail.SessionVisit? = null,
+        visible: () -> Boolean = { true },
+    ) {
         compose.setContent {
             CompositionLocalProvider(LocalContext provides context, LocalConfiguration provides context.resources.configuration) {
                 AgentsAnywhereTheme(appearanceMode = AAAppearanceMode.Light) {
                     Box(Modifier.fillMaxSize()) {
-                        MessageList(
+                        if (visible()) MessageList(
                             messages = session.messages,
                             darkMode = false,
                             sessionId = session.id,
                             notices = session.notices,
                             workspaceRoot = "/workspace/project",
                             controller = controller,
+                            visit = visit,
                             forceLatestRequest = session.forceLatestRequest,
                             streamLatestRequest = session.streamRequest,
                             workingLabel = "DeepSeek Harness is working",

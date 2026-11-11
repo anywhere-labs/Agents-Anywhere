@@ -270,28 +270,40 @@ internal class TimelineReadingState {
         return top + localY
     }
 
+    fun snapshot(): List<String> =
+        listOf("following:$following") + expanded.map { "e:${it.key}:${it.value}" } +
+            groupMembers.map { "g:${it.key}:${it.value}" } +
+            codePositions.map { "c:${it.key}:${it.value.first}:${it.value.second}" } +
+            listOfNotNull(anchor?.let {
+                "anchor:" + org.json.JSONObject().put("key", it.key).put("row", it.row)
+                    .put("offset", it.offset).put("context", it.context).put("y", it.y.toDouble()).toString()
+            })
+
     companion object {
-        val Saver = listSaver<TimelineReadingState, String>(
-            save = { state ->
-                listOf("following:${state.following}") + state.expanded.map { "e:${it.key}:${it.value}" } + state.groupMembers.map { "g:${it.key}:${it.value}" } +
-                    state.codePositions.map { "c:${it.key}:${it.value.first}:${it.value.second}" }
-            },
-            restore = { saved -> TimelineReadingState().apply {
-                saved.forEach { entry ->
-                    if (entry.startsWith("following:")) { following = entry.substringAfter(':').toBoolean(); return@forEach }
-                    if (entry.startsWith("c:")) {
-                        val yIndex = entry.lastIndexOf(':')
-                        val xIndex = entry.lastIndexOf(':', yIndex - 1)
-                        codePositions[entry.substring(2, xIndex)] = entry.substring(xIndex + 1, yIndex).toInt() to entry.substring(yIndex + 1).toInt()
-                        return@forEach
-                    }
-                    val key = entry.substring(2, entry.lastIndexOf(':'))
-                    val value = entry.substringAfterLast(':').toBoolean()
-                    if (entry.startsWith("e:")) expanded[key] = value else groupMembers[key] = value
+        fun restore(saved: List<String>) = TimelineReadingState().apply {
+            saved.forEach { entry ->
+                if (entry.startsWith("following:")) { following = entry.substringAfter(':').toBoolean(); return@forEach }
+                if (entry.startsWith("anchor:")) {
+                    val value = org.json.JSONObject(entry.removePrefix("anchor:"))
+                    anchor = Anchor(value.getString("key"), value.getString("row"), value.getInt("offset"),
+                        value.getString("context"), value.getDouble("y").toFloat())
+                    return@forEach
                 }
-            } },
-        )
+                if (entry.startsWith("c:")) {
+                    val yIndex = entry.lastIndexOf(':')
+                    val xIndex = entry.lastIndexOf(':', yIndex - 1)
+                    codePositions[entry.substring(2, xIndex)] = entry.substring(xIndex + 1, yIndex).toInt() to entry.substring(yIndex + 1).toInt()
+                    return@forEach
+                }
+                val key = entry.substring(2, entry.lastIndexOf(':'))
+                val value = entry.substringAfterLast(':').toBoolean()
+                if (entry.startsWith("e:")) expanded[key] = value else groupMembers[key] = value
+            }
+        }
+
+        val Saver = listSaver<TimelineReadingState, String>(save = { it.snapshot() }, restore = { restore(it) })
     }
+
 }
 
 @Composable

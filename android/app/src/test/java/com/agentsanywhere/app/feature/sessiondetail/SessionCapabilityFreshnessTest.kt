@@ -31,10 +31,57 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SessionCapabilityFreshnessTest {
+    @Test
+    fun returningToCachedSessionAcceptsRepeatedOnlinePresenceAtTheSameSequence() {
+        val online = metaEvent(sequence = 5, takeover = true).copy(eventId = "presence-online")
+        val offline = metaEvent(sequence = 5, takeover = true, connectorStatus = "offline")
+            .copy(eventId = "presence-offline")
+        val beforeLeaving = reduceRealtimeEvents(openedSession(takeover = true), listOf(online, offline), emptyList())
+        assertFalse(beforeLeaving.session!!.connectorOnline)
+
+        val cache = SessionStateCache()
+        cache.close(cache.open("account", SESSION_ID, "token"), beforeLeaving)
+        val cached = cache.open("account", SESSION_ID, "token").cached!!
+        val recovered = reduceRealtimeEvents(cached, listOf(online), emptyList())
+
+        assertTrue(recovered.session!!.connectorOnline)
+        assertEquals("seq:5", recovered.realtime.cursor)
+    }
+
+    @Test
+    fun returningToCachedSessionAcceptsRepeatedCapabilitiesAtTheSameSequence() {
+        val available = capabilityEvent(sequence = 5, revision = 5, allowed = true)
+            .copy(eventId = "capabilities-available")
+        val unavailable = capabilityEvent(sequence = 5, revision = 5, allowed = true, available = false)
+            .copy(eventId = "capabilities-unavailable")
+        val beforeLeaving = reduceRealtimeEvents(openedSession(takeover = true), listOf(available, unavailable), emptyList())
+        assertFalse(beforeLeaving.composerEnabled())
+
+        val cache = SessionStateCache()
+        cache.close(cache.open("account", SESSION_ID, "token"), beforeLeaving)
+        val cached = cache.open("account", SESSION_ID, "token").cached!!
+        val recovered = reduceRealtimeEvents(cached, listOf(available), emptyList())
+
+        assertTrue(recovered.composerEnabled())
+    }
+
+    @Test
+    fun returningToCachedSessionStillDeduplicatesDurableEvents() {
+        val snapshot = event("timeline.snapshot", sequence = 5, RemoteSessionEventPayload())
+        val beforeLeaving = reduceRealtimeEvents(openedSession(), listOf(snapshot), emptyList())
+        val cache = SessionStateCache()
+        cache.close(cache.open("account", SESSION_ID, "token"), beforeLeaving)
+        val cached = cache.open("account", SESSION_ID, "token").cached!!
+
+        assertSame(cached, reduceRealtimeEvent(cached, snapshot, emptyList()))
+        assertSame(cached, reduceRealtimeEvents(cached, listOf(snapshot), emptyList()))
+    }
+
     @Test
     fun takeoverPushAfterStoredCapabilitiesEnablesComposer() {
         // The connector's report of its reconnect arrives first.
@@ -125,6 +172,61 @@ class SessionCapabilityFreshnessTest {
         assertTrue(state.composerEnabled())
     }
 
+    @Test
+    fun requiredSnapshotDiscardsStaleHistoryAndCanResetAFutureCursor() {
+        val old = openedSession().copy(
+            timeline = SessionTimelineState(messages = listOf(
+                TimelineMessage("stale", author = MessageAuthor.Agent, text = "stale")), nextSeq = 100),
+            realtime = SessionRealtimeState(cursor = "seq:100", processedEventIds = setOf("old-event")),
+        )
+        val snapshot = openedSession().copy(
+            timeline = SessionTimelineState(messages = listOf(
+                TimelineMessage("fresh", author = MessageAuthor.Agent, text = "fresh")), nextSeq = 3),
+            realtime = SessionRealtimeState(cursor = "seq:3"),
+        )
+        val restored = reduceSnapshotWithLiveState(snapshot, old, old, replaceHistory = true)
+        assertEquals(listOf("fresh"), restored.messages.map { it.id })
+        assertEquals("seq:3", restored.realtime.cursor)
+        assertTrue(restored.realtime.processedEventIds.isEmpty())
+    }
+
+    @Test
+    fun requiredSnapshotKeepsOnlyTimelineObservationsReceivedDuringItsRead() {
+        val old = openedSession().copy(timeline = SessionTimelineState(messages = listOf(
+            TimelineMessage("stale", author = MessageAuthor.Agent, text = "stale")), nextSeq = 5))
+        val incoming = TimelineMessage("during-read", author = MessageAuthor.Agent, text = "new", updatedSeq = 7)
+        val live = old.copy(timeline = old.timeline.copy(
+            messages = old.messages + incoming,
+            orderingItems = listOf(TimelineOrderingItem(incoming.id, 7, 1, 7)), nextSeq = 7),
+            realtime = SessionRealtimeState(cursor = "seq:7"))
+        val snapshot = openedSession().copy(timeline = SessionTimelineState(messages = listOf(
+            TimelineMessage("fresh", author = MessageAuthor.Agent, text = "fresh")), nextSeq = 6),
+            realtime = SessionRealtimeState(cursor = "seq:6"))
+        val restored = reduceSnapshotWithLiveState(snapshot, live, old, replaceHistory = true)
+        assertEquals(setOf("fresh", "during-read"), restored.messages.map { it.id }.toSet())
+        assertEquals("seq:7", restored.realtime.cursor)
+    }
+
+    @Test
+    fun revokedAccessDuringRecoveryInvalidatesTheVisitAndStopsItsSubscription() = runBlocking {
+        val cache = SessionStateCache()
+        val visit = cache.open("account", SESSION_ID, "token")
+        val revoked = CompletableDeferred<Throwable>()
+        val job = SessionRealtimeController(
+            transport = RecoveryTransport(emptyList(), com.agentsanywhere.app.api.ApiException("Revoked", 403)),
+            sessionStore = auth("http://localhost"), clientId = "client",
+        ).start(
+            scope = this, sessionId = SESSION_ID, cursor = { "seq:5" },
+            onEvents = {}, onCursorAdvanced = {}, onSnapshotRequired = {},
+            onRuntimeRefreshRequired = { _, _ -> }, onConnectionChanged = { _, _, _, _ -> },
+            onAccessRevoked = { cache.invalidate(visit); revoked.complete(it) },
+        )
+        withTimeout(5_000) { revoked.await(); job.join() }
+        assertFalse(cache.isCurrent(visit))
+        cache.close(visit, openedSession())
+        assertNull(cache.open("account", SESSION_ID, "token").cached)
+    }
+
     private fun recover(
         initial: SessionDetailState,
         recovered: List<RemoteSessionEventEnvelope>,
@@ -167,6 +269,7 @@ class SessionCapabilityFreshnessTest {
                         """{"state":{"sessionId":"$SESSION_ID","runtime":"codex","status":"idle","updatedSeq":5}}""",
                     )
                     path.endsWith("/runtime/notices") -> json(200, """{"notices":[]}""")
+                    path.endsWith("/planning") -> json(200, """{"sessionId":"$SESSION_ID"}""")
                     path.endsWith("/runtime/capabilities") -> json(
                         504,
                         """{"detail":{"code":"runtime_capabilities_timeout","message":"connector session capabilities request timed out"}}""",
@@ -177,14 +280,17 @@ class SessionCapabilityFreshnessTest {
         }
         server.start()
         try {
-            val origin = server.url("/").toString().trimEnd('/')
+            val origin = "http://127.0.0.1:${server.port}"
             block(SessionDetailController(SessionsApi(ApiClient()), auth(origin)))
         } finally {
             server.shutdown()
         }
     }
 
-    private class RecoveryTransport(private val recovered: List<RemoteSessionEventEnvelope>) : RealtimeTransport {
+    private class RecoveryTransport(
+        private val recovered: List<RemoteSessionEventEnvelope>,
+        private val failure: Exception? = null,
+    ) : RealtimeTransport {
         override fun createDashboardTicket(serverUrl: String, authorizationToken: String, clientId: String): RemoteWsTicket =
             throw UnsupportedOperationException()
 
@@ -205,12 +311,15 @@ class SessionCapabilityFreshnessTest {
             authorizationToken: String,
             sessionId: String,
             after: String,
-        ) = RemoteEventRecoveryResponse(
-            events = recovered,
-            nextCursor = "seq:${recovered.maxOf { it.sequence }}",
-            snapshotRequired = false,
-            serverTime = null,
-        )
+        ): RemoteEventRecoveryResponse {
+            failure?.let { throw it }
+            return RemoteEventRecoveryResponse(
+                events = recovered,
+                nextCursor = "seq:${recovered.maxOf { it.sequence }}",
+                snapshotRequired = false,
+                serverTime = null,
+            )
+        }
 
         override fun parseDashboardMessage(text: String): RemoteDashboardSnapshot? = null
 

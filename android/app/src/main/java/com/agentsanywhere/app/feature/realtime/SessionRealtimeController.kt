@@ -55,6 +55,7 @@ class SessionRealtimeController(
         onSnapshotRequired: suspend (reason: String) -> Unit,
         onRuntimeRefreshRequired: suspend (connectionGeneration: Long, refreshGeneration: Long) -> Unit,
         onConnectionChanged: (connected: Boolean, recovering: Boolean, attempt: Int, error: String?) -> Unit,
+        onAccessRevoked: suspend (Throwable) -> Unit = {},
     ): Job {
         val job = scope.launch(Dispatchers.IO) {
         var attempt = 0
@@ -138,9 +139,19 @@ class SessionRealtimeController(
                                     requestSnapshotOnce(reason, connectionGeneration)
                                 },
                             )
-                        } finally {
                             if (isCurrentConnection(connectionGeneration)) {
                                 onConnectionChanged(true, false, 0, null)
+                            }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (error: Exception) {
+                            if (!isCurrentConnection(connectionGeneration)) return@launch
+                            if (error is com.agentsanywhere.app.api.ApiException && error.statusCode in listOf(403, 404)) {
+                                onAccessRevoked(error)
+                                activeJob.get()?.cancel()
+                            } else {
+                                onConnectionChanged(false, false, attempt, error.message)
+                                requestImmediateReconnect()
                             }
                         }
                     }
@@ -198,6 +209,11 @@ class SessionRealtimeController(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
+                if (isCurrentConnection(connectionGeneration) &&
+                    error is com.agentsanywhere.app.api.ApiException && error.statusCode in listOf(403, 404)) {
+                    onAccessRevoked(error)
+                    return@launch
+                }
                 if (isCurrentConnection(connectionGeneration)) {
                     onConnectionChanged(false, false, attempt, error.message)
                 }

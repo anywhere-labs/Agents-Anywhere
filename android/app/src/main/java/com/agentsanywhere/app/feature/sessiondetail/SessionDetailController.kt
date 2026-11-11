@@ -13,6 +13,11 @@ import com.agentsanywhere.app.feature.auth.AuthSessionReader
 import com.agentsanywhere.app.feature.sessions.toAgentSession
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -29,6 +34,32 @@ class SessionDetailController(
     private val sessionStore: AuthSessionReader,
 ) {
 
+
+    val sessionCache = SessionStateCache()
+
+    fun cacheScope(): String = listOf(sessionStore.readServerUrl(), sessionStore.readUserId(),
+        sessionStore.readAuthSessionId().orEmpty()).joinToString("\u0000")
+
+    fun visitKey(): String = cacheScope() + "\u0000" + sessionStore.readAccessToken()
+
+    fun openVisit(sessionId: String): SessionVisit =
+        sessionCache.open(cacheScope(), sessionId, sessionStore.readAccessToken())
+
+    fun isCurrentVisit(visit: SessionVisit): Boolean = sessionCache.isCurrent(visit) &&
+        visit.scope == cacheScope() && visit.token == sessionStore.readAccessToken()
+
+    private val selectionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val selectionWrites = mutableMapOf<String, Deferred<Result<SessionRuntimeState?>>>()
+
+    fun dispose() {
+        sessionCache.clear()
+        selectionScope.cancel()
+        synchronized(selectionWrites) { selectionWrites.clear() }
+    }
+
+    private suspend fun awaitSelectionWrite(sessionId: String) {
+        synchronized(selectionWrites) { selectionWrites[sessionId] }?.await()?.getOrThrow()
+    }
 
     private val optimisticStore = SessionOptimisticMessageStore()
     private val attachmentTransfer = SessionAttachmentTransfer(sessionsApi)
@@ -140,6 +171,7 @@ class SessionDetailController(
                     sessionId = sessionId,
                     limit = INITIAL_TIMELINE_LIMIT,
                 )
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 val projection = mergeRemoteTimelineItems(
                     currentOrdering = emptyList(),
                     currentMessages = emptyList(),
@@ -238,8 +270,9 @@ class SessionDetailController(
         snapshot: SessionDetailState,
         live: SessionDetailState,
         requestState: SessionDetailState,
+        replaceHistory: Boolean = false,
     ): SessionDetailState {
-        val next = reduceSnapshotWithLiveState(snapshot, live, requestState)
+        val next = reduceSnapshotWithLiveState(snapshot, live, requestState, replaceHistory)
         optimisticStore.replace(sessionId, next.messages.filter { it.optimistic })
         return next
     }
@@ -274,7 +307,6 @@ class SessionDetailController(
             val noticesRequest = async {
                 runCatching { sessionsApi.getSessionRuntimeNotices(auth.serverUrl, auth.accessToken, sessionId) }
             }
-
             var next = current
             metaRequest.await().fold(
                 onSuccess = { response ->
@@ -366,6 +398,10 @@ class SessionDetailController(
         sessionId: String,
         current: SessionDetailState,
     ): SessionDetailState = withContext(Dispatchers.IO) {
+        // Failure is surfaced by the selection action; live facts still need refreshing.
+        try { awaitSelectionWrite(sessionId) }
+        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (_: Exception) { }
         val auth = authSession()
         coroutineScope {
             val runtimeRequest = async {
@@ -388,6 +424,10 @@ class SessionDetailController(
                     }
                 }
             }
+            // Planning projections are not replayed by event recovery.
+            val planningRequest = async {
+                runCatching { sessionsApi.planning(auth.serverUrl, auth.accessToken, sessionId) }
+            }
             val permissionCatalogRequest = current.catalogs.permission?.let {
                 async {
                     runCatching {
@@ -400,11 +440,21 @@ class SessionDetailController(
                 }
             }
             var next = current
+            planningRequest.await().fold(
+                onSuccess = { next = next.copy(planning = it) },
+                onFailure = { error ->
+                    if (error is kotlinx.coroutines.CancellationException ||
+                        error is ApiException && error.statusCode in listOf(403, 404)) throw error
+                    // Keep the readable cached plan on a transient failure.
+                },
+            )
             runtimeRequest.await().fold(
                 onSuccess = { response ->
                     next = next.applyRuntimeObservation(response.state.toSessionRuntimeState(response.serverTime))
                 },
                 onFailure = { error ->
+                    if (error is kotlinx.coroutines.CancellationException ||
+                        error is ApiException && error.statusCode in listOf(403, 404)) throw error
                     next = next.copy(runtime = next.runtime.copy(errorMessage = error.userMessage()))
                 },
             )
@@ -415,6 +465,8 @@ class SessionDetailController(
                     )
                 },
                 onFailure = { error ->
+                    if (error is kotlinx.coroutines.CancellationException ||
+                        error is ApiException && error.statusCode in listOf(403, 404)) throw error
                     next = next.copy(capabilities = next.capabilities.afterReadFailure(error))
                 },
             )
@@ -423,6 +475,8 @@ class SessionDetailController(
                     next = next.applyNoticeObservation(response.notices, response.serverTime, replace = true)
                 },
                 onFailure = { error ->
+                    if (error is kotlinx.coroutines.CancellationException ||
+                        error is ApiException && error.statusCode in listOf(403, 404)) throw error
                     next = next.copy(notices = next.notices.copy(errorMessage = error.userMessage()))
                 },
             )
@@ -440,6 +494,8 @@ class SessionDetailController(
                     }
                 },
                 onFailure = { error ->
+                    if (error is kotlinx.coroutines.CancellationException ||
+                        error is ApiException && error.statusCode in listOf(403, 404)) throw error
                     next = next.copy(
                         catalogs = next.catalogs.copy(
                             modelLoading = false,
@@ -463,6 +519,8 @@ class SessionDetailController(
                     }
                 },
                 onFailure = { error ->
+                    if (error is kotlinx.coroutines.CancellationException ||
+                        error is ApiException && error.statusCode in listOf(403, 404)) throw error
                     next = next.copy(
                         catalogs = next.catalogs.copy(
                             permissionLoading = false,
@@ -518,6 +576,7 @@ class SessionDetailController(
     ): Result<SendMessageResult> {
         return withContext(Dispatchers.IO) {
             runCatching {
+                awaitSelectionWrite(sessionId)
                 val auth = authSession()
                 val uploaded = if (uploadedAttachments.isNotEmpty()) {
                     uploadedAttachments
@@ -656,19 +715,26 @@ class SessionDetailController(
         sessionId: String,
         selections: Map<String, String?>,
     ): Result<SessionRuntimeState?> {
-        return withContext(Dispatchers.IO) {
-            runCatching {
-                val auth = authSession()
-                val response = sessionsApi.patchSessionRuntimeSelections(
-                    auth.serverUrl,
-                    auth.accessToken,
-                    sessionId,
-                    selections,
-                )
-                if (!response.ok) throw IllegalStateException("Runtime rejected the selection update.")
-                response.state?.toSessionRuntimeState(response.serverTime)
+        val auth = authSession()
+        val write = synchronized(selectionWrites) {
+            val previous = selectionWrites[sessionId]
+            selectionScope.async {
+                previous?.await()
+                runCatching {
+                    val response = sessionsApi.patchSessionRuntimeSelections(
+                        auth.serverUrl, auth.accessToken, sessionId, selections,
+                    )
+                    if (!response.ok) throw IllegalStateException("Runtime rejected the selection update.")
+                    response.state?.toSessionRuntimeState(response.serverTime)
+                }
+            }.also { selectionWrites[sessionId] = it }
+        }
+        write.invokeOnCompletion {
+            synchronized(selectionWrites) {
+                if (selectionWrites[sessionId] === write) selectionWrites.remove(sessionId)
             }
         }
+        return write.await()
     }
 
     suspend fun loadCommands(sessionId: String): Result<List<RuntimeCommand>> {
@@ -690,6 +756,7 @@ class SessionDetailController(
     ): RuntimeCommandOutcome {
         return withContext(Dispatchers.IO) {
             runCatching {
+                awaitSelectionWrite(sessionId)
                 val auth = authSession()
                 val response = sessionsApi.executeSessionRuntimeCommand(
                     auth.serverUrl,
@@ -747,7 +814,9 @@ class SessionDetailController(
         sessionId: String,
         current: SessionDetailState,
         older: SessionTimelineState,
+        expectedHistoryGeneration: Long,
     ): SessionDetailState {
+        if (current.timeline.historyGeneration != expectedHistoryGeneration) return current
         val orderingItems = mergeTimelineOrderingItems(
             current.timeline.orderingItems,
             older.orderingItems,
