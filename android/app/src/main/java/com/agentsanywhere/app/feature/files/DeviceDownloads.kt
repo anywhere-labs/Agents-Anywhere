@@ -12,6 +12,7 @@ import androidx.annotation.RequiresApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.OutputStream
 
 /** Folder inside the public Downloads directory that receives saved files. */
 const val DOWNLOADS_SUBFOLDER = "Agents Anywhere"
@@ -34,22 +35,44 @@ suspend fun saveFileToDownloads(
     context: Context,
     source: File,
     displayName: String,
+): Result<SavedDownload> = saveDownload(context, displayName) { output ->
+    source.inputStream().use { input -> input.copyTo(output, 64 * 1024) }
+}
+
+internal suspend fun saveCsvToDownloads(
+    context: Context,
+    displayName: String,
+    csv: String,
+): Result<SavedDownload> = saveDownload(context, displayName, mimeType = "text/csv") { output ->
+    output.write(csv.toByteArray(Charsets.UTF_8))
+}
+
+private suspend fun saveDownload(
+    context: Context,
+    displayName: String,
+    mimeType: String? = null,
+    write: (OutputStream) -> Unit,
 ): Result<SavedDownload> = withContext(Dispatchers.IO) {
     runCatching {
         val name = localFileName(displayName)
-        val mimeType = downloadsMimeType(name) { extension ->
+        val resolvedMimeType = mimeType ?: downloadsMimeType(name) { extension ->
             MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            saveWithMediaStore(context, source, name, mimeType)
+            saveWithMediaStore(context, name, resolvedMimeType, write)
         } else {
-            saveToPublicDirectory(context, source, name, mimeType)
+            saveToPublicDirectory(context, name, resolvedMimeType, write)
         }
     }
 }
 
 @RequiresApi(Build.VERSION_CODES.Q)
-private fun saveWithMediaStore(context: Context, source: File, name: String, mimeType: String): SavedDownload {
+private fun saveWithMediaStore(
+    context: Context,
+    name: String,
+    mimeType: String,
+    write: (OutputStream) -> Unit,
+): SavedDownload {
     val resolver = context.contentResolver
     val values = ContentValues().apply {
         put(MediaStore.Downloads.DISPLAY_NAME, name)
@@ -60,27 +83,43 @@ private fun saveWithMediaStore(context: Context, source: File, name: String, mim
     val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
     val uri = resolver.insert(collection, values) ?: error("Unable to create the download.")
     try {
-        resolver.openOutputStream(uri, "w")?.use { output ->
-            source.inputStream().use { input -> input.copyTo(output, 64 * 1024) }
-        } ?: error("Unable to write the download.")
-        resolver.update(uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
+        val output = resolver.openOutputStream(uri, "w") ?: error("Unable to write the download.")
+        output.use(write)
+        val published = ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }
+        check(resolver.update(uri, published, null, null) == 1) { "Unable to publish the download." }
     } catch (error: Throwable) {
-        resolver.delete(uri, null, null)
+        runCatching { resolver.delete(uri, null, null) }
         throw error
     }
-    val savedName = resolver.query(uri, arrayOf(MediaStore.Downloads.DISPLAY_NAME), null, null, null)?.use { cursor ->
-        if (cursor.moveToFirst()) cursor.getString(0) else null
-    } ?: name
+    val savedName = runCatching {
+        resolver.query(uri, arrayOf(MediaStore.Downloads.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
+        }
+    }.getOrNull() ?: name
     return SavedDownload(displayName = savedName, uri = uri)
 }
 
 @Suppress("DEPRECATION")
-private fun saveToPublicDirectory(context: Context, source: File, name: String, mimeType: String): SavedDownload {
+private fun saveToPublicDirectory(
+    context: Context,
+    name: String,
+    mimeType: String,
+    write: (OutputStream) -> Unit,
+): SavedDownload {
     val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
     val directory = File(downloads, DOWNLOADS_SUBFOLDER)
-    check(directory.isDirectory || directory.mkdirs()) { "Unable to create the download folder." }
-    val target = uniqueDownloadFile(directory, name)
-    source.copyTo(target, overwrite = false)
+    directory.mkdirs()
+    check(directory.isDirectory) { "Unable to create the download folder." }
+    var target: File
+    do {
+        target = uniqueDownloadFile(directory, name)
+    } while (!target.createNewFile())
+    try {
+        target.outputStream().use(write)
+    } catch (error: Throwable) {
+        runCatching { target.delete() }
+        throw error
+    }
     MediaScannerConnection.scanFile(context, arrayOf(target.absolutePath), arrayOf(mimeType), null)
     return SavedDownload(displayName = target.name, uri = Uri.fromFile(target))
 }
