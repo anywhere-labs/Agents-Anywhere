@@ -19,6 +19,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.Remeasurement
+import androidx.compose.ui.layout.RemeasurementModifier
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -56,12 +58,17 @@ internal class TimelineReadingState {
     private var hasMoreHistory = false
     private var correcting = false
     private var list: LazyListState? = null
+    private var remeasurement: Remeasurement? = null
     /** Far (upper) edge of each visible row, measured from the list's start, as of the last check. */
     private var rowTops = emptyMap<Any, Int>()
     private var itemSpans = emptyMap<Any, ItemSpan>()
-    private var pendingProbe: LayoutCoordinates? = null
-    private var pendingProbeBaseY = 0f
-    private var pendingUnplacedShift = 0f
+
+    /** Put on the attached LazyColumn so [holdInFrame] can place its rows again before the frame is drawn. */
+    val remeasurementModifier: Modifier = object : RemeasurementModifier {
+        override fun onRemeasurementAvailable(remeasurement: Remeasurement) {
+            this@TimelineReadingState.remeasurement = remeasurement
+        }
+    }
 
     val needsOlder: Boolean
         get() = !following && owners.isNotEmpty() && anchor?.let { it.row !in owners } == true
@@ -77,11 +84,9 @@ internal class TimelineReadingState {
         val row: String,
         val coordinates: LayoutCoordinates? = null,
     ) {
-        fun liveBounds(shift: Float = 0f): Rect {
-            val attached = coordinates?.takeIf { it.isAttached }
-                ?: return if (shift == 0f) bounds else bounds.translate(0f, shift)
-            val pos = attached.positionInWindow()
-            return Rect(pos.copy(y = pos.y + shift), attached.size.toSize())
+        fun liveBounds(): Rect {
+            val attached = coordinates?.takeIf { it.isAttached } ?: return bounds
+            return Rect(attached.positionInWindow(), attached.size.toSize())
         }
     }
     private data class Anchor(val key: String, val row: String, val offset: Int, val context: String, val y: Float)
@@ -111,7 +116,6 @@ internal class TimelineReadingState {
         if (viewportWidth != 0f && abs(viewportWidth - readingBounds.width) > 1f) {
             rowTops = emptyMap()
             itemSpans = emptyMap()
-            clearPendingShift()
         }
         viewportWidth = readingBounds.width
         this.lazyBounds = lazyBounds
@@ -135,10 +139,7 @@ internal class TimelineReadingState {
     }
 
     fun detach(list: LazyListState) {
-        if (this.list === list) {
-            this.list = null
-            clearPendingShift()
-        }
+        if (this.list === list) this.list = null
     }
 
     /** A region's positioned callback ran: this frame is laid out but not drawn. Never call it while measuring. */
@@ -164,17 +165,15 @@ internal class TimelineReadingState {
 
     fun pauseAt(key: String? = null) {
         following = false
-        val shift = currentUnplacedShift()
         anchor = key?.let { k ->
             regions[k]?.takeIf { it.coordinates?.isAttached != false }
-                ?.let { Anchor(k, it.row, -1, "", it.liveBounds(shift).top - viewport.top) }
+                ?.let { Anchor(k, it.row, -1, "", it.liveBounds().top - viewport.top) }
         } ?: capture()
         invalidate()
     }
 
     fun gesture(delta: Float) {
         if (delta == 0f) return
-        clearPendingShift()
         following = false
         towardsLatest = delta < 0f // reverseLayout: upward finger motion approaches latest.
         anchor = null
@@ -182,7 +181,6 @@ internal class TimelineReadingState {
     }
 
     fun release() {
-        clearPendingShift()
         following = true
         towardsLatest = false
         anchor = null
@@ -190,10 +188,9 @@ internal class TimelineReadingState {
     }
 
     private fun capture(): Anchor? {
-        val shift = currentUnplacedShift()
         val visible = regions.entries.mapNotNull { (k, r) ->
             if (r.coordinates?.isAttached == false) return@mapNotNull null
-            val b = r.liveBounds(shift)
+            val b = r.liveBounds()
             if (b.bottom > viewport.top && b.top < viewport.bottom &&
                 b.right > viewport.left && b.left < viewport.right
             ) k to (r to b) else null
@@ -228,7 +225,6 @@ internal class TimelineReadingState {
             if (list.firstVisibleItemIndex != 0 || list.firstVisibleItemScrollOffset != 0) {
                 correcting = true
                 try {
-                    clearPendingShift()
                     list.scrollToItem(0)
                 } finally {
                     correcting = false
@@ -238,7 +234,6 @@ internal class TimelineReadingState {
             return
         }
         val held = anchor ?: capture().also { anchor = it } ?: return
-        val shift = currentUnplacedShift()
         val region = regions[held.key]?.takeIf { it.coordinates?.isAttached != false }
         if (region == null) {
             val owner = owners[held.row]
@@ -250,7 +245,6 @@ internal class TimelineReadingState {
                 // adopting whichever neighbouring row LazyColumn chose as fallback.
                 correcting = true
                 try {
-                    clearPendingShift()
                     list.scrollToItem(owner.first)
                 } finally {
                     correcting = false
@@ -266,11 +260,10 @@ internal class TimelineReadingState {
             invalidate()
             return
         }
-        val delta = held.y - anchoredLineY(held, region, region.liveBounds(shift).top)
+        val delta = held.y - anchoredLineY(held, region, region.liveBounds().top)
         if (abs(delta) <= 1f) return
         correcting = true
         val consumed = try {
-            clearPendingShift()
             list.scrollBy(delta)
         } finally {
             correcting = false
@@ -286,6 +279,10 @@ internal class TimelineReadingState {
      * during touch drag or inertial fling [settle] does not run at all, so growth below the reading
      * edge must also be compensated synchronously via [LazyListState.dispatchRawDelta] without
      * cancelling the user's active scroll mutation.
+     *
+     * A delta that keeps the same rows visible only shifts the measured rows and schedules their
+     * placement for the next frame, so this frame was still drawn displaced: the line stayed put but
+     * other text flashed over it on every update. Remeasuring places the rows before the draw.
      */
     private fun holdInFrame() {
         val list = list ?: return
@@ -302,7 +299,6 @@ internal class TimelineReadingState {
         }
 
         val activelyScrolling = touching || selecting || selectionReaders.values.any { it() } || list.isScrollInProgress
-        val shift = currentUnplacedShift()
         val held = if (activelyScrolling) null else anchor
 
         val delta = if (held != null) {
@@ -310,7 +306,7 @@ internal class TimelineReadingState {
             val coordinates = region?.coordinates?.takeIf { it.isAttached }
             val row = owners[held.row]?.first
             if (region != null && coordinates != null && row != null && visible.any { it.index == row }) {
-                held.y - anchoredLineY(held, region, coordinates.positionInWindow().y + shift)
+                held.y - anchoredLineY(held, region, coordinates.positionInWindow().y)
             } else if (row != null) {
                 // The growth pushed the anchored row out of the viewport, where it keeps reporting its
                 // last placement. Rows are stacked on the far edge of the nearest row below them, so
@@ -326,26 +322,12 @@ internal class TimelineReadingState {
         }
         if (abs(delta) <= 1f) return
 
-        val probe = regions.values.firstNotNullOfOrNull { r ->
-            r.coordinates?.takeIf { it.isAttached && owners[r.row]?.first?.let { idx -> visible.any { it.index == idx } } == true }
-        }
-        val probeBeforeY = probe?.positionInWindow()?.y
         correcting = true
-        val consumed = try {
-            list.dispatchRawDelta(delta)
+        try {
+            if (abs(list.dispatchRawDelta(delta)) > 0.5f) remeasurement?.forceRemeasure()
         } finally {
             correcting = false
             snapshotItems(list.layoutInfo.visibleItemsInfo)
-        }
-        if (probe != null && probeBeforeY != null && abs(consumed) > 0.5f) {
-            val probeAfterY = probe.takeIf { it.isAttached }?.positionInWindow()?.y
-            if (probeAfterY != null && abs(probeAfterY - probeBeforeY) <= 0.5f) {
-                pendingProbe = probe
-                pendingProbeBaseY = probeAfterY
-                pendingUnplacedShift = shift + consumed
-            } else {
-                clearPendingShift()
-            }
         }
     }
 
@@ -374,24 +356,6 @@ internal class TimelineReadingState {
         val prevBottom = previous.getValue(bottom.key)
         val prevTop = previous.getValue(top.key)
         return ((top.offset + top.size - bottom.offset) - (prevTop.top - prevBottom.offset)).toFloat()
-    }
-
-    private fun currentUnplacedShift(): Float {
-        val probe = pendingProbe?.takeIf { it.isAttached } ?: run {
-            clearPendingShift()
-            return 0f
-        }
-        if (abs(probe.positionInWindow().y - pendingProbeBaseY) > 0.5f) {
-            clearPendingShift()
-            return 0f
-        }
-        return pendingUnplacedShift
-    }
-
-    private fun clearPendingShift() {
-        pendingProbe = null
-        pendingProbeBaseY = 0f
-        pendingUnplacedShift = 0f
     }
 
     private fun anchoredLineY(held: Anchor, region: Region, top: Float): Float {

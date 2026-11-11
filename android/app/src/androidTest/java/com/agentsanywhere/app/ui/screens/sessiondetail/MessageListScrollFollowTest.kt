@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.res.Configuration
 import java.util.Locale
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.layout.Box
@@ -21,6 +23,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.text.TextLayoutResult
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNotice
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNoticeAction
@@ -275,11 +278,10 @@ class MessageListScrollFollowTest {
 
             // Hold finger stationary on screen while new paragraphs stream in at the bottom.
             val heldY = textLineY(marker, 0)
+            val node = compose.onNodeWithText(marker, substring = true).fetchSemanticsNode()
             repeat(3) { index ->
-                compose.runOnIdle {
-                    appendLongParagraph(session, "stationary-$index")
-                }
-                compose.mainClock.advanceTimeByFrame()
+                val drawn = drawnFrameTop(session, node) { appendLongParagraph(session, "stationary-$index") }
+                assertEquals("Holding finger still while output streams must draw the reading line in place", heldY, drawn, 3f)
                 compose.waitForIdle()
                 assertEquals("Holding finger still while output streams must not jump the reading line", heldY, textLineY(marker, 0), 3f)
             }
@@ -291,12 +293,10 @@ class MessageListScrollFollowTest {
                 compose.onNode(hasScrollAction()).performTouchInput {
                     moveBy(Offset(0f, dragStep))
                 }
-                compose.runOnIdle {
-                    appendLongParagraph(session, "dragging-$index")
-                }
-                compose.mainClock.advanceTimeByFrame()
-                compose.waitForIdle()
+                val drawn = drawnFrameTop(session, node) { appendLongParagraph(session, "dragging-$index") }
                 expectedY += dragStep
+                assertEquals("Dragging forward by $dragStep while streaming must draw only the finger's motion", expectedY, drawn, 4f)
+                compose.waitForIdle()
                 assertEquals("Dragging forward by $dragStep while streaming must not lurch", expectedY, textLineY(marker, 0), 4f)
             }
 
@@ -403,12 +403,12 @@ class MessageListScrollFollowTest {
         val before = compose.onNodeWithText("kotlin").fetchSemanticsNode().positionInRoot.y
         assertTrue("Code panel header should sit near/above viewport top so code fills the viewport, was $before", before in -500f..260f)
 
+        val label = compose.onNodeWithText("kotlin").fetchSemanticsNode()
         compose.mainClock.autoAdvance = false
         try {
             repeat(3) { index ->
-                compose.runOnIdle {
-                    appendLongParagraph(session, "code-anchor-$index")
-                }
+                val drawn = drawnFrameTop(session, label) { appendLongParagraph(session, "code-anchor-$index") }
+                assertEquals("Frame $index must draw the code panel in place", before, drawn, 2f)
                 repeat(4) { subFrame ->
                     compose.mainClock.advanceTimeByFrame()
                     compose.waitForIdle()
@@ -433,10 +433,11 @@ class MessageListScrollFollowTest {
         showMessageList(session)
         scrollMarkerIntoReadingArea(marker, minY = 450f, swipe = .3f)
         val before = textLineY(marker, 0)
+        val node = compose.onNodeWithText(marker, substring = true).fetchSemanticsNode()
 
         compose.mainClock.autoAdvance = false
         try {
-            compose.runOnIdle {
+            val drawn = drawnFrameTop(session, node) {
                 session.workingLabel = null
                 session.turnInProgress = false
                 session.messages = session.messages.map {
@@ -444,6 +445,7 @@ class MessageListScrollFollowTest {
                 }
                 session.streamRequest += 1
             }
+            assertEquals("The frame that completes the turn must draw the reading line in place", before, drawn, 3f)
             repeat(4) { frame ->
                 compose.mainClock.advanceTimeByFrame()
                 compose.waitForIdle()
@@ -504,10 +506,11 @@ class MessageListScrollFollowTest {
         compose.waitForIdle()
         val before = textLineY(line, 0)
         assertTrue("The reading line must be on screen, was $before", before > minY && before < 1800f)
+        val node = compose.onNodeWithText(line, substring = true).fetchSemanticsNode()
 
         compose.mainClock.autoAdvance = false
         repeat(4) { index ->
-            compose.runOnIdle {
+            val drawn = drawnFrameTop(session, node) {
                 session.messages = session.messages.map { message ->
                     if (message.id == "assistant-last") message.copy(
                         text = message.text + "\n\nStreamed paragraph $index. " + "More generated words. ".repeat(12),
@@ -516,14 +519,28 @@ class MessageListScrollFollowTest {
                 }
                 session.streamRequest += 1
             }
-            compose.mainClock.advanceTimeByFrame()
-            // Positioned callbacks run on the UI thread before the frame is drawn; read after them.
+            assertEquals("The frame that shows new output must draw the reading line in place", before, drawn, 2f)
             compose.waitForIdle()
-            assertEquals("The frame that shows new output must not move the reading line", before, textLineY(line, 0), 2f)
+            assertEquals("The reading line must stay put once the frame is idle", before, textLineY(line, 0), 2f)
             compose.mainClock.advanceTimeByFrame()
             assertEquals("The reading line must stay put after the update settles", before, textLineY(line, 0), 2f)
         }
         compose.mainClock.autoAdvance = true
+    }
+
+    /**
+     * Applies [update], runs one frame and returns where [node]'s top is placed when that frame is
+     * drawn. Choreographer draws right after the layout pass and its positioned callbacks, so read in
+     * the same UI-thread task: waitForIdle would lay the list out again and hide a correction that
+     * only lands in the next frame, after the displaced frame was already on screen.
+     */
+    private fun drawnFrameTop(session: TestSession, node: SemanticsNode, update: () -> Unit): Float = compose.runOnUiThread {
+        update()
+        Snapshot.sendApplyNotifications()
+        compose.mainClock.advanceTimeByFrame()
+        assertTrue("This frame must lay out the update", session.composed === session.messages)
+        assertTrue("The reading line must still be laid out", node.layoutInfo.isAttached)
+        node.positionInRoot.y
     }
 
     private fun textLayout(marker: String): TextLayoutResult {
@@ -673,10 +690,12 @@ class MessageListScrollFollowTest {
         compose.setContent {
             CompositionLocalProvider(LocalContext provides context, LocalConfiguration provides context.resources.configuration) {
                 AgentsAnywhereTheme(appearanceMode = AAAppearanceMode.Light) {
+                    val messages = session.messages
+                    SideEffect { session.composed = messages }
                     Box(Modifier.fillMaxSize()) {
                         MessageList(
                             planningContent = {},
-                            messages = session.messages,
+                            messages = messages,
                             darkMode = false,
                             sessionId = session.id,
                             notices = session.notices,
@@ -749,6 +768,8 @@ class MessageListScrollFollowTest {
         var forceLatestRequest by mutableStateOf(0)
         var workingLabel by mutableStateOf<String?>("DeepSeek Harness is working")
         var turnInProgress by mutableStateOf(true)
+        /** The messages of the last applied composition. */
+        var composed: List<TimelineMessage>? = null
     }
 
     private fun initialMessages(): List<TimelineMessage> = buildList {

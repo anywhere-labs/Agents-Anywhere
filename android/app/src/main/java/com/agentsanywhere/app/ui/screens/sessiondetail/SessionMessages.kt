@@ -424,6 +424,7 @@ internal fun MessageList(
                         .fillMaxSize()
                         .imePadding()
                         .nestedScroll(scrollInput)
+                        .then(reading.remeasurementModifier)
                         .onGloballyPositioned {
                             val bounds = it.boundsInWindow()
                             reading.viewport(
