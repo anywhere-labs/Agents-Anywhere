@@ -1,0 +1,419 @@
+{
+  "$defs": {
+    "Maturity": {
+      "description": "How mature the runtime or capability is. It is declared by the adapter and shown next to, never instead of, the lifecycle status.",
+      "enum": [
+        "experimental",
+        "beta",
+        "stable"
+      ],
+      "type": "string"
+    },
+    "ModelConnectionCapability": {
+      "additionalProperties": false,
+      "description": "How the runtime takes a model connection from the unified configuration. Absent or null means the runtime does not support one.",
+      "properties": {
+        "apply": {
+          "description": "When a saved connection takes effect.",
+          "enum": [
+            "immediate",
+            "new_session",
+            "restart"
+          ],
+          "type": "string"
+        },
+        "catalog": {
+          "additionalProperties": false,
+          "properties": {
+            "auto": {
+              "type": "boolean"
+            },
+            "manual": {
+              "type": "boolean"
+            },
+            "required": {
+              "description": "The connection is only used with models listed in `modelsField`; absent means false.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "auto",
+            "manual"
+          ],
+          "type": "object"
+        },
+        "configField": {
+          "description": "Top-level configuration field holding {baseUrl, apiKey}.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "maturity": {
+          "$ref": "#/$defs/Maturity"
+        },
+        "modeField": {
+          "description": "Configuration field that selects one of `modes`, when the runtime has modes.",
+          "oneOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "modelsField": {
+          "oneOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "modes": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "reason": {
+                "oneOf": [
+                  {
+                    "maxLength": 1024,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "supported": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "supported"
+            ],
+            "type": "object"
+          },
+          "maxItems": 16,
+          "type": "array"
+        },
+        "protocols": {
+          "items": {
+            "enum": [
+              "openai_responses",
+              "openai_chat",
+              "anthropic"
+            ],
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "scope": {
+          "description": "What a saved connection changes: an AA-managed instance, one session, or the runtime's native global configuration.",
+          "enum": [
+            "instance",
+            "session",
+            "native_global"
+          ],
+          "type": "string"
+        },
+        "modelField": {
+          "description": "Top-level configuration field holding the model new sessions use, {modelId, effortId?}. With a connection, modelId must be one of the models in `modelsField`. A change applies without restarting the runtime and never changes existing sessions; absent means the runtime takes no model setting.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "maturity",
+        "configField",
+        "modelsField",
+        "protocols",
+        "scope",
+        "catalog",
+        "apply"
+      ],
+      "type": "object"
+    },
+    "RuntimeConfigSchema": {
+      "additionalProperties": false,
+      "description": "Provider-owned configuration contract for this runtime type.",
+      "properties": {
+        "defaults": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema": {
+          "additionalProperties": true,
+          "description": "A JSON Schema whose root validates a runtime configuration object.",
+          "properties": {
+            "type": {
+              "const": "object"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        "uiSchema": {
+          "oneOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "revision",
+        "schema",
+        "uiSchema",
+        "defaults",
+        "metadata"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://agents-anywhere.dev/contracts/runtime-control/2.1/schemas/runtime-type-descriptor.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "available": {
+            "const": false
+          }
+        },
+        "required": [
+          "available"
+        ]
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "minLength": 1,
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "instancePolicy": {
+            "const": "single"
+          }
+        },
+        "required": [
+          "instancePolicy"
+        ]
+      },
+      "then": {
+        "properties": {
+          "maxInstances": {
+            "const": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "instancePolicy": {
+            "const": "multiple"
+          }
+        },
+        "required": [
+          "instancePolicy"
+        ]
+      },
+      "then": {
+        "properties": {
+          "maxInstances": {
+            "oneOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 2,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "description": "Provider-owned discovery facts. runtimeType is a stable provider identifier, never an instance identifier or implementation category.",
+  "properties": {
+    "available": {
+      "type": "boolean"
+    },
+    "capabilities": {
+      "additionalProperties": {
+        "type": "boolean"
+      },
+      "propertyNames": {
+        "minLength": 1
+      },
+      "type": "object"
+    },
+    "configSchema": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RuntimeConfigSchema"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "description": {
+      "oneOf": [
+        {
+          "maxLength": 1024,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "displayName": {
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "implementationType": {
+      "description": "Optional implementation category, separate from the stable provider identity.",
+      "oneOf": [
+        {
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "instancePolicy": {
+      "enum": [
+        "single",
+        "multiple"
+      ],
+      "type": "string"
+    },
+    "maturity": {
+      "$ref": "#/$defs/Maturity"
+    },
+    "maxInstances": {
+      "oneOf": [
+        {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "metadata": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "modelConnection": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ModelConnectionCapability"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reason": {
+      "oneOf": [
+        {
+          "maxLength": 1024,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "recommendationRank": {
+      "oneOf": [
+        {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "recommended": {
+      "type": "boolean"
+    },
+    "runtimeType": {
+      "maxLength": 64,
+      "pattern": "^(?!rti_)[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "runtimeType",
+    "displayName",
+    "description",
+    "available",
+    "reason",
+    "recommended",
+    "recommendationRank",
+    "implementationType",
+    "configSchema",
+    "capabilities",
+    "metadata",
+    "instancePolicy",
+    "maxInstances"
+  ],
+  "title": "RuntimeTypeDescriptor",
+  "type": "object",
+  "x-direction": "egress",
+  "x-runtime-control-version": "2.1"
+}

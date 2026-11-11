@@ -8,14 +8,18 @@ from connector.runtime_protocol import (
     RuntimeModelCatalog,
     RuntimePermissionCatalog,
 )
+from connector.runtimes.catalog_revisions import runtime_catalog_revision
 from connector.runtimes.codex.domain.catalogs import (
     codex_permission_catalog_items,
     model_catalog_from_codex_items,
     permission_catalog_from_codex_items,
 )
 from connector.runtimes.codex.sdk.runtime_client import CodexModelListResult
-from connector.runtimes.catalog_revisions import runtime_catalog_revision
 from connector.runtimes.custom_models import custom_model_items
+from connector.runtimes.runtime_model import (
+    mark_runtime_model,
+    runtime_model_from_config,
+)
 
 EnsureStarted = Callable[[], Awaitable[None]]
 GetModelListResult = Callable[[], CodexModelListResult | None]
@@ -56,6 +60,7 @@ class CodexCatalogReader:
                 ),
             ),
         )
+        catalog = mark_runtime_model(catalog, runtime_model_from_config(self.config.values))
         if query:
             lowered = query.casefold()
             models = tuple(

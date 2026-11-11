@@ -56,10 +56,11 @@ import { dashboardApi } from "@/features/dashboard/api"
 import { PairDeviceDialog } from "@/components/pair-device-dialog"
 import type { ConnectorRevokeResponse } from "@/features/dashboard/types"
 import { useIsMobile } from "@/hooks/use-mobile"
-import { useTranslations } from "next-intl"
+import { useLocale, useTranslations } from "next-intl"
 import { toast } from "sonner"
 import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
 import { RuntimeAddDialog } from "@/components/runtime-add-dialog"
+import { RuntimeMaturityBadge } from "@/components/runtime-maturity-badge"
 import { RuntimeConfigDialog } from "@/components/runtime-config-dialog"
 import { RuntimeInstanceNameDialog } from "@/components/runtime-instance-name-dialog"
 import {
@@ -181,6 +182,7 @@ function SessionRow({
   onSelectChange: (checked: boolean) => void
 }) {
   const t = useTranslations("dashboard.device")
+  const locale = useLocale()
   return (
     <div className="flex w-full items-center gap-3 rounded-md px-2 py-2.5 transition-colors hover:bg-accent/40">
       {selectMode ? (
@@ -211,7 +213,7 @@ function SessionRow({
       >
         {session.title ?? t("untitled")}
       </button>
-      <span className="shrink-0 text-xs text-muted-foreground">{formatSessionTime(session)}</span>
+      <span className="shrink-0 text-xs text-muted-foreground">{formatSessionTime(session, locale)}</span>
     </div>
   )
 }
@@ -225,11 +227,12 @@ function sessionActivityAt(session: DeviceSession) {
   return session.sortAt ?? session.lastActivityAt ?? session.lastItemAt ?? session.updatedAt ?? null
 }
 
-function formatSessionTime(session: DeviceSession) {
+// Dates follow the app language, not the browser's.
+function formatSessionTime(session: DeviceSession, locale: string) {
   const value = sessionActivityAt(session)
   if (!value) return ""
   try {
-    return new Intl.DateTimeFormat(undefined, {
+    return new Intl.DateTimeFormat(locale, {
       month: "short",
       day: "numeric",
       hour: "2-digit",
@@ -916,10 +919,11 @@ export function DevicePage() {
                           <div className="min-w-0 flex-1">
                             <div className="flex min-w-0 items-center gap-2">
                               <span className="truncate text-sm font-medium">{runtimeInstanceName(runtime)}</span>
+                              <RuntimeMaturityBadge maturity={runtime.maturity} className="shrink-0 font-normal" />
                               <Badge variant="outline" className="shrink-0 font-normal">
                                 {runtimeStatusLabel(runtime)}
                               </Badge>
-                              {runtime.status === "starting" && runtimePhaseMessage(runtime) ? (
+                              {(runtime.status === "starting" || runtime.status === "running") && runtimePhaseMessage(runtime) ? (
                                 <span className="truncate text-xs text-muted-foreground">
                                   {runtimePhaseMessage(runtime)}
                                 </span>
@@ -1008,6 +1012,7 @@ export function DevicePage() {
                           <div className="min-w-0 flex-1">
                             <div className="flex min-w-0 items-center gap-1">
                               <p className="truncate text-sm font-medium">{runtimeType.displayName}</p>
+                              <RuntimeMaturityBadge maturity={runtimeType.maturity} className="shrink-0 font-normal" />
                             </div>
                             <p className="truncate text-xs text-muted-foreground">
                               {runtimeType.reason || runtimeType.description || runtimeType.implementationType}
@@ -1172,6 +1177,7 @@ export function DevicePage() {
           schema={configRuntime.schema}
           uiSchema={configRuntime.uiSchema}
           config={configRuntime.config}
+          secretFields={configRuntime.secretFields}
           defaults={configRuntime.defaults}
           requiredFields={configRuntime.runtimeId === configRuntime.runtimeType
             ? []

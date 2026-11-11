@@ -21,8 +21,8 @@ from sqlalchemy.pool import NullPool
 from agent_server.infra.db.engine import resolve_db_url
 
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_44"
-CURRENT_SCHEMA_VERSION = "2.44"
+CURRENT_SCHEMA_REVISION = "v2_55"
+CURRENT_SCHEMA_VERSION = "2.55"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -42,9 +42,7 @@ def upgrade_database(
     db_url: str | None = None,
     revision: str = "head",
 ) -> None:
-    _run_outside_event_loop(
-        lambda: _upgrade_database(db_url=db_url, revision=revision)
-    )
+    _run_outside_event_loop(lambda: _upgrade_database(db_url=db_url, revision=revision))
 
 
 def _upgrade_database(*, db_url: str | None, revision: str) -> None:
@@ -269,6 +267,65 @@ def _classify_sync(connection) -> UnversionedDatabase:
                 and "runtime_id" in runtime_catalog_columns
                 and "name_key" in runtime_columns
             )
+            # v2_46 adds planning tables on top of the v2_45 workflow layout.
+            planning_tables = {"session_planning", "plan_documents", "planning_operations", "planning_creations"}
+            planning_layout = bool(planning_tables & tables)
+            if planning_layout:
+                columns = {
+                    "session_planning": {"session_id", "payload"},
+                    "plan_documents": {"session_id", "plan_id", "revision", "content_hash", "payload", "created_at"},
+                    "planning_operations": {"session_id", "operation_id", "fingerprint", "payload"},
+                    "planning_creations": {"connector_id", "runtime_id", "operation_id", "fingerprint", "payload"},
+                }
+                if not (planning_tables.issubset(tables) and all(required.issubset(_column_names(inspector, table)) for table, required in columns.items())):
+                    return UnversionedDatabase("unknown")
+            goal_columns = {
+                "session_goals": {
+                    "session_id",
+                    "goal_id",
+                    "status",
+                    "source_revision",
+                    "payload",
+                    "ended_at",
+                },
+                "session_goal_state": {
+                    "session_id",
+                    "current_goal_id",
+                    "last_outcome_goal_id",
+                    "revision",
+                    "binding_generation",
+                    "source_epoch",
+                    "source_revision",
+                    "payload",
+                },
+                "goal_operations": {
+                    "session_id",
+                    "operation_id",
+                    "fingerprint",
+                    "state",
+                    "request_payload",
+                    "result_payload",
+                },
+                "goal_event_outbox": {
+                    "event_id",
+                    "session_id",
+                    "state_revision",
+                    "kind",
+                    "payload",
+                    "claim_owner",
+                    "claim_until",
+                    "delivered_at",
+                },
+            }
+            goal_layout = bool(set(goal_columns) & tables)
+            if goal_layout and not (
+                set(goal_columns).issubset(tables)
+                and all(
+                    required.issubset(_column_names(inspector, table))
+                    for table, required in goal_columns.items()
+                )
+            ):
+                return UnversionedDatabase("unknown")
             if runtime_instance_layout:
                 if (
                     "app_releases" in tables
@@ -363,6 +420,46 @@ def _classify_sync(connection) -> UnversionedDatabase:
                                 revision = "v2_32"
                                 if "runtime_control_version" not in connector_columns:
                                     revision = "v2_33"
+                                    workflow_tables = {
+                                        "runtime_workflows",
+                                        "session_runtime_event_receipts",
+                                    }
+                                    if workflow_tables & tables:
+                                        workflow_columns = {
+                                            "user_id",
+                                            "kind",
+                                            "id",
+                                            "connector_id",
+                                            "runtime_id",
+                                            "runtime_type",
+                                            "project_id",
+                                            "session_id",
+                                            "input_digest",
+                                            "request_json",
+                                            "result_json",
+                                            "consumed_by",
+                                        }
+                                        receipt_columns = {
+                                            "session_id",
+                                            "source_event_id",
+                                            "event_digest",
+                                        }
+                                        if not (
+                                            workflow_tables.issubset(tables)
+                                            and workflow_columns.issubset(
+                                                _column_names(
+                                                    inspector, "runtime_workflows"
+                                                )
+                                            )
+                                            and receipt_columns.issubset(
+                                                _column_names(
+                                                    inspector,
+                                                    "session_runtime_event_receipts",
+                                                )
+                                            )
+                                        ):
+                                            return UnversionedDatabase("unknown")
+                                        revision = "v2_45"
                         else:
                             return UnversionedDatabase("unknown")
                     elif connector_kind_layout:
@@ -419,6 +516,71 @@ def _classify_sync(connection) -> UnversionedDatabase:
                 revision = "v2_12"
             else:
                 revision = "v2_13"
+            if planning_layout:
+                if revision != "v2_45":
+                    return UnversionedDatabase("unknown")
+                revision = "v2_46"
+            if goal_layout:
+                if revision != "v2_46":
+                    return UnversionedDatabase("unknown")
+                revision = "v2_47"
+            if "session_inventory_scans" in tables:
+                if revision != "v2_47" or "source_changed_seq" not in session_columns:
+                    return UnversionedDatabase("unknown")
+                revision = "v2_49"
+            # v2_50 adds model configuration after main's goal and inventory revisions.
+            if {"model_profiles", "tokens_links"} & tables:
+                if revision != "v2_49":
+                    return UnversionedDatabase("unknown")
+                revision = "v2_50"
+            # v2_51 replaces per-runtime operations with model channels.
+            if "runtime_channel_switches" in tables:
+                if revision != "v2_50":
+                    return UnversionedDatabase("unknown")
+                revision = "v2_51"
+            if "runtime_channel_sync" in tables:
+                required = {
+                    "channel_sync_outbox",
+                    "channel_device_fences",
+                    "channel_rotation_intents",
+                    "channel_device_gates",
+                }
+                if (
+                    revision != "v2_51"
+                    or not required.issubset(tables)
+                    or "connection_revision" not in _column_names(inspector, "model_profiles")
+                    or not {
+                        "target_generation",
+                        "lease_owner",
+                        "lease_epoch",
+                        "plan_ciphertext",
+                    }.issubset(_column_names(inspector, "runtime_channel_switches"))
+                ):
+                    return UnversionedDatabase("unknown")
+                revision = "v2_52"
+            # v2_53 adds hourly usage rollups on top of the channel schema.
+            hourly_tables = {
+                "usage_hourly_counts",
+                "usage_hourly_users",
+                "usage_hourly_sessions",
+                "usage_hourly_runtime_sessions",
+                "usage_hourly_runtime_users",
+                "usage_hourly_connectors",
+            }
+            if hourly_tables & tables:
+                if revision != "v2_52" or not hourly_tables.issubset(tables):
+                    return UnversionedDatabase("unknown")
+                revision = "v2_53"
+            # v2_54 keeps the newest timeline row's summary on each session.
+            if "latest_item_id" in session_columns:
+                if revision != "v2_53":
+                    return UnversionedDatabase("unknown")
+                revision = "v2_54"
+            # v2_55 keeps user-chosen device settings on each connector.
+            if "device_settings" in connector_columns:
+                if revision != "v2_54":
+                    return UnversionedDatabase("unknown")
+                revision = "v2_55"
             return UnversionedDatabase("v2", revision)
         if "approvals" in tables:
             if {"presence_instance_id", "presence_connection_id"}.issubset(

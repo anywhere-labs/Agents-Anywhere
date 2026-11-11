@@ -49,7 +49,11 @@ from connector.runtimes.codex.ipc.timeline import (
     touches_turn_history,
 )
 from connector.runtimes.codex.notifications.notices import CodexNoticeHandler
+from connector.runtimes.codex.notifications.turn_lifecycle import (
+    CodexTurnLifecycleHandler,
+)
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
+from connector.runtimes.codex.timeline.order import is_append_only, timeline_order
 
 IPC_SOURCE = "codex.ipc"
 STATE_SOURCE_KEYS = (
@@ -83,6 +87,7 @@ class CodexIpcSessionProjector:
     read_model_catalog: ModelCatalogReader | None = None
     read_permission_catalog: PermissionCatalogReader | None = None
     async_submissions: AsyncInputSubmissions | None = None
+    turn_lifecycle: CodexTurnLifecycleHandler | None = None
     _published_meta: dict[str, tuple[Any, ...]] = field(default_factory=dict, init=False)
     _notice_ids: dict[str, set[str]] = field(default_factory=dict, init=False)
     _timeline_items: dict[str, dict[str, RuntimeTimelineItem]] = field(
@@ -117,6 +122,13 @@ class CodexIpcSessionProjector:
         return codex_sessions.stable_session_id(self.namespace, thread_id)
 
     async def handle(self, event: FollowerEvent) -> None:
+        if self.turn_lifecycle is None:
+            await self._handle(event)
+            return
+        async with self.turn_lifecycle.session_lock(self.session_id_for(event.thread.thread_id)):
+            await self._handle(event)
+
+    async def _handle(self, event: FollowerEvent) -> None:
         """Mirror one follower event into host updates.
 
         Side effects:
@@ -132,8 +144,18 @@ class CodexIpcSessionProjector:
         if not touches_state and not touches_history:
             return
         if thread.state is not None and thread.status == "following":
-            if touches_state:
+            if self.turn_lifecycle is not None and self.turn_lifecycle.history_reconciled(
+                thread.thread_id, active_turn_id(thread.state),
+            ):
+                # History can reach disk before the owner's final IPC snapshot.
+                # Keep late content without reviving the already finished turn.
+                if touches_history and self.timeline is not None:
+                    await self._project_timeline(thread, full=event.kind == "snapshot")
+                return
+            from connector.runtimes.codex.planning import observe_ipc_plan
+            if touches_state or self.session_id_for(thread.thread_id) not in self._published_meta:
                 await self._project_state(thread)
+            await observe_ipc_plan(self.host, self.session_id_for(thread.thread_id), thread)
             if touches_history and self.timeline is not None:
                 await self._project_timeline(thread, full=event.kind == "snapshot")
             return
@@ -148,21 +170,26 @@ class CodexIpcSessionProjector:
         ordering_time = codex_sessions.thread_ordering_time(dict(state))
         meta_key = (title, cwd, ordering_time, thread.owner_client_id)
         if self._published_meta.get(session_id) != meta_key:
-            await self.host.session_meta_upsert(
-                session_id=session_id,
-                runtime="codex",
-                external_session_id=thread.thread_id,
-                title=title,
-                cwd=cwd,
-                ordering_time=ordering_time,
-                metadata={
-                    "source": IPC_SOURCE,
-                    "attachment": "ipc",
-                    "owner_client_id": thread.owner_client_id,
-                    "originator": state.get("originator"),
-                    "thread_source": state.get("source"),
+            # Plan publication can use a separate HTTP request. Confirm the
+            # session binding before emitting plans, rather than racing a queued
+            # WebSocket metadata notification against durable plan ingestion.
+            await self.host.publish_runtime_notifications("codex", [{
+                "method": "session.meta.upsert",
+                "params": {
+                    "sessionId": session_id,
+                    "externalSessionId": thread.thread_id,
+                    "title": title,
+                    "cwd": cwd,
+                    "orderingTime": ordering_time,
+                    "metadata": {
+                        "source": IPC_SOURCE,
+                        "attachment": "ipc",
+                        "owner_client_id": thread.owner_client_id,
+                        "originator": state.get("originator"),
+                        "thread_source": state.get("source"),
+                    },
                 },
-            )
+            }])
             self._published_meta[session_id] = meta_key
 
         pending = _pending_requests(state)
@@ -234,6 +261,8 @@ class CodexIpcSessionProjector:
                 self.active_turn_ids.pop(session_id, None)
             if self.timeline is not None:
                 self.timeline.end_turn(thread.thread_id, previous)
+            if self.turn_lifecycle is not None and self.turn_lifecycle.history_reconciled(thread.thread_id, previous):
+                return None
             await self.host.session_turn_ended(
                 session_id=session_id,
                 runtime="codex",
@@ -261,7 +290,11 @@ class CodexIpcSessionProjector:
             transport="ipc",
         )
         known = self._timeline_items.get(session_id)
-        if full or known is None:
+        if (
+            full
+            or known is None
+            or not is_append_only(timeline_order(known.values()), timeline_order(items))
+        ):
             await self.host.timeline_sync(
                 session_id=session_id,
                 runtime="codex",
@@ -280,24 +313,41 @@ class CodexIpcSessionProjector:
                 and previous.status == item.status
             ):
                 continue
-            known[item.id] = item
             await self.host.timeline_item_upsert(item)
+            known[item.id] = item
 
     async def _project_detached(self, thread: FollowedThread) -> None:
         session_id = self.session_id_for(thread.thread_id)
-        if self.session_states.get(session_id) is None:
+        cached = self.session_states.get(session_id)
+        if cached is None:
             # Never seen through IPC; nothing to downgrade.
             return
-        await self._sync_notices(session_id, thread, [])
-        self._active_turns.pop(session_id, None)
+        if cached.status in ACTIVE_STATUSES and not str(cached.metadata.get("source", "")).startswith(IPC_SOURCE):
+            # A late disconnect from the previous owner cannot end our new SDK turn.
+            return
+        # Losing the IPC route does not prove the native task has ended. Keep
+        # its identity and activity until explicit history or a new snapshot
+        # supplies the outcome; otherwise history cannot finish the server turn.
+        previous_turn = self._active_turns.get(session_id)
+        pending_turn = (
+            previous_turn is not None
+            and cached.metadata.get("turn_id") == previous_turn
+            and cached.status in ACTIVE_STATUSES
+        )
+        if not pending_turn:
+            await self._sync_notices(session_id, thread, [])
+            if self.session_states.get(session_id) is not cached:
+                return
+            self._active_turns.pop(session_id, None)
         self._timeline_items.pop(session_id, None)
         await self.session_states.update(
             session_id=session_id,
             external_session_id=thread.thread_id,
-            status="idle",
+            status=cached.status if pending_turn else "idle",
             metadata={
                 "source": IPC_SOURCE,
                 "attachment": "none",
+                **({} if pending_turn else {"turn_id": None, "notice_id": None}),
                 "ipc": {
                     "ownerClientId": None,
                     "revision": None,

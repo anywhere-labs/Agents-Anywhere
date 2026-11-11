@@ -8,6 +8,9 @@ All Server HTTP, SSE, and WebSocket API documentation should live under this dir
 
 ## Documents
 
+- [统一目标模式](goals.md)：Codex、Claude Code 的目标栏、操作回执、原生续跑和数据库恢复。
+
+- [统一原生 Plan](planning.md)：规划命令、流式卡片、不可变版本、审阅和回执 API；[完整设计](../runtime-protocol/unified-plan-implementation-plan.md)保留原生研究与分层依据。
 - [Upgrading to v2](../upgrading.md): current deployment and client upgrade
   guidance, including legacy v1 migrations.
 - [API v2 namespace](./namespace.md): `/api/v2` namespace and client/connector URL rules.
@@ -16,6 +19,7 @@ All Server HTTP, SSE, and WebSocket API documentation should live under this dir
 - [Session service architecture](./session-service-architecture.md): Server, Connector, Runtime, and Web ownership boundaries for session data and realtime updates.
 - [Effective capability API](./capabilities.md): global and session-scoped effective capability semantics, paths, and realtime events.
 - [Capability event deduplication](./capability-event-deduplication.md): why repeated session capability events occurred and how live projection delivery is deduplicated safely.
+- [模型配置](model-config.md)：模型配置、预览、应用与恢复，Tokens Anywhere 链接，以及 Runtime 的成熟度和模型连接状态。
 - [Realtime API](./realtime.md): session, dashboard, connector, and terminal realtime channel semantics.
 - [Admin Usage API](./admin-usage.md): event-driven usage statistics for administrators (`/admin/usage/*`), how events are collected and what each metric means.
 - [Frontend migration checklist](./frontend-migration-checklist.md): frontend API call-site replacements and behavior changes to apply after backend cleanup.
@@ -44,6 +48,7 @@ The connector channel endpoints are intentionally stable. Runtime protocol refac
 /connectors
 /connectors/{connectorId}
 /connectors/{connectorId}/preferences
+/connectors/{connectorId}/device-settings
 /connectors/{connectorId}/runtimes
 /connectors/{connectorId}/runtimes/discover
 /connectors/{connectorId}/runtimes/{runtimeId}/capabilities

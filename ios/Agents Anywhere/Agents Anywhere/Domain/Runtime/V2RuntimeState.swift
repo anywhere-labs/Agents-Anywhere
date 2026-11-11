@@ -158,7 +158,8 @@ nonisolated struct V2RuntimeError: Codable, Hashable, LocalizedError {
     let code: String?
     let message: String
 
-    var errorDescription: String? { message }
+    /// Known codes follow the app language; only unknown codes show the runtime's own message.
+    var errorDescription: String? { RuntimeErrorText.text(code: code, fallback: message) }
 }
 
 nonisolated struct V2RuntimeSelectionUpdateRequest: Encodable, Hashable {

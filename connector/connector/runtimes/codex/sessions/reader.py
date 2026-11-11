@@ -40,6 +40,7 @@ from connector.runtimes.codex.sessions.history_index import (
     NativeThreadActivity,
     read_history_index,
     read_native_thread_activity,
+    read_rollout_terminal_activity,
     source_signature,
     valid_read_state,
 )
@@ -48,15 +49,42 @@ from connector.runtimes.codex.sessions.rollout_settings import (
     rollout_permission_settings,
 )
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
+from connector.runtimes.codex.timeline.order import (
+    TimelineOrder,
+    checkpoint_order,
+    is_append_only,
+    timeline_order,
+)
 
 ListModelCatalog = Callable[[str | None, int], Awaitable[RuntimeModelCatalog]]
 ListPermissionCatalog = Callable[[str | None, int], Awaitable[RuntimePermissionCatalog]]
 
 EnsureStarted = Callable[[], Awaitable[None]]
+TIMELINE_CHECKPOINT_VERSION = 2
 
 
 def _session_sync_key(thread_id: str) -> str:
     return f"codex/session-sync/{thread_id}"
+
+
+def _timeline_checkpoint(
+    value: Mapping[str, Any] | None,
+    session_id: str,
+) -> tuple[dict[str, str], TimelineOrder] | None:
+    if (
+        not isinstance(value, Mapping)
+        or value.get("version") != TIMELINE_CHECKPOINT_VERSION
+        or value.get("sessionId") != session_id
+    ):
+        return None
+    items = value.get("items")
+    if not isinstance(items, dict) or not all(
+        isinstance(key, str) and isinstance(fingerprint, str)
+        for key, fingerprint in items.items()
+    ):
+        return None
+    order = checkpoint_order(value.get("order"), items)
+    return (items, order) if order is not None else None
 
 
 def _utc_now() -> str:
@@ -209,9 +237,7 @@ class CodexSessionReader:
             getattr(self.host, "session_namespace", self.host.connector_id),
             thread_id,
         )
-        if (not isinstance(checkpoint, dict) or checkpoint.get("version") != 1
-                or checkpoint.get("sessionId") != session_id or not isinstance(checkpoint.get("items"), dict)
-                or not all(isinstance(k, str) and isinstance(v, str) for k, v in checkpoint["items"].items())):
+        if _timeline_checkpoint(checkpoint, session_id) is None:
             changed = True
         sync_state = {
             "marker": sync_marker,
@@ -270,8 +296,9 @@ class CodexSessionReader:
         checkpoint_key = f"codex/timeline-sync/{external_session_id}"
         previous = await self.host.sync_state_read(checkpoint_key) if external_session_id else None
         # Version changes deliberately invalidate projections from older implementations.
-        old_items = previous.get("items") if isinstance(previous, Mapping) and previous.get("version") == 1 and previous.get("sessionId") == session_id else None
-        valid = isinstance(old_items, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in old_items.items())
+        checkpoint = _timeline_checkpoint(previous, session_id)
+        valid = checkpoint is not None
+        old_items, old_order = checkpoint if checkpoint is not None else ({}, ())
         # Capture before any history awaits: a newer scan must not be acknowledged here.
         pending = self._pending_sync_states.get(session_id)
         indexed = await self._read_indexed_snapshot(session_id, external_session_id, previous if valid else None)
@@ -290,19 +317,28 @@ class CodexSessionReader:
             item.id: hashlib.sha256(json.dumps(asdict(item), sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
             for item in items
         })
-        removed = valid and bool(old_items.keys() - fingerprints.keys())
-        if removed and prefix:
+        # An indexed read returns only the changed tail. Preserve the explicit
+        # order of its acknowledged prefix instead of relying on dict key order.
+        order = tuple(entry for entry in old_order if entry[0] in prefix) + timeline_order(items)
+        reordered = valid and not is_append_only(old_order, order)
+        replacement = (
+            self.client is not None
+            and external_session_id is not None
+            and (not valid or reordered)
+        )
+        if replacement and prefix:
             # A replacement must contain the entire surviving timeline, not just its tail.
             snapshot = await self.get_session_snapshot(session_id, external_session_id)
             items = tuple(item for item in snapshot.items if item.type not in {"turn.start", "turn.end"})
             fingerprints = {item.id: hashlib.sha256(json.dumps(asdict(item), sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest() for item in items}
             read_state = None
-        replacement = previous is not None and (not valid or removed)
+            order = timeline_order(items)
         delta = items if not valid or replacement else tuple(item for item in items if old_items.get(item.id) != fingerprints[item.id])
         prepared_snapshot = replace(snapshot, items=delta, complete=bool(replacement)) if snapshot is not None and (delta or replacement) else None
         async def commit() -> None:
             if external_session_id:
-                await self.host.sync_state_write(checkpoint_key, {"version": 1, "sessionId": session_id, "items": fingerprints,
+                await self.host.sync_state_write(checkpoint_key, {"version": TIMELINE_CHECKPOINT_VERSION, "sessionId": session_id, "items": fingerprints,
+                    "order": [list(entry) for entry in order],
                     **({"readState": read_state} if read_state is not None else {})})
             if pending is not None:
                 sync_key, sync_state = pending
@@ -448,7 +484,10 @@ class CodexSessionReader:
         thread = self._observed_threads.get(external_session_id)
         if thread is None:
             return None
-        return await asyncer.asyncify(read_native_thread_activity)(thread)
+        activity = await asyncer.asyncify(read_native_thread_activity)(thread)
+        if activity is None:
+            activity = await asyncer.asyncify(read_rollout_terminal_activity)(thread)
+        return activity
 
     async def _read_session_selections(
         self,

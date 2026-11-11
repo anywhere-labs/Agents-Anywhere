@@ -342,6 +342,7 @@ final class AppState {
         if repository.hasLoaded {
             services.newSession.updateProjects(projects)
             services.newSession.updateConnectors(connectors)
+            services.newSession.updateModelChannel(repository.modelConfig, runtimes: repository.runtimes)
         }
     }
 

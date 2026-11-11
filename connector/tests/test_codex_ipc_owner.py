@@ -317,17 +317,58 @@ def test_owner_serves_discovery_snapshots_and_follower_requests() -> None:
                 context={"approvalSource": {"requestId": 42, "method": "item/commandExecution/requestApproval", "threadId": THREAD}, "command": "ls"},
             )
             notices.upsert(notice)
+            await states.update(
+                session_id,
+                THREAD,
+                status="waiting_approval",
+                metadata={"source": "item/commandExecution/requestApproval"},
+            )
             state = await owner.build_conversation_state(THREAD)
             assert state["requests"][0]["requestId"] == 42 and state["requests"][0]["params"]["command"] == "ls"
-            decided = await window_client.request(
+
+            # A second pending approval keeps the session in waiting_approval
+            # after the first window decision resolves.
+            notices.upsert(
+                SessionNotice(
+                    notice_id="notice_approval_2",
+                    session_id=session_id,
+                    runtime="codex",
+                    type="interaction",
+                    title="approve",
+                    interaction_type="approval",
+                    blocking={"scope": "session", "targetId": session_id},
+                    response_required=True,
+                    context={"approvalSource": {"requestId": 43, "method": "item/commandExecution/requestApproval", "threadId": THREAD}, "command": "pwd"},
+                )
+            )
+            first = await window_client.request(
                 "thread-follower-command-approval-decision",
                 {"conversationId": THREAD, "requestId": 42, "decision": "accept"},
                 target_client_id=connector_client.client_id,
             )
-            assert decided.ok
+            assert first.ok
             assert ("respond", (42, {"decision": "accept"})) in sdk.calls
             assert notices.get("notice_approval_1").status == "resolved"
             assert host.notices[-1].status == "resolved"
+            assert states.get(session_id).status == "waiting_approval"
+
+            decided = await window_client.request(
+                "thread-follower-command-approval-decision",
+                {"conversationId": THREAD, "requestId": 43, "decision": "decline"},
+                target_client_id=connector_client.client_id,
+            )
+            assert decided.ok
+            assert ("respond", (43, {"decision": "decline"})) in sdk.calls
+            assert notices.get("notice_approval_2").status == "resolved"
+            assert host.notices[-1].status == "resolved"
+            # A response delivered by a window resolves the notice; the
+            # session must also leave waiting_approval so the UI drops the
+            # badge and placeholder instead of waiting for a card that is gone.
+            assert states.get(session_id).status == "running"
+            assert host.states[-1]["status"] == "running"
+            assert host.states[-1]["metadata"]["source"] == "codex.ipc.owner/responded"
+            assert host.states[-1]["metadata"]["notice_id"] == "notice_approval_2"
+            assert host.states[-1]["metadata"]["decision"] == "decline"
 
             history = await window_client.request(
                 "thread-follower-load-complete-history", {"conversationId": THREAD}, target_client_id=connector_client.client_id

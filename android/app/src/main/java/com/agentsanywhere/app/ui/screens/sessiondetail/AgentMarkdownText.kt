@@ -75,6 +75,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.feature.files.inlineCodeFilePath
+import com.agentsanywhere.app.feature.files.normalizeSpacedLinkDestinations
+import com.agentsanywhere.app.feature.files.sessionFileLinkPath
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import java.util.UUID
@@ -164,7 +167,7 @@ internal fun AgentMarkdownText(
     }
     val uriHandler = LocalUriHandler.current
     val (mathSource, document) = remember(text) {
-        val raw = text.ifBlank { "_(no content)_" }
+        val raw = normalizeSpacedLinkDestinations(text.ifBlank { "_(no content)_" })
         val extracted = MarkdownMathSource.parse(raw)
         val parsed = markdownParser.parse(normalizeMarkdownTables(extracted.markdown)) as Document
         extracted to parsed
@@ -211,7 +214,7 @@ private fun MarkdownBlocks(
                         if (codeLiteral.needsWrappingCode()) {
                             MarkdownWrappingCodeChip(
                                 code = codeLiteral,
-                                path = parseFileRef(codeLiteral),
+                                path = inlineCodeFilePath(codeLiteral),
                                 styles = styles,
                                 onOpenFile = onOpenFile,
                             )
@@ -286,7 +289,7 @@ private fun MarkdownBlocks(
                         .background(styles.border),
                 )
                 is HtmlBlock -> MarkdownInlineText(
-                    nodes = listOf(Text(mathSource.restoreLiteral(node.literal))),
+                    nodes = listOf(HtmlInline().apply { literal = mathSource.restoreLiteral(node.literal) }),
                     mathSource = mathSource,
                     textStyle = styles.body,
                     styles = styles,
@@ -436,6 +439,22 @@ private fun MarkdownInlineText(
     onOpenFile: (String) -> Unit,
     onOpenUrl: (String) -> Unit,
 ) {
+    val imageParts = remember(nodes, mathSource) {
+        splitMarkdownImages(nodes, mathSource::restoreLiteral)
+    }
+    if (imageParts.any { it is MarkdownImagePart.Picture }) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            imageParts.forEach { part ->
+                when (part) {
+                    is MarkdownImagePart.Picture -> MarkdownImage(part.source, part.description)
+                    is MarkdownImagePart.Words -> MarkdownInlineText(
+                        part.nodes, mathSource, textStyle, styles, onOpenFile, onOpenUrl,
+                    )
+                }
+            }
+        }
+        return
+    }
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
     val maxInlineMathWidthPx = with(density) { 280.dp.roundToPx() }
@@ -535,7 +554,7 @@ private fun buildMarkdownInline(
                     is HardLineBreak -> append("\n")
                     is Code -> {
                         val codeLiteral = mathSource.restoreLiteral(node.literal)
-                        val path = parseFileRef(codeLiteral)
+                        val path = inlineCodeFilePath(codeLiteral)
                         if (codeLiteral.needsWrappingCode()) {
                             if (path != null) pushStringAnnotation(AnnotationFile, path)
                             withSpan(
@@ -575,12 +594,28 @@ private fun buildMarkdownInline(
                     }
                     is Link -> {
                         val destination = mathSource.restoreLiteral(node.destination)
-                        val filePath = if (isFilePath(destination)) stripLine(destination) else null
+                        val filePath = sessionFileLinkPath(destination)
                         pushStringAnnotation(if (filePath != null) AnnotationFile else AnnotationUrl, filePath ?: destination)
                         withSpan(SpanStyle(color = styles.linkColor, textDecoration = TextDecoration.Underline)) {
                             appendNodes(node.children())
                         }
                         pop()
+                    }
+                    is ImageTextWrapper -> {
+                        val wrapper = node.styleNode
+                        if (wrapper is Link) {
+                            val destination = mathSource.restoreLiteral(wrapper.destination)
+                            val filePath = sessionFileLinkPath(destination)
+                            pushStringAnnotation(if (filePath != null) AnnotationFile else AnnotationUrl, filePath ?: destination)
+                        }
+                        val span = when (wrapper) {
+                            is Link -> SpanStyle(color = styles.linkColor, textDecoration = TextDecoration.Underline)
+                            is Emphasis -> SpanStyle(fontStyle = FontStyle.Italic)
+                            is StrongEmphasis -> SpanStyle(fontWeight = FontWeight.Bold)
+                            else -> SpanStyle(textDecoration = TextDecoration.LineThrough)
+                        }
+                        withSpan(span) { appendNodes(node.content) }
+                        if (wrapper is Link) pop()
                     }
                     is Image -> appendNodes(node.children())
                     is HtmlInline -> append(mathSource.restoreLiteral(node.literal))
@@ -1087,24 +1122,6 @@ private fun splitTableRowCells(line: String): List<String> {
 private fun String.isMarkdownFenceBoundary(): Boolean {
     val trimmed = trimStart()
     return trimmed.startsWith("```") || trimmed.startsWith("~~~")
-}
-
-private fun stripLine(path: String): String = path.replace(Regex(""":\d+(:\d+)?$"""), "")
-
-private fun parseFileRef(text: String): String? {
-    if (text.isBlank() || text.contains(" ") || text.contains("://")) return null
-    if (!text.contains("/")) return null
-    if (!Regex("""\.[a-zA-Z0-9]+(?::\d+(?::\d+)?)?$""").containsMatchIn(text)) return null
-    return stripLine(text)
-}
-
-private fun isFilePath(href: String): Boolean {
-    if (href.isBlank()) return false
-    return !href.startsWith("http://") &&
-        !href.startsWith("https://") &&
-        !href.startsWith("mailto:") &&
-        !href.startsWith("#") &&
-        !href.startsWith("//")
 }
 
 private val latexExtensionsRegistered = AtomicBoolean(false)

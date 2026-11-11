@@ -46,14 +46,19 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.api.AuthApi
 import com.agentsanywhere.app.api.AuthMeResponse
+import com.agentsanywhere.app.api.DevicesApi
 import com.agentsanywhere.app.api.FilesApi
+import com.agentsanywhere.app.api.ModelConfigApi
 import com.agentsanywhere.app.api.RealtimeApi
 import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.api.TerminalApi
 import com.agentsanywhere.app.feature.auth.AuthSessionReader
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
 import com.agentsanywhere.app.feature.auth.WebLoginViewModel
+import com.agentsanywhere.app.feature.devices.DevicesController
 import com.agentsanywhere.app.feature.files.FilesController
+import com.agentsanywhere.app.feature.modelconfig.ModelConfigController
+import com.agentsanywhere.app.feature.modelconfig.ModelConfigState
 import com.agentsanywhere.app.feature.realtime.SessionRealtimeController
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessions.NewSessionCreateOutcome
@@ -270,6 +275,8 @@ class AgentsAnywhereNavHostWorkspaceTest {
         val detail = remember { SessionDetailController(SessionsApi(), noAuth) }
         val realtime = remember { SessionRealtimeController(RealtimeApi(), noAuth, "workspace-test") }
         val files = remember { FilesController(FilesApi(), auth) }
+        val devices = remember { DevicesController(DevicesApi(), auth) }
+        val modelConfig = remember { ModelConfigController(ModelConfigApi(), noAuth) }
         val terminal = remember { RemoteTerminalPool(TerminalController(TerminalApi(), auth, AuthApi())) }
         val webLogin = remember { WebLoginViewModel(application) }
         val updates = remember { AppUpdateViewModel(application) }
@@ -280,6 +287,7 @@ class AgentsAnywhereNavHostWorkspaceTest {
                 devices = listOf(AgentDevice("device", "Device", online = true)),
                 hasLoaded = true,
             ),
+            modelConfigState = ModelConfigState(), modelConfigController = modelConfig,
             isRefreshingSessions = false, selectedSessionId = selected, preparedSessionDraft = prepared,
             selectedDeviceId = null, deviceDetailReturnDestination = AppDestination.Sessions,
             deviceSetupReturnDestination = AppDestination.Sessions, selectedHomeTab = HomeTab.Active,
@@ -302,8 +310,7 @@ class AgentsAnywhereNavHostWorkspaceTest {
             onPrepareDeviceSetup = { unavailable() }, onCreateDeviceSetup = { unavailable() },
             onClaimDevicePairCode = { _, _ -> unavailable() }, devicePairingStates = emptyMap(),
             onWaitForPairingDevice = {}, onClearDevicePairing = {}, onDevicePairingComplete = {},
-            onListDeviceRuntimes = { unavailable() }, onSetDeviceRuntimeActive = { _, _, _ -> unavailable() },
-            onDeleteDeviceRuntimeConfig = { _, _ -> unavailable() },
+            onListDeviceRuntimes = { unavailable() }, deviceAgents = devices, deviceSettings = devices,
             onBulkSetSessionsArchived = { _, _ -> unavailable() },
             onArchiveAllDeviceSessions = { _, _, _ -> unavailable() },
             onRenameSession = { _, _ -> unavailable() }, onSetSessionPinned = { _, _ -> unavailable() },
@@ -316,6 +323,7 @@ class AgentsAnywhereNavHostWorkspaceTest {
             onPrepareSession = {}, onPreparedSessionCreated = {}, onListDirectory = { _, _, _ -> unavailable() },
             onListNewSessionRuntimes = { unavailable() },
             onLoadNewSessionRuntimeCapabilities = { _, _ -> unavailable() },
+            onPrepareRuntimeWorkspace = { _, _, _ -> unavailable() },
             onLoadNewSessionModelCatalog = { _, _ -> unavailable() },
             onLoadNewSessionPermissionCatalog = { _, _ -> unavailable() },
             onSessionChanged = {}, onMobileLoginQrRequested = {},

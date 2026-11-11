@@ -22,7 +22,6 @@ SHUTTING_DOWN=false
 SERVICE_PIDS=()
 SERVICE_NAMES=()
 OUTPUT_PIDS=()
-INFRA_STARTED=false
 
 usage() {
   cat <<'EOF'
@@ -46,7 +45,8 @@ Options:
 
 The default stack uses Docker PostgreSQL and Redis. An existing .env.local is
 loaded automatically. Connector startup is opt-in because its saved config may
-point at another Server.
+point at another Server. Ctrl-C stops applications; shared PostgreSQL and Redis
+stay running for the next launch.
 EOF
 }
 
@@ -126,6 +126,22 @@ if [[ -f "${ENV_FILE}" ]]; then
 elif [[ "${ENV_FILE_EXPLICIT}" == true ]]; then
   fail "environment file not found: ${ENV_FILE}"
 fi
+
+# Keep one local encryption key across restarts; never print it or regenerate it.
+if [[ -z "${AGENT_SERVER_SECRET:-}" ]]; then
+  command -v openssl >/dev/null 2>&1 || fail "openssl is required to generate the local Server secret"
+  AGENT_SERVER_SECRET="$(openssl rand -hex 32)"
+  (
+    umask 077
+    touch "${ENV_FILE}"
+    chmod 600 "${ENV_FILE}"
+    printf '\nAGENT_SERVER_SECRET=%s\n' "${AGENT_SERVER_SECRET}" >>"${ENV_FILE}"
+  )
+  printf '[local] Generated and saved the Server secret to %s\n' "${ENV_FILE}"
+elif [[ ${#AGENT_SERVER_SECRET} -lt 32 || "${AGENT_SERVER_SECRET}" == "agent-server-dev-secret" ]]; then
+  fail "AGENT_SERVER_SECRET must contain at least 32 characters and must not use the development default"
+fi
+export AGENT_SERVER_SECRET
 
 if [[ "${CONNECTOR_CONFIG_EXPLICIT}" != true ]]; then
   CONNECTOR_CONFIG="${AGENT_CONNECTOR_CONFIG:-${HOME}/.agents-anywhere/connector.json}"
@@ -285,11 +301,12 @@ start_service() {
 
 stop_process_tree() {
   local pid="$1"
+  local signal="${2:-TERM}"
   local child
   for child in $(pgrep -P "${pid}" 2>/dev/null || true); do
-    stop_process_tree "${child}"
+    stop_process_tree "${child}" "${signal}"
   done
-  kill -TERM "${pid}" >/dev/null 2>&1 || true
+  kill -"${signal}" "${pid}" >/dev/null 2>&1 || true
 }
 
 cleanup() {
@@ -305,7 +322,23 @@ cleanup() {
   for pid in "${SERVICE_PIDS[@]-}"; do
     [[ -n "${pid}" ]] && stop_process_tree "${pid}"
   done
+  # A graceful Server shutdown can stall on in-flight work. Bound the wait
+  # so a later launcher cannot inherit orphaned workers and renewed Redis locks.
+  local tick alive
+  for ((tick = 0; tick < 50; tick++)); do
+    alive=false
+    for pid in "${SERVICE_PIDS[@]-}"; do
+      if [[ -n "${pid}" ]] && kill -0 "${pid}" >/dev/null 2>&1; then
+        alive=true
+      fi
+    done
+    [[ "${alive}" == false ]] && break
+    sleep 0.1
+  done
   for pid in "${SERVICE_PIDS[@]-}"; do
+    if [[ -n "${pid}" ]] && kill -0 "${pid}" >/dev/null 2>&1; then
+      stop_process_tree "${pid}" KILL
+    fi
     [[ -n "${pid}" ]] && wait "${pid}" >/dev/null 2>&1 || true
   done
   for pid in "${OUTPUT_PIDS[@]-}"; do
@@ -321,9 +354,7 @@ cleanup() {
     [[ "$(<"${LOCAL_UP_PID_FILE}")" == "$$" ]]; then
     rm -f "${LOCAL_UP_PID_FILE}"
   fi
-  if [[ "${INFRA_STARTED}" == true ]] && docker info >/dev/null 2>&1; then
-    docker compose -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
-  fi
+  # PostgreSQL and Redis are shared by both launchers and survive restarts.
   exit "${status}"
 }
 
@@ -367,8 +398,18 @@ reset_local_data
 
 assert_port_available "${SERVER_PORT}" "server"
 assert_port_available "${WEB_PORT}" "web"
-assert_port_available "${POSTGRES_PORT}" "PostgreSQL"
-assert_port_available "${REDIS_PORT}" "Redis"
+# Compose reuses our shared infrastructure; reject unrelated port owners.
+for service in postgres redis; do
+  if [[ "${service}" == postgres ]]; then
+    infra_port="${POSTGRES_PORT}"
+  else
+    infra_port="${REDIS_PORT}"
+  fi
+  container_id="$(docker compose -f "${COMPOSE_FILE}" ps --status running -q "${service}")"
+  if [[ -z "${container_id}" ]]; then
+    assert_port_available "${infra_port}" "${service}"
+  fi
+done
 
 if [[ "${WITH_CONNECTOR}" == true ]]; then
   if [[ -z "${AGENT_CONNECTOR_ID:-}" || -z "${AGENT_CONNECTOR_TOKEN:-}" ]]; then
@@ -404,7 +445,6 @@ AGENTS_ANYWHERE_POSTGRES_PORT="${POSTGRES_PORT}" \
 AGENTS_ANYWHERE_REDIS_PORT="${REDIS_PORT}" \
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" \
   docker compose -f "${COMPOSE_FILE}" up -d --wait
-INFRA_STARTED=true
 
 printf '%s[setup]%s Applying database migrations...\n' "${CYAN}" "${RESET}"
 (

@@ -41,6 +41,10 @@ import com.agentsanywhere.app.feature.devices.DevicesController
 import com.agentsanywhere.app.feature.devices.DevicePairingMonitor
 import com.agentsanywhere.app.feature.files.FilesController
 import com.agentsanywhere.app.feature.realtime.DashboardRealtimeController
+import com.agentsanywhere.app.feature.modelconfig.ModelConfigController
+import com.agentsanywhere.app.feature.modelconfig.ModelConfigState
+import com.agentsanywhere.app.feature.modelconfig.toModelConfigState
+import com.agentsanywhere.app.api.ModelConfigApi
 import com.agentsanywhere.app.feature.realtime.RealtimeClientIdStore
 import com.agentsanywhere.app.feature.realtime.SessionRealtimeController
 import com.agentsanywhere.app.feature.sessions.SessionsController
@@ -139,8 +143,16 @@ fun AgentsAnywhereApp(
     val sessionsController = remember(context, sessionStore, apiClient) {
         SessionsController(
             sessionsApi = SessionsApi(apiClient),
+            workflowApi = com.agentsanywhere.app.api.RuntimeWorkflowApi(apiClient),
+            workflowReferences = com.agentsanywhere.app.feature.sessions.RuntimeWorkflowReferenceStore(context),
             devicesApi = DevicesApi(apiClient),
             filesApi = FilesApi(apiClient),
+            sessionStore = sessionStore,
+        )
+    }
+    val modelConfigController = remember(sessionStore, apiClient) {
+        ModelConfigController(
+            api = ModelConfigApi(apiClient),
             sessionStore = sessionStore,
         )
     }
@@ -180,6 +192,7 @@ fun AgentsAnywhereApp(
     }
     val currentDestination = AppDestination.valueOf(destinationName)
     val hasAuthSession = sessionStore.hasAuthSession()
+    LaunchedEffect(hasAuthSession, sessionStore.readServerUrl(), sessionStore.readUserId()) { if (hasAuthSession) sessionsController.workflows.restore() else sessionsController.workflows.clear() }
     val updateServerUrl = sessionStore.readServerUrl()
     val updatesAllowed = hasAuthSession && updateServerUrl.isNotBlank() && currentDestination !in setOf(
         AppDestination.LoginMethods, AppDestination.ServerSetup, AppDestination.QrLogin, AppDestination.QrWaiting,
@@ -206,6 +219,7 @@ fun AgentsAnywhereApp(
             }.sortedWith(com.agentsanywhere.app.feature.sessions.sessionListComparator(now)))
         }
     }
+    var modelConfigState by remember(sessionsController) { mutableStateOf(ModelConfigState()) }
     var isRefreshingSessions by remember { mutableStateOf(false) }
     var projectSessionsById by remember { mutableStateOf<Map<String, List<AgentSession>>>(emptyMap()) }
     var loadingProjectRequests by remember { mutableStateOf<Set<ProjectSessionLoadKey>>(emptySet()) }
@@ -260,6 +274,7 @@ fun AgentsAnywhereApp(
         appUpdateViewModel.syncSession(false)
         remoteTerminalPool.disposeLocal()
         sessionsState = SessionsState()
+        modelConfigState = ModelConfigState()
         isRefreshingSessions = false
         projectSessionsById = emptyMap()
         loadingProjectRequests = emptySet()
@@ -463,6 +478,7 @@ fun AgentsAnywhereApp(
     ) {
         if (!hasAuthSession) {
             sessionsState = SessionsState()
+            modelConfigState = ModelConfigState()
             return@LaunchedEffect
         }
         if (!appVisible) return@LaunchedEffect
@@ -477,6 +493,7 @@ fun AgentsAnywhereApp(
                     sessionsState = sessionsState.replacedByDashboardSnapshot(
                         sessionsController.dashboardSnapshotState(snapshot),
                     )
+                    modelConfigState = snapshot.toModelConfigState()
                 }
             },
             onInitialFailure = {
@@ -505,6 +522,8 @@ fun AgentsAnywhereApp(
     AgentsAnywhereNavHost(
         currentDestination = currentDestination,
         sessionsState = sessionsState,
+        modelConfigState = modelConfigState,
+        modelConfigController = modelConfigController,
         isRefreshingSessions = isRefreshingSessions,
         selectedSessionId = selectedSessionId,
         preparedSessionDraft = preparedSessionDraft,
@@ -661,20 +680,8 @@ fun AgentsAnywhereApp(
                 devicesController.listDeviceRuntimes(connectorId)
             }
         },
-        onSetDeviceRuntimeActive = { connectorId, runtime, active ->
-            if (!hasAuthSession) {
-                Result.failure(IllegalStateException("Sign in again to update this runtime."))
-            } else {
-                devicesController.setDeviceRuntimeActive(connectorId, runtime, active)
-            }
-        },
-        onDeleteDeviceRuntimeConfig = { connectorId, runtime ->
-            if (!hasAuthSession) {
-                Result.failure(IllegalStateException("Sign in again to delete runtime configuration."))
-            } else {
-                devicesController.deleteDeviceRuntimeConfig(connectorId, runtime)
-            }
-        },
+        deviceAgents = devicesController,
+        deviceSettings = devicesController,
         onBulkSetSessionsArchived = { ids, archived ->
             if (!hasAuthSession) {
                 Result.failure(IllegalStateException("Sign in again to update sessions."))
@@ -873,6 +880,7 @@ fun AgentsAnywhereApp(
         onLoadNewSessionRuntimeCapabilities = { connectorId, runtime ->
             sessionsController.loadNewSessionRuntimeCapabilities(connectorId, runtime)
         },
+        onPrepareRuntimeWorkspace = { connector, runtime, project -> sessionsController.prepareRuntimeWorkspace(connector, runtime, project) },
         onLoadNewSessionModelCatalog = { connectorId, runtime ->
             sessionsController.loadNewSessionModelCatalog(connectorId, runtime)
         },
@@ -887,6 +895,14 @@ fun AgentsAnywhereApp(
             destinationName = AppDestination.QrWaiting.name
         },
     )
+    com.agentsanywhere.app.ui.screens.home.RuntimeWorkflowDialog(sessionsController.workflows) {
+        sessionsController.openAcceptedWorkflow(sessionsState.devices).onSuccess { session ->
+            sessionsState = sessionsState.withPatchedSession(session)
+            preparedSessionDraft = null
+            selectedSessionId = session.id
+            destinationName = AppDestination.SessionDetail.name
+        }
+    }
     AnnouncementGate(
         api = announcementsApi,
         serverUrl = updateServerUrl.ifBlank { AppConfig.OFFICIAL_SERVER_URL },
