@@ -118,6 +118,42 @@ def test_conversation_state_from_thread_builds_v11_shape() -> None:
     assert idle["turnsPagination"]["oldestLoadedTurnId"] is None
 
 
+def test_conversation_state_keeps_project_threads_in_their_project() -> None:
+    # A following App window adopts workspaceKind as is; "projectless" moves a
+    # thread out of its project into the App's chats once it is opened there.
+    def state_for(cwd: str | None, host_id: str = "local") -> dict[str, Any]:
+        raw = _raw_thread()
+        raw["cwd"] = cwd
+        return conversation_state_from_thread(
+            raw, thread_id=THREAD, host_id=host_id, runtime_status="idle", requests=[], active_turn_id=None
+        )
+
+    for cwd in (
+        "/Users/me/Downloads/report",
+        "/Users/me/Documents/Codex",
+        "/Users/me/Documents/Codex/notes",
+        "/Users/me/Documents/Codex/2026-04-30",
+        "/Users/me/Documents/Codex/2026-04-30/New-Chat",
+        None,
+    ):
+        state = state_for(cwd)
+        assert state["workspaceKind"] == "project", cwd
+        assert state["workspaceBrowserRoot"] is None and state["projectlessOutputDirectory"] is None
+
+    # The App's own chat folders (Documents/Codex/<date>/<slug> or <date>-<slug>) stay projectless.
+    for cwd, root in (
+        ("/Users/me/Documents/Codex/2026-04-30/https-www-blender-org-lab-mcp-2", "/Users/me/Documents/Codex"),
+        (" /Users/me/Documents/Codex/2026-06-11-new-chat/ ", "/Users/me/Documents/Codex"),
+        ("C:\\Users\\me\\Documents\\Codex\\2026-06-11\\new-chat", "C:\\Users\\me\\Documents\\Codex"),
+    ):
+        state = state_for(cwd)
+        assert state["workspaceKind"] == "projectless", cwd
+        assert state["workspaceBrowserRoot"] == root
+    # Like the App, chat folders are only recognized on the local host.
+    remote = state_for("/Users/me/Documents/Codex/2026-04-30/new-chat", host_id="ssh-devbox")
+    assert remote["workspaceKind"] == "project" and remote["workspaceBrowserRoot"] is None
+
+
 # -- fakes ---------------------------------------------------------------------
 
 
