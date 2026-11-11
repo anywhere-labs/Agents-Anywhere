@@ -3,6 +3,7 @@ package com.agentsanywhere.app.ui.screens.sessiondetail
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.lazy.LazyListItemInfo
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -22,12 +23,8 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.TextLayoutResult
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.launch
 import kotlin.math.abs
-import kotlin.math.roundToInt
 
 internal val LocalTimelineReading = staticCompositionLocalOf<TimelineReadingState?> { null }
 internal val LocalReadingMessage = staticCompositionLocalOf { "" }
@@ -49,19 +46,29 @@ internal class TimelineReadingState {
     var touching = false
     var selecting = false
     var towardsLatest = false
+    var returningToLatest = false
     private var anchor by mutableStateOf<Anchor?>(null)
+    private var lazyBounds = Rect.Zero
     private var viewport = Rect.Zero
+    private var viewportWidth = 0f
     private val regions = linkedMapOf<String, Region>()
     private var owners by mutableStateOf(emptyMap<String, Pair<Int, String>>())
     private var hasMoreHistory = false
     private var correcting = false
     private var list: LazyListState? = null
-    private var scope: CoroutineScope? = null
     /** Far (upper) edge of each visible row, measured from the list's start, as of the last check. */
     private var rowTops = emptyMap<Any, Int>()
+    private var itemSpans = emptyMap<Any, ItemSpan>()
+    private var pendingProbe: LayoutCoordinates? = null
+    private var pendingProbeBaseY = 0f
+    private var pendingUnplacedShift = 0f
 
     val needsOlder: Boolean
         get() = !following && owners.isNotEmpty() && anchor?.let { it.row !in owners } == true
+
+    private data class ItemSpan(val offset: Int, val size: Int) {
+        val top: Int get() = offset + size
+    }
 
     private data class Region(
         val bounds: Rect,
@@ -69,7 +76,14 @@ internal class TimelineReadingState {
         val text: String = "",
         val row: String,
         val coordinates: LayoutCoordinates? = null,
-    )
+    ) {
+        fun liveBounds(shift: Float = 0f): Rect {
+            val attached = coordinates?.takeIf { it.isAttached }
+                ?: return if (shift == 0f) bounds else bounds.translate(0f, shift)
+            val pos = attached.positionInWindow()
+            return Rect(pos.copy(y = pos.y + shift), attached.size.toSize())
+        }
+    }
     private data class Anchor(val key: String, val row: String, val offset: Int, val context: String, val y: Float)
 
     fun invalidate() { changes.trySend(Unit) }
@@ -93,8 +107,15 @@ internal class TimelineReadingState {
         }
     }
 
-    fun viewport(bounds: Rect) {
-        viewport = bounds
+    fun viewport(lazyBounds: Rect, readingBounds: Rect) {
+        if (viewportWidth != 0f && abs(viewportWidth - readingBounds.width) > 1f) {
+            rowTops = emptyMap()
+            itemSpans = emptyMap()
+            clearPendingShift()
+        }
+        viewportWidth = readingBounds.width
+        this.lazyBounds = lazyBounds
+        viewport = readingBounds
         invalidate()
     }
 
@@ -109,15 +130,14 @@ internal class TimelineReadingState {
 
     fun remove(key: String) { regions.remove(key); invalidate() }
 
-    fun attach(list: LazyListState, scope: CoroutineScope) {
+    fun attach(list: LazyListState) {
         this.list = list
-        this.scope = scope
     }
 
     fun detach(list: LazyListState) {
         if (this.list === list) {
             this.list = null
-            scope = null
+            clearPendingShift()
         }
     }
 
@@ -144,13 +164,17 @@ internal class TimelineReadingState {
 
     fun pauseAt(key: String? = null) {
         following = false
-        anchor = key?.let { k -> regions[k]?.let { Anchor(k, it.row, -1, "", it.bounds.top - viewport.top) } }
-            ?: capture()
+        val shift = currentUnplacedShift()
+        anchor = key?.let { k ->
+            regions[k]?.takeIf { it.coordinates?.isAttached != false }
+                ?.let { Anchor(k, it.row, -1, "", it.liveBounds(shift).top - viewport.top) }
+        } ?: capture()
         invalidate()
     }
 
     fun gesture(delta: Float) {
         if (delta == 0f) return
+        clearPendingShift()
         following = false
         towardsLatest = delta < 0f // reverseLayout: upward finger motion approaches latest.
         anchor = null
@@ -158,6 +182,7 @@ internal class TimelineReadingState {
     }
 
     fun release() {
+        clearPendingShift()
         following = true
         towardsLatest = false
         anchor = null
@@ -165,39 +190,56 @@ internal class TimelineReadingState {
     }
 
     private fun capture(): Anchor? {
-        val visible = regions.entries.filter { (_, r) -> r.bounds.bottom > viewport.top && r.bounds.top < viewport.bottom &&
-            r.bounds.right > viewport.left && r.bounds.left < viewport.right }
-        val candidate = visible.filter { it.value.layout != null }
-            .minByOrNull { (_, r) -> abs(r.bounds.top.coerceAtLeast(viewport.top) - viewport.top) }
-            ?: visible.filter { !it.key.startsWith("message:") }.minByOrNull { abs(it.value.bounds.top - viewport.top) }
-            ?: visible.minByOrNull { abs(it.value.bounds.top - viewport.top) }
+        val shift = currentUnplacedShift()
+        val visible = regions.entries.mapNotNull { (k, r) ->
+            if (r.coordinates?.isAttached == false) return@mapNotNull null
+            val b = r.liveBounds(shift)
+            if (b.bottom > viewport.top && b.top < viewport.bottom &&
+                b.right > viewport.left && b.left < viewport.right
+            ) k to (r to b) else null
+        }
+        val candidate = visible.filter { it.second.first.layout != null }
+            .minByOrNull { (_, pair) -> abs(pair.second.top.coerceAtLeast(viewport.top) - viewport.top) }
+            ?: visible.filter { !it.first.startsWith("message:") }.minByOrNull { abs(it.second.second.top - viewport.top) }
+            ?: visible.minByOrNull { abs(it.second.second.top - viewport.top) }
             ?: return null
-        val (key, region) = candidate
+        val (key, pair) = candidate
+        val (region, bounds) = pair
         val layout = region.layout
         val offset = if (layout != null && layout.lineCount > 0) {
-            layout.getLineStart(layout.getLineForVerticalPosition((viewport.top - region.bounds.top).coerceAtLeast(0f)))
+            layout.getLineStart(layout.getLineForVerticalPosition((viewport.top - bounds.top).coerceAtLeast(0f)))
         } else -1
         val localY = if (layout != null && offset >= 0) layout.getLineTop(layout.getLineForOffset(offset.coerceAtMost(region.text.length))) else 0f
-        return Anchor(key, region.row, offset, if (offset >= 0) region.text.drop(offset).take(40) else "", region.bounds.top + localY - viewport.top)
+        return Anchor(key, region.row, offset, if (offset >= 0) region.text.drop(offset).take(40) else "", bounds.top + localY - viewport.top)
     }
 
     /** Called after a layout frame, never from a placement callback. */
     suspend fun settle(list: LazyListState) {
-        if (correcting || viewport == Rect.Zero) return
+        if (correcting || returningToLatest || viewport == Rect.Zero) return
         if (touching || selecting || selectionReaders.values.any { it() } || list.isScrollInProgress) {
             if (!correcting) anchor = null
+            if (!following && towardsLatest && !touching && list.firstVisibleItemIndex == 0 && list.firstVisibleItemScrollOffset == 0) {
+                release()
+            }
             return
         }
         if (!following && towardsLatest && list.firstVisibleItemIndex == 0 && list.firstVisibleItemScrollOffset == 0) release()
         if (following) {
             if (list.firstVisibleItemIndex != 0 || list.firstVisibleItemScrollOffset != 0) {
                 correcting = true
-                try { list.scrollToItem(0) } finally { correcting = false }
+                try {
+                    clearPendingShift()
+                    list.scrollToItem(0)
+                } finally {
+                    correcting = false
+                    snapshotItems(list.layoutInfo.visibleItemsInfo)
+                }
             }
             return
         }
         val held = anchor ?: capture().also { anchor = it } ?: return
-        val region = regions[held.key]
+        val shift = currentUnplacedShift()
+        val region = regions[held.key]?.takeIf { it.coordinates?.isAttached != false }
         if (region == null) {
             val owner = owners[held.row]
             // Keep the saved identity while the existing history pager materializes it.
@@ -207,61 +249,149 @@ internal class TimelineReadingState {
                 // message before restoring its descendant coordinate, instead of
                 // adopting whichever neighbouring row LazyColumn chose as fallback.
                 correcting = true
-                try { list.scrollToItem(owner.first) } finally { correcting = false }
+                try {
+                    clearPendingShift()
+                    list.scrollToItem(owner.first)
+                } finally {
+                    correcting = false
+                    snapshotItems(list.layoutInfo.visibleItemsInfo)
+                }
                 invalidate()
                 return
             }
-            val fallbackKey = listOf("header:${held.row}", "message:${held.row}", owner?.second)
-                .filterNotNull().firstOrNull { it != held.key && regions.containsKey(it) }
+            val fallbackKey = listOf("header:${held.row}", owner?.second?.takeUnless { it.startsWith("message:") })
+                .filterNotNull().firstOrNull { it != held.key && regions[it]?.coordinates?.isAttached != false && regions.containsKey(it) }
             val fallback = fallbackKey?.let(regions::get)
             anchor = if (fallback != null) Anchor(fallbackKey, held.row, -1, "", held.y) else capture()
             invalidate()
             return
         }
-        val delta = held.y - anchoredLineY(held, region, region.bounds.top)
+        val delta = held.y - anchoredLineY(held, region, region.liveBounds(shift).top)
         if (abs(delta) <= 1f) return
         correcting = true
-        val consumed = try { list.scrollBy(delta) } finally { correcting = false }
+        val consumed = try {
+            clearPendingShift()
+            list.scrollBy(delta)
+        } finally {
+            correcting = false
+            snapshotItems(list.layoutInfo.visibleItemsInfo)
+        }
         // A list boundary cannot satisfy an arbitrary coordinate. Rebase instead of retrying forever.
         if (abs(consumed - delta) > 1f) anchor = capture()
     }
 
     /**
      * In a reversed list a growing row keeps its bottom edge, so streamed text pushes the line being
-     * read upward. [settle] runs a frame later, which showed that displaced frame on every update.
+     * read upward. [settle] runs a frame later, which showed that displaced frame on every update;
+     * during touch drag or inertial fling [settle] does not run at all, so growth below the reading
+     * edge must also be compensated synchronously via [LazyListState.dispatchRawDelta] without
+     * cancelling the user's active scroll mutation.
      */
     private fun holdInFrame() {
         val list = list ?: return
-        val scope = scope ?: return
+        val layoutInfo = list.layoutInfo
+        val visible = layoutInfo.visibleItemsInfo
         val previousTops = rowTops
-        val visible = list.layoutInfo.visibleItemsInfo
-        rowTops = visible.associate { it.key to it.offset + it.size }
-        if (correcting || following || viewport == Rect.Zero) return
-        if (touching || selecting || selectionReaders.values.any { it() } || list.isScrollInProgress) return
-        val held = anchor ?: return
-        val region = regions[held.key]
-        val coordinates = region?.coordinates?.takeIf { it.isAttached }
-        val row = owners[held.row]?.first ?: return
-        val delta = if (region != null && coordinates != null && visible.any { it.index == row }) {
-            held.y - anchoredLineY(held, region, coordinates.positionInWindow().y)
+        val previousSpans = itemSpans
+        snapshotItems(visible)
+
+        if (correcting || returningToLatest || following || viewport == Rect.Zero || visible.isEmpty()) return
+        if (towardsLatest && list.firstVisibleItemIndex == 0 && list.firstVisibleItemScrollOffset == 0) {
+            if (!touching) release()
+            return
+        }
+
+        val activelyScrolling = touching || selecting || selectionReaders.values.any { it() } || list.isScrollInProgress
+        val shift = currentUnplacedShift()
+        val held = if (activelyScrolling) null else anchor
+
+        val delta = if (held != null) {
+            val region = regions[held.key]
+            val coordinates = region?.coordinates?.takeIf { it.isAttached }
+            val row = owners[held.row]?.first
+            if (region != null && coordinates != null && row != null && visible.any { it.index == row }) {
+                held.y - anchoredLineY(held, region, coordinates.positionInWindow().y + shift)
+            } else if (row != null) {
+                // The growth pushed the anchored row out of the viewport, where it keeps reporting its
+                // last placement. Rows are stacked on the far edge of the nearest row below them, so
+                // the anchored row moved exactly as far as that edge did.
+                val below = visible.lastOrNull { it.index < row && it.key in previousTops }
+                below?.let { (rowTops.getValue(it.key) - previousTops.getValue(it.key)).toFloat() }
+                    ?: visibleSpanGrowth(visible, previousSpans, layoutInfo.viewportEndOffset)
+            } else {
+                visibleSpanGrowth(visible, previousSpans, layoutInfo.viewportEndOffset)
+            }
         } else {
-            // The growth pushed the anchored row out of the viewport, where it keeps reporting its
-            // last placement. Rows are stacked on the far edge of the nearest row below them, so
-            // the anchored row moved exactly as far as that edge did.
-            val below = visible.lastOrNull { it.index < row && it.key in previousTops } ?: return
-            (rowTops.getValue(below.key) - previousTops.getValue(below.key)).toFloat()
+            visibleSpanGrowth(visible, previousSpans, layoutInfo.viewportEndOffset)
         }
         if (abs(delta) <= 1f) return
+
+        val probe = regions.values.firstNotNullOfOrNull { r ->
+            r.coordinates?.takeIf { it.isAttached && owners[r.row]?.first?.let { idx -> visible.any { it.index == idx } } == true }
+        }
+        val probeBeforeY = probe?.positionInWindow()?.y
         correcting = true
-        // scrollToItem remeasures synchronously; undispatched, it completes before this frame draws.
-        scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            try {
-                list.scrollToItem(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset + delta.roundToInt())
-            } finally {
-                correcting = false
-                rowTops = list.layoutInfo.visibleItemsInfo.associate { it.key to it.offset + it.size }
+        val consumed = try {
+            list.dispatchRawDelta(delta)
+        } finally {
+            correcting = false
+            snapshotItems(list.layoutInfo.visibleItemsInfo)
+        }
+        if (probe != null && probeBeforeY != null && abs(consumed) > 0.5f) {
+            val probeAfterY = probe.takeIf { it.isAttached }?.positionInWindow()?.y
+            if (probeAfterY != null && abs(probeAfterY - probeBeforeY) <= 0.5f) {
+                pendingProbe = probe
+                pendingProbeBaseY = probeAfterY
+                pendingUnplacedShift = shift + consumed
+            } else {
+                clearPendingShift()
             }
         }
+    }
+
+    private fun snapshotItems(visible: List<LazyListItemInfo>) {
+        rowTops = visible.associate { it.key to it.offset + it.size }
+        itemSpans = visible.associate { it.key to ItemSpan(it.offset, it.size) }
+    }
+
+    /**
+     * Stack height change between the bottommost and topmost shared items at or below the reading
+     * top line. User scroll shifts all item offsets by the same delta and cancels out, isolating
+     * content growth/shrinkage and item insertions/removals in between.
+     */
+    private fun visibleSpanGrowth(
+        visible: List<LazyListItemInfo>,
+        previous: Map<Any, ItemSpan>,
+        viewportEndOffset: Int,
+    ): Float {
+        if (previous.isEmpty()) return 0f
+        val topInset = (viewport.top - lazyBounds.top).coerceAtLeast(0f)
+        val readingTopFromStart = viewportEndOffset - topInset
+        val shared = visible.filter { it.offset < readingTopFromStart && it.key in previous }
+        if (shared.isEmpty()) return 0f
+        val bottom = shared.first()
+        val top = shared.last()
+        val prevBottom = previous.getValue(bottom.key)
+        val prevTop = previous.getValue(top.key)
+        return ((top.offset + top.size - bottom.offset) - (prevTop.top - prevBottom.offset)).toFloat()
+    }
+
+    private fun currentUnplacedShift(): Float {
+        val probe = pendingProbe?.takeIf { it.isAttached } ?: run {
+            clearPendingShift()
+            return 0f
+        }
+        if (abs(probe.positionInWindow().y - pendingProbeBaseY) > 0.5f) {
+            clearPendingShift()
+            return 0f
+        }
+        return pendingUnplacedShift
+    }
+
+    private fun clearPendingShift() {
+        pendingProbe = null
+        pendingProbeBaseY = 0f
+        pendingUnplacedShift = 0f
     }
 
     private fun anchoredLineY(held: Anchor, region: Region, top: Float): Float {

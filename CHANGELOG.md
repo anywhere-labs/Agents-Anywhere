@@ -106,7 +106,7 @@
 
   [#567](https://github.com/anywhere-labs/Agents-Anywhere/pull/567)
 
-- Agent 还在输出时往上翻看长回复或之前的消息，正在读的内容不再随新输出反复跳动闪烁。（[#567](https://github.com/anywhere-labs/Agents-Anywhere/pull/567)）
+- Agent 还在输出时往上翻到长回复开头从前往后读或浏览之前的消息，滑动与停留期间正在读的内容和回到底部按钮都不再随新输出跳动闪烁。（[#567](https://github.com/anywhere-labs/Agents-Anywhere/pull/567)）
 
 ### iOS
 

@@ -17,6 +17,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.swipeUp
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
@@ -246,6 +247,236 @@ class MessageListScrollFollowTest {
         assertReadingLineHoldsWhileStreaming(session, line, minY = 600f)
     }
 
+    /**
+     * Reading a long reply from start towards end by dragging slowly while output keeps streaming
+     * at the bottom: each drawn frame must move only by the finger's drag delta, never jumping
+     * upward when streamed paragraphs arrive below the viewport.
+     */
+    @Test
+    fun slowForwardDragThroughLongStreamingReplyNeverJumpsOnStreamUpdates() {
+        val marker = "QA_FORWARD_DRAG_LINE"
+        val paragraphs = (1..24).map { "Section $it of a very long final reply. " + "Detailed explanation words for reading. ".repeat(10) }
+        val reply = (paragraphs.take(2) + "$marker start reading forward here. ${paragraphs[2]}" + paragraphs.drop(3)).joinToString("\n\n")
+        val session = TestSession(initialMessages().map {
+            if (it.id == "assistant-last") it.copy(text = reply) else it
+        })
+        showMessageList(session)
+        scrollMarkerIntoReadingArea(marker, minY = 520f, swipe = .35f)
+
+        compose.mainClock.autoAdvance = false
+        try {
+            // Put finger down and cross touch slop so the gesture enters active user scroll.
+            compose.onNode(hasScrollAction()).performTouchInput {
+                down(Offset(width * 0.5f, height * 0.65f))
+                moveBy(Offset(0f, -40f))
+            }
+            compose.mainClock.advanceTimeByFrame()
+            compose.waitForIdle()
+
+            // Hold finger stationary on screen while new paragraphs stream in at the bottom.
+            val heldY = textLineY(marker, 0)
+            repeat(3) { index ->
+                compose.runOnIdle {
+                    appendLongParagraph(session, "stationary-$index")
+                }
+                compose.mainClock.advanceTimeByFrame()
+                compose.waitForIdle()
+                assertEquals("Holding finger still while output streams must not jump the reading line", heldY, textLineY(marker, 0), 3f)
+            }
+
+            // Now drag slowly upward (-18px/frame, reading from front to back) while output keeps streaming.
+            var expectedY = textLineY(marker, 0)
+            repeat(5) { index ->
+                val dragStep = -18f
+                compose.onNode(hasScrollAction()).performTouchInput {
+                    moveBy(Offset(0f, dragStep))
+                }
+                compose.runOnIdle {
+                    appendLongParagraph(session, "dragging-$index")
+                }
+                compose.mainClock.advanceTimeByFrame()
+                compose.waitForIdle()
+                expectedY += dragStep
+                assertEquals("Dragging forward by $dragStep while streaming must not lurch", expectedY, textLineY(marker, 0), 4f)
+            }
+
+            // Pause finger briefly so VelocityTracker sees zero release velocity, then lift on the
+            // exact same frame another streamed paragraph arrives.
+            compose.onNode(hasScrollAction()).performTouchInput {
+                advanceEventTime(120)
+                moveBy(Offset.Zero)
+            }
+            compose.mainClock.advanceTimeByFrame()
+            compose.waitForIdle()
+            val beforeLiftY = textLineY(marker, 0)
+            compose.onNode(hasScrollAction()).performTouchInput { up() }
+            compose.runOnIdle {
+                appendLongParagraph(session, "on-lift")
+            }
+            repeat(3) {
+                compose.mainClock.advanceTimeByFrame()
+                compose.waitForIdle()
+                assertEquals("Lifting finger while output streams must keep the reading line put", beforeLiftY, textLineY(marker, 0), 4f)
+            }
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
+    }
+
+    /**
+     * Gentle forward flick (inertial fling towards latest) through a long streaming reply:
+     * streamed paragraphs arriving mid-fling and as the fling stops must not cause sudden lurches.
+     */
+    @Test
+    fun forwardFlingThroughLongStreamingReplyCoastsSmoothlyWithoutStreamingJumps() {
+        val marker = "QA_FORWARD_FLING_LINE"
+        val paragraphs = (1..26).map { "Chapter $it of a long streamed report. " + "Steady prose for reading forward. ".repeat(10) }
+        val reply = (paragraphs.take(1) + "$marker coasting past this paragraph. ${paragraphs[1]}" + paragraphs.drop(2)).joinToString("\n\n")
+        val session = TestSession(initialMessages().map {
+            if (it.id == "assistant-last") it.copy(text = reply) else it
+        })
+        showMessageList(session)
+        scrollMarkerIntoReadingArea(marker, minY = 900f, swipe = .38f)
+
+        compose.mainClock.autoAdvance = false
+        try {
+            // Trigger a gentle upward flick so the list enters inertial fling towards latest.
+            compose.onNode(hasScrollAction()).performTouchInput {
+                swipeUp(startY = height * 0.7f, endY = height * 0.52f, durationMillis = 120)
+            }
+            compose.mainClock.advanceTimeByFrame()
+            compose.waitForIdle()
+
+            var prevY = textLineY(marker, 0)
+            var prevStep = -Float.MAX_VALUE
+            repeat(12) { frame ->
+                if (frame % 2 == 1) {
+                    compose.runOnIdle {
+                        appendLongParagraph(session, "fling-$frame")
+                    }
+                }
+                compose.mainClock.advanceTimeByFrame()
+                compose.waitForIdle()
+                val currentY = textLineY(marker, 0)
+                val step = currentY - prevY // <= 0 while moving upward towards latest
+                assertTrue("Forward fling must not jump backwards (step=$step at frame $frame)", step <= 2f)
+                if (prevStep != -Float.MAX_VALUE && frame > 1) {
+                    // Decelerating fling: upward speed cannot suddenly spike by a streamed paragraph's height (~120px+).
+                    assertTrue(
+                        "Streamed output during fling must not spike frame displacement (prevStep=$prevStep, step=$step at frame $frame)",
+                        step >= prevStep - 12f,
+                    )
+                }
+                prevStep = step
+                prevY = currentY
+            }
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
+    }
+
+    /**
+     * When the viewport is filled entirely by a non-text region (a tall fenced code block spanning
+     * the whole reading viewport so no BasicText layout is visible), streaming growth must not
+     * oscillate between [TimelineReadingState.placed] and [TimelineReadingState.settle] across frames.
+     */
+    @Test
+    fun nonTextAnchoredViewportDoesNotOscillateBetweenFramesWhileStreaming() {
+        val codeFence = "```kotlin\n" + (1..80).joinToString("\n") { "val line$it = \"stable code block filling viewport $it\"" } + "\n```"
+        val tail = (1..8).joinToString("\n\n") { "Tail paragraph $it below the code block. " + "Generated words. ".repeat(10) }
+        val session = TestSession(initialMessages().map {
+            if (it.id == "assistant-last") it.copy(text = "$codeFence\n\n$tail") else it
+        })
+        showMessageList(session)
+        // Scroll until the code block label "kotlin" is just above the reading top, so the entire
+        // visible reading area is filled by the code panel alone.
+        var swipes = 0
+        while (swipes++ < 35 && compose.onAllNodesWithText("kotlin").fetchSemanticsNodes()
+                .firstOrNull()?.let { it.positionInRoot.y in -400f..180f } != true) {
+            compose.onNode(hasScrollAction()).performTouchInput {
+                swipeDown(startY = height * .3f, endY = height * .55f, durationMillis = 400)
+            }
+            compose.waitForIdle()
+        }
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.waitForIdle()
+        val before = compose.onNodeWithText("kotlin").fetchSemanticsNode().positionInRoot.y
+        assertTrue("Code panel header should sit near/above viewport top so code fills the viewport, was $before", before in -500f..260f)
+
+        compose.mainClock.autoAdvance = false
+        try {
+            repeat(3) { index ->
+                compose.runOnIdle {
+                    appendLongParagraph(session, "code-anchor-$index")
+                }
+                repeat(4) { subFrame ->
+                    compose.mainClock.advanceTimeByFrame()
+                    compose.waitForIdle()
+                    val now = compose.onNodeWithText("kotlin").fetchSemanticsNode().positionInRoot.y
+                    assertEquals("Frame $index.$subFrame must not oscillate", before, now, 2f)
+                }
+            }
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
+    }
+
+    /** Finishing the turn removes the working indicator and adds reply actions without jumping or crashing. */
+    @Test
+    fun completingStreamingTurnKeepsReadingLineSteady() {
+        val marker = "QA_TURN_FINISH_LINE"
+        val paragraphs = (1..16).map { "Turn finish paragraph $it. " + "Steady reading words. ".repeat(9) }
+        val reply = (paragraphs.take(2) + "$marker keep steady on finish. ${paragraphs[2]}" + paragraphs.drop(3)).joinToString("\n\n")
+        val session = TestSession(initialMessages().map {
+            if (it.id == "assistant-last") it.copy(text = reply) else it
+        })
+        showMessageList(session)
+        scrollMarkerIntoReadingArea(marker, minY = 450f, swipe = .3f)
+        val before = textLineY(marker, 0)
+
+        compose.mainClock.autoAdvance = false
+        try {
+            compose.runOnIdle {
+                session.workingLabel = null
+                session.turnInProgress = false
+                session.messages = session.messages.map {
+                    if (it.id == "assistant-last") it.copy(status = "done", revision = it.revision + 1) else it
+                }
+                session.streamRequest += 1
+            }
+            repeat(4) { frame ->
+                compose.mainClock.advanceTimeByFrame()
+                compose.waitForIdle()
+                assertEquals("Turn completion frame $frame must keep reading line steady", before, textLineY(marker, 0), 3f)
+            }
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
+    }
+
+    private fun scrollMarkerIntoReadingArea(marker: String, minY: Float, swipe: Float) {
+        var swipes = 0
+        while (swipes++ < 40 && compose.onAllNodesWithText(marker, substring = true).fetchSemanticsNodes()
+                .firstOrNull()?.let { it.positionInRoot.y > minY } != true) {
+            compose.onNode(hasScrollAction()).performTouchInput {
+                swipeDown(startY = height * .25f, endY = height * (.25f + swipe), durationMillis = 400)
+            }
+            compose.waitForIdle()
+        }
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.waitForIdle()
+    }
+
+    private fun appendLongParagraph(session: TestSession, tag: String) {
+        session.messages = session.messages.map { message ->
+            if (message.id == "assistant-last") message.copy(
+                text = message.text + "\n\nStreamed paragraph $tag. " + "More generated words arriving below viewport. ".repeat(14),
+                revision = message.revision + 1,
+            ) else message
+        }
+        session.streamRequest += 1
+    }
+
     private fun assertStreamingKeepsReadingLine(minY: Float, swipe: Float) {
         val marker = "QA_STREAM_READING_LINE"
         val paragraphs = (1..12).map { "Paragraph $it of a long streamed reply. " + "Steady words for reading. ".repeat(8) }
@@ -444,6 +675,7 @@ class MessageListScrollFollowTest {
                 AgentsAnywhereTheme(appearanceMode = AAAppearanceMode.Light) {
                     Box(Modifier.fillMaxSize()) {
                         MessageList(
+                            planningContent = {},
                             messages = session.messages,
                             darkMode = false,
                             sessionId = session.id,
@@ -452,8 +684,8 @@ class MessageListScrollFollowTest {
                             controller = controller,
                             forceLatestRequest = session.forceLatestRequest,
                             streamLatestRequest = session.streamRequest,
-                            workingLabel = "DeepSeek Harness is working",
-                            turnInProgress = true,
+                            workingLabel = session.workingLabel,
+                            turnInProgress = session.turnInProgress,
                             hasMore = false,
                             loadingOlder = false,
                             onLoadOlder = {},
@@ -515,6 +747,8 @@ class MessageListScrollFollowTest {
         var messages by mutableStateOf(initial)
         var streamRequest by mutableStateOf(0)
         var forceLatestRequest by mutableStateOf(0)
+        var workingLabel by mutableStateOf<String?>("DeepSeek Harness is working")
+        var turnInProgress by mutableStateOf(true)
     }
 
     private fun initialMessages(): List<TimelineMessage> = buildList {
