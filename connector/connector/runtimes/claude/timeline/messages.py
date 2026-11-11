@@ -369,19 +369,24 @@ def message_text(message: Any) -> str | None:
     return result if isinstance(result, str) and result else None
 
 
-def is_synthetic_control_message(message: Any) -> bool:
-    role = message_role(message)
-    text = message_text(message)
+def is_task_notification_message(message: Any) -> bool:
     origin = _extract(message, "origin")
-    if _extract(origin, "kind") == "task-notification":
-        return True
-    if text is None:
-        return False
-    normalized = text.strip()
-    if normalized.startswith("<task-notification>") and normalized.endswith(
-        "</task-notification>"
+    if (
+        _extract(message, "subtype") == "task_notification"
+        or _extract(origin, "kind") == "task-notification"
     ):
         return True
+    if message_role(message) != "user":
+        return False
+    text = (message_text(message) or "").strip()
+    return text.startswith("<task-notification>") and text.endswith("</task-notification>")
+
+
+def is_synthetic_control_message(message: Any) -> bool:
+    if is_task_notification_message(message):
+        return True
+    role = message_role(message)
+    normalized = (message_text(message) or "").strip()
     if role == "user" and normalized in CLAUDE_INTERRUPTED_REQUEST_MARKERS:
         return True
     return (

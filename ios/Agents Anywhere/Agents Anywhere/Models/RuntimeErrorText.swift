@@ -28,6 +28,7 @@ nonisolated enum RuntimeErrorText {
         case "attachments_too_large": String(localized: "附件超过上限：每条消息最多 16 个，总大小不超过 32 MiB。")
         case "attachments_unsupported": String(localized: "当前执行者不支持首条附件。")
         case "capability_unavailable": String(localized: "该会话当前不能执行此操作。")
+        case "claude_resume_no_response": String(localized: "Claude 恢复会话后没有回复这条消息。")
         case "command_unavailable": String(localized: "命令目录已变化，请刷新。")
         case "configuration_changed": String(localized: "配置选项已不可用。")
         case "configuration_conflict": String(localized: "选择之间不一致，请重新选择模型和推理强度。")

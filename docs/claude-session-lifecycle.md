@@ -22,26 +22,23 @@ main reply ends. An unconfirmed task is not assumed complete. Model or
 permission changes do not force-close a connection with active background
 work; the next turn can use the new selection after that work completes.
 
-Future wakeups are a separate constraint: observed `CronCreate`/`CronList`
-jobs keep the process alive regardless of idle timeout, and a successful
-empty reconciliation removes that reason to retain it. Failed reconciliation
-does not mean an empty job list. Reconciliation waits for native background
-work to finish so its maintenance-only tool restrictions do not interrupt that
-work. Runtime shutdown and transport failure close
-the owned connection; a cleanly interrupted turn can leave it available, while
-an input that cannot be individually retracted may require closing it.
-After process loss, ordinary turns can resume from the native session ID;
-in-flight background work is not automatically replayed. Startup reconnects
-only sessions registered with observed scheduled jobs.
+Observed `CronCreate` and `CronList` jobs keep the process alive regardless of
+the idle timeout. The SDK's `ScheduleWakeup` result and Stop hook also tell AA
+when to keep the process alive for a dynamic `/loop` wakeup. That protection
+ends when Claude reports cancellation or no remaining wakeups, or when the
+observed deadline and a short grace period pass. Only Cron task IDs go into
+the restart registry. A process-local wakeup is lost if the process exits.
+Reconciliation waits until native background work and dynamic wakeups are no
+longer pending, so the maintenance request doesn't interfere with them.
 
-## Pending validation
+Runtime shutdown and transport failure close the owned connection. A cleanly
+interrupted turn can leave it available, while an input that cannot be
+individually retracted may require closing it. After process loss, ordinary
+turns can resume from the native session ID. Startup reconnects only sessions
+registered with observed Cron jobs.
 
-This lifecycle change has local automated coverage but is **pending real
-Connector/Claude CLI validation**. Verify a no-Cron background task completes
-after its initiating reply, a follow-up user prompt reuses the same process,
-the configured idle timeout reclaims it, and a scheduled job fires on time
-without a new prompt. Also repeat #122 (legacy `ScheduleWakeup`) and #123
-(background notification racing a real user message) against the deployed
-SDK/CLI; neither issue is closed by the presence of an idle timer. Durable
-task ownership across multiple Connector processes and recovery of interrupted
-background work are not guaranteed.
+On a resumed connection, AA matches the first user reply by its native
+message ID. If Claude also injects a task notification from the previous
+process, the prompt hook identifies the actual user input. If the turn ends
+without a reply or tool work, AA reports an error and leaves the next action
+to the user. In-flight background work is not automatically replayed.
