@@ -39,6 +39,6 @@ registered with observed Cron jobs.
 
 On a resumed connection, AA matches the first user reply by its native
 message ID. If Claude also injects a task notification from the previous
-process, the prompt hook identifies the actual user input. If the turn ends
+process, the prompt hook identifies the actual user input. If that turn ends
 without a reply or tool work, AA reports an error and leaves the next action
 to the user. In-flight background work is not automatically replayed.

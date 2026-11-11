@@ -527,6 +527,7 @@ class ClaudeTurnRunner:
                     )
                     if (
                         resumed_prompt
+                        and (resumed_with_notification or saw_synthetic_no_response)
                         and terminal.status == "completed"
                         and not (emitted_tools or emitted_final_assistant_content or emitted_partial)
                         and (not text or no_response_marker)

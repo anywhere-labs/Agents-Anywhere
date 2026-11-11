@@ -84,6 +84,6 @@ exit, start the dynamic loop again. Cron jobs follow the recovery rules
 above.
 
 The first prompt after resuming a Claude process is matched by its native
-message ID and identified to Claude as user input. A completed turn with no
-reply or tool work is shown as a failure, so the user can decide what to
-send next.
+message ID and identified to Claude as user input. When a recovered task
+notification accompanies the prompt, a turn that ends without a reply or
+tool work is shown as a failure.
