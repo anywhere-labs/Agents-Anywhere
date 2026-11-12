@@ -13,7 +13,8 @@ struct ChatSidebarView: View {
     let onNewProjectSession: (String) -> Void
     let onRestoreSession: (String) async -> Bool
     let account: ChatSidebarAccount?
-    /// 宽 detail（Duo 横屏）新会话/头像迁到右缘竖排 toolbar，底栏隐藏。
+    /// 新会话/头像已在 toolbar（内屏双栏）时置 false，底栏不重复。
+    /// 抽屉形态恒 true：抽屉展开会盖住 detail 顶栏，底栏是唯一入口。
     var showsBottomControls = true
     let selectedDeviceId: V2ConnectorID?
     let selectedSessionId: V2SessionID?

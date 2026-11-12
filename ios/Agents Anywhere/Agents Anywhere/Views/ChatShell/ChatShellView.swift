@@ -40,8 +40,8 @@ struct ChatShellView: View {
         )
         // Regular width keeps the native split sidebar; compact width uses the
         // original drawer, including the Duo cover screen. Duo-only entries
-        // ride the right-edge rail (see the `chatRail` injection below) instead
-        // of a second shell.
+        // ride the rail injected below — the system places them in the top bar
+        // or the right edge, we never choose the edge ourselves.
         sidebarLayout(layout)
         .onChange(of: layout, initial: true) { _, next in sidebar.setLayout(next) }
         // 侧栏状态记忆：分栏形态下开合变化即时快照（含开关刚打开时
