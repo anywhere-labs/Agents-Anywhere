@@ -5,6 +5,7 @@ from typing import Any, Protocol
 from agent_server.infra.connector_rpc import (
     ConnectorOfflineError,
     ConnectorRpcError,
+    ConnectorTransportTimeout,
 )
 from agent_server.services.connector_rpc import (
     ConnectorRequestTimeoutError,
@@ -48,6 +49,7 @@ class ConnectorGateway:
         except ConnectorOfflineError as exc:
             raise ConnectorUnavailableError(str(exc)) from exc
         except ConnectorRpcError as exc:
-            raise ConnectorUpstreamError(exc.message or exc.code) from exc
+            raise ConnectorUpstreamError(exc.api_detail) from exc
         except TimeoutError as exc:
-            raise ConnectorRequestTimeoutError(f"{method} timed out") from exc
+            detail = exc.api_detail if isinstance(exc, ConnectorTransportTimeout) else None
+            raise ConnectorRequestTimeoutError(detail or f"{method} timed out") from exc

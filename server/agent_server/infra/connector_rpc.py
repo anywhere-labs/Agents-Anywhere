@@ -47,6 +47,12 @@ class ConnectorTransportTimeout(TimeoutError):
         super().__init__(message)
         self.details = details
 
+    @property
+    def api_detail(self) -> dict[str, Any] | None:
+        if (self.details or {}).get("deliveryState") == "outcome_unknown":
+            return ConnectorOutcomeUnknownError.response_detail()
+        return None
+
 
 class DuplicateConnectorConnectionError(RuntimeError):
     pass
@@ -58,6 +64,38 @@ class ConnectorRpcError(RuntimeError):
         self.code = code
         self.message = message
         self.details = details
+
+    @property
+    def api_detail(self) -> str | dict[str, Any]:
+        return self.message or self.code
+
+
+class ConnectorOutcomeUnknownError(ConnectorRpcError):
+    """The request may have run, but its response could not be confirmed."""
+
+    code = "operation_outcome_unknown"
+    message = "The operation outcome is uncertain. Check its status before submitting again."
+
+    def __init__(self, reason: str, *, details: dict[str, Any] | None = None) -> None:
+        deadline = current_request_deadline()
+        super().__init__(
+            self.code,
+            self.message,
+            details={
+                **(details or {}),
+                "deliveryState": "outcome_unknown",
+                "reason": reason,
+                **({"controlCallId": deadline.call_id} if deadline is not None else {}),
+            },
+        )
+
+    @classmethod
+    def response_detail(cls) -> dict[str, Any]:
+        return {"code": cls.code, "message": cls.message, "retryable": False}
+
+    @property
+    def api_detail(self) -> dict[str, Any]:
+        return self.response_detail()
 
 
 @dataclass
@@ -574,8 +612,11 @@ class ConnectorRpcManager:
                      if connection is not None and self._is_local_online(connection) else None)
         if lease is None or not lease.ready or (expected is not None and lease.connection_id != expected):
             budget = current_request_deadline()
-            raise ConnectorOfflineError("connector is offline or connection changed", details={
-                "deliveryState": budget.delivery_state if budget else "not_dispatched"})
+            if budget is not None and budget.delivery_state == "outcome_unknown":
+                raise ConnectorOutcomeUnknownError("connector connection changed")
+            raise ConnectorOfflineError(
+                "connector is offline or connection changed", details={"deliveryState": "not_dispatched"},
+            )
         return lease
 
     @bounded_connector_request
@@ -706,8 +747,10 @@ class ConnectorRpcManager:
         if (not await self.is_connection_id_current(connection.connector_id, connection.connection_id)
                 or connection.authorize_control is not None and not await connection.authorize_control()):
             deadline = current_request_deadline()
-            raise ConnectorOfflineError("connector session authorization or identity changed", details={
-                "deliveryState": deadline.delivery_state if deadline else "not_dispatched"})
+            reason = "connector session authorization or identity changed"
+            if deadline is not None and deadline.delivery_state == "outcome_unknown":
+                raise ConnectorOutcomeUnknownError(reason)
+            raise ConnectorOfflineError(reason, details={"deliveryState": "not_dispatched"})
 
     @staticmethod
     def _check_websocket_budget(payload: dict[str, Any], fallback_capable: bool) -> None:
@@ -733,7 +776,6 @@ class ConnectorRpcManager:
             asyncio.get_running_loop().create_future()
         )
         future.add_done_callback(lambda done: None if done.cancelled() else done.exception())
-        connection.pending[request_id] = future
         deadline = current_request_deadline()
         fields = {"connectorId": connector_id, "connectionId": connection.connection_id,
                   "callId": deadline.call_id if deadline else None, "rpcRequestId": request_id, "method": method}
@@ -757,6 +799,7 @@ class ConnectorRpcManager:
                     # TimeoutError is also an OSError. A local deadline before
                     # sending must not enter the socket-failure cleanup below.
                     raise deadline.timeout_error()
+                connection.pending[request_id] = future
                 try:
                     if deadline is not None:
                         deadline.delivery_state = "outcome_unknown"
@@ -769,9 +812,7 @@ class ConnectorRpcManager:
                     )
                 except (RuntimeError, OSError) as exc:
                     await self.unregister(connector_id, connection)
-                    if future.done():
-                        future.exception()
-                    raise ConnectorOfflineError("connector disconnected") from exc
+                    raise ConnectorOutcomeUnknownError("connector WebSocket send failed") from exc
             response = await asyncio.wait_for(future, timeout=timeout)
             logger.debug(
                 "connector rpc response received connector_id={} method={} request_id={} elapsed_ms={:.1f}",
@@ -851,7 +892,16 @@ class ConnectorRpcManager:
                 if deadline.remaining() <= 0:
                     raise deadline.timeout_error()
                 deadline.delivery_state = "outcome_unknown"
-            subscribers = await self._frames.publish(lease.instance_id, envelope, timeout=deadline.remaining() if deadline else timeout)
+            try:
+                subscribers = await self._frames.publish(
+                    lease.instance_id, envelope, timeout=deadline.remaining() if deadline else timeout,
+                )
+            except TimeoutError:
+                raise
+            except (RedisError, OSError) as exc:
+                if payload.get("type") in {"request", "meshRequest"}:
+                    raise ConnectorOutcomeUnknownError("connector request relay failed") from exc
+                raise
             details.update(subscriberCount=subscribers)
             if not subscribers:
                 delivery = "not_dispatched"
@@ -879,7 +929,9 @@ class ConnectorRpcManager:
             raise
         except Exception as exc:
             outcome = "timeout" if isinstance(exc, TimeoutError) else "failed"
-            details.update(error_fields(exc, stack=not isinstance(exc, (ConnectorOfflineError, TimeoutError))))
+            details.update(error_fields(exc, stack=not isinstance(
+                exc, (ConnectorOfflineError, ConnectorRpcError, TimeoutError),
+            )))
             if mesh_request and isinstance(exc, ConnectorNotDispatchedError) and self._safe_mesh_rejection(exc):
                 outcome = "not_dispatched"
                 details["reason"] = exc.details["reason"]
@@ -897,6 +949,11 @@ class ConnectorRpcManager:
         error = response.get("error") or {}
         error_type = error.get("type")
         message = error.get("message") or "connector RPC routing failed"
+        error_details = error.get("details") or {}
+        if error.get("code") == ConnectorOutcomeUnknownError.code or (
+            error_type == "offline" and error_details.get("deliveryState") == "outcome_unknown"
+        ):
+            raise ConnectorOutcomeUnknownError(error_details.get("reason", message), details=error_details)
         if error_type == "offline":
             raise ConnectorOfflineError(message, details=error.get("details"))
         if error_type == "not_dispatched":
@@ -1266,10 +1323,10 @@ class ConnectorRpcManager:
     def _fail_pending(self, connection: ConnectorConnection, message: str) -> None:
         for future in connection.pending.values():
             if not future.done():
-                future.set_exception(ConnectorOfflineError(message))
+                future.set_exception(ConnectorOutcomeUnknownError(message))
 
     def _fail_routed_pending(self, message: str) -> None:
         for future in self._routed_pending.values():
             if not future.done():
-                future.set_exception(ConnectorOfflineError(message, details={"deliveryState": "outcome_unknown"}))
+                future.set_exception(ConnectorOutcomeUnknownError(message))
         self._routed_pending.clear()

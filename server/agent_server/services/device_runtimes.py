@@ -35,6 +35,7 @@ from agent_server.core.utc import utc_now
 from agent_server.infra.connector_rpc import (
     ConnectorConnection,
     ConnectorOfflineError,
+    ConnectorOutcomeUnknownError,
     ConnectorRpcError,
     ConnectorRpcManager,
 )
@@ -962,6 +963,11 @@ class DeviceRuntimeService:
                 error={"code": "connector_offline", "message": str(exc)},
             )
             raise DeviceRuntimeOfflineError(str(exc)) from exc
+        except ConnectorOutcomeUnknownError as exc:
+            await self._store.set_device_runtime_status(
+                runtime.connectorId, runtime.runtimeId, "unknown", error=exc.api_detail,
+            )
+            raise DeviceRuntimeUpstreamError(exc.message, detail=exc.api_detail) from exc
         except ConnectorRpcError as exc:
             digest = connection_digest(runtime.config, runtime.modelConnection)
             if digest is not None:
@@ -1076,6 +1082,11 @@ class DeviceRuntimeService:
                 runtime.connectorId, runtime.runtimeId, "unknown"
             )
             raise DeviceRuntimeOfflineError(str(exc)) from exc
+        except ConnectorOutcomeUnknownError as exc:
+            await self._store.set_device_runtime_status(
+                runtime.connectorId, runtime.runtimeId, "unknown", error=exc.api_detail,
+            )
+            raise DeviceRuntimeUpstreamError(exc.message, detail=exc.api_detail) from exc
         except ConnectorRpcError as exc:
             await self._store.set_device_runtime_status(
                 runtime.connectorId,

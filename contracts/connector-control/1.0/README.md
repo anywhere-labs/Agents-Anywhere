@@ -10,6 +10,9 @@ presence 新增可选 `controlFallbackCapable: true`，缺省为 false，不新�
 
 每次请求固定 connectionId、controlCallId 和绝对 deadline。没有匹配 route 时不等待
 注册；仅在 Mesh 明确未分发时允许回退一次，提交后的超时或结果未知均不重放。
+调用可能已执行、回执无法确认时，Mesh、WebSocket 和跨 worker 中转都保留
+`outcome_unknown`。业务 API 使用 `operation_outcome_unknown` 提示先确认原操作状态，
+例如 Shell 执行在链路中断时返回 HTTP 502，等待回执超时时返回 HTTP 504。
 两条通道仍校验基础连接身份及认证时的凭据版本。WS 请求新增可选 metadata，使用
 `aa-control-call-id`、`aa-connection-id` 关联日志；错误增加可选 details，不改变领域参数。
 `workspace.refresh` 仍为预留方法，不提供 WS 回退。

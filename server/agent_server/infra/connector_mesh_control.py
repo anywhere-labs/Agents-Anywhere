@@ -8,7 +8,7 @@ import time
 from dataclasses import asdict
 from typing import Any
 
-from meshcall import DeadlineExceededError, MeshCallError, UnavailableError
+from meshcall import CallCancelledError, DeadlineExceededError, MeshCallError, UnavailableError
 from meshcall.protocol import CallOpenFrame, encode_frame
 from meshcall.transport import DEFAULT_MAX_FRAME_SIZE
 from pydantic import BaseModel, ConfigDict
@@ -31,6 +31,7 @@ from agent_server.infra.connector_rpc import (
     ConnectorConnection,
     ConnectorNotDispatchedError,
     ConnectorOfflineError,
+    ConnectorOutcomeUnknownError,
     ConnectorRpcError,
     ConnectorRpcManager,
     ConnectorTransportTimeout,
@@ -139,7 +140,7 @@ class MeshConnectorControlTransport:
                     "params": params, "timeout": budget.remaining(), "controlCallId": budget.call_id,
                 }, timeout=budget.remaining())
             if not await self.rpc.is_connection_id_current(connector_id, connection_id):
-                raise ConnectorOfflineError("connector connection changed", details={"deliveryState": "outcome_unknown"})
+                raise ConnectorOutcomeUnknownError("connector connection changed")
             outcome, delivery = "returned", "response_received"
             details = result_fields(response)
             return response
@@ -238,17 +239,20 @@ class MeshConnectorControlTransport:
                 raise ConnectorRpcError(exc.code, exc.message, details=exc.details) from exc
             raise ConnectorTransportTimeout(f"{method} timed out", details={
                 "deliveryState": "outcome_unknown", "controlCallId": call_id}) from exc
-        except UnavailableError as exc:
+        except (UnavailableError, CallCancelledError) as exc:
             details = exc.details or {}
             if details.get("source") == "connector_domain":
                 raise ConnectorRpcError(exc.code, exc.message, details=details) from exc
-            if details.get("source") == "router" and details.get("reason") in {
+            if isinstance(exc, UnavailableError) and details.get("source") == "router" and details.get("reason") in {
                 "no_instances", "instance_unknown", "instance_draining",
             }:
                 if budget is not None:
                     budget.delivery_state = "not_dispatched"
                 raise ConnectorNotDispatchedError(exc.message, details={**details, "deliveryState": "not_dispatched"}) from exc
-            raise ConnectorOfflineError(exc.message or "connector is offline", details={
-                **details, "deliveryState": "outcome_unknown", "controlCallId": call_id}) from exc
+            raise ConnectorOutcomeUnknownError(
+                details.get("reason") or "connector MeshCall response unavailable", details=details,
+            ) from exc
+        except (OSError, WebSocketException) as exc:
+            raise ConnectorOutcomeUnknownError("connector MeshCall link interrupted") from exc
         except MeshCallError as exc:
             raise ConnectorRpcError(exc.code, exc.message, details=exc.details) from exc

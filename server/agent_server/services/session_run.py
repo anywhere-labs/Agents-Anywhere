@@ -42,6 +42,7 @@ from agent_server.core.utc import utc_now
 from agent_server.infra.connector_rpc import (
     ConnectorOfflineError,
     ConnectorRpcError,
+    ConnectorTransportTimeout,
     ConnectorRpcManager,
 )
 from agent_server.infra.repositories.projects import _clean_workspace_path
@@ -384,9 +385,24 @@ class SessionRunService:
             )
         except ConnectorOfflineError as exc:
             await self._store.clear_active_run(session.id)
-            raise SessionRunConflictError(_unconfirmed_creation_detail(
-                session.id, "connector_offline", str(exc),
-            )) from exc
+            raise SessionRunConflictError({
+                "code": "connector_offline",
+                "message": str(exc),
+                "sessionId": session.id,
+                "platformSessionCreated": True,
+                "created": False,
+                "messageAccepted": False,
+                "resultUnknown": False,
+                "retryable": False,
+            }) from exc
+        except ConnectorTransportTimeout as exc:
+            await self._store.clear_active_run(session.id)
+            detail = exc.api_detail
+            if detail is None:
+                raise SessionRunTimeoutError(str(exc)) from exc
+            raise SessionRunTimeoutError(
+                _unconfirmed_creation_detail(session.id, detail["code"], detail["message"]),
+            ) from exc
         except ConnectorRpcError as exc:
             await self._store.clear_active_run(session.id)
             raise SessionRunUpstreamError({
@@ -703,9 +719,12 @@ class SessionRunService:
         except ConnectorOfflineError as exc:
             await self._store.clear_active_run(session_id)
             raise SessionRunConflictError(str(exc)) from exc
+        except ConnectorTransportTimeout as exc:
+            await self._store.clear_active_run(session_id)
+            raise SessionRunTimeoutError(exc.api_detail or str(exc)) from exc
         except ConnectorRpcError as exc:
             await self._store.clear_active_run(session_id)
-            raise SessionRunUpstreamError(exc.message or exc.code) from exc
+            raise SessionRunUpstreamError(exc.api_detail) from exc
         if isinstance(result, dict) and result.get("ok") is False:
             await self._store.clear_active_run(session_id)
             await self._persist_operation_source_state(session, result)
@@ -776,7 +795,7 @@ class SessionRunService:
         except ConnectorOfflineError as exc:
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
-            raise SessionRunUpstreamError(exc.message or exc.code) from exc
+            raise SessionRunUpstreamError(exc.api_detail) from exc
         if not isinstance(result, dict):
             return "idle"
         state = result.get("state")
@@ -849,7 +868,7 @@ class SessionRunService:
         except ConnectorOfflineError as exc:
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
-            raise SessionRunUpstreamError(exc.message or exc.code) from exc
+            raise SessionRunUpstreamError(exc.api_detail) from exc
         if isinstance(result, dict) and result.get("ok") is False:
             code = result.get("code")
             message = result.get("message")
@@ -932,7 +951,7 @@ class SessionRunService:
         except ConnectorOfflineError as exc:
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
-            raise SessionRunUpstreamError(exc.message or exc.code) from exc
+            raise SessionRunUpstreamError(exc.api_detail) from exc
         await self._usage.record(
             message_sent_event(
                 session,
@@ -972,7 +991,7 @@ class SessionRunService:
                 "message": "connector runtime capabilities request timed out",
             }) from exc
         except ConnectorRpcError as exc:
-            raise SessionRunUpstreamError(exc.message or exc.code) from exc
+            raise SessionRunUpstreamError(exc.api_detail) from exc
         except (TypeError, ValueError) as exc:
             raise SessionRunUpstreamError(str(exc)) from exc
         capability = next(
@@ -1028,7 +1047,7 @@ class SessionRunService:
                 "message": "connector session capabilities request timed out",
             }) from exc
         except ConnectorRpcError as exc:
-            raise SessionRunUpstreamError(exc.message or exc.code) from exc
+            raise SessionRunUpstreamError(exc.api_detail) from exc
         except ValueError as exc:
             raise SessionRunUpstreamError(str(exc)) from exc
         online_session = session.model_copy(update={"connectorStatus": "online"})
@@ -1215,7 +1234,7 @@ class SessionRunService:
         except ConnectorOfflineError as exc:
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
-            raise SessionRunUpstreamError(exc.message or exc.code) from exc
+            raise SessionRunUpstreamError(exc.api_detail) from exc
         await self._store.clear_active_run(session_id)
         return RpcResponsePayload(ok=True, result=result)
 

@@ -684,6 +684,8 @@ async def probe(args):
             routers[0].kill()
             failed = await pending
             assert failed.status_code == 502, failed.text
+            assert failed.json()["error"] == "operation_outcome_unknown", failed.text
+            assert failed.json()["details"]["deliveryState"] == "outcome_unknown", failed.text
             await asyncio.sleep(0.8)
             assert connector.counts["lost-response"] == connector.finished["lost-response"] == 1
             assert connector.legacy_calls["lost-response"] == 0

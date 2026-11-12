@@ -91,6 +91,7 @@ from agent_server.deps import (
 )
 from agent_server.infra.connector_rpc import (
     ConnectorOfflineError,
+    ConnectorOutcomeUnknownError,
     ConnectorRpcError,
     ConnectorRpcManager,
 )
@@ -1351,7 +1352,7 @@ async def execute_session_command(
             params,
             timeout=30,
         )
-    except (ConnectorOfflineError, TimeoutError):
+    except (ConnectorOfflineError, ConnectorOutcomeUnknownError, TimeoutError):
         return _unknown_command_result(payload.command)
     except ConnectorRpcError as exc:
         raise HTTPException(

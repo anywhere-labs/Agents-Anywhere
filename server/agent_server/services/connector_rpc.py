@@ -4,8 +4,8 @@ from typing import Any, Protocol
 
 
 class ConnectorServiceError(RuntimeError):
-    def __init__(self, detail: str) -> None:
-        super().__init__(detail)
+    def __init__(self, detail: str | dict[str, Any]) -> None:
+        super().__init__(detail if isinstance(detail, str) else detail["message"])
         self.detail = detail
 
 
