@@ -33,6 +33,25 @@ class SlashSteer:
     attachments: bool = False
 
 
+@dataclass(frozen=True)
+class PlanningModeOption:
+    config_id: str
+    plan: str
+    normal: str
+    legacy: bool = False
+
+
+@dataclass(frozen=True)
+class PlanDocumentUpdate:
+    native_id: str
+    markdown: str
+
+
+@dataclass(frozen=True)
+class PlanReviewRequest(PlanDocumentUpdate):
+    responses: dict[str, dict]
+
+
 class AcpDialect:
     """The generic dialect: every hook keeps standard ACP behaviour."""
 
@@ -42,6 +61,19 @@ class AcpDialect:
     steer: ExtensionSteer | SlashSteer | None = None
     #: AA guarantees this Agent satisfies, such as ``managed_tool_permissions``.
     guarantees: frozenset[str] = frozenset()
+
+    planning_mode: PlanningModeOption | None = None
+
+    def plan_mode_changed(self, update: dict) -> bool:
+        return False
+
+    def plan_document(self, update: dict) -> PlanDocumentUpdate | None:
+        """Recognize a final plan delivered independently of an approval request."""
+        return None
+
+    def plan_review(self, kind: str, request: dict) -> PlanReviewRequest | None:
+        """Recognize an authoritative plan submission and its native responses."""
+        return None
 
     def capabilities(self, initialized: dict) -> Iterable[str]:
         """Extra AA session capabilities beyond those derived from the handshake."""
@@ -67,6 +99,10 @@ class AcpDialect:
     ) -> dict | None:
         """Answer an Agent request itself, or ``None`` to ask the user as usual."""
         return None
+
+    def prompt_cancelled(self, session_id: str, error: Exception) -> bool:
+        """Recognize a known non-standard response to a cancelled prompt."""
+        return False
 
     async def before_prompt(
         self, client: Any, session_id: str, text: str, blocks: list | None, purpose: str

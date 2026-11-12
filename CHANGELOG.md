@@ -21,6 +21,8 @@
 
 ### 会话创建与消息交付
 
+- Pi 会话现在支持 `/plan`，可以从首条任务开始规划、审阅和修改计划，并在同意后按原有工具权限继续执行。（[#631](https://github.com/anywhere-labs/Agents-Anywhere/pull/631)）
+
 - 现在可以把本机安装的 Hermes Agent 作为 Agent 使用：支持对话、工具审批、文本和图片附件、运行中追加指令、中断与恢复；暂不支持浏览 Hermes 的旧会话。（[#591](https://github.com/anywhere-labs/Agents-Anywhere/pull/591)）
 - Hermes、Pi 等 ACP Agent 未安装、ACP 入口不可用、需要登录、无法创建或恢复会话时，Web、Desktop、Android 和 iOS 按界面语言显示统一说明，英文界面不再出现中文。（[#599](https://github.com/anywhere-labs/Agents-Anywhere/pull/599)）
 - 会话很多或多个会话同时运行时，会话列表的实时刷新不再拖慢 Server 数据库：读取会话列表不再逐个去查每个会话的最新记录，同一用户的连续变化最多每 2 秒合并推送一次，部署者可用 `AGENT_SERVER_DASHBOARD_MIN_INTERVAL_SECONDS` 调整。（[#552](https://github.com/anywhere-labs/Agents-Anywhere/pull/552)、[#595](https://github.com/anywhere-labs/Agents-Anywhere/pull/595)）

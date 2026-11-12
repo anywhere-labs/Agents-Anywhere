@@ -1,3 +1,4 @@
+import type { PlanningCreationIntent } from "@/generated/runtime-workflows/v1_2/creation-request"
 import { apiClient } from "@/lib/api"
 import type { InlineAttachmentRef } from "./types"
 import type { WorkflowView as ProtocolWorkflowView } from "@/generated/runtime-workflows/v1_2/workflow-view"
@@ -31,7 +32,7 @@ export const workflowApi = {
   updateConfiguration: (token: string, sessionId: string, body: { operationId: string; expectedRevision: number; values: Record<string, string | boolean> }) => apiClient.post<{ phase: string; configuration: import("./runtime-forms").AgentConfiguration }>(`/runtime-workflows/sessions/${encodeURIComponent(sessionId)}/configuration`, body, { token }),
   prepare: (token: string, body: { connectorId: string; runtimeId: string; projectId: string; clientPreparationId: string }) =>
     apiClient.post<WorkflowView>("/runtime-workflows/preparations", body, { token }),
-  begin: (token: string, body: PreparedWorkspace & { createOperationId: string; clientMessageId: string; content: string; selections: Record<string, string | null>; attachments?: InlineAttachmentRef[]; title?: string }) =>
+  begin: (token: string, body: PreparedWorkspace & { createOperationId: string; clientMessageId: string; content: string; selections: Record<string, string | null>; planningIntent?: PlanningCreationIntent; attachments?: InlineAttachmentRef[]; title?: string }) =>
     apiClient.post<WorkflowView>("/runtime-workflows/creations", body, { token }),
   get: (token: string, kind: WorkflowView["kind"], id: string) => apiClient.get<WorkflowView>(`/runtime-workflows/${kind}/${encodeURIComponent(id)}`, { token }),
   respond: (token: string, operation: WorkflowView, interaction: WorkflowInteraction, actionId: string, input?: RuntimeDialogValue) =>

@@ -62,6 +62,7 @@ class SessionService:
         self.configurations = ConfigurationService(store)
         self.prompts = PromptService(store)
         self.interactions = InteractionService(store, self._notice)
+        self.planning = None
         self.stopping = False
         self.on_binding_changed = None
         self.materialize_attachments = None
@@ -112,20 +113,12 @@ class SessionService:
     def _notice(self, context: dict, interaction):
         if not context.get("sessionId"):
             return
-        view = next(
-            item
-            for item in self.interactions.views(interaction.scope_id)
-            if item["interactionId"] == interaction.interaction_id
-        )
         binding = self._binding(self.store.require("binding", context["sessionId"]))
         if (
             binding.connection_generation == context["generation"]
             and not context["closing"]
         ):
-            waiting = any(
-                row["status"] == "open"
-                for row in self.interactions.views(context["scopeId"])
-            )
+            waiting = self.interactions.has_open(context["scopeId"])
             self._save_binding(
                 binding.observe(
                     context["generation"],
@@ -136,6 +129,15 @@ class SessionService:
                     else "idle",
                 )
             )
+        if interaction.plan_review:
+            if interaction.status in {"expired", "cancelled"}:
+                self._job(self.planning.review_closed(context, interaction.interaction_id))
+            return
+        view = next(
+            item
+            for item in self.interactions.views(interaction.scope_id)
+            if item["interactionId"] == interaction.interaction_id
+        )
         self._emit(
             "notice.upsert",
             {
@@ -317,12 +319,18 @@ class SessionService:
             )
         context["client"] = self.client_factory(
             lambda agent_id, update: self._update(context, agent_id, update),
-            lambda agent_id, kind, request: self.interactions.open(
-                context, agent_id, kind, request
-            ),
+            lambda agent_id, kind, request: self._interaction(context, agent_id, kind, request),
         )
         self.contexts[scope_id] = context
         return context
+
+    async def _interaction(self, context, agent_id, kind, request):
+        open_review = None
+        if self.planning is not None:
+            open_review = self.planning.interaction(context, agent_id, kind, request)
+        return await self.interactions.open(
+            context, agent_id, kind, request, open_review=open_review,
+        )
 
     def prepare(self, values: dict) -> dict:
         key = values["preparationId"]
@@ -410,7 +418,7 @@ class SessionService:
             "catalog": model_catalog_payload(model_catalog(options, self.runtime_type)),
             "configuration": {
                 "revision": options.revision,
-                "options": list(options.options),
+                "options": options.public_options(),
             },
             "interactions": self.interactions.views(key),
             "canRespond": key in self.contexts,
@@ -432,6 +440,8 @@ class SessionService:
                     "configuration",
                 )
             }
+            if "planningIntent" in values:
+                reservation["planningIntent"] = values["planningIntent"]
             if row.get("reservation"):
                 require_same_input(
                     fingerprint(row["reservation"]), fingerprint(reservation)
@@ -461,6 +471,10 @@ class SessionService:
                 or not context.get("agentSessionId")
             ):
                 raise AcpError("preparation_stale", "准备所持有的 Agent 已退出。")
+            if "planningIntent" in reservation and (
+                self.planning is None or not self.planning.can_prepare(context, values["planningIntent"])
+            ):
+                raise AcpError("planning_unavailable", "该 Agent 会话当前无法进入规划模式。")
             with self.store.transaction():
                 self.store.put(
                     "preparation",
@@ -495,7 +509,7 @@ class SessionService:
             or reservation.get("platformSessionId") != values["sessionId"]
         ):
             raise AcpError("preparation_not_reserved", "准备尚未为当前创建操作预留。")
-        for key in ("configuration", "selections"):
+        for key in ("configuration", "selections", "planningIntent"):
             require_same_input(
                 fingerprint(reservation.get(key, {})), fingerprint(values.get(key, {}))
             )
@@ -504,7 +518,10 @@ class SessionService:
             raise AcpError(
                 "operation_outcome_unknown", "准备执行者已退出，请查询原操作。"
             )
-        context.update(scopeId=operation_id, sessionId=values["sessionId"])
+        context.update(
+            scopeId=operation_id, sessionId=values["sessionId"],
+            initializingPlan=values.get("planningIntent") is not None,
+        )
         context["projection"] = self.projection_factory(
             values["sessionId"], context["generation"]
         )
@@ -568,8 +585,12 @@ class SessionService:
                     self._save_binding(
                         binding.observe(context["generation"], attachment="attached")
                     )
+            configuration = values.get("configuration", {})
+            mode = context["client"].dialect.planning_mode
+            if mode is not None and mode.config_id in configuration:
+                raise AcpError("planning_unavailable", "请使用会话规划意图设置规划模式。")
             configured = self.configurations.snapshot(values["sessionId"]).merge_legacy(
-                values.get("configuration", {}),
+                configuration,
                 values.get("selections", {}),
             )
             await self.configurations.update(
@@ -578,6 +599,10 @@ class SessionService:
                 context["client"],
                 configured,
             )
+            if values.get("planningIntent") is not None:
+                if self.planning is None:
+                    raise AcpError("planning_unavailable", "该 Agent 会话当前无法进入规划模式。")
+                await self.planning.prepare_creation(values["sessionId"], context["agentSessionId"])
             blocks = None
             if values.get("attachments"):
                 if self.materialize_attachments is None:
@@ -730,10 +755,13 @@ class SessionService:
             context = self.sessions.get(session_id)
             if not context or context["closing"]:
                 raise AcpError("agent_recovery_required", "会话执行者需要恢复。")
+            if context.get("initializingPlan") and not creation_id:
+                raise AcpError("session_not_ready", "规划会话的首条任务正在初始化。")
             if len(self.active_runs) >= self.max_runs:
                 raise AcpError("run_capacity", "并发执行已达到上限。")
             operation, _ = self.prompts.prepare(session_id, message_id, content, blocks)
             self.active_runs.add(session_id)
+            context.pop("initializingPlan", None)
             self._save_binding(
                 binding.observe(binding.connection_generation, foreground="running")
             )
@@ -845,6 +873,11 @@ class SessionService:
             self.active_runs.discard(session_id)
 
     async def _update(self, context: dict, agent_id: str, update: dict):
+        self._project_update(context, agent_id, update)
+        if self.planning is not None:
+            await self.planning.observe_update(context, agent_id, update)
+
+    def _project_update(self, context: dict, agent_id: str, update: dict):
         if context["closing"]:
             return
         known = context.get("agentSessionId") or context.get(
@@ -854,13 +887,17 @@ class SessionService:
             raise AcpError("agent_session_mismatch", "事件来源与会话绑定不一致。")
         context["provisionalAgentSessionId"] = agent_id
         with self.store.transaction():
-            scope_id = context.get("sessionId", context["scopeId"])
-            if update.get("sessionUpdate") == "config_option_update":
-                self.configurations.observe(scope_id, update.get("configOptions", []))
-            if not context.get("sessionId"):
+            session_id = context.get("sessionId")
+            binding = self._binding(self.store.require("binding", session_id)) if session_id else None
+            if binding is not None and binding.connection_generation != context["generation"]:
                 return
-            binding = self._binding(self.store.require("binding", context["sessionId"]))
-            if binding.connection_generation != context["generation"]:
+            if update.get("sessionUpdate") == "config_option_update":
+                scope_id = session_id or context["scopeId"]
+                old_revision = self.configurations.snapshot(scope_id).revision
+                new = self.configurations.observe(scope_id, update.get("configOptions", []))
+                if binding is not None and self.planning is not None and new["revision"] != old_revision:
+                    self._save_binding(binding.observe(context["generation"]))
+            if not session_id:
                 return
             if update.get("sessionUpdate") in {"aa_operation_update", "aa_execution_observed"}:
                 receipt = update.get("receipt") or {

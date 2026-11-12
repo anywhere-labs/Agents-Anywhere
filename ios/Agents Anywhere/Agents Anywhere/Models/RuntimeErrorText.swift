@@ -112,6 +112,8 @@ nonisolated enum RuntimeErrorText {
         case "pi_source_unreadable": String(localized: "原生历史来源当前无法读取，已保留浏览内容。")
         case "pi_workspace_missing": String(localized: "原会话的项目工作目录不存在或无效。")
         case "pi_writer_unavailable": String(localized: "原生历史写入校验尚未就绪。")
+        case "plan_review_expired": String(localized: "这次计划审阅已失效，请刷新会话后重新确认。")
+        case "planning_unavailable": String(localized: "当前会话无法进入或继续规划。请检查所选 Agent 和连接状态。")
         case "preparation_consumed": String(localized: "工作区准备已绑定其他创建操作。")
         case "preparation_not_reserved": String(localized: "工作区准备尚未为当前创建操作预留。")
         case "preparation_stale": String(localized: "工作区准备已失效，请重新准备。")

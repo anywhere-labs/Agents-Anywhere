@@ -245,6 +245,7 @@ def prepare_launch(context):
         env = [
             ("PI_CODING_AGENT_DIR", str(agent_dir)),
             ("AA_PI_PERMISSIONS_FILE", str(paths.permission_file)),
+            ("AA_PI_PLANNING_DIR", str(paths.permission_file.with_suffix(".planning"))),
             ("AA_PI_GUARD_DIGEST", "sha256:" + identity["guardSha256"]),
             ("AA_PI_GUARD", str(GUARD)),
             ("PATH", str(installation.node.parent) + os.pathsep + os.environ.get("PATH", "")),
@@ -320,6 +321,7 @@ PI = AcpAgentDefinition(
         "package": "@openma/pi-acp",
     },
     maturity="beta",
+    planning=("session.planning", "session.plan_document", "session.plan_review"),
     model_connection=MODEL_CONNECTION,
     model_connection_status=model_connection_status,
     dialect=dialect,

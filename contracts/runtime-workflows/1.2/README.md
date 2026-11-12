@@ -11,3 +11,5 @@
 生成：`cd server && PYTHONPATH=. uv run python scripts/export_workflow_schemas.py`。ACP 平台扩展由 Connector 的独立导出脚本生成。
 
 创建请求也接受与普通新建会话相同的可选 `attachments` 内联附件列表（最多 10 个、合计 32 MiB），允许只发附件。未传或空列表保持原有请求摘要；Server 保存附件后向 Connector 传递稳定引用，重试不会改变同一附件的引用。
+
+创建请求可带 `planningIntent: {mode: "plan", operationId}`。Server 在预留前检查 Runtime 的 `session.planning` 是否声明 `metadata.preparedCreation`，并将同一意图用于预留和创建。Connector 在发首条任务前确认模式已生效，切换失败时拒绝派发。省略时沿用普通创建流程。

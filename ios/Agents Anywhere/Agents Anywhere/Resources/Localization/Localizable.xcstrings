@@ -27606,6 +27606,40 @@
           }
         }
       }
+    },
+    "这次计划审阅已失效，请刷新会话后重新确认。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This plan review has expired. Refresh the session before confirming again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这次计划审阅已失效，请刷新会话后重新确认。"
+          }
+        }
+      }
+    },
+    "当前会话无法进入或继续规划。请检查所选 Agent 和连接状态。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Planning is unavailable for this session. Check the selected agent and its connection."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前会话无法进入或继续规划。请检查所选 Agent 和连接状态。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
