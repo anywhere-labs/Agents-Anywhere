@@ -57,6 +57,18 @@ DSH `SessionSkillCatalog.list` 服务端只返回用户可调用技能
 （SDK 声明 "user-invocable skills"），`modelInvocable` 仅表示"同一
 技能是否也通告给模型"，是信息性标志——桥端无需再过滤。
 
+## DSH 0.2.2 的 workingDirectory 注入（2026-11-13）
+
+DSH 基线升到 0.2.2-rc.1 后，`SessionSkillCatalog` 会注入
+`workingDirectory`。桥端测试 fixture 若只组合 `SessionController` 而不
+组合 `WorkingDirectory`，`catalog.list` 会失败并被桥端降级为「无技能」，
+命令菜单里的用户技能全部消失。修法：`dsh-bridge-next/package.json` 的
+devDependencies 补 `@deepseek-ai/dsh-working-directory`，并在
+`tests/fixtures/agent-runtime.ts` 里
+`await ctx.plugin(WorkingDirectory, { defaultDirectory: root })`，与真实
+Host 的组合一致。升级 DSH 基线后先跑 `corepack yarn check`；这类
+fixture 组合缺口只会以「技能列表为空」的形式出现。
+
 ## 桥端排障日志地图与联调回路（2026-10-28 实证）
 
 排障先看对日志，别看错地方：

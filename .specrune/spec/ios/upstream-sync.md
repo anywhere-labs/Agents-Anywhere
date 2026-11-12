@@ -23,6 +23,21 @@ comm -12 <(git diff --name-only $BASE main | sort) \
 | `Localizable.xcstrings` | **程序化 union**：`git checkout --theirs` 后用 Python 取上游 JSON 为底、把仅我们有的键 merge 回去、按键排序、`json.load` 验证 | 手工去 `<<<<<<<` 标记必坏 JSON（两侧条目在冲突块内交错截断，实测）；不要字符串拼接 |
 | `.specrune/spec/**` 等 add/add | 逐个看：通常一侧是旧中间态，取最新线 | — |
 
+### 版本字段（2026-11-13 补）
+
+pbxproj「取我们侧」只适用于签名与部署目标；`MARKETING_VERSION` /
+`CURRENT_PROJECT_VERSION` 必须跟上游。2.2.0 同步时上游把两者从
+2.1.0/10 升到 2.2.0/12，整文件取我们侧会让 iOS 版本号落后于其他端。
+合并后跑一遍版本表：iOS、`dsh-bridge-next`、`web-next`、
+`desktop-workbench`、Android、`connector`、`server` 应同为 MINOR 版本。
+
+### xcstrings 排序（2026-11-13 补）
+
+本地 `Localizable.xcstrings` 在 union 后按码点全量排序，与 Xcode 写入
+顺序不同，因此与上游的 diff 会有上万行「纯重排」。这是契约行为，不要
+当成坏合并去回退；判断正确性看键集合（上游键全在 + 仅本地键）和
+`json.load`，不要看行数。
+
 ## 自动合并 ≠ 正确（必做校验）
 
 git 对 `commands.ts` "自动合并成功"却**追加了第二个旧版 `executeSkill`**
