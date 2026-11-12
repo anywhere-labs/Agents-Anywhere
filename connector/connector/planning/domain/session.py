@@ -130,6 +130,7 @@ class SessionPlanning:
         *,
         turn_id: str | None,
         native_review: dict | None,
+        review_actions: tuple[str, ...] | None = None,
     ) -> bool:
         digest = content_hash(text)
         plan_id = self.plan_id_for(native_id)
@@ -139,7 +140,10 @@ class SessionPlanning:
             and current["planId"] == plan_id
             and current["contentHash"] == digest
         ):
-            return False
+            if review_actions is None or self.native_review == native_review:
+                return False
+            self.open_review(current, native_review, review_actions)
+            return True
         version = self.next_version(plan_id)
         title = plan_title(text)
         proposal = {
@@ -158,17 +162,28 @@ class SessionPlanning:
         self.execution = None
         self.execution_progress = None
         self.draft = None
-        self.native_review = native_review
-        self.review = {
-            "reviewId": stable_id("review_", plan_id, str(version)),
-            "planId": plan_id,
-            "planRevision": version,
-            "contentHash": digest,
-            "status": "open",
-            "actions": ["approve_and_execute", "request_revision", "dismiss_review"],
-        }
-        self.revision += 1
+        self.open_review(proposal, native_review, review_actions)
         return True
+
+    def open_review(self, proposal, native_review, actions):
+        self.native_review = native_review
+        if actions == ():
+            self.review = None
+        else:
+            review_id = stable_id("review_", proposal["planId"], str(proposal["revision"]))
+            if actions is not None and native_review:
+                review_id = stable_id("review_", review_id, native_review["noticeId"])
+            self.review = {
+                "reviewId": review_id,
+                "planId": proposal["planId"],
+                "planRevision": proposal["revision"],
+                "contentHash": proposal["contentHash"],
+                "status": "open",
+                "actions": list(actions) if actions is not None else [
+                    "approve_and_execute", "request_revision", "dismiss_review",
+                ],
+            }
+        self.revision += 1
 
     def require_review(
         self, request: dict[str, Any], *, allow_approved: bool = False

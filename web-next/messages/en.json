@@ -2515,6 +2515,8 @@
     "pi_source_unreadable": "The native history source cannot be read right now. The browsed content is kept.",
     "pi_workspace_missing": "The original session's working directory is missing or invalid.",
     "pi_writer_unavailable": "Native history write verification is not ready yet.",
+    "plan_review_expired": "This plan review has expired. Refresh the session before confirming again.",
+    "planning_unavailable": "Planning is unavailable for this session. Check the selected agent and its connection.",
     "preparation_consumed": "The workspace preparation is already bound to another creation.",
     "preparation_not_reserved": "The workspace preparation has not been reserved for this creation.",
     "preparation_stale": "The workspace preparation is no longer valid. Prepare again.",

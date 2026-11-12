@@ -1,6 +1,6 @@
 # 统一原生 Plan
 
-Web、Desktop、Android 和 iOS 使用相同的规划规则，Codex、Claude Code、DSH 负责各自的原生适配。模式切换、计划正文、用户审阅和实施进度分别记录。
+Web、Desktop、Android 和 iOS 使用相同的规划规则，Codex、Claude Code、DSH 负责各自的原生适配，Pi 通过 ACP 接入。模式切换、计划正文、用户审阅和实施进度分别记录。
 
 ## 使用方式
 
@@ -39,6 +39,7 @@ Web、Desktop、Android 和 iOS 使用相同的规划规则，Codex、Claude Cod
 | Codex | 实验 app-server `thread/settings/update`，后续 `turn/start` 保留 collaboration mode；外部 owner 沿既有 IPC 路由 | Plan item/delta；completed 正文作为权威终稿。AA 提供续跑确认，批准后使用普通协作模式提交指定正文 |
 | Claude Code | SDK `permission_mode=plan` / `set_permission_mode` 控制响应 | Write 的原生计划文件增量与 ExitPlanMode；审批前冻结补充回调中的完整正文，或读取已确认且受限于原生 plans 目录的文件 |
 | DSH | 已组合的原生 `planMode.get/set`，区分当前模式与下一步待生效选择 | `exit_plan_mode` 工具参数流与 `plan-review` intent；使用原生问题选项身份回应，批准在下一步退出规划 |
+| Pi（ACP） | 配置更新后在 Agent 工具守卫中限制实施 | 提交 Markdown 计划，审阅通过 ACP 表单回应，批准后按原工具权限在同一回合实施 |
 
 Codex 不支持的运行中切换明确拒绝；外部 writer 被占用且 owner 无法控制时，绝不退回 SDK 争锁。Codex `turn/plan/updated` 只属于执行步骤。
 

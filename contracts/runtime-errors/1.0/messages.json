@@ -266,6 +266,14 @@
       "zh-CN": "当前权限或用户审批未允许此命令。",
       "en": "The current permissions or approvals do not allow this command."
     },
+    "plan_review_expired": {
+      "zh-CN": "这次计划审阅已失效，请刷新会话后重新确认。",
+      "en": "This plan review has expired. Refresh the session before confirming again."
+    },
+    "planning_unavailable": {
+      "zh-CN": "当前会话无法进入或继续规划。请检查所选 Agent 和连接状态。",
+      "en": "Planning is unavailable for this session. Check the selected agent and its connection."
+    },
     "pi_adapter_cache_corrupt": {
       "zh-CN": "Pi ACP 缓存依赖来源已变化。",
       "en": "The cached Pi ACP dependencies have changed."

@@ -30,6 +30,7 @@ class PlanningObservation:
     source_turn_id: str | None = None
     expected_revision: int | None = None
     progress: Mapping[str, Any] | None = None
+    review_actions: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)

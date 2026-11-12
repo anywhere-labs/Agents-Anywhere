@@ -301,6 +301,21 @@ class RuntimeWorkflowService:
                 prep = await self.store.get_runtime_workflow(
                     request["preparationId"], user_id=user_id, kind="preparation"
                 )
+                if "planningIntent" in request:
+                    capabilities = await self._call(row, "runtime.capabilities", {})
+                    if not any(
+                        item.get("capabilityId") == "session.planning"
+                        and item.get("supported") and item.get("available") and item.get("allowed")
+                        and item.get("metadata", {}).get("preparedCreation") is True
+                        for item in capabilities.get("capabilitySet", {}).get("capabilities", [])
+                    ):
+                        rejected = await self.store.reject_unreserved_creation(
+                            row["id"], user_id=user_id, result=reservation_rejection({
+                                "code": "planning_unavailable",
+                                "message": "当前运行时不支持在新建会话时进入规划模式。",
+                            }),
+                        )
+                        return self._view(row, rejected)
                 reservation = await self._call(
                     row,
                     "workspace.preparation.reserve",
@@ -311,6 +326,7 @@ class RuntimeWorkflowService:
                         "expectedRevision": request["expectedRevision"],
                         "catalogRevision": request["catalogRevision"],
                         "selections": request["selections"],
+                        **({"planningIntent": request["planningIntent"]} if "planningIntent" in request else {}),
                         **(
                             {"configuration": request["configuration"]}
                             if "configuration" in request
@@ -394,7 +410,7 @@ class RuntimeWorkflowService:
     def _view(row: dict[str, Any], state: dict[str, Any]) -> WorkflowView:
         return WorkflowView(
             protocolVersion="1.2"
-            if "configuration" in state or "configuration" in row["request"]
+            if "configuration" in state or "configuration" in row["request"] or "planningIntent" in row["request"]
             else "1.1",
             id=row["id"],
             kind=row["kind"],

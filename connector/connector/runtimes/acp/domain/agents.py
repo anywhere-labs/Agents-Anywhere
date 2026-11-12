@@ -74,6 +74,7 @@ class AcpAgentDefinition:
     # running instance applied it (see ``RuntimeProvider.model_connection``).
     model_connection: Any = None
     model_connection_status: Callable[[Any], Any] | None = None
+    planning: tuple[str, ...] = ()
     # Hooks.
     dialect: Callable[[AgentContext], AcpDialect] = lambda _context: AcpDialect()
     prepare_launch: Callable[[AgentContext], Callable[[], Awaitable[LaunchDefinition]]] | None = None

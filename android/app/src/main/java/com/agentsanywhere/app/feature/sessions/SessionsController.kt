@@ -151,8 +151,6 @@ class SessionsController(
         val goal = Regex("^/goal(?:\\s|$)").containsMatchIn(draft.content.trimStart())
         val planning = if(goal)null else com.agentsanywhere.app.feature.sessiondetail.PlanningCommand.parse(draft.content)
         if (planning?.command == "exit_plan" || planning?.command == "enter_plan") return NewSessionCreateOutcome.Failed(PlanningFailure(PlanningFailure.Reason.TaskRequired))
-        // Prepared-workspace creation does not carry a planning intent yet; refuse instead of silently dropping it.
-        if (planning != null && draft.preparedWorkspace != null) return NewSessionCreateOutcome.Failed(PlanningFailure(PlanningFailure.Reason.WorkspaceRequired))
         validateNewSessionDraft(draft)?.let { error -> return NewSessionCreateOutcome.Failed(error) }
         val serverUrl = sessionStore.readServerUrl()
         val accessToken = sessionStore.readAccessToken()
@@ -184,7 +182,10 @@ class SessionsController(
                     val value = workflows.run("creations", org.json.JSONObject().put("preparationId", prepared.preparationId)
                         .put("createOperationId", draft.clientMessageId).put("clientMessageId", draft.clientMessageId)
                         .put("expectedRevision", prepared.expectedRevision).put("catalogRevision", prepared.catalogRevision)
-                        .put("selections", org.json.JSONObject(draft.selections.toMap())).put("content", draft.content).apply {
+                        .put("selections", org.json.JSONObject(draft.selections.toMap()))
+                        .put("content", planning?.content ?: draft.content).apply {
+                            if (planning != null) put("planningIntent", org.json.JSONObject()
+                                .put("mode", "plan").put("operationId", draft.clientMessageId))
                             if (draft.attachments.isNotEmpty()) put("attachments", org.json.JSONArray(draft.attachments.map { part ->
                                 val item = part.toInlineAttachmentRef()
                                 org.json.JSONObject().put("fileId", item.fileId).put("name", item.name).put("mediaType", item.mediaType)

@@ -114,6 +114,8 @@ fun runtimeErrorRes(code: String?): Int? = when (code) {
     "pi_source_unreadable" -> R.string.runtime_error_pi_source_unreadable
     "pi_workspace_missing" -> R.string.runtime_error_pi_workspace_missing
     "pi_writer_unavailable" -> R.string.runtime_error_pi_writer_unavailable
+    "plan_review_expired" -> R.string.runtime_error_plan_review_expired
+    "planning_unavailable" -> R.string.runtime_error_planning_unavailable
     "preparation_consumed" -> R.string.runtime_error_preparation_consumed
     "preparation_not_reserved" -> R.string.runtime_error_preparation_not_reserved
     "preparation_stale" -> R.string.runtime_error_preparation_stale

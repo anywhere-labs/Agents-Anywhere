@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from uuid import uuid4
@@ -9,12 +10,19 @@ from uuid import uuid4
 from acp import RequestError
 
 from ...domain.definitions import AcpError, PromptRejectedBeforeDispatch
-from ...domain.dialect import AcpDialect, ExtensionSteer
+from ...domain.dialect import (
+    AcpDialect,
+    ExtensionSteer,
+    PlanningModeOption,
+    PlanReviewRequest,
+)
 from .settings import private_json
 
 GUARD = Path(__file__).with_name("permissions.mjs").resolve()
 PERMISSIONS = {"ask", "ask_all", "readonly"}
 PERMISSION_OPTION = "aa-permission"
+PLAN_OPTION = "aa-planning"
+PLAN_REVIEW_PREFIX = "AA_PLAN_REVIEW\n"
 
 
 def model_unavailable(error: RequestError) -> bool:
@@ -25,6 +33,7 @@ class PiDialect(AcpDialect):
     # AA loads its own approval guard into Pi, so tool permissions are AA-managed.
     guarantees = frozenset({"managed_tool_permissions"})
     steer = ExtensionSteer("session/steering")
+    planning_mode = PlanningModeOption(PLAN_OPTION, "plan", "normal")
 
     def __init__(self, *, agent_dir: Path, permission_file: Path | None = None):
         self.agent_dir = agent_dir
@@ -47,9 +56,43 @@ class PiDialect(AcpDialect):
 
     # Configuration and permissions
 
+    def planning_marker(self, session_id):
+        return self.permission_file.with_suffix(".planning") / hashlib.sha256(session_id.encode()).hexdigest()
+
+    def plan_mode_changed(self, update):
+        meta = update.get("_meta", {}).get("pi", {})
+        return (
+            update.get("sessionUpdate") == "session_info_update"
+            and meta.get("event") == "status" and meta.get("key") == "aa-plan-mode"
+        )
+
+    def plan_review(self, kind, request):
+        message = request.get("message", "")
+        if kind != "form" or not message.startswith(PLAN_REVIEW_PREFIX):
+            return None
+        native_id = message.removeprefix(PLAN_REVIEW_PREFIX)
+        markdown = (request.get("schema") or {}).get("properties", {}).get("value", {}).get("description")
+        if not native_id or not isinstance(markdown, str) or not markdown.strip():
+            raise AcpError("planning_unavailable", "Pi 未提供有效的计划正文。")
+        return PlanReviewRequest(native_id, markdown, {
+            "approve_and_execute": {"actionId": "accept", "input": {"value": "approve"}},
+            "request_revision": {
+                "actionId": "accept", "input": {"value": "revise\n"}, "feedbackField": "value",
+            },
+            "dismiss_review": {"actionId": "cancel"},
+        })
+
     def adapt_configuration(self, session_id, options):
         return [
             *options,
+            {
+                "id": PLAN_OPTION,
+                "name": "Plan",
+                "category": "mode",
+                "type": "select",
+                "currentValue": "plan" if self.planning_marker(session_id).is_file() else "normal",
+                "options": [{"value": "normal", "name": "Normal"}, {"value": "plan", "name": "Plan"}],
+            },
             {
                 "id": PERMISSION_OPTION,
                 "name": "权限",
@@ -72,6 +115,16 @@ class PiDialect(AcpDialect):
         self.permissions[session_id] = value
 
     async def configure(self, client, session_id, key, value):
+        if key == PLAN_OPTION:
+            marker = self.planning_marker(session_id)
+            if value == "plan":
+                marker.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                marker.touch(mode=0o600)
+            elif value == "normal":
+                marker.unlink(missing_ok=True)
+            else:
+                raise AcpError("planning_unavailable", "Pi 规划模式值无效。")
+            return client.configuration.get(session_id, [])
         if key != PERMISSION_OPTION:
             return None
         if value not in PERMISSIONS:
@@ -164,7 +217,7 @@ class PiDialect(AcpDialect):
             )
 
     async def authorize_bash(self, client, session_id, command):
-        if self.permissions.get(session_id, "ask") == "readonly":
+        if self.planning_marker(session_id).is_file() or self.permissions.get(session_id, "ask") == "readonly":
             return False
         answer = await client.request_interaction(
             session_id,
