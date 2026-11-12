@@ -1,5 +1,5 @@
 import { ConnectorEnvironment, type ConnectorEnvironmentState } from "./connector-environment";
-import { ConnectorGuard } from "./connector-guard";
+import { ConnectorGuard, guardSessionActive } from "./connector-guard";
 import { terminateConnectorProcess } from "./connector-process";
 import { localRuntimePath } from "./local-runtime";
 import type { OwnershipState, RuntimeOwner } from "./local-runtime";
@@ -164,6 +164,7 @@ export class ConnectorSupervisor {
           uv: launcher.executable, python: this.resolvePythonPath(), env: this.connectorEnvironment(), direct: this.resolveDirectConnectorCli() };
       },
       onState: state => options.onEnvironment?.(state),
+      guardSessionActive: process.platform === "darwin" ? session => guardSessionActive(this.guardSource(), session) : undefined,
       log: message => this.log({ level: "INFO", message }),
     });
     this.refreshLocalState();
@@ -596,6 +597,10 @@ export class ConnectorSupervisor {
     return new ConnectorRpcError(-32000, message || "Connector RPC error", details ?? { reason: code });
   }
 
+  private guardSource(): string {
+    return path.join(this.options.packaged ? this.options.resourcesPath : path.resolve(__dirname, ".."), "connector-guard");
+  }
+
   private ensureRpcProcess(requiresConfig: boolean): void {
     if (this.cleanupFailure) throw this.cleanupFailure;
     if (this.rpcProcess) return;
@@ -610,7 +615,7 @@ export class ConnectorSupervisor {
     const lines: string[] = [];
     const guard = process.platform === "darwin" && this.options.desktopPid !== undefined
       ? new ConnectorGuard({
-        source: path.join(this.options.packaged ? this.options.resourcesPath : path.resolve(__dirname, ".."), "connector-guard"),
+        source: this.guardSource(),
         desktopPid: this.options.desktopPid,
         cwd,
         executable: launcher.executable,
@@ -657,12 +662,26 @@ export class ConnectorSupervisor {
         this.finalizeRpcProcess(child, `Connector RPC closed${signal ? ` by ${signal}` : ""} with code ${code ?? "null"}`);
       });
     }
-    try {
-      this.environment.recordProcess(child.pid);
-      guard?.start();
-    } catch (error) {
-      void this.terminateRpcProcess(true).catch(failure => this.logError(failure));
-      throw error;
+    if (guard) {
+      // The guard waits for start until its session is recorded in the lease.
+      // The normal RPC readiness deadline also covers this handshake.
+      if (child.pid === undefined) return;
+      void guard.session().then(session => {
+        if (this.rpcProcess !== child) return;
+        this.environment.recordProcess(child.pid, session);
+        guard.start();
+      }).catch(error => {
+        if (this.rpcProcess !== child) return;
+        this.ready?.reject(error);
+        void this.terminateRpcProcess(true).catch(failure => this.logError(failure));
+      });
+    } else {
+      try {
+        this.environment.recordProcess(child.pid);
+      } catch (error) {
+        void this.terminateRpcProcess(true).catch(failure => this.logError(failure));
+        throw error;
+      }
     }
   }
 

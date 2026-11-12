@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { test, type TestContext } from "node:test";
-import { ConnectorGuard } from "./connector-guard";
+import { setTimeout as delay } from "node:timers/promises";
+import { ConnectorEnvironment } from "./connector-environment";
+import { ConnectorGuard, guardSessionActive } from "./connector-guard";
 
 const mac = { skip: process.platform !== "darwin", timeout: 10_000 };
+const guardSource = path.resolve(__dirname, "../connector-guard");
 
 const launcher = `
   const { spawn } = require("node:child_process");
@@ -18,7 +23,7 @@ const launcher = `
 
 async function start(t: TestContext, desktopPid: number, diagnostics: string[], script = launcher) {
   const guard = new ConnectorGuard({
-    source: path.resolve(__dirname, "../connector-guard"),
+    source: guardSource,
     desktopPid,
     cwd: __dirname,
     executable: process.execPath,
@@ -26,7 +31,7 @@ async function start(t: TestContext, desktopPid: number, diagnostics: string[], 
     env: process.env,
     onDiagnostic: line => diagnostics.push(line),
   });
-  t.after(() => guard.stop());
+  t.after(() => { if (guard.child.exitCode === null && guard.child.signalCode === null) return guard.stop(); });
   const lines = readline.createInterface({ input: guard.child.stdout });
   const ready = once(lines, "line");
   guard.start();
@@ -64,7 +69,6 @@ test("Electron exit reaps the Connector while the backend control channel is sti
   assert.throws(() => process.kill(group, 0), { code: "ESRCH" });
 });
 
-
 test("cleanup completes while a separate process group still holds stdout", mac, async t => {
   const detachedLauncher = `
     const { spawn } = require("node:child_process");
@@ -82,5 +86,68 @@ test("cleanup completes while a separate process group still holds stdout", mac,
   });
   await guard.stop();
   assert.doesNotThrow(() => process.kill(host, 0));
+  assert.throws(() => process.kill(group, 0), { code: "ESRCH" });
+});
+
+
+test("a stale environment lease stays busy after the guard dies with a live Connector session", mac, async t => {
+  const { guard, group } = await start(t, process.pid, []);
+  const session = await guard.session();
+  let groupSignaled = false;
+  t.after(async () => {
+    if (!groupSignaled && await guardSessionActive(guardSource, session)) process.kill(-group, "SIGKILL");
+  });
+  assert.equal(await guardSessionActive(guardSource, session), true);
+  const [boot, seconds, micros] = session.identity.split(":");
+  assert.equal(await guardSessionActive(guardSource, { ...session, identity: `${boot}:${seconds}:${Number(micros) + 1}` }), false);
+  assert.equal(await guardSessionActive(guardSource, { ...session, identity: `00000000-0000-0000-0000-000000000000:${seconds}:${micros}` }), false);
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-guard-lease-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const environment = path.join(root, ".venv");
+  fs.mkdirSync(`${environment}.desktop-lock`);
+  const ownerPath = path.join(`${environment}.desktop-lock`, "owner.json");
+  const previous = JSON.stringify({ pid: 2147483647, childPid: session.pid, guardSession: session });
+  fs.writeFileSync(ownerPath, previous);
+
+  guard.child.kill("SIGKILL");
+  assert.equal((await guard.closed).cleaned, false);
+  const next = new ConnectorEnvironment({
+    dataPath: root,
+    resolve: () => ({ project: root, environment, uv: "", python: "", env: process.env, direct: process.execPath }),
+    guardSessionActive: record => guardSessionActive(guardSource, record),
+    onState: () => {},
+    log: () => {},
+  });
+  t.after(() => next.shutdown());
+  await assert.rejects(next.prepare(), /Environment is busy/);
+  assert.equal(fs.readFileSync(ownerPath, "utf8"), previous);
+  assert.doesNotThrow(() => process.kill(group, 0));
+
+  process.kill(-group, "SIGKILL");
+  groupSignaled = true;
+  const deadline = Date.now() + 2_000;
+  while (await guardSessionActive(guardSource, session) && Date.now() < deadline) await delay(25);
+  await next.prepare();
+  assert.equal(next.getState().status, "ready");
+});
+
+test("a live backend can finish graceful shutdown after Electron exits", mac, async t => {
+  const main = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"]);
+  t.after(() => { main.kill("SIGKILL"); });
+  const script = `
+    process.stdin.resume();
+    process.stdin.on("end", () => process.exit(0));
+    console.log(process.pid + " " + process.pid);
+    setInterval(() => {}, 1000);
+  `;
+  const { guard, group } = await start(t, main.pid!, [], script);
+  const exited = once(main, "exit");
+  main.kill("SIGKILL");
+  await exited;
+  await delay(150);
+  assert.doesNotThrow(() => process.kill(group, 0));
+  await guard.stop();
+  assert.equal((await guard.closed).code, 0);
   assert.throws(() => process.kill(group, 0), { code: "ESRCH" });
 });

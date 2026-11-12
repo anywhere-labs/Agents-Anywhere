@@ -7,6 +7,10 @@ import type { Duplex } from "node:stream";
 
 type GuardExit = { code: number | null; signal: NodeJS.Signals | null; cleaned: boolean };
 const STOP_TIMEOUT_MS = 6_000;
+const INSPECTION_TIMEOUT_MS = 2_000;
+
+export type ConnectorGuardSession = { pid: number; identity: string };
+const SESSION_IDENTITY = /^[0-9a-f-]{36}:\d+:\d+$/i;
 
 function stageGuard(source: string): string {
   // Resolve the system-assigned directory instead of inheriting a potentially
@@ -31,9 +35,35 @@ function stageGuard(source: string): string {
   return executable;
 }
 
+/** A stale lock can be inspected safely without signaling any recorded PID. */
+export function guardSessionActive(source: string, session: ConnectorGuardSession): Promise<boolean> {
+  if (!Number.isSafeInteger(session?.pid) || session.pid <= 1 || !SESSION_IDENTITY.test(session.identity)) {
+    throw new Error("Connector RPC session record is invalid.");
+  }
+  const probe = spawn(stageGuard(source), ["--session-active", String(session.pid), session.identity], { stdio: "ignore" });
+  return new Promise((resolve, reject) => {
+    const failed = (cause?: Error) => new Error(`Could not verify the previous Connector RPC session (PID ${session.pid}).`, { cause });
+    const timeout = setTimeout(() => {
+      probe.kill("SIGKILL");
+      probe.unref();
+      reject(failed());
+    }, INSPECTION_TIMEOUT_MS);
+    probe.once("error", error => {
+      clearTimeout(timeout);
+      reject(failed(error));
+    });
+    probe.once("exit", code => {
+      clearTimeout(timeout);
+      if (code === 0 || code === 1) resolve(code === 1);
+      else reject(failed());
+    });
+  });
+}
+
 export class ConnectorGuard {
   readonly child: ChildProcessWithoutNullStreams;
   readonly closed: Promise<GuardExit>;
+  private readonly identification: Promise<ConnectorGuardSession | undefined>;
   private readonly control: Duplex;
   private stopped = false;
 
@@ -57,12 +87,20 @@ export class ConnectorGuard {
     // fd 3, so neither uv nor its descendants can hold this channel open.
     this.control = this.child.stdio[3] as Duplex;
     this.control.on("error", () => this.control.destroy());
+    let identify!: (session?: ConnectorGuardSession) => void;
+    this.identification = new Promise(resolve => { identify = resolve; });
     let cleaned = false;
     const reader = readline.createInterface({ input: this.control });
     reader.on("error", () => this.control.destroy());
     reader.on("line", line => {
-      if (line.startsWith("clean ")) cleaned = true;
-      else options.onDiagnostic(line);
+      if (line.startsWith("session ")) {
+        const [, pid, identity] = line.split(" ");
+        if (Number(pid) === this.child.pid && SESSION_IDENTITY.test(identity)) identify({ pid: Number(pid), identity });
+      } else if (line.startsWith("clean ")) {
+        cleaned = true;
+      } else {
+        options.onDiagnostic(line);
+      }
     });
     const controlClosed = new Promise<void>(resolve => reader.once("close", resolve));
     this.control.once("close", () => reader.close());
@@ -74,12 +112,21 @@ export class ConnectorGuard {
     });
     // A detached descendant can retain stdout/stderr after the group is gone.
     // Only the guard owns the control socket, which carries the cleanup result.
-    this.closed = Promise.all([exited, controlClosed]).then(([result]) => ({
-      ...result, cleaned: cleaned || this.child.pid === undefined,
-    }));
+    this.closed = Promise.all([exited, controlClosed]).then(([result]) => {
+      identify();
+      return { ...result, cleaned: cleaned || this.child.pid === undefined };
+    });
   }
 
-  start(): void { this.control.write("start\n"); }
+  async session(): Promise<ConnectorGuardSession> {
+    const session = await this.identification;
+    if (!session) throw new Error("Could not identify the Connector RPC session.");
+    return session;
+  }
+
+  start(): void {
+    if (!this.stopped) this.control.write("start\n");
+  }
 
   watch(pid: number): void {
     if (!this.stopped) this.control.write(`watch ${pid}\n`);
@@ -88,6 +135,8 @@ export class ConnectorGuard {
   async stop(): Promise<void> {
     if (!this.stopped) {
       this.stopped = true;
+      this.child.stdin.once("error", () => { /* The Connector may have already closed stdin. */ });
+      this.child.stdin.end();
       this.control.write("stop\n");
     }
     let timer: NodeJS.Timeout | undefined;
