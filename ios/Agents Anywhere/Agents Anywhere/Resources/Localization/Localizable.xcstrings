@@ -10628,6 +10628,24 @@
         }
       }
     },
+    "dashboard.device.runtimeConfigFields.agentCliPath.label": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.agentCliPath.label. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent executable path (optional)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent 可执行文件路径（可选）"
+          }
+        }
+      }
+    },
     "dashboard.device.runtimeConfigFields.claudeExecutablePath.description": {
       "comment": "Shared with Web: dashboard.device.runtimeConfigFields.claudeExecutablePath.description. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",

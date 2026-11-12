@@ -347,12 +347,15 @@ class SessionService:
         self._job(self._open_preparation(context, row))
         return self.preparation_view(key)
 
+    def _process_cwd(self, workspace: Workspace) -> str:
+        return workspace.canonical_path if self.profile.launch_in_workspace else str(self.root)
+
     async def _open_preparation(self, context: dict, preparation: Preparation):
         launched = False
         try:
             launch = await self.launch_for_preparation() if self.launch_for_preparation else self.launch
             launched = True
-            await context["client"].start(launch, str(self.root))
+            await context["client"].start(launch, self._process_cwd(preparation.workspace))
             process = context["client"].process.process
             self._job(self._watch(context, process))
             result = await self.preparation_driver.prepare(context)
@@ -381,12 +384,18 @@ class SessionService:
             with self.store.transaction():
                 current = self.store.require("preparation", preparation.preparation_id)
                 if current["phase"] not in {"cancelled", "expired"}:
-                    # A local check that fails before any Agent process starts is a definite
-                    # failure; once the Agent runs, its effect stays unknown. The message
-                    # always matches the code it travels with.
                     known = isinstance(error, AcpError)
+                    # An explicit auth rejection before a session id is assigned
+                    # is as definite as a failed local launch check.
+                    rejected = known and (
+                        not launched
+                        or (
+                            error.code == "agent_authentication_required"
+                            and not context.get("provisionalAgentSessionId")
+                        )
+                    )
                     current.update(
-                        phase="failed" if known and not launched else "outcome_unknown",
+                        phase="failed" if rejected else "outcome_unknown",
                         revision=current["revision"] + 1,
                         failure={
                             "code": error.code if known else "agent_open_failed",
@@ -654,15 +663,16 @@ class SessionService:
                            projection=self.projection_factory(session_id, context["generation"]))
             try:
                 launch = await self.launch_for_session(session_id) if self.launch_for_session else self.launch
-                await context["client"].start(launch, str(self.root))
+                await context["client"].start(launch, self._process_cwd(binding.workspace))
                 guarantees = frozenset(context["client"].capabilities.get("_meta", {}).get("aa", {}).get("guarantees", []))
                 if not self.profile.required_guarantees <= guarantees:
                     raise AcpError("agent_guarantees_missing", "当前 Agent 不能满足该会话的恢复保证。")
-                if context["client"].capabilities.get("sessionCapabilities", {}).get("resume") is not None:
-                    # Resume sends only future deltas. Keep the persisted ordering
-                    # and revisions rather than restarting Timeline sequence at one.
-                    context["projection"].items.update({row["id"]: row for row in self.store.values("projection")
-                                                       if row["sessionId"] == session_id})
+                # The generation check drops replay during load. Keep prior items
+                # in the projection so later messages append after persisted history.
+                context["projection"].items.update({
+                    row["id"]: row for row in self.store.values("projection")
+                    if row["sessionId"] == session_id
+                })
                 result = await context["client"].resume(
                     binding.agent_session_id, binding.workspace.canonical_path,
                     aa={"ownerGeneration": context["generation"],

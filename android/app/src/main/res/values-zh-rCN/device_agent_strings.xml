@@ -94,6 +94,7 @@
     <string name="runtime_config_remove_effort">删除推理强度</string>
     <string name="runtime_config_add_effort">添加强度</string>
 
+    <string name="runtime_config_field_agent_cli_path">Agent 可执行文件路径（可选）</string>
     <string name="runtime_config_field_claude_executable_path">Claude 可执行文件路径（可选）</string>
     <string name="runtime_config_field_claude_executable_path_description">可选。只有 Claude Code 不在默认 PATH 时才需要填写。</string>
     <string name="runtime_config_field_codex_executable_path">Codex 可执行文件路径（可选）</string>
