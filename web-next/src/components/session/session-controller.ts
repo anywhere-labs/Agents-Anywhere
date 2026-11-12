@@ -123,7 +123,9 @@ export function createSessionController(options: SessionControllerOptions) {
 
   function recordError(key: string, error: unknown) {
     if (disposed || snapshot.invalidated) return
-    if (isApiError(error) && (error.status === 403 || error.status === 404)) {
+    // A runtime catalog can be unavailable while the session history remains accessible.
+    if (key !== "model" && key !== "permission" &&
+        isApiError(error) && (error.status === 403 || error.status === 404)) {
       callbacks.onInvalidated()
       errors.clear()
       liveReads.clear()

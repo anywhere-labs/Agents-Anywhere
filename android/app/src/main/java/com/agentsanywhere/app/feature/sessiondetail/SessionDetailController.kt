@@ -494,8 +494,7 @@ class SessionDetailController(
                     }
                 },
                 onFailure = { error ->
-                    if (error is kotlinx.coroutines.CancellationException ||
-                        error is ApiException && error.statusCode in listOf(403, 404)) throw error
+                    if (error is kotlinx.coroutines.CancellationException) throw error
                     next = next.copy(
                         catalogs = next.catalogs.copy(
                             modelLoading = false,
@@ -519,8 +518,7 @@ class SessionDetailController(
                     }
                 },
                 onFailure = { error ->
-                    if (error is kotlinx.coroutines.CancellationException ||
-                        error is ApiException && error.statusCode in listOf(403, 404)) throw error
+                    if (error is kotlinx.coroutines.CancellationException) throw error
                     next = next.copy(
                         catalogs = next.catalogs.copy(
                             permissionLoading = false,

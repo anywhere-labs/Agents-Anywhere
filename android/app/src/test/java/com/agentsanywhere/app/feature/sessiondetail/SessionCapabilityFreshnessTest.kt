@@ -1,11 +1,13 @@
 package com.agentsanywhere.app.feature.sessiondetail
 
 import com.agentsanywhere.app.api.ApiClient
+import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.RealtimeTransport
 import com.agentsanywhere.app.api.RemoteDashboardSnapshot
 import com.agentsanywhere.app.api.RemoteEventRecoveryResponse
 import com.agentsanywhere.app.api.RemoteRuntimeCapability
 import com.agentsanywhere.app.api.RemoteRuntimeCapabilitySet
+import com.agentsanywhere.app.api.RemoteRuntimeModelCatalog
 import com.agentsanywhere.app.api.RemoteSessionEventEnvelope
 import com.agentsanywhere.app.api.RemoteSessionEventPayload
 import com.agentsanywhere.app.api.RemoteWsTicket
@@ -34,6 +36,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 class SessionCapabilityFreshnessTest {
     @Test
@@ -150,6 +154,24 @@ class SessionCapabilityFreshnessTest {
     }
 
     @Test
+    fun missingRuntimeCatalogDoesNotInvalidateReadableHistory() = withRuntimeServer { controller ->
+        val model = RemoteRuntimeModelCatalog(runtime = "codex", revision = 1, models = emptyList())
+        val current = openedSession().copy(
+            timeline = SessionTimelineState(messages = listOf(
+                TimelineMessage("history", author = MessageAuthor.Agent, text = "retained"))),
+            catalogs = RuntimeCatalogs(model = model),
+        )
+
+        val refreshed = runBlocking { controller.refreshRuntimeLiveDomains(SESSION_ID, current) }
+        val state = controller.mergeRuntimeLiveState(current, current, refreshed)
+
+        assertEquals(listOf("history"), state.messages.map { it.id })
+        assertEquals(model, state.catalogs.model)
+        assertTrue(state.catalogs.modelStale)
+        assertEquals("runtime not found", state.catalogs.modelErrorMessage)
+    }
+
+    @Test
     fun snapshotKeepsCapabilitiesPushedWhileItWasInFlight() {
         val requestState = openedSession().beginSnapshotLoad(clearErrors = false)
         val live = reduceRealtimeEvents(requestState, takeoverPush(sequence = 6), devices = emptyList())
@@ -227,6 +249,35 @@ class SessionCapabilityFreshnessTest {
         assertNull(cache.open("account", SESSION_ID, "token").cached)
     }
 
+    @Test
+    fun failedRequiredSnapshotIsRetriedAfterReconnectEvenWhenTheCursorMoves() = runBlocking {
+        val cursor = AtomicReference("seq:5")
+        val snapshots = AtomicInteger()
+        val recovered = CompletableDeferred<Int>()
+        val job = SessionRealtimeController(
+            transport = RecoveryTransport(emptyList(), requiredSnapshotAfter = "seq:5"),
+            sessionStore = auth("http://localhost"), clientId = "client", retryDelay = { 1L },
+        ).start(
+            scope = this, sessionId = SESSION_ID, cursor = cursor::get,
+            onEvents = {}, onCursorAdvanced = {},
+            onSnapshotRequired = {
+                if (snapshots.incrementAndGet() == 1) {
+                    cursor.set("seq:6")
+                    throw ApiException("Temporarily unavailable", 503)
+                }
+            },
+            onRuntimeRefreshRequired = { _, _ -> },
+            onConnectionChanged = { connected, recovering, _, _ ->
+                if (connected && !recovering && snapshots.get() > 0) recovered.complete(snapshots.get())
+            },
+        )
+        try {
+            assertEquals(2, withTimeout(5_000) { recovered.await() })
+        } finally {
+            job.cancelAndJoin()
+        }
+    }
+
     private fun recover(
         initial: SessionDetailState,
         recovered: List<RemoteSessionEventEnvelope>,
@@ -269,6 +320,9 @@ class SessionCapabilityFreshnessTest {
                         """{"state":{"sessionId":"$SESSION_ID","runtime":"codex","status":"idle","updatedSeq":5}}""",
                     )
                     path.endsWith("/runtime/notices") -> json(200, """{"notices":[]}""")
+                    path.endsWith("/runtime/catalogs/model") -> json(
+                        404, """{"detail":{"code":"runtime_not_found","message":"runtime not found"}}""",
+                    )
                     path.endsWith("/planning") -> json(200, """{"sessionId":"$SESSION_ID"}""")
                     path.endsWith("/runtime/capabilities") -> json(
                         504,
@@ -290,6 +344,7 @@ class SessionCapabilityFreshnessTest {
     private class RecoveryTransport(
         private val recovered: List<RemoteSessionEventEnvelope>,
         private val failure: Exception? = null,
+        private val requiredSnapshotAfter: String? = null,
     ) : RealtimeTransport {
         override fun createDashboardTicket(serverUrl: String, authorizationToken: String, clientId: String): RemoteWsTicket =
             throw UnsupportedOperationException()
@@ -315,8 +370,8 @@ class SessionCapabilityFreshnessTest {
             failure?.let { throw it }
             return RemoteEventRecoveryResponse(
                 events = recovered,
-                nextCursor = "seq:${recovered.maxOf { it.sequence }}",
-                snapshotRequired = false,
+                nextCursor = recovered.maxOfOrNull { it.sequence }?.let { "seq:$it" } ?: after,
+                snapshotRequired = after == requiredSnapshotAfter,
                 serverTime = null,
             )
         }
@@ -327,9 +382,12 @@ class SessionCapabilityFreshnessTest {
 
         // Opens and subscribes at once, which starts recovery and a live read.
         override fun openWebSocket(url: String, listener: WebSocketListener): WebSocket {
-            listener.onOpen(IdleSocket, handshake)
-            listener.onMessage(IdleSocket, "session.subscribed")
-            return IdleSocket
+            val socket = object : WebSocket by IdleSocket {
+                override fun cancel() = listener.onClosed(this, 1000, "cancelled")
+            }
+            listener.onOpen(socket, handshake)
+            listener.onMessage(socket, "session.subscribed")
+            return socket
         }
     }
 

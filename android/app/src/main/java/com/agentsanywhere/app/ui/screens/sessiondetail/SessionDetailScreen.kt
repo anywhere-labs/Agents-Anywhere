@@ -211,6 +211,7 @@ fun SessionDetailScreen(
             filesController = filesController,
             terminalPool = terminalPool,
             composerDraftStore = composerDraftStore,
+            backHandlingEnabled = backHandlingEnabled,
             onSessionChanged = { if (active.get() && (visit == null || controller.isCurrentVisit(visit))) onSessionChanged(it) },
             visit = visit,
             isVisitActive = { active.get() && (visit == null || controller.isCurrentVisit(visit)) },
@@ -241,6 +242,7 @@ private fun SessionDetailVisit(
     filesController: FilesController,
     terminalPool: RemoteTerminalPool,
     composerDraftStore: SessionComposerDraftStore,
+    backHandlingEnabled: Boolean,
     onSessionChanged: (AgentSession) -> Unit = {},
     visit: com.agentsanywhere.app.feature.sessiondetail.SessionVisit?,
     isVisitActive: () -> Boolean,
@@ -755,33 +757,41 @@ private fun SessionDetailVisit(
         }
     }
 
-    suspend fun loadInitialSnapshot(replaceHistory: Boolean = false) {
-        val id = sessionId ?: return
-        if (!appVisible) return
-        if (!refetchInFlight.compareAndSet(false, true)) return
+    suspend fun loadInitialSnapshot(replaceHistory: Boolean = false): Boolean {
+        val id = sessionId ?: return false
+        if (!appVisible || !isVisitActive()) return false
+        if (!refetchInFlight.compareAndSet(false, true)) return false
         val hadInitializedState = state.initialized
         try {
             state = state.beginSnapshotLoad(clearErrors = !hadInitializedState)
             val requestState = state
-            controller.loadInitialSnapshot(id, devices, requestState).fold(
+            return controller.loadInitialSnapshot(id, devices, requestState).fold(
                 onSuccess = { loaded ->
-                    if (!isVisitActive()) return@fold
+                    if (!isVisitActive()) return@fold false
                     if (!appVisible) {
                         state = state.failSnapshotLoad(null)
+                        false
                     } else {
                         state = controller.mergeSnapshotWithLiveState(id, loaded, state, requestState, replaceHistory)
                             .completeSnapshotLoad()
                         state.session?.let(onSessionChanged)
+                        true
                     }
                 },
                 onFailure = {
-                    if (!isVisitActive() || invalidateAccess(it)) return@fold
+                    if (!isVisitActive()) return@fold false
+                    if (replaceHistory) {
+                        state = state.failSnapshotLoad(null)
+                        throw it
+                    }
+                    if (invalidateAccess(it)) return@fold false
                     if (!appVisible) {
                         state = state.failSnapshotLoad(null)
                     } else {
                         val initialLoadError = context.getString(R.string.session_load_messages_failed)
                         state = state.failSnapshotLoad(initialLoadError.takeUnless { hadInitializedState })
                     }
+                    false
                 },
             )
         } finally {
@@ -1340,8 +1350,11 @@ private fun SessionDetailVisit(
                 }
             },
             onSnapshotRequired = { _ ->
-                if (isVisitActive() && sessionId == id && appVisible) {
-                    withContext(Dispatchers.Main.immediate) { loadInitialSnapshot(replaceHistory = true) }
+                withContext(Dispatchers.Main.immediate) {
+                    if (!isVisitActive() || !appVisible) throw kotlinx.coroutines.CancellationException()
+                    check(loadInitialSnapshot(replaceHistory = true)) {
+                        context.getString(R.string.session_load_messages_failed)
+                    }
                 }
             },
             onRuntimeRefreshRequired = { connectionGeneration, refreshGeneration ->

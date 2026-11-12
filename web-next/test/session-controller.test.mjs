@@ -354,15 +354,19 @@ test("a queued offline presence event cancels a notice response before it can re
   assert.equal(f.controller.getSnapshot().state.notices[0].title, "cached")
 })
 
-test("a failed catalog read retains its cached domain while the other catalog refreshes", async t => {
+test("a missing runtime retains the cached model catalog and leaves the session accessible", async t => {
   const f = await fixture(t)
   enableCatalogs(t, f)
-  t.mock.method(dashboardApi, "getSessionModelCatalog", async () => { throw new Error("model catalog unavailable") })
+  t.mock.method(dashboardApi, "getSessionModelCatalog", async () => {
+    throw new ApiError({ status: 404, kind: "notFound", code: "runtime_not_found", detail: "runtime not found" })
+  })
   await f.subscribe()
   assert.equal(f.controller.getSnapshot().state.catalogs.model.models[0].id, "cached")
   assert.equal(f.controller.getSnapshot().state.catalogs.permission.permissions[0].id, "read")
-  assert.equal(f.controller.getSnapshot().error, "model catalog unavailable")
+  assert.equal(f.controller.getSnapshot().error, "runtime not found")
   assert.equal(f.controller.getSnapshot().recovered, true)
+  assert.equal(f.invalidations, 0)
+  assert.equal(f.sockets[0].closed, undefined)
 })
 
 test.after(() => hooks.deregister())
