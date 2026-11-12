@@ -21,3 +21,9 @@ node devtools/aa-next/codex-host.mjs
 `{"command":"send","id":"<id>","clientMessageId":"<unique-id>","text":"继续"}`。
 显式中断用 `{"command":"stop","id":"<id>"}`。关闭订阅用
 `{"command":"unwatch","id":"<id>"}`。
+
+审批出现在订阅的 `control.pending` 中。使用其中的请求 ID 和选项 ID，发送
+`{"command":"answer","id":"<id>","requestId":"<request-id>","optionId":"<option-id>"}`。
+原窗口提供的配置出现在会话的 `config` 中。修改时发送
+`{"command":"set-config","id":"<id>","configId":"<config-id>","value":"<value>"}`。
+设置由原窗口确认。

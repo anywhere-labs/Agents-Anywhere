@@ -5,6 +5,7 @@ import { isAbsolute, join } from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
+// AA NEXT     → TS 守护进程 ── ACP ──→ 扩展版 codex-acp ── IPC ──→ Codex App／IDE
 function requiredPath(name) {
   const value = process.env[name];
   if (!value || !isAbsolute(value)) throw new Error(`${name} must be an absolute path`);
@@ -37,7 +38,7 @@ async function run() {
   try {
     for await (const line of input) {
       try {
-        const { command, id, text, clientMessageId, delivery = "auto" } = JSON.parse(line);
+        const { command, id, text, clientMessageId, delivery = "auto", requestId, optionId, configId, value } = JSON.parse(line);
         if (command !== "list" && (typeof id !== "string" || id === "")) throw new Error("A conversation id is required");
         switch (command) {
           case "list":
@@ -69,6 +70,15 @@ async function run() {
           case "stop":
             await manager.get(id).stop();
             output({ command, result: {} });
+            break;
+          case "answer":
+            if (typeof requestId !== "string" || typeof optionId !== "string") throw new Error("Invalid approval arguments");
+            manager.get(id).answer(requestId, optionId, caller);
+            output({ command, result: {} });
+            break;
+          case "set-config":
+            if (typeof configId !== "string" || typeof value !== "string") throw new Error("Invalid config arguments");
+            output({ command, result: await manager.get(id).setConfig(configId, value, caller) });
             break;
           default:
             throw new Error("Unknown command");
