@@ -18,6 +18,7 @@ import PermissionPresets from '@deepseek-ai/dsh-permission-presets'
 import Approval from '@deepseek-ai/dsh-user-approval'
 import Shell from '@deepseek-ai/dsh-shell'
 import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
+import WorkingDirectory from '@deepseek-ai/dsh-working-directory'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
@@ -97,5 +98,7 @@ export async function mountAgents(ctx: Context, adapter?: LlmAdapter,
   new HostConnectionService(ctx, [], {} as ConstructorParameters<typeof HostConnectionService>[2])
   await ctx.plugin(FileUploads).await()
   await ctx.plugin(LocalFileSystem).await()
+  // 0.2.2's SessionSkillCatalog injects workingDirectory; every real Host composes it.
+  await ctx.plugin(WorkingDirectory, { defaultDirectory: root }).await()
   await ctx.plugin(SessionController, { nativeOpen: false }).await()
 }
