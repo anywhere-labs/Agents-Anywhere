@@ -10,6 +10,7 @@ import json
 import sqlite3
 import time
 from collections.abc import Mapping
+from contextlib import closing
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -56,7 +57,8 @@ def read_native_thread_activity(
     source, thread_id, database_path = native_source
     try:
         database_uri = database_path.as_uri() + "?mode=ro"
-        with sqlite3.connect(database_uri, uri=True, timeout=0.1) as database:
+        # Connection's own context manager only commits; it never closes the file.
+        with closing(sqlite3.connect(database_uri, uri=True, timeout=0.1)) as database:
             row = database.execute(
                 "SELECT turn_id, status FROM thread_turns "
                 "WHERE thread_id=? ORDER BY rollout_ordinal DESC LIMIT 1",
