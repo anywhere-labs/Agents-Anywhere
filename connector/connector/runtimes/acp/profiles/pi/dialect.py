@@ -40,6 +40,7 @@ class PiDialect(AcpDialect):
         self.permission_file = permission_file or agent_dir / "aa-permissions.json"
         self.permissions: dict[str, str] = {}
         self.native_files: dict[str, str | None] = {}
+        self.cancelled_plans: set[str] = set()
 
     # Capabilities
 
@@ -178,7 +179,14 @@ class PiDialect(AcpDialect):
 
     async def interaction(self, session_id, kind, request, ask):
         message = request.get("message", "")
-        if kind != "form" or not message.startswith("AA_TOOL_PERMISSION\n"):
+        if kind != "form":
+            return None
+        if message.startswith(PLAN_REVIEW_PREFIX):
+            answer = await ask(session_id, kind, request)
+            if session_id is not None and answer.get("action") == "cancel":
+                self.cancelled_plans.add(session_id)
+            return answer
+        if not message.startswith("AA_TOOL_PERMISSION\n"):
             return None
         tool = json.loads(message.split("\n", 1)[1])
         answer = await ask(
@@ -207,7 +215,17 @@ class PiDialect(AcpDialect):
 
     # Input
 
+    def prompt_cancelled(self, session_id, error):
+        return (
+            session_id in self.cancelled_plans
+            and isinstance(error, RequestError)
+            and error.code == -32603
+            and str(error) == "Internal error: This operation was aborted"
+        )
+
     async def before_prompt(self, client, session_id, text, blocks, purpose):
+        if purpose == "prompt":
+            self.cancelled_plans.discard(session_id)
         # Pi's native /bash runs outside the tool guard; check it the same way.
         if purpose == "steer" or text.lstrip().split(maxsplit=1)[0:1] != ["/bash"]:
             return

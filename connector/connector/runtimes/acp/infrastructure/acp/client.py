@@ -314,7 +314,12 @@ class AgentClient:
         await self.dialect.before_prompt(self, session_id, text, blocks, "prompt")
         self.turns[session_id] = Turn(operation_id, text, attachments_of(blocks))
         try:
-            result = await self.send_prompt(session_id, text, operation_id, blocks)
+            try:
+                result = await self.send_prompt(session_id, text, operation_id, blocks)
+            except RequestError as error:
+                if self.callbacks.failure is not None or not self.dialect.prompt_cancelled(session_id, error):
+                    raise
+                result = {"stopReason": "cancelled"}
             await self.observe(session_id)
             return result
         finally:

@@ -68,7 +68,13 @@ class AcpPlanningPort:
         if not session_id:
             return self.ceiling
         context = self.context(session_id, external_id)
-        return self.ceiling if context and self.mode_option(context) else ()
+        if not context:
+            return ()
+        if self.mode_option(context):
+            return self.ceiling
+        return (
+            (DOCUMENT,) if DOCUMENT in self.ceiling and MODE not in self.ceiling else ()
+        )
 
     async def available(self, session_id, external_id):
         return MODE in self.features(session_id, external_id)
@@ -184,29 +190,40 @@ class AcpPlanningPort:
                     external_session_id=agent_id,
                 )
             )
-            turn = context["client"].turns.get(agent_id)
-            progress_turn, progress = context.get("planningProgress", (None, None))
-            await self.runtime.host.observe_planning(
-                PlanningObservation(
-                    session_id,
-                    "proposal",
-                    native_id=proposal.native_id,
-                    text=proposal.markdown,
-                    external_session_id=agent_id,
-                    native_review={
-                        "noticeId": item.interaction_id,
-                        "generation": item.owner_generation,
-                        "revision": item.revision,
-                        "responses": proposal.responses,
-                    },
-                    review_actions=tuple(proposal.responses),
-                    progress=progress
-                    if turn and turn.message_id == progress_turn
-                    else None,
-                )
+            await self.observe_document(
+                context,
+                agent_id,
+                proposal,
+                native_review={
+                    "noticeId": item.interaction_id,
+                    "generation": item.owner_generation,
+                    "revision": item.revision,
+                    "responses": proposal.responses,
+                },
+                actions=tuple(proposal.responses),
             )
 
         return open_review
+
+    async def observe_document(
+        self, context, agent_id, document, *, native_review=None, actions=()
+    ):
+        turn = context["client"].turns.get(agent_id)
+        turn_id = turn.message_id if turn else None
+        progress_turn, progress = context.get("planningProgress", (None, None))
+        await self.runtime.host.observe_planning(
+            PlanningObservation(
+                context["sessionId"],
+                "proposal",
+                native_id=document.native_id,
+                text=document.markdown,
+                external_session_id=agent_id,
+                source_turn_id=turn_id,
+                native_review=native_review,
+                review_actions=actions,
+                progress=progress if turn_id and turn_id == progress_turn else None,
+            )
+        )
 
     async def review_closed(self, context, notice_id):
         await self.runtime.host.observe_planning(
@@ -235,7 +252,7 @@ class AcpPlanningPort:
                     external_session_id=agent_id,
                 )
             )
-        elif kind == "plan" and await self.available(session_id, agent_id):
+        elif kind == "plan" and self.features(session_id, agent_id):
             steps = [
                 {
                     "step": entry["content"],
@@ -274,6 +291,10 @@ class AcpPlanningPort:
                         external_session_id=agent_id,
                     )
                 )
+
+        document = context["client"].dialect.plan_document(update)
+        if document is not None and DOCUMENT in self.features(session_id, agent_id):
+            await self.observe_document(context, agent_id, document)
 
     async def review_is_current(self, session_id, external_id, proposal, native):
         context = self.context(session_id, external_id)

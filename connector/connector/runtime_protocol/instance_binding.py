@@ -177,11 +177,13 @@ def session_source_observation_for_instance(
 async def with_planning_capabilities(capabilities: RuntimeCapabilitySet, port, external_session_id: str | None = None) -> RuntimeCapabilitySet:
     if port is None:
         return capabilities
+    if hasattr(port, "features"):
+        features = port.features(capabilities.session_id or "", external_session_id)
+        return apply_planning_capabilities(capabilities, port, features)
     existing = next((item for item in capabilities.capabilities if item.capability_id == "session.planning"), None)
     native_available = (existing.metadata if existing else {}).get("nativePlanningAvailable")
     supported = native_available if isinstance(native_available, bool) else await port.available(capabilities.session_id or "", external_session_id)
-    declared = port.features(capabilities.session_id or "", external_session_id) if hasattr(port, "features") else PLANNING_CAPABILITIES
-    return apply_planning_capabilities(capabilities, port, declared if supported else ())
+    return apply_planning_capabilities(capabilities, port, PLANNING_CAPABILITIES if supported else ())
 
 
 PLANNING_CAPABILITIES = ("session.planning", "session.plan_document", "session.plan_review")

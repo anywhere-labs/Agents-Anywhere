@@ -887,13 +887,17 @@ class SessionService:
             raise AcpError("agent_session_mismatch", "事件来源与会话绑定不一致。")
         context["provisionalAgentSessionId"] = agent_id
         with self.store.transaction():
-            scope_id = context.get("sessionId", context["scopeId"])
-            if update.get("sessionUpdate") == "config_option_update":
-                self.configurations.observe(scope_id, update.get("configOptions", []))
-            if not context.get("sessionId"):
+            session_id = context.get("sessionId")
+            binding = self._binding(self.store.require("binding", session_id)) if session_id else None
+            if binding is not None and binding.connection_generation != context["generation"]:
                 return
-            binding = self._binding(self.store.require("binding", context["sessionId"]))
-            if binding.connection_generation != context["generation"]:
+            if update.get("sessionUpdate") == "config_option_update":
+                scope_id = session_id or context["scopeId"]
+                old_revision = self.configurations.snapshot(scope_id).revision
+                new = self.configurations.observe(scope_id, update.get("configOptions", []))
+                if binding is not None and self.planning is not None and new["revision"] != old_revision:
+                    self._save_binding(binding.observe(context["generation"]))
+            if not session_id:
                 return
             if update.get("sessionUpdate") in {"aa_operation_update", "aa_execution_observed"}:
                 receipt = update.get("receipt") or {

@@ -42,9 +42,13 @@ class PlanningModeOption:
 
 
 @dataclass(frozen=True)
-class PlanReviewRequest:
+class PlanDocumentUpdate:
     native_id: str
     markdown: str
+
+
+@dataclass(frozen=True)
+class PlanReviewRequest(PlanDocumentUpdate):
     responses: dict[str, dict]
 
 
@@ -62,6 +66,10 @@ class AcpDialect:
 
     def plan_mode_changed(self, update: dict) -> bool:
         return False
+
+    def plan_document(self, update: dict) -> PlanDocumentUpdate | None:
+        """Recognize a final plan delivered independently of an approval request."""
+        return None
 
     def plan_review(self, kind: str, request: dict) -> PlanReviewRequest | None:
         """Recognize an authoritative plan submission and its native responses."""
@@ -91,6 +99,10 @@ class AcpDialect:
     ) -> dict | None:
         """Answer an Agent request itself, or ``None`` to ask the user as usual."""
         return None
+
+    def prompt_cancelled(self, session_id: str, error: Exception) -> bool:
+        """Recognize a known non-standard response to a cancelled prompt."""
+        return False
 
     async def before_prompt(
         self, client: Any, session_id: str, text: str, blocks: list | None, purpose: str

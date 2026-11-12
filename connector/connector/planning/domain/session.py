@@ -140,7 +140,7 @@ class SessionPlanning:
             and current["planId"] == plan_id
             and current["contentHash"] == digest
         ):
-            if review_actions is None or self.native_review == native_review:
+            if not review_actions or self.native_review == native_review:
                 return False
             self.open_review(current, native_review, review_actions)
             return True
