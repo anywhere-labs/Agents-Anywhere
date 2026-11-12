@@ -34,7 +34,7 @@ class AuthSessionStore(context: Context) : AuthSessionReader, MobileAuthSessionS
     }
 
     @Synchronized
-    fun readAuthSessionId(): String? {
+    override fun readAuthSessionId(): String? {
         if (!hasAuthSession()) return null
         // Give existing saved logins an identity without tying it to a renewable token.
         return preferences.getString(KEY_AUTH_SESSION_ID, null)
@@ -139,6 +139,7 @@ class AuthSessionStore(context: Context) : AuthSessionReader, MobileAuthSessionS
 }
 
 interface AuthSessionReader {
+    fun readAuthSessionId(): String? = null
     fun readUserId(): String = ""
     fun readServerUrl(): String
 

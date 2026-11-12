@@ -192,6 +192,61 @@ fun SessionDetailScreen(
     backHandlingEnabled: Boolean = true,
     onSessionChanged: (AgentSession) -> Unit = {},
 ) {
+    androidx.compose.runtime.key(controller.visitKey(), sessionId, preparedSession?.localSessionId) {
+        val visit = remember { sessionId?.let(controller::openVisit) }
+        val active = remember { AtomicBoolean(true) }
+        DisposableEffect(Unit) { onDispose { active.set(false) } }
+        SessionDetailVisit(
+            navigate = navigate,
+            sessionId = sessionId,
+            initialSession = initialSession,
+            preparedSession = preparedSession,
+            onCreatePreparedSession = onCreatePreparedSession,
+            onPreparedSessionCreated = { if (active.get()) onPreparedSessionCreated(it) },
+            onLoadPreparedModelCatalog = onLoadPreparedModelCatalog,
+            onLoadPreparedPermissionCatalog = onLoadPreparedPermissionCatalog,
+            devices = devices,
+            controller = controller,
+            realtimeController = realtimeController,
+            filesController = filesController,
+            terminalPool = terminalPool,
+            composerDraftStore = composerDraftStore,
+            backHandlingEnabled = backHandlingEnabled,
+            onSessionChanged = { if (active.get() && (visit == null || controller.isCurrentVisit(visit))) onSessionChanged(it) },
+            visit = visit,
+            isVisitActive = { active.get() && (visit == null || controller.isCurrentVisit(visit)) },
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SessionDetailVisit(
+    navigate: (AppDestination) -> Unit,
+    sessionId: String?,
+    initialSession: AgentSession?,
+    preparedSession: NewSessionDraft? = null,
+    onCreatePreparedSession: suspend (NewSessionCreateDraft) -> NewSessionCreateOutcome = {
+        NewSessionCreateOutcome.Failed(IllegalStateException("Prepared session creation is unavailable."))
+    },
+    onPreparedSessionCreated: (AgentSession) -> Unit = {},
+    onLoadPreparedModelCatalog: suspend (String, String) -> Result<NewSessionModelCatalog> = { _, _ ->
+        Result.failure(IllegalStateException("Model catalog is unavailable."))
+    },
+    onLoadPreparedPermissionCatalog: suspend (String, String) -> Result<NewSessionPermissionCatalog> = { _, _ ->
+        Result.failure(IllegalStateException("Permission catalog is unavailable."))
+    },
+    devices: List<AgentDevice>,
+    controller: SessionDetailController,
+    realtimeController: SessionRealtimeController,
+    filesController: FilesController,
+    terminalPool: RemoteTerminalPool,
+    composerDraftStore: SessionComposerDraftStore,
+    backHandlingEnabled: Boolean,
+    onSessionChanged: (AgentSession) -> Unit = {},
+    visit: com.agentsanywhere.app.feature.sessiondetail.SessionVisit?,
+    isVisitActive: () -> Boolean,
+) {
     var planningCreation by remember(sessionId, preparedSession?.localSessionId) { mutableStateOf(false) }
     var goalState by remember(sessionId){mutableStateOf<com.agentsanywhere.app.api.RemoteGoalState?>(null)}
     var goalMode by remember(sessionId,preparedSession?.localSessionId){mutableStateOf(false)}
@@ -199,7 +254,7 @@ fun SessionDetailScreen(
     var goalReplacement by remember(sessionId){mutableStateOf<Pair<String,List<com.agentsanywhere.app.feature.sessiondetail.TimelineAttachment>>?>(null)}
     LaunchedEffect(sessionId) {
         val id=sessionId
-        if(id!=null)while(true){controller.loadGoal(id).onSuccess{goalState=it};delay(3000)}
+        if(id!=null)while(isVisitActive()){controller.loadGoal(id).onSuccess{if(isVisitActive())goalState=it};delay(3000)}
     }
 
     var planningBusy by remember(sessionId) { mutableStateOf(false) }
@@ -274,7 +329,7 @@ fun SessionDetailScreen(
             ?.let(controller::optimisticMessages)
             .orEmpty()
         mutableStateOf(
-            SessionDetailState(
+            visit?.cached ?: SessionDetailState(
                 meta = SessionMeta(
                     session = initialSession?.takeIf { preparedSession != null || it.id == sessionId },
                     isLoading = sessionId != null,
@@ -286,6 +341,23 @@ fun SessionDetailScreen(
                 sending = optimisticMessages.hasPendingOptimisticSend(),
             ),
         )
+    }
+
+    androidx.compose.runtime.SideEffect { visit?.latestState = state }
+    DisposableEffect(visit) {
+        onDispose { if (visit != null) controller.sessionCache.close(visit, state) }
+    }
+
+    fun invalidateAccess(error: Throwable): Boolean {
+        if (error !is com.agentsanywhere.app.api.ApiException || error.statusCode !in listOf(403, 404)) return false
+        if (!isVisitActive()) return true
+        if (visit != null) controller.sessionCache.invalidate(visit)
+        goalState = null
+        planReader.value = null
+        showRuntimeSettings = false
+        state = SessionDetailState(meta = SessionMeta(errorMessage = error.message),
+            timeline = SessionTimelineState(errorMessage = error.message))
+        return true
     }
 
     fun showError(message: String) {
@@ -474,6 +546,7 @@ fun SessionDetailScreen(
         nextAttachments: List<PendingAttachment>,
         clientMessageId: String? = retryClientMessageId,
     ) {
+        if (!isVisitActive()) return
         composerDraftStore.save(composerDraftSessionId, nextDraft, nextAttachments, clientMessageId)
     }
 
@@ -490,6 +563,7 @@ fun SessionDetailScreen(
     }
 
     fun clearComposerDraft() {
+        if (!isVisitActive()) return
         draft = ""
         attachments = emptyList()
         composerDraftStore.clear(composerDraftSessionId)
@@ -683,31 +757,41 @@ fun SessionDetailScreen(
         }
     }
 
-    suspend fun loadInitialSnapshot() {
-        val id = sessionId ?: return
-        if (!appVisible) return
-        if (!refetchInFlight.compareAndSet(false, true)) return
+    suspend fun loadInitialSnapshot(replaceHistory: Boolean = false): Boolean {
+        val id = sessionId ?: return false
+        if (!appVisible || !isVisitActive()) return false
+        if (!refetchInFlight.compareAndSet(false, true)) return false
         val hadInitializedState = state.initialized
         try {
             state = state.beginSnapshotLoad(clearErrors = !hadInitializedState)
             val requestState = state
-            controller.loadInitialSnapshot(id, devices, requestState).fold(
+            return controller.loadInitialSnapshot(id, devices, requestState).fold(
                 onSuccess = { loaded ->
+                    if (!isVisitActive()) return@fold false
                     if (!appVisible) {
                         state = state.failSnapshotLoad(null)
+                        false
                     } else {
-                        state = controller.mergeSnapshotWithLiveState(id, loaded, state, requestState)
+                        state = controller.mergeSnapshotWithLiveState(id, loaded, state, requestState, replaceHistory)
                             .completeSnapshotLoad()
                         state.session?.let(onSessionChanged)
+                        true
                     }
                 },
                 onFailure = {
+                    if (!isVisitActive()) return@fold false
+                    if (replaceHistory) {
+                        state = state.failSnapshotLoad(null)
+                        throw it
+                    }
+                    if (invalidateAccess(it)) return@fold false
                     if (!appVisible) {
                         state = state.failSnapshotLoad(null)
                     } else {
                         val initialLoadError = context.getString(R.string.session_load_messages_failed)
                         state = state.failSnapshotLoad(initialLoadError.takeUnless { hadInitializedState })
                     }
+                    false
                 },
             )
         } finally {
@@ -717,7 +801,7 @@ fun SessionDetailScreen(
 
     fun loadOlderMessages() {
         val id = sessionId ?: return
-        if (!appVisible || !state.hasMore || state.timeline.loadingOlder) return
+        if (!appVisible || !state.hasMore || state.timeline.loadingOlder || refetchInFlight.get()) return
         if (!olderInFlight.compareAndSet(false, true)) return
         val beforeOrderSeq = state.timeline.orderingItems
             .minOfOrNull { it.orderSeq }
@@ -729,6 +813,7 @@ fun SessionDetailScreen(
             )
             return
         }
+        val historyGeneration = state.timeline.historyGeneration
         state = state.copy(
             timeline = state.timeline.copy(loadingOlder = true, historyErrorMessage = null),
             actionError = null,
@@ -737,10 +822,12 @@ fun SessionDetailScreen(
             try {
                 controller.loadOlder(id, beforeOrderSeq)
                     .onSuccess { older ->
-                        if (!appVisible) return@onSuccess
-                        state = controller.applyOlder(id, state, older)
+                        if (!isVisitActive() || !appVisible) return@onSuccess
+                        state = controller.applyOlder(id, state, older, historyGeneration)
                     }
                     .onFailure { error ->
+                        if (!isVisitActive() || invalidateAccess(error)) return@onFailure
+                        if (state.timeline.historyGeneration != historyGeneration) return@onFailure
                         val message = error.message ?: context.getString(R.string.session_load_messages_failed)
                         state = state.copy(
                             timeline = state.timeline.copy(
@@ -1234,7 +1321,7 @@ fun SessionDetailScreen(
             sessionId = id,
             cursor = { withContext(Dispatchers.Main.immediate) { state.realtime.cursor } },
             onEvents = { events ->
-                if (sessionId != id || !appVisible) return@start
+                if (!isVisitActive() || sessionId != id || !appVisible) return@start
                 withContext(Dispatchers.Main.immediate) {
                     for(event in events) {
                         val observed=event.payload.goal
@@ -1250,7 +1337,7 @@ fun SessionDetailScreen(
             },
             onCursorAdvanced = { cursor ->
                 withContext(Dispatchers.Main.immediate) {
-                    if (sessionId == id) {
+                    if (isVisitActive() && sessionId == id) {
                         state = state.copy(
                             realtime = state.realtime.copy(
                                 cursor = com.agentsanywhere.app.feature.sessiondetail.laterEventCursor(
@@ -1263,16 +1350,24 @@ fun SessionDetailScreen(
                 }
             },
             onSnapshotRequired = { _ ->
-                if (sessionId == id && appVisible) {
-                    withContext(Dispatchers.Main.immediate) { loadInitialSnapshot() }
+                withContext(Dispatchers.Main.immediate) {
+                    if (!isVisitActive() || !appVisible) throw kotlinx.coroutines.CancellationException()
+                    check(loadInitialSnapshot(replaceHistory = true)) {
+                        context.getString(R.string.session_load_messages_failed)
+                    }
                 }
             },
             onRuntimeRefreshRequired = { connectionGeneration, refreshGeneration ->
-                if (sessionId == id && appVisible) {
+                if (isVisitActive() && sessionId == id && appVisible) {
                     val requestState = withContext(Dispatchers.Main.immediate) { state }
-                    val refreshed = controller.refreshRuntimeLiveDomains(id, requestState)
+                    val refreshed = try {
+                        controller.refreshRuntimeLiveDomains(id, requestState)
+                    } catch (error: com.agentsanywhere.app.api.ApiException) {
+                        withContext(Dispatchers.Main.immediate) { invalidateAccess(error) }
+                        return@start
+                    }
                     withContext(Dispatchers.Main.immediate) {
-                        if (sessionId == id && appVisible &&
+                        if (isVisitActive() && sessionId == id && appVisible &&
                             realtimeController.isCurrentRuntimeRefresh(
                                 connectionGeneration,
                                 refreshGeneration,
@@ -1283,9 +1378,12 @@ fun SessionDetailScreen(
                     }
                 }
             },
+            onAccessRevoked = { error ->
+                withContext(Dispatchers.Main.immediate) { invalidateAccess(error) }
+            },
             onConnectionChanged = { connected, recovering, attempt, error ->
                 scope.launch {
-                    if (sessionId != id) return@launch
+                    if (!isVisitActive() || sessionId != id) return@launch
                     state = state.copy(
                         realtime = state.realtime.copy(
                             connected = connected,
@@ -1851,6 +1949,7 @@ fun SessionDetailScreen(
                                 sessionId = sessionId.orEmpty(),
                                 workspaceRoot = state.session?.cwd,
                                 controller = controller,
+                                visit = visit,
                                 loadWorkspaceImage = { path, cacheOnly ->
                                     val session = state.session
                                     val root = session?.cwd.orEmpty()

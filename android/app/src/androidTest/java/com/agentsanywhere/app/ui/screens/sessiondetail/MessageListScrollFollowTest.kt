@@ -5,6 +5,7 @@ import android.content.res.Configuration
 import java.util.Locale
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
@@ -49,9 +50,14 @@ import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.feature.auth.AuthSessionReader
 import com.agentsanywhere.app.feature.sessiondetail.MessageAuthor
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
+import com.agentsanywhere.app.feature.sessiondetail.SessionDetailState
+import com.agentsanywhere.app.feature.sessiondetail.SessionMeta
+import com.agentsanywhere.app.feature.sessiondetail.SessionTimelineState
+import com.agentsanywhere.app.feature.sessiondetail.SessionVisit
 import com.agentsanywhere.app.feature.sessiondetail.TimelineFileChange
 import com.agentsanywhere.app.feature.sessiondetail.TimelineMessage
 import com.agentsanywhere.app.feature.sessiondetail.TimelineMessageKind
+import com.agentsanywhere.app.feature.sessions.toAgentSession
 import com.agentsanywhere.app.ui.designsystem.AAAppearanceMode
 import com.agentsanywhere.app.ui.designsystem.AgentsAnywhereTheme
 import org.junit.Assert.assertEquals
@@ -59,6 +65,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.json.JSONObject
 
 private class ScrollTestAuthReader : AuthSessionReader {
     override fun readServerUrl(): String = "https://example.invalid"
@@ -686,34 +693,97 @@ class MessageListScrollFollowTest {
         )
     }
 
-    private fun showMessageList(session: TestSession) {
+    @Test
+    fun switchingAwayAndBackRestoresCachedHistoryDuringStreaming() {
+        val olderHistory = List(200) { index ->
+            TimelineMessage(id = "older-$index", author = MessageAuthor.Agent, text = "History entry $index")
+        }
+        val session = TestSession(olderHistory + initialMessages())
+        val other = TestSession(listOf(
+            TimelineMessage(id = "other", author = MessageAuthor.Agent, text = "Another session"),
+        )).apply { id = "other-session" }
+        val firstVisit = controller.openVisit(session.id)
+        var activeSession by mutableStateOf(session)
+        var visit by mutableStateOf(firstVisit)
+        showMessageList(session = { activeSession }, visit = { visit })
+        expandRunningDetails()
+        val before = compose.onNodeWithText(reasoningTitle).fetchSemanticsNode().boundsInRoot.top
+        compose.runOnIdle {
+            activeSession = other
+            visit = controller.openVisit(other.id)
+        }
+        compose.onNodeWithText("Another session").assertIsDisplayed()
+        compose.runOnIdle {
+            controller.sessionCache.close(firstVisit, cacheState(session))
+            controller.sessionCache.close(visit, cacheState(other))
+            visit = controller.openVisit(session.id)
+            session.messages = checkNotNull(visit.cached).messages
+            assertEquals(olderHistory.first().id, session.messages.first().id)
+            activeSession = session
+        }
+        compose.waitForIdle()
+        assertEquals("Returning to a cached history must preserve the expanded reader",
+            before, compose.onNodeWithText(reasoningTitle).fetchSemanticsNode().boundsInRoot.top, 2f)
+        assertReasoningVisible()
+
+        compose.runOnIdle {
+            val nextTool = TimelineMessage(id = "after-return", author = MessageAuthor.Tool,
+                text = "read_file", kind = TimelineMessageKind.ToolCall, title = "read_file", input = "README.md")
+            session.messages = session.messages.dropLast(1) + nextTool + session.messages.last()
+            session.streamRequest += 1
+        }
+        compose.waitForIdle()
+        assertEquals(before, compose.onNodeWithText(reasoningTitle).fetchSemanticsNode().boundsInRoot.top, 2f)
+        assertReasoningVisible()
+    }
+
+    private fun cacheState(session: TestSession): SessionDetailState {
+        val remote = SessionsApi().parseSession(JSONObject()
+            .put("id", session.id)
+            .put("connectorId", "synthetic-connector")
+            .put("runtime", "dsh"))
+        return SessionDetailState(
+            initialized = true,
+            meta = SessionMeta(session = remote.toAgentSession(emptyMap())),
+            timeline = SessionTimelineState(messages = session.messages, hasMore = true),
+        )
+    }
+
+    private fun showMessageList(session: TestSession) = showMessageList({ session })
+
+    private fun showMessageList(session: () -> TestSession, visit: () -> SessionVisit? = { null }) {
         compose.setContent {
             CompositionLocalProvider(LocalContext provides context, LocalConfiguration provides context.resources.configuration) {
                 AgentsAnywhereTheme(appearanceMode = AAAppearanceMode.Light) {
-                    val messages = session.messages
-                    SideEffect { session.composed = messages }
+                    val current = session()
+                    val messages = current.messages
+                    SideEffect { current.composed = messages }
                     Box(Modifier.fillMaxSize()) {
-                        MessageList(
-                            planningContent = {},
-                            messages = messages,
-                            darkMode = false,
-                            sessionId = session.id,
-                            notices = session.notices,
-                            workspaceRoot = "/workspace/project",
-                            controller = controller,
-                            forceLatestRequest = session.forceLatestRequest,
-                            streamLatestRequest = session.streamRequest,
-                            workingLabel = session.workingLabel,
-                            turnInProgress = session.turnInProgress,
-                            hasMore = false,
-                            loadingOlder = false,
-                            onLoadOlder = {},
-                            onPreviewAttachment = {},
-                            onOpenAttachment = {},
-                            onCopyMessage = {},
-                            onShareReply = {},
-                            onOpenFile = {},
-                        )
+                        val currentVisit = visit()
+                        key(currentVisit) {
+                            MessageList(
+                                planningContent = {},
+                                messages = messages,
+                                darkMode = false,
+                                sessionId = current.id,
+                                notices = current.notices,
+                                workspaceRoot = "/workspace/project",
+                                controller = controller,
+                                visit = currentVisit,
+                                forceLatestRequest = current.forceLatestRequest,
+                                streamLatestRequest = current.streamRequest,
+                                workingLabel = current.workingLabel,
+                                turnInProgress = current.turnInProgress,
+                                hasMore = false,
+                                loadingOlder = false,
+                                onLoadOlder = {},
+                                onPreviewAttachment = {},
+                                onOpenAttachment = {},
+                                onCopyMessage = {},
+                                onShareReply = {},
+                                onOpenFile = {},
+                            )
+                        }
                     }
                 }
             }

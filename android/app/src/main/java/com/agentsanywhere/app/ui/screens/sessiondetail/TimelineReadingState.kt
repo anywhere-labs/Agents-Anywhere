@@ -371,42 +371,47 @@ internal class TimelineReadingState {
         return top + localY - viewport.top
     }
 
-    companion object {
-        val Saver = listSaver<TimelineReadingState, String>(
-            save = { state ->
-                val held = state.anchor ?: if (!state.following) state.capture() else null
-                listOf("following:${state.following}") + state.expanded.map { "e:${it.key}:${it.value}" } + state.groupMembers.map { "g:${it.key}:${it.value}" } +
-                    state.codePositions.map { "c:${it.key}:${it.value.first}:${it.value.second}" } +
-                    held?.let { listOf("a:key:${it.key}", "a:row:${it.row}", "a:offset:${it.offset}", "a:context:${it.context}", "a:y:${it.y}") }.orEmpty()
-            },
-            restore = { saved -> TimelineReadingState().apply {
-                saved.forEach { entry ->
-                    if (entry.startsWith("a:")) return@forEach
-                    if (entry.startsWith("following:")) { following = entry.substringAfter(':').toBoolean(); return@forEach }
-                    if (entry.startsWith("c:")) {
-                        val yIndex = entry.lastIndexOf(':')
-                        val xIndex = entry.lastIndexOf(':', yIndex - 1)
-                        codePositions[entry.substring(2, xIndex)] = entry.substring(xIndex + 1, yIndex).toInt() to entry.substring(yIndex + 1).toInt()
-                        return@forEach
-                    }
-                    val key = entry.substring(2, entry.lastIndexOf(':'))
-                    val value = entry.substringAfterLast(':').toBoolean()
-                    if (entry.startsWith("e:")) expanded[key] = value else groupMembers[key] = value
-                }
-                val fields = saved.filter { it.startsWith("a:") }.associate {
-                    val field = it.substring(2)
-                    field.substringBefore(':') to field.substringAfter(':')
-                }
-                val key = fields["key"]
-                val row = fields["row"]
-                val offset = fields["offset"]?.toIntOrNull()
-                val y = fields["y"]?.toFloatOrNull()?.takeIf { it.isFinite() }
-                if (!following && key != null && row != null && offset != null && y != null) {
-                    anchor = Anchor(key, row, offset, fields["context"].orEmpty(), y)
-                }
-            } },
-        )
+    fun snapshot(): List<String> {
+        val held = anchor ?: if (!following) capture() else null
+        return listOf("following:$following") + expanded.map { "e:${it.key}:${it.value}" } +
+            groupMembers.map { "g:${it.key}:${it.value}" } +
+            codePositions.map { "c:${it.key}:${it.value.first}:${it.value.second}" } +
+            held?.let {
+                listOf("a:key:${it.key}", "a:row:${it.row}", "a:offset:${it.offset}", "a:context:${it.context}", "a:y:${it.y}")
+            }.orEmpty()
     }
+
+    companion object {
+        val Saver = listSaver<TimelineReadingState, String>(save = { it.snapshot() }, restore = { restore(it) })
+
+        fun restore(saved: List<String>) = TimelineReadingState().apply {
+            saved.forEach { entry ->
+                if (entry.startsWith("a:")) return@forEach
+                if (entry.startsWith("following:")) { following = entry.substringAfter(':').toBoolean(); return@forEach }
+                if (entry.startsWith("c:")) {
+                    val yIndex = entry.lastIndexOf(':')
+                    val xIndex = entry.lastIndexOf(':', yIndex - 1)
+                    codePositions[entry.substring(2, xIndex)] = entry.substring(xIndex + 1, yIndex).toInt() to entry.substring(yIndex + 1).toInt()
+                    return@forEach
+                }
+                val key = entry.substring(2, entry.lastIndexOf(':'))
+                val value = entry.substringAfterLast(':').toBoolean()
+                if (entry.startsWith("e:")) expanded[key] = value else groupMembers[key] = value
+            }
+            val fields = saved.filter { it.startsWith("a:") }.associate {
+                val field = it.substring(2)
+                field.substringBefore(':') to field.substringAfter(':')
+            }
+            val key = fields["key"]
+            val row = fields["row"]
+            val offset = fields["offset"]?.toIntOrNull()
+            val y = fields["y"]?.toFloatOrNull()?.takeIf { it.isFinite() }
+            if (!following && key != null && row != null && offset != null && y != null) {
+                anchor = Anchor(key, row, offset, fields["context"].orEmpty(), y)
+            }
+        }
+    }
+
 }
 
 @Composable

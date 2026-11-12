@@ -267,6 +267,7 @@ internal fun MessageList(
     sessionId: String,
     workspaceRoot: String?,
     controller: SessionDetailController,
+    visit: com.agentsanywhere.app.feature.sessiondetail.SessionVisit? = null,
     loadWorkspaceImage: WorkspaceImageLoader = UnavailableWorkspaceImageLoader,
     forceLatestRequest: Int,
     streamLatestRequest: Int,
@@ -288,7 +289,10 @@ internal fun MessageList(
     onOpenFile: (String) -> Unit,
     onRespondNotice: (RuntimeNotice, RuntimeNoticeAction, Map<String, Any?>?) -> Unit = { _, _, _ -> },
 ) {
-    val listState = rememberLazyListState()
+    val listState = rememberLazyListState(
+        initialFirstVisibleItemIndex = visit?.readingPosition?.firstVisibleItemIndex ?: 0,
+        initialFirstVisibleItemScrollOffset = visit?.readingPosition?.firstVisibleItemScrollOffset ?: 0,
+    )
     val scope = rememberCoroutineScope()
     val displayMessages = remember(messages, hideMessage) { messages.filterNot(hideMessage) }
     val displayWorkingLabel = workingLabel
@@ -312,7 +316,7 @@ internal fun MessageList(
         buildAgentActionsByTurnEnd(timelineItems, turnInProgress)
     }
     var showScrollToBottom by remember { mutableStateOf(false) }
-    val reading = rememberSaveable(sessionId, saver = TimelineReadingState.Saver) { TimelineReadingState() }
+    val reading = rememberSaveable(sessionId, saver = TimelineReadingState.Saver) { TimelineReadingState.restore(visit?.readingPosition?.reading.orEmpty()) }
     var returnToLatestJob by remember(sessionId) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val scrollButtonBottomPadding = bottomContentPadding.coerceAtLeast(24.dp)
     val density = LocalDensity.current
@@ -332,7 +336,28 @@ internal fun MessageList(
     }
     DisposableEffect(reading, listState) {
         reading.attach(listState)
-        onDispose { reading.detach(listState) }
+        onDispose {
+            visit?.readingPosition?.let { position ->
+                position.firstVisibleItemIndex = listState.firstVisibleItemIndex
+                position.firstVisibleItemScrollOffset = listState.firstVisibleItemScrollOffset
+                position.reading = reading.snapshot()
+            }
+            reading.detach(listState)
+        }
+    }
+
+    LaunchedEffect(visit, reading, listState) {
+        if (visit != null) snapshotFlow {
+            com.agentsanywhere.app.feature.sessiondetail.SessionReadingPosition(
+                listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, reading.snapshot(),
+            )
+        }.collectLatest { saved ->
+            visit.readingPosition.apply {
+                firstVisibleItemIndex = saved.firstVisibleItemIndex
+                firstVisibleItemScrollOffset = saved.firstVisibleItemScrollOffset
+                this.reading = saved.reading
+            }
+        }
     }
 
     fun observeUserScroll(deltaY: Float) {
