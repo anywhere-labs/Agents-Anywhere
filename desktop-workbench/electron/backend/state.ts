@@ -233,6 +233,10 @@ export class BackendState {
     return this.connector.getState();
   }
 
+  connectorStateSnapshot(): ConnectorState {
+    return this.connector.publicState();
+  }
+
   getPublicConfig() {
     return this.connector.getPublicConfig();
   }

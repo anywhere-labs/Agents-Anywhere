@@ -1,6 +1,10 @@
 package com.agentsanywhere.app.ui.screens.home
 
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,7 +20,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -34,21 +37,23 @@ internal fun HomeProjectSessionRow(
     inset: Boolean = true,
     onClick: () -> Unit,
     onLongPress: (Rect) -> Unit,
+    selected: Boolean = false,
 ) {
     val haptic = LocalHapticFeedback.current
     var bounds by remember { mutableStateOf(Rect.Zero) }
     Row(
         modifier = Modifier.fillMaxWidth().height(44.dp)
             .onGloballyPositioned { bounds = it.boundsInRoot() }
-            .pointerInput(onClick, onLongPress, bounds) {
-                detectTapGestures(
-                    onTap = { onClick() },
-                    onLongPress = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onLongPress(bounds)
-                    },
-                )
-            }.padding(start = if (inset) 18.dp else 0.dp, end = 10.dp),
+            .background(if (selected) LocalAAColors.current.subtle else Color.Transparent)
+            .semantics { this.selected = selected }
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongPress(bounds)
+                },
+            )
+            .padding(start = if (inset) 18.dp else 0.dp, end = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

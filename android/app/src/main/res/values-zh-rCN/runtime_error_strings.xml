@@ -24,6 +24,7 @@
     <string name="runtime_error_attachments_too_large">附件超过上限：每条消息最多 16 个，总大小不超过 32 MiB。</string>
     <string name="runtime_error_attachments_unsupported">当前执行者不支持首条附件。</string>
     <string name="runtime_error_capability_unavailable">该会话当前不能执行此操作。</string>
+    <string name="runtime_error_claude_resume_no_response">Claude 恢复会话后没有回复这条消息。</string>
     <string name="runtime_error_command_unavailable">命令目录已变化，请刷新。</string>
     <string name="runtime_error_configuration_changed">配置选项已不可用。</string>
     <string name="runtime_error_configuration_conflict">选择之间不一致，请重新选择模型和推理强度。</string>

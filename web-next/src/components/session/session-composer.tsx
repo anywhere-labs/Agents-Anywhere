@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { runtimeFailureOf, useRuntimeErrorText } from "@/lib/runtime-error-text"
 import { parsePlanningCommand } from "@/features/planning/commands"
 import { ArrowUp, Check, ChevronDown, Loader2, Square, X } from "lucide-react"
 import { toast } from "sonner"
@@ -183,6 +184,7 @@ export function SessionComposer({
   const isStopping = runtimeStatus === "stopping"
   const isWaiting = runtimeStatus === "waiting" || runtimeStatus === "pending"
   const isError = runtimeStatus === "error"
+  const runtimeErrorText = useRuntimeErrorText()
   const isDisconnected = runtimeStatus === "disconnected"
   const sourceUnavailable = session.archived
   const connectorOnline = session.connectorStatus === "online"
@@ -388,7 +390,7 @@ export function SessionComposer({
             : isWaitingApproval || isBlocked
               ? tSession("waitingApprovalPlaceholder")
               : isError
-                ? tSession("errorPlaceholder")
+                ? runtimeErrorText(runtimeFailureOf({ code: runtimeState?.error?.code }), tSession("errorPlaceholder"))
                 : tSession("replyPlaceholder")
   const planningIntent = parsePlanningCommand(value)
   const goalUsable = capabilityIsUsable(effectiveCapabilities, "session.goal", runtimeScope) && connectorOnline

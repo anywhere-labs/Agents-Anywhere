@@ -189,6 +189,7 @@ fun SessionDetailScreen(
     filesController: FilesController,
     terminalPool: RemoteTerminalPool,
     composerDraftStore: SessionComposerDraftStore,
+    backHandlingEnabled: Boolean = true,
     onSessionChanged: (AgentSession) -> Unit = {},
 ) {
     androidx.compose.runtime.key(controller.visitKey(), sessionId, preparedSession?.localSessionId) {
@@ -1250,7 +1251,7 @@ private fun SessionDetailVisit(
         }
     }
 
-    BackHandler {
+    BackHandler(enabled = backHandlingEnabled) {
         if (pagerState.currentPage == 1) {
             scope.launch { pagerState.animateScrollToPage(0) }
         } else {
@@ -1852,7 +1853,9 @@ private fun SessionDetailVisit(
             stringResource(R.string.session_busy_placeholder)
         runtimeStatus in setOf(SessionRuntimeStatus.WaitingApproval, SessionRuntimeStatus.Blocked) ->
             stringResource(R.string.session_waiting_approval_placeholder)
-        runtimeStatus == SessionRuntimeStatus.Error -> stringResource(R.string.session_error_placeholder)
+        runtimeStatus == SessionRuntimeStatus.Error ->
+            runtimeErrorText(context, state.runtime.error?.get("code") as? String, null)
+                ?: stringResource(R.string.session_error_placeholder)
         runtimeStatus == SessionRuntimeStatus.Disconnected -> stringResource(R.string.session_device_offline_placeholder)
         !canUseSendMessage && !canUseCommands -> stringResource(R.string.session_send_unavailable)
         inputEnabled -> stringResource(R.string.session_reply_to, replyTarget)
@@ -1965,6 +1968,7 @@ private fun SessionDetailVisit(
                                 bottomContentPadding = timelineBottomPadding,
                                 hasMore = state.hasMore,
                                 loadingOlder = state.timeline.loadingOlder,
+                                historyError = state.timeline.historyErrorMessage != null,
                                 onLoadOlder = { loadOlderMessages() },
                                 onPreviewAttachment = { previewImage = AttachmentPreview.Remote(it) },
                                 onOpenAttachment = ::openAttachment,

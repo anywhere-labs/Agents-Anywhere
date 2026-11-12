@@ -30,6 +30,7 @@
 
 ### Codex 与 Claude
 
+- Claude 的动态唤醒在等待时会保留原进程，恢复会话后的首条消息会与旧后台任务通知区分，通知伴随消息且 Claude 未回复时会显示错误。（[#619](https://github.com/anywhere-labs/Agents-Anywhere/pull/619)）
 - 修复 Codex 接管后原客户端离线导致发送失败、停止无效，以及任务已完成却仍显示运行中的问题；发送结果未知时不会自动重发消息，恢复旧任务状态时不会结束新回合或重复报告完成。（[#541](https://github.com/anywhere-labs/Agents-Anywhere/pull/541)）
 - Codex 的定时会话扫描只写入真正变化的会话，会话数量较多的部署数据库写入明显下降，并减少这些写入拖慢其他请求的情况。（[#557](https://github.com/anywhere-labs/Agents-Anywhere/pull/557)）
 - Connector 的 Codex 会话清单没有变化时不再重复上报，只每隔约 10 分钟核对一次；重连和启动时的扫描也会错开，故障恢复时不再集中冲击 Server。（[#555](https://github.com/anywhere-labs/Agents-Anywhere/pull/555)）
@@ -44,7 +45,7 @@
 ### 本机连接
 
 - 电脑关机、重启或注销时，Desktop 不再弹出「退出 Agents Anywhere？」阻止关机，而是直接停止本机连接并退出；需要确认的用户可以打开「关机时询问是否退出」。在 Desktop 里手动退出时仍会确认。（[#596](https://github.com/anywhere-labs/Agents-Anywhere/pull/596)）
-- 打开「登录时打开」和「登录时静默启动」后，开机登录时 Desktop 不再弹出主窗口，即使本机连接要过很久才就绪；只有本机连接被其他程序占用或启动出错时才显示窗口。更新后由安装器重新启动时，隐藏的窗口也不再被拉到前台。（[#403](https://github.com/anywhere-labs/Agents-Anywhere/pull/403)）
+- Desktop 登录时静默启动会在本机连接正常或仍在准备时保持隐藏，安装器从后台重新启动也不会拉起隐藏窗口，遇到本机连接被占用、归属检查失败或设备凭据失效时会自动打开一次窗口，凭据失效时可在窗口中重新连接。（[#403](https://github.com/anywhere-labs/Agents-Anywhere/pull/403)、[#627](https://github.com/anywhere-labs/Agents-Anywhere/pull/627)）
 - Desktop 和 DSH 插件的设置里新增「Connector 网络」，可选跟随系统、直连或自定义代理；Connector 的接口请求、实时连接和终端都走同一条路，日志里记录实际走的路径。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
 - 在系统代理里把服务器地址加入例外现在对 Connector 生效；只设置 `NO_PROXY` 不再让 Connector 绕过系统代理。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
 - 系统代理开关开着但本机代理软件已退出时，Connector 改为直连，不再一直连不上服务器。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
@@ -92,6 +93,7 @@
 
 ### Android
 
+- 折叠屏展开或使用宽窗口时，可以在左侧切换项目和会话、在右侧查看消息，并按需收起侧栏；窄窗口保留手机单栏导航，切换会话或窗口宽度时保留各会话草稿和阅读位置。（[#478](https://github.com/anywhere-labs/Agents-Anywhere/pull/478)）
 - 切回最近查看的会话时立即显示已加载的消息，保留历史阅读位置和展开状态，再补齐新消息、运行信息与计划状态，设备重新上线后的在线状态与可用操作也会正确恢复；切换会话后的旧请求不再影响新的访问，重建消息历史后也不再被迟到的分页恢复旧消息。（[#618](https://github.com/anywhere-labs/Agents-Anywhere/pull/618)）
 
 - Desktop 设备的详情页新增「设备设置」，可以远程打开或关闭「关机时询问是否退出」。（[#596](https://github.com/anywhere-labs/Agents-Anywhere/pull/596)）
@@ -106,7 +108,7 @@
 
   [#567](https://github.com/anywhere-labs/Agents-Anywhere/pull/567)
 
-- Agent 还在输出时往上翻看长回复或之前的消息，正在读的内容不再随新输出反复跳动闪烁。（[#567](https://github.com/anywhere-labs/Agents-Anywhere/pull/567)）
+- Agent 还在输出时往上翻到长回复开头从前往后读或浏览之前的消息，滑动与停留期间正在读的内容和回到底部按钮都不再随新输出跳动闪烁。（[#567](https://github.com/anywhere-labs/Agents-Anywhere/pull/567)、[#624](https://github.com/anywhere-labs/Agents-Anywhere/pull/624)）
 
 ### iOS
 
@@ -310,6 +312,8 @@
 - 快速设置里每种 Agent 只显示一次；删除 Runtime 后会真正移除，不再占用配置名额。（[#290](https://github.com/anywhere-labs/Agents-Anywhere/pull/290)）
 
 ### Android
+
+- 会话里的 Markdown 表格以卡片显示，支持复制、下载带时间戳的 CSV 和全屏查看，两列表格按内容调整列宽，多列表格可横向滚动，点击号码可呼叫、复制号码或添加联系人。（[#486](https://github.com/anywhere-labs/Agents-Anywhere/pull/486)）
 
 - 扫码登录的 token 过期后自动续期，终端重连前也会刷新凭据，修复项目列表一直加载。（[#260](https://github.com/anywhere-labs/Agents-Anywhere/pull/260)）
 - 输入框随软键盘上移，不再被键盘挡住。（[#255](https://github.com/anywhere-labs/Agents-Anywhere/pull/255)）

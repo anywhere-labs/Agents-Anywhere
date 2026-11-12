@@ -2431,6 +2431,7 @@
     "attachments_too_large": "Attachments exceed the limit: up to 16 per message and 32 MiB in total.",
     "attachments_unsupported": "The current agent does not support attachments on the first message.",
     "capability_unavailable": "This session cannot perform this action right now.",
+    "claude_resume_no_response": "Claude did not reply to this message after resuming the session.",
     "command_unavailable": "The command list has changed. Refresh it.",
     "configuration_changed": "The configuration option is no longer available.",
     "configuration_conflict": "The selections conflict. Choose the model and reasoning effort again.",
