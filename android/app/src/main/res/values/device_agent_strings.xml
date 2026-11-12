@@ -94,6 +94,7 @@
     <string name="runtime_config_remove_effort">Remove effort</string>
     <string name="runtime_config_add_effort">Add effort</string>
 
+    <string name="runtime_config_field_agent_cli_path">Agent executable path (optional)</string>
     <string name="runtime_config_field_claude_executable_path">Claude executable path (optional)</string>
     <string name="runtime_config_field_claude_executable_path_description">Optional. Fill this only when Claude Code is not available on the default PATH.</string>
     <string name="runtime_config_field_codex_executable_path">Codex executable path (optional)</string>

@@ -25,6 +25,7 @@ class Executable:
 
     name: str
     candidates: tuple[str, ...] = ()
+    windows_npm_entry: str | None = None
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ class AcpAgentDefinition:
     arguments: tuple[str, ...] = ()
     check: tuple[str, ...] | None = None
     version: tuple[str, ...] | None = None
+    launch_in_workspace: bool = False
     settings: tuple[PathSetting, ...] = ()
     # Instance configuration; generated from ``executable`` and ``settings`` when unset.
     config_schema: ConfigSchema | None = None
@@ -68,6 +70,7 @@ class AcpAgentDefinition:
     runtime_capabilities: tuple[str, ...] = ("runtime.attachment",)
     permission_options: tuple[tuple[str, str], ...] = ()
     required_guarantees: frozenset[str] = frozenset()
+    native_inventory: bool = True
     metadata: Mapping[str, Any] = field(default_factory=dict)
     maturity: str | None = None
     # A model connection the instance configuration can carry, and how a
@@ -87,6 +90,8 @@ class AcpAgentDefinition:
             required_guarantees=self.required_guarantees,
             permission_options=self.permission_options,
             runtime_capabilities=self.runtime_capabilities,
+            native_inventory=self.native_inventory,
+            launch_in_workspace=self.launch_in_workspace,
         )
 
     def instance_schema(self) -> ConfigSchema:
@@ -98,6 +103,9 @@ class AcpAgentDefinition:
                 "type": "string",
                 "title": f"本机 {self.executable.name} 路径（可选）",
                 "maxLength": 4096,
+                "metadata": {
+                    "i18n": {"labelKey": "dashboard.device.runtimeConfigFields.agentCliPath.label"},
+                },
             }
         for setting in self.settings:
             properties[setting.key] = {"type": "string", "title": setting.title, "maxLength": 4096}

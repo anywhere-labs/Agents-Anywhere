@@ -682,6 +682,9 @@
         "secretRequired": "更换了地址，请重新填写 API Key。"
       },
       "runtimeConfigFields": {
+        "agentCliPath": {
+          "label": "Agent 可执行文件路径（可选）"
+        },
         "claudeExecutablePath": {
           "label": "Claude 可执行文件路径（可选）",
           "description": "可选。只有 Claude Code 不在默认 PATH 时才需要填写。"

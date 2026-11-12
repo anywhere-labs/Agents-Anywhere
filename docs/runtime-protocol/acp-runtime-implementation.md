@@ -17,7 +17,7 @@ Web / Desktop / Android / iOS
   → Pi SDK
 ```
 
-默认 Provider 为 Codex、Claude、DSH、Pi、Hermes。Pi 使用 `runtimeType=pi`、`implementationType=acp-stdio`，ACP 是内部对接协议。通用 `AcpRuntime` 通过注入 `AgentProfile`、启动配置、准备策略复用协调逻辑，其他 Agent 可以有自己的 Provider 身份；默认列表没有单独名为 ACP 的入口。
+默认 Provider 包括 Codex、Claude、DSH，以及 Pi、Hermes、Command Code、OpenCode、Google Antigravity、MiniMax Code、CodeBuddy Code 和 MiMo Code。各 ACP Agent 保留自己的 Runtime 身份，使用 `implementationType=acp-stdio`，由 `AcpRuntime` 复用协调逻辑。
 
 Pi 的 `PiProvider` 直接实现 `RuntimeProvider` 的配置、发现和启动流程，优先复用本机 npm 安装的 Pi SDK，第三方 `@openma/pi-acp` 提供 ACP 入口并在自己的进程内调用该 SDK。
 
@@ -139,6 +139,8 @@ TUI 协作、最终模型请求守卫、持久接纳回执和原生位置选择�
 | 公共引擎 | `infrastructure/acp/client.py`、`application/sessions.py`、`runtime.py` | 进程与连接、握手、新建与恢复、发送与中断、接纳判定、用户消息写入、能力推导、命令、交互、历史重放和同步 |
 
 `provider.py` 的 `AcpAgentProvider` 把定义装配成 RuntimeProvider；Pi 和 Hermes 的 Provider 只是它的薄封装。
+
+Command Code、OpenCode、Google Antigravity、MiniMax Code、CodeBuddy Code 和 MiMo Code 由 Connector 启动已安装的官方 CLI，沿用本机认证与模型配置。Windows 上，已知 npm 启动器通过 Node 执行对应包入口。通用层按握手恢复已有 AA 绑定；这些 profile 关闭原生会话清单，避免将外部会话同步成无法读取的时间线。Command Code 的原生会话模式映射为 AA 权限选择，MiniMax Code 的权限配置项映射到同一目录。
 
 **接纳**：接纳表示 Agent 已在处理这条输入，不代表执行成功。发出 prompt 后，本轮第一个助手、思考、工具调用事件，Agent 在本轮发起的审批或表单，`session/prompt` 正常返回，以及方言声明的额外证据，都算接纳证据；子进程启动、请求写入 stdin、恢复时重放的历史都不算。确认接纳时，引擎写入带 `clientMessageId` 的用户消息；方言声明 Agent 会自行回显用户消息时，引擎不再写入。
 

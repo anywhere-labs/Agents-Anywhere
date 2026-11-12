@@ -12,6 +12,7 @@ import com.agentsanywhere.app.feature.devices.RuntimeConfigIssue
 /** Runtime schemas name their copy with the Web translation keys; these are the ones Android translates. */
 @StringRes
 private fun runtimeConfigCopyRes(key: String): Int? = when (key) {
+    "dashboard.device.runtimeConfigFields.agentCliPath.label" -> R.string.runtime_config_field_agent_cli_path
     "dashboard.device.runtimeConfigFields.claudeExecutablePath.label" -> R.string.runtime_config_field_claude_executable_path
     "dashboard.device.runtimeConfigFields.claudeExecutablePath.description" -> R.string.runtime_config_field_claude_executable_path_description
     "dashboard.device.runtimeConfigFields.codexExecutablePath.label" -> R.string.runtime_config_field_codex_executable_path
