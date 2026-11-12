@@ -6,23 +6,30 @@ test("silent launch keeps the window hidden while ownership is unresolved", () =
   // A cold boot spends minutes here: the Connector is still starting, and the
   // old fixed 10 s wait showed the window at the end of it.
   for (const status of ["checking", "preparing"] as const) {
-    assert.equal(nextSilentLaunchState("holding", status), "holding");
+    assert.equal(nextSilentLaunchState("holding", status, false), "holding");
   }
 });
 
-test("silent launch stays hidden for good once this machine owns the Connector", () => {
-  assert.equal(nextSilentLaunchState("holding", "owned"), "settled");
+test("silent launch stays hidden once this machine owns the Connector", () => {
+  assert.equal(nextSilentLaunchState("holding", "owned", false), "owned");
   // A later loss of ownership must not pop the window open on its own.
   for (const status of ["checking", "preparing", "conflict", "error"] as const) {
-    assert.equal(nextSilentLaunchState("settled", status), "settled");
+    assert.equal(nextSilentLaunchState("owned", status, false), "owned");
   }
 });
 
 test("silent launch reveals the window only for states the user has to resolve", () => {
-  assert.equal(nextSilentLaunchState("holding", "conflict"), "revealed");
-  assert.equal(nextSilentLaunchState("holding", "error"), "revealed");
-  assert.equal(nextSilentLaunchState("revealed", "owned"), "revealed");
-  assert.equal(nextSilentLaunchState("revealed", "conflict"), "revealed");
+  assert.equal(nextSilentLaunchState("holding", "conflict", false), "revealed");
+  assert.equal(nextSilentLaunchState("holding", "error", false), "revealed");
+  assert.equal(nextSilentLaunchState("revealed", "owned", false), "revealed");
+  assert.equal(nextSilentLaunchState("revealed", "conflict", false), "revealed");
+});
+
+test("credential failure reveals a silent launch once, even after ownership is held", () => {
+  assert.equal(nextSilentLaunchState("holding", "owned", true), "revealed");
+  assert.equal(nextSilentLaunchState("owned", "owned", true), "revealed");
+  assert.equal(nextSilentLaunchState("revealed", "owned", true), "revealed");
+  assert.equal(nextSilentLaunchState("inactive", "owned", true), "inactive");
 });
 
 test("ownership window decisions match the states that block the machine", () => {

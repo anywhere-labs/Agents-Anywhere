@@ -6,6 +6,7 @@ import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
 import { normalizeServerOrigin, resolveDesktopServer, type DesktopServerConnection } from "./desktop-server";
+import { nextSilentLaunchState, type SilentLaunchState } from "./silent-launch";
 
 // Execute the actual Main entrypoint functions without loading Electron or
 // starting a Connector. Any new shutdown side effects must be accounted for.
@@ -106,6 +107,10 @@ test("Windows close hides the window without confirming quit, and reopening rest
     mainWindow: null,
     devOrigin: null,
     isQuitting: false,
+    silentLaunch: "owned" as SilentLaunchState,
+    ownership: { status: "owned" },
+    backend: { hasConnectorAuthFailure: () => authFailed },
+    nextSilentLaunchState,
     windowMaterialOptions: () => ({}),
     appWindowIcon: () => "icon.png",
     staticWorkbenchUrl: () => "aa-workbench://web/",
@@ -114,7 +119,9 @@ test("Windows close hides the window without confirming quit, and reopening rest
     showDockForWindow: () => {},
     requestQuit: () => assert.fail("Closing the Windows window must not request quit"),
   };
-  const { createMainWindow, showMainWindow } = loadFunctions(["createMainWindow", "showMainWindow"], globals);
+  let authFailed = false;
+  const { createMainWindow, showMainWindow, applySilentLaunchState } =
+    loadFunctions(["createMainWindow", "showMainWindow", "applySilentLaunchState"], globals);
   const window = createMainWindow(false) as Window;
   const previewOptions = window.openHandler!({ url: "aa-workbench://web/#/preview?path=main.ts" }) as {
     action: string;
@@ -136,6 +143,9 @@ test("Windows close hides the window without confirming quit, and reopening rest
   showMainWindow();
   assert.deepEqual(calls.slice(2), ["restore", "show", "focus"]);
   calls.length = 0;
+  authFailed = true;
+  applySilentLaunchState();
+  assert.deepEqual(calls, [], "a failure after opening from the tray does not reopen the window");
   globals.isQuitting = true;
   window.emit("close", { preventDefault: () => assert.fail("Confirmed quit must allow closing") });
   showMainWindow();
@@ -280,7 +290,7 @@ test("a backend that stops after ready opens the gate, and its recheck starts a 
     errorMessage: (error: unknown) => error instanceof Error ? error.message : String(error),
     sendToRenderer: (_channel: string, state: { status: string; recovery?: { kind: string } }) => published.push(state),
     drainDesktopOAuthCallbacks: async () => {},
-    applyOwnershipToSilentLaunch: () => {},
+    applySilentLaunchState: () => {},
   };
   const { startDesktopBackend, restartDesktopBackend } = loadFunctions(
     ["startDesktopBackend", "restartDesktopBackend", "publishOwnership"],
