@@ -3,4 +3,7 @@
     <cache-path
         name="session_attachments"
         path="session-attachments/" />
+    <cache-path
+        name="file_previews"
+        path="file-previews/" />
 </paths>

@@ -11,6 +11,7 @@ from agent_server.infra.repositories.store_support import (
     _json_loads,
     session_shares_t,
 )
+from agent_server.infra.db.engine import read_connection
 
 
 class SessionShareRepositoryMixin:
@@ -48,7 +49,7 @@ class SessionShareRepositoryMixin:
         }
 
     async def get_session_share(self, share_id: str) -> dict[str, Any]:
-        async with self._engine.connect() as connection:
+        async with read_connection(self._engine) as connection:
             row = (
                 await connection.execute(
                     select(session_shares_t).where(session_shares_t.c.id == share_id)

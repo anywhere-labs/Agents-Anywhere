@@ -1,0 +1,12 @@
+{
+  "runtimeId": "codex",
+  "status": "running",
+  "modelConnection": {
+    "state": "applied",
+    "protocol": "openai_responses",
+    "scope": "instance",
+    "mode": null,
+    "reason": null,
+    "externalOwner": null
+  }
+}

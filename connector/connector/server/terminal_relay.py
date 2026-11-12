@@ -10,14 +10,16 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 
 from connector.local.terminal import TerminalNotFoundError
 from connector.logging import logger
-from connector.server.urls import api_v2_path, is_loopback_url
+from connector.server.network import NetworkEgress
+from connector.server.urls import api_v2_path
 from connector.server.urls import ws_url as build_ws_url
 
 
 class TerminalRelayRunner:
-    def __init__(self, server_url: str, local_ops: Any) -> None:
+    def __init__(self, server_url: str, local_ops: Any, *, egress: NetworkEgress | None = None) -> None:
         self.server_url = server_url
         self.local_ops = local_ops
+        self.egress = egress or NetworkEgress(server_url)
 
     async def run(self, terminal_id: str, token: str, *, attach: bool = False) -> None:
         relay_url = build_ws_url(
@@ -60,7 +62,7 @@ class TerminalRelayRunner:
     async def _connect(self, relay_url: str, terminal_id: str) -> None:
         async with websockets.connect(
             relay_url,
-            proxy=None if is_loopback_url(self.server_url) else True,
+            **self.egress.websocket_options(relay_url),
             max_size=4 * 1024 * 1024,
         ) as ws:
             start = json.loads(await ws.recv())

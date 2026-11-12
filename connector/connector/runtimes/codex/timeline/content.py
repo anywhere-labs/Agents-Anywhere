@@ -15,6 +15,7 @@ from connector.runtime_protocol import (
     FileChangeToolContent,
     GenericMarkerContent,
     GenericSystemContent,
+    ImageArtifactContent,
     InputRequestToolContent,
     MarkdownMessageContent,
     McpToolContent,
@@ -153,6 +154,11 @@ def codex_artifact_content_from_mapping(content: Mapping[str, Any]) -> TimelineC
                 content,
                 ("kind", "path", "action", "patch", "changes"),
             ),
+        )
+    if kind == "image":
+        return ImageArtifactContent(
+            path=string_field(content, "path"),
+            metadata=mapping_without(content, ("kind", "path")),
         )
     if kind == "file":
         return FileArtifactContent(

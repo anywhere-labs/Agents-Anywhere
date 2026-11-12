@@ -10,8 +10,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -176,6 +178,8 @@ internal fun ProfileDialogButton(
     primary: Boolean = false,
     enabled: Boolean = true,
     modifier: Modifier = Modifier,
+    /** Shows a spinner before the label while the action runs. */
+    loading: Boolean = false,
     onClick: () -> Unit,
 ) {
     val colors = LocalAAColors.current
@@ -195,6 +199,9 @@ internal fun ProfileDialogButton(
             .noRippleClickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text = label, color = content, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (loading) CircularProgressIndicator(modifier = Modifier.size(14.dp), color = content, strokeWidth = 2.dp)
+            Text(text = label, color = content, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        }
     }
 }

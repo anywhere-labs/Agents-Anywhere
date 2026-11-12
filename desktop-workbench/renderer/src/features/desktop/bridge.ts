@@ -43,6 +43,8 @@ export type DesktopConnectorState = {
   startConnectorOnLaunch: boolean
   silentLaunch: boolean
   notificationsEnabled: boolean
+  /** The device setting the server last handed to this Desktop; change it through the server. */
+  confirmQuitOnShutdown?: boolean
   configPath?: string
   runtimePath?: string
   dataPath?: string
@@ -59,6 +61,7 @@ export type DesktopConnectorState = {
   logRetentionDays?: number
   uvPypiIndexUrl?: string
   uvPythonInstallMirror?: string
+  connectorProxy?: string
 }
 
 export type DesktopLocalBinding = {
@@ -122,6 +125,7 @@ export type DesktopConnectorSettings = Partial<Pick<
   | "logRetentionDays"
   | "uvPypiIndexUrl"
   | "uvPythonInstallMirror"
+  | "connectorProxy"
 >>
 
 export type DesktopConnectorConfigPatch = Partial<Pick<

@@ -431,3 +431,10 @@ Windows 适配：
 - 上游：`codex-rs/app-server-daemon/README.md`、`codex-rs/app-server-transport/src/transport/{mod,unix_socket}.rs`、`codex-rs/app-server-daemon/src/client.rs`、`codex-rs/tui/src/{lib,daemon_startup,app_server_connection}.rs`、`codex-rs/app-server/src/{transport,thread_state,outgoing_message}.rs`、`codex-rs/app-server/src/request_processors/{thread_processor,thread_lifecycle,initialize_processor}.rs`、`codex-rs/app-server-protocol/src/protocol/v2/thread.rs`。
 - 第三方实现：[tarakanof/Ember issue #263](https://github.com/tarakanof/Ember/issues/263)（daemon 旁观者实测与 originator 坑）、[samuelhe52/codexctl](https://github.com/samuelhe52/codexctl)（stdlib Python daemon 客户端，WS over UDS 握手与方法序列）。
 - IPC 相关 issue：[openai/codex#8965](https://github.com/openai/codex/issues/8965)、[#21806](https://github.com/openai/codex/issues/21806)、[#32385](https://github.com/openai/codex/issues/32385)、[#34109](https://github.com/openai/codex/issues/34109)（socket 路径演变与多窗口竞争）。
+
+### 接管失联与回合状态恢复
+
+- IPC 明确返回 `no-client-found` 时，清理该 owner 的旧路由并最多重新选路一次；保留原消息 ID，超时及交付结果未知的请求不自动重发。
+- IPC 断开只代表路由不可用，不代表原生任务已经结束。保留活动回合及其待处理交互，直到原生终止记录或重新连接后的状态确认结果。
+- 状态读取不 resume 原生线程。SQLite 活动投影不可用时，只读取经过会话身份与文件签名校验的 rollout 尾部终止记录。
+- 历史校正只作用于读取开始时仍在运行的同一回合；`stale` 推断不写回实时状态。校正与 SDK、IPC 状态通知串行处理，释放该回合的 Timeline 状态，并抑制迟到的重复终止通知。

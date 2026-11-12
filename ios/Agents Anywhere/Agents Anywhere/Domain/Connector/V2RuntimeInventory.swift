@@ -28,6 +28,8 @@ nonisolated struct V2RuntimeType: Decodable, Identifiable, Hashable {
     let metadata: JSONValue
     let instancePolicy: String
     let maxInstances: Int?
+    /// Declared by the runtime adapter; stable shows no badge.
+    let maturity: String?
     let lastDiscoveredAt: String
     let createdAt: String
     let updatedAt: String

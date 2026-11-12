@@ -7,8 +7,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-import httpx
-
 from connector.core.config import ConnectorConfig
 from connector.core.control_config import (
     config_from_params,
@@ -25,6 +23,7 @@ from connector.core.runtime_owner import (
 from connector.logging import logger
 from connector.server.auth import ConnectorAuthenticationError
 from connector.server.client import BackendRpcClient
+from connector.server.network import open_http_client
 from connector.server.pairing import (
     poll_pairing,
     resolve_pair_server_url,
@@ -46,7 +45,7 @@ class ConnectorController:
         notifier: ControlNotifier | None = None,
         client_factory: Callable[
             [ConnectorConfig], BackendRpcClient
-        ] = BackendRpcClient,
+        ] | None = None,
     ) -> None:
         self.config_path = (
             Path(config_path)
@@ -54,7 +53,7 @@ class ConnectorController:
             else ConnectorConfig.default_path()
         )
         self.notifier = notifier
-        self.client_factory = client_factory
+        self.client_factory = client_factory or self._default_client
         self.runtime_path = runtime_path(self.config_path)
         self.lease = RuntimeLease(self.runtime_path, kind=os.environ.get("AA_CONNECTOR_OWNER_KIND", "cli"),
                                   legacy_paths=[self.config_path.with_name("connector-runtime.json")])
@@ -67,6 +66,18 @@ class ConnectorController:
         self._pairing_tasks: set[asyncio.Task[None]] = set()
         self._last_error: str | None = None
         self._auth_failed = False
+        # Settings the server handed over in this process; None until then.
+        self._device_settings: dict[str, Any] | None = None
+
+    def _default_client(self, config: ConnectorConfig) -> BackendRpcClient:
+        return BackendRpcClient(config, device_settings_sink=self._apply_device_settings)
+
+    async def _apply_device_settings(self, settings: dict[str, Any]) -> None:
+        if settings == self._device_settings:
+            return
+        self._device_settings = dict(settings)
+        logger.info("device settings updated settings={}", settings)
+        await self._emit_state()
 
     def get_state(self, _params: Any = None) -> dict[str, Any]:
         return {
@@ -78,6 +89,7 @@ class ConnectorController:
             "configPath": str(self.config_path),
             "runtimePath": str(self.runtime_path),
             "hasConfig": self.config_path.exists(),
+            "deviceSettings": dict(self._device_settings) if self._device_settings is not None else None,
         }
 
     def get_paths(self, _params: Any = None) -> dict[str, str]:
@@ -285,7 +297,7 @@ class ConnectorController:
         self, server_url: str, *, timeout: float, poll_interval: float, generation: int,
     ) -> None:
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with await open_http_client(server_url, 30) as client:
                 pairing = await start_pairing(client, server_url, timeout)
                 if not self._pairing_current(generation):
                     return

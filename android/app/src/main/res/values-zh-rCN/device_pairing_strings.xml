@@ -42,7 +42,7 @@
     <string name="device_pairing_confirming">正在确认配对，等待设备上线...</string>
     <string name="device_pairing_claim">认领</string>
     <string name="device_pairing_exit_title">设备已创建</string>
-    <string name="device_pairing_exit_description">设备 %1$s 已经创建但尚未完成配对。如果不再需要，请在设备列表中手动删除。</string>
+    <string name="device_pairing_exit_description">设备 %1$s 已经创建但尚未完成配对。如果不再需要，请在设备列表中手动删除。连接设备后还需添加 Agent，才能开始会话。</string>
     <string name="device_pairing_continue_pairing">继续配对</string>
     <string name="device_pairing_close_anyway">仍然关闭</string>
     <string name="device_pairing_copy_command">复制命令</string>
@@ -50,6 +50,6 @@
     <string name="device_pairing_errors_claim_failed">无法认领配对。</string>
     <string name="device_pairing_errors_copy_failed">复制失败，请选中命令后手动复制。</string>
     <string name="device_pairing_download">前往官网下载</string>
-    <string name="device_pairing_exit_waiting_description">离开页面后仍会等待 %1$s 上线，并更新设备列表。如果不再需要这台设备，请在设备列表中删除。</string>
+    <string name="device_pairing_exit_waiting_description">离开页面后仍会等待 %1$s 上线，上线后会提示你添加 Agent。如果不再需要这台设备，请在设备列表中删除。</string>
     <string name="device_pairing_open_download_failed">无法打开下载页面，请稍后重试。</string>
 </resources>

@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createServer } from 'node:net'
+import { createConnection, createServer } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { acquireManagerLock, managerLockRecordPath, readJson, writeJson } from '../../src/host/storage/files.js'
 import { desktopRecordPath, detectDesktop } from '../../src/host/desktop/detect.js'
@@ -93,6 +93,32 @@ test('an abruptly terminated process releases manager ownership without deleting
     await ended
     const release = await acquireManagerLock(lock)
     await release()
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+    await ended
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('a contender that resets the lease connection cannot crash the owner', { timeout: 8000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'aa-lock-reset-'))
+  const lock = join(root, 'manager.lock')
+  const moduleUrl = new URL('../../src/host/storage/files.ts', import.meta.url).href
+  const script = `import { acquireManagerLock } from ${JSON.stringify(moduleUrl)}; await acquireManagerLock(process.argv[1]); process.send('ready'); setInterval(() => {}, 1000);`
+  const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval', script, lock], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] })
+  const ended = once(child, 'exit')
+  try {
+    await Promise.race([once(child, 'message'), ended.then(() => { throw new Error('lock owner exited before ready') })])
+    const record = await readJson<{ port: number }>(managerLockRecordPath(lock))
+    assert.ok(record, 'the owner publishes its lease')
+    const probe = createConnection({ host: '127.0.0.1', port: record.port })
+    probe.on('error', () => undefined)
+    await once(probe, 'connect')
+    // A port probe that aborts the connection makes the lease write fail with
+    // ECONNRESET; that must stay contained in the connection handler (#545).
+    probe.resetAndDestroy()
+    await new Promise(resolve => setTimeout(resolve, 250))
+    assert.equal(child.exitCode, null, 'a reset probe must not take the owner down')
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
     await ended

@@ -31,7 +31,7 @@ Rough completion by behavior area:
 | --- | --- | --- |
 | SDK timeline source | Complete for T02 | Codex SDK stream input now flows through `CodexSdkEvent`; broader item coverage continues in T04. |
 | Timeline identity and dedupe | Complete for T01 | `clientMessageId` tagging, live/snapshot echo projection, and stable fallback identity are covered; broader SDK event coverage continues in T02/T04. |
-| Turn lifecycle | Complete for T03 | Codex runtime now covers waiting/running/blocked/idle convergence, failed-turn blocking notices, item-event running inference, and stale no-active-turn correction. |
+| Turn lifecycle | Complete for T03 | Codex runtime now covers waiting/running/blocked/idle convergence, failed-turn non-blocking error notices, item-event running inference, and stale no-active-turn correction. |
 | Notice/interaction lifecycle | Complete for T05 | Codex approvals now move through open/responding/resolved/closed, failed responses remain retryable, and blocking state is released only after open blocking notices are gone. |
 | Tool/reasoning/file reduce | Complete for T04 | SDK/native message, reasoning, tool, file-change, runtime/system, and unknown fallback items reduce to platform-safe timeline shapes. |
 | Selections | Complete for T06 | Catalogs are live runtime reads; Codex session state can read current selections, update selections through runtime state, reject invalid ids, and keep existing sends selection-free. |
@@ -195,8 +195,8 @@ Completed:
   responses after turn completion keep `idle`.
 - Completed, interrupted, and cancelled turns clear active turn and converge to
   `idle`.
-- Failed turns clear active turn, upsert a blocking `execution_error` notice,
-  attach structured error data, and set session state to `blocked`.
+- Failed turns clear active turn, upsert a non-blocking `execution_error` notice,
+  attach structured error data, and set session state to `error`.
 - `steer` and `interrupt` no-active-turn conflicts actively correct stale
   session state to `idle`.
 

@@ -27,12 +27,15 @@ struct SheetCloseToolbar: ToolbarContent {
 struct SheetEditorToolbar: ToolbarContent {
     var saveTitle = String(localized: "Save")
     var isWorking = false
+    /// Shown beside the progress while working; nil shows the progress alone.
+    var workingTitle: String?
     var saveDisabled = false
     let onCancel: () -> Void
     let onSave: () -> Void
     var body: some ToolbarContent {
         SheetCloseToolbar(disabled: isWorking, action: onCancel)
-        SheetSaveToolbar(saveTitle: saveTitle, isWorking: isWorking, saveDisabled: saveDisabled, onSave: onSave)
+        SheetSaveToolbar(saveTitle: saveTitle, isWorking: isWorking, workingTitle: workingTitle,
+            saveDisabled: saveDisabled, onSave: onSave)
     }
 }
 
@@ -40,14 +43,23 @@ struct SheetEditorToolbar: ToolbarContent {
 struct SheetSaveToolbar: ToolbarContent {
     var saveTitle = String(localized: "Save")
     var isWorking = false
+    /// Shown beside the progress while working; nil shows the progress alone.
+    var workingTitle: String?
     var saveDisabled = false
     let onSave: () -> Void
 
     var body: some ToolbarContent {
         ToolbarItem(placement: .confirmationAction) {
             Button(role: .confirm, action: onSave) {
-                Text(saveTitle).opacity(isWorking ? 0 : 1)
-                    .overlay { if isWorking { ProgressView().controlSize(.small) } }
+                if isWorking, let workingTitle {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text(workingTitle)
+                    }
+                } else {
+                    Text(saveTitle).opacity(isWorking ? 0 : 1)
+                        .overlay { if isWorking { ProgressView().controlSize(.small) } }
+                }
             }
             .disabled(isWorking || saveDisabled).keyboardShortcut("s", modifiers: .command)
         }

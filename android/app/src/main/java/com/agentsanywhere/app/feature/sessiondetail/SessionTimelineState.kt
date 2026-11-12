@@ -10,6 +10,8 @@ data class SessionTimelineState(
     val loadingOlder: Boolean = false,
     val errorMessage: String? = null,
     val historyErrorMessage: String? = null,
+    // Local generation: history requests cannot cross a snapshot/reset boundary.
+    val historyGeneration: Long = 0,
 )
 
 /**
@@ -46,6 +48,7 @@ data class TimelineMessage(
     val fileChanges: List<TimelineFileChange> = emptyList(),
     val agentCall: TimelineAgentCall? = null,
     val rawContent: String = "",
+    val workspaceImages: List<String> = emptyList(),
     val orderSeq: Int = 0,
     val revision: Int = 1,
     val updatedSeq: Int = 0,
@@ -56,6 +59,8 @@ data class TimelineMessage(
     val sourceReplacedBy: String? = null,
     val optimistic: Boolean = false,
     val errorMessage: String? = null,
+    val createdAt: String = "",
+    val sourceRole: String? = null,
 )
 
 data class TimelineFileChange(

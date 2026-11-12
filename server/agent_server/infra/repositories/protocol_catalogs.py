@@ -8,6 +8,7 @@ from agent_server.core.catalogs import (
     compare_same_revision_catalogs,
 )
 from agent_server.infra.repositories.store_support import *
+from agent_server.infra.db.engine import read_connection
 
 
 class ProtocolCatalogRepositoryMixin:
@@ -98,7 +99,7 @@ class ProtocolCatalogRepositoryMixin:
             connector = await self.get_connector(connector_id)
             if connector.userId != user_id:
                 raise KeyError(connector_id)
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(connector_runtime_catalogs_t.c.catalog_json)

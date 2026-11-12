@@ -21,6 +21,14 @@ function fixture(t: TestContext) {
 const fs = require('node:fs'), path = require('node:path');
 if (process.argv.includes('--version')) { console.log('uv fixture 1'); process.exit(0); }
 fs.appendFileSync(process.env.CALLS, JSON.stringify(process.argv.slice(2))+'\\n');
+if (process.argv.includes('prepare-pi')) {
+ if (process.env.FAIL_PI) { console.error(process.env.FAIL_PI); process.exit(2); }
+ const finishPi = () => { fs.mkdirSync(process.env.AA_PI_NPM_ROOT,{recursive:true}); console.log('Pi ACP adapter and dependencies ready'); };
+ console.log('Preparing Pi ACP adapter and dependencies');
+ if (process.env.WAIT_PI) { const timer=setInterval(()=>{if(fs.existsSync(process.env.WAIT_PI)){clearInterval(timer);finishPi();}},20); }
+ else finishPi();
+ return;
+}
 const finish = () => {
   if (process.env.FAIL) { console.error(process.env.FAIL); process.exit(2); }
   const env = process.env.UV_PROJECT_ENVIRONMENT;
@@ -44,13 +52,13 @@ else finish();
 `;
   fs.writeFileSync(executable, script, { mode: 0o700 });
   const context: EnvironmentContext = { project, environment, uv: executable, python: process.execPath,
-    env: { ...process.env, CALLS: path.join(root, "calls"), PROJECT: project, UV_PROJECT_ENVIRONMENT: environment, UV_CACHE_DIR: path.join(root, "cache") } };
+    env: { ...process.env, CALLS: path.join(root, "calls"), PROJECT: project, UV_PROJECT_ENVIRONMENT: environment, AA_PI_NPM_ROOT: path.join(root, "pi-cache"), UV_CACHE_DIR: path.join(root, "cache") } };
   const states: ConnectorEnvironmentState[] = [];
   let clock = Date.now();
   const make = (dataPath = root) => new ConnectorEnvironment({ dataPath, resolve: () => context, onState: s => states.push(s), log: () => {}, now: () => clock, watchdogMs: 120_000 });
   const manager = make();
   t.after(() => manager.shutdown());
-  return { root, context, manager, make, states, advance: (ms: number) => { clock += ms; }, calls: () => fs.existsSync(context.env.CALLS!) ? fs.readFileSync(context.env.CALLS!, "utf8").trim().split('\n').map(l => JSON.parse(l) as string[]) : [] };
+  return { root, context, manager, make, states, advance: (ms: number) => { clock += ms; }, calls: () => fs.existsSync(context.env.CALLS!) ? fs.readFileSync(context.env.CALLS!, "utf8").trim().split('\n').map(l => JSON.parse(l) as string[]).filter(args => args[0] === "sync") : [] };
 }
 async function until(check: () => boolean): Promise<void> {
   const deadline = Date.now() + 5000;
@@ -157,4 +165,42 @@ test("structured uv output and recovery classification preserve useful facts", (
   const resolved = parseEnvironmentOutput("Resolved 12 packages in 1s");
   const installed = parseEnvironmentOutput("Installed 8 packages in 2s", resolved.progress);
   assert.deepEqual(installed.progress, { totalPackages: 12, completedPackages: 8 });
+});
+
+test("Pi preparation blocks readiness, reports failure with a reusable Python environment, and retries", async t => {
+  if (process.platform === "win32") { t.skip("POSIX fixture executable"); return; }
+  const f = fixture(t);
+  f.context.env.FAIL_PI = "network error: Pi adapter download failed";
+  await assert.rejects(f.manager.prepare(), /Pi adapter download failed/);
+  assert.equal(f.manager.getState().status, "failed");
+  assert.equal(f.manager.getState().error?.kind, "network");
+  assert.equal(f.calls().length, 1);
+  delete f.context.env.FAIL_PI;
+  f.context.env.WAIT_PI = path.join(f.root, "pi-finish");
+  const retry = f.manager.prepare();
+  await until(() => f.manager.getState().phase === "pi");
+  assert.equal(f.manager.getState().status, "preparing");
+  fs.writeFileSync(f.context.env.WAIT_PI, "");
+  await retry;
+  assert.equal(f.manager.getState().status, "ready");
+  assert.equal(f.calls().length, 1, "Pi failure does not reinstall Python dependencies");
+  const calls = fs.readFileSync(f.context.env.CALLS!, "utf8").trim().split("\n").map(line => JSON.parse(line) as string[]);
+  const pi = calls.filter(args => args.includes("prepare-pi"));
+  assert.equal(pi.length, 2);
+  assert.equal(pi[1]?.at(-1), f.context.env.AA_PI_NPM_ROOT);
+});
+
+test("cancelling Pi preparation cancels environment readiness and permits retry", async t => {
+  if (process.platform === "win32") { t.skip("POSIX fixture executable"); return; }
+  const f = fixture(t);
+  f.context.env.WAIT_PI = path.join(f.root, "pi-finish");
+  const preparation = f.manager.prepare();
+  const rejected = assert.rejects(preparation);
+  await until(() => f.manager.getState().phase === "pi");
+  await f.manager.cancel();
+  await rejected;
+  assert.equal(f.manager.getState().status, "cancelled");
+  delete f.context.env.WAIT_PI;
+  await f.manager.prepare();
+  assert.equal(f.manager.getState().status, "ready");
 });

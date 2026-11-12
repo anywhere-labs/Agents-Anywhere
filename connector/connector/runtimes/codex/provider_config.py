@@ -9,6 +9,7 @@ from connector.runtime_protocol.filesystem import canonical_path
 from connector.runtimes.codex.sdk.binary import CodexRuntimeBinaryMode
 from connector.runtimes.custom_models import custom_models_schema
 from connector.runtimes.model_gateway import model_gateway_schema
+from connector.runtimes.runtime_model import runtime_model_schema
 
 PROTECTED_ENV_PREFIXES = ("AGENT_CONNECTOR_", "AGENT_SERVER_")
 MAX_CODEX_HOME_LENGTH = 4096
@@ -148,6 +149,7 @@ def codex_config_schema() -> dict[str, Any]:
             },
             "modelGateway": model_gateway_schema(),
             "customModels": custom_models_schema(),
+            "model": runtime_model_schema(),
         },
         "additionalProperties": False,
     }

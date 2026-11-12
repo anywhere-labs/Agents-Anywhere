@@ -102,7 +102,8 @@ class UsageEvent:
 
 @dataclass(frozen=True, slots=True)
 class UsageCountRow:
-    hour_bucket: str
+    local_date: str
+    local_hour: int
     event_type: str
     runtime_type: str | None
     outcome: str | None
@@ -111,35 +112,63 @@ class UsageCountRow:
 
 
 @dataclass(frozen=True, slots=True)
-class UsageUserRow:
-    hour_bucket: str
+class UsageUserDayRow:
+    """One user active on one local day."""
+
+    local_date: str
     user_id: str
     messages: int
-    events: int
 
 
 @dataclass(frozen=True, slots=True)
-class UsageSessionRow:
-    hour_bucket: str
-    event_type: str
-    session_id: str
-    runtime_type: str | None
-    user_id: str | None
-    count: int
+class UsageUserActivity:
+    days: list[UsageUserDayRow]
+    hour_of_day: dict[int, int]
+    """Distinct users per local hour of day (0-23) inside the report range."""
 
 
 @dataclass(frozen=True, slots=True)
-class UsageConnectorRow:
-    hour_bucket: str
-    connector_id: str
+class UsageSessionTotalsRow:
+    """Distinct session counts for one local day, or the whole range (``None``)."""
+
+    local_date: str | None
+    sessions: int
+    sessions_viewed: int
+    sessions_read_only: int
+    session_views: int
+
+
+@dataclass(frozen=True, slots=True)
+class UsageRuntimeReachRow:
+    runtime_type: str
+    sessions: int
+    users: int
+
+
+@dataclass(frozen=True, slots=True)
+class UsageConnectorTotalsRow:
+    """Distinct online connectors per local day, per OS, or for the whole range.
+
+    Exactly one of ``local_date`` / ``device_os`` is set for the per-day and
+    per-OS rows; both are ``None`` on the range total.
+    """
+
+    local_date: str | None
     device_os: str | None
+    connectors: int
 
 
 @dataclass(frozen=True, slots=True)
-class UsageDurationRow:
-    hour_bucket: str
+class UsageDurationStatsRow:
+    """Nearest-rank duration percentiles for one local day, one runtime type, or
+    the whole range (both keys ``None``)."""
+
+    local_date: str | None
     runtime_type: str | None
-    duration_ms: int
+    p50: int
+    p90: int
+    p99: int
+    samples: int
 
 
 @dataclass(frozen=True, slots=True)

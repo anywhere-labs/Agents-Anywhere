@@ -10,13 +10,14 @@ from starlette.requests import HTTPConnection
 from agent_server.api.server_push_websocket import (
     run_server_push_until_disconnect,
 )
-from agent_server.core.device_runtime import DeviceRuntimeView
+from agent_server.core.device_runtime import DeviceRuntimeView, public_runtime_view
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
     get_rpc,
     get_session_runtime_state_cache,
     get_store,
     get_timeline_broker,
+    get_tokens_link_service,
 )
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.repositories.facade import Store
@@ -29,6 +30,7 @@ from agent_server.services.session_meta_projection import (
     project_session_meta_for_dashboard,
 )
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
+from agent_server.services.tokens_link import TokensLinkService
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -43,6 +45,7 @@ async def _dashboard_snapshot(
     manager: ConnectorRpcManager,
     runtime_state_cache: SessionRuntimeStateCache,
     user_id: str,
+    model_config: TokensLinkService | None = None,
 ) -> dict[str, Any]:
     connectors = await db.list_connectors(user_id=user_id)
     projects = await db.list_projects(user_id=user_id)
@@ -70,7 +73,7 @@ async def _dashboard_snapshot(
         # Device pages render runtime lifecycle from this list, so a status
         # change reaches them without a manual refresh.
         "runtimes": [
-            DeviceRuntimeView.model_validate(row).model_dump(
+            public_runtime_view(DeviceRuntimeView.model_validate(row)).model_dump(
                 mode="json",
                 by_alias=True,
             )
@@ -86,6 +89,12 @@ async def _dashboard_snapshot(
                 "nextCursor": None,
             },
         },
+        # Profiles and per-runtime assignments for the model configuration page.
+        **(
+            {"modelConfig": await model_config.overview(user_id=user_id, runtime_rows=runtimes)}
+            if model_config is not None
+            else {}
+        ),
         "serverTime": utc_now(),
     }
 
@@ -123,6 +132,7 @@ async def dashboard_ws(
                 manager=manager,
                 runtime_state_cache=runtime_state_cache,
                 user_id=ticket.user_id,
+                model_config=get_tokens_link_service(websocket),
             )
         )
         while True:
@@ -149,7 +159,7 @@ async def dashboard_ws(
             async def build_snapshot() -> str:
                 snapshot = await _dashboard_snapshot(
                     db=db, manager=manager, runtime_state_cache=runtime_state_cache,
-                    user_id=ticket.user_id,
+                    user_id=ticket.user_id, model_config=get_tokens_link_service(websocket),
                 )
                 return json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 

@@ -4,6 +4,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from connector.server.network import open_http_client
 from connector.server.urls import api_v2_url
 
 
@@ -30,7 +31,7 @@ async def resolve_pair_server_url(
     errors: list[str] = []
     for candidate in candidates:
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with await open_http_client(candidate, timeout) as client:
                 response = await client.get(f"{candidate}/api/v2/health")
                 if response.status_code < 500:
                     return candidate

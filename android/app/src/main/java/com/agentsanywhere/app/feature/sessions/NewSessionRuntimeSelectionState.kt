@@ -73,6 +73,7 @@ data class NewSessionRuntimeCapability(
     val parameters: Map<String, Any?>,
     val runtimeId: String? = null,
     val runtimeType: String? = runtime,
+    val metadata: Map<String, Any?> = emptyMap(),
 ) {
     val usable: Boolean
         get() = supported && available && allowed
@@ -509,6 +510,7 @@ internal fun RemoteRuntimeCapabilities.toNewSessionRuntimeCapabilities(): NewSes
                 allowed = it.allowed,
                 unavailableReason = it.unavailableReason,
                 parameters = it.parameters,
+                metadata = it.metadata,
                 runtimeId = it.runtimeId,
                 runtimeType = it.runtimeType,
             )

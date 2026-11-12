@@ -58,6 +58,7 @@ ROLE_PERMISSIONS: dict[str, dict[str, list[str]]] = {
         "register": [DSH_BRIDGE_SERVICE],
         "call": [f"{DSH_SYNC_SERVICE}/*", *[f"{LOGS_SERVICE}/{method}" for method in ("write", "read", "tail")]],
     },
+
 }
 
 _UNIX_PATH_LIMIT = 103

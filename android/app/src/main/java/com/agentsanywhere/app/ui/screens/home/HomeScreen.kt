@@ -23,6 +23,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.ui.text.style.TextOverflow
+import com.composables.icons.lucide.PanelLeftClose
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
@@ -51,7 +55,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
-import com.agentsanywhere.app.api.AuthMeResponse
 import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.feature.devices.DeviceAgentPreviews
 import com.agentsanywhere.app.feature.sessions.SessionsState
@@ -63,7 +66,6 @@ import com.agentsanywhere.app.feature.sessions.ProjectSessionStatusFilter
 import com.agentsanywhere.app.feature.sessions.sessionListComparator
 import com.agentsanywhere.app.feature.sessions.availableProjectName
 import androidx.compose.runtime.LaunchedEffect
-import com.agentsanywhere.app.feature.update.AppUpdateViewModel
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.model.AgentSession
@@ -75,7 +77,6 @@ import com.agentsanywhere.app.ui.designsystem.AAWordmark
 import com.agentsanywhere.app.ui.designsystem.AuthErrorNotice
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.screens.common.AppEmptyState
-import com.agentsanywhere.app.ui.screens.profile.ProfileSettingsDrawer
 import com.composables.icons.lucide.Folder
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Monitor
@@ -96,33 +97,16 @@ fun HomeScreen(
     selectedTab: HomeTab,
     isRefreshing: Boolean,
     userId: String,
-    role: String,
     serverUrl: String,
-    appearanceMode: String,
-    languageMode: String,
     sidebarViewMode: String,
-    appUpdateViewModel: AppUpdateViewModel,
     projectSessionsById: Map<String, List<AgentSession>>,
     loadingProjectRequests: Set<ProjectSessionLoadKey>,
     projectSessionErrors: Map<ProjectSessionLoadKey, String>,
     onRefresh: () -> Unit,
     onLoadMore: (HomeTab) -> Unit,
     onTabSelected: (HomeTab) -> Unit,
-    onAppearanceModeChange: (String) -> Unit,
-    onLanguageModeChange: (String) -> Unit,
-    onSidebarViewModeChange: (String) -> Unit,
     profileOpen: Boolean,
     onProfileOpenChange: (Boolean) -> Unit,
-    onOpenArchivedSessions: () -> Unit,
-    onLoadAccount: suspend () -> Result<AuthMeResponse>,
-    onLoadAccountAuthConfig: suspend () -> Result<com.agentsanywhere.app.api.AuthConfigResponse>,
-    onUpdateDisplayName: suspend (String) -> Result<com.agentsanywhere.app.api.AuthMeResponse>,
-    onSendEmailCode: suspend (String) -> Result<com.agentsanywhere.app.api.EmailCodeResponse>,
-    onBindEmail: suspend (String, String?) -> Result<com.agentsanywhere.app.api.AuthMeResponse>,
-    onUpdateAvatar: suspend (String) -> Result<AuthMeResponse>,
-    onClearAvatar: suspend () -> Result<AuthMeResponse>,
-    onChangePassword: suspend (String) -> Result<Unit>,
-    onSignOut: () -> Unit,
     onRenameSession: suspend (String, String) -> Result<AgentSession>,
     onSetSessionPinned: suspend (String, Boolean) -> Result<AgentSession>,
     onSetSessionArchived: suspend (String, Boolean) -> Result<AgentSession>,
@@ -135,6 +119,9 @@ fun HomeScreen(
     onOpenDevice: (AgentDevice) -> Unit,
     deviceAgentPreviews: DeviceAgentPreviews,
     onPairDevice: () -> Unit,
+    selectedSessionId: String? = null,
+    compact: Boolean = false,
+    onCollapseSidebar: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -240,6 +227,9 @@ fun HomeScreen(
                 onOpenDevice = onOpenDevice,
                 deviceAgentPreviews = deviceAgentPreviews,
                 onPairDevice = onPairDevice,
+                selectedSessionId = selectedSessionId,
+                compact = compact,
+                onCollapseSidebar = onCollapseSidebar,
             )
             actionMenu?.let { menu ->
                 HomeSessionActionOverlay(
@@ -313,31 +303,6 @@ fun HomeScreen(
                     },
                 )
             }
-            ProfileSettingsDrawer(
-                open = profileOpen,
-                userId = userId,
-                role = role,
-                serverUrl = serverUrl,
-                appearanceMode = appearanceMode,
-                languageMode = languageMode,
-                sidebarViewMode = sidebarViewMode,
-                appUpdateViewModel = appUpdateViewModel,
-                onAppearanceModeChange = onAppearanceModeChange,
-                onLanguageModeChange = onLanguageModeChange,
-                onSidebarViewModeChange = onSidebarViewModeChange,
-                onLoadAccount = onLoadAccount,
-                onLoadAccountAuthConfig = onLoadAccountAuthConfig,
-                onUpdateDisplayName = onUpdateDisplayName,
-                onSendEmailCode = onSendEmailCode,
-                onBindEmail = onBindEmail,
-                onUpdateAvatar = onUpdateAvatar,
-                onClearAvatar = onClearAvatar,
-                onChangePassword = onChangePassword,
-                onOpenArchivedSessions = onOpenArchivedSessions,
-                onSignOut = onSignOut,
-                onClose = { onProfileOpenChange(false) },
-                onNotice = ::showToast,
-            )
             AAToastHost(
                 hostState = snackbarHostState,
                 modifier = Modifier
@@ -483,10 +448,14 @@ private fun HomeContent(
     onOpenDevice: (AgentDevice) -> Unit,
     deviceAgentPreviews: DeviceAgentPreviews,
     onPairDevice: () -> Unit,
+    selectedSessionId: String?,
+    compact: Boolean,
+    onCollapseSidebar: (() -> Unit)?,
 ) {
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
     val refreshState = rememberPullToRefreshState()
+    val modeStateHolder = rememberSaveableStateHolder()
     val indicatorContainer = if (darkMode) Color(0xFF27272A) else Color(0xFFF2F2F2)
     val indicatorColor = if (darkMode) Color(0xFFE4E4E7) else Color(0xFF8E8E93)
 
@@ -494,11 +463,12 @@ private fun HomeContent(
         modifier = Modifier
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.statusBars)
-            .padding(start = 18.dp, top = 6.dp, end = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(15.dp),
+            .padding(start = if (compact) 12.dp else 18.dp, top = 6.dp, end = if (compact) 12.dp else 18.dp),
+        verticalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 15.dp),
     ) {
-        HomeHeader(onProfile = onProfile, onSearch = onSearch)
+        HomeHeader(onProfile = onProfile, onSearch = onSearch, compact = compact, onCollapseSidebar = onCollapseSidebar)
         QuickEntries(
+            compact = compact,
             onDevicesClick = { navigate(AppDestination.Devices) },
             onTerminalClick = { navigate(AppDestination.Terminal) },
             onFilesClick = { navigate(AppDestination.Files) },
@@ -520,6 +490,7 @@ private fun HomeContent(
                 )
             },
         ) {
+            modeStateHolder.SaveableStateProvider(sidebarViewMode) {
             if (sidebarViewMode == HomeSidebarViewMode.Project) {
                 HomeProjectModeList(
                     state = state,
@@ -538,6 +509,7 @@ private fun HomeContent(
                     onSessionLongPress = onSessionLongPress,
                     onOpenSession = onOpenSession,
                     onPairDevice = onPairDevice,
+                    selectedSessionId = selectedSessionId,
                 )
             } else {
                 HomeList(
@@ -551,7 +523,9 @@ private fun HomeContent(
                     onCreateSession = { navigate(AppDestination.NewSession) },
                     onPairDevice = onPairDevice,
                     onLoadMore = onLoadMore,
+                    selectedSessionId = selectedSessionId,
                 )
+            }
             }
         }
     }
@@ -585,6 +559,7 @@ private fun HomeProjectModeList(
     onSessionLongPress: (AgentSession, Rect) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
     onPairDevice: () -> Unit,
+    selectedSessionId: String?,
 ) {
     when {
         state.isLoading && !state.hasLoaded -> HomeLoadingState()
@@ -640,16 +615,46 @@ private fun HomeProjectModeList(
                 onNewSession = onNewSessionInProject,
                 onSessionLongPress = onSessionLongPress,
                 onOpenSession = onOpenSession,
+                selectedSessionId = selectedSessionId,
             )
         }
     }
 }
 
 @Composable
-private fun HomeHeader(onProfile: () -> Unit, onSearch: () -> Unit) {
+private fun HomeHeader(
+    onProfile: () -> Unit,
+    onSearch: () -> Unit,
+    compact: Boolean,
+    onCollapseSidebar: (() -> Unit)?,
+) {
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
     val icon = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF1C1C1E)
+
+    if (compact) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            AAWordmark(color = colors.ink, fontSize = 26.sp, lineHeight = 34.sp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                IconButton(onClick = onProfile, modifier = Modifier.size(48.dp)) {
+                    Icon(Lucide.UserRound, contentDescription = stringResource(R.string.profile_settings), tint = icon)
+                }
+                IconButton(onClick = onSearch, modifier = Modifier.size(48.dp)) {
+                    Icon(Lucide.Search, contentDescription = stringResource(R.string.files_search), tint = icon)
+                }
+                if (onCollapseSidebar != null) {
+                    IconButton(onClick = onCollapseSidebar, modifier = Modifier.size(48.dp)) {
+                        Icon(Lucide.PanelLeftClose, contentDescription = stringResource(R.string.workspace_collapse_sidebar), tint = icon)
+                    }
+                }
+            }
+        }
+        return
+    }
 
     Row(
         modifier = Modifier
@@ -689,6 +694,7 @@ private fun HomeHeader(onProfile: () -> Unit, onSearch: () -> Unit) {
 
 @Composable
 private fun QuickEntries(
+    compact: Boolean,
     onDevicesClick: () -> Unit,
     onTerminalClick: () -> Unit,
     onFilesClick: () -> Unit,
@@ -697,24 +703,27 @@ private fun QuickEntries(
         modifier = Modifier
             .fillMaxWidth()
             .height(76.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp),
     ) {
         QuickEntryCard(
             title = stringResource(R.string.devices_title),
             icon = Lucide.Monitor,
             modifier = Modifier.weight(1f),
+            compact = compact,
             onClick = onDevicesClick,
         )
         QuickEntryCard(
             title = stringResource(R.string.common_terminal),
             icon = Lucide.Terminal,
             modifier = Modifier.weight(1f),
+            compact = compact,
             onClick = onTerminalClick,
         )
         QuickEntryCard(
             title = stringResource(R.string.common_files),
             icon = Lucide.Folder,
             modifier = Modifier.weight(1f),
+            compact = compact,
             onClick = onFilesClick,
         )
     }
@@ -726,6 +735,7 @@ private fun QuickEntryCard(
     icon: ImageVector,
     modifier: Modifier = Modifier,
     onClick: () -> Unit = {},
+    compact: Boolean = false,
 ) {
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
@@ -754,7 +764,7 @@ private fun QuickEntryCard(
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 onClick()
             }
-            .padding(horizontal = 12.dp, vertical = 13.dp),
+            .padding(horizontal = if (compact) 8.dp else 12.dp, vertical = 13.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Icon(
@@ -770,6 +780,7 @@ private fun QuickEntryCard(
             fontWeight = FontWeight.Bold,
             lineHeight = 17.sp,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

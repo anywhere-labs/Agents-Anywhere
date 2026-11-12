@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
+from connector.core.device_settings import (
+    DEVICE_SETTINGS_APPLY_METHOD,
+    normalize_device_settings,
+)
 from connector.runtime_protocol import RuntimeHostClient, RuntimeSupervisor
 from connector.server.local_rpc import (
     BackgroundScheduler,
@@ -11,6 +16,8 @@ from connector.server.local_rpc import (
 )
 from connector.server.runtime_rpc import RuntimeRpcHandler
 
+DeviceSettingsSink = Callable[[dict[str, Any]], Awaitable[None]]
+
 
 class ConnectorRequestSession:
     """Own connection-scoped RPC state while sharing runtime/local services."""
@@ -19,11 +26,15 @@ class ConnectorRequestSession:
         self,
         runtime_rpc: RuntimeRpcHandler,
         local_rpc: LocalRpcHandler,
+        device_settings_sink: DeviceSettingsSink | None = None,
     ) -> None:
         self.runtime_rpc = runtime_rpc
         self.local_rpc = local_rpc
+        self.device_settings_sink = device_settings_sink
 
     async def dispatch(self, method: str, params: dict[str, Any]) -> Any:
+        if method == DEVICE_SETTINGS_APPLY_METHOD:
+            return await self._apply_device_settings(params)
         if self.runtime_rpc.supports(method):
             return await self.runtime_rpc.dispatch(method, params)
         if self.local_rpc.supports(method):
@@ -32,6 +43,14 @@ class ConnectorRequestSession:
 
     async def discover_runtimes(self) -> dict[str, Any]:
         return await self.runtime_rpc.discover_runtimes()
+
+    async def _apply_device_settings(self, params: dict[str, Any]) -> dict[str, Any]:
+        # A Connector without a host to hand them to (the plain CLI) still
+        # acknowledges: the server only needs to know the device received them.
+        settings = normalize_device_settings(params.get("settings"))
+        if self.device_settings_sink is not None:
+            await self.device_settings_sink(settings)
+        return {"applied": True}
 
 
 class ConnectorRequestDispatcher:
@@ -45,8 +64,10 @@ class ConnectorRequestDispatcher:
         upload_prepared_download: UploadPreparedDownload,
         start_terminal_relay: StartTerminalRelay,
         schedule_background: BackgroundScheduler,
+        device_settings_sink: DeviceSettingsSink | None = None,
     ) -> None:
         self._agent_runtime_supervisor = agent_runtime_supervisor
+        self._device_settings_sink = device_settings_sink
         self._agent_runtime_host = agent_runtime_host
         self._schedule_background = schedule_background
         self.local_rpc = LocalRpcHandler(
@@ -66,6 +87,7 @@ class ConnectorRequestDispatcher:
                 schedule_background=self._schedule_background,
             ),
             local_rpc=self.local_rpc,
+            device_settings_sink=self._device_settings_sink,
         )
 
     async def dispatch(self, method: str, params: dict[str, Any]) -> Any:

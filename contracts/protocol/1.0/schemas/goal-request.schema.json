@@ -1,0 +1,61 @@
+{
+  "$id": "urn:agents-anywhere:protocol:1.0:goal-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "action": {
+      "enum": [
+        "set",
+        "edit",
+        "pause",
+        "resume",
+        "clear"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "attachments": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "maxItems": 100,
+      "title": "Attachments",
+      "type": "array"
+    },
+    "expectedRevision": {
+      "minimum": 0,
+      "title": "Expectedrevision",
+      "type": "integer"
+    },
+    "objective": {
+      "anyOf": [
+        {
+          "maxLength": 2097152,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Objective"
+    },
+    "operationId": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Operationid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "operationId",
+    "expectedRevision",
+    "action"
+  ],
+  "title": "GoalRequest",
+  "type": "object",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

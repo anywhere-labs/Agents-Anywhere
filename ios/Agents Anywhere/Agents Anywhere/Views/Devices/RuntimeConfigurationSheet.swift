@@ -21,7 +21,7 @@ struct RuntimeConfigurationSheet: View {
         self.startAfterSaving = startAfterSaving; self.canSave = canSave
         self.onSave = { _, config in try await onSave(config) }
         _instanceName = State(initialValue: runtime.name)
-        _model = State(initialValue: RuntimeConfigurationModel(schema: schema, config: runtime.config))
+        _model = State(initialValue: RuntimeConfigurationModel(schema: schema, config: runtime.config, secretFields: runtime.secretFields ?? [:]))
     }
     init(type: V2RuntimeType, schema: V2RuntimeConfigSchema, suggestedName: String,
          canSave: Bool = true, onSave: @escaping (String, [String: JSONValue]) async throws -> Void) {

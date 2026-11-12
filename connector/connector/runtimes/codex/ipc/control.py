@@ -18,6 +18,7 @@ from typing import Any
 from connector.logging import logger
 from connector.runtime_protocol import (
     RuntimeAttachment,
+    RuntimeConflictError,
     RuntimeInvalidRequestError,
     RuntimeOperationResult,
     RuntimeSessionStateCache,
@@ -62,7 +63,10 @@ from connector.runtimes.codex.ipc.timeline import (
     active_turn_id,
     turn_entities_in_order,
 )
-from connector.runtimes.codex.sdk.runtime_client import CodexTurnInputAttachment
+from connector.runtimes.codex.sdk.runtime_client import (
+    CodexCompactResult,
+    CodexTurnInputAttachment,
+)
 from connector.runtimes.codex.turns.attachments import materialize_codex_attachments
 
 DEFAULT_REQUEST_TIMEOUT_MS = 30_000
@@ -393,6 +397,28 @@ class CodexIpcTurnController:
             },
         )
 
+    async def compact_thread(self, thread: FollowedThread) -> CodexCompactResult:
+        """Ask the owner window to compact the thread it holds.
+
+        The owner runs ``thread/compact/start`` in its own app-server; the
+        compaction then reaches AA through the owner's state stream.
+
+        Raises ``RuntimeConflictError`` when the owner rejects the request and
+        ``RuntimeError`` when the outcome is unknown.
+        """
+
+        response = await self._send(
+            thread,
+            "thread-follower-compact-thread",
+            {"conversationId": thread.thread_id},
+        )
+        if response is not None and response.ok:
+            result = response.result if isinstance(response.result, Mapping) else {}
+            return CodexCompactResult(payload={**result, "transport": "ipc"})
+        if _outcome_unknown(response):
+            raise RuntimeError(_error_message(response))
+        raise RuntimeConflictError(_error_message(response))
+
     # -- selections ----------------------------------------------------------
 
     async def update_selections(
@@ -674,6 +700,10 @@ class CodexIpcTurnController:
                 thread.thread_id,
                 response.error,
             )
+            if response.error == "no-client-found":
+                # The router confirms nobody received this request. A cached
+                # follower must not keep routing later operations to that owner.
+                await self.follower.owner_unavailable(thread)
         return response
 
     async def _failed(

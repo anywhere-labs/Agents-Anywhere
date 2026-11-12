@@ -43,6 +43,7 @@ from agent_server.infra.db import (
     oauth_clients as oauth_clients_t,
     pairing_codes as pairing_codes_t,
     projects as projects_t,
+    session_inventory_scans as session_inventory_scans_t,
     sessions as sessions_t,
     session_shares as session_shares_t,
     timeline_items as timeline_items_t,

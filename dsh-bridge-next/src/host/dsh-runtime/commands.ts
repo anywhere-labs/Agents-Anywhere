@@ -31,9 +31,10 @@ export interface CommandCapability {
 const ONLINE_STATUSES = ['idle', 'running', 'waiting', 'pending', 'stopping', 'waiting_approval', 'error', 'blocked']
 
 /**
- * AA exposes the native compact command, a model-selector entry backed by AA's
- * own model catalog, and the session's user-invocable DSH skills; the registry
- * owns its grammar and side effects.
+ * AA exposes the native compact command, the native /plan command when the DSH
+ * plan-mode service is composed, a model-selector entry backed by AA's own
+ * model catalog, and the session's user-invocable DSH skills; the registry owns
+ * their grammar and side effects.
  */
 export class RuntimeCommands {
   private readonly instance = randomUUID()
@@ -93,6 +94,11 @@ export class RuntimeCommands {
     }
   }
 
+  /** /plan is a native DSH command; it is offered only when the plan-mode service is composed. */
+  private planModeAvailable(): boolean {
+    return Boolean((this.ctx as unknown as { get(key: string): unknown }).get('planMode'))
+  }
+
   /** The /model entry rides on AA's own model selector; it needs a routable provider catalog. */
   private async modelSelectorAvailable(): Promise<boolean> {
     const native = this.native()
@@ -109,7 +115,7 @@ export class RuntimeCommands {
     const query = typeof params.query === 'string' ? params.query.toLocaleLowerCase() : ''
     const agent = await this.agent(id, signal)
     const entries: Array<{ id: string, search: string, entry: Record<string, unknown> }> = registry.list(agent)
-      .filter(item => item.name === 'compact')
+      .filter(item => item.name === 'compact' || (item.name === 'plan' && this.planModeAvailable()))
       .map(item => ({
         id: item.name,
         search: `${item.name} ${item.description} ${item.input?.hint ?? ''}`.toLocaleLowerCase(),
@@ -149,6 +155,7 @@ export class RuntimeCommands {
     const fail = (code: string, message: string): CommandResult => ({ command, ok: false, code, message, result: {} })
     if (!command || parseCommand(`/${command}`)?.name !== command) return fail('invalid_command', 'Use the native command name from the catalog.')
     if (command === 'model') return fail('unknown_command', '/model opens the model selector; choose it from the command menu.')
+    if (command === 'plan' && !this.planModeAvailable()) return fail('unknown_command', 'This DSH command is not available in AA.')
     const args = params.args === undefined ? [] : params.args
     if (!Array.isArray(args) || args.some(arg => typeof arg !== 'string')) return fail('invalid_command', 'Command arguments must be strings.')
     if (params.attachments !== undefined && (!Array.isArray(params.attachments) || params.attachments.length)) return fail('command_attachments_unsupported', 'AA command attachments are unavailable. Keep attachments in the draft.')
@@ -162,7 +169,7 @@ export class RuntimeCommands {
     }
     const parsed = parseCommand(line)
     if (!parsed || parsed.name !== command) return fail('invalid_command', 'The raw command must invoke the requested native command name.')
-    if (command !== 'compact') return await this.executeSkill(id, command, line, signal)
+    if (command !== 'compact' && command !== 'plan') return await this.executeSkill(id, command, line, signal)
     const agent = await this.agent(id, signal)
     // Settlement races a short budget: quick commands keep their full settled
     // result; slow ones (/compact on a large session outlives every RPC

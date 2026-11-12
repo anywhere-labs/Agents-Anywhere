@@ -380,3 +380,27 @@ test('legacy runtime commands still execute without metadata.ui',async t=>{
   assert.equal(input.value,'')
 })
 test.after(()=>dom.window.close())
+
+test('a planning session offers /plan first; choosing it only completes the draft',async t=>{
+  const calls=[]
+  const planning={...capability,capabilities:[...capability.capabilities,{capabilityId:'session.planning',scope:'session',runtime:'codex',runtimeId:'codex',sessionId:'s1',supported:true,available:true,allowed:true}]}
+  function Host(){const [value,setValue]=useState('/');return h(SessionComposer,{token:'test',session,runtimeState:{status:'idle',metadata:{},selections:{}},pendingInteractionCount:0,sending:false,interrupting:false,takeoverBusy:false,value,effectiveCapabilities:planning,modelCatalog:null,permissionCatalog:null,runtimeCommands:[descriptor('compact',false)],onCommandQueryChange(){},onValueChange:setValue,onSelectionChange:async()=>true,onSend:async()=>assert.fail('choosing /plan sends nothing'),onInterrupt(){},onToggleTakeover(){},onCommand:async(id)=>{calls.push(id);return {ok:true,state:'accepted'}}})}
+  const host=await mount(t,h(Host));const input=host.querySelector('textarea')
+  const options=()=>[...host.querySelectorAll('[role=option]')]
+  assert.deepEqual(options().map(option=>option.querySelector('span').textContent.split(' ')[0]),['/plan','/compact'])
+  assert.match(options()[0].textContent,/\[task \| off\]/)
+  assert.match(options()[1].textContent,/Compact the session context\./,'a built-in command shows its translated description')
+  assert.doesNotMatch(options()[1].textContent,/native/)
+  await act(async()=>input.dispatchEvent(new window.KeyboardEvent('keydown',{key:'Enter',bubbles:true})))
+  assert.equal(input.value,'/plan ')
+  assert.deepEqual(calls,[],'the runtime never receives /plan as a native command')
+  await type(input,'/pl')
+  assert.deepEqual(options().map(option=>option.querySelector('span').textContent.split(' ')[0]),['/plan'])
+})
+
+test('without planning capability the menu does not offer /plan',async t=>{
+  function Host(){const [value,setValue]=useState('/');return h(SessionComposer,{token:'test',session,runtimeState:{status:'idle',metadata:{},selections:{}},pendingInteractionCount:0,sending:false,interrupting:false,takeoverBusy:false,value,effectiveCapabilities:capability,modelCatalog:null,permissionCatalog:null,runtimeCommands:[descriptor('compact',false),descriptor('skill-x',false)],onCommandQueryChange(){},onValueChange:setValue,onSelectionChange:async()=>true,onSend:async()=>true,onInterrupt(){},onToggleTakeover(){},onCommand:async()=>({ok:true,state:'accepted'})})}
+  const host=await mount(t,h(Host))
+  assert.match(host.querySelectorAll('[role=option]')[1].textContent,/native/,'a native command keeps the runtime description')
+  assert.deepEqual([...host.querySelectorAll('[role=option]')].map(option=>option.querySelector('span').textContent.split(' ')[0]),['/compact','/skill-x'])
+})

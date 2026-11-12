@@ -4,8 +4,10 @@ import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.net.http.SslError
 import android.os.Bundle
+import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.SslErrorHandler
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -56,14 +58,14 @@ import com.agentsanywhere.app.feature.auth.WEB_LOGIN_CALLBACK_URI
 import com.agentsanywhere.app.feature.auth.WebLoginSession
 import com.agentsanywhere.app.feature.auth.WebLoginState
 import com.agentsanywhere.app.feature.auth.WebLoginViewModel
-import com.agentsanywhere.app.feature.auth.webLoginApiOriginBridgeScript
+import com.agentsanywhere.app.feature.auth.registerWebLoginScripts
 import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.AuthErrorNotice
 import com.agentsanywhere.app.ui.designsystem.BackPill
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
-import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Info
+import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Server
 
 @Composable
@@ -272,14 +274,19 @@ private fun EmbeddedWebLogin(
                         CookieManager.getInstance().setAcceptCookie(true)
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
                         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-                            WebViewCompat.addDocumentStartJavaScript(
-                                this,
-                                webLoginApiOriginBridgeScript(session.oauthWebOrigin),
-                                setOf(session.oauthWebOrigin),
-                            )
+                            registerWebLoginScripts(
+                                context.assets.open("web-login-viewport.js").bufferedReader().use { it.readText() },
+                                session.oauthWebOrigin,
+                            ) { script, allowedOrigins ->
+                                WebViewCompat.addDocumentStartJavaScript(this, script, allowedOrigins)
+                            }
                         } else {
                             onWebError("Update Android System WebView to continue signing in.")
                             return@apply
+                        }
+                        webChromeClient = object : WebChromeClient() {
+                            // Identity-provider console messages may contain login credentials.
+                            override fun onConsoleMessage(message: ConsoleMessage): Boolean = true
                         }
                         webViewClient = SecureLoginWebViewClient(
                             onLoadingChanged = { loading = it },

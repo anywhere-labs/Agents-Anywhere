@@ -1,0 +1,15 @@
+{
+  "available": true,
+  "capabilities": {},
+  "configSchema": null,
+  "description": null,
+  "displayName": "Codex",
+  "implementationType": "sdk",
+  "instancePolicy": "multiple",
+  "maxInstances": null,
+  "metadata": {},
+  "reason": null,
+  "recommended": true,
+  "recommendationRank": -1,
+  "runtimeType": "codex"
+}

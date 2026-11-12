@@ -5,8 +5,10 @@ import base64
 import hashlib
 import os
 import time
-from collections.abc import Callable
+from collections import OrderedDict
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from anyio import CancelScope
@@ -20,6 +22,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from fastapi.responses import FileResponse
 from loguru import logger
 from starlette.requests import HTTPConnection
 
@@ -42,6 +45,7 @@ from agent_server.deps import (
     get_store,
     get_timeline_broker,
     get_timeline_write_buffer,
+    model_channel_service_for,
 )
 from agent_server.infra.connector_rpc import (
     ConnectorConnection,
@@ -53,6 +57,9 @@ from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.attachments import AttachmentService
+from agent_server.services.connector_device_settings import (
+    deliver_stored_device_settings,
+)
 from agent_server.services.connector_ingest import ConnectorIngestService
 from agent_server.services.connector_notifications import (
     ConnectorNotificationService,
@@ -65,7 +72,7 @@ from agent_server.services.device_runtimes import (
     DeviceRuntimeService,
 )
 from agent_server.services.effective_capabilities import (
-    publish_connector_session_capabilities,
+    ConnectorCapabilityRefresh,
 )
 from agent_server.services.runtime_ingress import (
     notification_runtime_id,
@@ -80,17 +87,65 @@ router = APIRouter(tags=["connector-ingress"])
 DEFAULT_NOTIFICATION_CONCURRENCY = 4
 
 
+_Notification = tuple[str, dict[str, Any], int]
+_CoalescingKey = tuple[str, str]
+
+
+class _NotificationQueue:
+    """FIFO that physically removes superseded snapshots at insertion time.
+
+    Replacements go at the tail, in their arrival position. Removing only the
+    old payload while leaving tombstones would still grow with stream length.
+    Both admission and session lanes use this queue so bursts cannot retain
+    every revision before the dispatcher gets its next turn.
+    """
+
+    def __init__(self) -> None:
+        self._entries: OrderedDict[
+            int, tuple[_CoalescingKey | None, _Notification | None]
+        ] = OrderedDict()
+        self._latest: dict[_CoalescingKey, int] = {}
+        self._sequence = 0
+        self._available = asyncio.Event()
+
+    def put_nowait(
+        self, notification: _Notification | None, key: _CoalescingKey | None = None,
+    ) -> bool:
+        replaced = False
+        if key is not None:
+            previous = self._latest.pop(key, None)
+            if previous is not None:
+                del self._entries[previous]
+                replaced = True
+        self._sequence += 1
+        self._entries[self._sequence] = (key, notification)
+        if key is not None:
+            self._latest[key] = self._sequence
+        self._available.set()
+        return replaced
+
+    def empty(self) -> bool:
+        return not self._entries
+
+    def get_nowait(self) -> _Notification | None:
+        if not self._entries:
+            raise asyncio.QueueEmpty
+        _, (key, notification) = self._entries.popitem(last=False)
+        if key is not None:
+            self._latest.pop(key)
+        if not self._entries:
+            self._available.clear()
+        return notification
+
+    async def get(self) -> _Notification | None:
+        while self.empty():
+            await self._available.wait()
+        return self.get_nowait()
+
+
 @dataclass(slots=True)
 class _NotificationLane:
-    """FIFO work for one ordering key, with superseded entries dropped."""
-
-    queue: asyncio.Queue[tuple[str, dict[str, Any], str | None, int, int]] = field(
-        default_factory=asyncio.Queue
-    )
-    # Highest queued version per stable item ID. A queued entry whose version is
-    # no longer the latest for its item has been fully replaced and is skipped.
-    latest: dict[str, int] = field(default_factory=dict)
-    version: int = 0
+    queue: _NotificationQueue = field(default_factory=_NotificationQueue)
 
 
 class _ConnectorNotificationPump:
@@ -129,9 +184,7 @@ class _ConnectorNotificationPump:
         self._accepting = True
         self._abort_task: asyncio.Task[None] | None = None
         self._lane_tasks: set[asyncio.Task[None]] = set()
-        self._queue: asyncio.Queue[tuple[str, dict[str, Any], int] | None] = (
-            asyncio.Queue()
-        )
+        self._queue = _NotificationQueue()
         self._task: asyncio.Task[None] | None = None
         self._lanes: dict[str, _NotificationLane] = {}
         self._active_lanes: set[str] = set()
@@ -188,7 +241,7 @@ class _ConnectorNotificationPump:
                 return
             generation = self._runtime_generations.get(notification_runtime_id(params), 0)
             self._mark_pending(1)
-            self._queue.put_nowait((method, params, generation))
+            self._enqueue(self._queue, (method, params, generation))
 
     async def close(self) -> None:
         self._accepting = False
@@ -272,20 +325,22 @@ class _ConnectorNotificationPump:
             )
             raise
 
+    def _enqueue(self, queue: _NotificationQueue, notification: _Notification) -> None:
+        method, params, _ = notification
+        item_key = self._item_key(method, params)
+        key = (self._lane_key(params), item_key) if item_key is not None else None
+        if queue.put_nowait(notification, key):
+            self.coalesced += 1
+            self._mark_pending(-1)
+
     async def _dispatch(self, method: str, params: dict[str, Any], generation: int) -> None:
         key = self._lane_key(params)
-        item_key = self._item_key(method, params)
         async with self._lane_guard:
             lane = self._lanes.get(key)
             if lane is None:
                 lane = _NotificationLane()
                 self._lanes[key] = lane
-            version = 0
-            if item_key is not None:
-                lane.version += 1
-                version = lane.version
-                lane.latest[item_key] = version
-            lane.queue.put_nowait((method, params, item_key, version, generation))
+            self._enqueue(lane.queue, (method, params, generation))
             if key not in self._active_lanes:
                 self._active_lanes.add(key)
                 task = asyncio.create_task(
@@ -299,7 +354,9 @@ class _ConnectorNotificationPump:
         try:
             while True:
                 try:
-                    method, params, item_key, version, generation = lane.queue.get_nowait()
+                    notification = lane.queue.get_nowait()
+                    assert notification is not None  # Only admission receives a close sentinel.
+                    method, params, generation = notification
                 except asyncio.QueueEmpty:
                     async with self._lane_guard:
                         if lane.queue.empty():
@@ -308,11 +365,6 @@ class _ConnectorNotificationPump:
                             return
                         continue
                 try:
-                    if item_key is not None:
-                        if lane.latest.get(item_key) != version:
-                            self.coalesced += 1
-                            continue
-                        lane.latest.pop(item_key, None)
                     async with self._slots:
                         if not self._runtime_current(method, params, generation):
                             self.obsolete += 1
@@ -467,6 +519,14 @@ async def connector_attachment_content(
     connector_id = await _require_active_connector(authorization, db)
     await db.record_connector_activity(connector_id)
     try:
+        path, metadata = await attachments.local_connector_file(
+            session_id=session_id,
+            file_id=file_id,
+            connector_id=connector_id,
+        )
+        if path is not None:
+            await attachments.verify_local_file(path, metadata)
+            return _connector_file_response(path, metadata)
         data, metadata = await attachments.read_connector_attachment(
             session_id=session_id,
             file_id=file_id,
@@ -483,6 +543,23 @@ async def connector_attachment_content(
             "X-File-Name": _safe_header_value(metadata.get("name") or file_id),
             "X-File-Sha256": str(metadata.get("sha256") or ""),
         },
+    )
+
+
+def _connector_file_response(path: Path, metadata: dict[str, Any]) -> FileResponse:
+    """Stream a stored blob to the connector without buffering it in memory."""
+    sha256 = str(metadata.get("sha256") or "")
+    headers = {
+        "X-File-Name": _safe_header_value(metadata.get("name") or path.name),
+        "X-File-Sha256": sha256,
+        "Cache-Control": "private, max-age=3600",
+    }
+    if sha256:
+        headers["ETag"] = f'"{sha256}"'
+    return FileResponse(
+        path,
+        media_type=metadata.get("mediaType") or "application/octet-stream",
+        headers=headers,
     )
 
 
@@ -536,6 +613,7 @@ async def connector_ws(
         async with db.connector_lifecycle(connector_id):
             await _require_active_connector(auth_header, db)
             connection = await manager.register(connector_id, websocket, ready=False)
+            await db.set_channel_device_gate(connector_id, connection.connection_id)
             ingest_service = ConnectorIngestService(
                 db, ConnectorNotificationService(
                     db, realtime, timeline_write_buffer,
@@ -543,6 +621,8 @@ async def connector_ws(
                 ),
                 timeline_broker, runtime_service, manager,
                 websocket.app.state.session_runtime_state_cache,
+                websocket.app.state.capability_refresh,
+                runtime_event=model_channel_service_for(websocket.app.state).runtime_event,
             )
             notification_pump = _ConnectorNotificationPump(
                 connector_id, ingest_service,
@@ -563,6 +643,7 @@ async def connector_ws(
                 ):
                     await websocket.close(code=1008, reason="connector was revoked")
                     return
+                await runtime_service.mark_reconnecting(connector_id)
                 await db.record_connector_activity(connector_id)
                 await websocket.accept()
                 if not await manager.mark_ready(connection):
@@ -584,6 +665,7 @@ async def connector_ws(
     completion_task: asyncio.Task[None] | None = None
     reader_task: asyncio.Task[None] | None = None
     capabilities_task: asyncio.Task[None] | None = None
+    device_settings_task: asyncio.Task[bool] | None = None
     try:
         # Usage statistics: the device is online once the socket is ready. This
         # runs inside the main try so a disconnect during the write still
@@ -616,8 +698,12 @@ async def connector_ws(
             name=f"connector-reader-{connection.connection_id}",
         )
         capabilities_task = asyncio.create_task(
-            _publish_connection_presence(db, manager, timeline_broker, connector_id),
+            _publish_connection_presence(db, manager, timeline_broker, connector_id, websocket.app.state.capability_refresh),
             name=f"connector-presence-{connection.connection_id}",
+        )
+        device_settings_task = asyncio.create_task(
+            deliver_stored_device_settings(db, manager, connector_id),
+            name=f"connector-device-settings-{connection.connection_id}",
         )
         done, _pending = await asyncio.wait(
             {reader_task, discovery_task, notification_pump.task},
@@ -656,6 +742,8 @@ async def connector_ws(
                 connector_id,
                 connection,
                 reason=discovery_reason or "runtime.recovery",
+                on_discovered=model_channel_service_for(websocket.app.state).connector_discovered,
+                on_ready=model_channel_service_for(websocket.app.state).connector_event,
             ),
             name=f"runtime-discovery-complete-{connection.connection_id}",
         )
@@ -690,6 +778,9 @@ async def connector_ws(
             if capabilities_task is not None:
                 capabilities_task.cancel()
                 await asyncio.gather(capabilities_task, return_exceptions=True)
+            if device_settings_task is not None:
+                device_settings_task.cancel()
+                await asyncio.gather(device_settings_task, return_exceptions=True)
             try:
                 if await manager.begin_drain(connection):
                     # The lease remains reserved until accepted work has settled.
@@ -711,12 +802,7 @@ async def connector_ws(
                     connector_id,
                     len(removed_terminals),
                 )
-            await publish_connector_session_capabilities(
-                db,
-                manager,
-                timeline_broker,
-                connector_id,
-            )
+            websocket.app.state.capability_refresh.request(connector_id)
             await publish_dashboard_changed(
                 db,
                 timeline_broker,
@@ -725,12 +811,12 @@ async def connector_ws(
             )
 
 
-async def _publish_connection_presence(db, manager, broker, connector_id: str) -> None:
+async def _publish_connection_presence(db, manager, broker, connector_id: str, refresh: ConnectorCapabilityRefresh) -> None:
     try:
         await publish_dashboard_changed(
             db, broker, connector_id=connector_id, reason="connector.online",
         )
-        await publish_connector_session_capabilities(db, manager, broker, connector_id)
+        refresh.request(connector_id)
     except Exception:  # noqa: BLE001 - background publication must not stop the reader
         logger.exception("connector presence publication failed connector_id={}", connector_id)
 
@@ -769,6 +855,8 @@ async def _complete_runtime_discovery(
     connection: ConnectorConnection,
     *,
     reason: str,
+    on_discovered: Callable[[str], Awaitable[None]] | None = None,
+    on_ready: Callable[[str], Awaitable[None]] | None = None,
 ) -> None:
     try:
         await runtime_service.publish_discovery(connector_id, reason)
@@ -790,6 +878,14 @@ async def _complete_runtime_discovery(
             connection.connection_id,
         )
 
+    async def open_gate() -> None:
+        # Targets first: a runtime that must move stays closed once the gate opens.
+        if on_discovered is not None:
+            await on_discovered(connector_id)
+        await runtime_service._store.clear_channel_device_gate(connector_id, connection.connection_id)
+
+    if not await _retry_while_current(runtime_service, connector_id, connection, open_gate):
+        return
     try:
         await runtime_service.reconcile_active(
             connector_id,
@@ -813,6 +909,32 @@ async def _complete_runtime_discovery(
             connector_id,
             connection.connection_id,
         )
+    # Last: a drive skips a gated device, and would mistake a runtime that
+    # reconcile_active has yet to start for one whose configuration drifted.
+    if on_ready is not None:
+        await _retry_while_current(runtime_service, connector_id, connection, lambda: on_ready(connector_id))
+
+
+async def _retry_while_current(
+    runtime_service: DeviceRuntimeService,
+    connector_id: str,
+    connection: ConnectorConnection,
+    step: Callable[[], Awaitable[None]],
+) -> bool:
+    """Retry a durable reconciliation step; False once another connection took over."""
+    delay = 2.0
+    while True:
+        try:
+            if not await runtime_service._manager.is_connection_id_current(connector_id, connection.connection_id):
+                return False
+            await step()
+            return True
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - retry the owned connection's durable reconciliation
+            logger.exception("model channel discovery reconciliation failed connector_id={}", connector_id)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 30.0)
 
 
 def _connector_device_os(value: str | None) -> str | None:

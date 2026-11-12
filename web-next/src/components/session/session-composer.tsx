@@ -1,6 +1,8 @@
 "use client"
 
 import * as React from "react"
+import { runtimeFailureOf, useRuntimeErrorText } from "@/lib/runtime-error-text"
+import { parsePlanningCommand } from "@/features/planning/commands"
 import { ArrowUp, Check, ChevronDown, Loader2, Square, X } from "lucide-react"
 import { toast } from "sonner"
 
@@ -54,7 +56,7 @@ import {
   selectionIdForPermissionCatalog,
 } from "@/components/session/catalog-selection"
 import { SelectionSettingsDrawer } from "@/components/session/selection-settings-drawer"
-import { CAPABILITY, capabilityIsUsable, findCapability, attachmentMimeTypes } from "@/components/session/capabilities"
+import { CAPABILITY, capabilityIsUsable, findCapability, attachmentMimeTypes, attachmentImagesAllowed } from "@/components/session/capabilities"
 import { useElementWidth } from "@/hooks/use-element-width"
 import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
 
@@ -126,6 +128,9 @@ export function SessionComposer({
 }) {
   const tSession = useTranslations("dashboard.session")
   const tNew = useTranslations("dashboard.new")
+  const tPlanning = useTranslations("planning")
+  const tGoal = useTranslations("goal")
+  const [goalMode,setGoalMode]=React.useState(false)
   const composerRef = React.useRef<HTMLDivElement | null>(null)
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null)
   const valueRef = React.useRef(value)
@@ -146,6 +151,7 @@ export function SessionComposer({
   const [menuDismissedFor, setMenuDismissedFor] = React.useState<string | null>(null)
   const commandMenuId = React.useId()
   React.useEffect(() => {
+    setGoalMode(false)
     setCommandFeedback(null)
     setCommandInputError(null)
     setMenuDismissedFor(null)
@@ -178,6 +184,7 @@ export function SessionComposer({
   const isStopping = runtimeStatus === "stopping"
   const isWaiting = runtimeStatus === "waiting" || runtimeStatus === "pending"
   const isError = runtimeStatus === "error"
+  const runtimeErrorText = useRuntimeErrorText()
   const isDisconnected = runtimeStatus === "disconnected"
   const sourceUnavailable = session.archived
   const connectorOnline = session.connectorStatus === "online"
@@ -202,6 +209,7 @@ export function SessionComposer({
   )
   const canUseEffortCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.effortCatalog, runtimeScope)
   const canUseAttachments = capabilityIsUsable(effectiveCapabilities, CAPABILITY.attachment, runtimeScope)
+  const imagesAllowed = attachmentImagesAllowed(effectiveCapabilities, runtimeScope)
   const allowedMimeTypes = React.useMemo(() => attachmentMimeTypes(effectiveCapabilities, runtimeScope), [effectiveCapabilities, runtimeScope])
   const {
     attachments,
@@ -218,7 +226,7 @@ export function SessionComposer({
     onDragLeave,
     onDragOver,
     onDrop,
-  } = useAttachments({ sessionId: creatingSession ? undefined : session.id, token, enabled: canUseAttachments, allowedMimeTypes })
+  } = useAttachments({ sessionId: creatingSession ? undefined : session.id, token, enabled: canUseAttachments, allowedMimeTypes, imagesAllowed })
   const canSend =
     canUseSendMessage &&
     !creatingSession &&
@@ -382,23 +390,38 @@ export function SessionComposer({
             : isWaitingApproval || isBlocked
               ? tSession("waitingApprovalPlaceholder")
               : isError
-                ? tSession("errorPlaceholder")
+                ? runtimeErrorText(runtimeFailureOf({ code: runtimeState?.error?.code }), tSession("errorPlaceholder"))
                 : tSession("replyPlaceholder")
-  const slashIntent = parseSlashIntent(value)
+  const planningIntent = parsePlanningCommand(value)
+  const goalUsable = capabilityIsUsable(effectiveCapabilities, "session.goal", runtimeScope) && connectorOnline
+  const goalIntent = goalUsable && /^\/goal(?:\s|$)/.test(value.trimStart())
+  const slashIntent = planningIntent || goalIntent ? null : parseSlashIntent(value)
   // "/Users/me/file.ts" and other non-command slash text never opens the menu.
   const slashCandidate = slashIntent && commandLikeToken(slashIntent) ? slashIntent : null
   const commandQuery = slashCandidate?.command ?? null
   const catalogUsable = canUseCommands && connectorOnline
   const mode = slashMode(slashIntent, runtimeCommands, { usable: catalogUsable, loading: commandsLoading, error: commandsError })
+  // `/plan` is parsed by AA, not run by the runtime; offer it wherever planning is usable.
+  const planningUsable = capabilityIsUsable(effectiveCapabilities, CAPABILITY.planning, runtimeScope) && connectorOnline
+  const planCommand = React.useMemo<RuntimeCommand>(() => ({
+    id: "plan", title: "/plan", description: tPlanning("commandDescription"), aliases: [], category: null, scope: "session",
+    enabled: true, disabledReason: null, acceptsArgs: true, argsSchema: null,
+    metadata: { ui: { kind: "execute", argumentHint: tPlanning("commandHint") } },
+  }), [tPlanning])
+  const baseOfferedCommands = React.useMemo(
+    () => planningUsable && !runtimeCommands.some((command) => command.id === "plan") ? [planCommand, ...runtimeCommands] : runtimeCommands,
+    [planCommand, planningUsable, runtimeCommands],
+  )
+  const offeredCommands:RuntimeCommand[] = goalUsable ? [{...planCommand,id:"goal",title:"/goal",description:tGoal("commandDescription"),metadata:{ui:{kind:"execute",argumentHint:tGoal("objective")}}},...baseOfferedCommands.filter(command=>command.id!=="goal")] : baseOfferedCommands
   const commandSuggestions = React.useMemo(
-    () => (commandQuery === null ? [] : runtimeCommands.filter((command) => commandMatchesQuery(command, commandQuery))),
-    [commandQuery, runtimeCommands],
+    () => (commandQuery === null ? [] : offeredCommands.filter((command) => commandMatchesQuery(command, commandQuery))),
+    [commandQuery, offeredCommands],
   )
   // A bare "/" in a session that cannot run commands explains why instead of
   // doing nothing, e.g. a runtime or bridge that predates native commands.
   const commandsCapability = findCapability(effectiveCapabilities, CAPABILITY.commands, runtimeScope)
   const commandsUnavailable =
-    commandsCapability !== null && !catalogUsable && slashCandidate?.command === "" && slashCandidate.suffix === ""
+    commandsCapability !== null && !catalogUsable && !planningUsable && slashCandidate?.command === "" && slashCandidate.suffix === ""
       ? !connectorOnline
         ? tSession("commandBlocked_offline")
         : !commandsCapability.supported
@@ -408,7 +431,7 @@ export function SessionComposer({
   const showUnavailableMenu = commandsUnavailable !== null && attachments.length === 0 && menuDismissedFor !== value
   const showCommandMenu =
     slashCandidate !== null &&
-    catalogUsable &&
+    (catalogUsable || planningUsable || goalUsable) &&
     slashCandidate.suffix === "" &&
     attachments.length === 0 &&
     menuDismissedFor !== value &&
@@ -417,12 +440,12 @@ export function SessionComposer({
     ? commandSuggestions[Math.min(activeCommandIndex, commandSuggestions.length - 1)]
     : null
   React.useEffect(() => { setActiveCommandIndex(0) }, [commandQuery])
-  const showInterruptAction = showInterrupt && mode.kind === "message" && !showCommandMenu
+  const showInterruptAction = showInterrupt && (mode.kind === "message" || goalIntent || goalMode) && !showCommandMenu
   React.useEffect(() => {
     onCommandQueryChange(commandQuery)
   }, [commandQuery, onCommandQueryChange])
   const commandBusy = sending || interrupting || commandPending
-  const blockOf = (command: RuntimeCommand): CommandBlock | null => commandBusy ? "busy" : commandBlock(command, runtimeStatus, {
+  const blockOf = (command: RuntimeCommand): CommandBlock | null => (command === planCommand || (command.id === "goal" && goalUsable)) ? null : commandBusy ? "busy" : commandBlock(command, runtimeStatus, {
     capability: canUseCommands,
     writable: session.takeover && !sourceUnavailable && !creatingSession,
     online: connectorOnline,
@@ -433,9 +456,12 @@ export function SessionComposer({
       ? tSession(`commandReason_${command.disabledReason}`)
       : command.disabledReason || tSession("commandUnavailable")
   }
+  // AA's own commands carry translated descriptions; native commands keep the runtime's text.
+  const commandDescription = (command: RuntimeCommand): string =>
+    tSession.has(`commandDescription_${command.id}`) ? tSession(`commandDescription_${command.id}`) : command.description || command.title
   const canSubmitCommand = mode.kind === "command" && !commandPending && connectorOnline
   const canSubmitMessage =
-    canSend &&
+    (canSend || Boolean((goalMode || goalIntent) && goalUsable && !sending && !interrupting) || Boolean(planningIntent && capabilityIsUsable(effectiveCapabilities, CAPABILITY.planning, runtimeScope) && !sending && !interrupting && !commandPending)) &&
     session.takeover &&
     hasInput &&
     attachmentsReady &&
@@ -448,6 +474,7 @@ export function SessionComposer({
   }, [onValueChange])
 
   const chooseCommand = (command: RuntimeCommand) => {
+    if(command.id==="goal" && goalUsable){setGoalMode(true);updateValue("");textareaRef.current?.focus();return}
     const block = blockOf(command)
     if (block) { setCommandInputError(blockMessage(command, block)); return }
     const sourceDraft = valueRef.current
@@ -461,6 +488,7 @@ export function SessionComposer({
     void runCommand(command, raw, sourceDraft)
   }
   const completeCommand = (command: RuntimeCommand) => {
+    if(command.id==="goal" && goalUsable){setGoalMode(true);updateValue("");textareaRef.current?.focus();return}
     updateValue(`/${command.id}${command.acceptsArgs ? " " : ""}`)
     textareaRef.current?.focus()
   }
@@ -520,6 +548,15 @@ export function SessionComposer({
   }
 
   const submit = async () => {
+    if(goalIntent && !value.trimStart().slice(5).trim() && goalUsable){setGoalMode(true);updateValue("");return}
+    if((goalMode || goalIntent) && goalUsable && !sending && !interrupting && attachmentsReady && session.takeover){
+      const text=value,files=attachments,currentVisit=sessionVisitRef.current
+      const objective=goalIntent?text.trimStart().slice(5).trim():text.trim()
+      if(!objective)return
+      const sent=await onSend("/goal "+objective,files,{})
+      if(sent && sessionVisitRef.current===currentVisit){if(valueRef.current===text)updateValue("");files.forEach(file=>remove(file.id));setGoalMode(false)}
+      return
+    }
     if (!hasInput) return
     if (mode.kind === "pending") {
       setCommandInputError(tSession(commandsError ? "commandCatalogError" : "commandLoading"))
@@ -533,6 +570,18 @@ export function SessionComposer({
     if (!canSubmitMessage) return
     const text = value
     const files = attachments
+    if (planningIntent) {
+      const currentVisit = sessionVisitRef.current
+      const sent = await onSend(text, files, {
+        ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
+        ...(selectedPermissionSelection ? { permission: selectedPermissionSelection } : {}),
+      })
+      if (sent && sessionVisitRef.current === currentVisit) {
+        if (valueRef.current === text) updateValue("")
+        files.forEach(file => remove(file.id))
+      }
+      return
+    }
     updateValue("")
     clear({ revokePreviews: false })
     const sent = await onSend(text, files, {
@@ -620,6 +669,7 @@ export function SessionComposer({
       onDragOver={onDragOver}
       onDrop={onDrop}
     >
+      {goalMode && <Badge variant="outline">{tGoal("title")}<Button type="button" variant="ghost" size="icon-sm" aria-label={tGoal("clearMode")} onClick={()=>setGoalMode(false)}><X/></Button></Badge>}
       <DragOverlay isDragging={isDragging} />
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
         {commandFeedback ? (
@@ -687,7 +737,7 @@ export function SessionComposer({
                         /{command.id}{hint ? <span className="text-muted-foreground"> {hint}</span> : null}
                       </span>
                       <span className={cn("min-w-0 flex-1 truncate text-xs", block ? "text-muted-foreground/80" : "text-muted-foreground")}>
-                        {block ? blockMessage(command, block) : command.description || command.title}
+                        {block ? blockMessage(command, block) : commandDescription(command)}
                       </span>
                     </button>
                   )

@@ -20,6 +20,7 @@ function startup(t: TestContext, environment: Record<string, string> = {}) {
 const fs=require('node:fs'),path=require('node:path');
 if(process.argv.includes('--version')){console.log('uv fixture');process.exit(0)}
 const args=process.argv.slice(2);fs.appendFileSync(process.env.CALLS,JSON.stringify({args,pid:process.pid})+'\\n');
+if(args.includes('prepare-pi')) { console.log('Pi ACP adapter and dependencies ready'); process.exit(0); }
 if(args[0]==='sync') {
  console.error('Downloading fixture (1 MiB)');
  const finish=()=>{const v=process.env.UV_PROJECT_ENVIRONMENT,b=path.join(v,'bin');fs.mkdirSync(b,{recursive:true});fs.writeFileSync(path.join(v,'pyvenv.cfg'),'home = '+path.dirname(process.execPath)+'\\n');if(!fs.existsSync(path.join(b,'python')))fs.symlinkSync(process.execPath,path.join(b,'python'));fs.writeFileSync(path.join(b,'anywhere-cli'),'');process.exit(0)};
@@ -74,12 +75,18 @@ test("RPC starts only after preparation commits its receipt, repeated acquisitio
   assert.equal(f.calls().length, 1); assert.equal(f.calls()[0]?.args[0], "sync");
   assert.equal(fs.existsSync(path.join(f.root, "data", ".connector-environment.json")), false);
   fs.writeFileSync(wait, ""); await first;
-  assert.equal(f.calls().length, 2); assert.deepEqual(f.calls()[1]?.args.slice(0, 2), ["run", "--no-sync"]);
+  assert.equal(f.calls().length, 3);
+  assert.ok(f.calls()[1]?.args.includes("prepare-pi"));
+  assert.ok(f.calls()[2]?.args.includes("rpc"));
+  assert.deepEqual(f.calls()[2]?.args.slice(0, 2), ["run", "--no-sync"]);
   assert.equal(f.supervisor.environmentState().status, "ready"); assert.equal(f.ownership.at(-1)?.status, "owned");
   assert.equal(fs.existsSync(path.join(f.root, "data", ".connector-environment.json")), true);
+  const settled = f.ownership.length;
+  await f.supervisor.acquireOwnership();
+  assert.deepEqual(f.ownership.slice(settled).map(state => state.status), ["owned"]);
   f.conflict(true); await assert.rejects(f.supervisor.acquireOwnership());
   assert.equal(f.supervisor.environmentState().status, "ready"); assert.equal(f.ownership.at(-1)?.status, "conflict");
-  f.conflict(false); await f.supervisor.acquireOwnership(); assert.equal(f.calls().length, 2);
+  f.conflict(false); await f.supervisor.acquireOwnership(); assert.equal(f.calls().length, 3);
 });
 test("cancel then immediate recheck starts one fresh preparation with no late RPC from the cancelled attempt", async t => {
   if (process.platform === "win32") { t.skip("POSIX executable fixture"); return; }
@@ -91,7 +98,7 @@ test("cancel then immediate recheck starts one fresh preparation with no late RP
   assert.equal(f.supervisor.environmentState().status, "cancelled"); assert.equal(f.calls().length, 1);
   fs.writeFileSync(wait, ""); await f.supervisor.acquireOwnership();
   assert.equal(f.calls().filter(c => c.args[0] === "sync").length, 2);
-  assert.equal(f.calls().filter(c => c.args[0] === "run").length, 1);
+  assert.equal(f.calls().filter(c => c.args.includes("rpc")).length, 1);
 });
 test("RPC startup has its own short deadline and kills its process before rejecting", { timeout: 15_000 }, async t => {
   if (process.platform === "win32") { t.skip("POSIX executable fixture"); return; }

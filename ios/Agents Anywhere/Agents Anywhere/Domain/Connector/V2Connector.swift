@@ -61,3 +61,28 @@ nonisolated struct V2ConnectorSessionArchiveResponse: Decodable, Hashable {
     let affected: Int
     let serverTime: String
 }
+
+/// User-chosen device switches owned by the Server (docs/api/device-settings.md),
+/// unlike `/preferences`, which the Connector reports and clients only read.
+nonisolated struct V2ConnectorDeviceSettings: Codable, Hashable {
+    var confirmQuitOnShutdown: Bool
+}
+
+nonisolated struct V2ConnectorDeviceSettingsResponse: Decodable, Hashable {
+    let connectorId: V2ConnectorID
+    let settings: V2ConnectorDeviceSettings
+    /// `nil` on reads. On writes, `false` means the Server kept the change and
+    /// the device applies it once it is online on a Connector that supports it.
+    let delivered: Bool?
+    let serverTime: String
+}
+
+/// Only the fields to change; omitted (`nil`) fields keep their current value.
+nonisolated struct V2ConnectorDeviceSettingsPatch: Encodable, Hashable {
+    var confirmQuitOnShutdown: Bool?
+}
+
+extension V2Connector {
+    /// Device settings only take effect on the Desktop app's managed Connector.
+    nonisolated var supportsDeviceSettings: Bool { connectorKind == "desktop" }
+}

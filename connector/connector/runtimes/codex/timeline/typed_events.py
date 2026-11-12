@@ -21,6 +21,7 @@ from openai_codex.generated.v2_all import (
     FileUpdateChange,
     FunctionCallOutputResponseItem,
     FunctionCallResponseItem,
+    ImageViewThreadItem,
     InputImageContentItem,
     InputImageDynamicToolCallOutputContentItem,
     InputTextContentItem,
@@ -368,6 +369,14 @@ def timeline_projection_from_thread_item(
             status=event_status,
             role="system",
             turn_id=turn_id,
+        )
+    if isinstance(root, ImageViewThreadItem):
+        return CodexTimelineProjection(
+            native_id=root.id,
+            raw_type="imageView",
+            status=event_status,
+            turn_id=turn_id,
+            path=root.path.root,
         )
     return CodexTimelineProjection(
         native_id=None,

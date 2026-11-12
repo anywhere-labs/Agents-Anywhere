@@ -27,6 +27,8 @@ class ClaudeSession:
     title: str | None = None
     cwd: str | None = None
     ordering_time: str | None = None
+    planning_mode: bool = False
+    planning_observed: bool = False
     selections: dict[str, str | None] = field(default_factory=dict)
     timeline_items: dict[str, RuntimeTimelineItem] = field(default_factory=dict)
     timeline_revision: int = 0

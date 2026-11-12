@@ -20,7 +20,7 @@ README 使用 AA 官网的纯色黑白视觉和真实产品截图，参考 DSH D
 
 输入来自相邻工作区的 [AA-landingpage](https://github.com/Bensonwang-owl/AA-landingpage)，原始来源和 SHA-256 记录在 `provenance.json`。`sources/` 保留本次使用的完整输入，复现不依赖相邻仓库或开发机的目录结构。截图文字和状态属于拍摄时刻，不代表每个 Runtime 支持相同的功能。
 
-MacBook、iPhone、iPad 图片沿用官网已合成的 Apple 设备展示图。设备边框来源与适用条款见官网仓库的 `assets/README.md`（Apple Design Resources）；这些成品不作为可复用设备边框库分发，不应将第三方设备素材理解为本项目 MIT 授权的范围。没有复制独立 Apple 边框源文件。Windows 和 Android 保留原始截图比例。Caveat 字体及其 SIL Open Font License 一并保留在 `sources/`。
+MacBook、iPhone、iPad 图片沿用官网已合成的 Apple 设备展示图。设备边框来源与适用条款见官网仓库的 `assets/README.md`（Apple Design Resources）；这些成品不作为可复用设备边框库分发，不应将第三方设备素材理解为本项目开源许可证授权的范围。没有复制独立 Apple 边框源文件。Windows 和 Android 保留原始截图比例。Caveat 字体及其 SIL Open Font License 一并保留在 `sources/`。
 
 Agent 标识沿用官网 `public/agents/` 的 Codex、Claude Code 与 DeepSeek Harness SVG，用于说明相应工具的兼容支持；名称与图形归各自权利人。来源细节见官网仓库 `assets/README.md`。后续支持使用“更多 Agent，即将支持 / More agents coming soon”表达，不将尚未支持的工具列为已支持。
 

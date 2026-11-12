@@ -1,7 +1,7 @@
 import { fork, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import readline from "node:readline";
-import type { DesktopSettings } from "./connector-types";
+import type { ConnectorState, DesktopSettings } from "./connector-types";
 import type { OwnershipState } from "./local-runtime";
 import {
   BACKEND_API_PREFIX,
@@ -34,7 +34,7 @@ export type BackendClientOptions = {
  *
  * It forks the backend, waits for the loopback port and token, keeps a
  * reconnecting SSE subscription for the snapshots Main itself needs (ownership,
- * settings), and proxies `net.fetch` requests from the backend so outbound
+ * Connector state, settings), and proxies `net.fetch` requests so outbound
  * traffic keeps using Chromium's network stack.
  */
 export class DesktopBackendClient {
@@ -46,6 +46,7 @@ export class DesktopBackendClient {
   private started = false;
   private exitPromise: Promise<void> | null = null;
   private ownership: OwnershipState = { status: "checking" };
+  private connectorAuthFailed = false;
   private settings: DesktopSettings | null = null;
   /** What the backend said last, quoted when it exits without a clear reason. */
   private lastError = "";
@@ -80,6 +81,10 @@ export class DesktopBackendClient {
     return this.ownership;
   }
 
+  hasConnectorAuthFailure(): boolean {
+    return this.connectorAuthFailed;
+  }
+
   getSettings(): DesktopSettings | null {
     return this.settings;
   }
@@ -89,7 +94,7 @@ export class DesktopBackendClient {
     this.started = true;
     const entry = this.options.entryPath ?? path.join(__dirname, "backend", "index.js");
     const payload = Buffer.from(JSON.stringify(init), "utf8").toString("base64");
-    const child = fork(entry, [payload], {
+    const child = fork(entry, [payload, String(process.pid)], {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
       stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
@@ -334,7 +339,8 @@ export class DesktopBackendClient {
     }
     if (event === "ownership") this.ownership = parsed as OwnershipState;
     else if (event === "settings") this.settings = parsed as DesktopSettings;
-    else if (!["state", "logs", "logsCleared"].includes(event)) return;
+    else if (event === "state") this.connectorAuthFailed = (parsed as ConnectorState | null)?.authFailed === true;
+    else if (!["logs", "logsCleared"].includes(event)) return;
     this.options.onEvent?.({ event: event as BackendEvent["event"], data: parsed });
   }
 

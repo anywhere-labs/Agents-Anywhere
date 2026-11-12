@@ -1,9 +1,12 @@
 import { jsonBytes } from './json-size.js'
+import { PlanDrafts } from './plan-draft.js'
 import { randomUUID } from 'node:crypto'
 import { receiptKey } from './attachments.js'
 import type { SnapshotPage, SnapshotRequest, SnapshotResult, SyncBatch as WireBatch } from '../generated/dsh-sync.js'
+import { MeshCallError } from 'meshcall'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { SessionLogSnapshot } from '@deepseek-ai/dsh-session-query'
 import { createProjection, replayHistory, PROJECTION_VERSION, type SessionProjection } from './history.js'
 import { sessionId } from './identity.js'
@@ -15,7 +18,7 @@ export type SyncOperation = { kind: string, [key: string]: unknown }
 export interface SyncCheckpoint { version: 1, projectionVersion: typeof PROJECTION_VERSION, throughSeq: number, historyHash: string, settled: boolean }
 /** What the feed needs from the Connector; one call per batch, checkpoint or capture. */
 export interface SyncTransport {
-  ingestBatch(batch: WireBatch, signal: AbortSignal): Promise<void>
+  ingestBatch(batch: WireBatch, signal: AbortSignal, attempt?: number): Promise<void>
   loadCheckpoint(externalSessionId: string): Promise<Record<string, unknown> | null>
   saveCheckpoint(externalSessionId: string, checkpoint: SyncCheckpoint): Promise<void>
   deleteCheckpoint(externalSessionId: string): Promise<void>
@@ -28,18 +31,29 @@ function matchesCheckpoint(value: unknown, projection: SessionProjection): boole
     && projection.settled && checkpoint.throughSeq === projection.throughSeq && checkpoint.historyHash === projection.historyHash
 }
 const MAX_BUFFER = 10_000
+const MAX_QUEUED_BYTES = 16 * 1024 * 1024
 const MAX_BYTES = 6 * 1024 * 1024
+/** Per-session changes that only say "reread this fact"; one queued copy suffices. */
+const SESSION_INVALIDATIONS = new Set(['session', 'status', 'question', 'approval'])
+/** Events with notifications or side effects that a recalibrating baseline does not repeat. */
+const RETAINED_EVENTS = new Set(['turn/end', 'plan/mode', 'model/selection', 'agent-preset/selected'])
 export const MAX_RETAINED_PROJECTIONS = 8
 export const SYNC_FLUSH_MS = Math.ceil(1000 / 30)
 
 class SyncTransportError extends Error {}
+/** The Connector's code for a Server it cannot reach; see contracts/dsh-bridge/2.0. */
+const BACKEND_UNAVAILABLE = 'backend_unavailable'
+const BATCH_RETRY_BASE_MS = 1_000
+const BATCH_RETRY_MAX_MS = 30_000
 
 /** One ordered subscription. A batch's delivery call returns only after the Connector ingested it. */
 export class SyncFeed {
+  private readonly planDrafts = new PlanDrafts()
   private batchSeq = 0
   private queue: NativeChange[] = []
   private queuedInvalidations = new Set<string>()
   private queuedBytes = 0
+  private lastQueued = new Map<string, NativeChange>()
   private projections = new Map<string, SessionProjection>()
   private published = new Map<string, string>()
   private sourceAvailability = new Map<string, string>()
@@ -62,21 +76,94 @@ export class SyncFeed {
       if (this.closed) return
       // These events invalidate current facts; replaying every invalidation
       // cannot recover an intermediate value and can starve the initial scan.
-      if (!('id' in change)) {
-        const key = change.type === 'catalogs' ? `catalogs:${change.catalogType}` : change.type
-        if (this.queuedInvalidations.has(key)) return
-        this.queuedInvalidations.add(key)
+      const invalidation = !('id' in change) ? (change.type === 'catalogs' ? `catalogs:${change.catalogType}` : change.type)
+        : SESSION_INVALIDATIONS.has(change.type) ? `${change.type}:${change.id}` : undefined
+      if (invalidation !== undefined) {
+        if (this.queuedInvalidations.has(invalidation)) return
+        this.queuedInvalidations.add(invalidation)
       }
-      try { this.queuedBytes += jsonBytes(change) }
+      let bytes: number
+      try { bytes = jsonBytes(change) }
       catch (error) {
         this.native.diagnostics.log('error', 'sync.event_failed', { streamId: this.id, sessionId: 'id' in change ? change.id : undefined }, error)
         if (!('id' in change)) return
         change = { type: 'refresh', id: change.id }
+        bytes = jsonBytes(change)
       }
-      if (this.queue.length >= MAX_BUFFER || this.queuedBytes > 16 * 1024 * 1024) { this.fail(new Error('DSH event buffer full; resubscribe for a fresh baseline')); return }
-      this.queue.push(change)
+      this.queuedBytes += bytes
+      if (change.type === 'stream' && this.coalesceStream(change)) return
+      if (this.queue.length >= MAX_BUFFER || this.queuedBytes > MAX_QUEUED_BYTES) {
+        if (!this.compactQueue()) { this.fail(new Error('DSH event buffer full; resubscribe for a fresh baseline')); return }
+      }
+      // A queued stream change may absorb later chunks, so never share the emitted object.
+      const queued = change.type === 'stream' ? { ...change } : change
+      this.queue.push(queued)
+      if ('id' in queued) this.lastQueued.set(queued.id, queued)
       this.wake?.(); this.wake = undefined
     })
+  }
+  /**
+   * Merges a chunk into the session's last queued change when that is a delta of
+   * the same block. Projections and plan drafts concatenate these deltas, so one
+   * merged chunk yields the same result while a long reply stays one queue entry.
+   */
+  private coalesceStream(change: Extract<NativeChange, { type: 'stream' }>): boolean {
+    const previous = this.lastQueued.get(change.id)
+    if (previous?.type !== 'stream' || previous.turn !== change.turn || previous.step !== change.step
+      || previous.throughSeq !== change.throughSeq) return false
+    const merged = mergeChunks(previous.chunk, change.chunk)
+    if (!merged) return false
+    previous.chunk = merged; previous.time = change.time
+    return true
+  }
+  /**
+   * Keeps the feed alive when native changes outpace delivery (for example a
+   * running Agent while the startup scan uploads a long history). The sessions
+   * holding most of the queue give their changes up for one recalibration;
+   * events whose notifications a baseline does not repeat stay queued after it.
+   */
+  private compactQueue(): boolean {
+    const sessions = new Map<string, { count: number, bytes: number }>()
+    const kinds = new Map<string, number>()
+    let length = this.queue.length, bytes = 0
+    for (const change of this.queue) {
+      const size = jsonBytes(change)
+      bytes += size
+      kinds.set(change.type, (kinds.get(change.type) ?? 0) + 1)
+      if (!('id' in change)) continue
+      const session = sessions.get(change.id) ?? { count: 0, bytes: 0 }
+      session.count++; session.bytes += size
+      sessions.set(change.id, session)
+    }
+    // Merged chunks are counted at their full size, so recount before dropping anything.
+    if (length < MAX_BUFFER && bytes <= MAX_QUEUED_BYTES) { this.queuedBytes = bytes; return true }
+    const byCount = length >= MAX_BUFFER
+    const collapsed = new Set<string>()
+    for (const [id, session] of [...sessions].sort(([, a], [, b]) => byCount ? b.count - a.count : b.bytes - a.bytes)) {
+      if (length <= MAX_BUFFER / 2 && bytes <= MAX_QUEUED_BYTES / 2) break
+      collapsed.add(id); length -= session.count - 1; bytes -= session.bytes
+    }
+    if (!collapsed.size) return false
+    const kept: NativeChange[] = [], tails = new Map<string, NativeChange[]>()
+    const interrupted = new Set<string>()
+    for (const change of this.queue) {
+      if (!('id' in change) || !collapsed.has(change.id)) { kept.push(change); continue }
+      if (change.type === 'refresh' && change.interrupted) interrupted.add(change.id)
+      if (change.type === 'event' && RETAINED_EVENTS.has(change.event.type)) {
+        tails.set(change.id, [...tails.get(change.id) ?? [], change])
+      }
+    }
+    for (const id of collapsed) {
+      for (const type of SESSION_INVALIDATIONS) this.queuedInvalidations.delete(`${type}:${id}`)
+      const refresh: NativeChange = { type: 'refresh', id, resume: true, ...interrupted.has(id) ? { interrupted: true } : {} }
+      kept.push(refresh, ...tails.get(id) ?? [])
+      this.lastQueued.set(id, kept.at(-1)!)
+    }
+    this.native.diagnostics.log('warn', 'sync.queue_compacted', { streamId: this.id, queuedEvents: this.queue.length,
+      remainingEvents: kept.length, sessions: collapsed.size, kinds: [...kinds].map(([type, count]) => `${type}:${count}`).join(',') })
+    this.queue = kept
+    this.queuedBytes = kept.reduce((total, change) => total + jsonBytes(change), 0)
+    return this.queue.length < MAX_BUFFER && this.queuedBytes <= MAX_QUEUED_BYTES
   }
   start(): void {
     this.native.diagnostics.log('info', 'sync.started', { streamId: this.id })
@@ -94,7 +181,7 @@ export class SyncFeed {
     this.unwatch()
     this.wake?.(); this.wake = undefined
     this.queue = []; this.queuedBytes = 0; this.projections.clear()
-    this.queuedInvalidations.clear()
+    this.queuedInvalidations.clear(); this.lastQueued.clear()
     this.failedSessions.clear()
     this.bufferedOperations = undefined; this.bufferedBytes = 0
   }
@@ -130,11 +217,20 @@ export class SyncFeed {
     if (jsonBytes(batch) > MAX_BYTES) throw new Error('DSH sync batch exceeds the transport limit')
     this.lastSentAt = performance.now()
     this.native.diagnostics.log('debug', 'sync.batch', { streamId: this.id, batchSeq: batch.batchSeq, operations: operations.length, kinds: operations.map(op => op.kind).join(',') })
-    try {
-      // No deadline: a slow upload is a slow answer, and MeshCall keepalives watch the connection.
-      await this.transport.ingestBatch(batch, this.abort.signal)
-    } catch (error) {
-      throw new SyncTransportError('DSH event delivery failed', { cause: error })
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        // No deadline: a slow upload is a slow answer, and MeshCall keepalives watch the connection.
+        await this.transport.ingestBatch(batch, this.abort.signal, attempt)
+        break
+      } catch (error) {
+        // An unreachable Server says nothing about the feed. Ending it would rescan
+        // every session on reconnect, and on a slow network that scan fails the same way.
+        if (this.closed || !(error instanceof MeshCallError) || error.code !== BACKEND_UNAVAILABLE) {
+          throw new SyncTransportError('DSH event delivery failed', { cause: error })
+        }
+        this.native.diagnostics.log('warn', 'sync.batch_retry', { streamId: this.id, batchSeq: batch.batchSeq, attempt: attempt + 1 }, error)
+        await delay(Math.min(BATCH_RETRY_BASE_MS * 2 ** attempt, BATCH_RETRY_MAX_MS), undefined, { signal: this.abort.signal })
+      }
     }
     this.native.diagnostics.log('debug', 'sync.ack', { streamId: this.id, batchSeq: batch.batchSeq, elapsedMs: Math.round(performance.now() - this.lastSentAt) })
   }
@@ -326,7 +422,47 @@ export class SyncFeed {
       this.native.diagnostics.log('error', 'sync.runtime_update_failed', { streamId: this.id, phase }, error)
     }
   }
-  private async changes(changes: NativeChange[]): Promise<void> {
+  /**
+   * Delivers the queued changes of individual sessions while the startup scan
+   * still runs, so a session someone is working in streams after its own
+   * baseline instead of after the whole inventory (#504). A session that has
+   * no baseline yet gets one first; runtime-wide changes and visibility
+   * reconciliation wait for the end of the scan.
+   */
+  private async liveChanges(): Promise<void> {
+    const live = this.queue.filter((change): change is Extract<NativeChange, { id: string }> => 'id' in change)
+    if (!live.length) return
+    this.queue = this.queue.filter(change => !('id' in change))
+    const ids = new Set(live.map(change => change.id))
+    for (const id of ids) {
+      // Later chunks must not merge into a change that is already being delivered.
+      this.lastQueued.delete(id)
+      for (const kind of SESSION_INVALIDATIONS) this.queuedInvalidations.delete(`${kind}:${id}`)
+    }
+    this.queuedBytes = this.queue.reduce((total, change) => total + jsonBytes(change), 0)
+    // Imported sessions first: another session's capture must not hold up their updates.
+    const imported = live.filter(change => this.published.has(change.id))
+    const pending = live.filter(change => !this.published.has(change.id))
+    let reconcile = await this.deliverLive(imported)
+    for (const id of new Set(pending.map(change => change.id))) {
+      if (!this.published.has(id) && await this.native.visible(id)) await this.baseline(id, true)
+    }
+    if (await this.deliverLive(pending)) reconcile = true
+    if (reconcile && !this.queuedInvalidations.has('visibility')) {
+      this.queuedInvalidations.add('visibility')
+      this.queue.push({ type: 'visibility' })
+    }
+  }
+  private async deliverLive(changes: NativeChange[]): Promise<boolean> {
+    if (!changes.length) return false
+    this.bufferedOperations = []
+    const reconcile = await this.changes(changes, false)
+    await this.flushOperations()
+    this.bufferedOperations = undefined
+    return reconcile
+  }
+  /** Applies changes; returns whether a visibility reconciliation is still due when `reconcileNow` is false. */
+  private async changes(changes: NativeChange[], reconcileNow = true): Promise<boolean> {
     const touched = new Set<string>(), statuses = new Set<string>(), capabilities = new Set<string>()
     const ended: [string, Record<string, unknown>][] = []
     let reconcile = false, runtimeCapabilities = false, allSessionCapabilities = false
@@ -354,11 +490,23 @@ export class SyncFeed {
           if (this.published.has(id)) reconcile = true
           return
         }
-        if (change.type === 'refresh') { await this.baseline(id); return }
+        if (change.type === 'refresh') {
+          if (change.interrupted) {
+            this.planDrafts.reset(id)
+            await this.notification('planning.observed', { sessionId: sessionId(this.namespace, id), externalSessionId: id, kind: 'interrupted' })
+          }
+          // Notifications already sent from an unsettled projection may include drafts
+          // that a checkpoint delta cannot remove; only a full capture replaces them.
+          await this.baseline(id, change.resume === true && (this.projections.get(id)?.settled ?? true)); return
+        }
         if (!this.published.has(id)) await this.baseline(id)
         if (!this.published.has(id)) return
         if (change.type === 'question' || change.type === 'approval') await this.notices(id)
         if (change.type === 'stream') {
+          const mode = await this.native.planning.read(id as SessionId)
+          if ('active' in mode && mode.active === false) await this.notification('planning.observed', { sessionId: sessionId(this.namespace, id), externalSessionId: id, kind: 'execution' })
+          const draft = this.planDrafts.observe(id, change.turn, change.step, change.chunk)
+          if (draft) await this.notification('planning.observed', { sessionId: sessionId(this.namespace, id), externalSessionId: id, ...draft })
           // Running sessions are never evicted. A chunk without a projection waits
           // for the next event to restore it instead of rereading the log per chunk.
           const projection = this.projections.get(id)
@@ -369,7 +517,13 @@ export class SyncFeed {
           return
         }
         if (change.type === 'event') {
+          const rawEvent = change.event as unknown as { type: string, data: { active?: boolean } }
+          if (rawEvent.type === 'plan/mode' && typeof rawEvent.data.active === 'boolean') await this.notification('planning.observed', { sessionId: sessionId(this.namespace, id), externalSessionId: id, kind: 'mode', mode: rawEvent.data.active ? 'plan' : 'normal' })
           if (['model/selection', 'agent-preset/selected'].includes(change.event.type)) capabilities.add(id)
+          if (change.event.type === 'turn/end') {
+            this.planDrafts.reset(id)
+            await this.notification('planning.observed', { sessionId: sessionId(this.namespace, id), externalSessionId: id, kind: 'interrupted' })
+          }
           if (change.event.type === 'turn/end') ended.push([id, {
             sessionId: this.published.get(id), externalSessionId: id,
             sourceObservedAt: new Date(change.event.time).toISOString(),
@@ -410,12 +564,16 @@ export class SyncFeed {
     for (const id of capabilities) await this.sessionOperation(id, 'capabilities', async () => {
       if (this.published.has(id)) await this.notification('session.capability.updated', await this.native.capabilities(this.published.get(id), id as SessionId))
     })
+    if (!reconcileNow) return reconcile
     if (reconcile) await this.reconcile()
+    return false
   }
   private async run(): Promise<void> {
     await this.notification('session.inventory.begin', { scanToken: this.id })
     await this.native.inventory(this.abort.signal, async entry => {
-      await this.baseline(entry.header.id, true)
+      // A session the live changes below already imported needs no second capture.
+      if (!this.published.has(entry.header.id)) await this.baseline(entry.header.id, true)
+      await this.liveChanges()
       await this.rememberCheckpoints()
       this.trimProjections()
     })
@@ -486,10 +644,23 @@ export class SyncFeed {
     }
   }
   private takeChanges(): NativeChange[] {
-    this.queuedBytes = 0; this.queuedInvalidations.clear()
+    this.queuedBytes = 0; this.queuedInvalidations.clear(); this.lastQueued.clear()
     return this.queue.splice(0)
   }
 
+}
+
+/** One chunk with the effect of applying `a` then `b`, or undefined when they are not deltas of one block. */
+function mergeChunks(a: StreamChunk, b: StreamChunk): StreamChunk | undefined {
+  if (!('index' in a) || !('index' in b) || a.index !== b.index) return undefined
+  if ((a.type === 'text-delta' && b.type === 'text-delta') || (a.type === 'reasoning-delta' && b.type === 'reasoning-delta')) {
+    return { ...a, text: a.text + b.text }
+  }
+  if (a.type === 'tool-call-delta' && b.type === 'tool-call-delta' && a.id === b.id) {
+    const name = b.name ?? a.name
+    return { ...a, ...name === undefined ? {} : { name }, argumentsDelta: a.argumentsDelta + b.argumentsDelta }
+  }
+  return undefined
 }
 
 function contentItems(items: TimelineItem[]): TimelineItem[] {

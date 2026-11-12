@@ -2,7 +2,12 @@
 
 import { useTranslations } from "next-intl"
 
-import { parseSettingsTab, settingsNavigation, type SettingsTab } from "@/components/settings/settings-navigation"
+import {
+  parseSettingsTab,
+  settingsNavigation,
+  settingsNavigationGroups,
+  type SettingsTab,
+} from "@/components/settings/settings-navigation"
 import { WorkspaceSectionSidebar } from "@/components/workspace-section-sidebar"
 import { useWorkspace } from "@/components/workspace-context"
 
@@ -16,12 +21,13 @@ export function SettingsSidebar({ contained = false }: { contained?: boolean }) 
       title={t("title")}
       activeId={parseSettingsTab(settingsTab)}
       onNavigate={(tab) => navigate("settings", tab)}
-      groups={[
-        {
-          id: "settings",
-          items: settingsNavigation.map((item) => ({ id: item.id, label: t(item.labelKey), icon: item.icon })),
-        },
-      ]}
+      groups={settingsNavigationGroups.map((group) => ({
+        id: group,
+        label: group === "models" ? t("modelsGroup") : undefined,
+        items: settingsNavigation
+          .filter((item) => item.group === group)
+          .map((item) => ({ id: item.id, label: t(item.labelKey), icon: item.icon })),
+      }))}
     />
   )
 }

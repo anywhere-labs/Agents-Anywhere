@@ -36,6 +36,7 @@ export type ConnectorView = {
   userId: string
   name: string
   deviceOs?: "macos" | "windows" | "linux" | null
+  connectorKind?: "desktop" | "cli" | null
   status: ConnectorStatus
   lastSeenAt?: string | null
 }
@@ -296,7 +297,7 @@ let mockInstanceSettings: InstanceSettings = {
 
 const mockServiceInfo: ServiceInfo = {
   endpoint: "https://anywhere.t4wefan.pub",
-  version: "2.1.0",
+  version: "2.2.0",
   database: "PostgreSQL",
   databasePath: "postgres:5432/agents_anywhere",
   startedAt: new Date(Date.now() - 86400000 * 7).toISOString(),

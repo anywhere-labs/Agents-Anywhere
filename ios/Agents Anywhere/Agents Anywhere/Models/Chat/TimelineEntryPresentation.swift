@@ -45,7 +45,26 @@ struct TimelineEntryPresentation: Hashable {
         filePath = TimelineText.path(raw)
         externalURL = TimelineText.first(raw["url"], raw["openUrl"]).flatMap(URL.init(string:))
             .flatMap { ["https", "http"].contains($0.scheme?.lowercased() ?? "") ? $0 : nil }
-        if item.isReasoning {
+        if raw["code"]?.stringValue == "model_request_retry" {
+            kind = .marker; symbol = "clock"; detail = nil
+            switch raw["state"]?.stringValue {
+            case "completed": title = String(localized: "重试结束，模型已恢复响应。")
+            case "interrupted": title = String(localized: "已取消模型请求重试。")
+            case "failed": title = String(localized: "模型请求重试后仍失败。")
+            default:
+                let reason = raw["reason"]?.stringValue == "rate_limit"
+                    ? String(localized: "模型服务暂时繁忙，正在重试。")
+                    : String(localized: "模型服务暂时不可用，正在重试。")
+                let attempt = raw["attempt"]?.intValue ?? 1
+                let progress = raw["maxAttempts"]?.intValue.map { maximum in String(localized: "第 \(attempt)/\(maximum) 次重试。") }
+                    ?? String(localized: "第 \(attempt) 次重试。")
+                let delay = raw["retryInMs"]?.intValue.map { milliseconds in
+                    let seconds = Int(ceil(Double(milliseconds) / 1000))
+                    return String(localized: "本次等待 \(seconds) 秒后重试。")
+                }
+                title = [reason, progress, delay].compactMap { $0 }.joined(separator: " ")
+            }
+        } else if item.isReasoning {
             kind = .reasoning; symbol = "sparkles"
             let text = TimelineText.reasoning(raw)
             if let summary = TimelineText.inlineSummary(text), !summary.isEmpty { title = String(localized: "思考：\(summary)") }

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+import re
+import time
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
@@ -20,11 +22,19 @@ from connector.runtimes.claude.sdk.events import (
     is_result_message,
     terminal_event_from_message,
 )
-from connector.runtimes.claude.timeline.messages import message_id, message_role
+from connector.runtimes.claude.timeline.messages import (
+    is_task_notification_message,
+    message_id,
+    message_role,
+    message_text,
+)
 from connector.runtimes.claude.timeline.stream import is_stream_event
 
 RECONCILE_DONE_MARKER = "AA_MAINTENANCE_DONE"
 CONNECTION_CLOSE_TIMEOUT_SECONDS = 30
+MAX_WAKEUP_DELAY_SECONDS = 3600 + 60  # The CLI can round the fire time to a minute.
+WAKEUP_GRACE_SECONDS = 60
+LEGACY_WAKEUP_RESULT = re.compile(r"^Next wakeup scheduled for .*?\(in (\d{1,5})s\)", re.DOTALL)
 LEGACY_RECONCILE_PROMPT = (
     "AA connection maintenance: call CronList exactly once to report the current "
     "scheduled task list, then stop. If needed, use ToolSearch to find CronList. "
@@ -46,11 +56,16 @@ class ClaudeResponse:
     discard: bool = False
     maintenance: bool = False
     task_snapshot: set[str] | None = None
+    resumed: bool = False
+    resume_notification: bool = False
+    resume_prompt: str | None = None
 
     async def connect(self) -> None:
         await self.connection.connect()
 
     async def query(self, content: str) -> None:
+        if self.resumed:
+            self.resume_prompt = content
         if self.user_id is None:
             await query_client(self.connection.client, content)
         else:
@@ -109,6 +124,10 @@ class ClaudeConnection:
     on_background_done: Callable[[ClaudeConnection], Awaitable[None]]
     cleanup: Callable[[], None]
     idle_timeout_seconds: float = 600.0
+    awaiting_resume_prompt: bool = False
+    wakeup_until: float = 0.0
+    wakeup_prompt: str | None = None
+    wakeup_scheduled_for: int | None = None
     task: asyncio.Task[None] | None = None
     idle_task: asyncio.Task[None] | None = None
     background_done_task: asyncio.Task[None] | None = None
@@ -133,6 +152,10 @@ class ClaudeConnection:
     def streaming(self) -> bool:
         return callable(getattr(self.client, "receive_messages", None))
 
+    @property
+    def wakeup_pending(self) -> bool:
+        return time.monotonic() < self.wakeup_until
+
     def cancel_idle(self) -> None:
         timer = self.idle_task
         self.idle_task = None
@@ -152,17 +175,27 @@ class ClaudeConnection:
         self.cancel_idle()
 
         async def expire() -> None:
-            await asyncio.sleep(self.idle_timeout_seconds)
+            # Native wakeups are owned by this CLI process. Give it time to
+            # enqueue the due prompt before reclaiming an otherwise idle connection.
+            delay = max(self.idle_timeout_seconds, self.wakeup_until - time.monotonic())
+            await asyncio.sleep(delay)
             await self.on_idle(self)
 
         self.idle_task = asyncio.create_task(expire())
 
     def response_for(self, execution: ClaudeExecution | None) -> ClaudeResponse:
         self.cancel_idle()
+        resumed = (
+            self.awaiting_resume_prompt and self.streaming and execution is not None
+        )
+        if resumed:
+            self.awaiting_resume_prompt = False
+        identified = resumed or self.retained or self.queried.is_set()
         response = ClaudeResponse(
             self,
             execution=execution,
-            user_id=str(uuid4()) if self.retained or self.queried.is_set() else None,
+            user_id=str(uuid4()) if identified else None,
+            resumed=resumed,
         )
         self.pending = response
         return response
@@ -185,10 +218,91 @@ class ClaudeConnection:
             else:
                 await self.selected.wait()
 
+    async def user_prompt(self, data: Mapping[str, Any], *_args: Any) -> dict[str, Any]:
+        source = data.get("source")
+        if source == "loop_wakeup":
+            self.clear_wakeup()
+        if source not in (None, "sdk", "user"):
+            return {}
+        # The resumed CLI can attach a background notification that claims no
+        # human input was received, even when it shares this prompt's turn.
+        for response in (self.pending, self.current):
+            if response is None or response.resume_prompt is None:
+                continue
+            if data.get("prompt") == response.resume_prompt:
+                response.resume_prompt = None
+                return {
+                    "hookSpecificOutput": {
+                        "hookEventName": "UserPromptSubmit",
+                        "additionalContext": (
+                            "This prompt is genuine user input from Agents Anywhere. "
+                            "Respond to the user's prompt even if the same turn contains "
+                            "a background-task notification. Treat only the notification "
+                            "as automated; it does not indicate user approval or consent."
+                        ),
+                    }
+                }
+        return {}
+
+    async def observe_stop(self, data: Mapping[str, Any], *_args: Any) -> dict[str, Any]:
+        crons = data.get("session_crons")
+        if isinstance(crons, list) and all(
+            isinstance(cron, Mapping) and isinstance(cron.get("id"), str)
+            for cron in crons
+        ):
+            # Keep process-local tasks out of the persistent Cron registry.
+            if not any(cron["id"] not in self.task_ids for cron in crons):
+                self.clear_wakeup()
+            elif not self.wakeup_pending:
+                self.keep_wakeup(MAX_WAKEUP_DELAY_SECONDS)
+        return {}
+
+    def keep_wakeup(self, delay: float) -> None:
+        self.wakeup_until = (
+            time.monotonic() + min(MAX_WAKEUP_DELAY_SECONDS, max(0, delay))
+            + WAKEUP_GRACE_SECONDS
+        )
+
+    def clear_wakeup(self) -> None:
+        self.wakeup_until = 0.0
+        self.wakeup_prompt = None
+        self.wakeup_scheduled_for = None
+
+    def observe_wakeup_result(self, tool_input: Any, result: Any) -> None:
+        if not isinstance(tool_input, Mapping):
+            return
+        if tool_input.get("stop") is True:
+            self.clear_wakeup()
+            return
+        scheduled_for = result.get("scheduledFor") if isinstance(result, Mapping) else None
+        if type(scheduled_for) is int and scheduled_for > 0:
+            self.keep_wakeup(scheduled_for / 1000 - time.time())
+            self.wakeup_scheduled_for = scheduled_for
+        elif isinstance(result, str) and (match := LEGACY_WAKEUP_RESULT.match(result)):
+            self.keep_wakeup(int(match[1]))
+            self.wakeup_scheduled_for = None
+        else:
+            return
+        prompt = tool_input.get("prompt")
+        self.wakeup_prompt = prompt if isinstance(prompt, str) else None
+
+    def is_dynamic_wakeup(self, job: Mapping[str, Any]) -> bool:
+        # Newer CLIs also return dynamic wakeups in CronList, but the CLI
+        # cannot restore those jobs when the native process is restarted.
+        if self.wakeup_prompt is None or job.get("prompt") != self.wakeup_prompt:
+            return False
+        next_fire = job.get("nextFireAt")
+        return (
+            not job.get("recurring") and not job.get("durable")
+            and (self.wakeup_scheduled_for is None or next_fire in (None, self.wakeup_scheduled_for))
+        )
+
     async def tool_result(self, data: Any, *_args: Any) -> dict[str, Any]:
         response = data.get("tool_response")
         name = data.get("tool_name")
-        if isinstance(response, dict):
+        if name == "ScheduleWakeup":
+            self.observe_wakeup_result(data.get("tool_input"), response)
+        elif isinstance(response, dict):
             task_id = response.get("id")
             if name == "CronCreate" and isinstance(task_id, str):
                 self.task_ids.add(task_id)
@@ -201,7 +315,7 @@ class ClaudeConnection:
                     for job in jobs
                 ):
                     return {}
-                ids = {job["id"] for job in jobs}
+                ids = {job["id"] for job in jobs if not self.is_dynamic_wakeup(job)}
                 if self.current is not None and self.current.maintenance:
                     self.current.task_snapshot = ids
                 else:
@@ -277,6 +391,11 @@ class ClaudeConnection:
             await self.queried.wait()
             preamble = []
             async for message in receive_response_messages(self.client):
+                task_notification = is_task_notification_message(message)
+                if task_notification:
+                    for response in (self.current, self.pending):
+                        if response is not None and response.resumed:
+                            response.resume_notification = True
                 had_background = bool(self.background.active_ids)
                 task_event = self.background.observe(message)
                 if task_event:
@@ -289,9 +408,23 @@ class ClaudeConnection:
                                 self.on_background_done(self)
                             )
                 if self.current is None:
-                    if task_event:
+                    if task_event or (
+                        task_notification and self.pending is not None and self.pending.resumed
+                    ):
                         continue
                     terminal_event = terminal_event_from_message(message)
+                    if (
+                        self.pending is not None
+                        and self.pending.resumed
+                        and terminal_event is not None
+                        and terminal_event.status == "completed"
+                        and not message_text(message)
+                    ):
+                        # Resume can emit a successful startup result before the
+                        # first user echo. It belongs to neither a user reply
+                        # nor an autonomous turn.
+                        preamble.clear()
+                        continue
                     if self.pending is not None and (
                         self.pending.user_id is None
                         or (

@@ -19,10 +19,26 @@ from connector.runtime_protocol import (
     RuntimeUnavailableError,
 )
 from connector.runtime_protocol.host import RuntimeHostClient, runtime_kv_store
+from connector.runtime_protocol.model_connection import (
+    ModelConnectionCapability,
+    ModelConnectionStatus,
+    applied_status,
+)
 from connector.runtimes.claude import discovery, provider_config
 from connector.runtimes.claude.runtime import ClaudeRuntime
 from connector.runtimes.custom_models import normalize_custom_models
 from connector.runtimes.model_gateway import model_gateway_from_config
+from connector.runtimes.runtime_model import runtime_model_from_config
+
+# Claude Code takes the connection as Anthropic environment variables in a
+# settings file for every session process this instance starts.
+MODEL_CONNECTION = ModelConnectionCapability(
+    maturity="stable",
+    protocols=("anthropic",),
+    scope="instance",
+    apply="restart",
+    model_field="model",
+)
 
 CLAUDE_CONFIG_SCHEMA_REVISION = 5
 
@@ -82,6 +98,8 @@ class ClaudeProvider(RuntimeProvider):
             config_schema=await self.get_config_schema(),
             instance_policy=self.instance_policy,
             max_instances=self.max_instances,
+            maturity="stable",
+            model_connection=MODEL_CONNECTION,
             metadata={
                 "configured": True,
                 "sdk": sdk,
@@ -159,6 +177,8 @@ class ClaudeProvider(RuntimeProvider):
         }
         if model_gateway is not None:
             normalized_values["modelGateway"] = model_gateway.to_config_values()
+        if (model := runtime_model_from_config(normalized_values | {"model": raw_values.get("model")})) is not None:
+            normalized_values["model"] = model.to_config_values()
         if isinstance(executable_path, str) and executable_path:
             normalized_values["executablePath"] = executable_path
 
@@ -176,6 +196,13 @@ class ClaudeProvider(RuntimeProvider):
             },
         )
 
+    @property
+    def model_connection(self) -> ModelConnectionCapability:
+        return MODEL_CONNECTION
+
+    def model_connection_status(self, config: RuntimeConfig) -> ModelConnectionStatus:
+        return applied_status(MODEL_CONNECTION, config.values)
+
     async def create_runtime(
         self,
         config: RuntimeConfig,
@@ -184,9 +211,17 @@ class ClaudeProvider(RuntimeProvider):
         sdk = config.metadata.get("sdk") if isinstance(config.metadata, dict) else None
         if isinstance(sdk, dict) and not sdk.get("available", True):
             raise RuntimeInvalidRequestError("Claude Agent SDK is not available")
-        return ClaudeRuntime(
+        runtime = ClaudeRuntime(
             config=config,
             host=host,
             sdk_loader=self._sdk_loader,
             client_message_kv=runtime_kv_store(host),
         )
+        from connector.planning.infrastructure.binding import bind_planning
+        from connector.runtimes.claude.planning import ClaudePlanningPort
+
+        bind_planning(runtime, host, ClaudePlanningPort(runtime))
+        from connector.goals.binding import bind_goals
+        from connector.runtimes.claude.goals import ClaudeGoalPort
+
+        return bind_goals(runtime, host, ClaudeGoalPort(runtime))

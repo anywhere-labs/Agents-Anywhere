@@ -55,7 +55,7 @@ export class BackendState {
   private closed = false;
   private initialized = false;
 
-  constructor(private readonly init: BackendInit, fetcher: BackendFetcher) {
+  constructor(private readonly init: BackendInit, fetcher: BackendFetcher, desktopPid?: number) {
     this.server = { serverUrl: init.defaultServerUrl, apiNamespace: init.apiNamespace };
     this.machineState = new MachineStateStore(undefined, (message) => this.appendLog({ level: "WARNING", message }));
     this.settings = new DesktopSettingsStore(init.settingsPath, init.preferredLanguages);
@@ -74,6 +74,7 @@ export class BackendState {
       uvBundleDir: init.uvBundleDir,
       pythonBundleDir: init.pythonBundleDir,
       packaged: init.packaged,
+      desktopPid,
       homePath: init.homePath,
       shellEnvironment: {},
       settings: this.settings,
@@ -83,6 +84,9 @@ export class BackendState {
       onLog: (entry) => { if (!this.connector.hasRuntimeLogs()) this.bufferLog(entry); },
       onRuntimeLog: (entry) => this.bufferLog(entry),
       onLogSourceChanged: () => { this.logBatcher.flush(); this.emit("logsCleared", undefined); },
+      onDeviceSettings: (settings) => {
+        if (this.settings.saveDeviceSettings(settings)) this.emit("settings", this.settings.get());
+      },
     });
     this.devices = new DesktopDeviceService({
       requireOwnership: () => this.requireOwnership(),
@@ -228,6 +232,10 @@ export class BackendState {
 
   getConnectorState(): Promise<ConnectorState> {
     return this.connector.getState();
+  }
+
+  connectorStateSnapshot(): ConnectorState {
+    return this.connector.publicState();
   }
 
   getPublicConfig() {

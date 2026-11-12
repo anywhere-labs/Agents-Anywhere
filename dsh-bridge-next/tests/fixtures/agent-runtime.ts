@@ -5,6 +5,7 @@ import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import AgentDefaultModel from '@deepseek-ai/dsh-agent-default-model'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import SessionProjection from '@deepseek-ai/dsh-session-projection'
 import SessionController from '@deepseek-ai/dsh-api-session-controller'
 import Attachments from '@deepseek-ai/dsh-attachment-local'
@@ -17,6 +18,7 @@ import PermissionPresets from '@deepseek-ai/dsh-permission-presets'
 import Approval from '@deepseek-ai/dsh-user-approval'
 import Shell from '@deepseek-ai/dsh-shell'
 import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
+import WorkingDirectory from '@deepseek-ai/dsh-working-directory'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
@@ -70,6 +72,8 @@ export async function mountAgents(ctx: Context, adapter?: LlmAdapter,
   await ctx.plugin(SessionProjection).await()
   await ctx.plugin(SystemPrompt).await()
   await ctx.plugin(ToolRuntime).await()
+  // 0.2.2 moved tool execution out of the loop; an Agent runs only with an executor in scope.
+  await ctx.plugin(NativeToolExecutor).await()
   await ctx.plugin(AgentRegistry).await()
   await ctx.plugin(AgentLoop, { agents: [] }).await()
   // rc.7 stores defaults in the composition; this fixture has no profile ConfigEditor.
@@ -94,5 +98,7 @@ export async function mountAgents(ctx: Context, adapter?: LlmAdapter,
   new HostConnectionService(ctx, [], {} as ConstructorParameters<typeof HostConnectionService>[2])
   await ctx.plugin(FileUploads).await()
   await ctx.plugin(LocalFileSystem).await()
+  // 0.2.2's SessionSkillCatalog injects workingDirectory; every real Host composes it.
+  await ctx.plugin(WorkingDirectory, { defaultDirectory: root }).await()
   await ctx.plugin(SessionController, { nativeOpen: false }).await()
 }

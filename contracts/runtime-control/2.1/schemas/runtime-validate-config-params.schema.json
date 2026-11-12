@@ -1,0 +1,68 @@
+{
+  "$id": "https://agents-anywhere.dev/contracts/runtime-control/2.1/schemas/runtime-validate-config-params.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "dependentRequired": {
+    "operationId": [
+      "switchRevision"
+    ],
+    "switchRevision": [
+      "operationId"
+    ]
+  },
+  "description": "Parameters for validating one named runtime instance configuration without starting it.",
+  "properties": {
+    "config": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "configRevision": {
+      "description": "Non-negative revision safe to compose and compare in JavaScript.",
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "name": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": ".*\\S.*",
+      "type": "string"
+    },
+    "operationId": {
+      "description": "Server switch operation this request belongs to. Sent only to Connectors that declare the switchFence feature, always together with switchRevision.",
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "runtime": {
+      "description": "Stable provider type; it MUST equal the instance's immutable runtimeType.",
+      "maxLength": 64,
+      "pattern": "^(?!rti_)[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "type": "string"
+    },
+    "runtimeId": {
+      "maxLength": 128,
+      "pattern": "^(?:(?!rti_)[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*|rti_[A-Za-z0-9_-]+)$",
+      "type": "string"
+    },
+    "switchRevision": {
+      "description": "Monotonic switch revision of this runtime instance. The Connector rejects a revision lower than the accepted one, or the accepted revision with another operationId, with code switch_revision_stale.",
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "runtime",
+    "runtimeId",
+    "name",
+    "config",
+    "configRevision"
+  ],
+  "title": "RuntimeValidateConfigParams",
+  "type": "object",
+  "x-direction": "ingress",
+  "x-rpc-method": "runtime.validateConfig",
+  "x-rpc-part": "params",
+  "x-runtime-control-version": "2.1"
+}

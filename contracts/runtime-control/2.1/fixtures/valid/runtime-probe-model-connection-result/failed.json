@@ -1,0 +1,14 @@
+{
+  "configDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "instanceId": "5f0c1d2e-0000-4000-8000-000000000001",
+  "probe": {
+    "code": "probe_unauthorized",
+    "latencyMs": 120,
+    "message": "HTTP 401: invalid api key",
+    "model": "claude-sonnet-4-5",
+    "protocol": "anthropic",
+    "state": "failed"
+  },
+  "runtime": "claude",
+  "runtimeId": "claude"
+}

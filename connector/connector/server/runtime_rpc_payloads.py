@@ -19,6 +19,9 @@ from connector.runtime_protocol import (
     SessionNotice,
     SessionSourceObservation,
 )
+from connector.runtime_protocol.catalogs import (
+    model_catalog_payload as project_model_catalog,
+)
 
 
 def runtime_config_schema_payload(schema: RuntimeConfigSchema) -> dict[str, Any]:
@@ -74,6 +77,13 @@ def runtime_type_descriptor_payload(
         ),
         "capabilities": dict(descriptor.capabilities),
         "metadata": dict(descriptor.metadata),
+        # Absent rather than null: older descriptors are stable by default.
+        **({"maturity": descriptor.maturity} if descriptor.maturity is not None else {}),
+        "modelConnection": (
+            descriptor.model_connection.payload()
+            if descriptor.model_connection is not None
+            else None
+        ),
         "instancePolicy": descriptor.instance_policy,
         "maxInstances": descriptor.effective_max_instances,
     }
@@ -272,58 +282,7 @@ def session_notice_payload(notice: SessionNotice) -> dict[str, Any]:
 
 
 def model_catalog_payload(catalog: RuntimeModelCatalog) -> dict[str, Any]:
-    return {
-        "runtime": catalog.runtime,
-        **({"runtimeId": catalog.runtime_id} if catalog.runtime_id is not None else {}),
-        "revision": catalog.revision,
-        "models": [
-            {
-                "id": model.id,
-                "displayName": model.title,
-                "selectionId": model.selection_id,
-                "description": model.description,
-                "default": False,
-                "reasoningItems": [
-                    {
-                        "id": reasoning.id,
-                        "displayName": reasoning.title,
-                        "selectionId": reasoning.selection_id,
-                        "description": reasoning.description,
-                        "default": False,
-                        "metadata": {
-                            **dict(reasoning.metadata),
-                            "enabled": reasoning.enabled,
-                            **(
-                                {"disabledReason": reasoning.disabled_reason}
-                                if reasoning.disabled_reason is not None
-                                else {}
-                            ),
-                        },
-                    }
-                    for reasoning in model.reasoning_items
-                ],
-                "group": (
-                    {
-                        "id": model.group.id,
-                        "displayName": model.group.title,
-                        "itemDisplayName": model.group.item_title,
-                    }
-                    if model.group is not None
-                    else None
-                ),
-                "metadata": {
-                    **dict(model.metadata),
-                    "enabled": model.enabled,
-                    **(
-                        {"disabledReason": model.disabled_reason}
-                        if model.disabled_reason is not None
-                        else {}
-                    ),
-                },
-            }
-            for model in catalog.models
-        ],
-    }
+    return project_model_catalog(catalog)
 
 
 def permission_catalog_payload(catalog: RuntimePermissionCatalog) -> dict[str, Any]:
@@ -395,3 +354,22 @@ def agent_inventory_payload(item: RuntimeInventoryItem) -> dict[str, Any]:
         "capabilities": dict(item.capabilities),
         "metadata": dict(item.metadata),
     }
+
+
+def model_connection_result(entry: Any) -> dict[str, Any]:
+    """Report what the adapter did with the model connection, never the key."""
+    if entry.config is None:
+        return {}
+    status = entry.runtime.model_connection_status() if entry.runtime is not None else None
+    if status is None:
+        status = entry.provider.model_connection_status(entry.config)
+    if status is None:
+        return {}
+    payload = status.payload()
+    if entry.status == "error" and payload["state"] == "applied":
+        error = entry.error or {}
+        payload.update(
+            state="failed",
+            reason=str(error.get("message") or "the runtime did not start"),
+        )
+    return {"modelConnection": payload}

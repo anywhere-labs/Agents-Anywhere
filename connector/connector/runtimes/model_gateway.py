@@ -15,15 +15,34 @@ MAX_MODEL_GATEWAY_API_KEY_LENGTH = 8192
 class ModelGateway:
     base_url: str
     api_key: str
+    # Set only for runtimes that speak more than one protocol.
+    protocol: str | None = None
 
     def to_config_values(self) -> dict[str, str]:
-        return {
+        values = {
             "baseUrl": self.base_url,
             "apiKey": self.api_key,
         }
+        if self.protocol is not None:
+            values["protocol"] = self.protocol
+        return values
 
 
-def model_gateway_schema() -> dict[str, Any]:
+def model_gateway_schema(protocols: tuple[str, ...] = ()) -> dict[str, Any]:
+    """The connection object; with ``protocols`` it also names the protocol."""
+    schema = _base_model_gateway_schema()
+    if protocols:
+        schema["required"] = [*schema["required"], "protocol"]
+        schema["properties"]["protocol"] = {
+            "type": "string",
+            "title": "Protocol",
+            "description": "The API the gateway address speaks.",
+            "enum": list(protocols),
+        }
+    return schema
+
+
+def _base_model_gateway_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "title": "Model gateway",
@@ -89,12 +108,17 @@ def model_gateway_schema() -> dict[str, Any]:
     }
 
 
-def model_gateway_from_config(raw: Any) -> ModelGateway | None:
+def model_gateway_from_config(
+    raw: Any,
+    *,
+    protocols: tuple[str, ...] = (),
+) -> ModelGateway | None:
     if raw is None:
         return None
     if not isinstance(raw, Mapping):
         raise RuntimeInvalidRequestError("modelGateway must be an object")
-    unexpected_fields = set(raw) - {"baseUrl", "apiKey"}
+    allowed = {"baseUrl", "apiKey", "protocol"} if protocols else {"baseUrl", "apiKey"}
+    unexpected_fields = set(raw) - allowed
     if unexpected_fields:
         raise RuntimeInvalidRequestError(
             "modelGateway contains unsupported fields: "
@@ -103,7 +127,14 @@ def model_gateway_from_config(raw: Any) -> ModelGateway | None:
 
     base_url = normalized_gateway_url(raw.get("baseUrl"))
     api_key = normalized_gateway_api_key(raw.get("apiKey"))
-    return ModelGateway(base_url=base_url, api_key=api_key)
+    protocol = None
+    if protocols:
+        protocol = raw.get("protocol")
+        if protocol not in protocols:
+            raise RuntimeInvalidRequestError(
+                "modelGateway.protocol must be one of: " + ", ".join(protocols)
+            )
+    return ModelGateway(base_url=base_url, api_key=api_key, protocol=protocol)
 
 
 def normalized_gateway_url(raw: Any) -> str:

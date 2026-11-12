@@ -73,7 +73,7 @@ export function App({ connector, token, userId, initialPage, onPageChange, onCom
         void navigate(page - 1)
       } else if (event.key === "ArrowRight" && page < steps.length - 1) {
         event.preventDefault()
-        void navigate(page + 1)
+        page === 1 ? pageRef.current?.querySelector<HTMLButtonElement>('[data-onboarding-next]')?.click() : void navigate(page + 1)
       }
     }
     window.addEventListener("keydown", handleKeyDown)
@@ -85,7 +85,7 @@ export function App({ connector, token, userId, initialPage, onPageChange, onCom
     setDialog({ kind, open: true })
   }
 
-  const next = () => { void navigate(page + 1) }
+  const next = () => { page === 1 ? setDialog({ kind: "skip", open: true }) : void navigate(page + 1) }
   const experience = async () => {
     await onComplete?.()
     window.location.href = PRODUCT_LINKS.webAppHref
@@ -107,7 +107,9 @@ export function App({ connector, token, userId, initialPage, onPageChange, onCom
         onOpenChange={(open) => setDialog((current) => ({ ...current, open }))}
         onRestoreFocus={() => { if (triggerRef.current?.isConnected) triggerRef.current.focus({ preventScroll: true }) }}
         onPhoneConnected={() => { setDialog((current) => ({ ...current, open: false })); void navigate(3) }}
-        onConfirmSkip={() => { setDialog((current) => ({ ...current, open: false })); void navigate(3) }}
+        onlyIfEmpty={page === 1}
+        onAddAgent={() => { setDialog((current) => ({ ...current, open: false })); void navigate(1) }}
+        onConfirmSkip={() => { setDialog((current) => ({ ...current, open: false })); void navigate(page === 1 ? 2 : 3) }}
       />
     </>
   )

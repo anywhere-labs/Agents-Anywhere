@@ -3,11 +3,9 @@ import test from "node:test"
 
 import {
   acceptSessionEventId,
-  bufferedEventsAfterLiveCapabilityRead,
   drainSessionEventBuffer,
   mergeEffectiveCapabilities,
   SessionEventSequenceCursor,
-  settleSessionEventRecovery,
 } from "../src/components/session/session-event-state.ts"
 
 function capabilitySet(allowed) {
@@ -98,21 +96,8 @@ test("durable events keep exact event-id dedup", () => {
   assert.equal(acceptSessionEventId(event, processedEventIds), false)
 })
 
-test("session switch resets a higher sequence before recovering a lower-sequence session", () => {
-  const cursor = new SessionEventSequenceCursor("session-high", 32807)
-
-  cursor.switchTo("session-low")
-  assert.equal(cursor.current("session-low"), 0)
-
-  cursor.advance("session-low", 1072)
-  assert.equal(cursor.current("session-low"), 1072)
-  assert.equal(cursor.accepts("session-low", 1072), true)
-  assert.equal(cursor.accepts("session-low", 1071), false)
-})
-
 test("stale session work cannot alter the current session cursor", () => {
-  const cursor = new SessionEventSequenceCursor("session-high", 32807)
-  cursor.switchTo("session-low", 1072)
+  const cursor = new SessionEventSequenceCursor("session-low", 1072)
 
   cursor.advance("session-high", 40000)
 
@@ -131,8 +116,7 @@ test("authoritative snapshot can replace a future cursor in the same session", (
 })
 
 test("stale session snapshot cannot replace the current session cursor", () => {
-  const cursor = new SessionEventSequenceCursor("session-old", 32807)
-  cursor.switchTo("session-current", 1072)
+  const cursor = new SessionEventSequenceCursor("session-current", 1072)
 
   cursor.replaceFromSnapshot("session-old", 10)
 
@@ -196,40 +180,6 @@ test("buffer drain preserves later events when an event starts nested recovery",
   assert.deepEqual(remaining, [online])
 })
 
-test("recovery releases its gate before draining events received in flight", async () => {
-  let resolveRecovery
-  const recovery = new Promise((resolve) => {
-    resolveRecovery = resolve
-  })
-  const buffered = [presenceEvent("online", "evt_during_recovery")]
-  const applied = []
-  let recoveryActive = true
-
-  const settled = settleSessionEventRecovery(
-    recovery,
-    () => {
-      recoveryActive = false
-    },
-    () => {
-      const remaining = drainSessionEventBuffer(
-        buffered,
-        (event) => applied.push(event),
-        () => recoveryActive,
-      )
-      assert.deepEqual(remaining, [])
-    },
-  )
-
-  await Promise.resolve()
-  assert.deepEqual(applied, [])
-
-  resolveRecovery()
-  await settled
-
-  assert.equal(recoveryActive, false)
-  assert.deepEqual(applied, buffered)
-})
-
 test("capability comparison ignores set revision and capability order", () => {
   const first = capabilitySet(true)
   first.capabilities.push({
@@ -267,41 +217,4 @@ test("capability comparison canonicalizes each record once, including duplicates
   assert.equal(reads, 200)
   const removedDuplicate = { revision: 3, capabilities: records.slice(1) }
   assert.equal(mergeEffectiveCapabilities(first, removedDuplicate), removedDuplicate)
-})
-
-test("live capability cutover discards only pre-read capability projections", () => {
-  const capabilityBeforeRead = capabilityEvent(capabilitySet(false))
-  const capabilityDuringRead = {
-    ...capabilityEvent(capabilitySet(true)),
-    eventId: "evt_10_capability_during_read",
-  }
-  const session = {
-    ...capabilityBeforeRead,
-    eventId: "evt_10_session",
-    type: "session.meta.updated",
-    payload: { session: { id: "session-1" } },
-  }
-  const timeline = {
-    ...capabilityBeforeRead,
-    eventId: "evt_10_timeline",
-    type: "timeline.item_updated",
-    payload: { item: { id: "item-1" } },
-  }
-
-  assert.deepEqual(
-    bufferedEventsAfterLiveCapabilityRead(
-      [session, capabilityBeforeRead],
-      [capabilityDuringRead, timeline],
-      true,
-    ),
-    [session, capabilityDuringRead, timeline],
-  )
-  assert.deepEqual(
-    bufferedEventsAfterLiveCapabilityRead(
-      [session, capabilityBeforeRead],
-      [capabilityDuringRead, timeline],
-      false,
-    ),
-    [session, capabilityBeforeRead, capabilityDuringRead, timeline],
-  )
 })

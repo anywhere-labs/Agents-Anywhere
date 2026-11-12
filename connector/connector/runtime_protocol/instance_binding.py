@@ -10,6 +10,7 @@ from connector.runtime_protocol.instance_models import (
     RuntimeInstanceSpec,
     RuntimeSourceKey,
 )
+from connector.runtime_protocol.model_connection import ModelConnectionStatus
 from connector.runtime_protocol.models import (
     PreparedSessionTimelineSync,
     RuntimeAttachment,
@@ -32,6 +33,10 @@ from connector.runtime_protocol.models import (
     SessionState,
 )
 from connector.runtime_protocol.protocol import AgentRuntime
+from connector.runtime_protocol.workflows import (
+    RuntimeWorkflowRequest,
+    RuntimeWorkflowResult,
+)
 
 
 def _instance_metadata(
@@ -169,6 +174,24 @@ def session_source_observation_for_instance(
     )
 
 
+async def with_planning_capabilities(capabilities: RuntimeCapabilitySet, port, external_session_id: str | None = None) -> RuntimeCapabilitySet:
+    if port is None:
+        return capabilities
+    from connector.runtime_protocol.models import RuntimeCapability
+    existing = next((item for item in capabilities.capabilities if item.capability_id == "session.planning"), None)
+    native_available = (existing.metadata if existing else {}).get("nativePlanningAvailable")
+    supported = native_available if isinstance(native_available, bool) else await port.available(capabilities.session_id or "", external_session_id)
+    names = ("session.planning", "session.plan_document", "session.plan_review")
+    items = [item for item in capabilities.capabilities if item.capability_id not in names]
+    for name in names:
+        items.append(RuntimeCapability(
+            capability_id=name, scope="session" if capabilities.session_id else "runtime",
+            runtime=capabilities.runtime, session_id=capabilities.session_id, supported=supported,
+            available=supported,
+            metadata={"contentStreaming": port.content_streaming}))
+    return replace(capabilities, capabilities=tuple(items))
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeInstanceHost(RuntimeHostClient):
     """Bind runtime-to-Connector effects to one immutable instance identity."""
@@ -184,9 +207,26 @@ class RuntimeInstanceHost(RuntimeHostClient):
         | None
     ) = None
 
+    async def observe_planning(self, observation) -> None:
+        await RuntimeHostClient.observe_planning(self, observation)
+
+    async def validate_planning_document(self, session_id: str, text: str) -> bool:
+        return await RuntimeHostClient.validate_planning_document(self, session_id, text)
+
+    async def prepare_planning_turn(self, session_id: str, external_id: str | None) -> bool:
+        return await RuntimeHostClient.prepare_planning_turn(self, session_id, external_id)
+
+    async def publish_planning(self, snapshot: dict, durable: bool = False) -> None:
+        await self.base.publish_planning({**snapshot, "runtimeId": self.instance.runtime_id,
+                                          "runtime": self.instance.runtime_type}, durable)
+
     @property
     def connector_id(self) -> str:
         return self.base.connector_id
+
+    @property
+    def runtime_id(self) -> str:
+        return self.instance.runtime_id
 
     @property
     def session_namespace(self) -> str:
@@ -199,11 +239,12 @@ class RuntimeInstanceHost(RuntimeHostClient):
 
     async def publish_runtime_snapshot(
         self, runtime: str, session_id: str, meta: dict[str, Any], items: Iterable[dict[str, Any]],
-        *, runtime_id: str | None = None, on_progress: UploadProgress | None = None,
+        *, runtime_id: str | None = None, on_progress: UploadProgress | None = None, ordered: bool = True,
     ) -> None:
         self._validate_native_runtime(runtime)
+        kwargs = {} if ordered else {"ordered": False}
         await self.base.publish_runtime_snapshot(
-            runtime, session_id, meta, items, runtime_id=self.instance.runtime_id, on_progress=on_progress,
+            runtime, session_id, meta, items, runtime_id=self.instance.runtime_id, on_progress=on_progress, **kwargs,
         )
 
     async def publish_runtime_notifications(
@@ -286,12 +327,39 @@ class RuntimeInstanceHost(RuntimeHostClient):
             metadata=self.instance_metadata(metadata),
         )
 
+    async def publish_goal(self, snapshot: dict, durable: bool = False) -> None:
+        await self.base.publish_goal(
+            {
+                **snapshot,
+                "runtime": self.instance.runtime_type,
+                "runtimeId": self.instance.runtime_id,
+            },
+            durable=durable,
+        )
+
+    async def prepare_goal_creation(
+        self, session_id, external_id, content, attachments, operation_id
+    ):
+        return await RuntimeHostClient.prepare_goal_creation(
+            self, session_id, external_id, content, attachments, operation_id
+        )
+
+    async def planning_capabilities(
+        self, capabilities: RuntimeCapabilitySet
+    ) -> RuntimeCapabilitySet:
+        capabilities = await with_planning_capabilities(
+            capabilities, getattr(self, "_planning_port", None)
+        )
+        return await with_goal_capabilities(
+            capabilities, getattr(self, "_goal_port", None)
+        )
+
     async def runtime_capabilities_update(
         self,
         capabilities: RuntimeCapabilitySet,
     ) -> None:
         await self.base.runtime_capabilities_update(
-            runtime_capabilities_for_instance(capabilities, self.instance)
+            runtime_capabilities_for_instance(await self.planning_capabilities(capabilities), self.instance)
         )
 
     async def session_capabilities_update(
@@ -299,7 +367,7 @@ class RuntimeInstanceHost(RuntimeHostClient):
         capabilities: RuntimeCapabilitySet,
     ) -> None:
         await self.base.session_capabilities_update(
-            runtime_capabilities_for_instance(capabilities, self.instance)
+            runtime_capabilities_for_instance(await self.planning_capabilities(capabilities), self.instance)
         )
 
     async def model_catalog_update(self, catalog: RuntimeModelCatalog) -> None:
@@ -449,6 +517,31 @@ class RuntimeInstance(AgentRuntime):
     instance: RuntimeInstanceSpec
     native_runtime: AgentRuntime
 
+    async def list_scoped_model_catalog(self, session_id: str, query: str | None = None, limit: int = 100) -> RuntimeModelCatalog:
+        catalog = await self.native_runtime.list_scoped_model_catalog(session_id, query=query, limit=limit)
+        return replace(catalog, runtime=self.instance.runtime_type, runtime_id=self.instance.runtime_id)
+
+    async def execute_workflow(self, request: RuntimeWorkflowRequest) -> RuntimeWorkflowResult:
+        return await self.native_runtime.execute_workflow(request)
+
+    async def get_session_configuration(self, session_id: str) -> dict[str, Any]:
+        return await self.native_runtime.get_session_configuration(session_id)
+
+    async def update_session_configuration(self, session_id: str, values: Mapping[str, Any]) -> dict[str, Any]:
+        return await self.native_runtime.update_session_configuration(session_id, values)
+
+    @property
+    def goals(self):
+        return self.native_runtime.goals
+
+    @property
+    def planning(self):
+        return self.native_runtime.planning
+
+
+    def model_connection_status(self) -> ModelConnectionStatus | None:
+        return self.native_runtime.model_connection_status()
+
     @property
     def sync_mode(self) -> str:
         return self.native_runtime.sync_mode
@@ -476,7 +569,12 @@ class RuntimeInstance(AgentRuntime):
         await self.native_runtime.start()
 
     async def stop(self) -> None:
+        if self.planning is not None:
+            await self.planning.close()
         await self.native_runtime.stop()
+
+    async def apply_model_setting(self, config: RuntimeConfig) -> bool:
+        return await self.native_runtime.apply_model_setting(config)
 
     async def get_config(self) -> RuntimeConfig:
         return runtime_config_for_instance(
@@ -485,10 +583,15 @@ class RuntimeInstance(AgentRuntime):
         )
 
     async def get_runtime_capabilities(self) -> RuntimeCapabilitySet:
-        return runtime_capabilities_for_instance(
-            await self.native_runtime.get_runtime_capabilities(),
-            self.instance,
+        capabilities = await self.native_runtime.get_runtime_capabilities()
+        if self.planning is not None:
+            capabilities = await with_planning_capabilities(
+                capabilities, self.planning.port
+            )
+        capabilities = await with_goal_capabilities(
+            capabilities, self.goals.port if self.goals else None
         )
+        return runtime_capabilities_for_instance(capabilities, self.instance)
 
     async def list_model_catalog(
         self,
@@ -625,6 +728,13 @@ class RuntimeInstance(AgentRuntime):
             session_id,
             external_session_id,
         )
+        if self.planning is not None:
+            capabilities = await with_planning_capabilities(
+                capabilities, self.planning.port, external_session_id
+            )
+        capabilities = await with_goal_capabilities(
+            capabilities, self.goals.port if self.goals else None
+        )
         return runtime_capabilities_for_instance(capabilities, self.instance)
 
     async def create_and_start_session(
@@ -758,3 +868,28 @@ class RuntimeInstance(AgentRuntime):
 def _source_key_digest(source_key: RuntimeSourceKey) -> str:
     payload = f"{source_key.kind}\0{source_key.key}".encode()
     return hashlib.sha256(payload).hexdigest()[:24]
+
+
+async def with_goal_capabilities(capabilities, port):
+    if port is None:
+        return capabilities
+    from connector.runtime_protocol.models import RuntimeCapability
+
+    supported = await port.available(capabilities.session_id or "")
+    capability = RuntimeCapability(
+        capability_id="session.goal",
+        runtime=capabilities.runtime,
+        session_id=capabilities.session_id,
+        scope="session" if capabilities.session_id else "runtime",
+        supported=supported,
+        available=supported,
+    )
+    return replace(
+        capabilities,
+        capabilities=tuple(
+            item
+            for item in capabilities.capabilities
+            if item.capability_id != "session.goal"
+        )
+        + (capability,),
+    )

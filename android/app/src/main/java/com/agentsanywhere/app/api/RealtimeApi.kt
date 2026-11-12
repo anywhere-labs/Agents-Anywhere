@@ -99,6 +99,9 @@ class RealtimeApi(
             activePage = activePage.toRemoteSessionPageInfo(),
             archivedPage = archivedPage.toRemoteSessionPageInfo(),
             serverTime = message.optNullableString("serverTime"),
+            runtimes = message.optJSONArray("runtimes").toObjectList { runCatching { devicesApi.parseDeviceRuntime(this) }.getOrNull() }
+                .filterNotNull(),
+            modelConfig = message.optJSONObject("modelConfig")?.let { runCatching { it.toModelConfigOverview() }.getOrNull() },
         )
     }
 

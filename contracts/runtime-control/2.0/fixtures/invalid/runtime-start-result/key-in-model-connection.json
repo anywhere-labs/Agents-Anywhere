@@ -1,0 +1,8 @@
+{
+  "runtimeId": "codex",
+  "status": "running",
+  "modelConnection": {
+    "state": "applied",
+    "apiKey": "sk-should-never-appear"
+  }
+}

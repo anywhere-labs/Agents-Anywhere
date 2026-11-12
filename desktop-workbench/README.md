@@ -55,7 +55,9 @@ PostgreSQL and Redis, the Server on fixed port `8000`, the Web app on fixed port
 It releases existing listeners on those three application ports, always points
 Desktop at the local Server, and stays in the foreground like `./local-up.sh`,
 streaming prefixed Server, Web, and Desktop logs (also written to
-`.local-dev/logs/`). Press Ctrl-C to stop everything it started; `down` stops a
+`.local-dev/logs/`). Press Ctrl-C to stop its application processes (with a 5-second shutdown
+timeout); shared PostgreSQL and Redis containers stay running for the next launch.
+`down` stops a
 launcher still running in another terminal:
 
 ```bash
@@ -141,6 +143,9 @@ cd desktop-workbench
 WORKBENCH_API_ORIGIN=http://127.0.0.1:8000 WORKBENCH_API_NAMESPACE= yarn dev
 ```
 
+On macOS, install the Xcode Command Line Tools (`xcode-select --install`) to
+build the native Connector process supervisor.
+
 Development runs the repo-level `../connector` project with the same `uv` the
 packaged app ships, so a dev launch never depends on the developer's PATH.
 `yarn dev` and `yarn start` download that uv into
@@ -185,7 +190,9 @@ and BFSU carry no `openai-codex`) still installs. `PIP_INDEX_URL` follows the
 mirror. The saved `uvPythonInstallMirror` sets `UV_PYTHON_INSTALL_MIRROR` for
 the Python interpreter download (GitHub python-build-standalone when empty); it
 only matters without a bundled or saved interpreter, and Settings hides it
-otherwise. `UV_HTTP_TIMEOUT` defaults to 60 seconds.
+otherwise. `UV_HTTP_TIMEOUT` defaults to 60 seconds. The saved `connectorProxy`
+sets `AA_CONNECTOR_PROXY` for the Connector's route to the Server, see
+[Connector network](../docs/connector-network.md).
 
 When building the environment fails, or uv itself reports the failure on a
 normal launch (`error:`, `×` or `Caused by:` lines), the ownership gate offers

@@ -134,9 +134,8 @@ async def postgres_plans(store, rows, connector_id, runtime_id, scan):
             for name, (statement, parameters) in zip(
                 (
                     "unchanged_source",
-                    "inventory_begin",
+                    "inventory_scan_lookup",
                     "inventory_read",
-                    "inventory_refresh",
                 ),
                 captured,
                 strict=True,
@@ -262,8 +261,14 @@ async def audit(app, connector_id, session_id, *, pooled=False):
 
     async def summaries():
         async with store.engine.connect() as conn:
+            # source_changed_seq only orders writes against scans; each path
+            # draws a different number of values from its sequence.
             return [
-                dict(row)
+                {
+                    key: value
+                    for key, value in row.items()
+                    if key != "source_changed_seq"
+                }
                 for row in (
                     await conn.execute(select(sessions_t).order_by(sessions_t.c.id))
                 ).mappings()

@@ -10,10 +10,22 @@ from connector.runtime_protocol import (
     RuntimeInvalidRequestError,
     RuntimeScope,
 )
+from connector.runtime_protocol.switch_fence import (
+    MAX_OPERATION_ID_LENGTH,
+    RuntimeSwitchRequest,
+)
 
 _RUNTIME_SCOPE_FIELDS = frozenset({"runtime", "runtimeId"})
 _RUNTIME_CONFIG_FIELDS = frozenset(
-    {"runtime", "runtimeId", "name", "config", "configRevision"}
+    {
+        "runtime",
+        "runtimeId",
+        "name",
+        "config",
+        "configRevision",
+        "operationId",
+        "switchRevision",
+    }
 )
 
 
@@ -60,6 +72,30 @@ def required_safe_int(params: dict[str, Any], key: str) -> int:
     if value is None:
         raise ValueError(f"{key} is required")
     return value
+
+
+def optional_switch_request(params: dict[str, Any]) -> RuntimeSwitchRequest | None:
+    """The switch fence fields, sent together or not at all."""
+
+    operation_id = params.get("operationId")
+    switch_revision = optional_safe_int(params, "switchRevision", minimum=1)
+    if operation_id is None and switch_revision is None:
+        return None
+    if operation_id is None or switch_revision is None:
+        raise RuntimeInvalidRequestError(
+            "operationId and switchRevision must be sent together"
+        )
+    if (
+        not isinstance(operation_id, str)
+        or not 1 <= len(operation_id) <= MAX_OPERATION_ID_LENGTH
+    ):
+        raise ValueError(
+            f"operationId must be a string of 1 to {MAX_OPERATION_ID_LENGTH} characters"
+        )
+    return RuntimeSwitchRequest(
+        operation_id=operation_id,
+        switch_revision=switch_revision,
+    )
 
 
 def required_runtime_type(params: dict[str, Any]) -> str:
@@ -232,6 +268,7 @@ class RuntimeConfigParams:
     instance: RuntimeInstanceSpec
     config: dict[str, Any]
     config_revision: int | None
+    switch: RuntimeSwitchRequest | None = None
 
     @property
     def runtime_id(self) -> str:
@@ -253,6 +290,7 @@ class RuntimeConfigParams:
             ),
             config=runtime_config(params),
             config_revision=required_safe_int(params, "configRevision"),
+            switch=optional_switch_request(params),
         )
 
 

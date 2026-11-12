@@ -15,4 +15,5 @@ enum class AppDestination(val title: String) {
     SessionDetail("Session"),
     ArchivedSessions("Archived Sessions"),
     DeviceSetup("Device Setup"),
+    ModelConfig("Model Configuration"),
 }
