@@ -246,6 +246,64 @@
           "duplex_reason": null
         },
         {
+          "name": "probeModelConnection",
+          "stream": "unary",
+          "request": {
+            "module": "connector.server.mesh_services",
+            "qualname": "RuntimeControlServiceProbeModelConnectionRequest",
+            "schema": {
+              "$defs": {
+                "Payload": {
+                  "additionalProperties": true,
+                  "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+                  "properties": {},
+                  "title": "Payload",
+                  "type": "object"
+                }
+              },
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/Payload"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "RuntimeControlServiceProbeModelConnectionRequest",
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "request"
+          ],
+          "response": {
+            "module": "connector.server.mesh_services",
+            "qualname": "Payload",
+            "schema": {
+              "additionalProperties": true,
+              "description": "Protocol payload while domain DTOs remain owned by protocol/handlers.",
+              "properties": {},
+              "title": "Payload",
+              "type": "object"
+            }
+          },
+          "input_item": null,
+          "output_item": null,
+          "balance": {
+            "kind": "round_robin",
+            "key": null
+          },
+          "binding": "instance",
+          "description": "Probe the model connection loaded by a running Runtime instance.",
+          "annotations": {
+            "idempotent": true,
+            "read_only": true,
+            "destructive": false
+          },
+          "deprecated": null,
+          "duplex_reason": null
+        },
+        {
           "name": "start",
           "stream": "unary",
           "request": {

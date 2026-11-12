@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from agent_server.infra.repositories.store_support import *
+from agent_server.infra.db.engine import read_connection
 
 
 class ConnectorRepositoryMixin:
     async def get_connector_preferences(self, connector_id: str) -> dict[str, Any]:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(connectors_t.c.user_preferences).where(
@@ -34,6 +35,36 @@ class ConnectorRepositoryMixin:
             if result.rowcount == 0:
                 raise KeyError(connector_id)
         return preferences
+
+    async def get_connector_device_settings(self, connector_id: str) -> dict[str, Any]:
+        async with read_connection(self._engine) as conn:
+            row = (
+                await conn.execute(
+                    select(connectors_t.c.device_settings).where(
+                        connectors_t.c.id == connector_id,
+                        connectors_t.c.revoked == 0,
+                    )
+                )
+            ).first()
+        if row is None:
+            raise KeyError(connector_id)
+        value = _json_loads(row.device_settings)
+        return value if isinstance(value, dict) else {}
+
+    async def update_connector_device_settings(
+        self,
+        connector_id: str,
+        settings: dict[str, Any],
+    ) -> dict[str, Any]:
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                update(connectors_t)
+                .where(connectors_t.c.id == connector_id, connectors_t.c.revoked == 0)
+                .values(device_settings=_json_dumps(settings), updated_at=utc_now())
+            )
+            if result.rowcount == 0:
+                raise KeyError(connector_id)
+        return settings
 
     async def record_fs_preview_token(
         self,
@@ -148,7 +179,7 @@ class ConnectorRepositoryMixin:
         connector_id: str,
         session_id: str,
     ) -> dict[str, dict[str, str]]:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (
                 await conn.execute(
                     select(connector_terminal_roots_t).where(
@@ -172,7 +203,7 @@ class ConnectorRepositoryMixin:
         connector_id: str,
         terminal_id: str,
     ) -> dict[str, str] | None:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(connector_terminal_roots_t).where(
@@ -300,7 +331,7 @@ class ConnectorRepositoryMixin:
         owner_user_id: str | None = None,
     ) -> ConnectorView:
         now = utc_now()
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(
@@ -387,7 +418,7 @@ class ConnectorRepositoryMixin:
 
 
     async def verify_connector_token(self, connector_id: str, token: str) -> bool:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(connectors_t.c.token_hash, connectors_t.c.revoked).where(
@@ -421,7 +452,7 @@ class ConnectorRepositoryMixin:
         connector_id = connector_access_token_id(token)
         if connector_id is None:
             return None
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             credential_hash = (
                 await conn.execute(
                     select(connectors_t.c.token_hash).where(
@@ -438,7 +469,7 @@ class ConnectorRepositoryMixin:
         return authenticated, hashlib.sha256(str(credential_hash).encode()).hexdigest()
 
     async def get_connector(self, connector_id: str) -> ConnectorView:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(connectors_t).where(
@@ -456,7 +487,7 @@ class ConnectorRepositoryMixin:
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
         query = query.order_by(connectors_t.c.updated_at.desc(), connectors_t.c.created_at.desc())
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             rows = (await conn.execute(query)).mappings().all()
         return [self._connector_from_row(row) for row in rows]
 
@@ -492,8 +523,15 @@ class ConnectorRepositoryMixin:
         return await self.get_connector(connector_id)
 
 
-    async def pending_connector_deletions(self) -> list[tuple[str, str]]:
+    async def list_user_connector_ids(self, user_id: str) -> list[str]:
+        """Every connector the user owns, including revoked and pending ones."""
         async with self._engine.connect() as conn:
+            return list((await conn.execute(
+                select(connectors_t.c.id).where(connectors_t.c.user_id == user_id)
+            )).scalars())
+
+    async def pending_connector_deletions(self) -> list[tuple[str, str]]:
+        async with read_connection(self._engine) as conn:
             rows = (await conn.execute(select(connectors_t.c.id, connectors_t.c.user_id)
                 .where(connectors_t.c.revoked == 2)
                 .order_by(connectors_t.c.updated_at).limit(50))).all()
@@ -705,7 +743,7 @@ class ConnectorRepositoryMixin:
             ))
             .where(connectors_t.c.id == connector_id, connectors_t.c.revoked == 0)
         )
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (await conn.execute(query)).first()
         if row is None:
             raise KeyError(connector_id)
@@ -725,7 +763,7 @@ class ConnectorRepositoryMixin:
         )
         if user_id is not None:
             connector_query = connector_query.where(connectors_t.c.user_id == user_id)
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             if (await conn.execute(connector_query)).first() is None:
                 raise KeyError(connector_id)
             row = (

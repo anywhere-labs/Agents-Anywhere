@@ -232,6 +232,10 @@ class RuntimeControlService(_DomainService):
     async def validateConfig(self, request: Payload, ctx: RpcContext) -> Payload:
         return await self._call("runtime.validateConfig", request, ctx)
 
+    @query(description="Probe the model connection loaded by a running Runtime instance.")
+    async def probeModelConnection(self, request: Payload, ctx: RpcContext) -> Payload:
+        return await self._call("runtime.probeModelConnection", request, ctx)
+
     @mutates(description="Start or reconcile a configured Runtime instance.")
     async def start(self, request: Payload, ctx: RpcContext) -> Payload:
         return await self._call("runtime.start", request, ctx)

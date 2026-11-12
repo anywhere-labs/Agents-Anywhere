@@ -279,6 +279,7 @@ internal fun MessageList(
     bottomContentPadding: Dp = 168.dp,
     hasMore: Boolean,
     loadingOlder: Boolean,
+    historyError: Boolean = false,
     onLoadOlder: () -> Unit,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
     onOpenAttachment: (TimelineAttachment) -> Unit,
@@ -318,10 +319,20 @@ internal fun MessageList(
     val topReadingInset = with(density) { 74.dp.toPx() }
     val bottomReadingInset = with(density) { bottomContentPadding.toPx() }
 
-    SideEffect { reading.items(timelineItems, 1 + (if (displayWorkingLabel != null) 1 else 0) + detachedNotices.size) }
+    val hasPlanningItem = planningContent != null || planPlacement.end.isNotEmpty()
+    val firstTimelineIndex = 1 +
+        (if (hasPlanningItem) 1 else 0) +
+        (if (displayWorkingLabel != null) 1 else 0) +
+        detachedNotices.size
+
+    SideEffect { reading.items(timelineItems, firstTimelineIndex, hasMore) }
 
     DisposableEffect(sessionId) {
         onDispose { returnToLatestJob?.cancel() }
+    }
+    DisposableEffect(reading, listState) {
+        reading.attach(listState)
+        onDispose { reading.detach(listState) }
     }
 
     fun observeUserScroll(deltaY: Float) {
@@ -351,21 +362,30 @@ internal fun MessageList(
     }
 
     LaunchedEffect(listState) {
-        var lastPosition = listState.firstVisibleItemIndex * 1_000 + listState.firstVisibleItemScrollOffset
+        var lastIndex = listState.firstVisibleItemIndex
+        var lastOffset = listState.firstVisibleItemScrollOffset
         var lastTime = System.nanoTime()
         snapshotFlow {
-            (listState.firstVisibleItemIndex * 1_000 + listState.firstVisibleItemScrollOffset) to listState.isScrollInProgress
-        }.collectLatest { (position, scrolling) ->
+            Triple(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, listState.isScrollInProgress)
+        }.collectLatest { (index, offset, scrolling) ->
+                val atBottom = index == 0 && offset == 0
+                if (atBottom) {
+                    lastIndex = 0
+                    lastOffset = 0
+                    lastTime = System.nanoTime()
+                    showScrollToBottom = false
+                    return@collectLatest
+                }
                 val now = System.nanoTime()
                 val elapsedMs = ((now - lastTime) / 1_000_000).coerceAtLeast(1)
-                val slowEnough = abs(position - lastPosition) / elapsedMs < 2
-                lastPosition = position
+                val moved = if (index == lastIndex) abs(offset - lastOffset) else 1_000
+                val slowEnough = moved / elapsedMs < 2
+                lastIndex = index
+                lastOffset = offset
                 lastTime = now
-                if (position > 0 && (slowEnough || !scrolling)) {
-                    delay(120)
+                if (showScrollToBottom || slowEnough || !scrolling) {
+                    if (!showScrollToBottom) delay(120)
                     showScrollToBottom = listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
-                } else {
-                    showScrollToBottom = false
                 }
         }
     }
@@ -379,12 +399,12 @@ internal fun MessageList(
     }
     LaunchedEffect(streamLatestRequest, sessionId) { reading.invalidate() }
 
-    LaunchedEffect(listState, hasMore, loadingOlder, displayMessages.size) {
+    LaunchedEffect(listState, hasMore, loadingOlder, historyError, displayMessages.size) {
         snapshotFlow {
             val layout = listState.layoutInfo
             val total = layout.totalItemsCount
             val lastVisible = layout.visibleItemsInfo.maxOfOrNull { it.index } ?: -1
-            total > 0 && lastVisible >= total - LOAD_OLDER_VISIBLE_THRESHOLD
+            (!historyError && reading.needsOlder) || (total > 0 && lastVisible >= total - LOAD_OLDER_VISIBLE_THRESHOLD)
         }
             .distinctUntilChanged()
             .collectLatest { nearOldest ->
@@ -404,10 +424,16 @@ internal fun MessageList(
                         .fillMaxSize()
                         .imePadding()
                         .nestedScroll(scrollInput)
+                        .then(reading.remeasurementModifier)
                         .onGloballyPositioned {
                             val bounds = it.boundsInWindow()
-                            reading.viewport(bounds.copy(top = bounds.top + topReadingInset,
-                                bottom = (bounds.bottom - bottomReadingInset).coerceAtLeast(bounds.top + topReadingInset + 1f)))
+                            reading.viewport(
+                                lazyBounds = bounds,
+                                readingBounds = bounds.copy(
+                                    top = bounds.top + topReadingInset,
+                                    bottom = (bounds.bottom - bottomReadingInset).coerceAtLeast(bounds.top + topReadingInset + 1f),
+                                ),
+                            )
                         }
                         .pointerInput(sessionId) {
                             awaitPointerEventScope {
@@ -425,7 +451,9 @@ internal fun MessageList(
                                             val event = awaitPointerEvent(PointerEventPass.Initial)
                                             val change = event.changes.firstOrNull { it.id == pointerId } ?: break
                                             if (!change.pressed) {
-                                                if (change.uptimeMillis - down.uptimeMillis >= viewConfiguration.longPressTimeoutMillis) reading.pauseAt()
+                                                if (travel <= viewConfiguration.touchSlop &&
+                                                    change.uptimeMillis - down.uptimeMillis >= viewConfiguration.longPressTimeoutMillis
+                                                ) reading.pauseAt()
                                                 break
                                             }
                                             val delta = change.position.y - previousY
@@ -540,9 +568,14 @@ internal fun MessageList(
                     onClick = {
                         returnToLatestJob?.cancel()
                         returnToLatestJob = scope.launch {
-                            listState.animateToLatestFromAnywhere()
-                            reading.release()
-                            listState.scrollToItem(0)
+                            reading.returningToLatest = true
+                            try {
+                                listState.animateToLatestFromAnywhere()
+                                reading.release()
+                                listState.scrollToItem(0)
+                            } finally {
+                                reading.returningToLatest = false
+                            }
                         }
                     },
                     modifier = Modifier
@@ -1268,7 +1301,10 @@ private fun AgentMessageContent(
     onOpenFile: (String) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (message.text.isNotBlank()) AgentMarkdownText(message.text, darkMode, onOpenFile = onOpenFile)
+        if (message.text.isNotBlank()) {
+            AgentMarkdownText(message.text, darkMode, onOpenFile = onOpenFile)
+            GeneratedFileCards(markdown = message.text, onOpenFile = onOpenFile)
+        }
         UserAttachmentStrip(
             attachments = message.attachments,
             darkMode = darkMode,
@@ -2307,6 +2343,25 @@ private fun TimelineShimmerText(
 }
 
 @Composable
+private fun modelRetryText(message: TimelineMessage): String? {
+    val content = remember(message.rawContent) {
+        runCatching { org.json.JSONObject(message.rawContent) }.getOrNull()
+    } ?: return null
+    if (content.optString("code") != "model_request_retry") return null
+    return when (content.optString("state")) {
+        "completed" -> stringResource(R.string.session_model_retry_completed)
+        "interrupted" -> stringResource(R.string.session_model_retry_interrupted)
+        "failed" -> stringResource(R.string.session_model_retry_failed)
+        else -> listOfNotNull(
+            stringResource(if (content.optString("reason") == "rate_limit") R.string.session_model_retry_busy else R.string.session_model_retry_unavailable),
+            if (content.has("maxAttempts")) stringResource(R.string.session_model_retry_progress, content.optInt("attempt", 1), content.optInt("maxAttempts"))
+            else stringResource(R.string.session_model_retry_attempt, content.optInt("attempt", 1)),
+            if (content.has("retryInMs")) stringResource(R.string.session_model_retry_delay, kotlin.math.ceil(content.optDouble("retryInMs") / 1000).toInt()) else null,
+        ).joinToString(" ")
+    }
+}
+
+@Composable
 private fun ToolPlaceholder(
     message: TimelineMessage,
     darkMode: Boolean,
@@ -2323,7 +2378,9 @@ private fun ToolPlaceholder(
         )
         return
     }
+    val retryText = modelRetryText(message)
     val displayText = when {
+        retryText != null -> retryText
         message.kind == TimelineMessageKind.Diagnostic -> stringResource(
             R.string.session_timeline_unknown_item,
             listOf(message.type, message.contentKind).filter(String::isNotBlank).joinToString(" / "),

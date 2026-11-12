@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+from meshcall import MeshCallError
 
 from connector.logging import logger
 from connector.runtime_protocol.host import RuntimeHostClient
@@ -21,6 +22,7 @@ from connector.runtime_protocol.models import (
 )
 from connector.runtimes.dsh.bridge.client import BridgeClient
 from connector.runtimes.dsh.bridge.host import (
+    SUBSCRIPTION_UNKNOWN,
     SnapshotPage,
     SnapshotRequest,
     SnapshotResult,
@@ -35,6 +37,7 @@ from connector.runtimes.dsh.bridge.models import (
     timeline_item,
 )
 from connector.runtimes.dsh.bridge.models import notice as session_notice
+from connector.server.errors import ConnectorNetworkError
 from connector.server.ingest import ConnectorIngestRejectedError
 
 # Consecutive subscription failures back off up to this long between attempts.
@@ -50,6 +53,12 @@ STREAMING_POST_INTERVAL_SECONDS = 0.25
 
 # Called once when the relay task ends for any reason other than close().
 RelayExitHandler = Callable[["SyncRelay", BaseException | None], None]
+
+# Sync progress is a phase of a usable runtime: session reads and commands go
+# straight to the Bridge and do not wait for the event feed. Only a lost Bridge
+# makes the runtime unusable, and that is reported by the runtime itself (#504).
+SYNCING_PHASE = {"code": "syncing", "message": "正在同步 DSH 会话…", "retryable": True}
+SYNC_INTERRUPTED_PHASE = {"code": "sync_interrupted", "message": "DSH 会话同步中断，正在重试…", "retryable": True}
 
 _DURABLE_NOTIFICATIONS = {
     "timeline.itemUpsert", "session.meta.upsert", "session.state.updated",
@@ -84,6 +93,35 @@ class _Quarantine:
     def source_state(self) -> dict[str, Any]:
         return {"availability": "unavailable", "reason": self.reason,
                 "observedAt": _observed_now(), "observationOrigin": "event"}
+
+
+def _with_event_time(items: Iterator[dict[str, Any]], activity: Any) -> Iterator[dict[str, Any]]:
+    """Date replayed items with their own DSH event time when they carry no time.
+
+    DSH items keep their event time only inside ``source``, so the backend dates an
+    untimed item with the moment it was ingested. For a complete capture that is
+    the sync moment: a first import, or any re-capture, would sort every session
+    by the order this relay happened to walk them instead of by when it was used.
+    An item without an event time falls back to the session's last activity, as
+    the polling path does with the session's ordering time. Items that already
+    carry a time keep it.
+    """
+    fallback = activity if isinstance(activity, str) and activity else None
+    for item in items:
+        source = item.get("source")
+        time = (_event_time(source.get("time")) if isinstance(source, Mapping) else None) or fallback
+        yield item if time is None else {"createdAt": time, "updatedAt": time, **item}
+
+
+def _event_time(value: Any) -> str | None:
+    """Turn a DSH event time (epoch milliseconds) into the backend's ISO form."""
+    if isinstance(value, bool) or not isinstance(value, int | float) or not value > 0:
+        return None
+    try:
+        moment = datetime.fromtimestamp(value / 1000, UTC)
+    except (OverflowError, OSError, ValueError):
+        return None
+    return moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _checkpoint(value: Any) -> dict[str, Any] | None:
@@ -152,6 +190,8 @@ class SyncRelay:
         self.item_bytes = 0
         self.item_ids: set[str] = set()
         self.durable_checkpoints = False
+        # The current subscription delivered its complete inventory.
+        self.baseline_complete = False
 
     def start(self) -> None:
         self.task = asyncio.create_task(self.run(), name="dsh-event-sync")
@@ -171,9 +211,16 @@ class SyncRelay:
         if self.on_exit is not None:
             self.on_exit(self, error)
 
+    async def _baseline_completed(self) -> None:
+        self.baseline_complete = True
+        await self._report_health("running")
+
     async def _report_health(self, status: str, phase: dict[str, Any] | None = None) -> None:
         # Status is best effort: the backend socket may be down while the
         # bridge is fine, and a failed report must not take the sync with it.
+        if not self.client.connected:
+            # The runtime reports the lost Bridge; a late "running" must not overwrite it.
+            return
         try:
             if phase is None:
                 await self.host.runtime_health_update(status)
@@ -241,12 +288,13 @@ class SyncRelay:
 
     async def deliver_snapshot(self, session_id: str, snapshot: dict[str, Any]) -> None:
         meta = snapshot["meta"]
+        items = _with_event_time(self.iter_items(), meta.get("lastActivityAt"))
         try:
             # With durable checkpoints every earlier notification of the feed has
             # landed before its capture, so the upload need not queue behind, or
             # hold back, the other notifications of the Connector.
             await self.host.publish_runtime_snapshot(
-                "dsh", session_id, meta, self.iter_items(), ordered=not self.durable_checkpoints,
+                "dsh", session_id, meta, items, ordered=not self.durable_checkpoints,
             )
         except (ConnectorIngestRejectedError, httpx.HTTPStatusError) as error:
             if isinstance(error, httpx.HTTPStatusError) and not 400 <= error.response.status_code < 500:
@@ -372,7 +420,7 @@ class SyncRelay:
         if streaming and (hold := started + self.streaming_post_interval - loop.time()) > 0:
             await asyncio.sleep(hold)
         if any(n["method"] == "session.inventory.complete" and n["params"].get("complete") is True for n in notifications):
-            await self._report_health("running")
+            await self._baseline_completed()
 
     async def store_items(self, items: list[dict[str, Any]]) -> None:
         self.item_bytes += object_bytes(items)
@@ -461,7 +509,7 @@ class SyncRelay:
         elif method in {"session.inventory.begin", "session.inventory.complete"}:
             await self.host.publish_runtime_notifications("dsh", [notice])
             if method == "session.inventory.complete" and params.get("complete") is True:
-                await self._report_health("running")
+                await self._baseline_completed()
         else:
             raise ValueError(f"Unsupported runtime notification: {method}")
 
@@ -479,11 +527,9 @@ class SyncRelay:
                         "DSH event sync interrupted; resubscribing in {:.1f}s ({}: {})",
                         delay, type(error).__name__, error,
                     )
-                    await self._report_health("starting", {
-                        "code": "sync_interrupted", "message": "DSH 会话同步中断，正在重试…", "retryable": True,
-                    })
                     if not self.client.connected:
                         return
+                    await self._report_health("running", SYNC_INTERRUPTED_PHASE)
                     self.clear_snapshot()
                     await asyncio.sleep(delay)
         finally:
@@ -496,11 +542,10 @@ class SyncRelay:
         self.subscription_id = subscription_id
         self.projection_version = None
         self.expected_batch = 1
+        self.baseline_complete = False
         self.confirmed.clear()
         try:
-            await self._report_health("starting", {
-                "code": "syncing", "message": "正在同步 DSH 会话…", "retryable": True,
-            })
+            await self._report_health("running", SYNCING_PHASE)
             async for event in self.client.stream("sync", {"subscriptionId": subscription_id, "checkpointVersion": 1}):
                 if event.get("kind") != "subscribed":
                     continue
@@ -525,6 +570,18 @@ class SyncRelay:
         try:
             await self._await_subscription()
             await self._ingest_locked(batch)
+        except (asyncio.CancelledError, MeshCallError, ConnectorNetworkError):
+            # An unreachable Server is retried by the plugin, not a rejected batch.
+            raise
+        except Exception as error:
+            # The plugin only sees an internal error; keep the facts that decided it.
+            logger.warning(
+                "DSH sync batch rejected subscription={} batch_subscription={} batch_seq={} expected_batch={} "
+                "projection={} batch_projection={} operations={} error={}: {}",
+                self.subscription_id, batch.subscriptionId, batch.batchSeq, self.expected_batch,
+                self.projection_version, batch.projectionVersion, len(batch.operations), type(error).__name__, error,
+            )
+            raise
         finally:
             if task is not None:
                 self._ingest_tasks.discard(task)
@@ -532,7 +589,9 @@ class SyncRelay:
     async def _ingest_locked(self, batch: SyncBatch) -> None:
         async with self.ingest_lock:
             if batch.subscriptionId != self.subscription_id or self.projection_version is None:
-                raise ValueError("Batch for a subscription that already ended")
+                # Not acknowledged: the plugin saves checkpoints only after an
+                # acknowledgement, and this batch was never applied.
+                raise MeshCallError(SUBSCRIPTION_UNKNOWN, "The DSH sync subscription already ended")
             if batch.batchSeq == self.expected_batch - 1:
                 # A delivery whose acknowledgement was lost may be retried; the
                 # original application already advanced the sequence, so acking

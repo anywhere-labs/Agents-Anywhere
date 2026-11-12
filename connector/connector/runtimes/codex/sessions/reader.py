@@ -40,6 +40,7 @@ from connector.runtimes.codex.sessions.history_index import (
     NativeThreadActivity,
     read_history_index,
     read_native_thread_activity,
+    read_rollout_terminal_activity,
     source_signature,
     valid_read_state,
 )
@@ -483,7 +484,10 @@ class CodexSessionReader:
         thread = self._observed_threads.get(external_session_id)
         if thread is None:
             return None
-        return await asyncer.asyncify(read_native_thread_activity)(thread)
+        activity = await asyncer.asyncify(read_native_thread_activity)(thread)
+        if activity is None:
+            activity = await asyncer.asyncify(read_rollout_terminal_activity)(thread)
+        return activity
 
     async def _read_session_selections(
         self,

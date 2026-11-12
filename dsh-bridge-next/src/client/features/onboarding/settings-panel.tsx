@@ -27,6 +27,7 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
   const [draft, setDraft] = useState(management?.settings)
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [customProxy, setCustomProxy] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [openingFolder, setOpeningFolder] = useState<'data' | 'logs' | null>(null)
   const [reset, setReset] = useState<'normal' | 'force' | null>(null)
@@ -43,6 +44,7 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
   const status = connectorStatus(snapshot, state.readError, t)
   const dirty = JSON.stringify(draft) !== signature
   const mirror = PYPI_MIRRORS.find(mirror => mirror.url === draft.uvPypiIndexUrl)?.id ?? 'default'
+  const proxyChoice = draft.connectorProxy === 'direct' ? 'direct' : draft.connectorProxy || customProxy ? 'custom' : 'system'
   const update = <K extends keyof typeof draft>(key: K, value: (typeof draft)[K]) => {
     setDraft({ ...draft, [key]: value }); setSaved(false); state.clearError()
   }
@@ -118,6 +120,25 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
           <Choice label={t('PyPI 镜像')} value={mirror} disabled={busy} options={PYPI_MIRRORS.map(({ id, label }) => ({ id, label: translateMessage(t, label) }))}
             onChange={id => update('uvPypiIndexUrl', PYPI_MIRRORS.find(mirror => mirror.id === id)!.url)} />
         </div>
+      </div>
+
+      <div className={css.section}>
+        <h3>{t('网络')}</h3>
+        <div className={css.row}>
+          <div><span>{t('Connector 网络')}</span><p className={css.hint}>{t('上传很慢或一直同步失败时，可以换成直连')}</p></div>
+          <Choice label={t('Connector 网络')} disabled={busy} value={proxyChoice}
+            options={[{ id: 'system', label: t('跟随系统') }, { id: 'direct', label: t('直连') }, { id: 'custom', label: t('自定义代理') }]}
+            onChange={id => {
+              setCustomProxy(id === 'custom')
+              if (id !== 'custom') update('connectorProxy', id === 'direct' ? 'direct' : '')
+              else if (draft.connectorProxy === 'direct') update('connectorProxy', '')
+            }} />
+        </div>
+        {proxyChoice === 'custom' ? <>
+          <label className={css.field} htmlFor={`${id}-proxy`}>{t('代理地址')}</label>
+          <Input id={`${id}-proxy`} className={css.input!} disabled={busy} value={draft.connectorProxy} spellCheck={false}
+            placeholder='http://127.0.0.1:7890' autoComplete="off" onChange={event => update('connectorProxy', event.target.value)} />
+        </> : null}
       </div>
 
       <div className={css.section}>

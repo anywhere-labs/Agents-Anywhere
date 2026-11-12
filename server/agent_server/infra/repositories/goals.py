@@ -16,6 +16,7 @@ from agent_server.infra.db.schema import (
     sessions,
     timeline_items,
 )
+from agent_server.infra.db.engine import read_connection
 from agent_server.infra.repositories.store_support import session_revision_fenced
 
 TERMINAL = {"complete", "failed", "cleared", "replaced"}
@@ -27,7 +28,7 @@ def encode(value):
 
 class GoalRepositoryMixin:
     async def read_goal(self, session_id):
-        async with self._engine.connect() as c:
+        async with read_connection(self._engine) as c:
             raw = (
                 await c.execute(
                     select(session_goal_state.c.payload).where(
@@ -45,7 +46,7 @@ class GoalRepositoryMixin:
     async def goal_session_ids(self, session_ids):
         if not session_ids:
             return []
-        async with self._engine.connect() as c:
+        async with read_connection(self._engine) as c:
             return list(
                 (
                     await c.execute(
@@ -57,7 +58,7 @@ class GoalRepositoryMixin:
             )
 
     async def pending_goal_operation(self, session_id):
-        async with self._engine.connect() as c:
+        async with read_connection(self._engine) as c:
             return (
                 await c.execute(
                     select(goal_operations.c.operation_id)
@@ -73,7 +74,7 @@ class GoalRepositoryMixin:
             ).scalar_one_or_none()
 
     async def replay_goal_operation(self, session_id, request):
-        async with self._engine.connect() as c:
+        async with read_connection(self._engine) as c:
             row = (
                 (
                     await c.execute(
@@ -192,7 +193,7 @@ class GoalRepositoryMixin:
         return None
 
     async def get_goal_operation(self, session_id, operation_id):
-        async with self._engine.connect() as c:
+        async with read_connection(self._engine) as c:
             row = (
                 (
                     await c.execute(
@@ -443,6 +444,7 @@ class GoalRepositoryMixin:
                             payload_json=encode(item),
                         )
                     )
+                    await self.timeline.refresh_session_latest(c, session_id)
                     envelope["items"] = [item]
                 await c.execute(
                     insert(goal_event_outbox).values(

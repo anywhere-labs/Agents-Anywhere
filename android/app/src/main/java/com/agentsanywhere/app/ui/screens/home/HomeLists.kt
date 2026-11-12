@@ -8,7 +8,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -47,13 +48,13 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
@@ -92,6 +93,7 @@ internal fun HomeList(
     onCreateSession: () -> Unit,
     onPairDevice: () -> Unit,
     onLoadMore: (HomeTab) -> Unit,
+    selectedSessionId: String? = null,
 ) {
     val devices = remember(state.devices) { state.devices.sortedForDevicesPage() }
     val sessions = if (tab == HomeTab.Active) state.sessions else state.archivedSessions
@@ -140,6 +142,7 @@ internal fun HomeList(
             onLoadMore = { onLoadMore(tab) },
             onSessionLongPress = onSessionLongPress,
             onOpenSession = onOpenSession,
+            selectedSessionId = selectedSessionId,
         )
     }
 }
@@ -245,9 +248,10 @@ private fun SessionList(
     onLoadMore: () -> Unit,
     onSessionLongPress: (AgentSession, Rect) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
+    selectedSessionId: String? = null,
 ) {
-    var pinnedExpanded by remember { mutableStateOf(true) }
-    var recentExpanded by remember { mutableStateOf(true) }
+    var pinnedExpanded by rememberSaveable { mutableStateOf(true) }
+    var recentExpanded by rememberSaveable { mutableStateOf(true) }
     val pinned = remember(sessions) { SessionsState(sessions = sessions).pinnedSessions }
     val recent = remember(sessions) { SessionsState(sessions = sessions).recentSessions }
     val projectsById = remember(projects) { projects.associateBy { it.id } }
@@ -286,6 +290,7 @@ private fun SessionList(
                 items(pinned, key = { "pinned-${it.id}" }) { session ->
                     HomeSessionRow(
                         session = session,
+                        selected = session.id == selectedSessionId,
                         contextLabel = session.sidebarContextLabel(
                             projectName = projectsById[session.projectId]?.name,
                             deviceName = devicesById[session.connectorId]?.name,
@@ -311,6 +316,7 @@ private fun SessionList(
                 items(recent, key = { "recent-${it.id}" }) { session ->
                     HomeSessionRow(
                         session = session,
+                        selected = session.id == selectedSessionId,
                         contextLabel = session.sidebarContextLabel(
                             projectName = projectsById[session.projectId]?.name,
                             deviceName = devicesById[session.connectorId]?.name,
@@ -443,6 +449,7 @@ private fun HomeSectionHeader(
 internal fun HomeSessionRow(
     session: AgentSession,
     contextLabel: String,
+    selected: Boolean = false,
     showDivider: Boolean = true,
     onClick: () -> Unit,
     onLongPress: (Rect) -> Unit,
@@ -450,6 +457,7 @@ internal fun HomeSessionRow(
     HomeSessionRowShell(
         height = 66.dp,
         showDivider = showDivider,
+        selected = selected,
         onClick = onClick,
         onLongPress = onLongPress,
     ) {
@@ -626,6 +634,7 @@ private fun SessionUnreadIndicator(
 private fun HomeSessionRowShell(
     height: androidx.compose.ui.unit.Dp,
     showDivider: Boolean = true,
+    selected: Boolean = false,
     onClick: () -> Unit,
     onLongPress: (Rect) -> Unit,
     content: @Composable RowScope.() -> Unit,
@@ -640,15 +649,15 @@ private fun HomeSessionRowShell(
                 .fillMaxWidth()
                 .height(height)
                 .onGloballyPositioned { bounds = it.boundsInRoot() }
-                .pointerInput(onClick, onLongPress, bounds) {
-                    detectTapGestures(
-                        onTap = { onClick() },
-                        onLongPress = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onLongPress(bounds)
-                        },
-                    )
-                }
+                .background(if (selected) colors.subtle else Color.Transparent)
+                .semantics { this.selected = selected }
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onLongPress(bounds)
+                    },
+                )
                 .padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),

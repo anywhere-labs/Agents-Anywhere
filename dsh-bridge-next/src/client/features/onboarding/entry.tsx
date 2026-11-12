@@ -21,6 +21,23 @@ const homeLinks = [
 const tabs = ['connection', 'settings', 'logs'] as const
 const tabLabels = { connection: '登录和连接', settings: '设置', logs: '运行日志' } as const
 
+/** Match the portal stack without treating another plugin's idle popover as a modal. */
+function activeModalDialog(panel: HTMLElement): HTMLElement {
+  const document = panel.ownerDocument
+  const view = document.defaultView!
+  return Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]')).findLast(dialog => {
+    // The panel may be inert because we covered it ourselves; keep its stack position.
+    if (dialog === panel) return true
+    if (dialog.getAttribute('aria-modal') === 'false' || dialog.closest('[hidden], [inert]')) return false
+    const visibility = view.getComputedStyle(dialog).visibility
+    if (visibility === 'hidden' || visibility === 'collapse') return false
+    for (let element: HTMLElement | null = dialog; element; element = element.parentElement) {
+      if (view.getComputedStyle(element).display === 'none') return false
+    }
+    return true
+  }) ?? panel
+}
+
 export interface ConnectionEntryProps {
   wide: boolean
   t: Translate
@@ -46,7 +63,8 @@ export function ConnectionEntry({ wide, host, t, renderTrigger }: ConnectionEntr
   const close = useCallback(() => {
     // Official Modals each listen for Escape; a nested reset confirmation must
     // close first, leaving the connection panel and its edits in place.
-    if (document.querySelectorAll('[role="dialog"]').length > 1) return
+    const dialog = content.current?.closest<HTMLElement>('[role="dialog"]')
+    if (dialog && activeModalDialog(dialog) !== dialog) return
     setOpen(false)
   }, [])
 
@@ -59,7 +77,7 @@ export function ConnectionEntry({ wide, host, t, renderTrigger }: ConnectionEntr
     const appRoot = document.getElementById('root')
     const wasInert = appRoot?.hasAttribute('inert') ?? false
     appRoot?.setAttribute('inert', '')
-    const activeDialog = () => Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]')).at(-1) ?? dialog
+    const activeDialog = () => activeModalDialog(dialog)
     const focusable = () => Array.from(activeDialog().querySelectorAll<HTMLElement>(
       'button:not(:disabled), a[href], input:not(:disabled), summary, [tabindex="0"]',
     )).filter(element => {
@@ -85,10 +103,12 @@ export function ConnectionEntry({ wide, host, t, renderTrigger }: ConnectionEntr
     const observer = new MutationObserver(() => {
       const wasCovered = dialog.hasAttribute('inert')
       const covered = activeDialog() !== dialog
+      if (wasCovered === covered) return
       dialog.toggleAttribute('inert', covered)
       if (wasCovered && !covered && lastFocus?.isConnected) lastFocus.focus()
     })
-    observer.observe(document.body, { childList: true })
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true,
+      attributeFilter: ['hidden', 'inert', 'aria-modal', 'class', 'style'] })
     document.addEventListener('focusin', onFocus)
     document.addEventListener('keydown', onKeyDown)
     return () => {

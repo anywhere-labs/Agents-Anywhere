@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import sys
+import traceback
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -92,7 +93,7 @@ class RpcLogSink:
             payload["details"] = _clip(json.dumps(extra, default=str), 16000)
         exception = record.get("exception")
         if exception is not None:
-            payload["exception"] = _clip(exception, 16000)
+            payload["exception"] = _clip(_format_exception(exception), 16000)
 
         if self._writer is not None:
             self._writer.write(payload)
@@ -109,6 +110,15 @@ def install_rpc_log_sink(
         level=level,
         remove_default_sink=remove_default_sink,
     )
+
+
+def _format_exception(exception: Any) -> str:
+    """The traceback text, not the repr of Loguru's (type, value, traceback) record."""
+    kind, value, trace = (getattr(exception, name, None) for name in ("type", "value", "traceback"))
+    if kind is None and value is None:
+        return str(exception)
+    # Keep the end of a long chain: the frame that raised matters most.
+    return "".join(traceback.format_exception(kind, value, trace))[-16000:]
 
 
 def _clip(value: Any, limit: int) -> str:

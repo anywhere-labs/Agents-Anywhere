@@ -14,8 +14,113 @@ class FilesController(
     private val filesApi: FilesApi,
     private val sessionStore: AuthSessionStore,
 ) {
+    private companion object {
+        /** The Server keeps a prepared transfer for five minutes; leave a margin. */
+        const val TRANSFER_REUSE_MILLIS = 4L * 60 * 1000
+    }
+
     private val workspaceCache = ConcurrentHashMap<String, java.io.File>()
     private val workspaceLocks = ConcurrentHashMap<String, Mutex>()
+    private val previewLocks = ConcurrentHashMap<String, Mutex>()
+    private val consumedTransfers = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * Asks the Connector for the file's current name, size, type and hash.
+     * The Server prepares a transfer that [downloadRemoteFile] can use once.
+     */
+    suspend fun prepareRemoteFile(target: FilePreviewTarget): Result<RemoteFileInfo> {
+        return withContext(Dispatchers.IO) {
+            runCatching { prepareRemoteFileBlocking(target) }.recoverCatching { error ->
+                if (error is ApiException) throw error
+                throw IllegalStateException(error.message ?: "Could not open file.", error)
+            }
+        }
+    }
+
+    /** The local copy of exactly this version of the file, if it was downloaded before. */
+    fun cachedRemoteFile(info: RemoteFileInfo, cacheDir: java.io.File): java.io.File? {
+        if (info.sha256.isBlank()) return null
+        val directory = filePreviewCacheDirectory(cacheDir, info.target.connectorId, info.path, info.sha256)
+        val file = java.io.File(directory, localFileName(info.name))
+        if (!file.isFile || file.length() != info.size) return null
+        directory.setLastModified(System.currentTimeMillis())
+        return file
+    }
+
+    /**
+     * Downloads [info] into the preview cache under the original file name,
+     * reusing an earlier copy with the same hash. A transfer that is already
+     * used or close to expiring is prepared again first, which also picks up
+     * a file the agent rewrote in the meantime.
+     */
+    suspend fun downloadRemoteFile(
+        info: RemoteFileInfo,
+        cacheDir: java.io.File,
+        onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> },
+    ): Result<LocalRemoteFile> {
+        val lock = previewLocks.getOrPut(
+            "${info.target.connectorId}\u0000${normalizeRemotePath(info.target.path)}",
+        ) { Mutex() }
+        return lock.withLock {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    var current = info
+                    cachedRemoteFile(current, cacheDir)?.let { return@runCatching LocalRemoteFile(current, it) }
+                    val expired = System.currentTimeMillis() - current.preparedAtMillis > TRANSFER_REUSE_MILLIS
+                    if (expired || !consumedTransfers.add(current.transfer.transferId)) {
+                        current = prepareRemoteFileBlocking(current.target)
+                        cachedRemoteFile(current, cacheDir)?.let { return@runCatching LocalRemoteFile(current, it) }
+                        consumedTransfers.add(current.transfer.transferId)
+                    }
+                    val directory = filePreviewCacheDirectory(
+                        cacheDir = cacheDir,
+                        connectorId = current.target.connectorId,
+                        path = current.path,
+                        sha256 = current.sha256.ifBlank { UUID.randomUUID().toString() },
+                    )
+                    check(directory.isDirectory || directory.mkdirs()) { "Could not create the download folder." }
+                    val auth = authSession()
+                    val file = filesApi.downloadFile(
+                        serverUrl = auth.serverUrl,
+                        authorizationToken = auth.accessToken,
+                        transfer = current.transfer,
+                        destination = java.io.File(directory, localFileName(current.name)),
+                        maxBytes = FilesApi.MAX_SAVE_BYTES,
+                        onProgress = onProgress,
+                    )
+                    directory.setLastModified(System.currentTimeMillis())
+                    pruneFilePreviewCache(cacheDir, keep = directory)
+                    LocalRemoteFile(current, file)
+                }.recoverCatching { error ->
+                    if (error is ApiException) throw error
+                    throw IllegalStateException(error.message ?: "Could not download file.", error)
+                }
+            }
+        }
+    }
+
+    private fun prepareRemoteFileBlocking(target: FilePreviewTarget): RemoteFileInfo {
+        val auth = authSession()
+        val transfer = filesApi.prepareFile(
+            serverUrl = auth.serverUrl,
+            authorizationToken = auth.accessToken,
+            deviceId = target.connectorId,
+            root = target.root,
+            path = target.path,
+        )
+        val name = transfer.name.takeIf { it.isNotBlank() && it != "download" }
+            ?: fileNameFromRemotePath(transfer.path.ifBlank { target.path })
+        return RemoteFileInfo(
+            target = target,
+            path = transfer.path.ifBlank { target.path },
+            name = name,
+            size = transfer.size,
+            mediaType = transfer.mediaType,
+            sha256 = transfer.sha256,
+            transfer = transfer,
+            preparedAtMillis = System.currentTimeMillis(),
+        )
+    }
 
     suspend fun listFiles(
         connectorId: String,
@@ -269,4 +374,21 @@ class FilesController(
         val serverUrl: String,
         val accessToken: String,
     )
+}
+
+/** Largest file the preview page downloads to show, save or share. */
+const val MAX_REMOTE_FILE_DOWNLOAD_BYTES = FilesApi.MAX_SAVE_BYTES
+
+/** Maps a failure from [FilesController] to the case the preview page explains. */
+fun remoteFileFailure(error: Throwable): RemoteFileFailure {
+    val text = error.message.orEmpty()
+    val status = (error as? ApiException)?.statusCode
+    return when {
+        status == 413 -> RemoteFileFailure.TooLarge
+        text.contains("not found", ignoreCase = true) && !text.contains("transfer", ignoreCase = true) ->
+            RemoteFileFailure.NotFound
+        text.contains("no such file", ignoreCase = true) -> RemoteFileFailure.NotFound
+        status == 409 || text.contains("offline", ignoreCase = true) -> RemoteFileFailure.DeviceOffline
+        else -> RemoteFileFailure.Other(text.takeIf { it.isNotBlank() })
+    }
 }

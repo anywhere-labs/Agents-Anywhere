@@ -83,9 +83,14 @@ import com.agentsanywhere.app.R
 import com.agentsanywhere.app.api.AttachmentTransferException
 import com.agentsanywhere.app.api.AttachmentTransferFailure
 import com.agentsanywhere.app.api.UploadFilePart
+import com.agentsanywhere.app.feature.files.FilePreviewTarget
 import com.agentsanywhere.app.feature.files.FilesController
 import com.agentsanywhere.app.feature.files.MAX_INLINE_WORKSPACE_IMAGE_BYTES
+import com.agentsanywhere.app.feature.files.opensInFilePreview
+import com.agentsanywhere.app.feature.files.remoteFileRequest
 import com.agentsanywhere.app.feature.files.resolvePathInWorkspace
+import com.agentsanywhere.app.feature.files.sessionFileLinkPath
+import com.agentsanywhere.app.feature.files.windowsDriveRoot
 import com.agentsanywhere.app.feature.realtime.SessionRealtimeController
 import com.agentsanywhere.app.feature.sessiondetail.DownloadedAttachment
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
@@ -151,6 +156,7 @@ import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.runtimePermissionLocalizer
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.agentsanywhere.app.ui.screens.files.RemoteFilePreviewDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -183,6 +189,7 @@ fun SessionDetailScreen(
     filesController: FilesController,
     terminalPool: RemoteTerminalPool,
     composerDraftStore: SessionComposerDraftStore,
+    backHandlingEnabled: Boolean = true,
     onSessionChanged: (AgentSession) -> Unit = {},
 ) {
     var planningCreation by remember(sessionId, preparedSession?.localSessionId) { mutableStateOf(false) }
@@ -248,6 +255,7 @@ fun SessionDetailScreen(
     var shareScope by remember(sessionId) { mutableStateOf(SessionShareScope.Reply) }
     var shareBusy by remember(sessionId) { mutableStateOf(false) }
     var pendingOpenFilePath by remember(sessionId) { mutableStateOf<String?>(null) }
+    var filePreviewTarget by remember(sessionId) { mutableStateOf<FilePreviewTarget?>(null) }
     var terminalVerticalDragActive by remember(sessionId) { mutableStateOf(false) }
     var composerHeightPx by remember { mutableStateOf(0) }
     var readOnlyComposerTapCount by remember(sessionId) { mutableStateOf(0) }
@@ -414,8 +422,23 @@ fun SessionDetailScreen(
     }
 
     fun openReferencedFile(path: String) {
-        val trimmed = path.trim()
+        val raw = path.trim()
+        // Artifacts may report a file:// URI; Markdown links arrive already decoded.
+        val trimmed = if (raw.startsWith("file:", ignoreCase = true)) sessionFileLinkPath(raw) ?: raw else raw
         if (trimmed.isBlank()) return
+        val session = state.session
+        if (session != null && opensInFilePreview(trimmed)) {
+            val workspace = session.cwd?.takeIf { it.isNotBlank() }
+            val deviceOs = currentDevices.firstOrNull { it.id == session.connectorId }?.deviceOs
+                ?: workspace?.takeIf { windowsDriveRoot(it) != null }?.let { "windows" }
+            val request = remoteFileRequest(targetPath = trimmed, deviceOs = deviceOs, fallbackRoot = workspace)
+            filePreviewTarget = FilePreviewTarget(
+                connectorId = session.connectorId,
+                root = request.root,
+                path = request.path,
+            )
+            return
+        }
         pendingOpenFilePath = trimmed
         scope.launch { pagerState.animateScrollToPage(1) }
     }
@@ -1151,7 +1174,7 @@ fun SessionDetailScreen(
         }
     }
 
-    BackHandler {
+    BackHandler(enabled = backHandlingEnabled) {
         if (pagerState.currentPage == 1) {
             scope.launch { pagerState.animateScrollToPage(0) }
         } else {
@@ -1745,7 +1768,9 @@ fun SessionDetailScreen(
             stringResource(R.string.session_busy_placeholder)
         runtimeStatus in setOf(SessionRuntimeStatus.WaitingApproval, SessionRuntimeStatus.Blocked) ->
             stringResource(R.string.session_waiting_approval_placeholder)
-        runtimeStatus == SessionRuntimeStatus.Error -> stringResource(R.string.session_error_placeholder)
+        runtimeStatus == SessionRuntimeStatus.Error ->
+            runtimeErrorText(context, state.runtime.error?.get("code") as? String, null)
+                ?: stringResource(R.string.session_error_placeholder)
         runtimeStatus == SessionRuntimeStatus.Disconnected -> stringResource(R.string.session_device_offline_placeholder)
         !canUseSendMessage && !canUseCommands -> stringResource(R.string.session_send_unavailable)
         inputEnabled -> stringResource(R.string.session_reply_to, replyTarget)
@@ -1857,6 +1882,7 @@ fun SessionDetailScreen(
                                 bottomContentPadding = timelineBottomPadding,
                                 hasMore = state.hasMore,
                                 loadingOlder = state.timeline.loadingOlder,
+                                historyError = state.timeline.historyErrorMessage != null,
                                 onLoadOlder = { loadOlderMessages() },
                                 onPreviewAttachment = { previewImage = AttachmentPreview.Remote(it) },
                                 onOpenAttachment = ::openAttachment,
@@ -1894,6 +1920,20 @@ fun SessionDetailScreen(
                                         onRetry = if (canUseCommands) ({ loadCommands(force = true) }) else null,
                                         blockReason = ::commandBlockMessage,
                                         onSelect = ::chooseCommand,
+                                    )
+                                }
+                                val recoveryGeneration = state.runtime.metadata["ownerGeneration"] as? String
+                                if (state.runtime.metadata["nativeHistory"] != true && sessionId != null && !recoveryGeneration.isNullOrEmpty() &&
+                                    state.capabilities.find("session.recover", runtimeId, runtimeType)?.let {
+                                        it.supported && it.available && (it.allowed || it.unavailableReason == "session_not_taken_over")
+                                    } == true
+                                ) {
+                                    AgentRecoveryControls(
+                                        sessionId = sessionId,
+                                        generation = recoveryGeneration,
+                                        enabled = connectorOnline,
+                                        onRecover = { body -> controller.nativeHistoryAction(sessionId, body, false) },
+                                        onSettled = { loadInitialSnapshot() },
                                     )
                                 }
                                 if (state.runtime.metadata["nativeHistory"] == true && sessionId != null) {
@@ -2073,6 +2113,13 @@ fun SessionDetailScreen(
             .filter(TimelineAttachment::isImage)
             .distinctBy(TimelineAttachment::fileId)
             .map(AttachmentPreview::Remote)
+    }
+    filePreviewTarget?.let { target ->
+        RemoteFilePreviewDialog(
+            target = target,
+            filesController = filesController,
+            onDismiss = { filePreviewTarget = null },
+        )
     }
     previewImage?.let { preview ->
         AttachmentPreviewDialog(

@@ -565,8 +565,14 @@ class TimelineWriteBuffer:
             envelope["items"] = [result.item.model_dump(mode="json")]
         elif isinstance(result, TimelineBatchWriteResult):
             result_items = list(result.items)
-            needs_refetch = False
-            if not result_items and published_through != durable_sequence:
+            # A write that deleted or moved stored rows cannot be followed
+            # item by item; clients refetch.
+            needs_refetch = result.reordered
+            if (
+                not needs_refetch
+                and not result_items
+                and published_through != durable_sequence
+            ):
                 result_items, needs_refetch = await self._store.timeline.recovery_items(session_id)
                 envelope["timelineReset"] = True
             if needs_refetch or len(result_items) > 100:

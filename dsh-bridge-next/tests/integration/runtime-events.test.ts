@@ -9,7 +9,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { SessionId, type Session } from '@deepseek-ai/dsh-session'
 import { createAssistantMessage, createToolResultMessage, createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
-import { LocalRouter, Mesh, Router } from 'meshcall'
+import { LocalRouter, Mesh, MeshCallError, Router } from 'meshcall'
 import { bridgePath, nativeRuntime } from '../fixtures/native-runtime.js'
 import { corruptHistory } from '../fixtures/corrupt-history.js'
 import { mountAgents, TextAdapter, initialSelections } from '../fixtures/agent-runtime.js'
@@ -326,6 +326,27 @@ test('changes that outpace a slow startup scan recalibrate the noisiest session 
     assert.equal(last.request.meta.title, 'title 10499', 'the recalibration captures the final state')
     assert.ok(!diagnostics.some(entry => entry.event === 'sync.failed'))
   } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
+
+test('an unreachable Server retries the same batch and keeps the feed; any other failure still ends it', { timeout: 30_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-batch-retry-'))
+  const fixture = await nativeRuntime(home)
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  let unavailable = 2
+  const stream = follow(native, { onBatch: () => {
+    if (unavailable > 0) { unavailable -= 1; throw new MeshCallError('backend_unavailable', 'backend ingest request failed', { retryable: true }) }
+  } })
+  const refused = follow(native, { onBatch: () => { throw new MeshCallError('INVALID_PARAMS', 'refused') } })
+  try {
+    await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'inventory completes after the Server returns')
+    assert.deepEqual(stream.errors, [])
+    const [first, second, third] = stream.batches
+    assert.equal(first!.batchSeq, second!.batchSeq, 'the failed batch goes out again')
+    assert.equal(first!.batchSeq, third!.batchSeq)
+    assert.deepEqual(first!.operations, third!.operations)
+    await until(() => refused.errors.length === 1, 'a refused batch ends the feed')
+    assert.equal(refused.batches.length, 1)
+  } finally { stream.feed.close(); refused.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })
 
 test('new native drafts sync once after their first real user message, including attachment-only messages', { timeout: 30_000 }, async () => {
@@ -770,4 +791,62 @@ test('feeds without durable checkpoints keep settled projections instead of re-u
     assert.equal(stream.captures.length, captures, 'the kept projection sends only the delta')
     assert.deepEqual(stream.errors, [])
   } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
+
+test('a session someone works in streams before the startup scan finishes', { timeout: 30_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-live-during-scan-'))
+  const fixture = await nativeRuntime(home)
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  const emit = (change: NativeChange) => (native as unknown as { emit(change: NativeChange): void }).emit(change)
+  // Two more persisted, unloaded sessions so the scan outlasts the live changes.
+  for (const name of ['cold-a', 'cold-b']) {
+    const cold = fixture.ctx.sessions.prepare(SessionId(name), { meta: { cwd: home } })
+    const detach = fixture.ctx.sessions.enter(cold)
+    fixture.ctx.sessions.announce(cold)
+    cold.append('turn/start', { turn: 1 })
+    cold.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: name }] }), { surfaceOp: 'append' })
+    cold.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    await fixture.ctx.sessions.flush(cold)
+    detach()
+  }
+  const live = sessionId('test', fixture.session.id)
+  // Every capture but the loaded session's waits until the test lets it through.
+  const held: { id: string, release: () => void }[] = []
+  const stream = follow(native, { snapshot: async capture => {
+    if (capture.request.sessionId === live) return
+    const id = String((capture.request.meta as Record<string, unknown>).externalSessionId)
+    await new Promise<void>(release => { held.push({ id, release }) })
+  } })
+  const notes = () => notifications(stream.ops())
+  const complete = () => notes().some(n => n.method === 'session.inventory.complete')
+  const captured = (id: string) => stream.captures.filter(capture => capture.request.sessionId === sessionId('test', id)).length
+  try {
+    await until(() => held.length === 1, 'the scan reached an unloaded session')
+    assert.equal(stream.captures[0]!.request.sessionId, live, 'a session loaded in DSH is scanned first')
+    const [first] = held
+    const other = ['cold-a', 'cold-b', 'persisted-only'].find(id => id !== first!.id)!
+    fixture.session.append('session/title', { title: '扫描中的新标题', source: { kind: 'user' }, messageSeqs: [] })
+    emit({ type: 'status', id: other })
+    first!.release()
+    // The next unloaded session is the one with a queued change, captured ahead of its turn in the scan.
+    await until(() => held.length === 2, 'the session with a queued change was captured early')
+    assert.equal(held[1]!.id, other)
+    assert.ok(notes().some(n => n.method === 'session.meta.upsert' && n.params.sessionId === live && n.params.title === '扫描中的新标题'),
+      'the live change of an imported session is delivered during the scan')
+    assert.ok(!complete(), 'the scan is still running')
+    for (let n = 1; ; n++) {
+      held[n]?.release()
+      if (complete()) break
+      await until(() => complete() || held.length > n + 1, 'the scan proceeds')
+    }
+    for (const entry of held) entry.release()
+    await until(complete, 'inventory completes')
+    assert.equal(captured(fixture.session.id), 1)
+    assert.equal(captured(other), 1, 'a session imported early is not captured again by the scan')
+    assert.deepEqual(stream.errors, [])
+    assert.deepEqual(stream.batches.map(b => b.batchSeq), stream.batches.map((_, n) => n + 1))
+  } finally {
+    for (const entry of held) entry.release()
+    stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true })
+  }
 })

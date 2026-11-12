@@ -23,7 +23,7 @@ RuntimeControl、Sessions、Workspaces、Files、Shell 和 Terminals。
 签发 900 秒的代理授权；实际接收 Mesh WebSocket 的 Server 为本机 Router 签发
 只允许注册该 link 服务的 token。Bootstrap、基础 WebSocket、Mesh WebSocket 和
 业务 API 可以位于不同实例，无需负载均衡粘性会话。凭据吊销、基础连接替换或过期
-会关闭 Mesh WebSocket。`Connection.ping` 为内部探针，不计入 67 个业务方法。
+会关闭 Mesh WebSocket。`Connection.ping` 为内部探针，不计入 68 个业务方法。
 
 Redis presence 租约继续表示基础连接的 owner。另一个 60 秒租约记录 Mesh link 的
 Router 与 worker，每 20 秒续期；只有预期服务全部注册后才能发布。发布时原子校验
@@ -47,10 +47,10 @@ Router 与 worker，每 20 秒续期；只有预期服务全部注册后才能�
 
 本分支只替换内部传输：领域参数、业务处理器、对外客户端 API、通知、文件和 PTY
 数据面保持现有语义；没有原生项目创建/同步、客户端界面或数据库 schema 变更。
-67 个映射中，66 个在当前主线有业务处理器；`workspace.refresh` 是为原生项目同步
+68 个映射中，67 个在当前主线有业务处理器；`workspace.refresh` 是为原生项目同步
 PR #413 保留的薄传输映射，处理器和调用入口由该 PR 提供。本契约不实现该业务。
 
-Runtime 10、Sessions 32、Workspaces 7、Files 5、Shell 3、Terminals 10。
+Runtime 11、Sessions 32、Workspaces 7、Files 5、Shell 3、Terminals 10。
 Sessions 包含目标、计划、会话配置，以及会话创建、树位置、关闭、恢复和 agent 操作等
 Runtime workflow 方法；Workspaces 包含工作区准备流程。
 各服务复用现有应用分发器；并发上限和异常翻译位于传输适配器，业务校验仍由领域负责。

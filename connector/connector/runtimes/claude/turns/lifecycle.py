@@ -44,6 +44,7 @@ from connector.runtimes.claude.sdk.stderr import ClaudeStderrBuffer
 from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
 from connector.runtimes.claude.sessions.scheduled import ClaudeScheduledSessions
 from connector.runtimes.claude.timeline.messages import (
+    CLAUDE_NO_RESPONSE_MARKER,
     ClaudeMessageProjector,
     is_synthetic_control_message,
     message_id,
@@ -168,6 +169,7 @@ class ClaudeTurnRunner:
                 or connection.current is not None
                 or connection.pending is not None
                 or connection.task_ids
+                or connection.wakeup_pending
                 or connection.background.active_ids
             ):
                 return
@@ -186,6 +188,7 @@ class ClaudeTurnRunner:
                     or connection.current is not None
                     or connection.pending is not None
                     or connection.background.active_ids
+                    or connection.wakeup_pending
                     or not connection.reconcile_needed
                     or not connection.retained
                     or connection.reconciling
@@ -222,9 +225,11 @@ class ClaudeTurnRunner:
             if not existing.closing and existing.selections == session.selections:
                 existing.cancel_idle()
                 return existing
-            if existing.background.active_ids:
+            if not existing.closing and (
+                existing.background.active_ids or existing.wakeup_pending
+            ):
                 raise RuntimeError(
-                    "Claude selection change requires background work to finish"
+                    "Claude selection change requires pending work to finish"
                 )
             await existing.close()
         # Scheduled reconnect bypasses the normal start/update selection path.
@@ -264,6 +269,12 @@ class ClaudeTurnRunner:
                 remember_native_plan_path(self.host, session.session_id, (data.get("tool_input") or {}).get("file_path"))
             return await connection.before_tool(data)
 
+        async def observe_stop(data, *args):
+            return await connection.observe_stop(data, *args)
+
+        async def user_prompt(data, *args):
+            return await connection.user_prompt(data, *args)
+
         try:
             client = new_sdk_client(
                 sdk=sdk,
@@ -276,6 +287,8 @@ class ClaudeTurnRunner:
                 cli_models=self.catalogs.cli_models,
                 on_tool_result=tool_result,
                 before_tool=before_native_tool,
+                on_stop=observe_stop,
+                on_user_prompt=user_prompt,
             )
         except BaseException:
             remove_gateway_settings_file(settings_path)
@@ -289,6 +302,7 @@ class ClaudeTurnRunner:
             ),
             cleanup=cleanup,
             idle_timeout_seconds=self.config.values.get("idleTimeoutSeconds", 600),
+            awaiting_resume_prompt=bool(session.external_session_id),
             selections=dict(session.selections),
             task_ids=set(existing.task_ids) if existing is not None else set(),
         )
@@ -304,6 +318,7 @@ class ClaudeTurnRunner:
                 or existing is None
                 or existing.selections == session.selections
                 or existing.background.active_ids
+                or existing.wakeup_pending
             ):
                 return
             try:
@@ -398,8 +413,15 @@ class ClaudeTurnRunner:
                 await query_client(client, effective_content)
 
             emitted_final_assistant_content = False
+            emitted_tools = False
+            emitted_partial = False
+            saw_synthetic_no_response = False
+            resumed_prompt = not scheduled and client.resumed
             stream_accumulator = ClaudeStreamAccumulator()
             async for message in receive_response_messages(client):
+                retry_item = self.timeline.retry_item_for_message(session, turn_id, message)
+                if retry_item is not None:
+                    await self.notifications.timeline_activity.timeline_item_upsert(retry_item)
                 goal_port = getattr(self.host, "_goal_port", None)
                 if goal_port is not None:
                     goal_port.observe_message(session.session_id, message)
@@ -448,6 +470,7 @@ class ClaudeTurnRunner:
                         )
                 from connector.runtimes.claude.planning import observe_claude_plan
                 await observe_claude_plan(self.host, session, turn_id, message)
+                resumed_with_notification = resumed_prompt and client.resume_notification
                 stream_item = stream_accumulator.item_from_stream_event(
                     session=session,
                     turn_id=turn_id,
@@ -488,34 +511,51 @@ class ClaudeTurnRunner:
                     )
                     user_message_published = True
                 if stream_item is not None:
-                    await self.notifications.timeline_activity.timeline_item_upsert(
-                        stream_item
-                    )
+                    partial_text = stream_item.content["text"].strip()
+                    if not resumed_with_notification or not CLAUDE_NO_RESPONSE_MARKER.startswith(
+                        partial_text
+                    ):
+                        emitted_partial = True
+                        await self.notifications.timeline_activity.timeline_item_upsert(stream_item)
                 if is_stream_event(message):
                     continue
                 if terminal_message is not None:
                     terminal = terminal_message
-                    if not emitted_final_assistant_content:
-                        text = message_text(message)
-                        if text:
-                            await self.notifications.timeline_activity.timeline_item_upsert(
-                                self.timeline.message_item(
-                                    session=session,
-                                    turn_id=turn_id,
-                                    role="assistant",
-                                    text=text,
-                                    event="claude.turn.result",
-                                    native_item_id=message_id(message),
-                                    item_id=stream_accumulator.final_item_id(
-                                        session,
-                                        turn_id,
-                                    ),
-                                    revision=stream_accumulator.next_final_revision(),
-                                )
+                    no_response_marker = (
+                        (resumed_with_notification or saw_synthetic_no_response)
+                        and (text or "").strip() == CLAUDE_NO_RESPONSE_MARKER
+                    )
+                    if (
+                        resumed_prompt
+                        and (resumed_with_notification or saw_synthetic_no_response)
+                        and terminal.status == "completed"
+                        and not (emitted_tools or emitted_final_assistant_content or emitted_partial)
+                        and (not text or no_response_marker)
+                    ):
+                        terminal = failed_terminal_event(
+                            code="claude_resume_no_response",
+                            message="Claude ended the resumed turn without replying.",
+                        )
+                    elif text and not (emitted_final_assistant_content or no_response_marker):
+                        await self.notifications.timeline_activity.timeline_item_upsert(
+                            self.timeline.message_item(
+                                session=session,
+                                turn_id=turn_id,
+                                role="assistant",
+                                text=text,
+                                event="claude.turn.result",
+                                native_item_id=message_id(message),
+                                item_id=stream_accumulator.final_item_id(
+                                    session,
+                                    turn_id,
+                                ),
+                                revision=stream_accumulator.next_final_revision(),
                             )
-                            emitted_final_assistant_content = True
-                            stream_accumulator.reset()
+                        )
+                        emitted_final_assistant_content = True
+                        stream_accumulator.reset()
                     break
+                emitted_tools = emitted_tools or bool(tool_items)
                 for item in tool_items:
                     await self.notifications.timeline_activity.timeline_item_upsert(
                         item
@@ -524,6 +564,13 @@ class ClaudeTurnRunner:
                     await self.notifications.timeline_activity.timeline_item_upsert(
                         item
                     )
+                if (
+                    role == "assistant"
+                    and (synthetic_control or resumed_with_notification)
+                    and (text or "").strip() == CLAUDE_NO_RESPONSE_MARKER
+                ):
+                    saw_synthetic_no_response = True
+                    continue
                 if synthetic_control:
                     continue
                 if role not in {"assistant", "system"}:
@@ -607,6 +654,7 @@ class ClaudeTurnRunner:
                     and connection.retained
                     and not connection.reconciling
                     and not connection.background.active_ids
+                    and not connection.wakeup_pending
                     and connection.pending is None
                     and not connection.closing
                     and not self.stopping
@@ -641,7 +689,10 @@ class ClaudeTurnRunner:
                 )
             finally:
                 if connection is not None:
-                    if terminal.status == "failed":
+                    if (
+                        terminal.status == "failed"
+                        and terminal.error_code != "claude_resume_no_response"
+                    ):
                         await connection.close()
                     else:
                         if (
@@ -821,6 +872,9 @@ class ClaudeTurnRunner:
         update_state: bool = True,
     ) -> None:
         reason = terminal.reason or execution.interrupt_reason
+        retry_item = self.timeline.finish_retry(session, execution.turn_id, terminal.status)
+        if retry_item is not None:
+            await self.notifications.timeline_activity.timeline_item_upsert(retry_item)
         if terminal.status == "failed":
             metadata = {
                 "source": "claude.turn.failed",

@@ -31,22 +31,25 @@ from agent_server.api import (
     connectors,
     dashboard_stream,
     error_handlers,
+    model_config,
     oauth,
     pairing,
     projects,
     runtime_workflows,
     service,
-    session_planning,
     session_goals,
+    session_planning,
     sessions,
     sessions_fs,
     sessions_terminal,
     shares,
+    tokens_link,
 )
 from agent_server.core.api_namespace import API_V2_PREFIX
 from agent_server.core.process_settings import ProcessSettings
 from agent_server.core.setup_token import SetupToken
 from agent_server.core.utc import utc_now
+from agent_server.deps import model_channel_service_for, tokens_link_service_for
 from agent_server.infra.connector_mesh import ConnectorMesh
 from agent_server.infra.connector_mesh_control import MeshConnectorControlTransport
 from agent_server.infra.connector_rpc import ConnectorRpcManager
@@ -57,12 +60,20 @@ from agent_server.infra.db.migrations import (
 )
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.logging import configure_server_logging
+from agent_server.infra.malloc_trim import run_malloc_trim_loop
+from agent_server.infra.model_gateway_probe import (
+    GatewayProber,
+    private_gateways_allowed,
+)
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.terminal_stream_hub import TerminalStreamHub
 from agent_server.infra.timeline_broker import TimelineBroker
+from agent_server.infra.tokens_access_cache import TokensAccessCache
+from agent_server.infra.tokens_client import TokensClient
 from agent_server.infra.ws_tickets import ClientWsTicketManager
+from agent_server.services.channel_reconciliation import ChannelReconciler
 from agent_server.services.connector_deletion import ConnectorDeletionRecovery
 from agent_server.services.connector_rpc import ConnectorServiceError
 from agent_server.services.dashboard_events import publish_dashboard_changed
@@ -130,7 +141,9 @@ def create_app(
         presence_task: asyncio.Task[None] | None = None
         deletion_task: asyncio.Task[None] | None = None
         usage_task: asyncio.Task[None] | None = None
+        tokens_task: asyncio.Task[None] | None = None
         goal_task: asyncio.Task[None] | None = None
+        trim_task: asyncio.Task[None] | None = None
         try:
             logger.info(
                 "server concurrency pid={} workers={} event_workers={}",
@@ -151,16 +164,40 @@ def create_app(
             presence_task = asyncio.create_task(_connector_presence_watchdog(app))
             deletion_task = asyncio.create_task(app.state.connector_deletion_recovery.run())
             usage_task = asyncio.create_task(app.state.usage_maintenance.run())
+            tokens_task = asyncio.create_task(tokens_link_service_for(app.state).run_keep_alive())
+            # Switches a stopped worker left behind; waiting ones resume on events.
+            await model_channel_service_for(app.state).resume()
+            app.state.channel_reconciler = ChannelReconciler(app.state.store,
+                model_channel_service_for(app.state), app.state.redis, tokens_link_service_for(app.state))
+            await app.state.channel_reconciler.start()
             from agent_server.services.goal.outbox import run_goal_outbox
 
             goal_task = asyncio.create_task(
                 run_goal_outbox(app.state.store, app.state.timeline_broker)
             )
+            if process_settings.malloc_trim_interval_seconds > 0:
+                # Opt-in mitigation for glibc heap creep in long-lived workers (#466).
+                trim_task = asyncio.create_task(
+                    run_malloc_trim_loop(process_settings.malloc_trim_interval_seconds),
+                    name="malloc-trim",
+                )
             # Generate the bootstrap token early so operators see it in logs.
             if await app.state.store.count_users() == 0:
                 await SetupTokenService(app.state.setup_token, app.state.redis).snapshot()
             yield
         finally:
+            if trim_task is not None:
+                trim_task.cancel()
+                await asyncio.gather(trim_task, return_exceptions=True)
+            if tokens_task is not None:
+                tokens_task.cancel()
+                await asyncio.gather(tokens_task, return_exceptions=True)
+            reconciler = getattr(app.state, "channel_reconciler", None)
+            if reconciler is not None:
+                await reconciler.close()
+            driver = getattr(app.state, "channel_driver", None)
+            if driver is not None:
+                await driver.close()
             if goal_task is not None:
                 goal_task.cancel()
                 await asyncio.gather(goal_task, return_exceptions=True)
@@ -259,8 +296,14 @@ def create_app(
         instance_id=app.state.rpc.instance_id,
     )
     app.state.terminal_stream_hub = TerminalStreamHub(app.state.redis)
+    app.state.tokens_access_cache = TokensAccessCache(app.state.redis)
+    app.state.tokens_client_factory = TokensClient
+    app.state.gateway_prober = GatewayProber(allow_private=private_gateways_allowed())
     app.state.timeline_broker = TimelineBroker(
         app.state.redis,
+        dashboard_min_interval_seconds=float(
+            os.getenv("AGENT_SERVER_DASHBOARD_MIN_INTERVAL_SECONDS", "2")
+        ),
         event_workers=process_settings.event_workers,
         event_threshold_bytes=int(os.getenv("AGENT_SERVER_EVENT_THRESHOLD_BYTES", str(256 * 1024))),
         event_queue_items=int(os.getenv("AGENT_SERVER_EVENT_QUEUE_ITEMS", "32")),
@@ -408,6 +451,8 @@ def create_app(
     app.include_router(connectors.router, prefix=API_V2_PREFIX)
     app.include_router(connector_files.router, prefix=API_V2_PREFIX)
     app.include_router(connector_runtimes.router, prefix=API_V2_PREFIX)
+    app.include_router(model_config.router, prefix=API_V2_PREFIX)
+    app.include_router(tokens_link.router, prefix=API_V2_PREFIX)
     app.include_router(runtime_workflows.router, prefix=API_V2_PREFIX)
     app.include_router(connector_shell.router, prefix=API_V2_PREFIX)
     app.include_router(connector_terminal.router, prefix=API_V2_PREFIX)

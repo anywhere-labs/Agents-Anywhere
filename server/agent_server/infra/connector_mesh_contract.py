@@ -17,6 +17,7 @@ CONTROL_METHODS: dict[str, tuple[str, str]] = {
     "runtime.configSchema": ("RuntimeControl", "configSchema"),
     "runtime.config": ("RuntimeControl", "config"),
     "runtime.validateConfig": ("RuntimeControl", "validateConfig"),
+    "runtime.probeModelConnection": ("RuntimeControl", "probeModelConnection"),
     "runtime.start": ("RuntimeControl", "start"),
     "runtime.stop": ("RuntimeControl", "stop"),
     "runtime.capabilities": ("RuntimeControl", "capabilities"),

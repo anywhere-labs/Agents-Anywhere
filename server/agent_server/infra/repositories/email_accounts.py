@@ -31,6 +31,7 @@ from agent_server.infra.db.schema import email_verification_codes as codes_t
 from agent_server.infra.db.schema import email_verification_limits as limits_t
 from agent_server.infra.db.schema import oauth_accounts as oauth_accounts_t
 from agent_server.infra.db.schema import users as users_t
+from agent_server.infra.db.engine import read_connection
 from agent_server.infra.repositories.store_support import _user_from_row
 
 CODE_TTL = 600
@@ -102,7 +103,7 @@ def _code_hash(nonce: str, code: str) -> str:
 class EmailAccountRepositoryMixin:
     async def user_for_email(self, email: str) -> UserView | None:
         normalized = normalize_email(email)
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 (
                     await conn.execute(
@@ -116,7 +117,7 @@ class EmailAccountRepositoryMixin:
 
     async def _email_login_row(self, email: str) -> Any:
         normalized = normalize_email(email)
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             return (
                 (
                     await conn.execute(

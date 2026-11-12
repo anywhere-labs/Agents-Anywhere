@@ -12,7 +12,7 @@ from connector.server.mesh_services import DOMAIN_SERVICE_TYPES
 from connector.server.runtime_rpc import WORKFLOW_RPC, RuntimeRpcHandler
 
 EXPECTED_METHOD_COUNTS = {
-    "RuntimeControl": 10,
+    "RuntimeControl": 11,
     "Sessions": 32,
     "Workspaces": 7,
     "Files": 5,

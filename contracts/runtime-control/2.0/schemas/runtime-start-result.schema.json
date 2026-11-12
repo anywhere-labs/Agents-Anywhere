@@ -1,0 +1,151 @@
+{
+  "$defs": {
+    "ModelConnectionStatus": {
+      "additionalProperties": false,
+      "description": "What the runtime actually did with the saved model connection. It never contains the API key.",
+      "properties": {
+        "externalOwner": {
+          "oneOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mode": {
+          "oneOf": [
+            {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "protocol": {
+          "oneOf": [
+            {
+              "enum": [
+                "openai_responses",
+                "openai_chat",
+                "anthropic"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scope": {
+          "oneOf": [
+            {
+              "enum": [
+                "instance",
+                "session",
+                "native_global"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "enum": [
+            "applied",
+            "failed",
+            "managed_externally",
+            "not_configured"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://agents-anywhere.dev/contracts/runtime-control/2.0/schemas/runtime-start-result.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "description": "Reply to runtime.start. Status, error and phase follow RuntimeInstanceStatus; modelConnection reports what the adapter did with the saved model connection.",
+  "properties": {
+    "error": {
+      "oneOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "modelConnection": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ModelConnectionStatus"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "phase": {
+      "oneOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "runtime": {
+      "type": "string"
+    },
+    "runtimeId": {
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "starting",
+        "running",
+        "error"
+      ],
+      "type": "string"
+    }
+  },
+  "required": [
+    "runtimeId",
+    "status"
+  ],
+  "title": "RuntimeStartResult",
+  "type": "object",
+  "x-direction": "egress",
+  "x-runtime-control-version": "2.0"
+}

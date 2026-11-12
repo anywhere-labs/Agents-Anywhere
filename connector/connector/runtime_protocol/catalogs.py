@@ -18,14 +18,14 @@ def model_catalog_payload(catalog: RuntimeModelCatalog) -> dict[str, Any]:
                 "displayName": model.title,
                 "selectionId": model.selection_id,
                 "description": model.description,
-                "default": False,
+                "default": model.default,
                 "reasoningItems": [
                     {
                         "id": reasoning.id,
                         "displayName": reasoning.title,
                         "selectionId": reasoning.selection_id,
                         "description": reasoning.description,
-                        "default": False,
+                        "default": reasoning.default,
                         "metadata": {
                             **dict(reasoning.metadata),
                             "enabled": reasoning.enabled,
