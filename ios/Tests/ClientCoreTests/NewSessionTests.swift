@@ -21,6 +21,47 @@ import Testing
         }
         return http
     }
+    /// A runtime that prepares a workspace before creating: each preparation posts once and is ready at once.
+    private func makePreparing(_ http: TestHTTPTransport) -> NewSessionModel {
+        let connectors = V2ConnectorAPI(transport: http)
+        let model = NewSessionModel(scope: .init(serverURL: URL(string: "https://example.test")!, accountID: "one"),
+            devices: .init(connectorAPI: connectors), preparation: .init(connectorAPI: connectors),
+            creation: .init(sessionAPI: V2SessionAPI(transport: http)), projectAPI: V2ProjectAPI(transport: http),
+            defaults: UserDefaults(suiteName: "aa-tests-\(UUID().uuidString)")!, workflowAPI: .init(transport: http))
+        if let response: V2ProjectListResponse = try? JSONDecoder().decode(V2ProjectListResponse.self, from: fixtureData("projects")) { model.updateProjects(response.projects) }
+        return model
+    }
+    private func preparingTransport() -> TestHTTPTransport {
+        let http = TestHTTPTransport()
+        http.respond = { call in
+            if call.path.hasSuffix("/capabilities") {
+                var value = try fixtureObject("capabilities")
+                var set = value["capabilitySet"] as! [String: Any]
+                var capabilities = set["capabilities"] as! [[String: Any]]
+                var prepare = capabilities[0]; prepare["capabilityId"] = "runtime.workspace.prepare"
+                capabilities.append(prepare); set["capabilities"] = capabilities; value["capabilitySet"] = set
+                return try JSONSerialization.data(withJSONObject: value)
+            }
+            if call.path == "/runtime-workflows/preparations" {
+                let count = http.count("/runtime-workflows/preparations")
+                let catalog = try fixtureObject("modelCatalog")["catalog"]!
+                return try JSONSerialization.data(withJSONObject: [
+                    "protocolVersion": "1", "id": "prep_\(count)", "kind": "preparation", "connectorId": "device",
+                    "runtimeId": "rti_work", "projectId": "project",
+                    "state": ["phase": "ready", "revision": 1, "catalogRevision": 1, "catalog": catalog, "interactions": []],
+                ])
+            }
+            if call.path.hasSuffix("/rti_work") { return try fixtureData("runtime") }
+            return try http.defaultResponse(call)
+        }
+        return http
+    }
+    private func channel(_ actual: String, generation: Int, state: String = "applied", message: String? = nil) throws -> V2ModelConfigOverview {
+        try decode(["profiles": [], "assignments": [], "channel": ["channel": actual, "revision": generation, "runtimes": [
+            ["connectorId": "device", "runtimeId": "rti_work", "desired": actual, "actual": actual, "state": state,
+             "appliedGeneration": generation, "message": message.map { $0 as Any } ?? NSNull()],
+        ]]])
+    }
     private func devices(online: Bool = true) throws -> [V2Connector] {
         var object = try fixtureObject("connector")
         var device = object["connector"] as! [String: Any]
@@ -72,7 +113,7 @@ import Testing
     @Test func creationStagesBeforeNetworkAndKeepsOneClientIDThroughBinding() async throws {
         let http = transport(); let model = make(http); let gate = TestGate()
         model.draft.text = "Start now"
-        await model.refresh(connectors: try devices()); _ = model.selectProject("project")
+        await model.refresh(connectors: try devices()); _ = model.selectProject("project"); await model.prepareTarget()
         var staged: NewSessionSubmission?
         var boundID: String?
         model.onStaged = { value in staged = value; await gate.wait() }
@@ -92,7 +133,7 @@ import Testing
         let http = transport(); let model = make(http)
         model.draft.text = "保留这个任务"
         await model.refresh(connectors: try devices())
-        _ = model.selectProject("project")
+        _ = model.selectProject("project"); await model.prepareTarget()
         #expect(model.canCreate)
         #expect(model.runtimeID == "rti_work")
         #expect(http.count("catalogs/model") == 0) // Unsupported capabilities are not queried.
@@ -103,7 +144,7 @@ import Testing
         #expect(model.draft.text == "保留这个任务")
         model.updateNetwork(.init(availability: .online))
         await model.refresh(connectors: try devices())
-        _ = model.selectProject("project")
+        _ = model.selectProject("project"); await model.prepareTarget()
         #expect(model.canCreate)
         #expect(http.calls.allSatisfy { $0.method == .get || $0.path.hasSuffix("fs/list") })
     }
@@ -131,7 +172,7 @@ import Testing
         defer { defaults.removePersistentDomain(forName: suite) }
         let model = make(transport(), defaults: defaults)
         await model.refresh(connectors: try devices())
-        _ = model.selectProject("project")
+        _ = model.selectProject("project"); await model.prepareTarget()
         #expect(await model.selectTarget(connectorID: "device", runtimeID: "rti_work"))
         #expect(model.selectProject("project"))
         #expect(!(await model.selectTarget(connectorID: "another-device", runtimeID: "rti_work")))
@@ -149,7 +190,7 @@ import Testing
         let http = transport(); let model = make(http)
         model.draft.text = "task"
         await model.refresh(connectors: try devices())
-        _ = model.selectProject("project")
+        _ = model.selectProject("project"); await model.prepareTarget()
         #expect(model.canCreate)
         http.respond = { call in
             if call.path.hasSuffix("/rti_work") {
@@ -168,7 +209,7 @@ import Testing
         let http = transport(); let model = make(http)
         model.draft.text = "task"
         await model.refresh(connectors: try devices())
-        _ = model.selectProject("project")
+        _ = model.selectProject("project"); await model.prepareTarget()
         http.respond = { call in
             if call.path.hasSuffix("/rti_work") { return try fixtureData("runtime") }
             if call.method == .post { model.draft.text = "next draft"; throw URLError(.timedOut) }
@@ -179,7 +220,7 @@ import Testing
         model.updateNetwork(.init(availability: .offline))
         model.updateNetwork(.init(availability: .online))
         await model.refresh(connectors: try devices())
-        _ = model.selectProject("project")
+        _ = model.selectProject("project"); await model.prepareTarget()
         #expect(await model.create(text: "next draft") == nil)
         #expect(http.calls.filter { $0.method == .post && !$0.path.hasSuffix("fs/list") }.count == 1)
         #expect(model.error != nil && model.draft.text == "next draft")
@@ -201,11 +242,80 @@ import Testing
         #expect(model.draft.text == "keep me" && http.calls.allSatisfy { $0.method == .get || $0.path.hasSuffix("fs/list") })
     }
 
+    @Test func reselectingTheCurrentWorkspaceKeepsThePreparedTarget() async throws {
+        let http = transport(); let model = make(http)
+        model.draft.text = "Start now"
+        await model.refresh(connectors: try devices())
+        _ = model.selectProject("project"); await model.prepareTarget()
+        #expect(model.canCreate)
+        // The page only prepares again when the path changes, so nothing would restore these.
+        #expect(model.selectProject("project"))
+        #expect(model.canCreate)
+        #expect(model.selectWorkspace(model.workspace))
+        #expect(model.canCreate)
+        #expect(model.selectWorkspace("/another-workspace"))
+        #expect(!model.canCreate)
+    }
+
+    @Test func returningToADevicePreparesItsWorkspaceAgain() async throws {
+        let http = preparingTransport(); let model = makePreparing(http)
+        model.draft.text = "Start now"
+        await model.refresh(connectors: try devices())
+        _ = model.selectProject("project")
+        await model.refresh(connectors: try devices())
+        #expect(model.canCreate && http.count("/runtime-workflows/preparations") == 1)
+        // Back on the same path, the page sees no workspace change; only the device refresh can prepare.
+        model.focusDevice("another-device", workspace: nil)
+        model.focusDevice("device", workspace: nil)
+        #expect(!model.canCreate)
+        await model.refresh(connectors: try devices())
+        #expect(model.canCreate && http.count("/runtime-workflows/preparations") == 2)
+    }
+
+    @Test func aRuntimeThatSwitchedChannelsReadsItsCatalogAgain() async throws {
+        let http = transport(); let model = make(http)
+        model.draft.text = "Start now"
+        await model.refresh(connectors: try devices())
+        _ = model.selectProject("project"); await model.prepareTarget()
+        let prepared = http.count("/capabilities")
+        model.updateModelChannel(nil, runtimes: [])
+        #expect(model.runtimeChannel == nil)
+        await model.prepareAfterChannelChange()
+        // The first channel report describes the channel the preparation already used.
+        model.updateModelChannel(try channel("native", generation: 1), runtimes: [])
+        await model.prepareAfterChannelChange()
+        model.updateModelChannel(try channel("native", generation: 1, message: "still native"), runtimes: [])
+        await model.prepareAfterChannelChange()
+        #expect(http.count("/capabilities") == prepared && model.canCreate)
+
+        model.updateModelChannel(try channel("tokens", generation: 2), runtimes: [])
+        await model.prepareAfterChannelChange()
+        #expect(http.count("/capabilities") == prepared + 1 && model.canCreate)
+        await model.prepareAfterChannelChange()
+        #expect(http.count("/capabilities") == prepared + 1)
+    }
+
+    @Test func aRuntimeThatSwitchedChannelsPreparesItsWorkspaceAgain() async throws {
+        let http = preparingTransport(); let model = makePreparing(http)
+        model.draft.text = "Start now"
+        model.updateModelChannel(try channel("native", generation: 1), runtimes: [])
+        await model.refresh(connectors: try devices())
+        _ = model.selectProject("project")
+        await model.refresh(connectors: try devices())
+        #expect(model.canCreate && http.count("/runtime-workflows/preparations") == 1)
+        // A kept workspace preparation is not enough once the runtime uses another channel.
+        model.updateModelChannel(try channel("tokens", generation: 2), runtimes: [])
+        await model.refresh(connectors: try devices())
+        #expect(http.count("/runtime-workflows/preparations") == 1)
+        await model.prepareAfterChannelChange()
+        #expect(model.canCreate && http.count("/runtime-workflows/preparations") == 2)
+    }
+
     @Test func successfulCreateUsesTypeAndInstanceAndDoesNotPersistDraft() async throws {
         let http = transport(); let model = make(http)
         model.draft.text = "task\nsecond line"
         await model.refresh(connectors: try devices())
-        _ = model.selectProject("project")
+        _ = model.selectProject("project"); await model.prepareTarget()
         #expect(model.selectProject("project"))
         let result = await model.create(text: model.draft.text)
         #expect(result != nil)

@@ -42,8 +42,9 @@ task IDs. When the set becomes empty, the connection becomes eligible for idle
 reclamation rather than closing immediately after its response.
 After a scheduled turn completes, AA sends one maintenance request asking Claude
 to call `CronList`. The maintenance request is restricted by a pre-tool hook to
-`CronList` (and `ToolSearch` when needed). An empty, valid list closes the idle
-connection; a non-empty list updates the observed IDs and keeps it open. If the
+`CronList` (and `ToolSearch` when needed). An empty, valid list lets the
+connection return to normal idle reclamation. A non-empty list updates the
+observed IDs and keeps the connection open. If the
 check fails or returns an invalid list, AA keeps the connection rather than risk
 dropping a task. These hints also do not discover all tasks in a previously
 unregistered, externally imported Claude session.
@@ -74,14 +75,15 @@ deadline, runtime-object restart, and simultaneous scheduled/user replies.
 Long-running expiration, multi-process durable
 task ownership and mobile notification delivery are not established by these tests.
 
-## Lifecycle status (2026-09-23)
+## Dynamic wakeups and reconnecting
 
-Claude scheduled-task connection retention and history filtering have been
-updated, but are **pending validation** with real user sessions after deployment.
-In particular, verify a scheduled wakeup fires without another user message,
-that a background-task notification cannot swallow a subsequent human prompt,
-and that refresh/restart does not reveal internal maintenance exchanges. The
-older `ScheduleWakeup` report and background-task race (#122 and #123) should
-remain open until those cases are reproduced and checked against the deployed
-Claude CLI/SDK. `CronCreate` retention alone does not establish that all
-background work has a safe lifetime.
+AA keeps the original Claude process alive through an observed
+`ScheduleWakeup` deadline, even if the session's idle timeout is shorter.
+These dynamic `/loop` wakeups live in the native process. After a process
+exit, start the dynamic loop again. Cron jobs follow the recovery rules
+above.
+
+The first prompt after resuming a Claude process is matched by its native
+message ID and identified to Claude as user input. When a recovered task
+notification accompanies the prompt, a turn that ends without a reply or
+tool work is shown as a failure.

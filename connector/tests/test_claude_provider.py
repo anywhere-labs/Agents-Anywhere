@@ -111,6 +111,7 @@ async def _test_claude_provider_schema_and_config_validation() -> None:
         "environment",
         "executablePath",
         "idleTimeoutSeconds",
+        "model",
         "modelGateway",
     }
     assert schema.schema["properties"]["executablePath"]["metadata"] == {

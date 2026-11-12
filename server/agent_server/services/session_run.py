@@ -3,9 +3,13 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import json
 import re
+from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 from agent_server.core.api_namespace import api_v2_path
 from agent_server.core.capabilities import (
@@ -13,6 +17,7 @@ from agent_server.core.capabilities import (
     CATALOG_PERMISSION,
     RUNTIME_ATTACHMENT,
     SESSION_INTERRUPT,
+    SESSION_PLANNING,
     SESSION_SEND_MESSAGE,
     SESSION_STEER,
 )
@@ -46,6 +51,7 @@ from agent_server.services.device_runtimes import (
 )
 from agent_server.services.effective_capabilities import (
     derive_session_effective_capabilities,
+    read_runtime_capability_facts,
     read_session_capability_facts,
 )
 from agent_server.services.repository_ports import SessionRunRepository
@@ -110,11 +116,21 @@ class SessionRunService:
         device_runtimes: DeviceRuntimeService,
         *,
         usage_recorder: UsageRecorder | NullUsageRecorder | None = None,
+        prepare_model_channel: Callable[..., Awaitable[str]] | None = None,
+        admit_runtime: Callable[..., AbstractAsyncContextManager[None]] | None = None,
     ) -> None:
         self._store = store
         self._manager = manager
         self._device_runtimes = device_runtimes
         self._usage = usage_recorder or NullUsageRecorder()
+        self._prepare_model_channel = prepare_model_channel
+        self._admit_runtime = admit_runtime
+
+    def _admitted(self, connector_id: str, runtime_id: str, *, user_id: str) -> AbstractAsyncContextManager[None]:
+        """Keep a model channel switch from restarting the runtime under this request."""
+        if self._admit_runtime is None:
+            return nullcontext()
+        return self._admit_runtime(connector_id, runtime_id, user_id=user_id)
 
     async def create_session(
         self,
@@ -168,6 +184,30 @@ class SessionRunService:
         *,
         user_id: str,
     ) -> dict[str, Any]:
+        from agent_server.core.goal.models import GoalCreationIntent
+
+        if (
+            re.match(r"^/goal(?:\s|$)", payload.content.lstrip())
+            and payload.goalIntent is None
+        ):
+            payload.content = payload.content.lstrip()[5:].strip()
+            payload.goalIntent = GoalCreationIntent(
+                operationId=payload.clientMessageId or str(uuid4())
+            )
+        if payload.goalIntent is not None:
+            payload.content = payload.content.strip()
+            if not payload.content:
+                raise SessionRunInvalidConfigError("goal_objective_required")
+        from agent_server.core.planning.commands import parse_plan_command
+        from agent_server.core.planning.models import PlanningCreationIntent
+
+        if payload.planningIntent is None and payload.goalIntent is None:
+            intent = parse_plan_command(payload.content)
+            if intent:
+                if intent["command"] != "submit_task":
+                    raise SessionRunInvalidConfigError("新会话的裸 /plan 只设置客户端意图，请填写规划任务后再发送。")
+                payload.content = intent["content"]
+                payload.planningIntent = PlanningCreationIntent(mode="plan", operationId=payload.clientMessageId or str(uuid4()))
         try:
             connector = await self._store.get_connector(payload.connectorId)
             if connector.userId != user_id:
@@ -182,6 +222,22 @@ class SessionRunService:
         )
         payload.cwd = project_cwd
         runtime_id = _request_runtime_id(payload)
+        if self._prepare_model_channel is not None:
+            runtime_id = await self._prepare_model_channel(payload.connectorId, runtime_id, user_id=user_id)
+            payload.runtimeId = runtime_id
+        async with self._admitted(payload.connectorId, runtime_id, user_id=user_id):
+            return await self._create_and_start_admitted(
+                payload, user_id=user_id, runtime_id=runtime_id, project_id=project_id,
+            )
+
+    async def _create_and_start_admitted(
+        self,
+        payload: SessionCreateAndStartRequest,
+        *,
+        user_id: str,
+        runtime_id: str,
+        project_id: str | None,
+    ) -> dict[str, Any]:
         await self._require_runtime_instance(
             payload.connectorId,
             payload.runtime,
@@ -201,6 +257,45 @@ class SessionRunService:
                 attachment_media_types=[attachment.mediaType for attachment in payload.attachments],
             )
 
+        if payload.goalIntent is not None:
+            await self._require_runtime_capability(
+                payload.connectorId,
+                payload.runtime,
+                payload.runtimeId or payload.runtime,
+                "session.goal",
+                user_id=user_id,
+                live=True,
+            )
+            payload.clientMessageId = (
+                payload.clientMessageId or payload.goalIntent.operationId
+            )
+            previous = await self._store.reserve_goal_creation(payload, user_id=user_id)
+            if previous is not None:
+                if not previous.get("sessionId"):
+                    raise SessionRunConflictError("goal_creation_outcome_unknown")
+                existing = await self._store.get_session(
+                    previous["sessionId"], user_id=user_id
+                )
+                return {
+                    "session": existing,
+                    "connectorResult": previous.get("connectorResult")
+                    or {"ok": False, "code": "goal_outcome_unknown"},
+                    "attachments": previous.get("attachments", []),
+                }
+        if payload.planningIntent is not None:
+            await self._require_runtime_capability(payload.connectorId, payload.runtime, runtime_id, SESSION_PLANNING, user_id=user_id, live=True)
+            payload.clientMessageId = payload.clientMessageId or payload.planningIntent.operationId
+            fingerprint = hashlib.sha256(json.dumps(payload.model_dump(mode="json"), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+            try:
+                previous = await self._store.reserve_planning_creation(payload.connectorId, runtime_id, payload.planningIntent.operationId, fingerprint)
+            except ValueError as exc:
+                raise SessionRunConflictError(str(exc)) from exc
+            if previous is not None:
+                if not previous.get("sessionId"):
+                    raise SessionRunConflictError("规划会话创建结果尚不确定，请先刷新设备会话列表；不要重复创建。")
+                existing = await self._store.get_session(previous["sessionId"], user_id=user_id)
+                return {"session": existing, "connectorResult": previous.get("connectorResult") or {"ok": False, "code": "command_outcome_unknown", "message": "首轮派发结果尚不确定，请查看会话状态。"}, "attachments": previous.get("attachments", [])}
+
         selections = _selections_from_mapping(payload.selections)
         session = await self._store.create_session(
             connector_id=payload.connectorId,
@@ -214,12 +309,21 @@ class SessionRunService:
             selections=selections,
             takeover=True,
         )
+        if payload.planningIntent is not None:
+            await self._store.save_planning_creation(payload.connectorId, runtime_id, payload.planningIntent.operationId, {"sessionId": session.id})
         params: dict[str, Any] = {
             "runtime": payload.runtime,
             "runtimeId": runtime_id,
             "sessionId": session.id,
             "content": payload.content,
         }
+        if payload.goalIntent is not None:
+            params["goalIntent"] = payload.goalIntent.model_dump(mode="json")
+            await self._store.save_goal_creation(
+                payload, user_id=user_id, result={"sessionId": session.id}
+            )
+        if payload.planningIntent is not None:
+            params["planningIntent"] = dict(payload.planningIntent)
         if payload.title is not None:
             params["title"] = payload.title
         if payload.cwd is not None:
@@ -247,6 +351,24 @@ class SessionRunService:
             ]
             params["timelineAttachments"] = persisted_attachment_refs
 
+        if payload.goalIntent is not None:
+            request = {
+                "operationId": payload.goalIntent.operationId,
+                "expectedRevision": 0,
+                "action": "set",
+                "objective": payload.content,
+                "attachments": [
+                    {
+                        key: ref.get(key)
+                        for key in ("fileId", "name", "mediaType", "size", "sha256")
+                    }
+                    for ref in persisted_attachment_refs
+                ],
+            }
+            await self._store.reserve_goal_operation(session.id, request)
+            await self._store.mark_goal_dispatched(
+                session.id, payload.goalIntent.operationId
+            )
         await self._store.start_active_run(
             session_id=session.id,
             runtime=payload.runtime,
@@ -286,6 +408,21 @@ class SessionRunService:
             raise SessionRunUpstreamError(_unconfirmed_creation_detail(
                 session.id, "invalid_connector_result", "connector did not return a session result",
             ))
+        if payload.goalIntent is not None:
+            goal_result = connector_result.get("goal")
+            if isinstance(goal_result, dict):
+                goal_result = {**goal_result, "state": None}
+                connector_result["goal"] = goal_result
+                await self._store.save_goal_operation(session.id, goal_result)
+            await self._store.save_goal_creation(
+                payload,
+                user_id=user_id,
+                result={
+                    "sessionId": session.id,
+                    "connectorResult": connector_result,
+                    "attachments": persisted_attachment_refs,
+                },
+            )
         if (
             connector_result.get("ok") is False
             or connector_result.get("accepted") is False
@@ -376,6 +513,21 @@ class SessionRunService:
             last_synced_at=utc_now(),
             origin="platform",
         )
+        if payload.planningIntent is not None:
+            await self._store.save_planning_creation(payload.connectorId, runtime_id, payload.planningIntent.operationId,
+                {"sessionId": session.id, "connectorResult": connector_result, "attachments": persisted_attachment_refs})
+            if not payload.content.strip() and not payload.attachments:
+                await self._store.clear_active_run(session.id)
+        if payload.goalIntent is not None:
+            await self._store.save_goal_creation(
+                payload,
+                user_id=user_id,
+                result={
+                    "sessionId": session.id,
+                    "connectorResult": connector_result,
+                    "attachments": persisted_attachment_refs,
+                },
+            )
         await self._usage.record(session_created_event(session, user_id=user_id))
         await self._usage.record(
             message_sent_event(
@@ -471,7 +623,35 @@ class SessionRunService:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
         if not await self._manager.is_online(session.connectorId):
             raise SessionRunConflictError("connector is offline")
+        async with self._admitted(session.connectorId, _session_runtime_id(session), user_id=user_id):
+            return await self._send_message_admitted(session, payload, user_id=user_id)
+
+    async def _send_message_admitted(
+        self,
+        session: SessionView,
+        payload: MessageCreateRequest,
+        *,
+        user_id: str,
+    ) -> RpcResponsePayload:
+        session_id = session.id
         await self._ensure_session_runtime_running(session, user_id=user_id)
+        from agent_server.core.planning.commands import parse_plan_command
+        intent = parse_plan_command(payload.content)
+        if intent:
+            from agent_server.core.models import RpcError
+            from agent_server.core.planning.models import PlanningRequest
+            from agent_server.services.planning.service import PlanningService
+            await self._require_session_capability(session, SESSION_PLANNING, user_id=user_id)
+            if payload.attachments:
+                await self._require_session_capability(session, RUNTIME_ATTACHMENT, user_id=user_id)
+            try:
+                request = PlanningRequest(**intent, operationId=payload.clientMessageId or str(uuid4()),
+                    attachments=[attachment.model_dump() for attachment in payload.attachments])
+                result = await PlanningService(self._store, self._manager).execute(session, request, user_id=user_id)
+            except ValueError as exc:
+                raise SessionRunInvalidConfigError(str(exc)) from exc
+            return RpcResponsePayload(ok=result.ok, result={"planning": result.model_dump(mode="json")},
+                error=None if result.ok else RpcError(code=result.code or "planning_rejected", message=result.message or "规划操作未完成。"))
         runtime_status = await self._read_runtime_status(session)
         if runtime_status not in {"idle", "error"}:
             raise SessionRunConflictError(f"session is {runtime_status}")
@@ -771,13 +951,30 @@ class SessionRunService:
         *,
         user_id: str,
         attachment_media_types: list[str] | None = None,
+        live: bool = False,
     ) -> None:
-        capability_set = ProtocolCapabilitySet.model_validate(
-            await self._store.get_protocol_capabilities(
-                connector_id,
-                user_id=user_id,
-            )
-        )
+        try:
+            if live:
+                capability_set = await read_runtime_capability_facts(
+                    self._manager, connector_id, runtime=runtime, runtime_id=runtime_id,
+                )
+            else:
+                capability_set = ProtocolCapabilitySet.model_validate(
+                    await self._store.get_protocol_capabilities(
+                        connector_id, user_id=user_id,
+                    )
+                )
+        except ConnectorOfflineError as exc:
+            raise SessionRunConflictError(str(exc)) from exc
+        except TimeoutError as exc:
+            raise SessionRunTimeoutError({
+                "code": "runtime_capabilities_timeout",
+                "message": "connector runtime capabilities request timed out",
+            }) from exc
+        except ConnectorRpcError as exc:
+            raise SessionRunUpstreamError(exc.message or exc.code) from exc
+        except (TypeError, ValueError) as exc:
+            raise SessionRunUpstreamError(str(exc)) from exc
         capability = next(
             (
                 item

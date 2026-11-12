@@ -42,7 +42,7 @@ const fetcher: BackendFetcher = (input, requestInit) => new Promise<Response>((r
   send({ type: "netFetch", id, url: String(input), method: requestInit?.method ?? "GET", headers, body });
 });
 
-const state = new BackendState(init, fetcher);
+const state = new BackendState(init, fetcher, Number(process.argv[3] ?? process.ppid));
 const server = new BackendServer(state);
 
 process.on("message", (message: BackendControlMessage) => {

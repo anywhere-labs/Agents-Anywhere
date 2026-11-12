@@ -11,6 +11,9 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "server"))
 
 from agent_server.core import device_runtime as d
+from agent_server.core import device_settings as ds
+from agent_server.core import model_channel as mch
+from agent_server.core import model_config as mc
 from agent_server.core import models as m
 from agent_server.core import protocol as p
 from agent_server.core.api_namespace import API_V2_PREFIX
@@ -21,7 +24,7 @@ NOW = "2026-09-05T12:00:00Z"
 def routes() -> list[dict[str, str]]:
     """Read real FastAPI decorators without constructing the app or connecting to storage."""
     result = []
-    for module in ("auth", "projects", "connectors", "connector_runtimes", "connector_files", "sessions", "sessions_fs", "client_ws", "dashboard_stream"):
+    for module in ("auth", "projects", "connectors", "connector_runtimes", "connector_files", "sessions", "sessions_fs", "client_ws", "dashboard_stream", "model_config", "tokens_link"):
         tree = ast.parse((ROOT / f"server/agent_server/api/{module}.py").read_text())
         prefix = ""
         for node in tree.body:
@@ -52,6 +55,28 @@ def fixtures() -> dict:
     notice = m.NoticeIn(noticeId="notice", type="interaction", sessionId="session", title="Approve", responseRequired=True, actions=[m.NoticeAction(actionId="approve", label="Approve")])
     item = m.TimelineItem(id="item", sessionId="session", type="message", status="done", role="assistant", content={"text": "Hello"}, source={"runtime": "claude"}, orderSeq=1, updatedSeq=10, contentHash="hash", createdAt=NOW, updatedAt=NOW)
     runtime = d.DeviceRuntimeView(connectorId="device", runtimeId="rti_work", runtimeType="claude", name="Work", displayName="Work", typeDisplayName="Claude", present=True, available=True, reason=None, configured=True, active=True, status="running", discovery={}, schema={"type": "object", "properties": {}}, uiSchema={}, defaults={}, capabilities={}, config={}, error=None, lastDiscoveredAt=NOW, createdAt=NOW, updatedAt=NOW)
+    # A runtime that takes a model connection; the key is redacted like every response does.
+    capability = {"maturity": "beta", "configField": "modelGateway", "modelsField": "customModels", "protocols": ["openai_responses", "openai_chat"], "modes": [{"id": "gateway", "supported": True, "reason": None}], "modeField": None, "scope": "instance", "catalog": {"auto": False, "manual": True}, "apply": "restart"}
+    gateway_schema = {"type": "object", "properties": {"modelGateway": {"type": "object", "properties": {"baseUrl": {"type": "string"}, "apiKey": {"type": "string"}, "protocol": {"type": "string", "enum": ["openai_responses", "openai_chat"]}}, "required": ["baseUrl", "apiKey"]}}}
+    gateway_runtime = d.public_runtime_view(d.DeviceRuntimeView(connectorId="device", runtimeId="rti_gateway", runtimeType="pi", name="Gateway", displayName="Gateway", typeDisplayName="Pi", present=True, available=True, reason=None, configured=True, active=True, status="running", discovery={}, schema=gateway_schema, uiSchema={"modelGateway": {"component": "modelGateway"}}, defaults={}, capabilities={}, config={"modelGateway": {"baseUrl": "https://gateway.example/v1", "apiKey": "sk-gate-test-secret-1234", "protocol": "openai_chat"}}, maturity="beta", modelConnection=capability, managedBy="model-config", error=None, lastDiscoveredAt=NOW, createdAt=NOW, updatedAt=NOW))
+    offer = {"format": "openai_chat", "baseUrl": "https://gateway.example/v1", "models": [{"id": "gpt-test", "name": "GPT Test", "efforts": ["high"], "input": ["text"]}]}
+    profile = {"id": "mpr_test", "source": "manual", "name": "Gateway", "originHost": "gateway.example", "offers": [offer], "keyHint": "sk-gate…1234", "strategyName": None, "state": "active", "etag": "1", "updatedAt": NOW}
+    status = gateway_runtime.modelConnectionStatus
+    # The current channel: one runtime switched, one went back after a failed
+    # switch, and one takes no model connection.
+    channel_runtime = {"override": None, "step": None, "reason": None, "message": None, "updatedAt": NOW}
+    channel_state = {"channel": "mpr_test", "revision": 3, "switch": {"revision": 3, "state": "attention", "startedAt": NOW, "finishedAt": NOW}, "runtimes": [
+        {**channel_runtime, "connectorId": "device", "runtimeId": "rti_work", "desired": "mpr_test", "actual": "native", "state": "unsupported", "reason": "model_connection_unsupported"},
+        {**channel_runtime, "connectorId": "device", "runtimeId": "rti_gateway", "desired": "mpr_test", "actual": "mpr_test", "state": "applied"},
+        {**channel_runtime, "connectorId": "device", "runtimeId": "rti_global", "override": "tokens", "desired": "tokens", "actual": "native", "state": "restored", "reason": "verify_timeout", "message": "runtime did not confirm in time"},
+    ]}
+    model_config = {
+        "secretConfigured": True,
+        "profiles": [profile, {**profile, "id": "mpr_tokens", "source": "tokens", "name": "Tokens Anywhere", "keyHint": "sk-tok…abcd", "strategyName": "default"}],
+        "assignments": [{"connectorId": "device", "runtimeId": "rti_gateway", "profileId": "mpr_test", "offerFormat": "openai_chat", "createdRuntime": False, "status": "applied", "error": None, "appliedAt": NOW, "modelConnectionStatus": status}],
+        "channel": channel_state,
+        "tokens": {"available": True, "tokensUrl": "https://tokens.example", "secretConfigured": True, "link": {"status": "linked", "issuer": "https://tokens.example", "account": {"id": "acct", "displayName": "Test", "email": "test@example.com"}, "linkedAt": NOW, "relinkSoon": False}},
+    }
     runtime_type = d.RuntimeTypeView(connectorId="device", runtimeType="claude", implementationType="claude_sdk", displayName="Claude", description=None, present=True, available=True, reason=None, recommended=True, recommendationRank=1, discovery={}, schema={"type": "object", "properties": {}}, uiSchema={}, defaults={}, capabilities={}, metadata={}, instancePolicy="multiple", maxInstances=3, lastDiscoveredAt=NOW, createdAt=NOW, updatedAt=NOW)
     snapshot = p.ProtocolSessionSnapshotResponse(session=session.model_dump(), state=state.model_dump(), timeline=p.ProtocolTimelineSnapshot(items=[item], nextSeq=10), notices=[notice], effectiveCapabilities=capabilities, runtimeCapabilities=capabilities, catalogs={"model": model.model_dump(), "permission": permission.model_dump()}, eventCursor="seq:10", serverTime=NOW)
     event = p.ProtocolEventEnvelope(eventId="event", sequence=11, cursor="seq:11", type="timeline.item_created", sessionId="session", emittedAt=NOW, payload={"item": item.model_copy(update={"id": "item-2", "orderSeq": 2, "updatedSeq": 11}).model_dump()})
@@ -65,6 +90,9 @@ def fixtures() -> dict:
         "runtimes": d.DeviceRuntimeListResponse(connectorId="device", runtimes=[runtime], serverTime=NOW),
         "runtimeTypes": d.RuntimeTypeListResponse(connectorId="device", runtimeTypes=[runtime_type], serverTime=NOW),
         "preferences": m.ConnectorPreferencesResponse(connectorId="device", preferences={"cwd": "/workspace"}, serverTime=NOW),
+        # A read never reports delivery; a write to an offline device is kept and applied later.
+        "deviceSettings": ds.ConnectorDeviceSettingsResponse(connectorId="device", settings=ds.ConnectorDeviceSettings(), serverTime=NOW),
+        "deviceSettingsSaved": ds.ConnectorDeviceSettingsResponse(connectorId="device", settings=ds.ConnectorDeviceSettings(confirmQuitOnShutdown=True), delivered=False, serverTime=NOW),
         "session": m.SessionResponse(session=session, serverTime=NOW),
         "sessions": {"sessions": [session.model_dump()], "hasMore": False, "nextCursor": None, "serverTime": NOW},
         "takeover": m.TakeoverResponse(session=session),
@@ -92,7 +120,13 @@ def fixtures() -> dict:
         "profile": m.AuthMeResponse(userId="account", email="test@example.com", displayName="Test", role="member", disabled=False, serverTime=NOW),
     }
     result = {key: value.model_dump(mode="json", by_alias=True) if hasattr(value, "model_dump") else value for key, value in output.items()}
-    result["dashboard"] = {"type": "dashboard.snapshot", "connectors": [connector.model_dump()], "projects": [project.model_dump()], "sessions": [session.model_dump()], "sessionPages": {"active": {"hasMore": False, "nextCursor": None}, "archived": {"hasMore": False, "nextCursor": None}}, "serverTime": NOW}
+    result["dashboard"] = {"type": "dashboard.snapshot", "connectors": [connector.model_dump()], "projects": [project.model_dump()], "sessions": [session.model_dump()], "runtimes": [runtime.model_dump(mode="json", by_alias=True), gateway_runtime.model_dump(mode="json", by_alias=True)], "sessionPages": {"active": {"hasMore": False, "nextCursor": None}, "archived": {"hasMore": False, "nextCursor": None}}, "modelConfig": model_config, "serverTime": NOW}
+    result["modelProfile"] = profile
+    result["modelChannel"] = channel_state
+    result["tokensLinkStart"] = {"startUrl": "https://example.test/api/v2/integrations/tokens/start?ticket=test"}
+    result["tokensUnlink"] = {"revoked": True}
+    result["modelConfigError"] = {"detail": {"code": "profile_in_use", "message": "devices still use this profile"}}
+    result["modelGatewayError"] = {"detail": {"code": "gateway_unreachable", "message": "the gateway did not answer"}}
     result["createdSession"] = {"session": session.model_dump(mode="json"), "connectorResult": {"ok": True},
         "attachments": [{key: result["upload"]["attachments"][0][key] for key in ("fileId", "name", "mediaType", "size", "sha256")}], "serverTime": NOW}
     requests = {
@@ -109,9 +143,24 @@ def fixtures() -> dict:
         "notice": m.InteractionRespondRequest(actionId="approve", input={"confirmed": True}),
         "ticket": p.ProtocolWsTicketRequest(clientId="client", scope=p.ProtocolWsTicketScope(sessionId="session")),
         "readText": m.FsReadTextRequest(path="test.txt"),
+        "patchDeviceSettings": ds.ConnectorDeviceSettingsPatch(confirmQuitOnShutdown=True),
+        "createModelProfile": mc.ManualProfileRequest(name="Gateway", apiKey="sk-test", offers=[mc.Offer(format="openai_chat", baseUrl="https://gateway.example/v1", models=[mc.ModelSpec(id="gpt-test")])]),
+        "detectModelProfile": mc.ManualProfileRequest(name="Gateway", apiKey="sk-test", baseUrl="https://gateway.example/v1"),
     }
     result["requests"] = {key: value.model_dump(mode="json", by_alias=True, exclude_none=True) for key, value in requests.items()}
     result["requests"]["createProject"].pop("attachMatchingSessions", None)
+    # Channel writes as clients send them (`channel: null` follows the current
+    # channel); each must pass the Server's own request model unchanged.
+    channel_requests = {
+        "setChannel": (mch.ChannelRequest, {"channel": "tokens"}),
+        "followChannel": (mch.RuntimeChannelRequest, {"channel": None}),
+        "confirmRuntimeChannel": (mch.RuntimeChannelRequest, {"channel": "tokens", "confirmNativeGlobal": True}),
+        "retryAll": (mch.RetryRequest, {}),
+        "retryRuntime": (mch.RetryRequest, {"connectorId": "device", "runtimeId": "rti_gateway"}),
+    }
+    for key, (model_type, body) in channel_requests.items():
+        model_type.model_validate(body)
+        result["requests"][key] = body
     result["routes"] = routes()
     return result
 

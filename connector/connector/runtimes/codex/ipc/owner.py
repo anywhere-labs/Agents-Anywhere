@@ -274,6 +274,7 @@ class CodexIpcOwnerService:
             active_turn_id=self.active_turn_ids.get(session_id),
             model_settings=model,
             permission_settings=permission,
+            collaboration_mode=getattr(self.sdk, "_planning_modes", {}).get(thread_id),
         )
 
     async def _settings_from_selections(
@@ -653,9 +654,18 @@ class CodexIpcOwnerService:
         if not isinstance(request_id, str | int):
             raise TypeError("requestId is required")
         await self.sdk.respond(request_id, dict(payload))
-        await self._resolve_notice(request_id, payload)
+        notice_id = await self._resolve_notice(request_id, payload)
+        thread_id = params.get("conversationId")
+        if isinstance(thread_id, str):
+            await self._settle_approval_state(
+                thread_id=thread_id,
+                request_id=request_id,
+                notice_id=notice_id,
+                payload=payload,
+            )
 
-    async def _resolve_notice(self, request_id: str | int, payload: Mapping[str, Any]) -> None:
+    async def _resolve_notice(self, request_id: str | int, payload: Mapping[str, Any]) -> str | None:
+        resolved_notice_id: str | None = None
         for thread_id in list(self.followers):
             session_id = self.session_id_for(thread_id)
             for notice in self.notices.open_blocking_for_session(session_id):
@@ -671,8 +681,57 @@ class CodexIpcOwnerService:
                     context={"approvalStatus": "resolved", "responsePayload": dict(payload)},
                     metadata={"source": "codex.ipc.owner/responded"},
                 )
-                if updated is not None and self.host is not None:
-                    await self.host.notice_upsert(updated)
+                if updated is not None:
+                    resolved_notice_id = updated.notice_id
+                    if self.host is not None:
+                        await self.host.notice_upsert(updated)
+        return resolved_notice_id
+
+    async def _settle_approval_state(
+        self,
+        *,
+        thread_id: str,
+        request_id: str | int,
+        notice_id: str | None,
+        payload: Mapping[str, Any],
+    ) -> None:
+        """Leave waiting_approval when another window resolves the approval.
+
+        Codex App / IDE windows answer approvals through the follower request
+        path, not through AA's interaction API. Resolving the notice there
+        removes the card, so the session state must also leave
+        waiting_approval; otherwise the UI keeps the badge and the
+        "waiting for your response" placeholder with no card to act on.
+        """
+
+        session_id = self.session_id_for(thread_id)
+        cached_state = self.session_states.get(session_id)
+        if cached_state is None or cached_state.status not in {
+            "waiting_approval",
+            "blocked",
+        }:
+            return
+        next_status = (
+            "waiting_approval"
+            if self.notices.open_blocking_for_session(session_id)
+            else "running"
+            if self.active_turn_ids.get(session_id) is not None
+            else "idle"
+        )
+        if next_status == cached_state.status:
+            return
+        decision = payload.get("decision")
+        await self.session_states.update(
+            session_id=session_id,
+            external_session_id=cached_state.external_session_id,
+            status=next_status,
+            metadata={
+                "source": "codex.ipc.owner/responded",
+                "request_id": request_id,
+                **({"notice_id": notice_id} if notice_id else {}),
+                **({"decision": decision} if isinstance(decision, str) else {}),
+            },
+        )
 
     async def _update_thread_settings(
         self, session_id: str, thread_id: str, params: Mapping[str, Any]
@@ -713,8 +772,16 @@ class CodexIpcOwnerService:
         selections = await selections_from_thread_state(
             flat, self.read_model_catalog, self.read_permission_catalog
         )
+        collaboration = settings.get("collaborationMode")
+        applied_mode = False
+        if isinstance(collaboration, Mapping) and collaboration.get("mode") in {"plan", "default"}:
+            setter = getattr(self.sdk, "set_collaboration_mode", None)
+            if not callable(setter):
+                return False
+            await setter(thread_id, dict(collaboration))
+            applied_mode = True
         if not selections:
-            return False
+            return applied_mode
         result = await self.apply_selections(session_id, thread_id, selections)
         return bool(getattr(result, "ok", True))
 
@@ -746,6 +813,7 @@ def conversation_state_from_thread(
     now: Clock = time.time,
     model_settings: CodexModelSettings | None = None,
     permission_settings: CodexPermissionSettings | None = None,
+    collaboration_mode: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a v11-shaped ``conversationState`` from app-server thread data.
 
@@ -814,11 +882,11 @@ def conversation_state_from_thread(
         "paginatedHistory": {"itemsBackwardsCursor": None},
         "latestModel": model,
         "latestReasoningEffort": effort,
-        "latestCollaborationMode": {
+        "latestCollaborationMode": dict(collaboration_mode) if collaboration_mode is not None else {
             "mode": "default",
             "settings": {"model": model, "reasoning_effort": effort, "developer_instructions": None},
         },
-        "latestThreadSettings": _latest_thread_settings(permissions, cwd, model, effort),
+        "latestThreadSettings": {**_latest_thread_settings(permissions, cwd, model, effort), **({"collaborationMode": dict(collaboration_mode)} if collaboration_mode is not None else {})},
         "latestTokenUsageInfo": None,
         "latestTurnStartMessageId": None,
         "previousTurnModel": None,

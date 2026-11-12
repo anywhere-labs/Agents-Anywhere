@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { watchPairingConnector } from "@/features/dashboard/pairing-watcher"
+import { EmptyAgentPrompt } from '@/components/empty-agent-prompt'
 import { AgentSetupContent } from "@/components/agent-setup-content"
 
 export type AgentSetupConnector = { id: string; name: string }
@@ -66,6 +67,7 @@ export function AgentSetupProvider({ children }: { children: React.ReactNode }) 
   return (
     <AgentSetupContext.Provider value={context}>
       {children}
+      <EmptyAgentPrompt blocked={queue.length > 0} />
       {queue.filter((item) => item.waitingOnline).map((item) => (
         <PendingPairing
           key={item.connector.id}

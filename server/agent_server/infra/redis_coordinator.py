@@ -136,6 +136,7 @@ class RedisCoordinator:
         self.stats = LockStats()
         self._slow_lock_ms = slow_lock_ms
         self._scripts: dict[str, Any] = {}
+        self._abandon_tasks: set[asyncio.Task[None]] = set()
 
     @property
     def distributed(self) -> bool:
@@ -173,6 +174,8 @@ class RedisCoordinator:
         return run_id
 
     async def close(self) -> None:
+        if self._abandon_tasks:
+            await asyncio.gather(*self._abandon_tasks, return_exceptions=True)
         if self._owns_client and self._client is not None:
             await self._client.aclose()
 
@@ -438,7 +441,7 @@ class RedisCoordinator:
         deadline = started_at + timeout_seconds
         effective_lease_seconds = lease_seconds or timeout_seconds
         ttl_ms = max(1, math.ceil(effective_lease_seconds * 1000))
-        while not await self._client.set(lock_key, token, nx=True, px=ttl_ms):
+        while not await self._try_acquire(lock_key, token, ttl_ms):
             if time.monotonic() >= deadline:
                 self.stats.timeouts += 1
                 raise TimeoutError(f"timed out acquiring distributed lock: {name}")
@@ -504,6 +507,30 @@ class RedisCoordinator:
             ) from renewal_error
         if release_error is not None:
             raise release_error
+
+    async def _try_acquire(self, lock_key: str, token: str, ttl_ms: int) -> bool:
+        try:
+            return bool(await self._client.set(lock_key, token, nx=True, px=ttl_ms))
+        except BaseException:
+            # The SET may have reached Redis even though its reply never reached
+            # this task (it was cancelled, or the connection dropped). Nobody
+            # would renew or release that lock, so every other writer would wait
+            # out the whole lease. The token is ours alone, so deleting by it can
+            # only undo our own write.
+            self._abandon_lock(lock_key, token)
+            raise
+
+    def _abandon_lock(self, lock_key: str, token: str) -> None:
+        async def delete() -> None:
+            try:
+                await asyncio.wait_for(self.delete_if_value(lock_key, token), timeout=5)
+            except Exception as exc:  # noqa: BLE001 - the lease still expires on its own
+                logger.warning("could not release an abandoned lock acquisition {}: {}", lock_key, exc)
+
+        # A task of its own, so a cancellation of the caller cannot stop it.
+        task = asyncio.create_task(delete(), name=f"redis-lock-abandon:{lock_key}")
+        self._abandon_tasks.add(task)
+        task.add_done_callback(self._abandon_tasks.discard)
 
     async def _release_lock(self, lock_key: str, token: str) -> None:
         if not await self.delete_if_value(lock_key, token):

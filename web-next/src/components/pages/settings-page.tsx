@@ -37,6 +37,7 @@ import { AccountProfileCard } from "@/components/pages/account-profile-card"
 import { accountDisplayName } from "@/features/auth/account-profile"
 import { MobileConnectionDialog } from "@/components/pages/mobile-signin-panel"
 import { ArchivedSessionsTab } from "@/components/settings/archived-sessions-tab"
+import { ModelConfigsTab } from "@/components/settings/model-configs-tab"
 import { parseSettingsTab, settingsNavigation } from "@/components/settings/settings-navigation"
 import { PageHeader } from "@/components/pages/page-header"
 import { useAuth } from "@/components/auth/auth-context"
@@ -45,6 +46,8 @@ import { LoadingState } from "@/components/loading-state"
 import { useWorkspace } from "@/components/workspace-context"
 import { authApi } from "@/features/auth/api"
 import type { AuthMe } from "@/features/auth/types"
+import { useTokensAnywhereUrl } from "@/features/tokens-anywhere/address"
+import { useTokensAnywhereSidebarVisibility } from "@/features/tokens-anywhere/sidebar-visibility"
 import { useMobileConnectionsSidebarVisibility } from "@/features/mobile-connections/sidebar-visibility"
 import { cn } from "@/lib/utils"
 
@@ -464,6 +467,8 @@ const themes: { id: AppearanceMode; labelKey: string; descKey: string }[] = [
 ]
 
 function AppearanceTab() {
+  const [tokensAnywhereVisible, setTokensAnywhereVisible] = useTokensAnywhereSidebarVisibility()
+  const tokensAnywhereUrl = useTokensAnywhereUrl()
   const t = useTranslations("pages.settings")
   const { theme, setTheme } = useTheme()
   const { sidebarShowsSessions, setSidebarShowsSessions, sidebarCompactSessions, setSidebarCompactSessions } = useWorkspace()
@@ -499,6 +504,15 @@ function AppearanceTab() {
 
       <SettingsSection title={t("desktopSidebar")} description={t("desktopSidebarDescription")}>
         <FieldGroup>
+          {tokensAnywhereUrl ? (
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="settings-tokens-anywhere-visible">{t("tokensAnywhereShow")}</FieldLabel>
+                <FieldDescription>{t("tokensAnywhereShowDescription")}</FieldDescription>
+              </FieldContent>
+              <Switch id="settings-tokens-anywhere-visible" checked={tokensAnywhereVisible} onCheckedChange={setTokensAnywhereVisible} />
+            </Field>
+          ) : null}
           <Field orientation="horizontal">
             <FieldContent>
               <FieldLabel htmlFor="settings-sidebar-shows-sessions">
@@ -535,7 +549,7 @@ function AppearanceTab() {
 }
 
 export function SettingsPage() {
-  const { openSession, projects, sessions, isLoading, refreshData, settingsTab, upsertSession } = useWorkspace()
+  const { connectors, openSession, projects, sessions, isLoading, refreshData, settingsTab, upsertSession } = useWorkspace()
   const { session, me: authMe, refreshMe } = useAuth()
   const t = useTranslations("pages.settings")
   // The section sidebar owns navigation; the route is the single source of truth.
@@ -599,8 +613,9 @@ export function SettingsPage() {
         <PageHeader title={t(activeNavItem.labelKey)} />
       </div>
 
-      <div className="flex min-h-0 flex-1 overflow-hidden px-5 py-5 sm:px-8 sm:py-6">
-        <ScrollArea className="h-full min-h-0 min-w-0 flex-1" viewportProps={{ className: "pb-8" }}>
+      {/* The padding sits inside the scroll area so its scrollbar runs along the window edge. */}
+      <div className="flex min-h-0 flex-1 overflow-hidden pt-5 sm:pt-6">
+        <ScrollArea className="h-full min-h-0 min-w-0 flex-1" viewportProps={{ className: "px-5 pb-13 sm:px-8 sm:pb-14" }}>
           {tab === "account" && (
             loadingMe ? (
               <LoadingState className="h-full" />
@@ -615,6 +630,9 @@ export function SettingsPage() {
             )
           )}
           {tab === "appearance" && <AppearanceTab />}
+          {tab === "model-configs" && (
+            <ModelConfigsTab token={session?.accessToken ?? ""} connectors={connectors} />
+          )}
           {tab === "mobile-connections" && (
             <MobileConnectionsTab
               token={session?.accessToken ?? ""}

@@ -1,0 +1,13 @@
+{
+  "active": true,
+  "configured": true,
+  "createdAt": "2026-08-25T05:10:00Z",
+  "error": null,
+  "name": "Work Codex",
+  "runtimeId": "rti_codex_work_01",
+  "runtimeType": "codex",
+  "startedAt": "2026-08-25T05:12:00Z",
+  "status": "running",
+  "stoppedAt": null,
+  "updatedAt": "2026-08-25T05:12:01Z"
+}

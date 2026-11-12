@@ -1,0 +1,64 @@
+{
+  "$id": "urn:agents-anywhere:runtime-workflows:1.1:workflow-view",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "connectorId": {
+      "title": "Connectorid",
+      "type": "string"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "preparation",
+        "creation"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "projectId": {
+      "title": "Projectid",
+      "type": "string"
+    },
+    "protocolVersion": {
+      "const": "1.1",
+      "default": "1.1",
+      "title": "Protocolversion",
+      "type": "string"
+    },
+    "runtimeId": {
+      "title": "Runtimeid",
+      "type": "string"
+    },
+    "sessionId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sessionid"
+    },
+    "state": {
+      "additionalProperties": true,
+      "title": "State",
+      "type": "object"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "connectorId",
+    "runtimeId",
+    "projectId",
+    "state"
+  ],
+  "title": "WorkflowView",
+  "type": "object"
+}

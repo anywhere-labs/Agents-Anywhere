@@ -5,6 +5,7 @@ import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import AgentDefaultModel from '@deepseek-ai/dsh-agent-default-model'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import SessionProjection from '@deepseek-ai/dsh-session-projection'
 import SessionController from '@deepseek-ai/dsh-api-session-controller'
 import Attachments from '@deepseek-ai/dsh-attachment-local'
@@ -70,6 +71,8 @@ export async function mountAgents(ctx: Context, adapter?: LlmAdapter,
   await ctx.plugin(SessionProjection).await()
   await ctx.plugin(SystemPrompt).await()
   await ctx.plugin(ToolRuntime).await()
+  // 0.2.2 moved tool execution out of the loop; an Agent runs only with an executor in scope.
+  await ctx.plugin(NativeToolExecutor).await()
   await ctx.plugin(AgentRegistry).await()
   await ctx.plugin(AgentLoop, { agents: [] }).await()
   // rc.7 stores defaults in the composition; this fixture has no profile ConfigEditor.

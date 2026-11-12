@@ -14,6 +14,11 @@ nonisolated struct V2PairingClaimResponse: Decodable, Hashable {
 }
 
 nonisolated enum V2DeviceRuntimeStatus: String, Decodable, Hashable {
+    init(from decoder: Decoder) throws {
+        // A status a newer Server adds must not hide the runtime list.
+        self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
+    }
+
     case stopped
     case discovering
     case available
@@ -49,11 +54,23 @@ nonisolated struct V2DeviceRuntime: Decodable, Identifiable, Hashable {
     let error: JSONValue?
     /// Step inside a non-error status (e.g. syncing while starting). Informational only.
     let phase: JSONValue?
+    /// Declared by the runtime adapter; shown beside the status, never instead of it.
+    let maturity: String?
+    /// How the runtime takes a model connection; absent when it takes none.
+    let modelConnection: V2ModelConnectionCapability?
+    let modelConnectionStatus: V2ModelConnectionStatus?
+    /// Saved write-only values by config path, e.g. `modelGateway.apiKey`. Values never arrive.
+    let secretFields: [String: V2RuntimeSecretField]?
+    /// Set on instances another feature created, such as `model-config`.
+    let managedBy: String?
     let lastDiscoveredAt: String
     let createdAt: String
     let updatedAt: String
 
     var id: V2RuntimeID { runtimeId }
+    var target: V2ModelTarget { .init(connectorId: connectorId, runtimeId: runtimeId) }
+    /// The maturity a badge shows: the model connection's when it has one.
+    var badgeMaturity: String? { modelConnection?.maturity ?? maturity }
 }
 
 nonisolated struct V2DeviceRuntimeListResponse: Decodable, Hashable {

@@ -56,6 +56,7 @@ struct AddDeviceAgentSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text(type.displayName).font(.headline)
+                RuntimeMaturityBadge(maturity: type.maturity)
                 if type.recommended { Text(String(localized: "推荐")).font(.caption).foregroundStyle(.secondary) }
                 Spacer()
             }

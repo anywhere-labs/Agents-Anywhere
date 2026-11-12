@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import weakref
 from typing import Any
+
+import pytest
 
 from agent_server.api.connector_ingress import (
     _ConnectorNotificationPump,
@@ -455,6 +458,7 @@ def test_invalidation_cancels_running_waiting_and_queued_notifications():
 
 def test_accidental_disconnect_drains_before_replacement_can_register():
     import pytest
+
     from agent_server.infra.connector_rpc import DuplicateConnectorConnectionError
 
     async def run():
@@ -490,3 +494,168 @@ def test_accidental_disconnect_drains_before_replacement_can_register():
         await manager.unregister("conn", replacement)
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("yield_each", [False, True])
+def test_replaced_payloads_are_released_while_handler_is_blocked(yield_each):
+    # Weak references test actual object lifetime, independent of allocator/RSS.
+    class Payload(dict):
+        pass
+
+    async def exercise():
+        entered, release = asyncio.Event(), asyncio.Event()
+        handled = []
+
+        class Ingest:
+            async def handle_notification_message(self, **kwargs):
+                handled.append(kwargs["params"]["item"]["sequence"])
+                entered.set()
+                await release.wait()
+
+        pump = _ConnectorNotificationPump("conn", Ingest())
+        pump.start()
+        references = []
+
+        def enqueue(sequence):
+            params = Payload(sessionId="session", item={
+                "id": "item", "sequence": sequence, "content": "x" * 4096,
+            })
+            pump.enqueue_message({"method": "timeline.itemUpsert", "params": params})
+            return weakref.ref(params)
+
+        try:
+            enqueue(0)
+            await asyncio.wait_for(entered.wait(), 1)
+            for sequence in range(1, 1001):
+                references.append(enqueue(sequence))
+                if yield_each:
+                    await asyncio.sleep(0)
+            # Cover both the admission queue (burst) and a blocked session lane.
+            assert all(reference() is None for reference in references[:-1])
+            assert references[-1]() is not None
+            assert pump._pending == 2
+            assert pump.coalesced == 999
+            release.set()
+            await asyncio.wait_for(pump.flush(), 2)
+            assert handled == [0, 1000]
+            assert pump._pending == 0
+        finally:
+            await pump.abort()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("yield_each", [False, True])
+def test_replacements_keep_their_arrival_position_among_other_notifications(yield_each):
+    async def exercise():
+        entered, release = asyncio.Event(), asyncio.Event()
+        handled = []
+
+        class Ingest:
+            async def handle_notification_message(self, **kwargs):
+                handled.append(kwargs["params"]["label"])
+                entered.set()
+                await release.wait()
+
+        pump = _ConnectorNotificationPump("conn", Ingest())
+        pump.start()
+
+        def enqueue(label, item_id=None):
+            params = {"sessionId": "session", "label": label}
+            method = "session.state.updated"
+            if item_id is not None:
+                method = "timeline.itemUpsert"
+                params["item"] = {"id": item_id}
+            pump.enqueue_message({"method": method, "params": params})
+
+        try:
+            enqueue("running", "running")
+            await asyncio.wait_for(entered.wait(), 1)
+            for label, item_id in [
+                ("a-old", "a"), ("b-old", "b"), ("state-1", None),
+                ("a-new", "a"), ("distinct", "c"), ("state-2", None), ("b-new", "b"),
+            ]:
+                enqueue(label, item_id)
+                if yield_each:
+                    await asyncio.sleep(0)
+            release.set()
+            await asyncio.wait_for(pump.flush(), 2)
+            assert handled == ["running", "state-1", "a-new", "distinct", "state-2", "b-new"]
+            assert pump.coalesced == 2
+        finally:
+            await pump.abort()
+
+    asyncio.run(exercise())
+
+
+def test_same_item_id_in_different_sessions_is_not_coalesced():
+    async def exercise():
+        handled = []
+
+        class Ingest:
+            async def handle_notification_message(self, **kwargs):
+                handled.append(kwargs["params"]["sessionId"])
+
+        pump = _ConnectorNotificationPump("conn", Ingest())
+        pump.start()
+        try:
+            for session in ("a", "b"):
+                pump.enqueue_message({"method": "timeline.itemUpsert", "params": {
+                    "sessionId": session, "item": {"id": "same"},
+                }})
+            await asyncio.wait_for(pump.flush(), 2)
+            assert sorted(handled) == ["a", "b"]
+            assert pump.coalesced == 0
+        finally:
+            await pump.abort()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("yield_each", [False, True])
+@pytest.mark.parametrize("shutdown", ["close", "abort"])
+def test_shutdown_after_coalescing_drains_or_discards_remaining_work(yield_each, shutdown):
+    async def exercise():
+        entered, release = asyncio.Event(), asyncio.Event()
+        handled = []
+
+        class Ingest:
+            async def handle_notification_message(self, **kwargs):
+                handled.append(kwargs["params"]["item"]["sequence"])
+                entered.set()
+                await release.wait()
+
+        pump = _ConnectorNotificationPump("conn", Ingest())
+        pump.start()
+
+        def enqueue(sequence):
+            pump.enqueue_message({"method": "timeline.itemUpsert", "params": {
+                "sessionId": "session", "item": {"id": "item", "sequence": sequence},
+            }})
+
+        try:
+            enqueue(0)
+            await asyncio.wait_for(entered.wait(), 1)
+            for sequence in range(1, 101):
+                enqueue(sequence)
+                if yield_each:
+                    await asyncio.sleep(0)
+            assert pump._pending == 2
+            stopping = asyncio.create_task(getattr(pump, shutdown)())
+            await asyncio.sleep(0)
+            if shutdown == "close":
+                assert not stopping.done()
+                release.set()
+            await asyncio.wait_for(stopping, 2)
+            assert handled == ([0, 100] if shutdown == "close" else [0])
+            assert pump._pending == 0
+            assert pump._queue.empty()
+            assert not pump._lanes and not pump._lane_tasks
+            # Admission remains closed after draining or invalidation.
+            enqueue(101)
+            assert pump._pending == 0
+        finally:
+            release.set()
+            await pump.abort()
+
+    asyncio.run(exercise())

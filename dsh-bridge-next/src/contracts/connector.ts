@@ -2,11 +2,13 @@ export interface ConnectorSettings {
   uvPath: string
   uvPypiIndexUrl: string
   uvPythonInstallMirror: string
+  /** '' follows the system, 'direct' skips any proxy, otherwise a proxy URL. */
+  connectorProxy: string
   syncIntervalSeconds: number
 }
 
 export const DEFAULT_CONNECTOR_SETTINGS: ConnectorSettings = {
-  uvPath: '', uvPypiIndexUrl: '', uvPythonInstallMirror: '', syncIntervalSeconds: 30,
+  uvPath: '', uvPypiIndexUrl: '', uvPythonInstallMirror: '', connectorProxy: '', syncIntervalSeconds: 30,
 }
 
 export const PYTHON_MIRRORS = [

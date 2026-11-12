@@ -80,6 +80,9 @@ _API_ROOTS = (
     "/connectors",
     "/dashboard",
     "/health",
+    "/integrations",
+    "/model-config",
+    "/model-profiles",
     "/oauth",
     "/pairing",
     "/projects",
@@ -124,8 +127,17 @@ async def _truncate(url: str) -> None:
 
     conn = await asyncpg.connect(url)
     try:
+        # Fail with the blocking backend IDs instead of waiting indefinitely on
+        # a transaction leaked by a previous test.
+        await conn.execute("SET lock_timeout = '10s'")
         try:
             await conn.execute(_truncate_sql())
+        except asyncpg.LockNotAvailableError as exc:
+            blockers = await conn.fetch(
+                "SELECT pid, state, wait_event_type FROM pg_stat_activity "
+                "WHERE datname = current_database() AND pid <> pg_backend_pid()"
+            )
+            raise RuntimeError(f"Test database cleanup blocked; backends={list(blockers)}") from exc
         except asyncpg.UndefinedTableError:
             # Tables may not exist yet on the very first run; create_app()
             # migrates the database and subsequent invocations will succeed.
@@ -186,3 +198,9 @@ def fresh_database_url() -> Iterator[str]:
         asyncio.run(
             _run_maintenance(maintenance, f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
         )
+
+
+@pytest.fixture
+def server_secret(monkeypatch):
+    """A Server secret long enough for the secret box."""
+    monkeypatch.setenv("AGENT_SERVER_SECRET", "test-server-secret-0123456789abcdef")

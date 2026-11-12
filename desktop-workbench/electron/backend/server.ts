@@ -150,8 +150,8 @@ export class BackendServer {
 
   /**
    * One SSE stream per subscriber. The initial frames carry the current
-   * ownership and settings so a late subscriber is never blind, and log entries
-   * arrive pre-batched from `BackendState`.
+   * snapshots, including failures that happened before the client subscribed.
+   * Log entries arrive pre-batched from `BackendState`.
    */
   private streamEvents(request: IncomingMessage, response: ServerResponse): void {
     response.writeHead(200, {
@@ -165,6 +165,7 @@ export class BackendServer {
     // renderer shows as progress, so even the earliest frame is safe to send.
     this.send(response, "environment", this.state.environmentState());
     this.send(response, "ownership", this.state.ownershipState());
+    this.send(response, "state", this.state.connectorStateSnapshot());
     this.send(response, "settings", this.state.getSettings());
     this.clients.add(response);
     const ping = setInterval(() => {

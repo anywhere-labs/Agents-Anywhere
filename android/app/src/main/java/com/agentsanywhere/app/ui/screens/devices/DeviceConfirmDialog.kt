@@ -130,6 +130,8 @@ internal fun DeviceConfirmDialog(
     errorMessage: String? = null,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
+    /** Back or an outside tap; defaults to the dismiss button's action. */
+    onDismissRequest: () -> Unit = onDismiss,
 ) {
     val colors = LocalAAColors.current
     val darkMode = colors.isDark
@@ -141,7 +143,7 @@ internal fun DeviceConfirmDialog(
     val dangerButton = Color(0xFFEF4444)
 
     Dialog(
-        onDismissRequest = { if (!busy) onDismiss() },
+        onDismissRequest = { if (!busy) onDismissRequest() },
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         Column(

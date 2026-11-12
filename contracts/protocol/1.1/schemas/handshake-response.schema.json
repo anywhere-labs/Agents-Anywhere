@@ -1,0 +1,27 @@
+{
+  "$id": "urn:agents-anywhere:protocol:1.1:handshake-response",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "selectedProtocolVersion": {
+      "enum": [
+        "1.0",
+        "1.1"
+      ],
+      "title": "Selectedprotocolversion",
+      "type": "string"
+    },
+    "serverVersion": {
+      "title": "Serverversion",
+      "type": "string"
+    }
+  },
+  "required": [
+    "selectedProtocolVersion",
+    "serverVersion"
+  ],
+  "title": "ProtocolHandshakeResponse",
+  "type": "object",
+  "x-direction": "egress",
+  "x-protocol-version": "1.1",
+  "x-pydantic-mode": "serialization"
+}

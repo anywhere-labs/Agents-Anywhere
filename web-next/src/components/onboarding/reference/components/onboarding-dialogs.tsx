@@ -1,4 +1,6 @@
-import { useState } from "react"
+import { useTranslations } from 'next-intl'
+import { hasConfiguredAgents } from '@/features/onboarding/agent-presence'
+import { useEffect, useRef, useState } from "react"
 import { MobileConnectionContent } from "@/components/pages/mobile-signin-panel"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/onboarding/reference/components/ui/dialog"
 import { Button } from "@/components/onboarding/reference/components/ui/button"
@@ -12,10 +14,30 @@ type OnboardingDialogsProps = {
   onOpenChange: (open: boolean) => void
   onPhoneConnected: () => void
   onConfirmSkip: () => void
+  onAddAgent: () => void
+  onlyIfEmpty?: boolean
   onRestoreFocus: () => void
 }
 
-export function OnboardingDialogs({ token, userId, kind, open, onOpenChange, onPhoneConnected, onConfirmSkip, onRestoreFocus }: OnboardingDialogsProps) {
+export function OnboardingDialogs({ token, userId, kind, open, onOpenChange, onPhoneConnected, onConfirmSkip, onRestoreFocus, onAddAgent, onlyIfEmpty }: OnboardingDialogsProps) {
+  const t = useTranslations('agentReminder')
+  const [hasAgents, setHasAgents] = useState<boolean | null>(null)
+  const [failed, setFailed] = useState(false)
+  const [retry, setRetry] = useState(0)
+  const confirmRef = useRef(onConfirmSkip)
+  confirmRef.current = onConfirmSkip
+  useEffect(() => {
+    if (!open || kind !== 'skip') return
+    let cancelled = false
+    setHasAgents(null)
+    setFailed(false)
+    void hasConfiguredAgents(token).then(value => {
+      if (cancelled) return
+      setHasAgents(value)
+      if (value && onlyIfEmpty) confirmRef.current()
+    }).catch(() => { if (!cancelled) setFailed(true) })
+    return () => { cancelled = true }
+  }, [open, kind, token, onlyIfEmpty, retry])
   const [busy, setBusy] = useState(false)
   const close = () => { if (!busy) onOpenChange(false) }
 
@@ -27,19 +49,22 @@ export function OnboardingDialogs({ token, userId, kind, open, onOpenChange, onP
         onCloseAutoFocus={(event) => { event.preventDefault(); onRestoreFocus() }}>
         {kind === "phone" && <>
           <DialogHeader>
-            <DialogTitle>连接手机</DialogTitle>
-            <DialogDescription>打开手机端 Agents Anywhere，扫描二维码。</DialogDescription>
+            <DialogTitle>{t('phoneTitle')}</DialogTitle>
+            <DialogDescription>{t('phoneDescription')}</DialogDescription>
           </DialogHeader>
           <MobileConnectionContent token={token} userId={userId} onComplete={onPhoneConnected} onCancel={close} onBusyChange={setBusy} />
         </>}
         {kind === "skip" && <>
           <DialogHeader>
-            <DialogTitle>确认跳过引导？</DialogTitle>
-            <DialogDescription>跳过后将略过设备与 Agent 的配置引导，你可以稍后在设备页面继续设置。</DialogDescription>
+            <DialogTitle>{t(hasAgents === false ? 'title' : 'skipTitle')}</DialogTitle>
+            <DialogDescription>{t(failed ? 'checkFailed' : hasAgents === null ? 'checking' : hasAgents ? 'skipDescription' : 'description')}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="ghost" size="lg" onClick={close}>继续引导</Button>
-            <Button size="lg" onClick={onConfirmSkip}>确认跳过</Button>
+            <Button variant="ghost" size="lg" onClick={close}>{t('continueTutorial')}</Button>
+            {failed ? <Button size="lg" onClick={() => setRetry(value => value + 1)}>{t('retry')}</Button> : <>
+              <Button variant={hasAgents === false ? 'ghost' : 'default'} size="lg" disabled={hasAgents === null} onClick={onConfirmSkip}>{t('skipAnyway')}</Button>
+              {hasAgents === false && <Button size="lg" onClick={onAddAgent}>{t('addAgent')}</Button>}
+            </>}
           </DialogFooter>
         </>}
       </DialogContent>

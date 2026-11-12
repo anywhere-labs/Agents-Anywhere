@@ -260,6 +260,7 @@ def test_runtime_rebuilds_a_relay_that_died_from_a_bug(monkeypatch):
         replacement = runtime._sync
         try:
             assert replacement is not None and replacement is not dead
+            assert replacement.quarantined is runtime._quarantined, "refusals outlive the relay"
             await _ready(client, replacement, 1)
             assert len(client.streams) == 1, "the replacement relay subscribes on its own"
             host.runtime_health_update.assert_awaited()

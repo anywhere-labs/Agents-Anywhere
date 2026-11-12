@@ -19,6 +19,8 @@ class ConnectorConfig:
     sync_existing_on_connect: bool = True
     sync_interval_seconds: float = 30
     state_path: str | None = None
+    # "system" (the default when unset), "direct", or a proxy URL.
+    proxy: str | None = None
 
     @classmethod
     def default_path(cls) -> Path:
@@ -77,6 +79,7 @@ class ConnectorConfig:
                 if isinstance(data.get("statePath"), str)
                 else None
             ),
+            proxy=data.get("proxy") if isinstance(data.get("proxy"), str) else None,
         )
 
     def save(self, path: str | Path | None = None) -> Path:
@@ -93,6 +96,7 @@ class ConnectorConfig:
                     "syncExistingOnConnect": self.sync_existing_on_connect,
                     "syncIntervalSeconds": self.sync_interval_seconds,
                     "statePath": self.state_path,
+                    **({"proxy": self.proxy} if self.proxy else {}),
                 },
                 ensure_ascii=False,
                 indent=2,

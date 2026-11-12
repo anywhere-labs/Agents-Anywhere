@@ -196,7 +196,9 @@ include connector presence, but must not include runtime state as durable fact.
 SessionMeta inventory, including active and archived sessions across all projects.
 Web and iOS use this endpoint for explicit dashboard refresh and derive project,
 device and archive views locally. It has no pagination or project filter and does
-not read timeline bodies or call each session's runtime. The paginated
+not read the timeline or call each session's runtime: `lastItemAt` and
+`lastItemOrderSeq` come from a summary of the newest timeline item that every
+timeline write keeps on the session. The paginated
 `GET /sessions` endpoint retains its cursor/filter contract for other callers.
 
 `PATCH /sessions/{sessionId}/meta` updates only Server-owned display metadata:

@@ -14,7 +14,7 @@
 ./local-up.sh
 ```
 
-它启动 Docker PostgreSQL/Redis、迁移数据库，再在前台运行 Server 和 Web。默认 Web 为 `http://127.0.0.1:5174`，Server 为 `http://127.0.0.1:8000`，PostgreSQL/Redis 端口为 `55432` / `56379`。日志在 `.local-dev/logs/`。按 Ctrl-C 停止本次启动的服务。
+它启动 Docker PostgreSQL/Redis、迁移数据库，再在前台运行 Server 和 Web。默认 Web 为 `http://127.0.0.1:5174`，Server 为 `http://127.0.0.1:8000`，PostgreSQL/Redis 端口为 `55432` / `56379`。日志在 `.local-dev/logs/`。按 Ctrl-C 停止本次启动的应用进程；两个启动脚本共用的 PostgreSQL/Redis 保持运行，下次启动直接复用，避免旧启动器退出时中断新实例。应用关闭超过 5 秒时，启动器会强制结束残留进程，避免旧 Server 长期占用会话锁。需要手动停止基础设施时运行 `docker compose -f docker/docker-compose.local.yml stop`（保留数据）。
 
 - `--skip-install`：复用依赖。
 - `--with-connector`：一起启动 Connector；默认不启动。
@@ -22,6 +22,8 @@
 - `--access-log`：打印 uvicorn 逐请求访问日志；默认关闭。Server 日志级别默认为 INFO，可用 `LOGURU_LEVEL=DEBUG` 查看调试日志（`desktop-local-up.sh` 同样适用）。
 - `--listen`：监听局域网地址；默认只监听回环。
 - `--reset-data`：删除本地数据库数据卷，仅在明确不要这些数据时使用。
+
+两个本地启动脚本都会读取根目录的 `.env.local`（可用 `--env-file` 指定其他文件）。未设置 `AGENT_SERVER_SECRET` 时，首次启动会自动生成随机密钥并保存到该文件，文件权限设为仅当前用户可读写；后续启动复用它，可直接测试模型 Key 的加密保存。已有的有效密钥会保留，过短或使用开发默认值时会提示修正。不要删除或更换密钥，否则原有登录令牌和已保存的加密凭据可能失效；不要提交本地配置文件。
 
 ## Desktop
 
@@ -40,7 +42,7 @@ yarn dev
 ./desktop-local-up.sh down
 ```
 
-此启动器使用 Server `8000`、Web `5174`（Desktop 开发模式的登录页）和 Desktop `5184`，会释放这三个应用端口的既有监听者，然后像 `local-up.sh` 一样在前台运行 Server、Web 和 Desktop，并带前缀输出日志（同时写入 `.local-dev/logs/`）。按 Ctrl-C 停止本次启动的服务和数据库容器；`down` 用于停止另一个终端里仍在运行的启动器。更多环境变量与生命周期见 [Desktop README](../desktop-workbench/README.md)。
+此启动器使用 Server `8000`、Web `5174`（Desktop 开发模式的登录页）和 Desktop `5184`，会释放这三个应用端口的既有监听者，然后像 `local-up.sh` 一样在前台运行 Server、Web 和 Desktop，并带前缀输出日志（同时写入 `.local-dev/logs/`）。按 Ctrl-C 停止本次启动的应用进程，关闭超时后强制结束残留进程，共用的 PostgreSQL/Redis 容器保持运行；`down` 用于停止另一个终端里仍在运行的启动器。更多环境变量与生命周期见 [Desktop README](../desktop-workbench/README.md)。
 
 ## Headless 检查
 
@@ -96,6 +98,32 @@ yarn workspace agents-anywhere-desktop-renderer protocol:check
 
 Server 测试应使用隔离测试环境，不要把生产数据库 URL 带入测试进程。Headless 检查通过不代表真实安装、OAuth 回调或远程 Runtime 会话已验证；这些按变更影响单独记录。
 
+### CI 入口与缓存
+
+`.github/workflows/ci.yml` 按路径选择 Connector、Server、DSH 插件、Web 和 Desktop
+检查。Connector 通用代码改动同时触发 Server、插件和三平台 ACP；Server 改动同时触发插件。
+ACP/Pi 受管验证脚本仅触发三平台 ACP，原生 Pi 验证脚本由独立 Pi compatibility 工作流覆盖。
+`setup-yarn` 改动触发 Web、Desktop 和插件；`dsh-bridge.yml` 改动触发插件，
+`pi-compat.yml` 由自身的 PR 工作流验证。主 CI、未知工作流、其他公共 action 和契约改动仍触发全部检查。
+
+公共 `setup-yarn` action 仅缓存下载归档，按项目、Node、平台及依赖声明区分，
+不缓存 `node_modules` 或 lockfile；缓存命中后仍执行安装，从当前清单解析依赖。
+Python 环境在检查前准备一次，Server 中预装当前 Connector，之后以 `--no-sync`
+运行检查；DSH 集成探针通过 `UV_NO_SYNC=true` 复用已准备的两个环境。
+CI 的一次性 PostgreSQL 使用 tmpfs，减少每个用例清表的磁盘开销；不修改生产数据库
+配置。pytest 保留外层硬超时，并输出慢项及分阶段耗时。
+
+三平台 ACP 保留完整传输、进程清理和 Pi 场景验证。Pi 的 8 个受管场景通过
+`verify-pi-managed.py --scenario all` 在同一进程内顺序执行，仅共用依赖缓存；
+每个场景独立创建工作目录、会话和本地模型服务，失败立即结束并清理运行时与服务。
+本地服务直接绑定回环地址，不执行反向 DNS 查询；日志显示模块导入、服务绑定、
+运行时准备、每个场景及整个批次的耗时。
+
+DSH 的 PR/push 检查统一在 CI 中执行。独立 `dsh-bridge.yml` 使用当前
+`dsh-bridge-next/`，仅负责手动验包和既有 `dsh-bridge-v<包版本>` release 发布：
+先完成类型、构建和测试，再用 `npm pack --ignore-scripts` 打包已验证的产物，
+发布作业下载同一份归档，不重复安装、构建或触发 `prepack`。手动运行不会发布。
+
 ## 构建安装包
 
 在 `desktop-workbench/` 运行：
@@ -106,3 +134,100 @@ yarn dist:win   # 在 Windows 构建 x64 NSIS 安装包
 ```
 
 签名、公证、架构选择及缓存重试见 [Desktop Packaging](../desktop-workbench/README.md#packaging)。凭据从环境或安全存储注入，不能提交到源码或文档。Android 的命令和签名边界见 [Android README](../android/README.md)。发布步骤见 [2.0.0 发布说明](releases/2.0.0.md)。
+
+### Desktop 的 Pi 适配器准备
+
+Desktop 在启动本机 Connector 前，先通过 `uv sync` 准备 Python 依赖，再安装并检查 Pi ACP 适配器及其 npm 依赖。环境准备弹窗会显示 Pi 准备阶段与安装输出，支持取消和失败后重试；全部完成后才启动 Connector。
+
+Desktop 的所有 Pi 实例共用应用数据目录下的 `pi-npm-runtimes` 缓存；本机 Pi 的模型、认证和配置仍使用原来的本机目录。清空 Connector 环境会同时清空该适配器缓存，下次准备时重新安装。独立 Connector 保留首次创建或恢复 Pi 会话时按需安装的行为。
+
+Connector 重连时，Server 保存并校验能力后即可继续恢复运行时；历史会话的能力广播由应用级后台任务完成，同一设备的新刷新替代旧刷新，断线和重连使用最新在线状态重新广播，服务退出时取消任务后再关闭存储。
+
+## 渠道对账升级与排查
+
+渠道对账使用 `v2_52` 迁移。升级时先停止所有旧 Server worker，执行迁移后启动新 Server，再升级 Connector；不要让旧、新切换执行器共同运行。`channelReconcileFence` 是自动切换的必需能力，旧 Connector 继续保留现有配置并显示升级要求。Redis 丢失标记后由数据库补偿和上线完整对账恢复，无需人工重新选择渠道。
+
+排查时比较 `runtime_channel_sync` 的目标与已应用版本、`runtime_channel_switches` 的操作身份及租约、`channel_sync_outbox` 的投递进度；通知已投递不代表设备已经应用。日志中的渠道对账统计包含待同步数、最老待更新记录、待投递数及恢复失败数。不要在日志或工单中粘贴解密配置。
+
+回退前停止新执行器并导出新增表及加密快照。存在同步或恢复记录时，迁移拒绝自动降级，避免删除仍可恢复的切换记录；空库支持正常回退；保留新增结构后再进行协调回退。
+
+### Server 按改动选择测试与并行运行
+
+Server 可用 `scripts.check_tests` 运行测试。需要先安装 Server 开发依赖，
+并按上文设置 `AGENT_SERVER_TEST_DB_URL`，指向已存在且名称含 `test` 的一次性数据库。
+执行账号需要建库和删库权限。运行器只在此实例中新建随机命名的测试数据库，
+为每个 worker 分配独立库；结束或超时后删除自己创建的库，不清空传入的基础库。
+清库等待表锁超过 10 秒会失败并列出数据库连接，避免一直等待。
+
+```bash
+cd server
+# 冷启动或完整回归，同时生成本机代码依赖基线
+uv run python -m scripts.check_tests --mode full --workers 2
+# 日常反馈：公共检查 + testmon 依据实际执行过的代码块选择的相关用例
+uv run python -m scripts.check_tests --mode affected --base origin/main --workers 2
+# 影子对照：相关用例跑完后仍执行全量，比较耗时与漏选失败
+uv run python -m scripts.check_tests --mode shadow --base origin/main --workers 2
+```
+
+`--base` 用于判定本次修改是否包含 Python 执行覆盖之外的输入；testmon 会比较
+当前代码与上次记录的执行依赖。普通函数修改可以跨测试文件选择到单条用例，
+无需把 `test_backend_mvp.py` 整个交给某个 worker。认证、协议契约、架构边界和
+基础设施健康检查固定执行，不受 testmon 选择结果影响。
+缺少基线、无法解析 base、新增/删除或未跟踪输入、数据库基础设施、迁移、契约、
+Connector、工作流和依赖配置等变化均回退全量。共享测试 helper 变化同样回退全量。
+基线失效时不把“没有数据”视为“没有测试需要运行”。
+
+PR/push 的 `Server tests` 默认只执行一次 `verify`：四 worker 全量验证，
+不采集 testmon 依赖，不运行额外的公共检查或选测阶段，也不恢复/保存 testmon 缓存。
+修改工作流、冷缓存或依赖变化都不会把常规检查切换为双 worker 覆盖采集。
+完整测试结果仍决定检查是否通过。
+
+基线采集与选测对照仅通过手动 `CI` 入口执行（建议 `scope=server`），
+使用独立检查名 `Server test diagnostics`；它们不替代 PR 的 `Server tests`。
+诊断模式仍会恢复成功运行的 `.testmondata`；缓存受 GitHub 分支作用域限制，
+PR 的缓存不能作为其他 PR 的共享基线。
+每次运行在 `server/.test-results/` 保存 `summary.json` 和分阶段 JSON：包含每条
+用例的 setup/call/teardown 耗时、实际结果、快速阶段与全量耗时及漏选失败列表。
+CI 将摘要显示在 Actions Summary，并上传 `server-test-report` artifact。
+漏选失败列表用于排查选择盲点；空列表不等于证明未来修改不会漏测。
+`--output` 可指定报告目录，`--timeout` 设置每阶段硬超时（默认 1200 秒）。
+`.testmondata*` 和报告目录均不提交，业务版本号不受此检查影响。
+
+GitHub Actions 手动运行 `CI` 时，可选 `scope=server`，只执行 Server 检查；
+用 `server_workers=1/2/4` 比较同一提交的并行效果，`server_mode=verify` 为默认全量验证，
+`full/shadow/affected` 用于基线采集、影子对照或快速诊断。手动运行互不取消，PR/push 仍会取消旧检查。
+先用 full 生成成功基线，再用 shadow 和 `server_sample_change=true` 测量
+真实函数修改的选择效果。该选项仅在一次性 CI checkout 中给公告读取函数加上
+不改变返回值的 `.strip()` 调用，不生成提交、不修改远程源码。
+
+`verify` 执行不采集依赖的全量检查，也是本地运行器的默认模式；`full` 执行全量并采集依赖基线。
+已有有效基线的 shadow 阶段只为受影响用例采集依赖，随后全量验证不重复开启覆盖跟踪，
+避免同一轮重复采集拖慢检查；冷启动和回退全量仍采集完整基线。
+
+云端实测中四 worker 覆盖采集触发了一条异步等待失败；因此采集限制为最多两个 worker，
+不带覆盖采集的验证可按 `server_workers` 使用四 worker。阶段报告分别记录实际 worker 数。
+
+手动运行还可选 `server_mode=affected`，只执行公共检查和相关用例，用于快速诊断。
+该模式的 job 名称为 `Server affected diagnostics`，不冒充必需的完整 `Server tests` 检查；
+PR/push 仍执行带全量兜底的影子对照。JSON 报告目录是隐藏目录，上传步骤明确包含该目录。
+
+## 并行 PR 的数据库迁移
+
+迁移是一条线性链：每个 `v2_N` 只有一个 `down_revision`，Server 启动时要求数据库正好处于 `CURRENT_SCHEMA_REVISION`。并行开发的 PR 都会取「现有最大值 + 1」，所以**编号只有合入 `main` 后才算确定**。先合入的 PR 保留编号，后合入的改号；已合入 `main` 的迁移不能改。
+
+撞号有两个容易忽略的地方：
+
+- **冲突出现得晚。** 两个 PR 各自和 `main` 比较都能合并，CI 也都能通过。前一个合入后，后一个才会在迁移文件、版本常量、测试和文档上同时冲突。
+- **Alembic 只比较 revision ID，不比较内容。** 开发库跑过一个分支的 `v2_N` 后，切到另一个同号分支不会再执行它的 DDL，启动时的版本检查还能通过，缺失的表或索引要到运行时才暴露。所以切换到同号的另一个分支时，要换一个新的本地库。
+
+后合入的 PR 按下面的步骤处理：
+
+1. 合并最新的 `main`。迁移文件冲突时保留 `main` 的版本，不要合并两边的内容，也不要二选一丢掉自己的迁移。
+2. 把自己的迁移改为新的最大编号，同时修改文件名、文档字符串里的 `Revision ID` 和 `Revises`、`revision`、`down_revision`。
+3. `CURRENT_SCHEMA_REVISION` 和 `CURRENT_SCHEMA_VERSION` 不是选 `main` 或选自己，而是设成新编号。`docs/upgrading.md` 里的当前 revision 同理。
+4. 用 `git grep -n 'v2_N'` 找出其余引用并逐条判断：测试名、加载迁移的测试、代码注释、`docs/api/`、CHANGELOG 的「升级须知」要跟着改；指向 `main` 上同号迁移的引用不要动。
+5. 如果迁移在无版本数据库的判定逻辑（`server/agent_server/infra/db/migrations.py`）里加了分支，同步其中的 revision 和前后顺序。
+6. 检查 git 报不出来的问题：迁移是否依赖或影响 `main` 新增的表和字段；回填或汇总类迁移，还要确认 `main` 没有新增绕过它的写入路径。
+7. 运行 `tests/test_database_migrations.py` 和相关测试，确认能从 `main` 的最新 revision 升级，并能降级回去。
+
+叠加 PR 也适用这些规则：基础 PR 改号后，依赖它的迁移要同步修改 `down_revision`；叠加 PR 合进基础分支时，要重新核对编号是否仍然接在 `main` 之后。

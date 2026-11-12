@@ -8,10 +8,12 @@ const DEFAULT_SETTINGS: DesktopSettings = {
   startConnectorOnLaunch: true,
   silentLaunch: true,
   notificationsEnabled: true,
+  confirmQuitOnShutdown: false,
   uvPath: "",
   pythonPath: "",
   uvPypiIndexUrl: "",
   uvPythonInstallMirror: "",
+  connectorProxy: "",
   logChunkSizeKb: 512,
   logRetainChunks: 20,
   logRetentionDays: 14,
@@ -42,7 +44,20 @@ export class DesktopSettingsStore {
   }
 
   save(patch: DesktopSettingsPatch): DesktopSettings {
-    const next = normalizeSettings({ ...this.settings, ...patch });
+    // The device setting is not a local preference; only the Connector sets it.
+    const { confirmQuitOnShutdown: _ignored, ...local } = patch as Partial<DesktopSettings>;
+    return this.write({ ...this.settings, ...local });
+  }
+
+  /** Records the device settings the server handed over; returns whether they changed. */
+  saveDeviceSettings(settings: { confirmQuitOnShutdown: boolean }): boolean {
+    if (this.settings.confirmQuitOnShutdown === settings.confirmQuitOnShutdown) return false;
+    this.write({ ...this.settings, confirmQuitOnShutdown: settings.confirmQuitOnShutdown });
+    return true;
+  }
+
+  private write(value: Partial<DesktopSettings>): DesktopSettings {
+    const next = normalizeSettings(value);
     writeJsonFile(this.filePath, next);
     this.settings = next;
     return this.get();
@@ -66,6 +81,10 @@ function normalizeSettings(value: Partial<DesktopSettings>): DesktopSettings {
       value.notificationsEnabled,
       DEFAULT_SETTINGS.notificationsEnabled,
     ),
+    confirmQuitOnShutdown: booleanValue(
+      value.confirmQuitOnShutdown,
+      DEFAULT_SETTINGS.confirmQuitOnShutdown,
+    ),
     uvPath: typeof value.uvPath === "string" ? value.uvPath.trim() : DEFAULT_SETTINGS.uvPath,
     pythonPath: typeof value.pythonPath === "string" ? value.pythonPath.trim() : DEFAULT_SETTINGS.pythonPath,
     uvPypiIndexUrl: typeof value.uvPypiIndexUrl === "string"
@@ -74,10 +93,18 @@ function normalizeSettings(value: Partial<DesktopSettings>): DesktopSettings {
     uvPythonInstallMirror: typeof value.uvPythonInstallMirror === "string"
       ? value.uvPythonInstallMirror.trim()
       : DEFAULT_SETTINGS.uvPythonInstallMirror,
+    connectorProxy: connectorProxyValue(value.connectorProxy),
     logChunkSizeKb: clamp(value.logChunkSizeKb, DEFAULT_SETTINGS.logChunkSizeKb, 64, 10_240),
     logRetainChunks: clamp(value.logRetainChunks, DEFAULT_SETTINGS.logRetainChunks, 1, 200),
     logRetentionDays: clamp(value.logRetentionDays, DEFAULT_SETTINGS.logRetentionDays, 1, 365),
   };
+}
+
+/** An unusable value follows the system rather than handing the Connector a bad URL. */
+function connectorProxyValue(value: unknown): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (text === "direct") return text;
+  return /^(?:https?|socks5h?):\/\/[^\s/]+/i.test(text) ? text : DEFAULT_SETTINGS.connectorProxy;
 }
 
 function booleanValue(value: unknown, fallback: boolean): boolean {

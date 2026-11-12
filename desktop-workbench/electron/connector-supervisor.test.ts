@@ -248,6 +248,7 @@ process.stdin.on('end', () => process.exit(0));
   const spawn = childProcess.spawn;
   const launches: Array<{ command: string; args: readonly string[] }> = [];
   t.mock.method(childProcess, "spawn", (command: string, args: readonly string[], options: childProcess.SpawnOptions) => {
+    if (command === "taskkill.exe") return spawn(command, args, options);
     launches.push({ command, args });
     return spawn(process.execPath, [script], options);
   });
@@ -350,7 +351,7 @@ test("runtime logs retain central sequences, paginate and export without a secon
   } finally { await supervisor.shutdown(); }
 });
 
-function supervisorFixture(root: string, options: { packaged?: boolean; onOwnership?: (state: OwnershipState) => void } = {}) {
+function supervisorFixture(root: string, options: { packaged?: boolean; onOwnership?: (state: OwnershipState) => void; connectControl?: () => Promise<ConnectorChannel> } = {}) {
   fs.writeFileSync(path.join(root, "pyproject.toml"), "");
   fs.mkdirSync(path.join(root, "connector"), { recursive: true });
   fs.writeFileSync(path.join(root, "connector", "cli.py"), "");
@@ -364,7 +365,7 @@ function supervisorFixture(root: string, options: { packaged?: boolean; onOwners
     binding: new DesktopBindingStore(path.join(root, "binding.json")),
     logs: new ConnectorLogStore(path.join(root, "logs"), () => settings.get()),
     onOwnership: options.onOwnership, onState: () => {}, onLog: () => {},
-    connectControl: async () => fakeChannel(),
+    connectControl: options.connectControl ?? (async () => fakeChannel()),
   });
 }
 
@@ -378,6 +379,86 @@ function launchScript(t: TestContext, script: string): void {
 }
 
 const READY_LINE = `process.stdout.write(JSON.stringify({ kind: 'connector.ready', version: 1, instanceId: 'fake', pid: process.pid, endpoint: { unixPath: '/nonexistent/fake.sock' }, key: 'mk_host_fake' }) + '\\n');`;
+
+test("health checks rebuild a live but unresponsive Connector and tolerate transient failures", { timeout: 15_000 }, async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-desktop-health-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const script = path.join(root, "runtime.cjs");
+  fs.writeFileSync(script, `${READY_LINE}\nprocess.stdin.resume();`);
+  launchScript(t, script);
+  fs.writeFileSync(path.join(root, "connector.json"), JSON.stringify({
+    serverUrl: "https://example.test", connectorId: "desktop-id", connectorToken: "private-token",
+  }));
+  const channel = fakeChannel();
+  let failing = false;
+  let probes = 0;
+  let connections = 0;
+  channel.control.getState = async options => {
+    assert.equal(options?.timeoutMs, 10_000);
+    probes++;
+    if (failing) throw new Error("No instances registered for aa.local.v2.Control");
+    return { running: true, authFailed: false };
+  };
+  const supervisor = supervisorFixture(root, {
+    connectControl: async () => ++connections === 1 ? channel : fakeChannel(),
+  });
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  try {
+    await supervisor.start();
+    const probe = async () => {
+      t.mock.timers.tick(30_000);
+      await new Promise<void>(resolve => setImmediate(resolve));
+    };
+    failing = true;
+    await probe();
+    assert.equal(connections, 1, "one failed check must not kill the process");
+    failing = false;
+    await probe();
+    failing = true;
+    await probe();
+    assert.equal(connections, 1, "a successful check resets the failure count");
+    await probe();
+    const deadline = Date.now() + 8_000;
+    while ((connections < 2 || !supervisor.publicState().running) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    assert.equal(probes, 4);
+    assert.equal(connections, 2, "rebuild the live process using the normal restart path");
+    assert.equal(supervisor.publicState().running, true);
+  } finally { await supervisor.shutdown(); }
+});
+
+test("health checks do not restart a stopped Connector and are removed on shutdown", { timeout: 15_000 }, async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-desktop-health-stop-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const script = path.join(root, "runtime.cjs");
+  fs.writeFileSync(script, `${READY_LINE}\nprocess.stdin.resume();`);
+  launchScript(t, script);
+  fs.writeFileSync(path.join(root, "connector.json"), JSON.stringify({
+    serverUrl: "https://example.test", connectorId: "desktop-id", connectorToken: "private-token",
+  }));
+  const channel = fakeChannel();
+  let probes = 0;
+  channel.control.getState = async () => {
+    probes++;
+    throw new Error("control unavailable");
+  };
+  const supervisor = supervisorFixture(root, { connectControl: async () => channel });
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  try {
+    await supervisor.start();
+    t.mock.timers.tick(30_000);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(probes, 1);
+    await supervisor.stop();
+    t.mock.timers.tick(90_000);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(probes, 1, "a stopped runtime must not trigger health recovery");
+  } finally { await supervisor.shutdown(); }
+  t.mock.timers.tick(90_000);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(probes, 1, "shutdown removes the health timer");
+});
 
 test("a Connector that exits on its own records why in lastError, a stopped one does not", { timeout: 15_000 }, async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-desktop-rpc-crash-"));
@@ -450,4 +531,27 @@ process.stdin.on('end', () => process.exit(0));
     for (const name of [".venv", "uv-cache", "connector-source"]) assert.equal(fs.existsSync(path.join(root, name)), false, name);
     assert.equal(fs.existsSync(path.join(root, "connector.json")), true, "credentials survive");
   } finally { await packaged.shutdown(); }
+});
+
+test("the Connector network setting replaces any proxy choice inherited from the shell", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-desktop-proxy-env-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const settings = new DesktopSettingsStore(path.join(root, "settings.json"), ["en-US"]);
+  const supervisor = new ConnectorSupervisor({
+    configPath: path.join(root, "connector.json"), dataPath: root, connectorDir: root, resourcesPath: root,
+    uvBundleDir: path.join(root, "build", "uv"),
+    pythonBundleDir: path.join(root, "build", "python"),
+    packaged: false, homePath: root, settings,
+    shellEnvironment: { AA_CONNECTOR_PROXY: "http://inherited:1" },
+    binding: new DesktopBindingStore(path.join(root, "binding.json")),
+    logs: new ConnectorLogStore(path.join(root, "logs"), () => settings.get()),
+    onState: () => {}, onLog: () => {},
+    connectControl: async () => fakeChannel(),
+  });
+  const environment = () => (supervisor as unknown as { connectorEnvironment(): NodeJS.ProcessEnv }).connectorEnvironment();
+  assert.equal(environment().AA_CONNECTOR_PROXY, undefined);
+  settings.save({ connectorProxy: "direct" });
+  assert.equal(environment().AA_CONNECTOR_PROXY, "direct");
+  settings.save({ connectorProxy: "http://127.0.0.1:7890" });
+  assert.equal(environment().AA_CONNECTOR_PROXY, "http://127.0.0.1:7890");
 });

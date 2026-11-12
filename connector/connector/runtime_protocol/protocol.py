@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from connector.runtime_protocol.errors import RuntimeUnsupportedError
+from connector.runtime_protocol.model_connection import ModelConnectionStatus
 from connector.runtime_protocol.models import (
     PreparedSessionTimelineSync,
     RuntimeAttachment,
@@ -21,10 +22,22 @@ from connector.runtime_protocol.models import (
     SessionNotice,
     SessionState,
 )
+from connector.runtime_protocol.workflows import (
+    RuntimeWorkflowRequest,
+    RuntimeWorkflowResult,
+)
 
 
 class AgentRuntime(ABC):
     """Connector -> Runtime."""
+
+    @property
+    def goals(self):
+        return getattr(self, "_goals", None)
+
+    @property
+    def planning(self):
+        return getattr(self, "_planning", None)
 
     @property
     def sync_mode(self) -> str:
@@ -43,8 +56,36 @@ class AgentRuntime(ABC):
     async def start(self) -> None:
         pass
 
+    def model_connection_status(self) -> ModelConnectionStatus | None:
+        """What this instance did with its model connection, when only it knows.
+
+        Adapters that hand the connection to another process while starting
+        report the outcome here; otherwise the provider's report from the
+        config is used.
+        """
+        return None
+
+    async def execute_workflow(self, request: RuntimeWorkflowRequest) -> RuntimeWorkflowResult:
+        """Control-plane operation: never queue behind an engine/UI continuation."""
+        raise RuntimeUnsupportedError(request.operation)
+
+    async def get_session_configuration(self, session_id: str) -> dict[str, Any]:
+        raise RuntimeUnsupportedError("get_session_configuration")
+
+    async def update_session_configuration(self, session_id: str, values: Mapping[str, Any]) -> dict[str, Any]:
+        raise RuntimeUnsupportedError("update_session_configuration")
+
     async def stop(self) -> None:
         pass
+
+    async def apply_model_setting(self, config: RuntimeConfig) -> bool:
+        """Take a config whose only change is the ``model`` setting, without restarting.
+
+        The setting only decides what new sessions use, so a runtime that can
+        swap it in place returns True and republishes its model catalog.
+        Returning False lets the supervisor restart the runtime as usual.
+        """
+        return False
 
     async def get_config(self) -> RuntimeConfig:
         raise RuntimeUnsupportedError("get_config")
@@ -63,6 +104,9 @@ class AgentRuntime(ABC):
         limit: int = 100,
     ) -> RuntimeModelCatalog:
         raise RuntimeUnsupportedError("list_model_catalog")
+
+    async def list_scoped_model_catalog(self, session_id: str, query: str | None = None, limit: int = 100) -> RuntimeModelCatalog:
+        return await self.list_model_catalog(query=query, limit=limit)
 
     async def list_permission_catalog(
         self,

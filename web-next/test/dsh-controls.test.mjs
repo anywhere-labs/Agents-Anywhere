@@ -66,3 +66,8 @@ test("DSH model variants label an empty reasoning effort as Default", () => {
     "DeepSeek",
   )
 })
+
+test("native model catalog entries without optional metadata keep their label", () => {
+  const model = { id: "fixture/fixture", displayName: "Fixture", selectionId: "fixture/fixture" }
+  assert.equal(modelCatalogDisplayName(model, [model], "Fixture", "Default"), "Fixture")
+})

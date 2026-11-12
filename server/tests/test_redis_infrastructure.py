@@ -198,6 +198,41 @@ def test_distributed_lock_renews_its_lease_while_held() -> None:
     asyncio.run(exercise())
 
 
+def test_distributed_lock_cancelled_mid_acquire_does_not_hold_the_lease() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator = _coordinator(fake_server)
+        other = _coordinator(fake_server)
+        applied = asyncio.Event()
+        real_set = coordinator.client.set
+
+        async def set_with_late_reply(*args, **kwargs):
+            # Redis applies the SET, but the reply is still in flight when the
+            # caller is cancelled.
+            result = await real_set(*args, **kwargs)
+            applied.set()
+            await asyncio.sleep(10)
+            return result
+
+        coordinator.client.set = set_with_late_reply  # type: ignore[method-assign]
+
+        async def hold() -> None:
+            async with coordinator.lock("session-revision:session-cancelled", lease_seconds=300):
+                raise AssertionError("cancelled acquisition entered the lock")
+
+        task = asyncio.create_task(hold())
+        await asyncio.wait_for(applied.wait(), timeout=1)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert task.cancelled()
+
+        async with other.lock("session-revision:session-cancelled", timeout_seconds=1):
+            pass
+        await coordinator.close()
+
+    asyncio.run(exercise())
+
+
 def test_distributed_lock_interrupts_owner_when_renewal_fails() -> None:
     async def exercise() -> None:
         fake_server = FakeServer()

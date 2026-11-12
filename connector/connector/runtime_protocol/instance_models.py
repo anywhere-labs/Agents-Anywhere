@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from connector.runtime_protocol.model_connection import ModelConnectionCapability
 from connector.runtime_protocol.models import RuntimeConfigSchema
 
 MAX_CONFIG_REVISION = 9_007_199_254_740_991
@@ -172,9 +173,15 @@ class RuntimeTypeDescriptor:
     instance_policy: RuntimeInstancePolicy = "single"
     max_instances: int | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    # How mature the runtime is; shown next to, never instead of, its status.
+    maturity: str | None = None
+    # Absent when the runtime cannot take a model connection.
+    model_connection: ModelConnectionCapability | None = None
 
     def __post_init__(self) -> None:
         _validate_runtime_type(self.runtime_type)
+        if self.maturity not in (None, "experimental", "beta", "stable"):
+            raise ValueError(f"unsupported maturity: {self.maturity!r}")
         _require_non_blank(self.display_name, "display_name")
         if not isinstance(self.available, bool):
             raise TypeError("available must be a boolean")

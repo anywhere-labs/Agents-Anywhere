@@ -19,12 +19,6 @@ export class SessionEventSequenceCursor {
     this.nextSeq = nextSeq
   }
 
-  switchTo(sessionId: string, nextSeq = 0): void {
-    if (this.sessionId === sessionId) return
-    this.sessionId = sessionId
-    this.nextSeq = nextSeq
-  }
-
   advance(sessionId: string, nextSeq: number): void {
     if (this.sessionId !== sessionId) return
     this.nextSeq = Math.max(this.nextSeq, nextSeq)
@@ -65,21 +59,6 @@ export function drainSessionEventBuffer(
   return []
 }
 
-export async function settleSessionEventRecovery(
-  recovery: Promise<void>,
-  releaseRecovery: () => void,
-  drainBufferedEvents: () => void,
-): Promise<void> {
-  try {
-    await recovery
-  } finally {
-    // The drain must observe an inactive recovery gate. Otherwise every
-    // buffered event is paused and can remain stranded indefinitely.
-    releaseRecovery()
-    drainBufferedEvents()
-  }
-}
-
 export function sessionEventUsesDurableEventIdDedup(
   event: ProtocolEventEnvelope,
 ): boolean {
@@ -94,17 +73,6 @@ export function acceptSessionEventId(
   if (processedEventIds.has(event.eventId)) return false
   processedEventIds.add(event.eventId)
   return true
-}
-
-export function bufferedEventsAfterLiveCapabilityRead(
-  bufferedBeforeRead: ProtocolEventEnvelope[],
-  bufferedDuringRead: ProtocolEventEnvelope[],
-  liveReadSucceeded: boolean,
-): ProtocolEventEnvelope[] {
-  const eventsBeforeRead = liveReadSucceeded
-    ? bufferedBeforeRead.filter((event) => event.type !== "runtime.capability.updated")
-    : bufferedBeforeRead
-  return [...eventsBeforeRead, ...bufferedDuringRead]
 }
 
 export function mergeEffectiveCapabilities(

@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -29,10 +29,14 @@ from connector.mesh.hub import (
     write_private_json,
 )
 from connector.runtimes.dsh import provider_config
+from connector.server.errors import ConnectorNetworkError
 
 RENDEZVOUS_VERSION = 2
 # Application error: the request names a subscription this process does not run.
 SUBSCRIPTION_UNKNOWN = "subscription_unknown"
+# The Server could not be reached. The subscription is intact, so the plugin
+# sends the same batch again instead of ending the feed and starting over.
+BACKEND_UNAVAILABLE = "backend_unavailable"
 
 
 class SyncBatch(BaseModel):
@@ -120,11 +124,17 @@ class SyncService:
 
     async def _call[T](self, work: Callable[[SyncSubscriber], Awaitable[T]], subscription_id: str) -> T:
         subscriber = self._subscriber(subscription_id)
-        return await run_on_loop(self._loop, work(subscriber))
+        return await self._on_loop(work(subscriber))
 
     async def _serialized[T](self, work: Callable[[SyncSubscriber], Awaitable[T]], subscription_id: str) -> T:
         subscriber = self._subscriber(subscription_id)
-        return await run_on_loop(self._loop, subscriber.serialized(lambda: work(subscriber)))
+        return await self._on_loop(subscriber.serialized(lambda: work(subscriber)))
+
+    async def _on_loop[T](self, work: Coroutine[Any, Any, T]) -> T:
+        try:
+            return await run_on_loop(self._loop, work)
+        except ConnectorNetworkError as exc:
+            raise MeshCallError(BACKEND_UNAVAILABLE, str(exc), retryable=True) from exc
 
     @mutates(idempotent=True)
     async def ingestBatch(self, batch: SyncBatch) -> IngestResult:

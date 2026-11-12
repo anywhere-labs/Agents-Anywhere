@@ -57,6 +57,8 @@ struct NewSessionView: View, Equatable {
                             ? ChatControlMetrics.expandedHorizontalInset : ChatControlMetrics.collapsedHorizontalInset)
                         .padding(.leading, 6)
                         .padding(.bottom, 6)
+                if model.goalCreation {HStack{Text(String(localized:"目标"));Button {model.goalCreation=false} label:{Image(systemName:"xmark")}.accessibilityLabel(String(localized:"退出目标输入"))}.font(.caption).padding(.horizontal)}
+                if model.planningCreation { Text(String(localized: "新会话将使用计划模式")).font(.caption).foregroundStyle(.secondary).padding(.horizontal) }
                 ChatComposerDock(draft: model.draft, settings: model.settings,
                     // 上游同款：随内容增高（本屏 ~2 行封顶），超上限
                     // 内部滚动。半折叠单行方案已弃（盖按钮、光标出视野）。
@@ -92,6 +94,8 @@ struct NewSessionView: View, Equatable {
                     ChatOverflowAction(title: String(localized: "浏览文件"), systemImage: "folder", isDisabled: !canBrowse) { showsFiles = true }
                 ]))
         }
+        .task { if let session = await model.resumeWorkflow() { onCreated(session) } }
+        .task(id: model.workspace) { if model.prepared == nil { await model.prepareTarget() } }
         .sheet(isPresented: $showsTarget) {
             SessionTargetSheet(model: model)
         }
@@ -115,6 +119,12 @@ struct NewSessionView: View, Equatable {
     private var statusContent: some View {
         VStack(alignment: .leading, spacing: 28) {
             connectionStatus
+            if model.hasPendingWorkflow { Button(String(localized: "重试")) { Task { if let session = await model.resumeWorkflow() { onCreated(session) } } }.disabled(model.isResumingWorkflow) }
+            if let workflow = model.runtimeWorkflow {
+                RuntimeWorkflowView(operation: workflow, pending: model.workflowResponding,
+                    onRespond: { request, action, input in Task { await model.respondWorkflow(request, action: action, input: input) } },
+                    onCancel: { Task { await model.cancelWorkflow() } })
+            }
             if model.isCreating {
                 Label(String(localized: "正在创建会话…"), appSymbol: "arrow.up.circle")
                     .font(.subheadline).foregroundStyle(.secondary)

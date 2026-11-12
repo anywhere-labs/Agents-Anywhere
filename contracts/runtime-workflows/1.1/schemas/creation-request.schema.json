@@ -1,0 +1,87 @@
+{
+  "$id": "urn:agents-anywhere:runtime-workflows:1.1:creation-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "catalogRevision": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Catalogrevision",
+      "type": "integer"
+    },
+    "clientMessageId": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Clientmessageid",
+      "type": "string"
+    },
+    "content": {
+      "maxLength": 1000000,
+      "minLength": 1,
+      "title": "Content",
+      "type": "string"
+    },
+    "createOperationId": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Createoperationid",
+      "type": "string"
+    },
+    "expectedRevision": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Expectedrevision",
+      "type": "integer"
+    },
+    "preparationId": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Preparationid",
+      "type": "string"
+    },
+    "selections": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "propertyNames": {
+        "enum": [
+          "model",
+          "permission"
+        ]
+      },
+      "title": "Selections",
+      "type": "object"
+    },
+    "title": {
+      "anyOf": [
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Title"
+    }
+  },
+  "required": [
+    "preparationId",
+    "createOperationId",
+    "expectedRevision",
+    "catalogRevision",
+    "selections",
+    "clientMessageId",
+    "content"
+  ],
+  "title": "BeginCreationRequest",
+  "type": "object"
+}

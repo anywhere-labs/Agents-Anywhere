@@ -74,6 +74,11 @@ class ClaudeTurnActionHandler:
                 message=str(exc),
             )
 
+        session.selections = effective_selections
+        entered = await self.runner.host.prepare_planning_turn(session_id, external_session_id)
+        effective_selections = dict(session.selections)
+        if entered and not content.strip() and not attachments:
+            return RuntimeOperationResult(ok=True, result={"externalSessionId": external_session_id, "created": True, "messageAccepted": False})
         async with session.execution_lock:
             if session.execution is not None:
                 return RuntimeOperationResult(

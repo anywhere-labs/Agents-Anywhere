@@ -291,7 +291,10 @@ class CodexNoticeHandler:
             severity="error",
             status="open",
             interaction_type="execution_error",
-            blocking={"scope": "session", "targetId": session_id},
+            # The turn is already over. A session-blocking notice with no
+            # actions would disable sending with no way to resolve it, so the
+            # error stays visible without locking the composer.
+            blocking=None,
             response_required=False,
             actions=(),
             source={

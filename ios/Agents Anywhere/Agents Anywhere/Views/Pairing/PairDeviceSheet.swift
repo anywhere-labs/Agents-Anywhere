@@ -12,6 +12,8 @@ struct PairDeviceSheet: View {
     @State private var isWorking = false
     @State private var creationUncertain = false
     @State private var error: String?
+    @State private var skipCheckFailed = false
+    @State private var showsSkipReminder = false
     @State private var copied = false
     private enum Step: Hashable { case connectionMethod, desktop, cliConfirm, name, cliMethod, pairCode, token }
 
@@ -22,7 +24,16 @@ struct PairDeviceSheet: View {
         }
         .appSheetPresentation(.compact)
         .disabled(isWorking)
-        .interactiveDismissDisabled(isWorking)
+        // All exits go through the close button's configuration check.
+        .interactiveDismissDisabled(true)
+        .alert(skipCheckFailed ? String(localized: "agentReminder.skipTitle") : String(localized: "agentReminder.title"), isPresented: $showsSkipReminder) {
+            Button(skipCheckFailed ? String(localized: "继续") : String(localized: "agentReminder.add"), role: .cancel) {
+                if !skipCheckFailed { configureAvailableAgent() }
+            }
+            Button(String(localized: "agentReminder.skip")) {
+                finishAndDismiss()
+            }
+        } message: { Text(skipCheckFailed ? String(localized: "agentReminder.checkFailed") : String(localized: "agentReminder.description")) }
         .onChange(of: path) { _, _ in error = nil; copied = false }
     }
 
@@ -35,7 +46,7 @@ struct PairDeviceSheet: View {
         .frame(maxWidth: .infinity)
         .navigationTitle(title(for: step))
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { SheetCloseToolbar(disabled: isWorking) { dismiss() } }
+        .toolbar { SheetCloseToolbar(disabled: isWorking, action: requestDismiss) }
         .onAppear {
             if step == .token, let credential {
                 appState.nativeChatServices?.agentSetup.watch(credential.connector)
@@ -201,6 +212,49 @@ struct PairDeviceSheet: View {
             .font(.footnote).foregroundStyle(.secondary) }
     }
 
+    /// Closing a connected pairing flow is also a request to skip Agent setup.
+    private func requestDismiss() {
+        guard !isWorking else { return }
+        guard let services = appState.nativeChatServices else { dismiss(); return }
+        isWorking = true
+        skipCheckFailed = false
+        Task {
+            defer { isWorking = false }
+            do {
+                let configured = try await services.deviceManagement.hasConfiguredAgents(connectors: appState.connectors)
+                guard !Task.isCancelled, appState.nativeChatServices === services else { return }
+                if configured { finishAndDismiss() } else { showsSkipReminder = true }
+            } catch is CancellationError {
+                // Keep the current presentation unchanged after cancellation.
+            } catch {
+                // A failed optional check must not trap the user in this sheet.
+                skipCheckFailed = true
+                showsSkipReminder = true
+            }
+        }
+    }
+
+    private func configureAvailableAgent() {
+        guard let services = appState.nativeChatServices else { return }
+        if let credential, isReady(credential) {
+            services.agentSetup.configure(credential.connector.id)
+            dismiss()
+        } else if let connector = appState.connectors.first(where: { $0.status == .online }) {
+            services.agentSetup.watch(connector)
+            services.agentSetup.configure(connector.id)
+            dismiss()
+        }
+        // With no online device, stay in the existing connection guide.
+    }
+
+    private func finishAndDismiss() {
+        if let credential, isReady(credential) {
+            appState.nativeChatServices?.agentSetup.finish(credential.connector.id)
+        }
+        // Pending devices continue to be watched after the guide closes.
+        dismiss()
+    }
+
     private func isReady(_ credential: V2ConnectorCreateResponse) -> Bool {
         appState.nativeChatServices?.agentSetup.requests.first(where: { $0.id == credential.connector.id })?.ready == true
     }
@@ -213,7 +267,7 @@ struct PairDeviceSheet: View {
                 Text(String(localized: "\(credential.connector.name) is online. You can now choose which agents to configure and start on this device, or finish without adding any."))
                     .font(.footnote).foregroundStyle(.secondary)
                 AppGlassButton(String(localized: "配置 Agent"), style: .prominent) { setup.configure(request.id); dismiss() }
-                AppGlassButton(String(localized: "稍后配置")) { setup.finish(request.id); dismiss() }
+                AppGlassButton(String(localized: "稍后配置"), action: requestDismiss)
             } else {
                 HStack {
                     if request.error == nil { ProgressView() }

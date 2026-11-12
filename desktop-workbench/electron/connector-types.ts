@@ -100,6 +100,8 @@ export type ConnectorState = {
   pythonPath: string;
   uvPypiIndexUrl: string;
   uvPythonInstallMirror: string;
+  /** "" follows the system, "direct" skips any proxy, otherwise a proxy URL. */
+  connectorProxy: string;
   logChunkSizeKb: number;
   logRetainChunks: number;
   logRetentionDays: number;
@@ -107,6 +109,7 @@ export type ConnectorState = {
   startConnectorOnLaunch: boolean;
   silentLaunch: boolean;
   notificationsEnabled: boolean;
+  confirmQuitOnShutdown: boolean;
 };
 
 export type DesktopSettings = {
@@ -114,16 +117,25 @@ export type DesktopSettings = {
   startConnectorOnLaunch: boolean;
   silentLaunch: boolean;
   notificationsEnabled: boolean;
+  /**
+   * Whether a system shutdown asks before quitting. The server owns this
+   * device setting (docs/api/device-settings.md); Desktop keeps the last value
+   * the Connector handed over so shutdown works offline too.
+   */
+  confirmQuitOnShutdown: boolean;
   uvPath: string;
   pythonPath: string;
   uvPypiIndexUrl: string;
   uvPythonInstallMirror: string;
+  /** "" follows the system, "direct" skips any proxy, otherwise a proxy URL. */
+  connectorProxy: string;
   logChunkSizeKb: number;
   logRetainChunks: number;
   logRetentionDays: number;
 };
 
-export type DesktopSettingsPatch = Partial<DesktopSettings>;
+/** Device settings change through the server, never as a local Desktop setting. */
+export type DesktopSettingsPatch = Partial<Omit<DesktopSettings, "confirmQuitOnShutdown">>;
 
 export type DesktopNotificationInput = {
   title: string;

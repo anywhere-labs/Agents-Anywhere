@@ -1,0 +1,128 @@
+{
+  "$id": "https://agents-anywhere.dev/contracts/runtime-control/2.1/schemas/runtime-probe-model-connection-result.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "description": "Reply to runtime.probeModelConnection: the outcome of one minimal model request sent with the connection the running instance loaded, and the digest of that connection. It never contains the API key.",
+  "properties": {
+    "configDigest": {
+      "description": "SHA-256 (lowercase hex) of the probed connection, computed like configDigest in runtime-start-result; null when the instance has no model connection.",
+      "oneOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "instanceId": {
+      "description": "Identity of the Connector process that answered.",
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "probe": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "description": "Stable reason for failed or skipped, such as probe_unauthorized, probe_not_found, probe_rate_limited, probe_rejected, probe_upstream_error, probe_unreachable, probe_timeout, probe_invalid_response, not_configured, model_connection_unsupported or model_unknown.",
+          "oneOf": [
+            {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "latencyMs": {
+          "oneOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "oneOf": [
+            {
+              "maxLength": 300,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "oneOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "protocol": {
+          "oneOf": [
+            {
+              "enum": [
+                "openai_responses",
+                "openai_chat",
+                "anthropic"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "description": "passed: a valid model reply came back. failed: the request failed or the reply was not a model reply. skipped: there was nothing to call (no connection, no capability, or no model AA can name).",
+          "enum": [
+            "passed",
+            "failed",
+            "skipped"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "type": "object"
+    },
+    "runtime": {
+      "type": "string"
+    },
+    "runtimeId": {
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "runtimeId",
+    "probe",
+    "configDigest"
+  ],
+  "title": "RuntimeProbeModelConnectionResult",
+  "type": "object",
+  "x-direction": "egress",
+  "x-rpc-method": "runtime.probeModelConnection",
+  "x-rpc-part": "result",
+  "x-runtime-control-version": "2.1"
+}

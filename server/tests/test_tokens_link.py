@@ -1,0 +1,493 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+from typing import Any
+from urllib.parse import parse_qs, urlsplit
+
+import httpx
+import pytest
+from test_model_config import (
+    CODEX_LIKE,
+    _activate,
+    _client,
+    _overview,
+    _runtime_state,
+    _runtimes,
+    _save_config,
+    _set_channel,
+)
+
+from agent_server.infra.tokens_client import TokensClient
+
+ISSUER = "https://tokens.test"
+SETTINGS = "#/settings/model-configs"
+
+
+class FakeTokens:
+    """Tokens Anywhere as far as an AA instance sees it."""
+
+    def __init__(self) -> None:
+        self.challenge: str | None = None
+        self.redirect_uri: str | None = None
+        self.refresh_count = 0
+        self.refresh = "rt-0"
+        self.access = "at-0"
+        self.secret = "sk-aa-secret-0001"
+        self.revoked: list[str] = []
+        self.refresh_error: str | None = None
+        self.api_base_url: str | None = None
+        self.key_kept = True
+        self.usage_query: dict[str, str] | None = None
+        self.model_hosts: list[str] = []
+        self.embed_next: str | None = None
+        self.embed_url: str | None = None
+
+    def _pair(self) -> httpx.Response:
+        self.refresh_count += 1
+        self.refresh = f"rt-{self.refresh_count}"
+        self.access = f"at-{self.refresh_count}"
+        return httpx.Response(
+            200,
+            json={
+                "access_token": self.access,
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "refresh_token": self.refresh,
+                "scope": "",
+            },
+        )
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/api/v1/oauth/token":
+            form = {key: values[0] for key, values in parse_qs(request.content.decode()).items()}
+            assert form["client_id"] == "agents-anywhere"
+            if form["grant_type"] == "authorization_code":
+                digest = hashlib.sha256(form["code_verifier"].encode()).digest()
+                challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+                if form["code"] != "good-code" or challenge != self.challenge:
+                    return httpx.Response(400, json={"error": "invalid_grant"})
+                assert form["redirect_uri"] == self.redirect_uri
+                return self._pair()
+            if self.refresh_error or form["refresh_token"] != self.refresh:
+                return httpx.Response(400, json={"error": self.refresh_error or "invalid_grant"})
+            return self._pair()
+        if path == "/api/v1/oauth/revoke":
+            self.revoked.append(parse_qs(request.content.decode())["token"][0])
+            return httpx.Response(200, json={})
+        if path == "/api/v1/pricing":
+            return httpx.Response(200, json={
+                "groups": [{"name": "default", "models": [
+                    {"model": "gpt-5", "provider": "openai", "maxOutputTokens": 128000},
+                    {"model": "deepseek-v3", "provider": "deepseek", "maxOutputTokens": 8000},
+                ]}],
+                "profiles": {"gpt-5": {"displayName": "GPT-5", "capabilities": ["vision"], "contextWindow": 400000}},
+            })
+        if path == "/api/v1/status":
+            return httpx.Response(200, json={"siteName": "Tokens", "apiBaseUrl": self.api_base_url or ISSUER})
+        if path == "/v1/models":
+            self.model_hosts.append(f"{request.url.scheme}://{request.url.host}")
+            assert request.headers["authorization"] == f"Bearer {self.secret}"
+            if request.headers.get("anthropic-version"):
+                return httpx.Response(200, json={"data": [{"type": "model", "id": "claude-x"}]})
+            return httpx.Response(
+                200,
+                json={
+                    "object": "list",
+                    "data": [
+                        {"id": "gpt-5", "owned_by": "openai"},
+                        {"id": "deepseek-v3", "owned_by": "deepseek"},
+                    ],
+                },
+            )
+        if request.headers.get("authorization") != f"Bearer {self.access}":
+            return httpx.Response(401, json={"code": "unauthenticated"})
+        if path == "/api/v1/me":
+            return httpx.Response(200, json={"id": "42", "displayName": "Ada", "email": "ada@example.com"})
+        if path == "/api/v1/balance":
+            return httpx.Response(200, json={"balance": "19.9800", "held": "0.0000", "available": "19.9800", "bonus": "0.0000"})
+        if path == "/api/v1/usage/daily":
+            self.usage_query = dict(request.url.params)
+            return httpx.Response(200, json={"items": [
+                {"date": "2026-11-03", "model": "gpt-5", "requests": 1, "inputTokens": 11000, "outputTokens": 89,
+                 "cacheReadTokens": 0, "cacheWrite5mTokens": 0, "cacheWrite1hTokens": 0, "amountCharged": "0.0200",
+                 "keyId": None, "keyName": None},
+            ]})
+        if path == "/api/v1/oauth/embed-tickets":
+            self.embed_next = json.loads(request.content)["next"]
+            url = self.embed_url or f"{ISSUER}/embed/start/?origin=http%3A%2F%2Ftestserver#ticket=tk-1"
+            return httpx.Response(201, json={"url": url, "expiresAt": "2026-11-09T00:01:00Z"})
+        key = {"id": "7", "prefix": self.secret[:8], "strategy": {"id": "1", "name": "Default"}}
+        if path == "/api/v1/keys/managed":
+            if not self.key_kept:
+                return httpx.Response(409, json={"error": {"code": "key_secret_not_kept", "message": "not kept"}})
+            return httpx.Response(200, json={"key": key, "secret": self.secret})
+        if path == "/api/v1/keys/7/rotate":
+            self.secret = "sk-aa-secret-0002"
+            return httpx.Response(200, json={"key": {**key, "prefix": self.secret[:8]}, "secret": self.secret})
+        return httpx.Response(404, json={"code": "not_found"})
+
+
+@pytest.fixture
+def tokens(tmp_path, server_secret):
+    client, _rpc, connector_id, headers = _client(tmp_path, CODEX_LIKE)
+    fake = FakeTokens()
+    client.app.state.tokens_client_factory = lambda base: TokensClient(
+        base, transport=httpx.MockTransport(fake.handle)
+    )
+    configured = client.put("/admin/integrations/tokens", headers=headers, json={"tokensUrl": ISSUER + "/"})
+    assert configured.status_code == 200, configured.text
+    assert configured.json()["tokensUrl"] == ISSUER
+    return client, fake, connector_id, headers
+
+
+def _start(client, headers, fake: FakeTokens) -> tuple[str, str]:
+    started = client.post("/integrations/tokens/link", headers=headers)
+    assert started.status_code == 200, started.text
+    start_url = urlsplit(started.json()["startUrl"])
+    assert start_url.path == "/api/v2/integrations/tokens/start"
+    opened = client.get(f"{start_url.path}?{start_url.query}", follow_redirects=False)
+    assert opened.status_code == 302, opened.text
+    authorize = urlsplit(opened.headers["location"])
+    query = {key: values[0] for key, values in parse_qs(authorize.query).items()}
+    assert f"{authorize.scheme}://{authorize.netloc}{authorize.path}" == f"{ISSUER}/oauth/authorize/"
+    assert query["client_id"] == "agents-anywhere"
+    assert query["code_challenge_method"] == "S256"
+    assert query["redirect_uri"] == "http://testserver/api/v2/integrations/tokens/callback"
+    fake.challenge = query["code_challenge"]
+    fake.redirect_uri = query["redirect_uri"]
+    return query["state"], start_url.query
+
+
+def _callback(client, **params) -> httpx.Response:
+    return client.get("/api/v2/integrations/tokens/callback", params=params, follow_redirects=False)
+
+
+def _link(client, headers, fake) -> None:
+    state, _ = _start(client, headers, fake)
+    done = _callback(client, code="good-code", state=state, iss=ISSUER)
+    assert done.status_code == 302, done.text
+    assert done.headers["location"] == f"{ISSUER}/oauth/done/"
+
+
+def _tokens_profile(client, headers) -> dict[str, Any]:
+    return next(item for item in _overview(client, headers)["profiles"] if item["source"] == "tokens")
+
+
+def test_link_apply_rotate_and_unlink(tokens):
+    client, fake, connector_id, headers = tokens
+
+    _link(client, headers, fake)
+
+    status = client.get("/integrations/tokens", headers=headers).json()
+    assert status["available"] is True
+    assert status["link"]["status"] == "linked"
+    assert status["link"]["account"] == {"id": "42", "displayName": "Ada", "email": "ada@example.com"}
+    profile = _tokens_profile(client, headers)
+    offers = {offer["format"]: offer for offer in profile["offers"]}
+    assert [model["id"] for model in offers["openai_responses"]["models"]] == ["gpt-5"]
+    assert [model["id"] for model in offers["openai_chat"]["models"]] == ["gpt-5", "deepseek-v3"]
+    assert offers["anthropic"]["baseUrl"] == ISSUER
+    assert offers["openai_responses"]["baseUrl"] == f"{ISSUER}/v1"
+    assert offers["openai_responses"]["models"][0] == {
+        "id": "gpt-5",
+        "name": "GPT-5",
+        "efforts": [],
+        "input": ["text", "image"],
+        "vendor": "openai",
+        "contextWindow": 400000,
+        "maxOutputTokens": 128000,
+    }
+    assert offers["openai_chat"]["models"][1]["vendor"] == "deepseek"
+    assert offers["anthropic"]["models"][0]["vendor"] == "anthropic"
+    assert profile["keyHint"] == "sk-aa-se…"
+
+    _save_config(client, connector_id, headers, {})
+    assert _runtime_state(_set_channel(client, headers, "tokens"))["actual"] == "tokens"
+    runtime = _runtimes(client, connector_id, headers)["codex"]
+    assert runtime["config"]["modelGateway"] == {"baseUrl": f"{ISSUER}/v1"}
+    assert runtime["secretFields"]["modelGateway.apiKey"]["hint"] == "sk-aa-s…0001"
+
+    # Without a cached access token the next call refreshes, rotating the refresh token.
+    client.app.state.tokens_access_cache._memory.clear()
+    rotated = client.post(
+        f"/model-profiles/{profile['id']}/rotate-key", headers=headers, json={"allowInterrupt": True},
+    )
+    assert rotated.status_code == 200, rotated.text
+    assert _runtime_state(rotated.json())["state"] == "applied"
+    assert fake.refresh == "rt-2"
+    runtime = _runtimes(client, connector_id, headers)["codex"]
+    assert runtime["secretFields"]["modelGateway.apiKey"]["hint"] == "sk-aa-s…0002"
+
+    # Revoking would kill the key under the runtime: switch it away first.
+    in_use = client.delete("/integrations/tokens/link", headers=headers)
+    assert in_use.status_code == 409, in_use.text
+    assert in_use.json()["detail"]["code"] == "channel_in_use"
+    _set_channel(client, headers, "native")
+    unlinked = client.delete("/integrations/tokens/link", headers=headers)
+    assert unlinked.status_code == 200, unlinked.text
+    assert unlinked.json() == {"revoked": True}
+    assert fake.revoked == ["rt-2"]
+    assert "modelGateway" not in _runtimes(client, connector_id, headers)["codex"]["config"]
+    overview = _overview(client, headers)
+    assert overview["profiles"] == []
+    assert overview["assignments"] == []
+    assert client.get("/integrations/tokens", headers=headers).json()["link"] is None
+
+
+def test_callback_needs_the_browser_and_issuer_that_started_it(tokens):
+    client, fake, _connector_id, headers = tokens
+
+    state, start_query = _start(client, headers, fake)
+    reopened = client.get(f"/api/v2/integrations/tokens/start?{start_query}", follow_redirects=False)
+    wrong_issuer = _callback(client, code="good-code", state=state, iss="https://evil.test")
+    replayed = _callback(client, code="good-code", state=state, iss=ISSUER)
+
+    assert reopened.headers["location"] == f"http://testserver/?tokensLink=link_expired{SETTINGS}"
+    assert wrong_issuer.headers["location"] == f"http://testserver/?tokensLink=invalid_issuer{SETTINGS}"
+    # A state works once, even after a failed attempt.
+    assert replayed.headers["location"] == f"http://testserver/?tokensLink=invalid_state{SETTINGS}"
+
+    state, _ = _start(client, headers, fake)
+    client.cookies.clear()
+    other_browser = _callback(client, code="good-code", state=state, iss=ISSUER)
+    assert other_browser.headers["location"] == f"http://testserver/?tokensLink=invalid_state{SETTINGS}"
+    assert client.get("/integrations/tokens", headers=headers).json()["link"] is None
+
+
+def test_denied_authorization_links_nothing(tokens):
+    client, fake, _connector_id, headers = tokens
+    state, _ = _start(client, headers, fake)
+
+    denied = _callback(client, error="access_denied", state=state, iss=ISSUER)
+
+    assert denied.headers["location"] == f"http://testserver/?tokensLink=access_denied{SETTINGS}"
+    assert client.get("/integrations/tokens", headers=headers).json()["link"] is None
+
+
+def test_revoked_refresh_token_asks_to_link_again(tokens):
+    client, fake, connector_id, headers = tokens
+    _link(client, headers, fake)
+    profile = _tokens_profile(client, headers)
+    client.app.state.tokens_access_cache._memory.clear()
+    fake.refresh_error = "invalid_grant"
+
+    _save_config(client, connector_id, headers, {})
+    item = _runtime_state(_set_channel(client, headers, "tokens"))
+
+    # Nothing was written; the runtime keeps its own configuration until a retry.
+    assert item["state"] == "restored"
+    assert item["reason"] == "reauth_required"
+    assert "modelGateway" not in _runtimes(client, connector_id, headers)["codex"]["config"]
+    assert profile["source"] == "tokens"
+    status = client.get("/integrations/tokens", headers=headers).json()
+    assert status["link"]["status"] == "reauth_required"
+    assert "rt-" not in json.dumps(status)
+
+
+def test_tokens_address_is_an_instance_setting(tmp_path, server_secret):
+    client, _rpc, _connector_id, headers = _client(tmp_path, CODEX_LIKE)
+
+    unset = client.get("/integrations/tokens", headers=headers).json()
+    refused = client.post("/integrations/tokens/link", headers=headers)
+    invalid = client.put("/admin/integrations/tokens", headers=headers, json={"tokensUrl": "https://x.test/path"})
+
+    assert unset["available"] is False
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["detail"]["code"] == "tokens_unconfigured"
+    assert invalid.status_code == 422, invalid.text
+
+
+def test_address_cannot_change_while_accounts_are_linked(tokens):
+    client, fake, _connector_id, headers = tokens
+    _link(client, headers, fake)
+
+    changed = client.put("/admin/integrations/tokens", headers=headers, json={"tokensUrl": "https://other.test"})
+    same = client.put("/admin/integrations/tokens", headers=headers, json={"tokensUrl": ISSUER})
+
+    assert changed.status_code == 409, changed.text
+    assert changed.json()["detail"]["code"] == "tokens_links_exist"
+    assert same.status_code == 200, same.text
+    assert same.json()["linkedAccounts"] == 1
+
+
+def test_snapshot_carries_the_link(tokens):
+    client, fake, _connector_id, headers = tokens
+    _link(client, headers, fake)
+    ticket = client.post(
+        "/ws-ticket", headers=headers, json={"clientId": "web_tokens", "scope": {"dashboard": True}}
+    ).json()["ticket"]
+
+    with client.websocket_connect(f"/dashboard/ws?ticket={ticket}") as ws:
+        snapshot = ws.receive_json()
+
+    assert snapshot["modelConfig"]["tokens"]["link"]["status"] == "linked"
+    assert fake.secret not in json.dumps(snapshot)
+    assert fake.refresh not in json.dumps(snapshot)
+
+
+def test_rotation_with_running_tasks_needs_permission_first(tokens):
+    client, fake, connector_id, headers = tokens
+    _link(client, headers, fake)
+    profile = _tokens_profile(client, headers)
+    _save_config(client, connector_id, headers, {})
+    _activate(client, connector_id, headers)
+    _set_channel(client, headers, "tokens")
+
+    async def one_running_session(**_kwargs):
+        return [{"id": "ses_running"}]
+
+    client.app.state.store.list_running_sessions_for_connector_agent = one_running_session
+    refused = client.post(
+        f"/model-profiles/{profile['id']}/rotate-key", headers=headers, json={"allowInterrupt": False},
+    )
+
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["detail"]["code"] == "busy"
+    # Nothing was rotated, so the runtime's key still works.
+    assert fake.secret == "sk-aa-secret-0001"
+
+
+def test_runtimes_offline_during_rotation_get_the_new_key_when_back(tokens):
+    client, fake, connector_id, headers = tokens
+    _link(client, headers, fake)
+    profile = _tokens_profile(client, headers)
+    _save_config(client, connector_id, headers, {})
+    _set_channel(client, headers, "tokens")
+    client.app.state.rpc.online = False
+
+    rotated = client.post(
+        f"/model-profiles/{profile['id']}/rotate-key", headers=headers, json={"allowInterrupt": True},
+    )
+
+    assert rotated.status_code == 200, rotated.text
+    assert _runtime_state(rotated.json())["state"] == "waiting_online"
+    assert _runtimes(client, connector_id, headers)["codex"]["secretFields"]["modelGateway.apiKey"]["hint"] == "sk-aa-s…0001"
+
+    # The device coming back is the event that finishes it.
+    from agent_server.deps import model_channel_service_for
+
+    client.app.state.rpc.online = True
+    import asyncio
+
+    asyncio.run(model_channel_service_for(client.app.state).connector_event(connector_id))
+    runtime = _runtimes(client, connector_id, headers)["codex"]
+    assert runtime["secretFields"]["modelGateway.apiKey"]["hint"] == "sk-aa-s…0002"
+    assert _overview(client, headers)["assignments"][0]["status"] == "applied"
+
+
+def test_models_come_from_the_gateway_address_tokens_reports(tokens):
+    client, fake, _connector_id, headers = tokens
+    fake.api_base_url = "https://api.tokens.test"
+
+    _link(client, headers, fake)
+
+    profile = _tokens_profile(client, headers)
+    offers = {offer["format"]: offer for offer in profile["offers"]}
+    assert set(fake.model_hosts) == {"https://api.tokens.test"}
+    assert offers["openai_chat"]["baseUrl"] == "https://api.tokens.test/v1"
+    assert offers["anthropic"]["baseUrl"] == "https://api.tokens.test"
+
+
+def test_a_key_tokens_did_not_keep_asks_for_its_secrets_key(tokens):
+    client, fake, _connector_id, headers = tokens
+    _link(client, headers, fake)
+    fake.key_kept = False
+
+    synced = client.post("/integrations/tokens/sync", headers=headers)
+
+    assert synced.status_code == 409, synced.text
+    assert synced.json()["detail"]["code"] == "key_not_kept"
+
+
+def test_account_shows_balance_and_console_pages(tokens):
+    client, fake, _connector_id, headers = tokens
+    _link(client, headers, fake)
+
+    account = client.get("/integrations/tokens/account", headers=headers)
+    usage = client.get("/integrations/tokens/usage", headers=headers, params={"days": 7})
+
+    assert account.status_code == 200, account.text
+    assert account.json()["account"]["displayName"] == "Ada"
+    assert account.json()["balance"]["available"] == "19.9800"
+    assert account.json()["links"]["billing"] == f"{ISSUER}/console/settings/billing/"
+    assert usage.status_code == 200, usage.text
+    body = usage.json()
+    assert fake.usage_query == {"from": body["from"], "to": body["to"], "groupBy": "model"}
+    assert body["items"][0]["amountCharged"] == "0.0200"
+    assert "keyId" not in body["items"][0]
+
+
+def test_embed_ticket_opens_the_linked_console(tokens):
+    client, fake, _connector_id, headers = tokens
+
+    unlinked = client.post("/integrations/tokens/embed-ticket", headers=headers, json={})
+    _link(client, headers, fake)
+    ticket = client.post("/integrations/tokens/embed-ticket", headers=headers, json={})
+    usage = client.post("/integrations/tokens/embed-ticket", headers=headers, json={"next": "/console/usage/"})
+    outside = client.post("/integrations/tokens/embed-ticket", headers=headers, json={"next": "/oauth/authorize/"})
+
+    assert unlinked.status_code == 409, unlinked.text
+    assert unlinked.json()["detail"]["code"] == "tokens_not_linked"
+    assert ticket.status_code == 200, ticket.text
+    assert ticket.headers["cache-control"] == "no-store"
+    assert ticket.json()["url"].startswith(f"{ISSUER}/embed/start/")
+    assert ticket.json()["origin"] == ISSUER
+    # The access token stays on the server; only the single-use address goes out.
+    assert fake.access not in ticket.text
+    assert usage.status_code == 200, usage.text
+    assert fake.embed_next == "/console/usage/"
+    assert outside.status_code == 422, outside.text
+
+    # An address on another site is never handed to the iframe.
+    fake.embed_url = "https://elsewhere.test/embed/start/#ticket=tk-2"
+    foreign = client.post("/integrations/tokens/embed-ticket", headers=headers, json={})
+    assert foreign.status_code == 502, foreign.text
+
+
+def test_turned_off_and_renamed_models_reach_runtimes(tmp_path, server_secret):
+    from test_model_config import PI_LIKE, _save_config
+
+    client, _rpc, connector_id, headers = _client(tmp_path, PI_LIKE)
+    fake = FakeTokens()
+    client.app.state.tokens_client_factory = lambda base: TokensClient(base, transport=httpx.MockTransport(fake.handle))
+    client.put("/admin/integrations/tokens", headers=headers, json={"tokensUrl": ISSUER})
+    _save_config(client, connector_id, headers, {"executionMode": "managed"})
+    _link(client, headers, fake)
+    _set_channel(client, headers, "tokens")
+
+    saved = client.put(
+        "/integrations/tokens/models",
+        headers=headers,
+        json={"disabled": ["deepseek-v3"], "names": {"gpt-5": "GPT Five"}},
+    )
+
+    assert saved.status_code == 200, saved.text
+    assert saved.json() == {"applying": True}
+    models = _runtimes(client, connector_id, headers)["codex"]["config"]["customModels"]
+    assert models == [{"modelId": "gpt-5", "displayName": "GPT Five"}]
+    assert _tokens_profile(client, headers)["preferences"] == {"disabled": ["deepseek-v3"], "names": {"gpt-5": "GPT Five"}}
+    [assignment] = _overview(client, headers)["assignments"]
+    assert assignment["status"] == "applied"
+
+
+def test_turning_off_the_chosen_model_leaves_runtimes_to_their_own_choice(tmp_path, server_secret):
+    from test_model_config import PI_WITH_MODEL, _save_config
+
+    client, _rpc, connector_id, headers = _client(tmp_path, PI_WITH_MODEL)
+    fake = FakeTokens()
+    client.app.state.tokens_client_factory = lambda base: TokensClient(base, transport=httpx.MockTransport(fake.handle))
+    client.put("/admin/integrations/tokens", headers=headers, json={"tokensUrl": ISSUER})
+    _save_config(client, connector_id, headers, {"executionMode": "managed"})
+    _link(client, headers, fake)
+    _set_channel(client, headers, "tokens")
+    config = _runtimes(client, connector_id, headers)["codex"]["config"]
+    _save_config(client, connector_id, headers, {**config, "model": {"modelId": "deepseek-v3"}})
+    assert _runtimes(client, connector_id, headers)["codex"]["config"]["model"] == {"modelId": "deepseek-v3"}
+
+    saved = client.put("/integrations/tokens/models", headers=headers, json={"disabled": ["deepseek-v3"], "names": {}})
+
+    assert saved.status_code == 200, saved.text
+    assert "model" not in _runtimes(client, connector_id, headers)["codex"]["config"]

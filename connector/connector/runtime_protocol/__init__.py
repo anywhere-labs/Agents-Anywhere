@@ -260,6 +260,8 @@ __all__ = [
     "RuntimeUnavailableError",
     "RuntimeUnsupportedError",
     "RuntimeUpstreamError",
+    "RuntimeWorkflowRequest",
+    "RuntimeWorkflowResult",
     "SelectionScope",
     "SessionMeta",
     "SessionNotice",
@@ -298,3 +300,8 @@ __all__ = [
     "session_attachments_dir",
     "timeline_content_hash",
 ]
+
+from connector.runtime_protocol.workflows import (
+    RuntimeWorkflowRequest,
+    RuntimeWorkflowResult,
+)

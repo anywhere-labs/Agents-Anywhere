@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import threading
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -19,9 +20,14 @@ from connector.runtime_protocol import (
     RuntimeUnavailableError,
 )
 from connector.runtime_protocol.filesystem import filesystem_resource_key
+from connector.runtimes.codex import provider as provider_module
 from connector.runtimes.codex import provider_config
 from connector.runtimes.codex.provider import CodexProvider
 from connector.runtimes.codex.runtime import CodexRuntime
+from connector.runtimes.codex.sdk.binary import (
+    CodexRuntimeBinarySelection,
+    LoginShellPathResult,
+)
 from connector.runtimes.codex.sdk.runtime_client import (
     CodexCompactResult,
     CodexInterruptTurnRequest,
@@ -34,6 +40,39 @@ from connector.runtimes.codex.sdk.runtime_client import (
     CodexThreadResult,
     CodexTurnResult,
 )
+
+
+@pytest.mark.parametrize("operation", ["discover", "validate_config"])
+@pytest.mark.parametrize("phase", ["environment", "binary"])
+def test_codex_probe_keeps_event_loop_responsive(monkeypatch, operation, phase):
+    released = threading.Event()
+
+    def environment(*args, **kwargs):
+        if phase == "environment":
+            assert released.wait(2), "login shell probe blocked the event loop"
+        return {}, LoginShellPathResult(None, None)
+
+    def selection(*args, **kwargs):
+        if phase == "binary":
+            assert released.wait(2), "Codex version probe blocked the event loop"
+        return CodexRuntimeBinarySelection("sdk_bundled", "sdk_bundled", None, None, None)
+
+    monkeypatch.setattr(provider_module, "codex_runtime_environment", environment)
+    monkeypatch.setattr(provider_module, "select_codex_runtime_binary", selection)
+
+    async def run():
+        timer = asyncio.get_running_loop().call_later(0.01, released.set)
+        try:
+            provider = CodexProvider(sdk_checker=_available_sdk)
+            if operation == "discover":
+                await provider.discover()
+            else:
+                await provider.validate_config({})
+        finally:
+            timer.cancel()
+            released.set()
+
+    asyncio.run(run())
 
 
 def test_codex_provider_requires_sdk_for_runnable_surface() -> None:
@@ -112,6 +151,7 @@ async def _test_codex_provider_schema_exposes_ipc_switches_but_no_app_server_mod
         "environment",
         "ipcDeeplinkHandoff",
         "ipcEnabled",
+        "model",
         "modelGateway",
         "useSystemCodex",
     }

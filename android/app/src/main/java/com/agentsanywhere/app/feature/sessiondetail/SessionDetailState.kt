@@ -3,6 +3,7 @@ package com.agentsanywhere.app.feature.sessiondetail
 import com.agentsanywhere.app.model.AgentSession
 
 data class SessionDetailState(
+    val planning: com.agentsanywhere.app.api.RemotePlanningState? = null,
     val meta: SessionMeta = SessionMeta(),
     val timeline: SessionTimelineState = SessionTimelineState(),
     val runtime: SessionRuntimeState = SessionRuntimeState(),
@@ -78,6 +79,7 @@ internal fun SessionDetailState.beginSnapshotLoad(clearErrors: Boolean): Session
     timeline = timeline.copy(
         isLoading = true,
         loadingOlder = false,
+        historyGeneration = timeline.historyGeneration + 1,
         errorMessage = if (clearErrors) null else timeline.errorMessage,
     ),
     runtime = runtime.copy(

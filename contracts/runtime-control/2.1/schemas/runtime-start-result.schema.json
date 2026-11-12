@@ -1,0 +1,169 @@
+{
+  "$defs": {
+    "ModelConnectionStatus": {
+      "additionalProperties": false,
+      "description": "What the runtime actually did with the saved model connection. It never contains the API key.",
+      "properties": {
+        "externalOwner": {
+          "oneOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mode": {
+          "oneOf": [
+            {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "protocol": {
+          "oneOf": [
+            {
+              "enum": [
+                "openai_responses",
+                "openai_chat",
+                "anthropic"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scope": {
+          "oneOf": [
+            {
+              "enum": [
+                "instance",
+                "session",
+                "native_global"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "enum": [
+            "applied",
+            "failed",
+            "managed_externally",
+            "not_configured"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://agents-anywhere.dev/contracts/runtime-control/2.1/schemas/runtime-start-result.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "description": "Reply to runtime.start. Status, error and phase follow RuntimeInstanceStatus; modelConnection reports what the adapter did with the saved model connection; configDigest and instanceId identify the loaded connection and the Connector process.",
+  "properties": {
+    "configDigest": {
+      "description": "SHA-256 (lowercase hex) of the model connection the running instance loaded, computed like the Server's connection digest; null when the runtime takes no model connection, has none configured, or is not running a configuration.",
+      "oneOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error": {
+      "oneOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "instanceId": {
+      "description": "Identity of the Connector process that answered; a restarted Connector reports a new value.",
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "modelConnection": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ModelConnectionStatus"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "phase": {
+      "oneOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "runtime": {
+      "type": "string"
+    },
+    "runtimeId": {
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "starting",
+        "running",
+        "error"
+      ],
+      "type": "string"
+    }
+  },
+  "required": [
+    "runtimeId",
+    "status"
+  ],
+  "title": "RuntimeStartResult",
+  "type": "object",
+  "x-direction": "egress",
+  "x-runtime-control-version": "2.1"
+}

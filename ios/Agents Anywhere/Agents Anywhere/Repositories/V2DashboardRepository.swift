@@ -9,6 +9,11 @@ final class V2DashboardRepository {
     private(set) var connectors: [V2Connector] = []
     private(set) var projects: [V2Project] = []
     private(set) var sessions: [V2SessionMeta] = []
+    /// Runtime instances from the latest push; HTTP reads do not carry them.
+    private(set) var runtimes: [V2DeviceRuntime] = []
+    /// Model profiles, assignments and the Tokens Anywhere link from the latest
+    /// push. Nil until a snapshot carrying it arrives.
+    private(set) var modelConfig: V2ModelConfigOverview?
     private(set) var isLoading = false
     private(set) var hasLoaded = false
     private(set) var isFresh = false
@@ -74,6 +79,8 @@ final class V2DashboardRepository {
 
     func apply(_ snapshot: V2DashboardSnapshot) {
         guard isValid, snapshot.type == "dashboard.snapshot" else { return }
+        if let runtimes = snapshot.runtimes, self.runtimes != runtimes { self.runtimes = runtimes }
+        if let modelConfig = snapshot.modelConfig, self.modelConfig != modelConfig { self.modelConfig = modelConfig }
         apply(connectors: snapshot.connectors, projects: snapshot.projects, sessions: snapshot.sessions)
     }
 
@@ -212,7 +219,7 @@ final class V2DashboardRepository {
         isValid = false; generation += 1; onChange = nil
         projectRefreshTask?.cancel(); projectRefreshTask = nil; projectRefreshID = nil
         checkedMissingProjects = []
-        sessions = []; connectors = []; projects = []
+        sessions = []; connectors = []; projects = []; runtimes = []; modelConfig = nil
     }
     func upsertProject(_ project: V2Project) {
         guard isValid else { return }

@@ -3,10 +3,11 @@ import { mkdir, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
-import { Mesh, MeshCallError, Router } from 'meshcall'
+import { DeadlineExceededError, Mesh, MeshCallError, Router } from 'meshcall'
 import type { ResolvedConfig } from '../config.js'
 import type { BoundDevice } from '../account/binding.js'
 import { writeJson } from '../storage/files.js'
+import { guardMeshCallResults } from '../meshcall-guard.js'
 import { DEFAULT_CONNECTOR_SETTINGS, type ConnectorSettings } from '../../contracts/connector.js'
 import type { RuntimeLogPage, RuntimeLogQuery } from '../../contracts/logs.js'
 import { ControlServiceClient, type ConnectorState as ControlState } from '../generated/connector-control.js'
@@ -274,6 +275,8 @@ export class SourceConnector implements ConnectorProcess {
         ...(typeof process.env['NO_PROXY'] === 'string' ? { NO_PROXY: process.env['NO_PROXY'].replaceAll('[::1]', '::1') } : {}),
         ...(typeof process.env['no_proxy'] === 'string' ? { no_proxy: process.env['no_proxy'].replaceAll('[::1]', '::1') } : {}),
         AA_CONNECTOR_OWNER_KIND: 'dsh-plugin',
+        // Undefined removes an inherited value: the setting decides.
+        AA_CONNECTOR_PROXY: settings.connectorProxy || undefined,
         ...(this.config.dshHome ? { DSH_HOME: this.config.dshHome } : {}),
         AGENT_CONNECTOR_DATA_DIR: dataDir,
         UV_PROJECT_ENVIRONMENT: join(this.config.stateRoot, 'connector-venv'),
@@ -327,7 +330,16 @@ export class SourceConnector implements ConnectorProcess {
   async assertHealthy(): Promise<void> {
     if (this.state.authFailed) throw new ConnectorCredentialError()
     if (this.failure) throw this.failure
-    const state = await this.requireControl().getState({ timeoutMs: 15_000 })
+    let state: ConnectorState
+    try {
+      state = await this.requireControl().getState({ timeoutMs: 15_000 })
+    } catch (error) {
+      // The Connector answers on its runtime loop, which is busy right after startup
+      // (backend handshake, first discovery). Slow is not unhealthy: an exit or a
+      // credential failure is reported separately, and the caller polls again.
+      if (error instanceof DeadlineExceededError) return
+      throw error
+    }
     this.updateState(state)
     if (state.authFailed) throw new ConnectorCredentialError()
     if (this.failure) throw this.failure
@@ -420,6 +432,7 @@ export class SourceConnector implements ConnectorProcess {
     const ready = this.ready!
     const router = new Router(ready.endpoint)
     const rpcLogger = new RuntimeRpcLogger(this.diagnostics)
+    guardMeshCallResults()
     const mesh = new Mesh(router, { token: ready.key, peerId: `dsh-plugin-${ready.instanceId}`, logger: rpcLogger })
     const connecting = mesh.connect()
     let timer: ReturnType<typeof setTimeout> | undefined

@@ -4,6 +4,7 @@ from sqlalchemy import insert, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from agent_server.infra.db import instance_settings as instance_settings_t
+from agent_server.infra.db.engine import read_connection
 from agent_server.core.utc import utc_now
 
 
@@ -12,7 +13,7 @@ class InstanceSettingsRepository:
         self._engine = engine
 
     async def get(self, key: str, default: str | None = None) -> str | None:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 await conn.execute(
                     select(instance_settings_t.c.value).where(instance_settings_t.c.key == key)

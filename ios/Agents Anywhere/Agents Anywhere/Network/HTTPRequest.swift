@@ -29,19 +29,23 @@ nonisolated struct HTTPRequest<Body: Encodable, Response: Decodable> {
     let queryItems: [URLQueryItem]
     let body: Body?
     let requiresAuth: Bool
+    /// Extra request headers, e.g. `Idempotency-Key`.
+    let headers: [String: String]
 
     init(
         method: HTTPMethod,
         path: String,
         queryItems: [URLQueryItem] = [],
         body: Body? = nil,
-        requiresAuth: Bool = true
+        requiresAuth: Bool = true,
+        headers: [String: String] = [:]
     ) {
         self.method = method
         self.path = path
         self.queryItems = queryItems
         self.body = body
         self.requiresAuth = requiresAuth
+        self.headers = headers
     }
 }
 
@@ -50,12 +54,14 @@ nonisolated extension HTTPRequest where Body == EmptyRequestBody {
         method: HTTPMethod,
         path: String,
         queryItems: [URLQueryItem] = [],
-        requiresAuth: Bool = true
+        requiresAuth: Bool = true,
+        headers: [String: String] = [:]
     ) {
         self.method = method
         self.path = path
         self.queryItems = queryItems
         self.body = nil
         self.requiresAuth = requiresAuth
+        self.headers = headers
     }
 }
