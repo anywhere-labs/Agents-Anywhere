@@ -55,7 +55,7 @@ export class BackendState {
   private closed = false;
   private initialized = false;
 
-  constructor(private readonly init: BackendInit, fetcher: BackendFetcher) {
+  constructor(private readonly init: BackendInit, fetcher: BackendFetcher, desktopPid?: number) {
     this.server = { serverUrl: init.defaultServerUrl, apiNamespace: init.apiNamespace };
     this.machineState = new MachineStateStore(undefined, (message) => this.appendLog({ level: "WARNING", message }));
     this.settings = new DesktopSettingsStore(init.settingsPath, init.preferredLanguages);
@@ -74,6 +74,7 @@ export class BackendState {
       uvBundleDir: init.uvBundleDir,
       pythonBundleDir: init.pythonBundleDir,
       packaged: init.packaged,
+      desktopPid,
       homePath: init.homePath,
       shellEnvironment: {},
       settings: this.settings,

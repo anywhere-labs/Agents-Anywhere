@@ -94,7 +94,7 @@ export class DesktopBackendClient {
     this.started = true;
     const entry = this.options.entryPath ?? path.join(__dirname, "backend", "index.js");
     const payload = Buffer.from(JSON.stringify(init), "utf8").toString("base64");
-    const child = fork(entry, [payload], {
+    const child = fork(entry, [payload, String(process.pid)], {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
       stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
