@@ -319,13 +319,19 @@ internal fun MessageList(
     val topReadingInset = with(density) { 74.dp.toPx() }
     val bottomReadingInset = with(density) { bottomContentPadding.toPx() }
 
-    SideEffect { reading.items(timelineItems, 1 + (if (displayWorkingLabel != null) 1 else 0) + detachedNotices.size, hasMore) }
+    val hasPlanningItem = planningContent != null || planPlacement.end.isNotEmpty()
+    val firstTimelineIndex = 1 +
+        (if (hasPlanningItem) 1 else 0) +
+        (if (displayWorkingLabel != null) 1 else 0) +
+        detachedNotices.size
+
+    SideEffect { reading.items(timelineItems, firstTimelineIndex, hasMore) }
 
     DisposableEffect(sessionId) {
         onDispose { returnToLatestJob?.cancel() }
     }
-    DisposableEffect(reading, listState, scope) {
-        reading.attach(listState, scope)
+    DisposableEffect(reading, listState) {
+        reading.attach(listState)
         onDispose { reading.detach(listState) }
     }
 
@@ -356,21 +362,30 @@ internal fun MessageList(
     }
 
     LaunchedEffect(listState) {
-        var lastPosition = listState.firstVisibleItemIndex * 1_000 + listState.firstVisibleItemScrollOffset
+        var lastIndex = listState.firstVisibleItemIndex
+        var lastOffset = listState.firstVisibleItemScrollOffset
         var lastTime = System.nanoTime()
         snapshotFlow {
-            (listState.firstVisibleItemIndex * 1_000 + listState.firstVisibleItemScrollOffset) to listState.isScrollInProgress
-        }.collectLatest { (position, scrolling) ->
+            Triple(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, listState.isScrollInProgress)
+        }.collectLatest { (index, offset, scrolling) ->
+                val atBottom = index == 0 && offset == 0
+                if (atBottom) {
+                    lastIndex = 0
+                    lastOffset = 0
+                    lastTime = System.nanoTime()
+                    showScrollToBottom = false
+                    return@collectLatest
+                }
                 val now = System.nanoTime()
                 val elapsedMs = ((now - lastTime) / 1_000_000).coerceAtLeast(1)
-                val slowEnough = abs(position - lastPosition) / elapsedMs < 2
-                lastPosition = position
+                val moved = if (index == lastIndex) abs(offset - lastOffset) else 1_000
+                val slowEnough = moved / elapsedMs < 2
+                lastIndex = index
+                lastOffset = offset
                 lastTime = now
-                if (position > 0 && (slowEnough || !scrolling)) {
-                    delay(120)
+                if (showScrollToBottom || slowEnough || !scrolling) {
+                    if (!showScrollToBottom) delay(120)
                     showScrollToBottom = listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
-                } else {
-                    showScrollToBottom = false
                 }
         }
     }
@@ -409,10 +424,16 @@ internal fun MessageList(
                         .fillMaxSize()
                         .imePadding()
                         .nestedScroll(scrollInput)
+                        .then(reading.remeasurementModifier)
                         .onGloballyPositioned {
                             val bounds = it.boundsInWindow()
-                            reading.viewport(bounds.copy(top = bounds.top + topReadingInset,
-                                bottom = (bounds.bottom - bottomReadingInset).coerceAtLeast(bounds.top + topReadingInset + 1f)))
+                            reading.viewport(
+                                lazyBounds = bounds,
+                                readingBounds = bounds.copy(
+                                    top = bounds.top + topReadingInset,
+                                    bottom = (bounds.bottom - bottomReadingInset).coerceAtLeast(bounds.top + topReadingInset + 1f),
+                                ),
+                            )
                         }
                         .pointerInput(sessionId) {
                             awaitPointerEventScope {
@@ -430,7 +451,9 @@ internal fun MessageList(
                                             val event = awaitPointerEvent(PointerEventPass.Initial)
                                             val change = event.changes.firstOrNull { it.id == pointerId } ?: break
                                             if (!change.pressed) {
-                                                if (change.uptimeMillis - down.uptimeMillis >= viewConfiguration.longPressTimeoutMillis) reading.pauseAt()
+                                                if (travel <= viewConfiguration.touchSlop &&
+                                                    change.uptimeMillis - down.uptimeMillis >= viewConfiguration.longPressTimeoutMillis
+                                                ) reading.pauseAt()
                                                 break
                                             }
                                             val delta = change.position.y - previousY
@@ -545,9 +568,14 @@ internal fun MessageList(
                     onClick = {
                         returnToLatestJob?.cancel()
                         returnToLatestJob = scope.launch {
-                            listState.animateToLatestFromAnywhere()
-                            reading.release()
-                            listState.scrollToItem(0)
+                            reading.returningToLatest = true
+                            try {
+                                listState.animateToLatestFromAnywhere()
+                                reading.release()
+                                listState.scrollToItem(0)
+                            } finally {
+                                reading.returningToLatest = false
+                            }
                         }
                     },
                     modifier = Modifier
