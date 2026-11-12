@@ -44,6 +44,7 @@
 
 ### 本机连接
 
+- macOS 上 Desktop 或本机连接异常退出时，会自动回收残留的 Connector 进程，清理完成后可重新启动本机连接。
 - 电脑关机、重启或注销时，Desktop 不再弹出「退出 Agents Anywhere？」阻止关机，而是直接停止本机连接并退出；需要确认的用户可以打开「关机时询问是否退出」。在 Desktop 里手动退出时仍会确认。（[#596](https://github.com/anywhere-labs/Agents-Anywhere/pull/596)）
 - Desktop 登录时静默启动会在本机连接正常或仍在准备时保持隐藏，安装器从后台重新启动也不会拉起隐藏窗口，遇到本机连接被占用、归属检查失败或设备凭据失效时会自动打开一次窗口，凭据失效时可在窗口中重新连接。（[#403](https://github.com/anywhere-labs/Agents-Anywhere/pull/403)、[#627](https://github.com/anywhere-labs/Agents-Anywhere/pull/627)）
 - Desktop 和 DSH 插件的设置里新增「Connector 网络」，可选跟随系统、直连或自定义代理；Connector 的接口请求、实时连接和终端都走同一条路，日志里记录实际走的路径。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）

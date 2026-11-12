@@ -143,6 +143,9 @@ cd desktop-workbench
 WORKBENCH_API_ORIGIN=http://127.0.0.1:8000 WORKBENCH_API_NAMESPACE= yarn dev
 ```
 
+On macOS, install the Xcode Command Line Tools (`xcode-select --install`) to
+build the native Connector process supervisor.
+
 Development runs the repo-level `../connector` project with the same `uv` the
 packaged app ships, so a dev launch never depends on the developer's PATH.
 `yarn dev` and `yarn start` download that uv into
