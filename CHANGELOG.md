@@ -27,6 +27,7 @@
 - 处理变慢时，同一条流式消息的旧版本不再持续积压占用 Server 内存；长时间运行的 Server 内存缓慢上涨时，部署者可以设置 `AGENT_SERVER_MALLOC_TRIM_INTERVAL_SECONDS`（例如 `300`），让每个工作进程定期把已释放的内存还给系统；默认不开启。（[#586](https://github.com/anywhere-labs/Agents-Anywhere/pull/586)、[#616](https://github.com/anywhere-labs/Agents-Anywhere/pull/616)）
 - Connector 断线重连或集中补传积压记录时，会话写入不再卡住数小时，也不再长期占着数据库连接、阻塞清理，进而拖垮整个服务；许多会话同时写入时，也不再全部报数据库连接超时。（[#556](https://github.com/anywhere-labs/Agents-Anywhere/pull/556)）
 - 使用 Redis 的部署里，Connector 断线重连时个别会话不再约 5 分钟写不进新消息、同步反复失败。（[#592](https://github.com/anywhere-labs/Agents-Anywhere/pull/592)）
+- Connector 刚连上或断开时开启接管，输入框不再仍显示只读、需要重新进入会话才能发送；这期间删除会话，也不再导致同一设备上其他会话的可用功能不刷新。（[#645](https://github.com/anywhere-labs/Agents-Anywhere/pull/645)）
 
 ### Codex 与 Claude
 

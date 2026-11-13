@@ -79,6 +79,8 @@ class SessionCapabilityRepository(Protocol):
         user_id: str | None = None,
     ) -> dict[str, Any]: ...
 
+    async def get_session(self, session_id: str) -> SessionView: ...
+
     async def get_session_seq(self, session_id: str) -> int: ...
 
     async def get_protocol_capabilities_stamp(
@@ -176,10 +178,20 @@ async def publish_connector_session_capabilities(
             return
         stamp: tuple[int, str] | None = None
         index: SessionCapabilityIndex | None = None
-        for session in sessions:
+        for listed in sessions:
             if active.get(connector_id) is not token:
                 return
-            async with store.session_revision_fence(session.id):
+            async with store.session_revision_fence(listed.id):
+                # The list predates this fence. Takeover, runtime instance and
+                # ownership can change before the batch reaches a session, and
+                # projecting the listed row would push stale permissions.
+                try:
+                    session = await store.get_session(listed.id)
+                    next_seq = await store.get_session_seq(listed.id)
+                except KeyError:
+                    continue
+                if session.connectorId != connector_id:
+                    continue
                 session = await with_effective_session_connector_status(presence, session)
                 # Other server processes can publish newer facts while this
                 # batch waits for a session fence. Check only the small stamp;
@@ -191,7 +203,6 @@ async def publish_connector_session_capabilities(
                     ))
                     stamp = current_stamp
                 effective_capabilities = index.project(session)
-                next_seq = await store.get_session_seq(session.id)
                 if active.get(connector_id) is not token:
                     return
                 await publisher.publish(
