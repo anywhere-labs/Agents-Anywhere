@@ -43,6 +43,7 @@
 - Server 上同一个会话的写入短暂排队时，Codex 和 Claude Code 的历史会话会在下一轮同步时重试，不再被当成拒收而暂停约 10 分钟以上，后台上报的实时变化也不再因此被丢弃；需要 Server 和 Connector 都升级到本版。（[#535](https://github.com/anywhere-labs/Agents-Anywhere/pull/535)）
 - 本机模式的 Pi 不能使用模型网关，切换到 AA 网关时会另建一个受管 Pi 实例，本机 Pi 及其历史不受影响。接入模型网关后恢复 Codex 已有会话时，继续使用会话原来的模型。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 接入模型网关后，Codex 中原本使用其他服务商（例如 kimi）的会话继续用原来的服务商，不再报「This chat uses …, but your current provider is …」；本机 Codex 是 0.166 或 0.167 时，配置了模型网关的 Codex 会改用 Agents Anywhere 自带的 Codex，避免重启后网关会话无法继续。（[#607](https://github.com/anywhere-labs/Agents-Anywhere/pull/607)）
+- Codex 的自动审查（auto-review）记录不再显示为 `unknown`，时间线会写明审查的操作和结果（审查中、已批准、已拒绝、超时或已中止），有理由时一并显示。（PR_PLACEHOLDER）
 
 ### 本机连接
 
