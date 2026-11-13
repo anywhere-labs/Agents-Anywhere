@@ -22,7 +22,6 @@ import socket
 import ssl
 import sys
 import urllib.request
-import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from functools import lru_cache
@@ -66,15 +65,10 @@ class NetworkEgress:
     change on their own, see ``_EgressTransport``.
     """
 
-    # Consecutive failed requests that justify replacing the connection pool.
-    FAILURES_BEFORE_DISCARD = 3
-
     def __init__(self, server_url: str, configured: str | None = None) -> None:
         self.server_url = server_url
         self.configured = configured
         self._current: Egress | None = None
-        self._transports: weakref.WeakSet[_EgressTransport] = weakref.WeakSet()
-        self._consecutive_failures = 0
 
     @property
     def current(self) -> Egress:
@@ -84,41 +78,7 @@ class NetworkEgress:
         self._store(await asyncio.to_thread(self._resolve))
 
     def http_client(self, timeout: httpx.Timeout | float) -> httpx.AsyncClient:
-        transport = _EgressTransport(self)
-        self._transports.add(transport)
-        return httpx.AsyncClient(timeout=timeout, trust_env=False, transport=transport)
-
-    async def discard_route(self) -> None:
-        """Stop handing out the current pool so the next request dials fresh.
-
-        The old route is retired, not aborted: httpcore can leave a connection
-        unusable without returning it, and a shared client then waits out the full
-        pool timeout on every request and never recovers (upstream issue #381).
-        Closing the route outright would abort the requests still running on it —
-        ``ClosedResourceError`` escapes to the control loop and stops the Connector,
-        which leaves the device offline until the App restarts. Retiring lets those
-        requests finish and closes the route once it is idle.
-        """
-
-        transports = list(self._transports)
-        await asyncio.gather(
-            *(transport.retire_route() for transport in transports), return_exceptions=True
-        )
-
-    async def note_failure(self) -> bool:
-        """Count a failed request; replace the pool once enough fail in a row."""
-
-        self._consecutive_failures += 1
-        if self._consecutive_failures < self.FAILURES_BEFORE_DISCARD:
-            return False
-        self._consecutive_failures = 0
-        await self.discard_route()
-        return True
-
-    def note_success(self) -> None:
-        """A request reached the Server, so the pool is healthy again."""
-
-        self._consecutive_failures = 0
+        return httpx.AsyncClient(timeout=timeout, trust_env=False, transport=_EgressTransport(self))
 
     def websocket_options(self, url: str) -> dict[str, Any]:
         """Keyword arguments for ``websockets.connect``; ``ssl`` is only valid for wss."""
@@ -140,12 +100,19 @@ class NetworkEgress:
         return egress
 
 
+# Pool timeouts in a row, with no response in between, after which a pool is wedged.
+POOL_TIMEOUTS_BEFORE_RETIRE = 3
+
+
 class _Route:
     """One connection pool, on one route to the Server."""
 
     def __init__(self, egress: Egress) -> None:
         self.egress = egress
         self.active = 0
+        # Belongs to this pool: a late result from a retired pool never counts
+        # against the pool that replaced it.
+        self.pool_timeouts = 0
         self.transport = httpx.AsyncHTTPTransport(verify=tls_context(), trust_env=False, proxy=_httpx_proxy(egress.proxy))
 
 
@@ -204,9 +171,16 @@ class _EgressTransport(httpx.AsyncBaseTransport):
 
         try:
             response = await route.transport.handle_async_request(request)
+        except httpx.PoolTimeout:
+            await release()
+            await self._note_pool_timeout(route)
+            raise
         except BaseException:
             await release()
             raise
+        # Any response, a 401 or a 5xx included, means the pool handed out a
+        # working connection; only that proves the pool healthy again.
+        route.pool_timeouts = 0
         response.stream = _RouteStream(response.stream, release)
         return response
 
@@ -216,8 +190,34 @@ class _EgressTransport(httpx.AsyncBaseTransport):
         self._route = None
         await asyncio.gather(*(route.transport.aclose() for route in routes), return_exceptions=True)
 
+    async def _note_pool_timeout(self, route: _Route) -> None:
+        """Retire the pool once it has timed out waiting for a connection too often.
+
+        httpcore can leave a connection unusable without returning it to the pool;
+        a shared client then waits out the pool timeout on every request and never
+        recovers, even while the WebSocket stays up (issue #381). Only pool
+        timeouts count: refused connections, 401s, 429s and 5xx are not the pool's
+        fault and a new pool would not help. Whether to send again stays with the
+        caller, so a request with side effects is never replayed here.
+        """
+
+        route.pool_timeouts += 1
+        if route is not self._route or route.pool_timeouts < POOL_TIMEOUTS_BEFORE_RETIRE:
+            return
+        logger.warning(
+            "retiring the HTTP connection pool after {} pool timeouts in a row route={}",
+            route.pool_timeouts,
+            route.egress,
+        )
+        await self.retire_route()
+
     async def retire_route(self) -> None:
-        """Stop handing out the current pool; close it once its requests finish."""
+        """Stop handing out the current pool; close it once its requests finish.
+
+        The pool is retired, not aborted: closing it outright would abort the
+        requests still running on it, and ``ClosedResourceError`` would escape to
+        the control loop and stop the Connector.
+        """
 
         route, self._route = self._route, None
         if route is not None:

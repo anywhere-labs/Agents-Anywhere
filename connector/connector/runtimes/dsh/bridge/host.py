@@ -209,24 +209,35 @@ class BridgeHost:
     def __init__(self, hub: LocalHub) -> None:
         self.hub = hub
         self.registry = SubscriptionRegistry()
-        self._mounted = False
+        self._service: SyncService | None = None
         self._published: Path | None = None
 
-    async def start(self, *, publish: bool = True) -> None:
-        if not self._mounted:
+    def service(self) -> SyncService:
+        """The Sync service to mount; the host mounts it together with Control and Logs."""
+        if self._service is None:
+            self._service = SyncService(self.registry, asyncio.get_running_loop())
+        return self._service
+
+    @property
+    def mounted(self) -> bool:
+        # Asked of the hub rather than remembered: when mounting registered the
+        # service but serving failed, the hub's supervisor serves it once the
+        # Router recovers, so it counts as mounted.
+        return self._service is not None and self.hub.has_service(self._service)
+
+    async def start(self) -> None:
+        if not self.mounted:
             if self.hub.serving:
                 # MeshCall freezes its service list once serving starts, so a
                 # late mount has to stop and restart the Router server. That
                 # cancels the Desktop's long-lived Control/Logs streams and
-                # takes the device offline. Callers mount the bridge before
-                # serving; a late call must fail instead of disconnecting them.
+                # takes the device offline. The host mounts the bridge together
+                # with them; a late call must fail instead of disconnecting them.
                 raise RuntimeError(
                     "DSH bridge must be mounted before the local router starts serving"
                 )
-            await self.hub.mount(SyncService(self.registry, asyncio.get_running_loop()))
-            self._mounted = True
-        if publish:
-            self.publish()
+            await self.hub.mount(self.service())
+        self.publish()
 
     def publish(self) -> None:
         path = rendezvous_path()
@@ -250,14 +261,19 @@ class BridgeHost:
 _hosts: dict[int, BridgeHost] = {}
 
 
-async def bridge_host(*, publish: bool = True) -> BridgeHost:
-    """The DSH bridge services of this process's Router, started on first use."""
-    hub = await local_hub()
+def host_for(hub: LocalHub) -> BridgeHost:
+    """The DSH bridge of ``hub``, created but not mounted."""
     host = _hosts.get(id(hub))
     if host is None:
         host = _hosts[id(hub)] = BridgeHost(hub)
         hub.on_stop(_forget(hub, host))
-    await host.start(publish=publish)
+    return host
+
+
+async def bridge_host() -> BridgeHost:
+    """The DSH bridge services of this process's Router, started on first use."""
+    host = host_for(await local_hub())
+    await host.start()
     return host
 
 

@@ -28,31 +28,36 @@ READY_VERSION = 1
 
 
 async def mount_host_services(hub: LocalHub, *services: object) -> None:
-    """Mount the DSH bridge, then ``services``, and publish the bridge last.
+    """Mount the DSH bridge with ``services`` in one go, then publish the bridge.
 
-    MeshCall freezes its service list when serving starts, so mounting the DSH
-    SyncService later stops and restarts serving and cancels the Desktop's
-    Control/Logs streams. Mounting it before those streams exist puts that
-    restart before the Desktop connects; the rendezvous is published only
-    afterwards so the DSH plugin cannot connect during the restart.
+    MeshCall freezes its service list when serving starts, and mounting more
+    later stops and restarts serving, which cancels the Desktop's Control/Logs
+    streams. So the DSH Sync service is mounted up front, whether or not DSH is
+    in use: whether DSH is installed, running or enabled is checked when it
+    connects and when its runtime starts. A single mount leaves no state in which
+    the Router serves without the bridge and refuses to add it. The rendezvous is
+    published last, once the services it points to are served.
     """
 
-    from connector.runtimes.dsh.bridge.host import bridge_host
+    from connector.runtimes.dsh.bridge.host import host_for
 
     dsh_host = None
+    bridge: tuple[object, ...] = ()
     try:
-        dsh_host = await bridge_host(publish=False)
+        dsh_host = host_for(hub)
+        bridge = (dsh_host.service(),)
     except Exception as exc:  # noqa: BLE001 - DSH is optional; control/logs still start
         logger.warning(
-            "DSH bridge could not be mounted before serving error_type={} error={}",
+            "DSH bridge could not be prepared error_type={} error={}",
             type(exc).__name__,
             exc,
         )
-    await hub.mount(*services)
-    if dsh_host is not None:
+    await hub.mount(*bridge, *services)
+    if dsh_host is not None and dsh_host.mounted:
         try:
             dsh_host.publish()
         except Exception as exc:  # noqa: BLE001 - DSH must not block the control plane
+            # Starting the DSH runtime or probing for it publishes again.
             logger.warning(
                 "DSH bridge rendezvous could not be published error_type={} error={}",
                 type(exc).__name__,

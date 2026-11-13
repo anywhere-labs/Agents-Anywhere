@@ -188,6 +188,10 @@ class LocalHub:
         """Whether mounted services are currently being served."""
         return self._server is not None
 
+    def has_service(self, service: object) -> bool:
+        """Whether ``service`` is mounted; the supervisor keeps serving it after a failure."""
+        return any(mounted is service for mounted in self._services)
+
     def key(self, role: str) -> str:
         return self._keys[role][0]
 
