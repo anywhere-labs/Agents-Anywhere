@@ -262,7 +262,7 @@ test("the composer footers keep the send button on the option row", () => {
   // Wrapping is what pushed the send button onto a row of its own.
   assert.doesNotMatch(footer, /flex-wrap/)
   assert.match(footer, /className="min-w-0 shrink gap-1\.5 text-muted-foreground"/)
-  assert.match(footer, /className="min-w-0 shrink max-w-72 gap-1\.5 text-muted-foreground"/)
+  assert.match(footer, /className="min-w-0 shrink max-w-80 gap-1\.5 text-muted-foreground" title=\{modelLabel\}>/)
   assert.match(footer, /<span className="min-w-0 truncate text-foreground">\{modelLabel\}<\/span>/)
   assert.match(source, /className="ml-auto shrink-0 rounded-full"/)
 
@@ -286,6 +286,30 @@ test("the composer footers keep the send button on the option row", () => {
   )
   assert.doesNotMatch(sessionFooter, /flex-wrap/)
   assert.match(sessionFooter, /className="h-8 min-w-0 shrink gap-1\.5 rounded-xl px-2\.5 text-muted-foreground"/)
-  assert.match(sessionFooter, /<span className="min-w-0 max-w-40 truncate text-foreground">\{modelLabel\}<\/span>/)
+  assert.match(sessionFooter, /className="h-8 min-w-0 max-w-80 shrink gap-1\.5 rounded-xl px-2\.5 text-muted-foreground"/)
+  assert.match(sessionFooter, /<span className="min-w-0 truncate text-foreground">\{modelLabel\}<\/span>/)
   assert.match(sessionFooter, /"ml-auto flex h-8 shrink-0 items-center gap-2 rounded-xl/)
+})
+
+test("long model lists stay reachable and show full model names", () => {
+  const menu = readFileSync(
+    new URL("../src/components/ui/dropdown-menu.tsx", import.meta.url),
+    "utf8",
+  )
+  // Menus keep clear of the window edges and the desktop title bar, which is a
+  // native drag region; Radix sizes the scrollable list from this padding.
+  assert.match(menu, /--aa-title-bar-height/)
+  assert.equal(menu.match(/collisionPadding=\{collisionPadding \?\? menuCollisionPadding\(\)\}/g)?.length, 2)
+  // Submenus (reasoning effort) are portaled out of the scrolling model list.
+  const subContent = menu.slice(menu.indexOf("function DropdownMenuSubContent"), menu.indexOf("export {"))
+  assert.match(subContent, /<DropdownMenuPrimitive\.Portal>\s*<DropdownMenuPrimitive\.SubContent/)
+  assert.match(subContent, /max-h-\(--radix-dropdown-menu-content-available-height\)/)
+  assert.match(subContent, /overflow-y-auto/)
+
+  for (const path of ["../src/components/task-composer.tsx", "../src/components/session/session-composer.tsx"]) {
+    const source = readFileSync(new URL(path, import.meta.url), "utf8")
+    assert.doesNotMatch(source, /max-w-40 truncate/)
+    assert.match(source, /<DropdownMenuContent align="start" className="w-auto min-w-56 max-w-\[min\(28rem,calc\(100vw-1rem\)\)\]">/)
+    assert.match(source, /<span\s+className="min-w-0 flex-1 truncate"\s+title=\{modelItem\.disabledReason \? `\$\{modelItem\.label\}\\n\$\{modelItem\.disabledReason\}` : modelItem\.label\}/)
+  }
 })

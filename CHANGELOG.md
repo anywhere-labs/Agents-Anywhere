@@ -102,6 +102,7 @@
 - 管理看板打开更快：使用报表改为读取按小时的汇总，耗时不再随使用事件增多而线性增长；顶部的实时状态也不再随设备数和事件数变慢。轮次耗时和审批等待分位数改为统计范围内的全部样本，不再只取最新的 20 万条。（[#472](https://github.com/anywhere-labs/Agents-Anywhere/pull/472)、[#473](https://github.com/anywhere-labs/Agents-Anywhere/pull/473)）
 - 点击会话中 Agent 回复的文件超链接（`file://`、带空格或中文的路径、`#L12`/`:行:列` 等）时，现在会在会话内打开预览标签页，不再新开窗口或跳回主页；不支持的格式或读取不到的路径在预览页里提示无法预览，仍可正常查看外链与页内锚点。行内代码里的文件引用也能识别，命令如 `ls -la 文件.pdf` 不会被误当成文件。（[#622](https://github.com/anywhere-labs/Agents-Anywhere/pull/622)）
 - Desktop 的颜色主题选「自动（跟随系统）」后，系统外观在浅色和深色之间切换（包括 macOS 按时间自动切换）时界面会立即跟随，不用再手动点一次颜色。（[#638](https://github.com/anywhere-labs/Agents-Anywhere/pull/638)）
+- 模型很多时，输入框的模型列表在窗口内滚动，不再伸到 Desktop 标题栏下面导致最上面的模型选不中、思考强度子菜单弹不出来；模型列表和按钮会显示更长的模型名，仍放不下时悬停可看到全名。（[#640](https://github.com/anywhere-labs/Agents-Anywhere/pull/640)）
 
 ### Android
 

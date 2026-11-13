@@ -324,6 +324,14 @@ html[data-windows-title-bar] [data-slot="session-tool-sidebar"] {
   -webkit-app-region: no-drag;
 }
 
+/* Menus and popovers can overlap a drag region (the title bar or a session
+ * header). Without this the OS takes the pointer there and items lose hover
+ * and clicks. */
+[data-radix-popper-content-wrapper],
+[data-radix-popper-content-wrapper] * {
+  -webkit-app-region: no-drag;
+}
+
 .code-mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
