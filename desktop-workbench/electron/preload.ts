@@ -167,7 +167,7 @@ contextBridge.exposeInMainWorld("desktopWorkbench", {
   },
   windowMaterial: windowMaterial(),
   window: {
-    setTheme: (theme: "light" | "dark"): Promise<void> => ipcRenderer.invoke("workbench:window:setTheme", theme),
+    setTheme: (theme: "light" | "dark" | "system"): Promise<void> => ipcRenderer.invoke("workbench:window:setTheme", theme),
     setTitleBarColors: (colors: { color: string; symbolColor: string }): Promise<void> =>
       ipcRenderer.invoke("workbench:window:setTitleBarColors", colors),
   },
