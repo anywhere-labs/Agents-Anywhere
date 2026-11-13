@@ -1269,6 +1269,17 @@ private fun SessionDetailVisit(
         }
     }
 
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { }
+    LaunchedEffect(sessionId) {
+        // Android 13+ only shows notifications (including the terminal service's) after a runtime grant.
+        if (sessionId != null && shouldRequestNotificationPermission(context)) {
+            notificationPermissionRequested = true
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
     DisposableEffect(context, sessionId) {
         if (sessionId != null) {
             RemoteTerminalForegroundService.start(context)
@@ -2716,3 +2727,12 @@ private fun uniqueGalleryFile(directory: File, displayName: String): File {
 
 private const val MAX_ATTACHMENT_FILES = 6
 private const val MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+
+/** Ask at most once per app process; the system stops prompting after the user declines twice. */
+private var notificationPermissionRequested = false
+
+private fun shouldRequestNotificationPermission(context: Context): Boolean =
+    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+        !notificationPermissionRequested &&
+        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+        PackageManager.PERMISSION_GRANTED
