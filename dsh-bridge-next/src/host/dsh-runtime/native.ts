@@ -8,8 +8,8 @@ import type {} from '@deepseek-ai/dsh-storage-domain'
 import type {} from '@deepseek-ai/dsh-permission-presets'
 import { realpath, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
-import { canonicalJson, digest, userMessageId } from './identity.js'
-import { BridgeError, CreationNotStartedError } from './errors.js'
+import { canonicalJson, digest, sessionId, userMessageId } from './identity.js'
+import { BridgeError, CreationNotStartedError, publicError } from './errors.js'
 import { ClientPresence } from './visibility.js'
 import { NativeSessionSource } from './sessions/source.js'
 import { record } from './types.js'
@@ -23,7 +23,7 @@ import { RuntimePlanning } from './planning.js'
 import type { Selections } from './selections.js'
 import { capabilities } from './capabilities.js'
 import { CreationIntents } from './creation-intents.js'
-import { latestTurnOutcome, type TurnOutcome } from './turn-outcome.js'
+import { continuationRequestId, latestTurnOutcome, turnOutcomeNoticeId, type TurnOutcome } from './turn-outcome.js'
 import { RuntimeAttachments, attachmentFingerprint, attachmentReferences, type AttachmentSnapshot, type StagedAttachment } from './attachments.js'
 declare module '@deepseek-ai/cordis' {
   interface Events { 'llm/adapters-updated'(): void }
@@ -52,6 +52,13 @@ export interface SessionFacts {
 export function lastTurnEndKind(events: readonly SessionEvent[]): string | undefined {
   const last = events.findLast(event => event.type === 'turn/end')
   return last?.type === 'turn/end' ? last.data.reason.kind : undefined
+}
+
+/** Whether DSH already admitted the prompt with this request identity. */
+function admitted(events: readonly SessionEvent[], requestId: string): boolean {
+  const matches = (message: { id: string, source: unknown }) => message.id === requestId || record(message.source).rpcId === requestId
+  return events.some(event => event.type === 'user/message' ? matches(event.data)
+    : event.type === 'agent/inbox/spliced' && event.data.inserted.some(matches))
 }
 
 /** All native interpretation stays in the Host; observers never await transport work. */
@@ -297,9 +304,7 @@ export class NativeRuntime {
         if (log && log.session.cwd !== path) throw new BridgeError('INVALID_PARAMS', 'The session already uses a different workspace.')
       }
       // Admission is durable before the loop records user/message. Retrying never resets configuration.
-      const isAcceptedMessage = (message: { id: string, source: unknown }) => message.id === messageId || record(message.source).rpcId === messageId
-      const accepted = log?.events.some(event => event.type === 'user/message' ? isAcceptedMessage(event.data)
-        : event.type === 'agent/inbox/spliced' && event.data.inserted.some(isAcceptedMessage))
+      const accepted = log !== undefined && admitted(log.events, messageId)
       if (accepted) {
         if (images.length && !receipt) throw new BridgeError('INVALID_PARAMS', 'This message ID was already accepted without attachments.')
         return
@@ -338,6 +343,61 @@ export class NativeRuntime {
         mode: 'queue', content: [...(text ? [{ type: 'text' as const, text }] : []), ...imageParts] }, signal)
       await this.ctx.sessions.flush(agent.session)
     })
+  }
+
+  /**
+   * Whether DSH would continue the failed turn closed at `endSeq` with an empty
+   * prompt. DSH 0.2.2-rc.3 reports that turn as its `conversationContinuation`
+   * projection; older DSH has none, so its failed turns never offer to continue.
+   */
+  async continuable(id: SessionId, endSeq: number, signal = new AbortController().signal): Promise<boolean> {
+    const controller = this.ctx.get('sessionController')
+    if (typeof controller?.projections !== 'function') return false
+    try {
+      const value = await controller.projections({ sessionId: id }, signal)
+      return value?.kind === 'sequenced' && value.values.conversationContinuation === endSeq
+    } catch (error) {
+      this.diagnostics.log('warn', 'session.continuation_unavailable', { sessionId: id }, error)
+      return false
+    }
+  }
+
+  /**
+   * Continue the failed turn behind an error card with DSH's empty prompt. Only
+   * the latest turn's card qualifies and DSH still decides whether its failure
+   * can continue; the request identity makes a repeated response a no-op.
+   */
+  async continueTurn(namespace: string, id: SessionId, noticeId: string, signal: AbortSignal) {
+    const platformId = sessionId(namespace, id)
+    const unavailable = { ok: false, code: 'dsh_continue_unavailable', message: '这一轮已无法继续生成，请重新发送消息。' }
+    try {
+      return await this.write(id, signal, async () => {
+        if (!await this.visible(id)) throw new BridgeError('SESSION_NOT_FOUND', 'The session is not visible in DSH.')
+        const events = this.ctx.sessions.get(id)?.snapshotEvents() ?? (await this.source.readLog(id)).events
+        const end = events.findLast(event => event.type === 'turn/end' && turnOutcomeNoticeId(platformId, Number(event.seq)) === noticeId)
+        if (!end) return unavailable
+        const endSeq = Number(end.seq)
+        const requestId = continuationRequestId(id, endSeq)
+        const accepted = { ok: true, result: { resolved: true, noticeId, sessionId: platformId } }
+        if (admitted(events, requestId)) return accepted
+        const outcome = latestTurnOutcome(events)
+        if (outcome?.kind !== 'failed' || outcome.endSeq !== endSeq) return unavailable
+        const agent = await this.configuration.agent(id)
+        try {
+          await this.configuration.controller().prompt({ sessionId: id, requestId: requestId as SessionPromptRequest['requestId'],
+            mode: 'queue', content: [] }, signal)
+        } catch (error) {
+          // DSH refuses once the failure can no longer continue or other input is waiting.
+          if (record(error).isDSHRemoteError === true && record(error).code === 'session/agent-busy') return unavailable
+          throw error
+        }
+        await this.ctx.sessions.flush(agent.session)
+        return accepted
+      })
+    } catch (error) {
+      const failure = publicError(error)
+      return { ok: false, code: failure.code, message: failure.message }
+    }
   }
 
   async updateSelections(id: SessionId, selections: Selections, signal: AbortSignal) {
