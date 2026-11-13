@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
-import { ensureExecutable, resolveUv, withPackageIndexes } from '../../src/host/connector/environment.js'
+import { ensureExecutable, launchDetached, resolveUv, withPackageIndexes } from '../../src/host/connector/environment.js'
 import { DEFAULT_CONNECTOR_SETTINGS } from '../../src/contracts/connector.js'
 
 const config = { stateRoot: '/unused', connectorSourceDir: '/unused', uvPath: 'uv', apiBaseUrl: 'https://example.test' }
@@ -61,4 +61,10 @@ test('a bundled uv without its executable bit is repaired, or copied when it can
   assert.equal(await readFile(copied, 'utf8'), await readFile(readOnly, 'utf8'))
 
   await assert.rejects(ensureExecutable(join(root, 'missing'), join(root, 'bin')))
+})
+
+test('folder openers launched detached succeed regardless of their exit code', async () => {
+  // explorer.exe exits with code 1 after handing the folder to the running shell.
+  await launchDetached(process.execPath, ['-e', 'process.exit(1)'])
+  await assert.rejects(launchDetached(join(tmpdir(), 'missing-file-manager-binary'), []))
 })

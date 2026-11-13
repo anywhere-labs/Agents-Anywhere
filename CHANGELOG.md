@@ -43,6 +43,7 @@
 - Server 上同一个会话的写入短暂排队时，Codex 和 Claude Code 的历史会话会在下一轮同步时重试，不再被当成拒收而暂停约 10 分钟以上，后台上报的实时变化也不再因此被丢弃；需要 Server 和 Connector 都升级到本版。（[#535](https://github.com/anywhere-labs/Agents-Anywhere/pull/535)）
 - 本机模式的 Pi 不能使用模型网关，切换到 AA 网关时会另建一个受管 Pi 实例，本机 Pi 及其历史不受影响。接入模型网关后恢复 Codex 已有会话时，继续使用会话原来的模型。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 接入模型网关后，Codex 中原本使用其他服务商（例如 kimi）的会话继续用原来的服务商，不再报「This chat uses …, but your current provider is …」；本机 Codex 是 0.166 或 0.167 时，配置了模型网关的 Codex 会改用 Agents Anywhere 自带的 Codex，避免重启后网关会话无法继续。（[#607](https://github.com/anywhere-labs/Agents-Anywhere/pull/607)）
+- Codex 的自动审查（auto-review）记录不再显示为 `unknown`，时间线会写明审查的操作和结果（审查中、已批准、已拒绝、超时或已中止），有理由时一并显示。（[#642](https://github.com/anywhere-labs/Agents-Anywhere/pull/642)）
 
 ### 本机连接
 
@@ -62,6 +63,7 @@
 
 ### DSH 同步
 
+- Windows 上在插件设置里点「打开数据目录」或「打开日志目录」时，目录打开后不再同时提示「无法打开目录」。（[#637](https://github.com/anywhere-labs/Agents-Anywhere/pull/637)）
 - DSH 插件的账号登录 7 天到期后，同步不再悄悄停止：重启 DSH 时 Connector 会用本机设备凭据继续连接，面板提示登录已过期并提供「重新登录」，只有手机连接等账号功能需要重新登录后才能用。（[#636](https://github.com/anywhere-labs/Agents-Anywhere/pull/636)）
 - DSH 开机自启时网络或服务器还没就绪，插件会自动重试启动 Connector 直到上线，面板显示失败原因和下次重试时间，不再停在「运行异常」等手动点「连接」。（[#636](https://github.com/anywhere-labs/Agents-Anywhere/pull/636)）
 - 修复安装主题等其他插件后「远程控制」面板无法通过关闭按钮、Esc 或遮罩关闭，以及焦点被无关浮层干扰的问题。（[#615](https://github.com/anywhere-labs/Agents-Anywhere/pull/615)）
@@ -99,10 +101,12 @@
 - 新建会话输入框下方不再显示模型加载时返回的原始错误提示，保留模型状态和重试入口。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 管理看板打开更快：使用报表改为读取按小时的汇总，耗时不再随使用事件增多而线性增长；顶部的实时状态也不再随设备数和事件数变慢。轮次耗时和审批等待分位数改为统计范围内的全部样本，不再只取最新的 20 万条。（[#472](https://github.com/anywhere-labs/Agents-Anywhere/pull/472)、[#473](https://github.com/anywhere-labs/Agents-Anywhere/pull/473)）
 - 点击会话中 Agent 回复的文件超链接（`file://`、带空格或中文的路径、`#L12`/`:行:列` 等）时，现在会在会话内打开预览标签页，不再新开窗口或跳回主页；不支持的格式或读取不到的路径在预览页里提示无法预览，仍可正常查看外链与页内锚点。行内代码里的文件引用也能识别，命令如 `ls -la 文件.pdf` 不会被误当成文件。（[#622](https://github.com/anywhere-labs/Agents-Anywhere/pull/622)）
+- Desktop 的颜色主题选「自动（跟随系统）」后，系统外观在浅色和深色之间切换（包括 macOS 按时间自动切换）时界面会立即跟随，不用再手动点一次颜色。（[#638](https://github.com/anywhere-labs/Agents-Anywhere/pull/638)）
 
 ### Android
 
 - 在 Android 上新建会话时不改标题，会话不再全部叫「新建会话」，标题交给 Claude Code 等 Agent 自动生成。（[#364](https://github.com/anywhere-labs/Agents-Anywhere/pull/364)）
+- 同步自 Codex 等的会话里，第一条用户消息不再被排到最后，按原来的顺序显示。（[#639](https://github.com/anywhere-labs/Agents-Anywhere/pull/639)）
 - Android 13 及以上可以开启 Agents Anywhere 的通知：第一次打开会话时会请求通知权限，系统设置里的通知开关不再是灰色、无法打开。（[#641](https://github.com/anywhere-labs/Agents-Anywhere/pull/641)）
 - 折叠屏展开或使用宽窗口时，可以在左侧切换项目和会话、在右侧查看消息，并按需收起侧栏；窄窗口保留手机单栏导航，切换会话或窗口宽度时保留各会话草稿和阅读位置。（[#478](https://github.com/anywhere-labs/Agents-Anywhere/pull/478)）
 - 切回最近查看的会话时立即显示已加载的消息，保留历史阅读位置和展开状态，再补齐新消息、运行信息与计划状态；模型或权限列表不可用时仍可阅读历史，历史重建失败时自动重试，迟到的旧请求不会覆盖重建后的历史。（[#618](https://github.com/anywhere-labs/Agents-Anywhere/pull/618)）

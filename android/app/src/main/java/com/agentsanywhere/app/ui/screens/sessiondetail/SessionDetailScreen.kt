@@ -806,7 +806,7 @@ private fun SessionDetailVisit(
         val beforeOrderSeq = state.timeline.orderingItems
             .minOfOrNull { it.orderSeq }
             ?: state.messages.filterNot { it.optimistic }.minOfOrNull { it.orderSeq }
-        if (beforeOrderSeq == null || beforeOrderSeq <= 1) {
+        if (beforeOrderSeq == null || beforeOrderSeq <= 0) {
             olderInFlight.set(false)
             state = state.copy(
                 timeline = state.timeline.copy(hasMore = false, loadingOlder = false),
