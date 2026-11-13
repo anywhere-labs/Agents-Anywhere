@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access, chmod, copyFile, mkdir, rename } from 'node:fs/promises'
 import { userInfo } from 'node:os'
@@ -106,6 +106,19 @@ export async function openFolder(path: string): Promise<void> {
   if (!canOpenFolders()) throw new Error('当前环境不支持打开本机目录。')
   await mkdir(path, { recursive: true, mode: 0o700 })
   const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer.exe' : 'xdg-open'
-  try { await promisify(execFile)(command, [path], { timeout: 5_000, windowsHide: true }) }
-  catch { throw new Error('无法打开目录，请检查本机文件管理器是否可用。') }
+  try {
+    // explorer.exe hands the request to the running shell and exits with code 1 even on
+    // success, so on Windows only a failure to launch it counts as a failure.
+    if (process.platform === 'win32') await launchDetached(command, [path])
+    else await promisify(execFile)(command, [path], { timeout: 5_000, windowsHide: true })
+  } catch { throw new Error('无法打开目录，请检查本机文件管理器是否可用。') }
+}
+
+/** Starts a process without waiting for it: resolves once it launched, ignoring its exit code. */
+export function launchDetached(command: string, args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true })
+    child.once('error', reject)
+    child.once('spawn', () => { child.unref(); resolve() })
+  })
 }
