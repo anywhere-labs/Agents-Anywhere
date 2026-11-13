@@ -806,7 +806,7 @@ private fun SessionDetailVisit(
         val beforeOrderSeq = state.timeline.orderingItems
             .minOfOrNull { it.orderSeq }
             ?: state.messages.filterNot { it.optimistic }.minOfOrNull { it.orderSeq }
-        if (beforeOrderSeq == null || beforeOrderSeq <= 1) {
+        if (beforeOrderSeq == null || beforeOrderSeq <= 0) {
             olderInFlight.set(false)
             state = state.copy(
                 timeline = state.timeline.copy(hasMore = false, loadingOlder = false),
@@ -2093,7 +2093,8 @@ private fun SessionDetailVisit(
                             modifier = Modifier.align(Alignment.TopCenter),
                         )
                         SessionDetailHeader(
-                            title = state.session?.title ?: stringResource(R.string.session_title_fallback),
+                            title = state.session?.title?.takeIf(String::isNotBlank)
+                                ?: stringResource(R.string.session_title_fallback),
                             darkMode = darkMode,
                             onLeftClick = ::openRuntimeSettings,
                             onRightClick = { scope.launch { pagerState.animateScrollToPage(1) } },
