@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass
+from uuid import uuid4
 
 from acp import RequestError, connect_to_agent
 from acp.schema import (
@@ -21,6 +22,7 @@ from ...domain.definitions import (
 from ...domain.dialect import GENERIC_DIALECT, AcpDialect, ExtensionSteer
 from ..processes import AgentProcess
 from .callbacks import Callbacks
+from .history import HistoryReplacement
 from .v1 import require_version, wire
 
 # Updates that show the Agent is working on the current input.
@@ -104,7 +106,8 @@ class AgentClient:
         self.process = AgentProcess()
         self.emit = on_update
         self.ask = on_interaction
-        self.callbacks = Callbacks(self.receive_update, self.request_interaction)
+        self.history = HistoryReplacement(self.history_event)
+        self.callbacks = Callbacks(self.receive_update, self.request_interaction, self.history.reset)
         self.connection = None
         self.capabilities = {}
         self.turns: dict[str, Turn] = {}
@@ -114,8 +117,14 @@ class AgentClient:
     # Agent → AA
 
     async def receive_update(self, session_id, value):
+        async with self.history.lock:
+            await self._receive_update(session_id, value)
+
+    async def _receive_update(self, session_id, value):
         value = self.dialect.translate_update(session_id, value)
         if value is None:
+            return
+        if await self.history.capture(session_id, value):
             return
         kind = value.get("sessionUpdate")
         if kind in EXECUTION_UPDATES or self.dialect.acceptance_evidence(session_id, value):
@@ -128,8 +137,22 @@ class AgentClient:
             value = {**value, "configOptions": self.adapt(session_id, value.get("configOptions", []))}
         await self.emit(session_id, value)
 
+    def enable_history_replacement(self):
+        """Only the coordinator with an atomic replacement consumer calls this."""
+        self.history.enabled = True
+
+    async def history_event(self, session_id, value):
+        await self.emit(session_id, value)
+        if value["sessionUpdate"] == "aa_history_replace":
+            for update in value["updates"]:
+                if update.get("sessionUpdate") == "config_option_update":
+                    self.configuration[session_id] = update.get("configOptions", [])
+                if update.get("sessionUpdate") == "available_commands_update":
+                    self.commands[session_id] = update.get("availableCommands", [])
+                    self.declare("session.commands")
+
     async def request_interaction(self, session_id, kind, request):
-        if session_id:
+        if session_id and session_id not in self.history.pending and session_id not in self.history.failed:
             await self.observe(session_id)
         answer = await self.dialect.interaction(session_id, kind, request, self.ask)
         return answer if answer is not None else await self.ask(session_id, kind, request)
@@ -211,6 +234,7 @@ class AgentClient:
                             }
                         ),
                         client_info=Implementation(name="agents-anywhere", version="1"),
+                        **({"codexIpc": {"historyReplacement": True}} if self.history.enabled else {}),
                     ),
                     20,
                 )
@@ -265,6 +289,28 @@ class AgentClient:
         except RequestError as error:
             raise self.classify(error, "resume") from error
         return self.adapt_session(session_id, result)
+
+    async def reload_history(self, session_id: str, cwd: str, **metadata) -> dict:
+        """A failed replacement needs a full load, never future-only resume."""
+        if self.capabilities.get("loadSession") is not True or not self.history.enabled:
+            raise AcpError("agent_history_reload_unsupported", "Agent 未提供完整历史恢复能力。")
+        await self.dialect.prepare_resume(session_id, metadata)
+        revision = uuid4().hex
+        values = {"sessionId": session_id, "revision": revision}
+        await self.history.reset({**values, "phase": "begin"}, request=True)
+        try:
+            result = wire(await self.connection.load_session(session_id=session_id, cwd=cwd, mcp_servers=[], **metadata))
+            if result.get("sessionId", session_id) != session_id:
+                raise AcpError("agent_session_mismatch", "历史恢复返回了不同的原生会话。")
+            result = self.adapt_session(session_id, result)
+            if self.callbacks.failure is not None:
+                raise AcpError("agent_projection_failed", "历史未能可靠保存，需要重新恢复。") from self.callbacks.failure
+            await self.history.reset({**values, "phase": "commit"})
+            return result
+        except BaseException:
+            if session_id in self.history.pending:
+                await self.history.reset({**values, "phase": "abort"})
+            raise
 
     # Input
 
@@ -397,6 +443,7 @@ class AgentClient:
 
     async def close(self):
         try:
+            await self.history.close()
             if self.connection:
                 await self.connection.close()
         finally:
