@@ -25,22 +25,26 @@ class FakeApi extends AccountApi {
   deleted = false
   deviceError: number | null = null
   deviceId = 'conn_test'
+  /** The server rejects the account token (expired or revoked) while device credentials still work. */
+  accountRejected = false
+  connectorChecks = 0
   override async exchange(): Promise<Account> {
     this.exchanges++
     return { apiBaseUrl: this.baseUrl, userId: 'user-test', displayName: '测试用户', accessToken: 'USER-SECRET', expiresAt: Date.now() + 3600_000 }
   }
-  override async me() { this.profileReads++; return { userId: 'user-test', displayName: '测试用户' } }
+  override async me() { this.profileReads++; if (this.accountRejected) throw new ApiError(401); return { userId: 'user-test', displayName: '测试用户' } }
   override async device(): Promise<Device> {
+    if (this.accountRejected) throw new ApiError(401)
     if (this.deviceError || this.deleted) throw new ApiError(this.deviceError ?? 404)
     return { id: this.deviceId, name: 'Test', userId: 'user-test', status: this.online ? 'online' : 'offline' }
   }
-  override async devices() { return this.registrations && !this.deleted ? [...this.knownDevices, await this.device()] : this.knownDevices }
+  override async devices() { if (this.accountRejected) throw new ApiError(401); return this.registrations && !this.deleted ? [...this.knownDevices, await this.device()] : this.knownDevices }
   override async register() {
     this.registrations++
     if (this.deleted) { this.deleted = false; this.deviceId = 'conn_recreated' }
     return { connector: await this.device(), connectorToken: 'CONNECTOR-SECRET' }
   }
-  override async verifyConnector() { return this.validCredential }
+  override async verifyConnector() { this.connectorChecks++; return this.validCredential }
   override async renewConnector(_token: string, id: string) { this.renewals++; this.renewedIds.push(id); this.validCredential = true; return 'RENEWED-SECRET' }
 }
 
@@ -54,7 +58,8 @@ class FakeConnector implements ConnectorProcess {
   expire() { this.running = false; for (const listener of this.listeners) listener({ running: false, authFailed: true }) }
   async prepare() {}
   startError: Error | null = null
-  async start() { if (this.startError) throw this.startError; this.running = true; this.starts++ }
+  // Like SourceConnector, starting a running process keeps it.
+  async start() { if (this.startError) throw this.startError; if (this.running) return; this.running = true; this.starts++ }
   async stop() { this.running = false; this.stops++ }
   environmentResets = 0
   async resetEnvironment() { await this.stop(); this.environmentResets++ }
@@ -69,6 +74,7 @@ async function fixture() {
   const checkedServers: string[] = []
   const openedPaths: string[] = []
   let healthError: Error | null = null
+  let healthFailures = 0
   let detection: DesktopDetection = { status: 'absent', message: 'not registered' }
   let localIds: string[] = []
   let detections = 0
@@ -78,9 +84,13 @@ async function fixture() {
   }, {
     systemLanguages: async () => ['en-US'],
     api: base => base === api.baseUrl ? api : new FakeApi(base), connector, detect: async () => { detections++; return detection },
-    checkServer: async (base) => { checkedServers.push(base); if (healthError) throw healthError },
+    checkServer: async (base) => {
+      checkedServers.push(base)
+      if (healthFailures > 0) { healthFailures--; throw new Error('连接服务器超时，请检查地址和网络后重试。') }
+      if (healthError) throw healthError
+    },
     openFolder: async (target) => { openedPaths.push(target) },
-    onlineTimeoutMs: 5000, pollIntervalMs: 10,
+    onlineTimeoutMs: 5000, pollIntervalMs: 10, resumeRetryDelaysMs: [10, 20],
     machineState: {
       readConnectorIds: async () => localIds,
     },
@@ -93,6 +103,8 @@ async function fixture() {
     setDesktop(value: DesktopDetection) { detection = value },
     setLocalIds(value: string[]) { localIds = value },
     failHealthCheck() { healthError = new Error('无法连接服务器，请检查地址和网络后重试。') },
+    failHealthCheckTimes(count: number) { healthFailures = count },
+    restoreHealthCheck() { healthError = null; healthFailures = 0 },
     async reopen() { await manager.dispose(); manager = create(); return manager },
     async close() { await manager.dispose(); await rm(root, { recursive: true, force: true }) },
   }
@@ -824,3 +836,123 @@ test('Desktop appearing during pairing or mid-startup aborts and stops the plugi
 })
 
 
+
+async function expireAccount(root: string) {
+  const account = await readJson<Account>(join(root, 'account.json'))
+  await writeJson(join(root, 'account.json'), { ...account!, expiresAt: Date.now() - 1_000 })
+}
+
+test('an expired account token restarts sync on the device credential and offers sign-in without a dangling login', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    await h.manager.controlConnector('stop')
+    await expireAccount(h.root)
+    await h.reopen()
+    h.api.accountRejected = true
+    const profileReads = h.api.profileReads
+    await h.manager.resume()
+    let snapshot = await h.manager.inspect()
+    assert.equal(snapshot.stage, 'ready')
+    assert.equal(snapshot.connectorRunning, true)
+    assert.equal(snapshot.accountExpired, true)
+    assert.equal(snapshot.flowId, null, 'Automatic startup never leaves an unused browser callback')
+    assert.equal(snapshot.deviceRecovery, null)
+    assert.equal(snapshot.account?.userId, 'user-test', 'The account stays visible for re-login')
+    assert.equal(h.api.profileReads, profileReads, 'An expired token is not sent to the server')
+    assert.equal(h.api.renewals, 0)
+    assert.equal(h.api.registrations, 1)
+    // Connector control keeps working; only account features need a new login.
+    await h.manager.controlConnector('restart')
+    assert.equal((await h.manager.inspect()).connectorRunning, true)
+    await assert.rejects(h.manager.createMobileLogin(), /登录已失效/)
+    const starts = h.connector.starts
+    h.api.accountRejected = false
+    const login = await h.manager.begin()
+    assert.match(login.url, /redirect_uri/)
+    await callback(login.url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready' && !(await h.manager.inspect()).accountExpired)
+    snapshot = await h.manager.inspect()
+    assert.equal(snapshot.connectorRunning, true)
+    assert.equal(h.connector.starts, starts, 'Signing in again keeps the running Connector on the same device')
+    assert.equal(h.api.registrations, 1)
+  } finally { await h.close() }
+})
+
+test('a token the server rejects before its local expiry falls back to the device credential and is remembered', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    await h.manager.controlConnector('stop')
+    await h.reopen()
+    h.api.accountRejected = true
+    await h.manager.resume()
+    const snapshot = await h.manager.inspect()
+    assert.equal(snapshot.stage, 'ready')
+    assert.equal(snapshot.connectorRunning, true)
+    assert.equal(snapshot.accountExpired, true)
+    assert.equal((await readJson<Account>(join(h.root, 'account.json')))?.expiresAt, 0)
+  } finally { await h.close() }
+})
+
+test('an expired account with a rejected device credential asks for sign-in instead of retrying', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    await h.manager.controlConnector('stop')
+    await expireAccount(h.root)
+    await h.reopen()
+    h.api.validCredential = false
+    await h.manager.resume()
+    const snapshot = await h.manager.inspect()
+    assert.equal(snapshot.deviceRecovery?.status, 'login_required')
+    assert.equal(snapshot.connectorRunning, false)
+    assert.equal(h.api.connectorChecks, 1, 'Credential failures are not retried')
+    assert.equal(snapshot.flowId, null)
+  } finally { await h.close() }
+})
+
+test('startup retries with backoff while the network is not ready', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    await h.manager.controlConnector('stop')
+    await h.reopen()
+    const checks = h.checkedServers.length
+    h.failHealthCheckTimes(3)
+    await h.manager.resume()
+    assert.equal(h.checkedServers.length - checks, 4)
+    const snapshot = await h.manager.inspect()
+    assert.equal(snapshot.stage, 'ready')
+    assert.equal(snapshot.connectorRunning, true)
+  } finally { await h.close() }
+})
+
+test('a user action stops automatic startup retries', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    await h.manager.controlConnector('stop')
+    await h.reopen()
+    h.failHealthCheck()
+    const resuming = h.manager.resume()
+    await until(async () => /自动重试/.test((await h.manager.inspect()).message))
+    await h.manager.logout()
+    await resuming
+    const checks = h.checkedServers.length
+    await delay(80)
+    assert.equal(h.checkedServers.length, checks, 'No retry runs after the user took over')
+    assert.equal(h.connector.running, false)
+    assert.equal((await h.manager.inspect()).account, null)
+  } finally { h.restoreHealthCheck(); await h.close() }
+})

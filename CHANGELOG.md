@@ -59,6 +59,8 @@
 
 ### DSH 同步
 
+- DSH 插件的账号登录 7 天到期后，同步不再悄悄停止：重启 DSH 时 Connector 会用本机设备凭据继续连接，面板提示登录已过期并提供「重新登录」，只有手机连接等账号功能需要重新登录后才能用。（[#636](https://github.com/anywhere-labs/Agents-Anywhere/pull/636)）
+- DSH 开机自启时网络或服务器还没就绪，插件会自动重试启动 Connector 直到上线，面板显示失败原因和下次重试时间，不再停在「运行异常」等手动点「连接」。（[#636](https://github.com/anywhere-labs/Agents-Anywhere/pull/636)）
 - 修复安装主题等其他插件后「远程控制」面板无法通过关闭按钮、Esc 或遮罩关闭，以及焦点被无关浮层干扰的问题。（[#615](https://github.com/anywhere-labs/Agents-Anywhere/pull/615)）
 - 经本地代理上传大批量会话时，不再因为等待服务器响应超过 60 秒而反复失败；上行很慢（低于约 64 KB/s）时每次重试会等得更久，不再在同一个大会话上反复重传、卡住后面所有会话的同步；上传失败的日志会写明错误类型、数据大小和耗时。（[#551](https://github.com/anywhere-labs/Agents-Anywhere/pull/551)、[#593](https://github.com/anywhere-labs/Agents-Anywhere/pull/593)）
 - 连不上服务器时，DSH 插件会重发当前批次并在恢复后继续，不再断开同步后重新扫描全部会话。（[#551](https://github.com/anywhere-labs/Agents-Anywhere/pull/551)）
