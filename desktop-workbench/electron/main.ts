@@ -36,7 +36,7 @@ import {
 } from "./desktop-onboarding";
 import { DesktopUpdateService } from "./desktop-updates";
 import { nextSilentLaunchState, shouldLaunchSilently, type SilentLaunchState } from "./silent-launch";
-import { validateTitleBarColors } from "./title-bar";
+import { validateTitleBarColors, validateWindowTheme } from "./title-bar";
 import type { BackendInit } from "./backend/protocol";
 import { DesktopBackendClient } from "./backend-client";
 import { readDesktopSettings } from "./desktop-settings";
@@ -699,8 +699,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle("workbench:window:setTheme", (event, theme: unknown) => {
     assertTrustedRenderer(event);
     if (event.sender !== mainWindow?.webContents) return;
-    if (theme !== "light" && theme !== "dark") throw new Error("Invalid window theme.");
-    nativeTheme.themeSource = theme;
+    nativeTheme.themeSource = validateWindowTheme(theme);
   });
   ipcMain.handle("workbench:window:setTitleBarColors", (event, input: unknown) => {
     assertTrustedRenderer(event);

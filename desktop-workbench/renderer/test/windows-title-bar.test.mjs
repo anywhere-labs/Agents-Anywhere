@@ -84,6 +84,23 @@ test("theme synchronization waits for CSS to update and cancels stale animation 
   assert.equal(cancelled, 7)
 })
 
+test("native window theme receives the user's choice so system mode keeps following the OS", () => {
+  for (const [theme, expected] of [["system", "system"], ["light", "light"], ["dark", "dark"], [undefined, null]]) {
+    const sent = []
+    let effect
+    const component = loadFunction("NativeWindowMaterial", {
+      React: { useLayoutEffect() {}, useEffect: callback => { effect = callback } },
+      // resolvedTheme is deliberately different: pinning it would stop prefers-color-scheme updates.
+      useTheme: () => ({ theme, resolvedTheme: "dark" }),
+      getDesktopWorkbenchBridge: () => ({ window: { setTheme: value => { sent.push(value); return Promise.resolve() } } }),
+      console,
+    })
+    assert.equal(component(), null)
+    effect()
+    assert.deepEqual(sent, expected ? [expected] : [])
+  }
+})
+
 test("Windows title bar exposes a controls target without an app icon or name in both themes", () => {
   for (const resolvedTheme of ["dark", "light"]) {
     const elements = []
