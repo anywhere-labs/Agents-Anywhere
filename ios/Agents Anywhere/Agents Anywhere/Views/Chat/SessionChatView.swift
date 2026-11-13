@@ -78,13 +78,18 @@ struct SessionChatView: View, Equatable {
                             && !session.runtime.allows("session.close") {
                             nativeHistoryControls
                         }
+                        if session.runtime.state?.metadata["nativeHistory"] != .bool(true)
+                            && (canContinueNativeHistory || model.hasNativeRecovery) {
+                            agentRecoveryControls
+                        }
                         if let target = model.planReviewTarget {
                             SessionPlanReviewPanel(chat: model, target: target.state)
                                 .id("\(target.state.epoch):\(target.id):\(target.state.review?.planId ?? ""):\(target.state.review?.planRevision ?? 0):\(target.state.review?.contentHash ?? "")")
                         }
+                        SessionGoalPanel(chat:model)
                         ChatComposerDock(draft: session.composer, settings: model.settings,
                             maximumEditorHeight: min(160, max(72, geometry.size.height * 0.30)), controls: controls,
-                            canSend: session.canSend || (V2PlanningCommand.parse(session.composer.text) != nil && session.runtime.allows("session.planning")), canAttach: model.canAttach,
+                            canSend: session.canSend || ((model.goalMode || session.composer.text.hasPrefix("/goal")) && session.runtime.allows("session.goal")) || (V2PlanningCommand.parse(session.composer.text) != nil && session.runtime.allows("session.planning")), canAttach: model.canAttach,
                             canSelectModel: session.runtime.allows("catalog.model"),
                             canSelectPermission: session.runtime.allows("catalog.permission"),
                             isStreaming: model.isRunning, canStop: session.runtime.allows("session.interrupt"),
@@ -233,6 +238,20 @@ struct SessionChatView: View, Equatable {
                         else { confirmingNativeContinue = true }
                     }.disabled(model.nativeHistoryBusy || (!canContinueNativeHistory && !model.hasNativeRecovery))
                 }
+            }.buttonStyle(.bordered)
+        }.padding(.horizontal, 16).padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var agentRecoveryControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(String(localized: "执行者已断开")).font(.subheadline.weight(.medium))
+            Text(model.nativeHistoryError ?? String(localized: "重新连接后可以继续这个会话，未确认的消息不会自动重发。"))
+                .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            HStack {
+                if model.nativeHistoryBusy { ProgressView() }
+                Button(model.hasNativeRecovery ? String(localized: "查询恢复状态") : String(localized: "恢复会话")) {
+                    Task { await model.continueNativeTask() }
+                }.disabled(model.nativeHistoryBusy)
             }.buttonStyle(.bordered)
         }.padding(.horizontal, 16).padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading)
     }

@@ -20,7 +20,9 @@ export function connectorStatus(snapshot: OnboardingSnapshot, readError: string 
   }
   if (snapshot.stage === 'error') return { label: t('运行异常'), state: 'error', detail: snapshot.message }
   if (snapshot.connector?.lastError) return { label: t('运行异常'), state: 'error', detail: snapshot.connector.lastError }
-  return snapshot.connectorRunning ? { label: t('运行中'), state: 'done' } : { label: t('未运行'), state: 'warning' }
+  const expired = snapshot.accountExpired ? { detail: snapshot.connectorRunning
+    ? '账号登录已过期，同步不受影响；手机连接等账号功能需要重新登录。' : '账号登录已过期，请重新登录。' } : {}
+  return snapshot.connectorRunning ? { label: t('运行中'), state: 'done', ...expired } : { label: t('未运行'), state: 'warning', ...expired }
 }
 
 export function AccountPanel({ t, host, state, snapshot, account }: {
@@ -36,8 +38,10 @@ export function AccountPanel({ t, host, state, snapshot, account }: {
   const [onboardingUrl, setOnboardingUrl] = useState<string | null>(null)
   const status = connectorStatus(snapshot, state.readError, t)
   const recovery = snapshot.deviceRecovery
-  const recoveryLabel = recovery?.status === 'deleted' ? t('重新配置') : recovery?.status === 'disconnected' ? t('重新连接')
-    : recovery?.status === 'login_required' ? t('重新登录') : t('重新检查')
+  // An expired account with a healthy device still offers sign-in, without blocking the running Connector.
+  const relogin = recovery?.status === 'login_required' || (!recovery && Boolean(snapshot.accountExpired))
+  const recoveryLabel = relogin ? t('重新登录') : recovery?.status === 'deleted' ? t('重新配置')
+    : recovery?.status === 'disconnected' ? t('重新连接') : t('重新检查')
   const avatar = account.avatar && account.avatar !== failedAvatar ? account.avatar : null
   // Client HMR can arrive before the Host reloads. The backend address exists
   // in older snapshots, so this action remains usable throughout development.
@@ -59,17 +63,17 @@ export function AccountPanel({ t, host, state, snapshot, account }: {
       <span>Connector</span>
       <span className={css.indicator}><StateDot state={status.state} /><span>{status.label}</span></span>
       {status.detail ? <p className={css.detail}>{translateMessage(t, status.detail)}</p> : null}
-      {recovery && recovery.status !== 'checking' ? <Button
+      {relogin || (recovery && recovery.status !== 'checking') ? <Button
         variant="outline"
         className={css.recover}
         disabled={state.busy || Boolean(state.readError)}
         onClick={() => void state.run(async () => {
           setOnboardingUrl(null)
-          if (recovery.status === 'login_required') {
+          if (relogin) {
             const result = await host.begin()
             setLoginUrl(result.url)
             window.open(result.url, '_blank', 'noopener,noreferrer')
-          } else {
+          } else if (recovery) {
             const result = await host.recoverDevice(recovery.status === 'deleted' ? 'recreate' : recovery.status === 'disconnected' ? 'reconnect' : 'check')
             if (result?.url) {
               setOnboardingUrl(result.url)
@@ -89,7 +93,7 @@ export function AccountPanel({ t, host, state, snapshot, account }: {
         disabled={state.busy}
         onClick={() => window.open(webAppUrl, '_blank', 'noopener,noreferrer')}
       >{t('打开 Web')}</Button>
-      <MobileConnection t={t} host={host} disabled={state.busy || Boolean(state.readError)} />
+      <MobileConnection t={t} host={host} disabled={state.busy || Boolean(state.readError) || Boolean(snapshot.accountExpired)} />
       <Button variant="ghost" className={css.button} disabled={state.busy} onClick={() => void state.run(async () => {
         setLoggingOut(true)
         try { await host.logout() } finally { setLoggingOut(false) }

@@ -10,6 +10,8 @@ data class SessionTimelineState(
     val loadingOlder: Boolean = false,
     val errorMessage: String? = null,
     val historyErrorMessage: String? = null,
+    // Local generation: history requests cannot cross a snapshot/reset boundary.
+    val historyGeneration: Long = 0,
 )
 
 /**

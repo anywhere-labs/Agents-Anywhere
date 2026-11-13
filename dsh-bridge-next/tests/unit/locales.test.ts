@@ -34,3 +34,10 @@ test('stored Host failures translate at render time without changing raw diagnos
   assert.equal(translateMessage(english, 'ENOENT: /用户/工作目录'), 'ENOENT: /用户/工作目录')
   assert.equal(english('{name}请求连接此账号', { name: '小王的手机' }), '小王的手机 wants to connect to this account')
 })
+
+test('automatic startup retry notices translate with their cause', () => {
+  const english = translate(en)
+  const notice = '连接服务器超时，请检查地址和网络后重试。（15 秒后自动重试）'
+  assert.equal(translateMessage(translate(zh), notice), notice)
+  assert.equal(translateMessage(english, notice), 'The server connection timed out. Check the address and network, then try again. (retrying automatically in 15 s)')
+})

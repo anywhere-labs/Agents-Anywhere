@@ -23,6 +23,16 @@ UploadProgress = Callable[[int], Awaitable[None]]
 class RuntimeHostClient(ABC):
     """Runtime -> Connector."""
 
+    async def prepare_goal_creation(
+        self, session_id, external_id, content, attachments, operation_id
+    ):
+        service = getattr(self, "_goal_service", None)
+        if service is None or session_id not in getattr(self, "_goal_creations", {}):
+            return None
+        return await service.prepare_creation(
+            session_id, external_id, content, attachments, operation_id
+        )
+
     async def observe_planning(self, observation) -> None:
         handler = getattr(self, "_planning_observer", None)
         if handler is not None:
@@ -35,6 +45,9 @@ class RuntimeHostClient(ABC):
     async def prepare_planning_turn(self, session_id: str, external_id: str | None) -> bool:
         callback = getattr(self, "_planning_prepare", None)
         return await callback(session_id, external_id) if callback else False
+
+    async def publish_goal(self, snapshot: dict, durable: bool = False) -> None:
+        raise NotImplementedError("Goal publication is unavailable")
 
     async def publish_planning(self, snapshot: dict, durable: bool = False) -> None:
         raise NotImplementedError("Planning publication is unavailable")
@@ -49,8 +62,13 @@ class RuntimeHostClient(ABC):
 
     async def publish_runtime_snapshot(
         self, runtime: str, session_id: str, meta: dict[str, Any], items: Iterable[dict[str, Any]],
-        runtime_id: str | None = None, on_progress: UploadProgress | None = None,
+        runtime_id: str | None = None, on_progress: UploadProgress | None = None, ordered: bool = True,
     ) -> None:
+        """Replace one session's timeline with a complete snapshot.
+
+        ``ordered=False`` is for a runtime that orders its own deliveries: the
+        upload then does not hold back the Connector's other notifications.
+        """
         raise NotImplementedError("Snapshot ingestion is unavailable")
 
     async def publish_runtime_notifications(

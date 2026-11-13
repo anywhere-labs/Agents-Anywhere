@@ -247,6 +247,8 @@ def test_v2_discovery_persists_types_without_creating_instances(tmp_path: Any) -
         "metadata": {"sdk": {"available": True}},
         "instancePolicy": "multiple",
         "maxInstances": 3,
+        "maturity": None,
+        "modelConnection": None,
         "lastDiscoveredAt": runtime_type["lastDiscoveredAt"],
         "createdAt": runtime_type["createdAt"],
         "updatedAt": runtime_type["updatedAt"],

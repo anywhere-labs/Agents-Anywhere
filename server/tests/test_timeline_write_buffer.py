@@ -13,6 +13,7 @@ from sqlalchemy import event, select, update
 
 from agent_server.core.models import TimelineItemIn
 from agent_server.core.protocol import PROTOCOL_MAX_REVISION
+from agent_server.infra.db import session_inventory_scans
 from agent_server.infra.db import sessions as sessions_t
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.repositories.facade import Store
@@ -679,7 +680,12 @@ async def test_unchanged_session_inventory_uses_one_batch_without_publication(
             )
 
         assert changed == []
-        assert len(statements) == 2
+        # The first scan records the reason on every row in one batch.
+        assert [
+            statement.split(" SET ")[0]
+            for statement in statements
+            if statement.startswith("UPDATE")
+        ] == ["UPDATE sessions"]
         assert payloads == []
         assert {
             session_id: await store.get_session_seq(session_id)
@@ -752,6 +758,8 @@ async def test_unchanged_session_inventory_chunks_maximum_payload_bind_count(
         "codex",
         scan_token,
     )
+    async with store.engine.connect() as conn:
+        started_seq = await conn.scalar(select(session_inventory_scans.c.started_seq))
     observations = {
         f"sess_inventory_chunk_{index}": {
             "observed_at": (
@@ -782,9 +790,9 @@ async def test_unchanged_session_inventory_chunks_maximum_payload_bind_count(
             record_statement,
         )
         try:
-            await store._complete_unchanged_session_inventory_observations(
+            await store._update_session_inventory_details(
                 observations=observations,
-                scan_token=scan_token,
+                started_seq=started_seq,
                 now="2026-09-02T00:00:00Z",
             )
         finally:
@@ -805,7 +813,6 @@ async def test_unchanged_session_inventory_chunks_maximum_payload_bind_count(
                             sessions_t.c.source_state_at,
                             sessions_t.c.source_state_reason,
                             sessions_t.c.source_observation_origin,
-                            sessions_t.c.source_scan_token,
                         ).where(sessions_t.c.id.in_(sample_ids))
                     )
                 )
@@ -820,7 +827,6 @@ async def test_unchanged_session_inventory_chunks_maximum_payload_bind_count(
             )
             assert by_id[session_id]["source_state_reason"] == f"reason-{index}"
             assert by_id[session_id]["source_observation_origin"] == "inventory"
-            assert by_id[session_id]["source_scan_token"] is None
     finally:
         await store.close()
 

@@ -40,6 +40,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
@@ -52,6 +57,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
@@ -77,12 +84,10 @@ internal fun HomeSessionActionOverlay(
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
     val density = LocalDensity.current
-    val row = menu.rowBounds
-    val menuWidth = 252.dp
+    var overlayOrigin by remember { mutableStateOf(Offset.Zero) }
     val menuHeight = 168.dp
     val gap = 10.dp
     val margin = 18.dp
-    val menuWidthPx = with(density) { menuWidth.toPx() }
     val menuHeightPx = with(density) { menuHeight.toPx() }
     val gapPx = with(density) { gap.toPx() }
     val marginPx = with(density) { margin.toPx() }
@@ -92,47 +97,63 @@ internal fun HomeSessionActionOverlay(
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(if (darkMode) Color(0x99000000) else Color(0x66000000))
-            .pointerInput(Unit) { detectTapGestures(onTap = { onDismiss() }) },
+            .onGloballyPositioned { overlayOrigin = it.boundsInRoot().topLeft },
     ) {
+        val row = menu.rowBounds.translate(-overlayOrigin.x, -overlayOrigin.y)
+        val menuWidth = minOf(252.dp, (maxWidth - 36.dp).coerceAtLeast(0.dp))
+        val menuWidthPx = with(density) { menuWidth.toPx() }
         val screenWidthPx = with(density) { maxWidth.toPx() }
         val screenHeightPx = with(density) { maxHeight.toPx() }
-        val menuX = (row.left + 120f).coerceIn(marginPx, screenWidthPx - menuWidthPx - marginPx)
+        val minX = minOf(marginPx, (screenWidthPx - menuWidthPx).coerceAtLeast(0f))
+        val maxX = (screenWidthPx - menuWidthPx - marginPx).coerceAtLeast(minX)
+        val menuX = (row.left + 120f).coerceIn(minX, maxX)
         val belowY = row.bottom + gapPx
         val aboveY = row.top - menuHeightPx - gapPx
-        val menuY = if (belowY + menuHeightPx + marginPx <= screenHeightPx) {
-            belowY
-        } else {
-            aboveY.coerceAtLeast(marginPx)
-        }
+        val minY = minOf(marginPx, (screenHeightPx - menuHeightPx).coerceAtLeast(0f))
+        val maxY = (screenHeightPx - menuHeightPx - marginPx).coerceAtLeast(minY)
+        val menuY = (if (belowY + menuHeightPx + marginPx <= screenHeightPx) belowY else aboveY)
+            .coerceIn(minY, maxY)
 
-        Box(
-            modifier = Modifier
-                .offset { IntOffset(row.left.roundToInt(), row.top.roundToInt()) }
-                .width(with(density) { row.width.toDp() })
-                .height(with(density) { row.height.toDp() })
-                .shadow(18.dp, highlightShape, ambientColor = Color(0x22000000), spotColor = Color(0x22000000))
-                .clip(highlightShape)
-                .background(highlightSurface),
+        Popup(
+            alignment = Alignment.TopStart,
+            onDismissRequest = onDismiss,
+            properties = PopupProperties(focusable = true),
         ) {
-            if (menu.projectView) {
-                HomeProjectSessionRow(
+            Box(
+                Modifier.width(maxWidth).height(maxHeight)
+                    .background(if (darkMode) Color(0x99000000) else Color(0x66000000))
+                    .pointerInput(Unit) { detectTapGestures(onTap = { onDismiss() }) },
+            ) {
+                Box(
+                    modifier = Modifier
+                        .offset { IntOffset(row.left.roundToInt(), row.top.roundToInt()) }
+                        .width(with(density) { row.width.toDp() })
+                        .height(with(density) { row.height.toDp() })
+                        .shadow(18.dp, highlightShape, ambientColor = Color(0x22000000), spotColor = Color(0x22000000))
+                        .clip(highlightShape)
+                        .background(highlightSurface)
+                        .clearAndSetSemantics { },
+                ) {
+                    if (menu.projectView) {
+                        HomeProjectSessionRow(
+                            session = menu.session,
+                            inset = !menu.session.pinned || menu.session.archived,
+                            onClick = {},
+                            onLongPress = {},
+                        )
+                    } else {
+                        HomeSessionHighlightRow(session = menu.session, contextLabel = menu.contextLabel, darkMode = darkMode)
+                    }
+                }
+                HomeSessionActionMenuCard(
                     session = menu.session,
-                    inset = !menu.session.pinned || menu.session.archived,
-                    onClick = {},
-                    onLongPress = {},
+                    modifier = Modifier.width(menuWidth).offset { IntOffset(menuX.roundToInt(), menuY.roundToInt()) },
+                    onRename = onRename,
+                    onTogglePinned = onTogglePinned,
+                    onToggleArchived = onToggleArchived,
                 )
-            } else {
-                HomeSessionHighlightRow(session = menu.session, contextLabel = menu.contextLabel, darkMode = darkMode)
             }
         }
-        HomeSessionActionMenuCard(
-            session = menu.session,
-            modifier = Modifier.offset { IntOffset(menuX.roundToInt(), menuY.roundToInt()) },
-            onRename = onRename,
-            onTogglePinned = onTogglePinned,
-            onToggleArchived = onToggleArchived,
-        )
     }
 }
 
@@ -174,7 +195,6 @@ private fun HomeSessionActionMenuCard(
 
     Column(
         modifier = modifier
-            .width(252.dp)
             .height(168.dp)
             .shadow(34.dp, RoundedCornerShape(22.dp), ambientColor = shadow, spotColor = shadow)
             .clip(RoundedCornerShape(22.dp))
@@ -225,6 +245,9 @@ private fun HomeSessionActionMenuRow(
     ) {
         Text(
             text = label,
+            modifier = Modifier.weight(1f).padding(end = 8.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             color = textColor,
             fontSize = 16.sp,
             fontWeight = FontWeight.Bold,

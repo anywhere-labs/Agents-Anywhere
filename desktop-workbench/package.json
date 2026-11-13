@@ -2,7 +2,7 @@
   "name": "agents-anywhere-desktop-workbench",
   "productName": "Agents Anywhere",
   "private": true,
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Electron shell for the Agents Anywhere web workbench",
   "packageManager": "yarn@4.6.0",
   "workspaces": [
@@ -14,7 +14,7 @@
   },
   "scripts": {
     "build:info": "node scripts/write-build-info.mjs",
-    "build:main": "yarn build:info && tsc -p tsconfig.json",
+    "build:main": "yarn build:info && node scripts/build-connector-guard.mjs && tsc -p tsconfig.json",
     "renderer:typecheck": "yarn workspace agents-anywhere-desktop-renderer typecheck",
     "typecheck": "yarn build:info && tsc -p tsconfig.json --noEmit",
     "test:main": "yarn build:main && node --test dist/electron/*.test.js dist/electron/backend/*.test.js",
@@ -33,8 +33,8 @@
   "devDependencies": {
     "@types/node": "^24.10.2",
     "@types/ws": "8.18.1",
-    "electron": "^39.2.7",
-    "electron-builder": "^26.0.12",
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0",
     "proxy-agent": "^8.0.2",
     "typescript": "^6.0.3"
   },
@@ -118,6 +118,9 @@
       "allowToChangeInstallationDirectory": true
     },
     "mac": {
+      "extraResources": [
+        { "from": "dist/connector-guard", "to": "connector-guard" }
+      ],
       "icon": "build/icon.icns",
       "hardenedRuntime": true,
       "entitlements": "build/entitlements.mac.plist",

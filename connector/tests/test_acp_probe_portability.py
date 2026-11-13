@@ -44,9 +44,14 @@ def test_controlled_acp_peer_uses_utf8_with_windows_pipe_encoding(tmp_path):
                     "创建中的扩展确认",
                     "允许受控文件写入？",
                 ]
-                assert "".join(row["content"]["text"] for row in updates) == (
-                    "受控 输出\u2028完成"
-                )
+                assert "".join(
+                    row["content"]["text"]
+                    for row in updates
+                    if row["sessionUpdate"] == "agent_message_chunk"
+                ) == "受控 输出\u2028完成"
+                # The engine records the input once the Agent starts on it.
+                assert [row["content"]["text"] for row in updates
+                        if row["sessionUpdate"] == "user_message_chunk"] == ["中文输入"]
                 assert marker.read_text(encoding="utf-8") == "中文输入\n"
         finally:
             await client.close()

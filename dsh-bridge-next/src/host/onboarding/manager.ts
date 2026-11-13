@@ -8,7 +8,7 @@ import { AccountApi, ApiError, publicProfile, type Account } from '../account/ap
 import { DeviceRecoveryRequired, ensureBinding, readBoundDevice, recoverBinding, verifyBoundDevice, type BoundDevice } from '../account/binding.js'
 import { checkServer, normalizeServerOrigin, resolveOAuthWebOrigin } from '../account/server.js'
 import type { ResolvedConfig } from '../config.js'
-import { ConnectorCredentialError, SourceConnector, type ConnectorProcess } from '../connector/process.js'
+import { ConnectorCredentialError, ConnectorOwnershipError, SourceConnector, type ConnectorProcess } from '../connector/process.js'
 import { detectDesktop } from '../desktop/detect.js'
 import { desktopOnboardingUrl, launchDesktop, newDesktopFlowId, type DesktopLauncher } from '../desktop/launch.js'
 import type { LocalMachineRegistry } from '../desktop/machine-state.js'
@@ -39,6 +39,17 @@ interface Dependencies {
   systemLanguages?: () => Promise<string[]>
   diagnostics?: RuntimeDiagnostics
   logOutput?: RpcLogOutput
+  /** Waits between automatic startup attempts; the last value repeats until one succeeds. */
+  resumeRetryDelaysMs?: number[]
+}
+
+const RESUME_RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 300_000]
+/** Account tokens this close to expiry are treated as expired, matching the login check. */
+const ACCOUNT_EXPIRY_MARGIN_MS = 30_000
+
+/** The account token no longer works, and the device credential cannot carry the connection alone. */
+class AccountLoginRequired extends Error {
+  constructor(readonly connectorId: string | null, message = '账号登录已失效，请重新登录。') { super(message) }
 }
 
 export class OnboardingManager {
@@ -88,6 +99,8 @@ export class OnboardingManager {
   private roleCheck: Promise<void> | null = null
   private roleTimer: ReturnType<typeof setInterval> | null = null
   private resolvedUvPath: string | null = null
+  private resuming: Promise<void> | null = null
+  private resumeController: AbortController | null = null
 
   constructor(private readonly config: ResolvedConfig, private readonly dependencies: Dependencies = {}) {
     this.settings = { apiBaseUrl: config.apiBaseUrl }
@@ -165,9 +178,7 @@ export class OnboardingManager {
       this.roleTimer = setInterval(() => {
         const wasBlocked = this.desktop.status !== 'absent'
         void this.refreshRole().then(() => {
-          if (wasBlocked && !this.disposed && this.desktop.status === 'absent' && this.account) {
-            void this.begin().catch(error => this.setProgress('error', safeMessage(error)))
-          }
+          if (wasBlocked && !this.disposed && this.desktop.status === 'absent' && this.account) void this.resume()
         }).catch(error => this.setProgress('error', safeMessage(error)))
       }, this.dependencies.rolePollIntervalMs ?? 1500)
       this.roleTimer.unref()
@@ -178,12 +189,56 @@ export class OnboardingManager {
     }
   }
 
-  async resume(): Promise<void> {
+  /**
+   * Starts a previously authorized device without user interaction; fresh
+   * installs stay idle. It never opens a login page: the device credential
+   * carries the connection when the account token has expired, and failures
+   * that may pass (network not ready at boot, server restarting) are retried
+   * with backoff until one attempt succeeds or the user takes over.
+   */
+  resume(): Promise<void> {
+    this.resuming ??= this.resumeLoop().finally(() => { this.resuming = null })
+    return this.resuming
+  }
+
+  private async resumeLoop(): Promise<void> {
     await this.initialize()
-    if (this.account && this.desktop.status === 'absent') {
-      // This starts only a previously authorized device. Fresh installs are idle.
-      try { await this.begin() } catch (error) { this.setProgress('error', safeMessage(error)) }
+    const controller = new AbortController()
+    this.resumeController = controller
+    const delays = this.dependencies.resumeRetryDelaysMs ?? RESUME_RETRY_DELAYS_MS
+    try {
+      for (let attempt = 0; ; attempt += 1) {
+        if (controller.signal.aborted || this.disposed || !this.account || this.desktop.status !== 'absent') return
+        try {
+          await this.serial(async () => {
+            if (controller.signal.aborted || this.connector.running) return
+            await this.requireStandalone()
+            if (!this.account || this.recovery) return
+            await (this.dependencies.checkServer ?? checkServer)(this.settings.apiBaseUrl)
+            await this.connector.prepare()
+            if (controller.signal.aborted) return
+            await this.startConnector()
+          })
+          return
+        } catch (error) {
+          // Desktop took over, the user acted, or the device needs an explicit decision.
+          if (controller.signal.aborted || this.disposed || this.desktop.status !== 'absent' || this.recovery) return
+          if (!canRetryResume(error)) { this.setProgress('error', safeMessage(error)); return }
+          const wait = delays[Math.min(attempt, delays.length - 1)] ?? RESUME_RETRY_DELAYS_MS[0]!
+          this.diagnostics.log('warn', 'onboarding.resume_retry', { attempt: attempt + 1, delayMs: wait }, error)
+          this.setProgress('error', `${safeMessage(error)}（${Math.ceil(wait / 1000)} 秒后自动重试）`)
+          try { await delay(wait, undefined, { signal: controller.signal }) } catch { return }
+        }
+      }
+    } finally {
+      if (this.resumeController === controller) this.resumeController = null
     }
+  }
+
+  /** A user action takes over from automatic startup; a pending retry must not undo it. */
+  private stopResume(): void {
+    this.resumeController?.abort()
+    this.resumeController = null
   }
 
   unavailableSnapshot(message: string): OnboardingSnapshot {
@@ -226,7 +281,7 @@ export class OnboardingManager {
 
   private refreshProfile(): void {
     const account = this.account
-    if (this.disposed || !account || this.profileRefresh || Date.now() - this.profileCheckedAt < 60_000) return
+    if (this.disposed || !account || this.accountExpired(account) || this.profileRefresh || Date.now() - this.profileCheckedAt < 60_000) return
     this.profileCheckedAt = Date.now()
     // Keep the panel responsive when the server is offline. A profile response
     // from an old login must never recreate an account after logout or switching.
@@ -236,11 +291,13 @@ export class OnboardingManager {
         this.account = { ...account, ...publicProfile(user) }
         await writeJson(join(this.config.stateRoot, 'account.json'), this.account)
       }))
-      .catch(() => undefined)
+      .catch(error => error instanceof ApiError && error.status === 401
+        ? this.serial(() => this.markAccountExpired(account)).catch(() => undefined) : undefined)
       .finally(() => { this.profileRefresh = null })
   }
 
   begin(input?: LoginRequest): Promise<{ url: string }> {
+    this.stopResume()
     const key = JSON.stringify(input ?? null)
     if (this.beginning) return this.beginning.key === key
       ? this.beginning.promise : Promise.reject(new Error('正在开始另一次登录，请稍候。'))
@@ -291,7 +348,8 @@ export class OnboardingManager {
         if (!(error instanceof ApiError) || error.status !== 401) {
           this.setProgress('error', safeMessage(error)); throw error
         }
-        this.account = null
+        // Keep the account and device: a running Connector continues on its own credential.
+        await this.markAccountExpired(this.account)
       }
     }
     return { url: flow.authorizationUrl(resolveOAuthWebOrigin(this.settings.apiBaseUrl)) }
@@ -321,10 +379,13 @@ export class OnboardingManager {
     if (!account) throw new Error('请先完成登录。')
     signal.throwIfAborted()
     this.setProgress('pairing', '登录成功，正在连接本机设备…')
+    const previousId = this.binding?.connectorId
     this.binding = await ensureBinding(this.config.stateRoot, account, api, signal, {
       ...(this.dependencies.machineState ? { machineState: this.dependencies.machineState } : {}),
       renew: Boolean(code),
     })
+    // A Connector kept running on its own credential while signed out must not keep the old device.
+    if (previousId && previousId !== this.binding.connectorId) await this.connector.stop()
     this.recovery = null
     await this.requireStandalone()
     signal.throwIfAborted()
@@ -376,8 +437,10 @@ export class OnboardingManager {
       } catch (error) {
         if (controller.signal.aborted || this.disposed) return
         if (error instanceof ApiError && error.status === 404) this.setRecovery(id, 'deleted', new DeviceRecoveryRequired(id, 'deleted').message)
-        else if (error instanceof ApiError && error.status === 401) this.setRecovery(id, 'login_required', '账号登录已失效，请重新登录后恢复设备连接。')
-        else this.setRecovery(id, 'unavailable', '暂时无法确认设备状态，请检查网络后重试。')
+        else if (error instanceof ApiError && error.status === 401) {
+          await this.markAccountExpired(account)
+          this.setRecovery(id, 'login_required', '账号登录已失效，请重新登录后恢复设备连接。')
+        } else this.setRecovery(id, 'unavailable', '暂时无法确认设备状态，请检查网络后重试。')
       }
     })().finally(() => {
       if (this.recoveryCheck === task) { this.recoveryCheck = null; this.recoveryController = null }
@@ -389,12 +452,14 @@ export class OnboardingManager {
   private async connectionFailed(error: unknown): Promise<void> {
     this.recordConnectionFailure(error)
     if (error instanceof DeviceRecoveryRequired) this.setRecovery(error.connectorId, error.reason, error.message)
+    else if (error instanceof AccountLoginRequired && error.connectorId) this.setRecovery(error.connectorId, 'login_required', error.message)
     else if (error instanceof ConnectorCredentialError && this.binding) await this.checkDeviceRecovery(this.binding.connectorId)
     else if (error instanceof ApiError && error.status === 401 && this.binding) this.setRecovery(this.binding.connectorId, 'login_required', '账号登录已失效，请重新登录后恢复设备连接。')
     else if (!this.recovery) this.setProgress('error', safeMessage(error))
   }
 
   recoverDevice(action: DeviceRecoveryAction): Promise<DeviceRecoveryResult> {
+    this.stopResume()
     return this.serial(async () => {
       await this.initialize()
       if (this.disposed) throw new Error('插件已关闭。')
@@ -444,7 +509,7 @@ export class OnboardingManager {
     })
   }
 
-  cancel(): Promise<void> { return this.serial(() => this.cancelFlow()) }
+  cancel(): Promise<void> { this.stopResume(); return this.serial(() => this.cancelFlow()) }
 
   private async requireStandalone(): Promise<void> {
     await this.initialize()
@@ -456,12 +521,30 @@ export class OnboardingManager {
   }
 
   private requireAccount(): Account {
+    const account = this.requireSignedIn()
+    if (account.expiresAt <= Date.now()) throw new Error('登录已失效，请重新登录。')
+    return account
+  }
+
+  /** Connector control needs a signed-in device, not a live account token. */
+  private requireSignedIn(): Account {
     if (!this.account) throw new Error('请先在“登录和连接”中登录。')
-    if (this.account.expiresAt <= Date.now()) throw new Error('登录已失效，请重新登录。')
     return this.account
   }
 
+  private accountExpired(account: Account): boolean {
+    return account.expiresAt <= Date.now() + ACCOUNT_EXPIRY_MARGIN_MS
+  }
+
+  /** The server rejected this token: remember it, so the next start goes straight to the device credential. */
+  private async markAccountExpired(account: Account): Promise<void> {
+    if (this.account?.userId !== account.userId || this.account.apiBaseUrl !== account.apiBaseUrl || this.account.expiresAt === 0) return
+    this.account = { ...this.account, expiresAt: 0 }
+    await writeJson(join(this.config.stateRoot, 'account.json'), this.account)
+  }
+
   controlConnector(action: ConnectorAction): Promise<null> {
+    this.stopResume()
     if (action === 'stop' && !this.disposed && this.desktop.status === 'absent') {
       this.controller?.abort()
     }
@@ -474,7 +557,7 @@ export class OnboardingManager {
         this.setProgress('idle', 'Connector 已停止。')
       } else {
         if (this.recovery) throw new Error('请先在“登录和连接”中恢复设备连接。')
-        this.requireAccount()
+        this.requireSignedIn()
         // Validate the executable before interrupting a working connection.
         await this.connector.prepare()
         if (action === 'restart') await this.connector.stop()
@@ -487,22 +570,20 @@ export class OnboardingManager {
   private async startConnector(): Promise<void> {
     await this.requireStandalone()
     if (this.disposed) throw new Error('插件已关闭。')
-    const account = this.requireAccount()
+    const account = this.requireSignedIn()
     const controller = new AbortController()
     this.controller = controller
     try {
-      const api = this.apiFactory(account.apiBaseUrl)
-      this.setProgress('pairing', '正在检查本机设备…')
-      this.binding = this.binding ? await verifyBoundDevice(this.binding, account, api, controller.signal)
-        : await ensureBinding(this.config.stateRoot, account, api, controller.signal, {
-          ...(this.dependencies.machineState ? { machineState: this.dependencies.machineState } : {}),
-        })
-      await this.requireStandalone()
-      controller.signal.throwIfAborted()
-      if (this.disposed) throw new Error('插件已关闭。')
-      this.setProgress('starting', '正在启动 Connector…')
-      await this.connector.start(this.binding, account.apiBaseUrl, controller.signal)
-      await this.waitOnline(api, account, this.binding.connectorId, controller.signal)
+      let viaAccount = !this.accountExpired(account)
+      if (viaAccount) {
+        try { await this.startWithAccount(account, controller.signal) }
+        catch (error) {
+          if (controller.signal.aborted || !(error instanceof ApiError) || error.status !== 401) throw error
+          await this.markAccountExpired(account)
+          viaAccount = false
+        }
+      }
+      if (!viaAccount) await this.startWithDevice(account, controller.signal)
       this.setProgress('ready', '本机设备已连接。')
     } catch (error) {
       if (!controller.signal.aborted) {
@@ -515,6 +596,42 @@ export class OnboardingManager {
     } finally { if (this.controller === controller) this.controller = null }
   }
 
+  private async startWithAccount(account: Account, signal: AbortSignal): Promise<void> {
+    const api = this.apiFactory(account.apiBaseUrl)
+    this.setProgress('pairing', '正在检查本机设备…')
+    this.binding = this.binding ? await verifyBoundDevice(this.binding, account, api, signal)
+      : await ensureBinding(this.config.stateRoot, account, api, signal, {
+        ...(this.dependencies.machineState ? { machineState: this.dependencies.machineState } : {}),
+      })
+    await this.requireStandalone()
+    signal.throwIfAborted()
+    if (this.disposed) throw new Error('插件已关闭。')
+    this.setProgress('starting', '正在启动 Connector…')
+    await this.connector.start(this.binding, account.apiBaseUrl, signal)
+    await this.waitOnline(api, account, this.binding.connectorId, signal)
+  }
+
+  /**
+   * The Connector authenticates with its own device credential, which outlives
+   * the 7-day account token. Synchronization keeps running; only account
+   * features (profile, device management, mobile pairing) wait for a new login.
+   */
+  private async startWithDevice(account: Account, signal: AbortSignal): Promise<void> {
+    const binding = this.binding ?? await readBoundDevice(this.config.stateRoot, account)
+    if (!binding) throw new AccountLoginRequired(null)
+    this.setProgress('pairing', '正在检查本机设备…')
+    if (!await this.apiFactory(account.apiBaseUrl).verifyConnector(binding.connectorId, binding.connectorToken, signal)) {
+      throw new AccountLoginRequired(binding.connectorId, '本机设备凭据已失效，且账号登录已过期，请重新登录后恢复连接。')
+    }
+    this.binding = binding
+    await this.requireStandalone()
+    signal.throwIfAborted()
+    if (this.disposed) throw new Error('插件已关闭。')
+    this.setProgress('starting', '正在启动 Connector…')
+    await this.connector.start(binding, account.apiBaseUrl, signal)
+    await this.connector.assertHealthy()
+  }
+
   saveConnectorSettings(input: ConnectorSettings): Promise<null> {
     return this.serial(async () => {
       await this.requireStandalone()
@@ -523,7 +640,7 @@ export class OnboardingManager {
       const previous = this.connectorSettings.get()
       if (JSON.stringify(next) === JSON.stringify(previous)) return null
       const restart = this.connector.running
-      if (restart) this.requireAccount()
+      if (restart) this.requireSignedIn()
       if (restart || next.uvPath !== previous.uvPath) await this.connector.prepare(next)
       if (this.disposed) throw new Error('插件已关闭。')
       await this.connectorSettings.save(next)
@@ -551,6 +668,7 @@ export class OnboardingManager {
   }
 
   resetConnector(forceLocal: boolean): Promise<null> {
+    this.stopResume()
     return this.serial(async () => {
       await this.requireStandalone()
       if (typeof forceLocal !== 'boolean') throw new Error('重置参数无效。')
@@ -581,13 +699,14 @@ export class OnboardingManager {
 
   /** Rebuilds the Connector's dependency environment; account, device binding and settings stay. */
   resetConnectorEnvironment(): Promise<null> {
+    this.stopResume()
     // A stuck installation holds the queue, and clearing it is the reason to be here.
     if (!this.disposed && this.desktop.status === 'absent') this.controller?.abort()
     return this.serial(async () => {
       await this.requireStandalone()
       await this.cancelFlow()
       await this.connector.resetEnvironment()
-      if (this.recovery || !this.account || this.account.expiresAt <= Date.now()) {
+      if (this.recovery || !this.account) {
         this.setProgress('idle', '依赖环境已清空，下次连接时会重新安装。')
         return null
       }
@@ -627,6 +746,7 @@ export class OnboardingManager {
   }
 
   logout(): Promise<void> {
+    this.stopResume()
     this.mobile.clear()
     return this.serial(async () => {
       await this.initialize()
@@ -649,6 +769,7 @@ export class OnboardingManager {
 
   async dispose(): Promise<void> {
     this.disposed = true
+    this.stopResume()
     if (this.roleTimer) clearInterval(this.roleTimer)
     this.roleTimer = null
     this.mobile.clear()
@@ -665,6 +786,7 @@ export class OnboardingManager {
 
   private loseOwnership(): void {
     this.disposed = true
+    this.stopResume()
     if (this.roleTimer) clearInterval(this.roleTimer)
     this.roleTimer = null
     this.mobile.clear()
@@ -727,6 +849,7 @@ export class OnboardingManager {
     return {
       desktop: this.desktop, settings: { ...this.settings }, stage: this.stage, message: this.message,
       account: this.account ? publicProfile(this.account) : null,
+      accountExpired: Boolean(this.account && this.accountExpired(this.account)),
       webAppUrl: resolveWebAppUrl(this.settings.apiBaseUrl),
       connectorId: this.binding?.connectorId ?? null, connectorRunning: this.connector.running, flowId: this.flow?.id ?? null,
       deviceRecovery: this.recovery ? { ...this.recovery } : null,
@@ -738,6 +861,15 @@ export class OnboardingManager {
       },
     }
   }
+}
+
+/** Only failures that can pass on their own are retried; everything else waits for the user. */
+function canRetryResume(error: unknown): boolean {
+  if (error instanceof ApiError) return error.status >= 500 || error.status === 408 || error.status === 429
+  if (error instanceof DeviceRecoveryRequired || error instanceof ConnectorCredentialError
+    || error instanceof AccountLoginRequired || error instanceof ConnectorOwnershipError) return false
+  if (error instanceof Error && 'code' in error && error.code === 'CONNECTOR_SYNC_STATE_INVALID') return false
+  return !(error instanceof Error && error.message === '插件已关闭。')
 }
 
 function safeMessage(error: unknown): string {

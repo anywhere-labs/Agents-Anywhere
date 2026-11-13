@@ -2,6 +2,30 @@
   "artifacts": [
     {
       "direction": "bidirectional",
+      "model": "GoalRequest",
+      "path": "schemas/goal-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "2db2ef7fbf066c527f4b258935fcee86777e8f3222dc62aed79e87301416d485",
+      "slug": "goal-request"
+    },
+    {
+      "direction": "egress",
+      "model": "GoalState",
+      "path": "schemas/goal-state.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "ef1e8c3cf96640741a625d1255017f5a65aa504bae0e79341f7b7df3ce132cc4",
+      "slug": "goal-state"
+    },
+    {
+      "direction": "egress",
+      "model": "GoalResponse",
+      "path": "schemas/goal-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "44b85b2fd305f9397817e6d76589f85597b39e318bb18ae3f51d44dd7cf2616c",
+      "slug": "goal-response"
+    },
+    {
+      "direction": "bidirectional",
       "model": "PlanningRequest",
       "path": "schemas/planning-request.schema.json",
       "pydanticMode": "validation",
@@ -101,7 +125,7 @@
       "model": "ProtocolSessionSnapshotResponse",
       "path": "schemas/session-snapshot-response.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "dd89aa2b039c976c4aa4617331dc287745fa1a4d91a96b5bf4b2bbb550173253",
+      "sha256": "273f81ab53a1cca42496ced615b50b0ddd119bc6072318f30a77405839111fb1",
       "slug": "session-snapshot-response"
     },
     {

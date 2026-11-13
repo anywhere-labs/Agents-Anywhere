@@ -38,6 +38,7 @@ const hostMessages = {
   "Connector 配置格式无效。": "Invalid Connector settings format.",
   "包含不支持的 Connector 配置项。": "The settings contain unsupported Connector options.",
   "uv 路径无效。": "Invalid uv path.",
+  "代理地址无效，请填写完整地址，例如 http://127.0.0.1:7890。": "Invalid proxy address. Enter a full address, such as http://127.0.0.1:7890.",
   "请填写 uv 可执行文件的绝对路径，或留空自动查找。": "Enter the absolute path to the uv executable, or leave it blank for automatic detection.",
   "请选择列表中的 PyPI 镜像。": "Select a PyPI mirror from the list.",
   "请选择列表中的 Python 下载镜像。": "Select a Python download mirror from the list.",
@@ -94,6 +95,11 @@ const hostMessages = {
   "设备暂未上线，请检查网络后在插件中重试。": "The device is not online yet. Check the network, then try again in the plugin.",
   "本机连接已中断，正在检查设备状态…": "The local connection was interrupted. Checking device status…",
   "账号登录已失效，请重新登录后恢复设备连接。": "Your session has expired. Sign in again to restore the device connection.",
+  "账号登录已失效，请重新登录。": "Your account session has expired. Sign in again.",
+  "本机设备凭据已失效，且账号登录已过期，请重新登录后恢复连接。": "The device credential is no longer valid and your account session has expired. Sign in again to restore the connection.",
+  "账号登录已过期，同步不受影响；手机连接等账号功能需要重新登录。": "Your account session has expired. Sync continues; sign in again to use account features such as mobile connection.",
+  "账号登录已过期，请重新登录。": "Your account session has expired. Sign in again.",
+  "{detail}（{seconds} 秒后自动重试）": "{detail} (retrying automatically in {seconds} s)",
   "暂时无法确认设备状态，请检查网络后重试。": "Unable to verify device status. Check the network and try again.",
   "设备状态已变化，请重新打开插件。": "The device status has changed. Reopen the plugin.",
   "设备状态已变化，请先重新检查。": "The device status has changed. Check it again first.",
@@ -250,6 +256,13 @@ export const en = {
   "启动 Connector": "Start Connector",
   "运行环境": "Environment",
   "uv 路径": "uv path",
+  "网络": "Network",
+  "Connector 网络": "Connector network",
+  "上传很慢或一直同步失败时，可以换成直连": "If uploads are very slow or sync keeps failing, try a direct connection",
+  "跟随系统": "Follow system",
+  "直连": "Direct",
+  "自定义代理": "Custom proxy",
+  "代理地址": "Proxy address",
   "留空使用内置 uv": "Leave blank to use bundled uv",
   "当前路径：": "Current path: ",
   "未找到 uv": "uv not found",
@@ -309,6 +322,8 @@ export const zh = { ...Object.fromEntries(Object.keys(en).map(key => [key, key])
 export function translateMessage(t: Translate, message: string | null | undefined): string {
   if (!message) return ''
   if (Object.hasOwn(en, message)) return t(message as LocaleKey)
+  const retry = /^(.+)（(\d+) 秒后自动重试）$/s.exec(message)
+  if (retry) return t('{detail}（{seconds} 秒后自动重试）', { detail: translateMessage(t, retry[1]), seconds: retry[2]! })
   const http = /^服务请求失败（HTTP (\d+)），请重试。$/.exec(message)
   if (http) return t('服务请求失败（HTTP {status}），请重试。', { status: http[1] })
   const exit = /^Connector 已退出（(.+)）。请在日志页切换到 Connector 查看原因。$/.exec(message)

@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.ui.screens.modelconfig.RuntimeMaturityBadge
 import com.agentsanywhere.app.feature.devices.DeviceAgentsState
 import com.agentsanywhere.app.feature.devices.DeviceRuntime
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeStatus
@@ -202,19 +203,26 @@ private fun ConfiguredAgentRow(
     ) {
         RuntimeStatusIndicator(runtime = runtime, pending = pending)
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = runtime.labels.primary,
-                color = colors.ink,
-                fontSize = 16.5.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = runtime.labels.primary,
+                    color = colors.ink,
+                    fontSize = 16.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f, fill = false),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                RuntimeMaturityBadge(maturity = runtime.maturity)
+            }
             Text(
                 text = listOfNotNull(
                     runtime.labels.secondary,
                     runtimeStatusLabel(runtime),
-                    runtime.phaseMessage?.takeIf { runtime.status == DeviceRuntimeStatus.Starting },
+                    runtime.phaseMessage?.takeIf { runtime.status == DeviceRuntimeStatus.Starting || runtime.status == DeviceRuntimeStatus.Running },
                 ).joinToString(" · "),
                 color = if (runtime.status == DeviceRuntimeStatus.Error && !warning) colors.errorText else colors.muted,
                 fontSize = 11.5.sp,

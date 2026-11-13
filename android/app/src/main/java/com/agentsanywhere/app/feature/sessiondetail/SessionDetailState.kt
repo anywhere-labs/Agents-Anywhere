@@ -79,6 +79,7 @@ internal fun SessionDetailState.beginSnapshotLoad(clearErrors: Boolean): Session
     timeline = timeline.copy(
         isLoading = true,
         loadingOlder = false,
+        historyGeneration = timeline.historyGeneration + 1,
         errorMessage = if (clearErrors) null else timeline.errorMessage,
     ),
     runtime = runtime.copy(

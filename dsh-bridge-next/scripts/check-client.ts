@@ -242,6 +242,70 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.equal(selectionCalls().at(-1)?.current, current)
     assert.equal(selectionCalls().at(-1)?.revision, 2)
     assert.equal(selectionCalls()[0]?.clientId, selectionCalls().at(-1)?.clientId)
+
+    // Other plugins may keep hidden or non-modal dialogs mounted on body.
+    // Exercise the published panel with those nodes before and after its portal.
+    for (const [name, markup] of [
+      ['non-modal popover', '<div role="dialog" aria-modal="false"><button>Foreign</button></div>'],
+      ['hidden dialog', '<div role="dialog" hidden><button>Foreign</button></div>'],
+      ['hidden ancestor', '<div hidden><div role="dialog"><button>Foreign</button></div></div>'],
+      ['inert dialog', '<div role="dialog" inert><button>Foreign</button></div>'],
+      ['inert ancestor', '<div inert><div role="dialog"><button>Foreign</button></div></div>'],
+      ['display none', '<div role="dialog" style="display:none"><button>Foreign</button></div>'],
+      ['display none ancestor', '<div style="display:none"><div role="dialog"><button>Foreign</button></div></div>'],
+      ['visibility hidden', '<div role="dialog" style="visibility:hidden"><button>Foreign</button></div>'],
+    ]) {
+      for (const dismissal of ['close button', 'Escape', 'backdrop']) {
+        const foreign = document.createElement('div')
+        foreign.innerHTML = markup!
+        await act(async () => { document.body.append(foreign); trigger.click() })
+        const panel = document.querySelector<HTMLElement>('[role="dialog"][aria-label="Agents Anywhere"]')!
+        assert.ok(panel)
+        const closeButton = panel.querySelector<HTMLButtonElement>('[aria-label="关闭远程控制"]')!
+        assert.equal(document.activeElement, closeButton, `${name}: opening focuses the panel`)
+        await act(async () => { document.body.append(foreign) })
+        assert.equal(panel.hasAttribute('inert'), false, `${name}: a later unrelated dialog must not cover the panel`)
+        const lastButton = Array.from(panel.querySelectorAll('button')).at(-1)!
+        await act(async () => {
+          lastButton.focus()
+          lastButton.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }))
+        })
+        assert.equal(document.activeElement, closeButton, `${name}: Tab stays within the panel`)
+        await act(async () => {
+          if (dismissal === 'close button') closeButton.click()
+          else if (dismissal === 'Escape') document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+          else panel.parentElement!.querySelector<HTMLElement>('[aria-hidden="true"]')!.click()
+        })
+        assert.equal(panel.isConnected, false, `${name}: ${dismissal} closes the panel`)
+        assert.equal(container.hasAttribute('inert'), false)
+        assert.equal(document.activeElement, trigger)
+        await act(async () => { foreign.remove() })
+      }
+    }
+
+    // A mounted modal can become active/idle without adding or removing its portal.
+    await act(async () => { trigger.click() })
+    const stackedPanel = dialog()!
+    const stackedClose = button('关闭远程控制')
+    const foreignModal = document.createElement('div')
+    foreignModal.innerHTML = '<div role="dialog" aria-modal="true" hidden><button>Foreign</button></div>'
+    const foreignDialog = foreignModal.firstElementChild as HTMLElement
+    await act(async () => { document.body.append(foreignModal) })
+    assert.equal(stackedPanel.hasAttribute('inert'), false)
+    await act(async () => { foreignDialog.hidden = false })
+    assert.equal(stackedPanel.hasAttribute('inert'), true, 'Showing a nested modal covers the panel')
+    await act(async () => { stackedClose.click() })
+    assert.equal(stackedPanel.isConnected, true, 'A visible modal without registration still blocks parent dismissal')
+    await act(async () => { foreignDialog.setAttribute('aria-modal', 'false') })
+    assert.equal(stackedPanel.hasAttribute('inert'), false, 'Changing to a non-modal popover restores the panel')
+    assert.equal(document.activeElement, stackedClose)
+    await act(async () => { foreignDialog.setAttribute('aria-modal', 'true') })
+    assert.equal(stackedPanel.hasAttribute('inert'), true)
+    await act(async () => { foreignDialog.style.display = 'none' })
+    assert.equal(stackedPanel.hasAttribute('inert'), false, 'CSS hiding a mounted modal restores the panel')
+    await act(async () => { stackedClose.click(); foreignModal.remove() })
+    assert.equal(stackedPanel.isConnected, false)
+
     await act(async () => { trigger.click() })
     assert.ok(dialog())
     assert.equal(dialog()!.getAttribute('aria-label'), 'Agents Anywhere')
@@ -428,6 +492,12 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.equal(dialog()!.hasAttribute('inert'), true, 'The parent dialog must be inert while confirming a reset')
     assert.equal(calls.some(call => call.endpoint.endsWith('/resetConnector')), false, 'Opening confirmation must never reset the device')
     const confirmation = document.querySelectorAll('[role="dialog"]')[1]!
+    await act(async () => {
+      button('关闭远程控制').click()
+      dialog()!.parentElement!.querySelector<HTMLElement>('[aria-hidden="true"]')!.click()
+    })
+    assert.equal(confirmation.isConnected, true, 'Parent close button and backdrop preserve a real stacked confirmation')
+    assert.ok(dialog()!.hasAttribute('inert'))
     await switchLanguage('en')
     assert.equal(document.querySelectorAll('[role="dialog"]')[1], confirmation)
     assert.match(confirmation.textContent!, /I understand the effects of a factory reset/)

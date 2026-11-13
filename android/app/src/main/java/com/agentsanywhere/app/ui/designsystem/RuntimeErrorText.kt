@@ -7,7 +7,11 @@ import com.agentsanywhere.app.R
 /** Localized text for a stable runtime or workflow error code, or null for an unknown code. */
 @StringRes
 fun runtimeErrorRes(code: String?): Int? = when (code) {
+    "agent_acp_unavailable" -> R.string.runtime_error_agent_acp_unavailable
+    "agent_authentication_required" -> R.string.runtime_error_agent_authentication_required
     "agent_capability_unsupported" -> R.string.runtime_error_agent_capability_unsupported
+    "agent_cli_missing" -> R.string.runtime_error_agent_cli_missing
+    "agent_cli_unsupported" -> R.string.runtime_error_agent_cli_unsupported
     "agent_configuration_failed" -> R.string.runtime_error_agent_configuration_failed
     "agent_guarantees_missing" -> R.string.runtime_error_agent_guarantees_missing
     "agent_install_failed" -> R.string.runtime_error_agent_install_failed
@@ -15,16 +19,23 @@ fun runtimeErrorRes(code: String?): Int? = when (code) {
     "agent_projection_failed" -> R.string.runtime_error_agent_projection_failed
     "agent_recovery_required" -> R.string.runtime_error_agent_recovery_required
     "agent_resume_unsupported" -> R.string.runtime_error_agent_resume_unsupported
+    "agent_session_failed" -> R.string.runtime_error_agent_session_failed
     "agent_session_mismatch" -> R.string.runtime_error_agent_session_mismatch
     "agent_session_missing" -> R.string.runtime_error_agent_session_missing
+    "agent_session_unavailable" -> R.string.runtime_error_agent_session_unavailable
+    "agent_steer_attachments_unsupported" -> R.string.runtime_error_agent_steer_attachments_unsupported
+    "agent_version_unsupported" -> R.string.runtime_error_agent_version_unsupported
     "attachment_cache_invalid" -> R.string.runtime_error_attachment_cache_invalid
     "attachment_mismatch" -> R.string.runtime_error_attachment_mismatch
     "attachments_too_large" -> R.string.runtime_error_attachments_too_large
     "attachments_unsupported" -> R.string.runtime_error_attachments_unsupported
     "capability_unavailable" -> R.string.runtime_error_capability_unavailable
+    "claude_resume_no_response" -> R.string.runtime_error_claude_resume_no_response
+    "command_unavailable" -> R.string.runtime_error_command_unavailable
     "configuration_changed" -> R.string.runtime_error_configuration_changed
     "configuration_conflict" -> R.string.runtime_error_configuration_conflict
     "configuration_mapping_unavailable" -> R.string.runtime_error_configuration_mapping_unavailable
+    "image_input_unsupported" -> R.string.runtime_error_image_input_unsupported
     "initialization_interrupted" -> R.string.runtime_error_initialization_interrupted
     "interaction_capacity" -> R.string.runtime_error_interaction_capacity
     "interaction_closed" -> R.string.runtime_error_interaction_closed
@@ -33,6 +44,7 @@ fun runtimeErrorRes(code: String?): Int? = when (code) {
     "invalid_agent_configuration" -> R.string.runtime_error_invalid_agent_configuration
     "invalid_agent_executable" -> R.string.runtime_error_invalid_agent_executable
     "invalid_attachment" -> R.string.runtime_error_invalid_attachment
+    "invalid_command" -> R.string.runtime_error_invalid_command
     "invalid_configuration_value" -> R.string.runtime_error_invalid_configuration_value
     "invalid_cwd" -> R.string.runtime_error_invalid_cwd
     "invalid_form_action" -> R.string.runtime_error_invalid_form_action

@@ -700,6 +700,10 @@ class CodexIpcTurnController:
                 thread.thread_id,
                 response.error,
             )
+            if response.error == "no-client-found":
+                # The router confirms nobody received this request. A cached
+                # follower must not keep routing later operations to that owner.
+                await self.follower.owner_unavailable(thread)
         return response
 
     async def _failed(

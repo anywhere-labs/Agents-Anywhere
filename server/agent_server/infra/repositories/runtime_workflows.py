@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from agent_server.core.runtime_workflows import is_reservation_rejection
 from agent_server.infra.db.schema import runtime_workflows
+from agent_server.infra.db.engine import read_connection
 
 
 class RuntimeWorkflowRepositoryMixin:
@@ -81,7 +82,7 @@ class RuntimeWorkflowRepositoryMixin:
     async def get_runtime_workflow(
         self, identifier: str, *, user_id: str, kind: str
     ) -> dict[str, Any]:
-        async with self._engine.connect() as conn:
+        async with read_connection(self._engine) as conn:
             row = (
                 (
                     await conn.execute(

@@ -1,6 +1,18 @@
 package com.agentsanywhere.app.ui.screens.sessiondetail
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -20,6 +32,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,11 +46,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -74,7 +89,13 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.feature.files.inlineCodeFilePath
+import com.agentsanywhere.app.feature.files.normalizeSpacedLinkDestinations
+import com.agentsanywhere.app.feature.files.saveCsvToDownloads
+import com.agentsanywhere.app.feature.files.savingDownloadsNeedsPermission
+import com.agentsanywhere.app.feature.files.sessionFileLinkPath
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import java.util.UUID
@@ -134,6 +155,7 @@ import ru.noties.jlatexmath.awt.geom.Line2D
 
 private const val AnnotationFile = "aa-file"
 private const val AnnotationUrl = "aa-url"
+private const val AnnotationPhone = "aa-phone"
 private const val SelectionCodeTokenPrefix = "[[AA_SELECT_CODE:"
 private val TableDelimiterCellRegex = Regex(""":?-{1,}:?""")
 private val MathExtractionRegex = Regex(
@@ -164,7 +186,7 @@ internal fun AgentMarkdownText(
     }
     val uriHandler = LocalUriHandler.current
     val (mathSource, document) = remember(text) {
-        val raw = text.ifBlank { "_(no content)_" }
+        val raw = normalizeSpacedLinkDestinations(text.ifBlank { "_(no content)_" })
         val extracted = MarkdownMathSource.parse(raw)
         val parsed = markdownParser.parse(normalizeMarkdownTables(extracted.markdown)) as Document
         extracted to parsed
@@ -211,7 +233,7 @@ private fun MarkdownBlocks(
                         if (codeLiteral.needsWrappingCode()) {
                             MarkdownWrappingCodeChip(
                                 code = codeLiteral,
-                                path = parseFileRef(codeLiteral),
+                                path = inlineCodeFilePath(codeLiteral),
                                 styles = styles,
                                 onOpenFile = onOpenFile,
                             )
@@ -278,7 +300,7 @@ private fun MarkdownBlocks(
                 is BulletList -> MarkdownList(node.children(), null, mathSource, darkMode, styles, onOpenFile, onOpenUrl)
                 is OrderedList -> MarkdownList(node.children(), node.startNumber, mathSource, darkMode, styles, onOpenFile, onOpenUrl)
                 is BlockQuote -> MarkdownQuote(node.children(), mathSource, darkMode, styles, onOpenFile, onOpenUrl)
-                is TableBlock -> MarkdownTable(node, mathSource, darkMode, styles, onOpenFile, onOpenUrl)
+                is TableBlock -> MarkdownTable(node, mathSource, styles, onOpenFile, onOpenUrl)
                 is ThematicBreak -> Box(
                     Modifier
                         .fillMaxWidth()
@@ -286,7 +308,7 @@ private fun MarkdownBlocks(
                         .background(styles.border),
                 )
                 is HtmlBlock -> MarkdownInlineText(
-                    nodes = listOf(Text(mathSource.restoreLiteral(node.literal))),
+                    nodes = listOf(HtmlInline().apply { literal = mathSource.restoreLiteral(node.literal) }),
                     mathSource = mathSource,
                     textStyle = styles.body,
                     styles = styles,
@@ -380,45 +402,352 @@ private fun MarkdownQuote(
     }
 }
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun MarkdownTable(
     table: TableBlock,
     mathSource: MarkdownMathSource,
-    darkMode: Boolean,
     styles: MarkdownStyles,
     onOpenFile: (String) -> Unit,
     onOpenUrl: (String) -> Unit,
 ) {
     val parentPart = LocalReadingPart.current
-    Column(
-        modifier = Modifier
-            .horizontalScroll(rememberScrollState())
-            .clip(RoundedCornerShape(8.dp))
-            .border(1.dp, styles.border, RoundedCornerShape(8.dp)),
-    ) {
-        table.tableRows().forEachIndexed { rowIndex, row ->
-            Row {
-                row.children().filterIsInstance<TableCell>().forEachIndexed { columnIndex, cell ->
-                    CompositionLocalProvider(LocalReadingPart provides "$parentPart/table:$rowIndex:$columnIndex") {
-                        val cellStyle = styles.tableCell(
-                            header = cell.isHeader,
-                            alignment = cell.alignment,
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val rows = remember(table) { table.tableRows().map { it.children().filterIsInstance<TableCell>() } }
+    val plainRows = remember(rows, mathSource) {
+        rows.map { row -> row.map { cell -> mathSource.restoreLiteral(cell.plainTableText()) } }
+    }
+    val columnCount = rows.maxOfOrNull { it.size } ?: 0
+    val scrollHorizontally = columnCount > 2
+    val shape = RoundedCornerShape(12.dp)
+    var fullscreen by remember { mutableStateOf(false) }
+    var phoneSheet by remember { mutableStateOf<String?>(null) }
+    val title = stringResource(R.string.markdown_table_title)
+    val copyLabel = stringResource(R.string.markdown_table_copy)
+    val downloadLabel = stringResource(R.string.markdown_table_download)
+    val fullscreenLabel = stringResource(R.string.markdown_table_fullscreen)
+    val closeLabel = stringResource(R.string.markdown_table_close)
+
+    val scope = rememberCoroutineScope()
+    var pendingCsv by remember { mutableStateOf<String?>(null) }
+    fun saveCsv(csv: String) {
+        scope.launch {
+            saveCsvToDownloads(context, "table-${System.currentTimeMillis()}.csv", csv)
+                .onSuccess { saved ->
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.file_preview_saved, saved.displayName),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+                .onFailure {
+                    Toast.makeText(context, R.string.file_preview_save_failed, Toast.LENGTH_SHORT).show()
+                }
+        }
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val csv = pendingCsv
+        pendingCsv = null
+        if (granted && csv != null) {
+            saveCsv(csv)
+        } else if (!granted) {
+            Toast.makeText(context, R.string.file_preview_save_permission_required, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    @Composable
+    fun Cells(fillWidth: Boolean, tableWidth: androidx.compose.ui.unit.Dp) {
+        val tableWidthValue = tableWidth.value
+        val halfWidth = tableWidthValue * 0.5f
+        val maxColumnWidth = if (fillWidth) halfWidth else halfWidth.coerceAtLeast(96f)
+        // 先按「半表宽」把每个单元格排一次版，取最长一行的实际宽度，作为该列需要的宽度。
+        val measureText = rememberTextMeasurer()
+        val measureDensity = LocalDensity.current
+        val measureStyle = styles.tableCell(header = false, alignment = null)
+        val measuredWidths = remember(rows, plainRows, maxColumnWidth, measureStyle, measureText, measureDensity) {
+            val maxWidthPx = with(measureDensity) { maxColumnWidth.dp.roundToPx() }.coerceAtLeast(1)
+            FloatArray(columnCount) { index ->
+                var widestPx = 0
+                rows.forEachIndexed { rowIndex, row ->
+                    val cell = row.getOrNull(index) ?: return@forEachIndexed
+                    val content = plainRows[rowIndex][index]
+                    if (content.isNotEmpty()) {
+                        val layout = measureText.measure(
+                            text = AnnotatedString(content),
+                            style = if (cell.isHeader) measureStyle.copy(fontWeight = FontWeight.Bold) else measureStyle,
+                            constraints = androidx.compose.ui.unit.Constraints(maxWidth = maxWidthPx),
                         )
-                        Box(
-                            modifier = Modifier
-                                .widthIn(min = 112.dp, max = 240.dp)
-                                .background(if (cell.isHeader || rowIndex == 0) styles.codeBackground else Color.Transparent)
-                                .border(0.5.dp, styles.border)
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                        var lineWidest = 0
+                        for (line in 0 until layout.lineCount) {
+                            val lineWidth = (layout.getLineRight(line) - layout.getLineLeft(line)).toInt()
+                            if (lineWidth > lineWidest) lineWidest = lineWidth
+                        }
+                        if (lineWidest > widestPx) widestPx = lineWidest
+                    }
+                }
+                with(measureDensity) { widestPx.toDp().value } + 22f
+            }
+        }
+        val widths: FloatArray = if (fillWidth) {
+            if (columnCount <= 1) {
+                floatArrayOf(tableWidthValue)
+            } else {
+                // 两列：每列先按内容拿宽度（最多一半），剩余空间全部补给最后一列，
+                // 这样前面的列正好贴合内容，不会出现「文字后面一大片空白」。
+                val needs = measuredWidths.copyOf()
+                val result = FloatArray(columnCount) { minOf(needs[it], halfWidth) }
+                val used = result.sum()
+                if (used < tableWidthValue) {
+                    result[columnCount - 1] += tableWidthValue - used
+                } else if (used > tableWidthValue) {
+                    val scale = tableWidthValue / used
+                    for (index in 0 until columnCount) result[index] *= scale
+                }
+                result
+            }
+        } else {
+            // 可横向滚动的表格即使在窄窗口也保留 96dp 的可读列宽。
+            FloatArray(columnCount) { index ->
+                measuredWidths[index].coerceIn(96f, maxColumnWidth)
+            }
+        }
+
+        Column {
+            rows.forEachIndexed { rowIndex, cells ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        // Image cells use SubcomposeLayout, so draw the grid after normal row measurement.
+                        .drawBehind {
+                            val stroke = 0.5.dp.toPx()
+                            if (rowIndex == 0 || cells.firstOrNull()?.isHeader == true) {
+                                drawRect(styles.codeBackground)
+                            }
+                            if (rowIndex == 0) {
+                                drawLine(styles.border, Offset.Zero, Offset(size.width, 0f), stroke)
+                            }
+                            drawLine(styles.border, Offset(0f, size.height), Offset(size.width, size.height), stroke)
+                            drawLine(styles.border, Offset.Zero, Offset(0f, size.height), stroke)
+                            drawLine(styles.border, Offset(size.width, 0f), Offset(size.width, size.height), stroke)
+                            var edge = 0f
+                            for (columnIndex in 0 until cells.lastIndex) {
+                                edge += widths[columnIndex].dp.roundToPx()
+                                val x = if (layoutDirection == LayoutDirection.Ltr) edge else size.width - edge
+                                drawLine(styles.border, Offset(x, 0f), Offset(x, size.height), stroke)
+                            }
+                        },
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    cells.forEachIndexed { columnIndex, cell ->
+                        CompositionLocalProvider(
+                            LocalReadingPart provides "$parentPart/table:$rowIndex:$columnIndex",
                         ) {
-                            MarkdownInlineText(
-                                nodes = cell.children(),
-                                mathSource = mathSource,
-                                textStyle = cellStyle,
-                                styles = styles.copy(bodyColor = cellStyle.color),
-                                onOpenFile = onOpenFile,
-                                onOpenUrl = onOpenUrl,
+                            val cellStyle = styles.tableCell(
+                                header = cell.isHeader,
+                                alignment = cell.alignment,
                             )
+                            val cellModifier = if (columnCount <= 1) {
+                                Modifier.fillMaxWidth()
+                            } else {
+                                val columnWidth = widths.getOrNull(columnIndex) ?: (tableWidthValue / columnCount)
+                                Modifier.width(columnWidth.dp)
+                            }
+                            Box(
+                                modifier = cellModifier
+                                    .clipToBounds()
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                            ) {
+                                val cellText = plainRows[rowIndex][columnIndex]
+                                MarkdownInlineText(
+                                    nodes = cell.children(),
+                                    mathSource = mathSource,
+                                    textStyle = cellStyle,
+                                    styles = styles.copy(bodyColor = cellStyle.color),
+                                    onOpenFile = onOpenFile,
+                                    onOpenUrl = onOpenUrl,
+                                    softBreakTokens = true,
+                                    onPhoneTap = { phoneSheet = it },
+                                    onPlainTap = {
+                                        if (cellText.isNotEmpty()) {
+                                            clipboard.setText(AnnotatedString(cellText))
+                                            Toast.makeText(
+                                                context,
+                                                R.string.markdown_table_cell_copied,
+                                                Toast.LENGTH_SHORT,
+                                            ).show()
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun Grid() {
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val tableWidth = maxWidth
+            if (scrollHorizontally) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                ) {
+                    Cells(fillWidth = false, tableWidth = tableWidth)
+                }
+            } else {
+                Cells(fillWidth = true, tableWidth = tableWidth)
+            }
+        }
+    }
+
+    @Composable
+    fun Card() {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .border(1.dp, styles.border, shape),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(styles.codeBackground)
+                    .padding(start = 14.dp, end = 6.dp, top = 2.dp, bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = title,
+                    color = styles.muted,
+                    style = styles.body.copy(fontSize = 13.sp),
+                    modifier = Modifier.weight(1f),
+                )
+                MarkdownTableButton(
+                    iconRes = R.drawable.aa_ic_table_copy,
+                    description = copyLabel,
+                    tint = styles.muted,
+                    iconSize = 19.dp,
+                    onClick = { clipboard.setText(AnnotatedString(plainRows.toTsv())) },
+                )
+                MarkdownTableButton(
+                    iconRes = R.drawable.aa_ic_table_download,
+                    description = downloadLabel,
+                    tint = styles.muted,
+                    iconSize = 20.dp,
+                    onClick = {
+                        val csv = plainRows.toCsv()
+                        val needsPermission = savingDownloadsNeedsPermission() &&
+                            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+                            PackageManager.PERMISSION_GRANTED
+                        if (needsPermission) {
+                            pendingCsv = csv
+                            permissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                        } else {
+                            saveCsv(csv)
+                        }
+                    },
+                )
+                MarkdownTableButton(
+                    iconRes = R.drawable.aa_ic_table_expand,
+                    description = fullscreenLabel,
+                    tint = styles.muted,
+                    iconSize = 17.dp,
+                    onClick = { fullscreen = true },
+                )
+            }
+            Grid()
+        }
+    }
+
+    Card()
+
+    val phone = phoneSheet
+    if (phone != null) {
+        androidx.compose.material3.ModalBottomSheet(onDismissRequest = { phoneSheet = null }) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = stringResource(R.string.markdown_table_phone_hint, phone),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 16.dp),
+                    color = styles.muted,
+                    style = styles.body.copy(fontSize = 13.sp),
+                    textAlign = TextAlign.Center,
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(0.5.dp)
+                        .background(styles.border),
+                )
+                TableSheetAction(stringResource(R.string.markdown_table_call), textColor = MaterialTheme.colorScheme.primary) {
+                    phoneSheet = null
+                    dialPhoneNumber(context, phone)
+                }
+                TableSheetAction(stringResource(R.string.markdown_table_copy_number), textColor = styles.bodyColor) {
+                    phoneSheet = null
+                    clipboard.setText(AnnotatedString(phone))
+                    android.widget.Toast.makeText(context, R.string.markdown_table_cell_copied, android.widget.Toast.LENGTH_SHORT).show()
+                }
+                TableSheetAction(stringResource(R.string.markdown_table_add_contact), textColor = styles.bodyColor) {
+                    phoneSheet = null
+                    addPhoneContact(context, phone)
+                }
+                TableSheetAction(stringResource(R.string.markdown_table_cancel), textColor = styles.muted) {
+                    phoneSheet = null
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+        }
+    }
+
+    if (fullscreen) {
+        Dialog(
+            onDismissRequest = { fullscreen = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.surface),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 18.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = title,
+                        color = styles.bodyColor,
+                        style = styles.body.copy(fontSize = 17.sp, fontWeight = FontWeight.Bold),
+                        modifier = Modifier.weight(1f),
+                    )
+                    MarkdownTableButton(
+                        iconRes = R.drawable.aa_ic_table_close,
+                        description = closeLabel,
+                        tint = styles.muted,
+                        onClick = { fullscreen = false },
+                    )
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                ) {
+                    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                        val dialogTableWidth = maxWidth
+                        if (scrollHorizontally) {
+                            Box(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                                Cells(fillWidth = false, tableWidth = dialogTableWidth)
+                            }
+                        } else {
+                            Cells(fillWidth = true, tableWidth = dialogTableWidth)
                         }
                     }
                 }
@@ -428,6 +757,205 @@ private fun MarkdownTable(
 }
 
 @Composable
+private fun MarkdownTableButton(
+    iconRes: Int,
+    description: String,
+    tint: Color,
+    iconSize: androidx.compose.ui.unit.Dp = 17.dp,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(32.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            painter = painterResource(id = iconRes),
+            contentDescription = description,
+            tint = tint,
+            modifier = Modifier.size(iconSize),
+        )
+    }
+}
+
+private fun Node.plainTableText(): String = when (this) {
+    is org.commonmark.node.Text -> literal
+    is org.commonmark.node.Code -> literal
+    is org.commonmark.node.SoftLineBreak -> " "
+    is org.commonmark.node.HardLineBreak -> " "
+    else -> {
+        val builder = StringBuilder()
+        var child = firstChild
+        while (child != null) {
+            builder.append(child.plainTableText())
+            child = child.next
+        }
+        builder.toString()
+    }
+}
+
+private fun AnnotatedString.withSoftBreaks(): AnnotatedString {
+    if (text.isEmpty()) return this
+    val phones = getStringAnnotations(AnnotationPhone, 0, text.length)
+    fun isProtected(index: Int): Boolean = phones.any { index in it.start until it.end }
+    val builder = AnnotatedString.Builder()
+    val indexMap = IntArray(text.length + 1)
+    var sinceBreak = 0
+    for (index in text.indices) {
+        indexMap[index] = builder.length
+        val char = text[index]
+        builder.append(char)
+        val wide = char.code >= 0x2E80
+        val separator = char == ' ' || char == '\t' || char == '\n'
+        if (isProtected(index) || wide || separator) {
+            // 中文、空格、和电话号码内部都不插入断点，并重置连续英文计数。
+            sinceBreak = 0
+            continue
+        }
+        val breakLetter = char == '/' || char == '-' || char == '_' || char == '.' ||
+            char == '\\' || char == '&' || char == '=' || char == '?' || char == '#' || char == ':'
+        if (breakLetter) {
+            builder.append('\u200B')
+            sinceBreak = 0
+            continue
+        }
+        sinceBreak += 1
+        if (sinceBreak >= 8) {
+            builder.append('\u200B')
+            sinceBreak = 0
+        }
+    }
+    indexMap[text.length] = builder.length
+    fun remap(source: Int): Int = indexMap[source.coerceIn(0, text.length)]
+    for (span in spanStyles) {
+        val start = remap(span.start)
+        val end = remap(span.end)
+        if (end > start) builder.addStyle(span.item, start, end)
+    }
+    for (span in paragraphStyles) {
+        val start = remap(span.start)
+        val end = remap(span.end)
+        if (end > start) builder.addStyle(span.item, start, end)
+    }
+    for (annotation in getStringAnnotations(0, text.length)) {
+        val start = remap(annotation.start)
+        val end = remap(annotation.end)
+        if (end > start) builder.addStringAnnotation(annotation.tag, annotation.item, start, end)
+    }
+    return builder.toAnnotatedString()
+}
+
+// 手机号 / 400-800 服务号 / 带区号座机（可带分机）
+private val PHONE_NUMBER_PATTERNS = listOf(
+    Regex("(?<!\\d)(?:\\+?86[\\s-]?)?1[3-9]\\d{9}(?!\\d)"),
+    Regex("(?<!\\d)(?:400|800)[\\s-]?\\d{3}[\\s-]?\\d{4}(?!\\d)"),
+    Regex("(?<!\\d)0\\d{2,3}[\\s-]?\\d{7,8}(?:\\s*(?:转|分机|ext\\.?|x)\\s*\\d{1,6})?(?!\\d)", RegexOption.IGNORE_CASE),
+)
+
+private fun AnnotatedString.withPhoneAnnotations(color: Color): AnnotatedString {
+    if (text.isEmpty()) return this
+    val phones = mutableListOf<MatchResult>()
+    for (pattern in PHONE_NUMBER_PATTERNS) {
+        for (match in pattern.findAll(text)) {
+            if (phones.none { it.range.first <= match.range.last && match.range.first <= it.range.last }) {
+                phones += match
+            }
+        }
+    }
+    if (phones.isEmpty()) return this
+    val builder = AnnotatedString.Builder(this)
+    val style = SpanStyle(color = color, fontWeight = FontWeight.Medium)
+    for (phone in phones) {
+        val start = phone.range.first
+        val end = phone.range.last + 1
+        builder.addStyle(style, start, end)
+        builder.addStringAnnotation(AnnotationPhone, phone.value, start, end)
+    }
+    return builder.toAnnotatedString()
+}
+
+private fun TextLayoutResult.phoneAt(text: AnnotatedString, offset: Int, position: Offset): String? {
+    // The nearest caret may be on either side of the tapped glyph.
+    for (index in offset downTo offset - 1) {
+        if (index !in text.indices) continue
+        val phone = text.getStringAnnotations(AnnotationPhone, index, index + 1).firstOrNull() ?: continue
+        if (getBoundingBox(index).contains(position)) return phone.item
+    }
+    return null
+}
+
+/** 去掉空格、横线、括号，把「转/分机」换成 tel: 的暂停符，得到可直接拨号的号码。 */
+private fun String.toDialNumber(): String {
+    val extensionMatch = Regex("(?:转|分机|ext\\.?|x)\\s*(\\d{1,6})", RegexOption.IGNORE_CASE).find(this)
+    val extension = extensionMatch?.groupValues?.getOrNull(1)
+    val base = if (extensionMatch != null) substring(0, extensionMatch.range.first) else this
+    val digits = StringBuilder()
+    for (char in base) {
+        if (char.isDigit()) digits.append(char)
+    }
+    var number = digits.toString()
+    if (number.startsWith("0086")) number = number.removePrefix("0086") else if (number.startsWith("86") && number.length > 11) number = number.removePrefix("86")
+    return number + if (extension != null) ",$extension" else ""
+}
+
+private fun dialPhoneNumber(context: Context, phone: String) {
+    try {
+        context.startActivity(android.content.Intent(android.content.Intent.ACTION_DIAL, android.net.Uri.parse("tel:" + phone.toDialNumber())))
+    } catch (error: Throwable) {
+        android.widget.Toast.makeText(context, R.string.markdown_table_open_failed, android.widget.Toast.LENGTH_SHORT).show()
+    }
+}
+
+private fun addPhoneContact(context: Context, phone: String) {
+    try {
+        val intent = android.content.Intent(android.content.Intent.ACTION_INSERT).apply {
+            type = android.provider.ContactsContract.Contacts.CONTENT_TYPE
+            putExtra(android.provider.ContactsContract.Intents.Insert.PHONE, phone.toDialNumber())
+        }
+        context.startActivity(intent)
+    } catch (error: Throwable) {
+        android.widget.Toast.makeText(context, R.string.markdown_table_open_failed, android.widget.Toast.LENGTH_SHORT).show()
+    }
+}
+
+@Composable
+private fun TableSheetAction(label: String, textColor: Color, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 17.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text = label, color = textColor, style = TextStyle(fontSize = 16.sp))
+    }
+}
+
+private fun List<List<String>>.toTsv(): String = joinToString("\n") { row ->
+    row.joinToString("\t") { cell ->
+        // A literal tab or line break would start another cell during paste.
+        val text = cell.replace('\t', ' ').replace('\r', ' ').replace('\n', ' ').asSpreadsheetText()
+        if ('"' in text) text.quoteSpreadsheetField() else text
+    }
+}
+
+private fun List<List<String>>.toCsv(): String = joinToString("\r\n") { row ->
+    row.joinToString(",") { cell -> cell.asSpreadsheetText().quoteSpreadsheetField() }
+}
+
+private fun String.asSpreadsheetText(): String {
+    val first = firstOrNull {
+        !it.isWhitespace() && !it.isISOControl() && it.category != CharCategory.FORMAT
+    }
+    // CSV quoting preserves the cell boundary but does not prevent formula evaluation.
+    return if (first != null && first in "=+-@＝＋－＠") "'$this" else this
+}
+
+private fun String.quoteSpreadsheetField(): String = "\"" + replace("\"", "\"\"") + "\""
+
+@Composable
 private fun MarkdownInlineText(
     nodes: List<Node>,
     mathSource: MarkdownMathSource,
@@ -435,7 +963,34 @@ private fun MarkdownInlineText(
     styles: MarkdownStyles,
     onOpenFile: (String) -> Unit,
     onOpenUrl: (String) -> Unit,
+    softBreakTokens: Boolean = false,
+    onPhoneTap: ((String) -> Unit)? = null,
+    onPlainTap: (() -> Unit)? = null,
 ) {
+    val imageParts = remember(nodes, mathSource) {
+        splitMarkdownImages(nodes, mathSource::restoreLiteral)
+    }
+    if (imageParts.any { it is MarkdownImagePart.Picture }) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            imageParts.forEach { part ->
+                when (part) {
+                    is MarkdownImagePart.Picture -> MarkdownImage(part.source, part.description)
+                    is MarkdownImagePart.Words -> MarkdownInlineText(
+                        nodes = part.nodes,
+                        mathSource = mathSource,
+                        textStyle = textStyle,
+                        styles = styles,
+                        onOpenFile = onOpenFile,
+                        onOpenUrl = onOpenUrl,
+                        softBreakTokens = softBreakTokens,
+                        onPhoneTap = onPhoneTap,
+                        onPlainTap = onPlainTap,
+                    )
+                }
+            }
+        }
+        return
+    }
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
     val maxInlineMathWidthPx = with(density) { 280.dp.roundToPx() }
@@ -451,29 +1006,51 @@ private fun MarkdownInlineText(
             onOpenFile = onOpenFile,
         )
     }
-    var layoutResult by remember(inline.text) { mutableStateOf<TextLayoutResult?>(null) }
-    val readingAnchor = ReadingTextAnchor(inline.text.text)
+    val baseText = if (onPhoneTap != null) {
+        remember(inline.text, styles.linkColor) { inline.text.withPhoneAnnotations(styles.linkColor) }
+    } else {
+        inline.text
+    }
+    val baseInlineContent = inline.inlineContent
+    val displayText = if (softBreakTokens) {
+        remember(baseText) { baseText.withSoftBreaks() }
+    } else {
+        baseText
+    }
+    var layoutResult by remember(displayText) { mutableStateOf<TextLayoutResult?>(null) }
+    val readingAnchor = ReadingTextAnchor(displayText.text)
+    val currentPhoneTap by rememberUpdatedState(onPhoneTap)
+    val currentPlainTap by rememberUpdatedState(onPlainTap)
 
     BasicText(
-        text = inline.text,
+        text = displayText,
         modifier = Modifier
             .fillMaxWidth()
             .onGloballyPositioned(readingAnchor::positioned)
-            .pointerInput(inline.text) {
+            .pointerInput(displayText) {
                 detectTapGestures { position ->
-                    val offset = layoutResult?.getOffsetForPosition(position) ?: return@detectTapGestures
-                    inline.text.getStringAnnotations(AnnotationFile, offset, offset).firstOrNull()?.let {
+                    val layout = layoutResult ?: return@detectTapGestures
+                    val offset = layout.getOffsetForPosition(position)
+                    displayText.getStringAnnotations(AnnotationFile, offset, offset).firstOrNull()?.let {
                         onOpenFile(it.item)
                         return@detectTapGestures
                     }
-                    inline.text.getStringAnnotations(AnnotationUrl, offset, offset).firstOrNull()?.let {
+                    displayText.getStringAnnotations(AnnotationUrl, offset, offset).firstOrNull()?.let {
                         onOpenUrl(it.item)
+                        return@detectTapGestures
+                    }
+                    val phoneTap = currentPhoneTap
+                    val phone = if (phoneTap != null) layout.phoneAt(displayText, offset, position) else null
+                    if (phone != null) {
+                        phoneTap?.invoke(phone)
+                    } else {
+                        currentPlainTap?.invoke()
                     }
                 }
             },
         style = textStyle,
         onTextLayout = { layoutResult = it; readingAnchor.laidOut(it) },
-        inlineContent = inline.inlineContent,
+        inlineContent = baseInlineContent,
     )
 }
 
@@ -535,7 +1112,7 @@ private fun buildMarkdownInline(
                     is HardLineBreak -> append("\n")
                     is Code -> {
                         val codeLiteral = mathSource.restoreLiteral(node.literal)
-                        val path = parseFileRef(codeLiteral)
+                        val path = inlineCodeFilePath(codeLiteral)
                         if (codeLiteral.needsWrappingCode()) {
                             if (path != null) pushStringAnnotation(AnnotationFile, path)
                             withSpan(
@@ -575,12 +1152,28 @@ private fun buildMarkdownInline(
                     }
                     is Link -> {
                         val destination = mathSource.restoreLiteral(node.destination)
-                        val filePath = if (isFilePath(destination)) stripLine(destination) else null
+                        val filePath = sessionFileLinkPath(destination)
                         pushStringAnnotation(if (filePath != null) AnnotationFile else AnnotationUrl, filePath ?: destination)
                         withSpan(SpanStyle(color = styles.linkColor, textDecoration = TextDecoration.Underline)) {
                             appendNodes(node.children())
                         }
                         pop()
+                    }
+                    is ImageTextWrapper -> {
+                        val wrapper = node.styleNode
+                        if (wrapper is Link) {
+                            val destination = mathSource.restoreLiteral(wrapper.destination)
+                            val filePath = sessionFileLinkPath(destination)
+                            pushStringAnnotation(if (filePath != null) AnnotationFile else AnnotationUrl, filePath ?: destination)
+                        }
+                        val span = when (wrapper) {
+                            is Link -> SpanStyle(color = styles.linkColor, textDecoration = TextDecoration.Underline)
+                            is Emphasis -> SpanStyle(fontStyle = FontStyle.Italic)
+                            is StrongEmphasis -> SpanStyle(fontWeight = FontWeight.Bold)
+                            else -> SpanStyle(textDecoration = TextDecoration.LineThrough)
+                        }
+                        withSpan(span) { appendNodes(node.content) }
+                        if (wrapper is Link) pop()
                     }
                     is Image -> appendNodes(node.children())
                     is HtmlInline -> append(mathSource.restoreLiteral(node.literal))
@@ -650,8 +1243,10 @@ private fun MarkdownWrappingCodeChip(
         fontFamily = FontFamily.Monospace,
         textDecoration = if (path != null) TextDecoration.Underline else null,
     )
+    val blockKey = "block:${LocalReadingMessage.current}:${LocalReadingPart.current}"
     Box(
         modifier = Modifier
+            .readingRegion(blockKey)
             .clip(RoundedCornerShape(5.dp))
             .background(styles.codeBackground)
             .border(1.dp, styles.codeBorder, RoundedCornerShape(5.dp))
@@ -711,7 +1306,8 @@ private fun SelectableMarkdownCodeBlock(
     val token = remember(label, code) { selectionCodeToken(label, code) }
     RegisterSessionSelectionCopyToken(token = token, replacement = code)
 
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
+    val blockKey = "block:${LocalReadingMessage.current}:${LocalReadingPart.current}:$label"
+    BoxWithConstraints(Modifier.fillMaxWidth().readingRegion(blockKey)) {
         // Anchor placeholder geometry to a physical 1.dp font unit so device
         // font scaling cannot enlarge the embedded code panel.
         val layoutUnitFontSize = with(density) { 1.dp.toSp() }
@@ -1087,24 +1683,6 @@ private fun splitTableRowCells(line: String): List<String> {
 private fun String.isMarkdownFenceBoundary(): Boolean {
     val trimmed = trimStart()
     return trimmed.startsWith("```") || trimmed.startsWith("~~~")
-}
-
-private fun stripLine(path: String): String = path.replace(Regex(""":\d+(:\d+)?$"""), "")
-
-private fun parseFileRef(text: String): String? {
-    if (text.isBlank() || text.contains(" ") || text.contains("://")) return null
-    if (!text.contains("/")) return null
-    if (!Regex("""\.[a-zA-Z0-9]+(?::\d+(?::\d+)?)?$""").containsMatchIn(text)) return null
-    return stripLine(text)
-}
-
-private fun isFilePath(href: String): Boolean {
-    if (href.isBlank()) return false
-    return !href.startsWith("http://") &&
-        !href.startsWith("https://") &&
-        !href.startsWith("mailto:") &&
-        !href.startsWith("#") &&
-        !href.startsWith("//")
 }
 
 private val latexExtensionsRegistered = AtomicBoolean(false)

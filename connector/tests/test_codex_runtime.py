@@ -5019,11 +5019,11 @@ async def _test_codex_runtime_interrupted_and_cancelled_turns_set_idle() -> None
     ]
 
 
-def test_codex_runtime_failed_turn_creates_blocking_error_notice() -> None:
-    asyncio.run(_test_codex_runtime_failed_turn_creates_blocking_error_notice())
+def test_codex_runtime_failed_turn_creates_non_blocking_error_notice() -> None:
+    asyncio.run(_test_codex_runtime_failed_turn_creates_non_blocking_error_notice())
 
 
-async def _test_codex_runtime_failed_turn_creates_blocking_error_notice() -> None:
+async def _test_codex_runtime_failed_turn_creates_non_blocking_error_notice() -> None:
     host = FakeHost()
     runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
 
@@ -5048,7 +5048,11 @@ async def _test_codex_runtime_failed_turn_creates_blocking_error_notice() -> Non
     assert notice.type == "interaction"
     assert notice.interaction_type == "execution_error"
     assert notice.severity == "error"
-    assert notice.blocking == {"scope": "session", "targetId": "sess_1"}
+    # The failed turn must stay visible without gating the composer: there is
+    # no action to answer, so blocking would strand every mobile client.
+    assert notice.blocking is None
+    assert notice.response_required is False
+    assert notice.actions == ()
     assert host.turn_ends[-1]["outcome"] == "failed"
     assert host.state_updates[-1]["status"] == "idle"
     assert interrupt.ok is True

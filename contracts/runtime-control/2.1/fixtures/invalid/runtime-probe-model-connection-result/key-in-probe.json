@@ -1,0 +1,8 @@
+{
+  "configDigest": null,
+  "probe": {
+    "apiKey": "sk-secret",
+    "state": "passed"
+  },
+  "runtimeId": "codex"
+}

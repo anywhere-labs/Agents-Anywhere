@@ -3,6 +3,7 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { environmentHasConnector, environmentHome, environmentUsesPython } from "./connector-python";
+import type { ConnectorGuardSession } from "./connector-guard";
 import { withMachineStateLock } from "./machine-state-lock";
 import { readJsonFile, writeJsonFile } from "./json-store";
 import { terminateConnectorProcess } from "./connector-process";
@@ -18,8 +19,10 @@ type Options = {
   /** Injectable only to exercise long installs without wall-clock delays. */
   now?: () => number;
   watchdogMs?: number;
+  guardSessionActive?: (session: ConnectorGuardSession) => Promise<boolean>;
 };
 type Receipt = { schema: 1; fingerprint: string };
+type EnvironmentOwner = { pid?: number; childPid?: number; guardSession?: ConnectorGuardSession; token?: string };
 
 export class ConnectorEnvironment {
   private preparation: Promise<void> | null = null;
@@ -213,16 +216,19 @@ export class ConnectorEnvironment {
       this.writeOwner();
     }
   }
-  /** Preserve the running RPC PID too, so a backend crash cannot permit a live env reset. */
-  recordProcess(pid?: number): void { this.writeOwner(pid); }
+  /** Record the session before authorizing launch, including if both owners later die. */
+  recordProcess(pid?: number, guardSession?: ConnectorGuardSession): void {
+    if (guardSession && !this.lock) throw new Error("Connector environment lease is missing.");
+    this.writeOwner(pid, guardSession);
+  }
 
   private async acquire(environment: string): Promise<void> {
     if (this.lock) return;
     const directory = `${environment}.desktop-lock`;
-    await withMachineStateLock(`${directory}.lease`, () => {
+    await withMachineStateLock(`${directory}.lease`, async () => {
       if (fs.existsSync(directory)) {
-        const owner = readJsonFile<{ pid?: number; childPid?: number } | null>(path.join(directory, "owner.json"), null);
-        if (alive(owner?.pid) || alive(owner?.childPid) || (!owner && Date.now() - fs.statSync(directory).mtimeMs < 10_000)) {
+        const owner = readJsonFile<EnvironmentOwner | null>(path.join(directory, "owner.json"), null);
+        if (alive(owner?.pid) || await this.hasLiveChild(owner) || (!owner && Date.now() - fs.statSync(directory).mtimeMs < 10_000)) {
           throw new Error(`Environment is busy (Desktop PID ${owner?.pid ?? "unknown"}, child PID ${owner?.childPid ?? "none"}): ${directory}`);
         }
         fs.rmSync(directory, { recursive: true, force: true });
@@ -232,8 +238,13 @@ export class ConnectorEnvironment {
       this.writeOwner();
     });
   }
-  private writeOwner(childPid?: number): void {
-    if (this.lock) writeJsonFile(path.join(this.lock.directory, "owner.json"), { pid: process.pid, childPid, token: this.lock.token });
+  private async hasLiveChild(owner: EnvironmentOwner | null): Promise<boolean> {
+    if (owner?.guardSession === undefined) return alive(owner?.childPid);
+    if (!this.options.guardSessionActive) throw new Error("Could not verify the previous Connector RPC session.");
+    return this.options.guardSessionActive(owner.guardSession);
+  }
+  private writeOwner(childPid?: number, guardSession?: ConnectorGuardSession): void {
+    if (this.lock) writeJsonFile(path.join(this.lock.directory, "owner.json"), { pid: process.pid, childPid, guardSession, token: this.lock.token });
   }
   private release(): void {
     if (!this.lock) return;

@@ -11,6 +11,9 @@ import {
   type SessionView as DemoSessionView,
 } from "@/lib/demo-api"
 import { useAuth } from "@/components/auth/auth-context"
+import { createSessionStateCache, type SessionStateCache } from "@/components/session/session-state-cache"
+import { createSessionControllerStore, type SessionControllerStore } from "@/components/session/session-controller-store"
+import { markSessionNavigation } from "@/components/session/session-switch-performance"
 import {
   DEFAULT_ADMIN_SECTION,
   legacyAdminRoutes,
@@ -18,11 +21,13 @@ import {
   type AdminSection,
 } from "@/features/admin/navigation"
 import { dashboardApi } from "@/features/dashboard/api"
+import { modelConfigApi } from "@/features/model-config/api"
 import { resolveWorkspaceProject } from "@/features/dashboard/project-workspaces"
 import type {
   ConnectorView as RealConnectorView,
   DashboardSnapshotMessage,
   DeviceRuntimeView,
+  ModelConfigOverview,
   ProjectCreateRequest,
   ProjectPatchRequest,
   ProjectView,
@@ -60,7 +65,7 @@ export type PanelMode = "docked" | "floating" | "closed"
  *   home + project prefill       →  #/new-session/proj-1
  *   device/:id                   →  #/device/conn-3
  */
-export type AppPage = "home" | "session" | "settings" | "admin" | "mobile-connections" | "device"
+export type AppPage = "home" | "session" | "settings" | "admin" | "mobile-connections" | "tokens-anywhere" | "device"
 
 export type WorkspaceSessionView = DemoSessionView & {
   projectId?: string | null
@@ -91,6 +96,7 @@ type ParsedRoute =
   | { page: "settings"; tab: string }
   | { page: "admin"; section: AdminSection }
   | { page: "mobile-connections" }
+  | { page: "tokens-anywhere" }
   | { page: "device"; connectorId: string }
 
 function parseHash(hash: string): ParsedRoute {
@@ -114,6 +120,8 @@ function parseHash(hash: string): ParsedRoute {
     case "service":
       // Pre-2.1 administration routes keep opening the matching section.
       return { page: "admin", section: legacyAdminRoutes[parts[0]] ?? DEFAULT_ADMIN_SECTION }
+    case "tokens-anywhere":
+      return { page: "tokens-anywhere" }
     case "mobile-connections":
       return { page: "mobile-connections" }
     case "device": {
@@ -132,6 +140,7 @@ function buildHash(route: ParsedRoute): string {
     case "session":   return `#/session/${route.sessionId}`
     case "settings":  return `#/settings/${route.tab}`
     case "admin":     return `#/admin/${route.section}`
+    case "tokens-anywhere": return "#/tokens-anywhere"
     case "mobile-connections": return "#/mobile-connections"
     case "device":    return `#/device/${route.connectorId}`
   }
@@ -143,6 +152,7 @@ function mapConnector(connector: RealConnectorView): ConnectorView {
     userId: connector.userId,
     name: connector.name,
     deviceOs: connector.deviceOs,
+    connectorKind: connector.connectorKind,
     status: connector.status,
     lastSeenAt: connector.lastSeenAt,
   }
@@ -272,6 +282,10 @@ export type WorkspaceState = ReturnType<typeof useSessionCreation> & {
   projects: ProjectView[]
   /** Live runtime instances from the dashboard snapshot, for device pages. */
   runtimes: DeviceRuntimeView[]
+  /** Model profiles, assignments and the Tokens Anywhere link from the snapshot. */
+  modelConfig: ModelConfigOverview | null
+  /** Read the model configuration now instead of waiting for the next push. */
+  refreshModelConfig: () => Promise<void>
   isLoading: boolean
   routeReady: boolean
 
@@ -281,6 +295,8 @@ export type WorkspaceState = ReturnType<typeof useSessionCreation> & {
   activeSession: SessionView | null
   activeSessionFallback: RealSessionView | null
   activeSessionPending: boolean
+  sessionStateCache: SessionStateCache
+  sessionControllers: SessionControllerStore
   activeConnectorId: string | null
   newSessionProjectId: string | null
   newSessionProject: ProjectView | null
@@ -434,16 +450,29 @@ export function useWorkspace() {
   return ctx
 }
 
+/** The workspace when rendered inside its provider; `null` elsewhere, such as in isolated previews. */
+export function useOptionalWorkspace(): WorkspaceState | null {
+  return React.useContext(WorkspaceContext)
+}
+
 // ─── Provider ─────────────────────────────────────────────────
 
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const { session: authSession } = useAuth()
+  const cacheScope = JSON.stringify([process.env.NEXT_PUBLIC_AGENTS_ANYWHERE_API ?? "", authSession?.userId ?? null])
+  const sessionStateCache = React.useMemo(() => createSessionStateCache(cacheScope), [cacheScope])
+  const sessionControllers = React.useMemo(() => createSessionControllerStore(sessionStateCache), [sessionStateCache])
+  React.useEffect(() => {
+    sessionControllers.activate()
+    return () => sessionControllers.deactivate()
+  }, [sessionControllers])
   const currentAccessTokenRef = React.useRef(authSession?.accessToken ?? null)
   currentAccessTokenRef.current = authSession?.accessToken ?? null
   const [connectors, setConnectors] = React.useState<ConnectorView[]>([])
   const [sessions, setSessions] = React.useState<SessionView[]>([])
   const [projects, setProjects] = React.useState<ProjectView[]>([])
   const [runtimes, setRuntimes] = React.useState<DeviceRuntimeView[]>([])
+  const [modelConfig, setModelConfig] = React.useState<ModelConfigOverview | null>(null)
   const [isLoading, setIsLoading] = React.useState(true)
   const sessionStreamSeqRef = React.useRef(new Map<string, number>())
   const pendingSessionIndicatorRef = React.useRef(new Map<string, SessionView>())
@@ -539,12 +568,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   // Derive page state from hash — start at "home" for safe SSR, correct on mount.
   const [route, setRoute] = React.useState<ParsedRoute>({ page: "home" })
   const [routeReady, setRouteReady] = React.useState(false)
-  // Administration and personal settings do not show the workspace, so they
-  // neither load the inventory nor hold the dashboard socket open. Archived
-  // sessions still read the shared inventory. Returning home resumes both.
+  // Model configuration follows Tokens authorization and setup progress in
+  // dashboard snapshots; the account channel follows the same shared state;
+  // archived sessions also need the shared inventory.
+  // Other settings and administration do not keep the dashboard socket open.
   const workspaceDataEnabled = routeReady
     && route.page !== "admin"
-    && (route.page !== "settings" || route.tab === "archived-sessions")
+    && (route.page !== "settings" || route.tab === "archived-sessions" || route.tab === "model-configs" || route.tab === "channel-switch" || route.tab === "service-models")
   const workspaceDataEnabledRef = React.useRef(workspaceDataEnabled)
   workspaceDataEnabledRef.current = workspaceDataEnabled
 
@@ -626,7 +656,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       connectors: message.connectors,
       projects: message.projects,
       sessions: message.sessions,
-      runtimes: message.runtimes ?? [],
+      runtimes: message.runtimes,
+      modelConfig: message.modelConfig,
     })
     if (lastDashboardSnapshotKeyRef.current === snapshotKey) return
     lastDashboardSnapshotKeyRef.current = snapshotKey
@@ -635,10 +666,14 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
     const nextConnectors = message.connectors.map(mapConnector)
     const nextProjects = sortProjectViews(message.projects)
-    const nextRuntimes = message.runtimes ?? []
     setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
     setProjects((current) => sameStableValue(current, nextProjects) ? current : nextProjects)
-    setRuntimes((current) => sameStableValue(current, nextRuntimes) ? current : nextRuntimes)
+    // Only the pushed snapshot carries runtimes and model configuration; the
+    // HTTP refresh does not, and must not wipe what the push delivered.
+    const nextRuntimes = message.runtimes
+    if (nextRuntimes) setRuntimes((current) => sameStableValue(current, nextRuntimes) ? current : nextRuntimes)
+    const nextModelConfig = message.modelConfig
+    if (nextModelConfig) setModelConfig((current) => sameStableValue(current, nextModelConfig) ? current : nextModelConfig)
     setSessions((current) => {
       const currentById = new Map(current.map((session) => [session.id, session]))
       const next = sortSessions(message.sessions.map((session) => {
@@ -655,6 +690,18 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(false)
     initialLoadDoneRef.current = true
   }, [reconcileSessionIndicator, sortSessions])
+
+  const refreshModelConfig = React.useCallback(async () => {
+    const token = currentAccessTokenRef.current
+    if (!token) return
+    const [overview, tokens] = await Promise.all([
+      modelConfigApi.overview(token),
+      modelConfigApi.tokensStatus(token),
+    ])
+    if (currentAccessTokenRef.current !== token) return
+    const next = { ...overview, tokens }
+    setModelConfig((current) => sameStableValue(current, next) ? current : next)
+  }, [])
 
   const fetchDataInFlightRef = React.useRef<{ token: string | null; promise: Promise<boolean> } | null>(null)
   const fetchData = React.useCallback((): Promise<boolean> => {
@@ -898,6 +945,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   const openSession = React.useCallback(
     (id: string) => {
+      markSessionNavigation(id)
       markSessionRead(id)
       pushRoute({ page: "session", sessionId: id })
     },
@@ -913,6 +961,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       else if (page === "session") pushRoute({ page: "session", sessionId: sub ?? "" })
       else if (page === "settings") pushRoute({ page: "settings", tab: sub ?? "account" })
       else if (page === "admin") pushRoute({ page: "admin", section: parseAdminSection(sub) })
+      else if (page === "tokens-anywhere") pushRoute({ page: "tokens-anywhere" })
       else if (page === "mobile-connections") pushRoute({ page: "mobile-connections" })
     },
     [pushRoute],
@@ -1333,8 +1382,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const getOptimisticItems = React.useCallback((sessionId: string) => {
-    return optimisticMessages
-      .filter((message) => optimisticMessageMatchesSession(message, sessionId, sessionAliases))
+    return optimisticMessagesRef.current
+      .filter((message) => optimisticMessageMatchesSession(message, sessionId, sessionAliasesRef.current))
       .map((message) => message.item)
   }, [optimisticMessages, sessionAliases])
 
@@ -1384,7 +1433,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   // ── Derived route fields ──────────────────────────────────
 
-  const validPages: AppPage[] = ["home", "session", "settings", "admin", "mobile-connections", "device"]
+  const validPages: AppPage[] = ["home", "session", "settings", "admin", "mobile-connections", "tokens-anywhere", "device"]
   const page: AppPage = validPages.includes(route.page as AppPage) ? (route.page as AppPage) : "home"
 
   const routeSessionId = route.page === "session" ? route.sessionId : null
@@ -1412,6 +1461,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     sessions,
     projects,
     runtimes,
+    modelConfig,
+    refreshModelConfig,
     isLoading,
     routeReady,
     page,
@@ -1419,6 +1470,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     activeSession,
     activeSessionFallback: activeSessionOptimisticState?.session ?? null,
     activeSessionPending,
+    sessionStateCache,
+    sessionControllers,
     activeConnectorId,
     newSessionProjectId,
     newSessionProject,
