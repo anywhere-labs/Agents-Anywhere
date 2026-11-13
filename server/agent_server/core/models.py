@@ -713,6 +713,7 @@ class ConnectorIngestRejectedNotification(BaseModel):
     code: str
     message: str
     errorType: str | None = None
+    retryable: bool = False
 
 
 class ConnectorIngestResponse(BaseModel):

@@ -40,6 +40,7 @@
 - 在 Codex App 或 IDE 窗口里处理审批后，Agents Anywhere 里的会话不再一直显示「等待批准」。（[#532](https://github.com/anywhere-labs/Agents-Anywhere/pull/532)）
 - Claude 工具结果里的图片（例如读取截图）不再以原文同步到云端，会话中改为显示 `[Image omitted: image/png, 1.2 MB]` 这样的摘要，不再显示一大段乱码；含大量截图的历史会话不再因请求过大（413）而每轮同步失败。（[#548](https://github.com/anywhere-labs/Agents-Anywhere/pull/548)）
 - Codex 和 Claude Code 的历史会话超过服务器单次请求上限时改为分批上传，不再因 413 一直同步失败；服务器仍然拒收的会话会暂停重试（从约 10 分钟起逐次加倍，最长约 6 小时），不再每轮重新读取和上传、拖慢同一设备上其他会话的同步，暂停期间会话标题和状态照常更新。（[#589](https://github.com/anywhere-labs/Agents-Anywhere/pull/589)）
+- Server 上同一个会话的写入短暂排队时，Codex 和 Claude Code 的历史会话会在下一轮同步时重试，不再被当成拒收而暂停约 10 分钟以上，后台上报的实时变化也不再因此被丢弃；需要 Server 和 Connector 都升级到本版。（[#535](https://github.com/anywhere-labs/Agents-Anywhere/pull/535)）
 - 本机模式的 Pi 不能使用模型网关，切换到 AA 网关时会另建一个受管 Pi 实例，本机 Pi 及其历史不受影响。接入模型网关后恢复 Codex 已有会话时，继续使用会话原来的模型。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 接入模型网关后，Codex 中原本使用其他服务商（例如 kimi）的会话继续用原来的服务商，不再报「This chat uses …, but your current provider is …」；本机 Codex 是 0.166 或 0.167 时，配置了模型网关的 Codex 会改用 Agents Anywhere 自带的 Codex，避免重启后网关会话无法继续。（[#607](https://github.com/anywhere-labs/Agents-Anywhere/pull/607)）
 
@@ -66,6 +67,7 @@
 - 修复安装主题等其他插件后「远程控制」面板无法通过关闭按钮、Esc 或遮罩关闭，以及焦点被无关浮层干扰的问题。（[#615](https://github.com/anywhere-labs/Agents-Anywhere/pull/615)）
 - 经本地代理上传大批量会话时，不再因为等待服务器响应超过 60 秒而反复失败；上行很慢（低于约 64 KB/s）时每次重试会等得更久，不再在同一个大会话上反复重传、卡住后面所有会话的同步；上传失败的日志会写明错误类型、数据大小和耗时。（[#551](https://github.com/anywhere-labs/Agents-Anywhere/pull/551)、[#593](https://github.com/anywhere-labs/Agents-Anywhere/pull/593)）
 - 连不上服务器时，DSH 插件会重发当前批次并在恢复后继续，不再断开同步后重新扫描全部会话。（[#551](https://github.com/anywhere-labs/Agents-Anywhere/pull/551)）
+- Server 上同一个会话的写入短暂排队（等锁超时或数据库连接用完）时，DSH 插件会退避后重发这一批，不再断开同步、重新扫描全部会话，会话也不再一直显示「正在工作」；需要 Server 和 Connector 都升级到本版。（[#535](https://github.com/anywhere-labs/Agents-Anywhere/pull/535)）
 - Connector 启动后短暂忙碌时，DSH 插件不再判定启动失败并关掉它（`Call deadline exceeded`），设备可以正常上线。（[#558](https://github.com/anywhere-labs/Agents-Anywhere/pull/558)）
 - 停用后重新启用 DSH 插件不再报 `ID BridgePayload already exists in the registry`，不需要重启 DSH。（[#558](https://github.com/anywhere-labs/Agents-Anywhere/pull/558)）
 - DSH 插件登录和绑定设备时遇到瞬时网络错误会自动重试；可能已送达的写操作不会重复发送。（[#558](https://github.com/anywhere-labs/Agents-Anywhere/pull/558)）

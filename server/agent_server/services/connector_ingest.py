@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from loguru import logger
+from sqlalchemy.exc import TimeoutError as DatabasePoolTimeoutError
 
 from agent_server.core.models import (
     ConnectorIngestRejectedNotification,
@@ -48,6 +49,43 @@ BUSY_SESSION_STATUSES = frozenset(
 )
 
 
+# PostgreSQL reports contention that clears on its own with these SQLSTATEs:
+# lock_not_available (a bounded lock wait, such as the timeline writer's
+# advisory lock under ``lock_timeout``), deadlock_detected and
+# serialization_failure.
+TRANSIENT_DATABASE_SQLSTATES = frozenset({"55P03", "40P01", "40001"})
+
+
+def ingest_error_is_retryable(error: BaseException) -> bool:
+    """Whether the same notification can be retried after a short backoff.
+
+    Bounded waits are transient by construction: the Redis session-revision
+    lock and other ``asyncio`` deadlines raise ``TimeoutError``, an exhausted
+    connection pool raises SQLAlchemy's ``TimeoutError``, and the timeline
+    writer lock times out inside PostgreSQL. SQLAlchemy wraps the driver
+    error, so the wrapped error and its cause are checked too. A validation
+    failure or a size rejection is never retryable.
+    """
+
+    seen: set[int] = set()
+    pending: list[BaseException] = [error]
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, TimeoutError | DatabasePoolTimeoutError):
+            return True
+        if getattr(current, "sqlstate", None) in TRANSIENT_DATABASE_SQLSTATES:
+            return True
+        pending.extend(
+            cause
+            for cause in (getattr(current, "orig", None), current.__cause__)
+            if isinstance(cause, BaseException)
+        )
+    return False
+
+
 def ingest_rejection_from_exception(
     index: int,
     notification: ConnectorNotification,
@@ -62,6 +100,7 @@ def ingest_rejection_from_exception(
         code="notification_failed",
         message=message,
         errorType=type(error).__name__,
+        retryable=ingest_error_is_retryable(error),
     )
 
 
