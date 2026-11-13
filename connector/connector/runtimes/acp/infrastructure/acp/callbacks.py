@@ -11,15 +11,17 @@ from acp.schema import (
 )
 from pydantic import TypeAdapter
 
+from .history import HISTORY_RESET
 from .v1 import wire
 
 
 class Callbacks:
-    def __init__(self, on_update, on_interaction):
+    def __init__(self, on_update, on_interaction, on_history_reset=None):
         self.on_update = on_update
         self.on_interaction = on_interaction
         self.failure = None
         self.guarantees = frozenset()
+        self.on_history_reset = on_history_reset
 
     def on_connect(self, conn):
         self.connection = conn
@@ -76,9 +78,17 @@ class Callbacks:
         return None
 
     async def ext_method(self, method, params):
+        if method.removeprefix("_") == HISTORY_RESET and self.on_history_reset:
+            return await self.on_history_reset(params, request=True)
         raise RequestError.method_not_found(method)
 
     async def ext_notification(self, method, params):
+        if method.removeprefix("_") == HISTORY_RESET and self.on_history_reset:
+            try:
+                await self.on_history_reset(params)
+            except Exception as error:  # noqa: BLE001 -- notification failures must reach the engine
+                self.failure = error
+            return
         if (
             method.removeprefix("_") == "aa/operation_update"
             and "durable_prompt_receipts" in self.guarantees

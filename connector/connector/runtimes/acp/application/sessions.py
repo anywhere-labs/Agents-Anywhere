@@ -321,6 +321,9 @@ class SessionService:
                 context, agent_id, kind, request
             ),
         )
+        enable_history = getattr(context["client"], "enable_history_replacement", None)
+        if enable_history:
+            enable_history()
         self.contexts[scope_id] = context
         return context
 
@@ -644,7 +647,9 @@ class SessionService:
         lock = self.recovery_locks.setdefault(session_id, asyncio.Lock())
         async with lock:
             if session_id in self.sessions and not self.sessions[session_id]["closing"]:
-                return self.state(session_id)
+                if not self.sessions[session_id].get("historyReloadRequired"):
+                    return self.state(session_id)
+                await self._close_context(self.sessions[session_id])
             saved = self.store.require("binding", session_id)
             binding = self._binding(saved)
             if not binding.agent_session_id:
@@ -652,18 +657,22 @@ class SessionService:
             context = self._new_context(session_id, binding.workspace)
             context.update(sessionId=session_id, agentSessionId=binding.agent_session_id,
                            projection=self.projection_factory(session_id, context["generation"]))
+            reload_history = self.store.get("history_recovery", session_id) is not None
+            if reload_history:
+                context["historyRecoveryOf"] = binding.connection_generation
             try:
                 launch = await self.launch_for_session(session_id) if self.launch_for_session else self.launch
                 await context["client"].start(launch, str(self.root))
                 guarantees = frozenset(context["client"].capabilities.get("_meta", {}).get("aa", {}).get("guarantees", []))
                 if not self.profile.required_guarantees <= guarantees:
                     raise AcpError("agent_guarantees_missing", "当前 Agent 不能满足该会话的恢复保证。")
-                if context["client"].capabilities.get("sessionCapabilities", {}).get("resume") is not None:
+                if not reload_history and context["client"].capabilities.get("sessionCapabilities", {}).get("resume") is not None:
                     # Resume sends only future deltas. Keep the persisted ordering
                     # and revisions rather than restarting Timeline sequence at one.
                     context["projection"].items.update({row["id"]: row for row in self.store.values("projection")
                                                        if row["sessionId"] == session_id})
-                result = await context["client"].resume(
+                restore_session = context["client"].reload_history if reload_history else context["client"].resume
+                result = await restore_session(
                     binding.agent_session_id, binding.workspace.canonical_path,
                     aa={"ownerGeneration": context["generation"],
                         "permission": self.state(session_id)["selections"].get("permission")},
@@ -695,6 +704,7 @@ class SessionService:
                     self._save_binding(replace(current,
                         owner_generation=context["generation"], connection_generation=context["generation"],
                         attachment="attached", foreground="idle", revision=current.revision + 1))
+                context.pop("historyRecoveryOf", None)
                 self._job(self._watch(context, context["client"].process.process))
                 return self.state(session_id)
             except BaseException:
@@ -777,6 +787,7 @@ class SessionService:
             operation = operation.lose_connection()
         finally:
             session_id = operation.session_id
+            failed = failed or context.get("historyReloadRequired", False)
             with self.store.transaction():
                 saved = self.store.get(
                     "prompt", fingerprint([session_id, operation.operation_id])
@@ -845,6 +856,9 @@ class SessionService:
             self.active_runs.discard(session_id)
 
     async def _update(self, context: dict, agent_id: str, update: dict):
+        if update.get("sessionUpdate") in {"aa_history_reset", "aa_history_replace"}:
+            self._history_update(context, agent_id, update)
+            return
         if context["closing"]:
             return
         known = context.get("agentSessionId") or context.get(
@@ -913,6 +927,72 @@ class SessionService:
                         "item": item,
                     },
                 )
+
+    def _history_update(self, context: dict, agent_id: str, update: dict):
+        """Commit a verified complete replay and its snapshot in one transaction."""
+        session_id = context.get("sessionId")
+        if not session_id or context.get("agentSessionId") != agent_id:
+            raise AcpError("agent_session_mismatch", "历史替换与会话绑定不一致。")
+        binding = self._binding(self.store.require("binding", session_id))
+        recovering = context.get("historyRecoveryOf") == binding.connection_generation
+        if binding.connection_generation != context["generation"] and not recovering:
+            raise AcpError("owner_changed", "历史替换所属执行者已变化。")
+        revision = update["revision"]
+        phase = update.get("phase", "commit")
+        if phase == "begin":
+            if context["closing"] or (binding.attachment != "attached" and not recovering) or context.get("historyRevision"):
+                raise AcpError("session_not_ready", "当前会话不能开始历史替换。")
+            # A process crash before commit must recover with full history too.
+            with self.store.transaction():
+                self.store.put("history_recovery", session_id, {"revision": revision})
+            context["historyRevision"] = revision
+            return
+        if context.get("historyRevision") != revision:
+            raise AcpError("history_revision_mismatch", "历史替换修订号不一致。")
+        if phase == "abort":
+            context.pop("historyRevision", None)
+            context["historyReloadRequired"] = True
+            with self.store.transaction():
+                self.store.put("history_recovery", session_id, {"revision": revision})
+                try:
+                    self._save_binding(binding.interrupted())
+                except AcpError as error:
+                    if error.code != "sync_backpressure":
+                        raise
+                    # Retain the binding update even when no outbox slot remains.
+            return
+        if context["closing"]:
+            raise AcpError("session_not_ready", "连接已关闭，历史替换不能提交。")
+        projection = self.projection_factory(session_id, f"{context['generation']}:history:{revision}")
+        observed = self.store.get("agent_observation", session_id) or {}
+        options = None
+        for value in update["updates"]:
+            kind = value.get("sessionUpdate")
+            if kind == "config_option_update":
+                options = context["client"].adapt(agent_id, value.get("configOptions", []))
+            elif kind in {"usage_update", "session_info_update", "compaction_update", "available_commands_update"}:
+                observed[kind] = value
+            else:
+                projection.apply(value)
+        # Replayed messages are historical; tools keep their explicit native status.
+        projection.finish()
+        with self.store.transaction():
+            for item in self.store.values("projection"):
+                if item["sessionId"] == session_id:
+                    self.store.delete("projection", item["id"])
+            for item in projection.items.values():
+                self.store.put("projection", item["id"], item)
+            if options is not None:
+                self.configurations.observe(session_id, options)
+            self.store.put("agent_observation", session_id, observed)
+            self.store.delete("history_recovery", session_id)
+            self._emit("timeline.sync", {
+                "sessionId": session_id, "externalSessionId": agent_id,
+                "complete": True, "items": list(projection.items.values()),
+            })
+            self._emit("session.state.updated", self.state(session_id))
+        context["projection"] = projection
+        context.pop("historyRevision", None)
 
     async def _watch(self, context, process):
         await process.wait()

@@ -28,4 +28,14 @@
 
 ## 历史范围
 
-流式与历史消息使用 Agent 的稳定 messageId/toolCallId；只有经核验的稳定身份才能跨连接去重。来源替换必须在完整回放核验后原子提交。本轮普通观察快照仍标记 partial，未发布来源替换事件，不删除平台消息或其他来源。
+流式与历史消息使用 Agent 的稳定 messageId/toolCallId；未核验的 messageId 只在当前连接或当前历史替换投影内关联消息，只有经核验的稳定身份才能跨连接去重。来源替换必须在完整回放核验后原子提交。本轮普通观察快照仍标记 partial，未发布来源替换事件，不删除平台消息或其他来源。
+
+### Codex IPC 完整历史替换（可选）
+
+具备完整时间线替换消费者的 ACP 连接才在 initialize 的 `_meta.codexIpc.historyReplacement` 声明 `true`。这不改变普通观察快照的 partial 语义。
+
+1. Agent 反向请求 `_codex/session/history_reset`，参数为 `{sessionId, revision, phase:"begin"}`；Connector 核验原生会话身份和连接代际后返回 `{revision, ready:true}`。revision 是本次替换的非空唯一字符串，不是消息修订号。
+2. 后续该会话的标准 `session/update` 暂存为完整回放，既不输出增量，也不作为当前输入已执行的证据；其他会话不受影响。暂存最多 100,000 条更新、64 MiB JSON，超过限制按失败处理。
+3. 同名通知 `phase:"commit"` 与当前 revision 匹配时，以新投影构造完整历史，在一个本地事务中替换已保存的投影并写入 `timeline.sync`（`complete:true`）出站记录；包括空历史，Server 和客户端沿用已有完整快照替换语义。
+4. `phase:"abort"`、回放无效、提交失败或连接关闭时丢弃暂存，旧时间线保持不变，会话标记需要恢复；此后忽略该连接上失去历史基线的增量。恢复重新连接原会话，不重发结果未知的输入。
+5. 错误会话、过期代际、重复 begin、已完成 revision 和不匹配的 commit/abort 不得提交替换。连接本身没有完整替换消费者时不协商该扩展。
