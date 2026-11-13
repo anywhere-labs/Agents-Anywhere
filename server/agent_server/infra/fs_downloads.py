@@ -7,7 +7,7 @@ import math
 import secrets
 import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from agent_server.infra.redis_coordinator import RedisCoordinator
 
@@ -31,6 +31,7 @@ class FsDownloadTransfer:
     media_type: str
     expires_at_monotonic: float
     queue: asyncio.Queue[bytes | None] | None = None
+    closed: asyncio.Event = field(default_factory=asyncio.Event)
 
     def _payload(self) -> dict[str, str | int]:
         return {
@@ -153,12 +154,11 @@ class FsDownloadRelayManager:
             assert transfer.queue is not None
             try:
                 async for chunk in chunks:
-                    if chunk:
-                        await transfer.queue.put(chunk)
-                await transfer.queue.put(None)
-                return True
+                    if chunk and not await self._enqueue_local(transfer, chunk):
+                        return False
+                return await self._enqueue_local(transfer, None)
             except Exception:
-                await transfer.queue.put(None)
+                await self._enqueue_local(transfer, None)
                 raise
 
         try:
@@ -202,6 +202,7 @@ class FsDownloadRelayManager:
                         break
                     yield chunk
             finally:
+                transfer.closed.set()
                 self._transfers.pop(transfer_id, None)
             return
 
@@ -230,6 +231,27 @@ class FsDownloadRelayManager:
             await self._coordinator.client.delete(
                 self._metadata_key(transfer_id), queue_key
             )
+
+    async def _enqueue_local(
+        self,
+        transfer: FsDownloadTransfer,
+        chunk: bytes | None,
+    ) -> bool:
+        assert transfer.queue is not None
+        remaining = transfer.expires_at_monotonic - self._clock()
+        if transfer.closed.is_set() or remaining <= 0:
+            return False
+        put = asyncio.create_task(transfer.queue.put(chunk))
+        closed = asyncio.create_task(transfer.closed.wait())
+        try:
+            done, _ = await asyncio.wait(
+                (put, closed), timeout=remaining, return_when=asyncio.FIRST_COMPLETED
+            )
+            return put in done
+        finally:
+            put.cancel()
+            closed.cancel()
+            await asyncio.gather(put, closed, return_exceptions=True)
 
     async def _enqueue_distributed(
         self,
@@ -260,6 +282,7 @@ class FsDownloadRelayManager:
         for transfer_id, transfer in list(self._transfers.items()):
             if transfer.expires_at_monotonic < now:
                 assert transfer.queue is not None
+                transfer.closed.set()
                 try:
                     transfer.queue.put_nowait(None)
                 except asyncio.QueueFull:

@@ -13,6 +13,22 @@ from connector.runtime_protocol import (
 ModelCatalogReader = Callable[[], Awaitable[RuntimeModelCatalog]]
 PermissionCatalogReader = Callable[[], Awaitable[RuntimePermissionCatalog]]
 
+# Codex's built-in permission profiles. Selecting a profile by name keeps the
+# thread's ``activePermissionProfile``; the legacy ``sandbox`` / ``sandboxPolicy``
+# fields clear it, and Codex Desktop shows the permission mode only from it.
+PERMISSION_PROFILE_IDS = {
+    "read-only": ":read-only",
+    "workspace-write": ":workspace",
+    "danger-full-access": ":danger-full-access",
+}
+_SANDBOX_BY_PROFILE_ID = {profile: sandbox for sandbox, profile in PERMISSION_PROFILE_IDS.items()}
+_SANDBOX_ALIASES = {
+    "read_only": "read-only",
+    "workspace_write": "workspace-write",
+    "full-access": "danger-full-access",
+    "full_access": "danger-full-access",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class CodexModelSettings:
@@ -25,6 +41,41 @@ class CodexPermissionSettings:
     approval_policy: str | None = None
     approvals_reviewer: str | None = None
     sandbox: str | None = None
+
+
+def permission_profile_id(sandbox: str | None) -> str | None:
+    """Return the built-in Codex permission profile for a sandbox mode."""
+
+    if sandbox is None:
+        return None
+    mode = _sandbox_mode(_SANDBOX_ALIASES.get(sandbox, sandbox))
+    return PERMISSION_PROFILE_IDS.get(mode) if mode is not None else None
+
+
+def thread_settings_update(
+    model: CodexModelSettings,
+    permission: CodexPermissionSettings,
+) -> dict[str, Any]:
+    """Build ``thread/settings/update`` fields for the selected model and permission.
+
+    Only the selected values are sent, so a model change leaves the permission
+    profile alone. The permission goes by profile name and never together with
+    ``sandboxPolicy``, which app-server rejects.
+    """
+
+    settings: dict[str, Any] = {}
+    if model.model is not None:
+        settings["model"] = model.model
+    if model.effort is not None:
+        settings["effort"] = model.effort
+    profile = permission_profile_id(permission.sandbox)
+    if profile is not None:
+        settings["permissions"] = profile
+    if permission.approval_policy is not None:
+        settings["approvalPolicy"] = permission.approval_policy
+    if permission.approvals_reviewer is not None:
+        settings["approvalsReviewer"] = permission.approvals_reviewer
+    return settings
 
 
 async def model_settings_from_selection(
@@ -100,6 +151,8 @@ async def model_selection_from_thread_state(
         ("threadSettings", "model"),
         ("settings", "model"),
         ("latestTurnStartParams", "model"),
+        ("collaborationMode", "settings", "model"),
+        ("collaboration_mode", "settings", "model"),
     )
     if model_id is None:
         return None
@@ -125,6 +178,9 @@ async def model_selection_from_thread_state(
         ("latestTurnStartParams", "reasoning"),
         ("latestTurnStartParams", "reasoningEffort"),
         ("latestTurnStartParams", "reasoning_effort"),
+        ("collaborationMode", "settings", "reasoning_effort"),
+        ("collaborationMode", "settings", "reasoningEffort"),
+        ("collaboration_mode", "settings", "reasoning_effort"),
     )
     catalog = await read_catalog()
     for model in catalog.models:
@@ -186,6 +242,14 @@ async def permission_selection_from_thread_state(
             ("latestTurnStartParams", "sandbox"),
             ("latestTurnStartParams", "sandboxPolicy"),
             ("latestTurnStartParams", "sandbox_policy"),
+        )
+    ) or _profile_sandbox_mode(
+        _first_present(
+            thread,
+            "permissions",
+            "activePermissionProfile",
+            ("threadSettings", "permissions"),
+            ("threadSettings", "activePermissionProfile"),
         )
     )
     if approval_policy is None and approvals_reviewer is None and sandbox is None:
@@ -268,6 +332,13 @@ def _sandbox_mode(value: Any) -> str | None:
         if isinstance(sandbox_type, str):
             return _sandbox_mode(sandbox_type)
     return None
+
+
+def _profile_sandbox_mode(value: Any) -> str | None:
+    """Map a built-in profile, by id or as ``{"id": ...}``, to its sandbox mode."""
+
+    profile_id = value.get("id") if isinstance(value, dict) else value
+    return _SANDBOX_BY_PROFILE_ID.get(profile_id) if isinstance(profile_id, str) else None
 
 
 def _native_setting_string(value: dict[str, Any], key: str) -> str | None:

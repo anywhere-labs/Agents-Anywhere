@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from loguru import logger
+from sqlalchemy.exc import TimeoutError as DatabasePoolTimeoutError
 
 from agent_server.core.models import (
     ConnectorIngestRejectedNotification,
@@ -29,6 +31,7 @@ from agent_server.services.device_runtimes import (
     DeviceRuntimeService,
 )
 from agent_server.services.effective_capabilities import (
+    ConnectorCapabilityRefresh,
     project_session_capabilities,
     publish_connector_session_capabilities,
 )
@@ -40,6 +43,47 @@ from agent_server.services.session_runtime_state_cache import (
 )
 
 INGEST_REJECTION_MESSAGE_MAX_LENGTH = 500
+# Sessions in these states still hold their runtime (see list_running_sessions_for_connector_agent).
+BUSY_SESSION_STATUSES = frozenset(
+    {"waiting", "pending", "running", "stopping", "waiting_approval", "error", "blocked"}
+)
+
+
+# PostgreSQL reports contention that clears on its own with these SQLSTATEs:
+# lock_not_available (a bounded lock wait, such as the timeline writer's
+# advisory lock under ``lock_timeout``), deadlock_detected and
+# serialization_failure.
+TRANSIENT_DATABASE_SQLSTATES = frozenset({"55P03", "40P01", "40001"})
+
+
+def ingest_error_is_retryable(error: BaseException) -> bool:
+    """Whether the same notification can be retried after a short backoff.
+
+    Bounded waits are transient by construction: the Redis session-revision
+    lock and other ``asyncio`` deadlines raise ``TimeoutError``, an exhausted
+    connection pool raises SQLAlchemy's ``TimeoutError``, and the timeline
+    writer lock times out inside PostgreSQL. SQLAlchemy wraps the driver
+    error, so the wrapped error and its cause are checked too. A validation
+    failure or a size rejection is never retryable.
+    """
+
+    seen: set[int] = set()
+    pending: list[BaseException] = [error]
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, TimeoutError | DatabasePoolTimeoutError):
+            return True
+        if getattr(current, "sqlstate", None) in TRANSIENT_DATABASE_SQLSTATES:
+            return True
+        pending.extend(
+            cause
+            for cause in (getattr(current, "orig", None), current.__cause__)
+            if isinstance(cause, BaseException)
+        )
+    return False
 
 
 def ingest_rejection_from_exception(
@@ -56,6 +100,7 @@ def ingest_rejection_from_exception(
         code="notification_failed",
         message=message,
         errorType=type(error).__name__,
+        retryable=ingest_error_is_retryable(error),
     )
 
 
@@ -68,13 +113,33 @@ class ConnectorIngestService:
         device_runtimes: DeviceRuntimeService,
         presence: ConnectorPresencePort,
         runtime_state_cache: SessionRuntimeStateCache,
+        capability_refresh: ConnectorCapabilityRefresh | None = None,
+        runtime_event: Callable[[str, str], Awaitable[None]] | None = None,
     ) -> None:
+        self._runtime_event = runtime_event
         self._store = store
         self._notifications = notifications
         self._timeline_broker = timeline_broker
         self._device_runtimes = device_runtimes
         self._presence = presence
         self._runtime_state_cache = runtime_state_cache
+        self._capability_refresh = capability_refresh
+
+    async def _notify_runtime_event(self, session: Any) -> None:
+        if self._runtime_event is None:
+            return
+        try:
+            await self._runtime_event(session.connectorId, session.runtimeId or session.runtime)
+        except Exception:  # noqa: BLE001 - a missed wake-up is retried by the next event
+            logger.exception("model channel wake-up failed session_id={}", session.id)
+
+    async def _refresh_session_capabilities(self, connector_id: str) -> None:
+        if self._capability_refresh is not None:
+            self._capability_refresh.request(connector_id)
+        else:
+            await publish_connector_session_capabilities(
+                self._store, self._presence, self._timeline_broker, connector_id,
+            )
 
     async def ingest(
         self,
@@ -101,8 +166,21 @@ class ConnectorIngestService:
                     connector_id,
                     notification,
                 )
-            except NotificationValidationError:
-                raise
+            except NotificationValidationError as exc:
+                # Preserve the single-notification 400 response, but do not
+                # let an invalid timeline order discard unrelated batched work.
+                if exc.code != "invalid_order_seq" or len(payload.notifications) == 1:
+                    raise
+                rejected.append(
+                    ConnectorIngestRejectedNotification(
+                        index=index,
+                        method=notification.method,
+                        code=exc.code,
+                        message=exc.message[:INGEST_REJECTION_MESSAGE_MAX_LENGTH],
+                        errorType=type(exc).__name__,
+                    )
+                )
+                continue
             except Exception as exc:  # noqa: BLE001
                 rejected.append(
                     ingest_rejection_from_exception(
@@ -137,19 +215,9 @@ class ConnectorIngestService:
                 )
         dashboard_changed = await self._publish_effects(effects)
         if protocol_capabilities_changed:
-            await publish_connector_session_capabilities(
-                self._store,
-                self._presence,
-                self._timeline_broker,
-                connector_id,
-            )
+            await self._refresh_session_capabilities(connector_id)
         if runtime_scoped_capabilities_changed:
-            await publish_connector_session_capabilities(
-                self._store,
-                self._presence,
-                self._timeline_broker,
-                connector_id,
-            )
+            await self._refresh_session_capabilities(connector_id)
         if dashboard_changed:
             await publish_dashboard_changed(
                 self._store,
@@ -207,23 +275,13 @@ class ConnectorIngestService:
         )
         dashboard_changed = await self._publish_effects([effect])
         if method == "protocol.capabilitiesUpdated" and effect.protocol_changed:
-            await publish_connector_session_capabilities(
-                self._store,
-                self._presence,
-                self._timeline_broker,
-                connector_id,
-            )
+            await self._refresh_session_capabilities(connector_id)
         if (
             method == "runtime.capability.updated"
             and effect.protocol_changed
             and not isinstance(params.get("sessionId"), str)
         ):
-            await publish_connector_session_capabilities(
-                self._store,
-                self._presence,
-                self._timeline_broker,
-                connector_id,
-            )
+            await self._refresh_session_capabilities(connector_id)
         if dashboard_changed:
             await publish_dashboard_changed(
                 self._store,
@@ -249,6 +307,7 @@ class ConnectorIngestService:
                     {
                         "items": [],
                         "runtime_state": None,
+                        "planning_state": None,
                         "timeline_reset": False,
                         "session": False,
                         "capability_changed": False,
@@ -288,6 +347,8 @@ class ConnectorIngestService:
                                 bucket["items"].append(effect.item)
                             if effect.items:
                                 bucket["items"].extend(effect.items)
+                    if effect.planning_state is not None:
+                        bucket["planning_state"] = effect.planning_state
                     if effect.runtime_state is not None:
                         bucket["runtime_state"] = effect.runtime_state
                     bucket["session"] = bucket["session"] or effect.session_changed
@@ -326,6 +387,8 @@ class ConnectorIngestService:
                 envelope["items"] = bucket["items"]
             elif bucket["items"]:
                 envelope["items"] = bucket["items"]
+            if bucket["planning_state"] is not None:
+                envelope["planningState"] = bucket["planning_state"]
             runtime_state: SessionRuntimeState | None = None
             if bucket["runtime_state"]:
                 bound_session = await self._store.get_session(session_id)
@@ -371,6 +434,9 @@ class ConnectorIngestService:
                         mark_read_on_change=True,
                     )
                     status_changed = persisted_session.status != bound_session.status
+                    if status_changed and persisted_session.status not in BUSY_SESSION_STATUSES:
+                        # A task ended: a model channel switch waiting for it may go on.
+                        await self._notify_runtime_event(persisted_session)
                     next_seq = max(
                         await self._store.get_session_seq(session_id),
                         persisted_session.updatedSeq,
@@ -426,6 +492,7 @@ class ConnectorIngestService:
                     "timelineReset",
                     "items",
                     "runtimeState",
+                    "planningState",
                     "session",
                     "capabilitySet",
                     "notices",
@@ -439,6 +506,7 @@ class ConnectorIngestService:
         for session_id, bucket in by_session.items():
             if not (
                 bucket["items"]
+                or bucket["planning_state"] is not None
                 or bucket["runtime_state"] is not None
                 or bucket["timeline_reset"]
                 or bucket["session"]
@@ -476,6 +544,7 @@ class ConnectorIngestService:
             raise ValueError("runtime.statusChanged requires status")
         error = params.get("error") if isinstance(params.get("error"), dict) else None
         phase = params.get("phase") if isinstance(params.get("phase"), dict) else None
+        model_connection = params.get("modelConnection")
         try:
             await self._device_runtimes.apply_status(
                 connector_id,
@@ -484,6 +553,7 @@ class ConnectorIngestService:
                 error=error,
                 phase=phase,
                 expected_connection_id=connection_id,
+                model_connection=model_connection if isinstance(model_connection, dict) else None,
             )
         except DeviceRuntimeNotFoundError:
             # Runtime lifecycle notifications may arrive while the connector is

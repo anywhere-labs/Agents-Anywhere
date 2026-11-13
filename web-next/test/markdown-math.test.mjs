@@ -9,6 +9,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { JSDOM } from "jsdom"
 import ts from "typescript"
 import { remarkStandaloneDisplayMath } from "../src/lib/markdown-math.ts"
+import * as sessionFileLink from "../src/lib/session-file-link.ts"
 
 const require = createRequire(import.meta.url)
 const passthrough = ({ children }) => React.createElement("div", null, children)
@@ -17,8 +18,12 @@ const stubs = {
   "@/lib/markdown-math": { remarkStandaloneDisplayMath },
   "@/lib/clipboard": { copyText() {} },
   "@/lib/utils": { cn: (...args) => args.filter(Boolean).join(" ") },
-  "@/lib/code-highlight": { highlightCode: code => code },
+  "@/components/source-code-block": {
+    SourceCodeBlock: passthrough,
+    SourceCodeContent: ({ code }) => React.createElement("pre", null, code),
+  },
   "@/lib/file-preview-window": { openNativeFilePreviewWindow() {} },
+  "@/lib/session-file-link": sessionFileLink,
   "@/components/ui/badge": { Badge: passthrough },
   "@/components/ui/scroll-area": { ScrollArea: passthrough, ScrollBar: () => null },
   "@/components/ui/dialog": {
@@ -33,6 +38,11 @@ const source = ts.transpileModule(readFileSync(new URL("../src/components/markdo
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },
 }).outputText
 const context = vm.createContext({ exports: {}, require: name => stubs[name] ?? require(name) })
+// The component lives inside the vm, so its `document`/`window` references
+// resolve to the vm global. Bridge them to the real globals (swapped by the
+// streaming/click tests) so browser-only APIs work when handlers run.
+Object.defineProperty(context, "document", { get: () => globalThis.document })
+Object.defineProperty(context, "window", { get: () => globalThis.window })
 vm.runInContext(source, context)
 function render(text) {
   return new JSDOM(renderToStaticMarkup(React.createElement(context.exports.MarkdownText, { text }))).window.document
@@ -74,6 +84,14 @@ test("GFM tables and normal highlighted code blocks remain available", () => {
   assert.match(doc.querySelector("pre").textContent, /const n = 1/)
 })
 
+test("in-page anchors stay in-page (no target=_blank)", () => {
+  const doc = render('[跳到段落](#section-1)')
+  const anchor = doc.querySelector('a[href="#section-1"]')
+  assert.ok(anchor, "anchor link should render")
+  assert.equal(anchor.getAttribute("target"), null)
+  assert.equal(anchor.getAttribute("rel"), null)
+})
+
 
 test("Mermaid fences route to the diagram renderer while preserving source", () => {
   const doc = render('```mermaid\ngraph LR; A-->B\n```\n\n```text\ngraph LR; A-->B\n```')
@@ -100,6 +118,34 @@ test("streaming Markdown preserves the mounted Mermaid subtree", async () => {
     await renderMessage('```mermaid\ngraph LR; A-->B; B-->C\n```\n\n继续回复')
     assert.equal(window.document.querySelector('[data-mermaid-source]'), diagram)
     assert.equal(diagram.getAttribute('data-mermaid-source'), 'graph LR; A-->B; B-->C')
+  } finally {
+    await act(() => root.unmount())
+    globalThis.window = previous.window
+    globalThis.document = previous.document
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act
+    window.close()
+  }
+})
+
+test("clicking an in-page anchor scrolls without changing location.hash", async () => {
+  const { window } = new JSDOM('<div id="root"></div><div id="target">target</div>')
+  const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT }
+  globalThis.window = window
+  globalThis.document = window.document
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  window.location.hash = "#/session/s1"
+
+  let scrolledTo = null
+  window.document.getElementById("target").scrollIntoView = () => { scrolledTo = "target" }
+
+  const root = createRoot(window.document.getElementById("root"))
+  try {
+    await act(() => root.render(React.createElement(context.exports.MarkdownText, { text: '[跳](#target)' })))
+    const anchor = window.document.querySelector('#root a[href="#target"]')
+    assert.ok(anchor, "anchor renders")
+    anchor.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true }))
+    assert.equal(scrolledTo, "target")
+    assert.equal(window.location.hash, "#/session/s1", "location.hash must not be overwritten")
   } finally {
     await act(() => root.unmount())
     globalThis.window = previous.window

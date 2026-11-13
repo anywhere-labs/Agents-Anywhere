@@ -65,6 +65,7 @@ import { Switch } from "@/components/ui/switch"
 import { AccountProfileCard } from "@/components/pages/account-profile-card"
 import { MobileConnectionDialog } from "@/components/pages/mobile-signin-panel"
 import { ArchivedSessionsTab } from "@/components/settings/archived-sessions-tab"
+import { ModelConfigsTab } from "@/components/settings/model-configs-tab"
 import { parseSettingsTab, settingsNavigation } from "@/components/settings/settings-navigation"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { useAuth } from "@/components/auth/auth-context"
@@ -75,11 +76,16 @@ import { authApi } from "@/features/auth/api"
 import { accountDisplayName } from "@/features/auth/account-profile"
 import { normalizeAuthMe } from "@/features/auth/normalize-me"
 import type { AuthMe } from "@/features/auth/types"
+import { useDeviceSettings } from "@/features/dashboard/device-settings"
 import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
+import { PYPI_MIRROR_OPTIONS, PYTHON_MIRROR_OPTIONS } from "@/features/desktop/package-mirrors"
 import {
   getDesktopWorkbenchBridge,
   type DesktopConnectorLog,
+  type DesktopConnectorLogSource,
 } from "@/features/desktop/bridge"
+import { useTokensAnywhereUrl } from "@/features/tokens-anywhere/address"
+import { useTokensAnywhereSidebarVisibility } from "@/features/tokens-anywhere/sidebar-visibility"
 import { useMobileConnectionsSidebarVisibility } from "@/features/mobile-connections/sidebar-visibility"
 import { cn } from "@/lib/utils"
 
@@ -89,20 +95,11 @@ const AVATAR_OUTPUT_SIZE = 256
 const AVATAR_MAX_FILE_SIZE = 8 * 1024 * 1024
 
 const SYNC_INTERVAL_OPTIONS = [15, 30, 60, 300] as const
-const PYPI_MIRROR_OPTIONS = [
-  { id: "default", url: "", labelKey: "desktopPypiDefault" },
-  { id: "tsinghua", url: "https://pypi.tuna.tsinghua.edu.cn/simple", labelKey: "desktopPypiTsinghua" },
-  { id: "ustc", url: "https://mirrors.ustc.edu.cn/pypi/simple", labelKey: "desktopPypiUstc" },
-  { id: "bfsu", url: "https://mirrors.bfsu.edu.cn/pypi/web/simple", labelKey: "desktopPypiBfsu" },
-  { id: "aliyun", url: "https://mirrors.aliyun.com/pypi/simple", labelKey: "desktopPypiAliyun" },
-  { id: "tencent", url: "https://mirrors.cloud.tencent.com/pypi/simple", labelKey: "desktopPypiTencent" },
-  { id: "huawei", url: "https://repo.huaweicloud.com/repository/pypi/simple", labelKey: "desktopPypiHuawei" },
-] as const
+type ConnectorProxyMode = "system" | "direct" | "custom"
 
-const PYTHON_MIRROR_OPTIONS = [
-  { id: "default", url: "", labelKey: "desktopPythonMirrorDefault" },
-  { id: "npmmirror", url: "https://registry.npmmirror.com/-/binary/python-build-standalone", labelKey: "desktopPythonMirrorNpmmirror" },
-] as const
+function isConnectorProxyUrl(value: string): boolean {
+  return /^(?:https?|socks5h?):\/\/[^\s/]+/i.test(value.trim())
+}
 
 function AccountTab({
   me,
@@ -282,6 +279,9 @@ function DesktopTab() {
     uvPypiIndexUrl: "",
     uvPythonInstallMirror: "",
   })
+  const [proxyMode, setProxyMode] = React.useState<ConnectorProxyMode>("system")
+  const [proxyUrl, setProxyUrl] = React.useState("")
+  const proxyUrlInvalid = proxyMode === "custom" && proxyUrl.trim() !== "" && !isConnectorProxyUrl(proxyUrl)
   const connectorId = binding?.connectorId ?? state?.connectorId ?? null
   const serverUrl = binding?.serverUrl || state?.serverUrl || null
   const serverConnector = connectors.find((connector) => connector.id === connectorId)
@@ -316,6 +316,12 @@ function DesktopTab() {
       uvPythonInstallMirror: state?.uvPythonInstallMirror ?? "",
     })
   }, [state?.uvPath, state?.pythonPath, state?.uvPypiIndexUrl, state?.uvPythonInstallMirror])
+
+  React.useEffect(() => {
+    const saved = state?.connectorProxy ?? ""
+    setProxyMode(saved === "direct" ? "direct" : saved ? "custom" : "system")
+    setProxyUrl(saved === "direct" ? "" : saved)
+  }, [state?.connectorProxy])
 
   const loadConnectorConfig = React.useCallback(async () => {
     const bridge = getDesktopWorkbenchBridge()
@@ -496,6 +502,52 @@ function DesktopTab() {
             <span className="w-36 shrink-0 text-sm text-muted-foreground">{t("desktopResolvedPythonPath")}</span>
             <span className="code-mono min-w-0 truncate text-sm">{state?.resolvedPythonPath || t("desktopPythonChosenByUv")}</span>
           </div>
+          <Field orientation="horizontal" className="border-t border-border py-4">
+            <FieldContent>
+              <span className="text-sm font-medium">{t("desktopConnectorProxy")}</span>
+              <span className="text-xs text-muted-foreground">{t("desktopConnectorProxyDescription")}</span>
+            </FieldContent>
+            <Select
+              value={proxyMode}
+              onValueChange={(value) => {
+                const mode = value as ConnectorProxyMode
+                setProxyMode(mode)
+                // A custom proxy is saved once its address has been typed.
+                if (mode === "system") void saveSettings({ connectorProxy: "" })
+                if (mode === "direct") void saveSettings({ connectorProxy: "direct" })
+              }}
+              disabled={busy}
+            >
+              <SelectTrigger className="min-w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectGroup>
+                  <SelectItem value="system">{t("desktopConnectorProxySystem")}</SelectItem>
+                  <SelectItem value="direct">{t("desktopConnectorProxyDirect")}</SelectItem>
+                  <SelectItem value="custom">{t("desktopConnectorProxyCustom")}</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
+          {proxyMode === "custom" ? (
+            <Field className="pb-4">
+              <Input
+                value={proxyUrl}
+                placeholder="http://127.0.0.1:7890"
+                aria-label={t("desktopConnectorProxyCustom")}
+                aria-invalid={proxyUrlInvalid}
+                onChange={(event) => setProxyUrl(event.currentTarget.value)}
+                onBlur={(event) => {
+                  const value = event.currentTarget.value.trim()
+                  if (isConnectorProxyUrl(value) && value !== state?.connectorProxy) void saveSettings({ connectorProxy: value })
+                }}
+              />
+              <span className={proxyUrlInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>
+                {t(proxyUrlInvalid ? "desktopConnectorProxyInvalid" : "desktopConnectorProxyCustomDescription")}
+              </span>
+            </Field>
+          ) : null}
           <Field orientation="horizontal" className="border-t border-border py-4">
             <FieldContent>
               <span className="text-sm font-medium">{t("desktopUvPypiIndexUrl")}</span>
@@ -714,6 +766,9 @@ function DesktopTab() {
 function StartupTab() {
   const t = useTranslations("pages.settings")
   const { supported, loading, busy, state, saveSettings } = useDesktopConnector()
+  const { session: authSession } = useAuth()
+  // The server owns this device setting so other devices can change it too.
+  const deviceSettings = useDeviceSettings(state?.connectorId || null, authSession?.accessToken)
 
   if (!supported) return <DesktopUnavailable title={t("startup")} />
   if (loading && !state) return <LoadingState className="min-h-64" />
@@ -748,6 +803,13 @@ function StartupTab() {
             disabled={busy}
             onCheckedChange={(checked) => void saveSettings({ silentLaunch: checked })}
           />
+          <DesktopSettingSwitch
+            label={t("desktopConfirmQuitOnShutdown")}
+            description={t("desktopConfirmQuitOnShutdownDescription")}
+            checked={deviceSettings.settings?.confirmQuitOnShutdown ?? Boolean(state?.confirmQuitOnShutdown)}
+            disabled={busy || deviceSettings.saving || !deviceSettings.settings}
+            onCheckedChange={(checked) => void deviceSettings.update({ confirmQuitOnShutdown: checked })}
+          />
         </FieldGroup>
       </section>
 
@@ -773,6 +835,7 @@ function LogsTab() {
   const t = useTranslations("pages.settings")
   const { supported, loading, busy, state, saveSettings } = useDesktopConnector()
   const [logs, setLogs] = React.useState<DesktopConnectorLog[]>([])
+  const [sourceFilter, setSourceFilter] = React.useState<"all" | DesktopConnectorLogSource>("all")
   const [logsLoading, setLogsLoading] = React.useState(false)
   const [olderLogsLoading, setOlderLogsLoading] = React.useState(false)
   const firstLogSeq = typeof logs[0]?.seq === "number" ? logs[0].seq : null
@@ -801,7 +864,10 @@ function LogsTab() {
     const epoch = logsEpoch.current
     setLogsLoading(true)
     try {
-      const page = await bridge.connector.getLogs({ pageSize: 200 })
+      const page = await bridge.connector.getLogs({
+        pageSize: 200,
+        source: sourceFilter === "all" ? undefined : sourceFilter,
+      })
       if (epoch !== logsEpoch.current) return
       setLogs((current) => [...page.items, ...current.filter((entry) =>
         typeof entry.seq === "number" && page.lastSeq != null && entry.seq > page.lastSeq)].slice(-200))
@@ -811,18 +877,21 @@ function LogsTab() {
     } finally {
       setLogsLoading(false)
     }
-  }, [t])
+  }, [sourceFilter, t])
 
   React.useEffect(() => {
     const bridge = getDesktopWorkbenchBridge()
     if (!supported || !bridge?.connector) return
     void loadLogs()
     const unsubscribeLog = bridge.connector.onLog((entries) => {
-      if (entries.length === 0) return
-      setOldestLogSeq((current) => current ?? (typeof entries[0]?.seq === "number" ? entries[0].seq : null))
+      const filtered = entries.filter((entry) =>
+        sourceFilter === "all" || (entry.source ?? "connector") === sourceFilter
+      )
+      if (filtered.length === 0) return
+      setOldestLogSeq((current) => current ?? (typeof filtered[0]?.seq === "number" ? filtered[0].seq : null))
       setLogs((current) => {
         const existing = new Set(current.map((entry) => entry.seq ?? entry.id))
-        return [...current, ...entries.filter((entry) => !existing.has(entry.seq ?? entry.id))].slice(-200)
+        return [...current, ...filtered.filter((entry) => !existing.has(entry.seq ?? entry.id))].slice(-200)
       })
     })
     const unsubscribeCleared = bridge.connector.onLogsCleared(() => {
@@ -835,7 +904,15 @@ function LogsTab() {
       if (typeof unsubscribeLog === "function") unsubscribeLog()
       if (typeof unsubscribeCleared === "function") unsubscribeCleared()
     }
-  }, [loadLogs, supported])
+  }, [loadLogs, sourceFilter, supported])
+
+  const selectSourceFilter = (next: "all" | DesktopConnectorLogSource) => {
+    if (next === sourceFilter) return
+    logsEpoch.current++
+    setLogs([])
+    setOldestLogSeq(null)
+    setSourceFilter(next)
+  }
 
   const loadOlderLogs = async () => {
     const bridge = getDesktopWorkbenchBridge()
@@ -843,7 +920,11 @@ function LogsTab() {
     const epoch = logsEpoch.current
     setOlderLogsLoading(true)
     try {
-      const page = await bridge.connector.getLogs({ pageSize: 200, beforeSeq: firstLogSeq })
+      const page = await bridge.connector.getLogs({
+        pageSize: 200,
+        beforeSeq: firstLogSeq,
+        source: sourceFilter === "all" ? undefined : sourceFilter,
+      })
       if (epoch !== logsEpoch.current) return
       setLogs((current) => {
         const existing = new Set(current.map((entry) => entry.seq ?? entry.id))
@@ -886,8 +967,30 @@ function LogsTab() {
     }
   }
 
+  const displayLogs = React.useMemo(
+    () =>
+      [...logs].reverse().sort((a, b) => {
+        const timeA = Date.parse(a.time ?? a.timestamp ?? "")
+        const timeB = Date.parse(b.time ?? b.timestamp ?? "")
+        if (Number.isFinite(timeA) && Number.isFinite(timeB) && timeA !== timeB) {
+          return timeB - timeA
+        }
+        if (typeof a.seq === "number" && typeof b.seq === "number" && a.seq !== b.seq) {
+          return b.seq - a.seq
+        }
+        return 0
+      }),
+    [logs]
+  )
+
   if (!supported) return <DesktopUnavailable title={t("logs")} />
   if (loading && !state) return <LoadingState className="min-h-64" />
+
+  const sourceOptions: Array<{ value: "all" | DesktopConnectorLogSource; label: string }> = [
+    { value: "all", label: t("desktopLogsSourceAll") },
+    { value: "connector", label: t("desktopLogsSourceConnector") },
+    { value: "bridge", label: t("desktopLogsSourceBridge") },
+  ]
 
   return (
     <div className="flex flex-col gap-4">
@@ -934,7 +1037,18 @@ function LogsTab() {
             <h2 className="text-base font-semibold">{t("desktopLogs")}</h2>
             <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopLogsDescription")}</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            {getDesktopWorkbenchBridge()?.connector?.openLogsFolder ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void getDesktopWorkbenchBridge()?.connector?.openLogsFolder?.()}
+              >
+                <FolderOpen data-icon="inline-start" />
+                {t("desktopOpenLogsFolder")}
+              </Button>
+            ) : null}
             {getDesktopWorkbenchBridge()?.connector?.exportLogs ? (
               <Button type="button" variant="outline" size="sm" onClick={() => void exportLogs()} disabled={exportingLogs}>
                 {exportingLogs ? <Spinner /> : <Download data-icon="inline-start" />}
@@ -952,30 +1066,69 @@ function LogsTab() {
           </div>
         </div>
         <Separator />
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-border/60 px-6 py-2.5">
+          {sourceOptions.map((option) => (
+            <Button
+              key={option.value}
+              type="button"
+              variant={sourceFilter === option.value ? "secondary" : "ghost"}
+              size="sm"
+              className="h-7 px-2.5 text-xs"
+              onClick={() => selectSourceFilter(option.value)}
+            >
+              {option.label}
+            </Button>
+          ))}
+        </div>
         <div className="max-h-[32rem] min-h-64 overflow-y-auto bg-muted/20 px-4 py-3">
-          {hasMoreLogs && logs.length > 0 ? (
-            <div className="mb-2 flex justify-center">
-              <Button type="button" variant="ghost" size="sm" onClick={() => void loadOlderLogs()} disabled={olderLogsLoading}>
-                {olderLogsLoading ? <Spinner /> : <ChevronDown className="rotate-180" data-icon="inline-start" />}
-                {olderLogsLoading ? t("desktopLoadingLogs") : t("desktopLoadOlderLogs")}
-              </Button>
-            </div>
-          ) : null}
-          {logs.length === 0 ? (
+          {displayLogs.length === 0 ? (
             <div className="flex min-h-56 items-center justify-center text-sm text-muted-foreground">
               {logsLoading ? t("desktopLoadingLogs") : t("desktopNoLogs")}
             </div>
           ) : (
             <div className="flex flex-col gap-1 font-mono text-xs">
-              {logs.map((entry, index) => (
-                <div key={entry.seq ?? entry.id ?? `${entry.time ?? entry.timestamp ?? "log"}-${index}`} className="grid grid-cols-[auto_auto_minmax(0,1fr)] gap-2 rounded px-2 py-1 hover:bg-muted/60">
-                  <span className="text-muted-foreground">{formatDesktopLogTime(entry.time ?? entry.timestamp)}</span>
-                  <span className={desktopLogLevelClass(entry.level)}>{entry.level ?? "INFO"}</span>
-                  <span className="min-w-0 whitespace-pre-wrap break-words text-foreground/90">{entry.message}</span>
-                </div>
-              ))}
+              {displayLogs.map((entry, index) => {
+                const source = entry.source ?? "connector"
+                const loggerName = entry.name?.trim() && entry.name.trim() !== source ? entry.name.trim() : null
+                const { message, detailsText } = formatDesktopLogPayload(entry)
+                return (
+                  <React.Fragment key={entry.seq ?? entry.id ?? `${entry.time ?? entry.timestamp ?? "log"}-${index}`}>
+                    <div className="rounded px-2 py-1 hover:bg-muted/60">
+                      <div className="grid grid-cols-[auto_auto_auto_minmax(0,1fr)] items-baseline gap-2">
+                        <span className="text-muted-foreground">{formatDesktopLogTime(entry.time ?? entry.timestamp)}</span>
+                        <span className={desktopLogLevelClass(entry.level)}>{formatDesktopLogLevel(entry.level)}</span>
+                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                          {source}
+                        </span>
+                        <span className="min-w-0 whitespace-pre-wrap break-words text-foreground/90">
+                          {loggerName ? <span className="mr-1.5 text-muted-foreground">[{loggerName}]</span> : null}
+                          {message}
+                        </span>
+                      </div>
+                      {detailsText ? (
+                        <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap break-words rounded border border-border/70 bg-background/70 px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground select-text">
+                          {detailsText}
+                        </pre>
+                      ) : null}
+                    </div>
+                    {entry.gapBefore ? (
+                      <div className="my-1 rounded border border-dashed border-border/80 bg-muted/40 px-2.5 py-1 text-center text-[11px] text-muted-foreground">
+                        {t("desktopLogsGapBefore")}
+                      </div>
+                    ) : null}
+                  </React.Fragment>
+                )
+              })}
             </div>
           )}
+          {hasMoreLogs && displayLogs.length > 0 ? (
+            <div className="mt-2 flex justify-center">
+              <Button type="button" variant="ghost" size="sm" onClick={() => void loadOlderLogs()} disabled={olderLogsLoading}>
+                {olderLogsLoading ? <Spinner /> : <ChevronDown data-icon="inline-start" />}
+                {olderLogsLoading ? t("desktopLoadingLogs") : t("desktopLoadOlderLogs")}
+              </Button>
+            </div>
+          ) : null}
         </div>
       </section>
     </div>
@@ -1068,12 +1221,82 @@ function formatDesktopLogTime(value: string | undefined): string {
   })
 }
 
+function formatDesktopLogLevel(level: string | undefined): string {
+  const normalized = level?.trim().toUpperCase() || "INFO"
+  return normalized === "WARN" ? "WARNING" : normalized
+}
+
 function desktopLogLevelClass(level: string | undefined): string {
-  const normalized = level?.toUpperCase() ?? "INFO"
+  const normalized = formatDesktopLogLevel(level)
   if (normalized === "ERROR" || normalized === "CRITICAL") return "font-semibold text-destructive"
   if (normalized === "WARNING") return "font-semibold text-amber-500"
   if (normalized === "SUCCESS") return "font-semibold text-emerald-500"
   return "text-muted-foreground"
+}
+
+function formatDesktopLogPayload(entry: DesktopConnectorLog): {
+  message: string
+  detailsText: string | null
+} {
+  const rawMessage = entry.message ?? ""
+  const eventMatch = rawMessage.match(/^[A-Za-z][\w.-]*/)
+  const eventName = eventMatch?.[0] ?? rawMessage
+  const tail = rawMessage.slice(eventName.length).trim()
+
+  let parsedDetails: unknown = undefined
+  const rawDetails = entry.details?.trim()
+  if (rawDetails) {
+    try {
+      parsedDetails = JSON.parse(rawDetails)
+    } catch {
+      parsedDetails = undefined
+    }
+  }
+
+  let message = rawMessage
+  if (
+    tail.startsWith("{") &&
+    tail.endsWith("}") &&
+    (parsedDetails === undefined ||
+      (typeof parsedDetails === "object" && parsedDetails !== null && !Array.isArray(parsedDetails)))
+  ) {
+    try {
+      const parsedTail = JSON.parse(tail)
+      if (typeof parsedTail === "object" && parsedTail !== null && !Array.isArray(parsedTail)) {
+        parsedDetails = {
+          ...(typeof parsedDetails === "object" && parsedDetails !== null
+            ? (parsedDetails as Record<string, unknown>)
+            : {}),
+          ...(parsedTail as Record<string, unknown>),
+        }
+        message = eventName
+      }
+    } catch {
+      // Keep original message if tail is not valid JSON.
+    }
+  }
+
+  let formattedDetails: string | null = null
+  if (parsedDetails !== undefined) {
+    if (typeof parsedDetails === "object" && parsedDetails !== null && !Array.isArray(parsedDetails)) {
+      if (Object.keys(parsedDetails).length > 0) {
+        formattedDetails = JSON.stringify(parsedDetails, null, 2)
+      }
+    } else {
+      formattedDetails = JSON.stringify(parsedDetails, null, 2)
+    }
+  } else if (rawDetails && rawDetails !== "{}") {
+    formattedDetails = rawDetails
+  }
+
+  const extraBlocks = [formattedDetails, entry.exception?.trim()].filter(
+    (part): part is string => Boolean(part)
+  )
+
+  return {
+    message,
+    detailsText: extraBlocks.length > 0 ? extraBlocks.join("\n\n") : null,
+  }
 }
 
 function ResetPasswordDialog({
@@ -1347,6 +1570,8 @@ const themes: { id: AppearanceMode; labelKey: string; descKey: string }[] = [
 ]
 
 function AppearanceTab() {
+  const [tokensAnywhereVisible, setTokensAnywhereVisible] = useTokensAnywhereSidebarVisibility()
+  const tokensAnywhereUrl = useTokensAnywhereUrl()
   const t = useTranslations("pages.settings")
   const { theme, setTheme } = useTheme()
   const { sidebarShowsSessions, setSidebarShowsSessions, sidebarCompactSessions, setSidebarCompactSessions } = useWorkspace()
@@ -1382,6 +1607,15 @@ function AppearanceTab() {
 
       <SettingsSection title={t("desktopSidebar")} description={t("desktopSidebarDescription")}>
         <FieldGroup>
+          {tokensAnywhereUrl ? (
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="settings-tokens-anywhere-visible">{t("tokensAnywhereShow")}</FieldLabel>
+                <FieldDescription>{t("tokensAnywhereShowDescription")}</FieldDescription>
+              </FieldContent>
+              <Switch id="settings-tokens-anywhere-visible" checked={tokensAnywhereVisible} onCheckedChange={setTokensAnywhereVisible} />
+            </Field>
+          ) : null}
           <Field orientation="horizontal">
             <FieldContent>
               <FieldLabel htmlFor="settings-sidebar-shows-sessions">
@@ -1418,7 +1652,7 @@ function AppearanceTab() {
 }
 
 export function SettingsPage() {
-  const { openSession, projects, sessions, isLoading, refreshData, settingsTab, upsertSession } = useWorkspace()
+  const { connectors, openSession, projects, sessions, isLoading, refreshData, settingsTab, upsertSession } = useWorkspace()
   const { session, me: authMe, refreshMe } = useAuth()
   const t = useTranslations("pages.settings")
   // The section sidebar owns navigation; the route is the single source of truth.
@@ -1482,8 +1716,9 @@ export function SettingsPage() {
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 overflow-hidden px-5 pb-5 pt-4 sm:px-8 sm:pb-8 sm:pt-5">
-        <ScrollArea className="h-full min-h-0 min-w-0 flex-1" viewportProps={{ className: "pb-8" }}>
+      {/* The padding sits inside the scroll area so its scrollbar runs along the window edge. */}
+      <div className="flex min-h-0 flex-1 overflow-hidden pt-4 sm:pt-5">
+        <ScrollArea className="h-full min-h-0 min-w-0 flex-1" viewportProps={{ className: "px-5 pb-13 sm:px-8 sm:pb-16" }}>
           {tab === "account" && (
             loadingMe ? (
               <LoadingState className="h-full" />
@@ -1500,6 +1735,9 @@ export function SettingsPage() {
                 {t("unavailable")}
               </div>
             )
+          )}
+          {tab === "model-configs" && (
+            <ModelConfigsTab token={session?.accessToken ?? ""} connectors={connectors} />
           )}
           {tab === "mobile-connections" && (
             <MobileConnectionsTab

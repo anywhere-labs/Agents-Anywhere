@@ -6,3 +6,7 @@ class ConnectorNetworkError(RuntimeError):
 
     code = "connector_network_error"
     retryable = True
+
+
+class ConnectorIngestClosedError(RuntimeError):
+    """The notification queue has been closed without a specific failure."""

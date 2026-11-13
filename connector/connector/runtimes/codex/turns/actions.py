@@ -12,6 +12,7 @@ from connector.runtime_protocol import (
     RuntimeSessionStateCache,
     RuntimeUnsupportedError,
     SessionSourceObservation,
+    SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
@@ -21,6 +22,9 @@ from connector.runtimes.codex.domain.pending_messages import (
 from connector.runtimes.codex.domain.selections import (
     model_settings_from_selection,
     permission_settings_from_selection,
+)
+from connector.runtimes.codex.notifications.turn_lifecycle import (
+    CodexTurnLifecycleHandler,
 )
 from connector.runtimes.codex.runtime_helpers import soft_codex_unavailable_reason
 from connector.runtimes.codex.sdk.runtime_client import (
@@ -50,6 +54,14 @@ class CodexTurnActions:
     pending_messages: PendingClientMessageRegistry
     list_model_catalog: Callable[[str | None, int], Awaitable[Any]] | None = None
     list_permission_catalog: Callable[[str | None, int], Awaitable[Any]] | None = None
+    turn_lifecycle: CodexTurnLifecycleHandler | None = None
+
+    async def reconcile_history_state(
+        self, state: SessionState | None, expected: SessionState | None,
+    ) -> SessionState | None:
+        if self.turn_lifecycle is None:
+            return state
+        return await self.turn_lifecycle.reconcile_history_state(state, expected)
 
     async def start_turn(
         self,
@@ -73,6 +85,9 @@ class CodexTurnActions:
         }:
             return _source_failure_result(cached_source)
         await self.ensure_started()
+        entered = await self.host.prepare_planning_turn(session_id, external_session_id)
+        if entered and not content.strip() and not attachments:
+            return RuntimeOperationResult(ok=True, result={"externalSessionId": external_session_id, "created": True, "messageAccepted": False})
         effective_selections = dict(selections or {})
         if not effective_selections:
             cached = self.session_states.get(session_id)
@@ -106,7 +121,10 @@ class CodexTurnActions:
             external_session_id=external_session_id,
             status="waiting",
             selections=effective_selections,
-            metadata={"source": "codex.turn/start.requested"},
+            metadata={
+                "source": "codex.turn/start.requested",
+                "pendingSelectionScopes": [],
+            },
         )
         self.pending_messages.register(
             external_session_id=external_session_id,
@@ -119,6 +137,7 @@ class CodexTurnActions:
                 self.host,
                 session_id,
                 attachments,
+                self.notices,
             )
             result = await self.client.start_turn(
                 CodexStartTurnRequest(
@@ -264,6 +283,7 @@ class CodexTurnActions:
             self.host,
             session_id,
             attachments,
+            self.notices,
         )
         effective_content = content_with_codex_attachment_notes(
             content,

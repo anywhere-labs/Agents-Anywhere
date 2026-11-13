@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from connector.runtimes.codex.timeline.raw_item import timeline_item_role
+
 
 def timeline_item_id(
     raw: dict[str, Any],
@@ -178,19 +180,7 @@ def _timeline_item_turn_id(raw: dict[str, Any]) -> str | None:
 
 
 def _timeline_item_role(raw: dict[str, Any]) -> str | None:
-    value = raw.get("role")
-    if isinstance(value, str) and value:
-        return value
-    item_type = raw.get("type")
-    if item_type == "reasoning":
-        return "system"
-    if item_type in {"userMessage", "steeringUserMessage"}:
-        return "user"
-    if item_type == "agentMessage":
-        return "assistant"
-    if item_type == "commandExecution":
-        return "tool"
-    return None
+    return timeline_item_role(raw)
 
 
 def _safe_component(value: str) -> str:

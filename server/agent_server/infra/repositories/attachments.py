@@ -41,6 +41,7 @@ class AttachmentRepositoryMixin:
         name: str,
         data: bytes,
         media_type: str | None = None,
+        file_id: str | None = None,
     ) -> dict[str, Any]:
         return await self.attachments.save_user_upload(
             session_id=session_id,
@@ -48,6 +49,7 @@ class AttachmentRepositoryMixin:
             data=data,
             name=name,
             media_type=media_type,
+            **({"file_id": file_id} if file_id else {}),
         )
 
     async def read_uploaded_file(

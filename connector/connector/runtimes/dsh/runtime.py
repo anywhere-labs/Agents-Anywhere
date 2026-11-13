@@ -36,7 +36,11 @@ from connector.runtimes.dsh.bridge.client import (
     BridgeUnavailableError,
 )
 from connector.runtimes.dsh.bridge.host import bridge_host
-from connector.runtimes.dsh.bridge.sync import SyncRelay
+from connector.runtimes.dsh.bridge.sync import (
+    SYNC_INTERRUPTED_PHASE,
+    SYNCING_PHASE,
+    SyncRelay,
+)
 
 BRIDGE_POLL_INTERVAL_SECONDS = 5.0
 # A relay that died from a bug is rebuilt after this pause, not in a tight loop.
@@ -64,6 +68,8 @@ class DshRuntime(AgentRuntime):
         self._restart_task: asyncio.Task[None] | None = None
         self._sync: SyncRelay | None = None
         self._relay_restart_task: asyncio.Task[None] | None = None
+        # Sessions whose history the backend refused, shared by every relay.
+        self._quarantined: dict[str, Any] = {}
         self._sync_mode = "events"
 
     @property
@@ -76,10 +82,16 @@ class DshRuntime(AgentRuntime):
             return
         await self._ensure_client()
         async with self._connect_lock:
+            if self._sync is not None and not self._sync.baseline_complete:
+                # A subscription still delivering its inventory, or about to
+                # resubscribe, already produces a fresh baseline. Restarting it
+                # on every backend reconnect could keep it from ever finishing.
+                logger.info("DSH resynchronize skipped; event sync is still building its baseline")
+                return
             if self._sync is not None:
                 await self._sync.close()
             if not self._stopping and self._client is not None and self.sync_mode == "events":
-                self._sync = SyncRelay(self._client, self.host, on_exit=self._relay_exited)
+                self._sync = SyncRelay(self._client, self.host, on_exit=self._relay_exited, quarantined=self._quarantined)
                 self._sync.start()
 
     @property
@@ -159,14 +171,24 @@ class DshRuntime(AgentRuntime):
         commands = models.commands(await self._request("listCommands", {
             **_session_params(session_id, external_session_id), "query": query, "limit": limit,
         }))
-        return tuple(command for command in commands if command.id == "compact")
+        planning = self.planning is not None and await self.planning.port.available(session_id, external_session_id)
+        return tuple(command for command in commands if command.id == "compact" or (command.id == "plan" and planning))
 
     async def execute_command(
         self, session_id: str, command: str, external_session_id: str | None = None,
         raw: str | None = None, args: tuple[str, ...] = (),
     ) -> RuntimeCommandResult:
+        if command == "plan" and self.planning is not None:
+            from uuid import uuid4
+
+            from connector.planning.application.commands import parse_plan_command
+            intent = parse_plan_command(raw if raw is not None else "/plan" + (" " + " ".join(args) if args else ""))
+            if intent is None:
+                return RuntimeCommandResult(command=command, ok=False, code="invalid_command", message="请输入完整 /plan 命令。")
+            result = await self.planning.execute(session_id, external_session_id, {**intent, "operationId": uuid4().hex})
+            return RuntimeCommandResult(command=command, ok=result["ok"], code=result.get("code"), message=result.get("message"), result=result)
         if command != "compact":
-            return RuntimeCommandResult(command=command, ok=False, code="unknown_command", message="AA supports only /compact for DSH.")
+            return RuntimeCommandResult(command=command, ok=False, code="unknown_command", message="This DSH command is not available in AA.")
         unavailable = await self._commands_unavailable(session_id, external_session_id)
         if unavailable:
             return RuntimeCommandResult(command=command, ok=False, code=unavailable[0], message=unavailable[1])
@@ -345,7 +367,12 @@ class DshRuntime(AgentRuntime):
         result = await self._request(
             "getSessionNotices", _session_params(session_id, external_session_id)
         )
-        return tuple(models.notice(item) for item in _array(result, "notices"))
+        from connector.runtimes.dsh.planning import observe_dsh_notice
+        notices = []
+        for item in _array(result, "notices"):
+            if not await observe_dsh_notice(self.host, {**item, "sessionId": session_id}):
+                notices.append(models.notice(item))
+        return tuple(notices)
 
     async def respond_interaction(
         self, session_id: str, notice_id: str, action_id: str,
@@ -371,8 +398,28 @@ class DshRuntime(AgentRuntime):
         if set(options) - {"agentPreset"}:
             raise RuntimeInvalidRequestError("Unsupported DSH creation option")
         preset = options.get("agentPreset", self.config.values.get("defaultAgentPreset"))
+        if preset is None:
+            preset = await self._initial_agent_preset()
         return await self._send_text("createAndStartSession", session_id, None, content, cwd, attachments, client_message_id,
                                      selections=selections, agent_preset=preset)
+
+    async def _initial_agent_preset(self) -> str | None:
+        """The plugin's declared initial mode when this Runtime has none saved.
+
+        ``defaultAgentPreset`` is only filled in when the Runtime config was
+        validated while DSH was reachable. The plugin owns the initial rule
+        (the mode DSH itself uses for new sessions, when it is loadable), so
+        read it from the catalog the config form uses; when it declares none,
+        the plugin asks the user to choose a mode.
+        """
+
+        try:
+            catalog = _object(await self._request("listAgentPresets"))
+        except RuntimeUnsupportedError:
+            return None
+        field = catalog.get("configField")
+        default = field.get("default") if isinstance(field, dict) else None
+        return default if isinstance(default, str) and default else None
 
     async def start_turn(
         self, session_id: str, external_session_id: str | None, content: str,
@@ -388,12 +435,13 @@ class DshRuntime(AgentRuntime):
         cwd: str | None, attachments: tuple[RuntimeAttachment, ...], client_message_id: str | None,
         *, selections: Mapping[str, str | None] | None = None, agent_preset: str | None = None,
     ) -> RuntimeOperationResult:
-        if (not content.strip() and not attachments) or not client_message_id:
+        if (not content.strip() and not attachments and not (method == "createAndStartSession" and self.planning and self.planning.state(session_id).requested_mode == "plan")) or not client_message_id:
             raise RuntimeInvalidRequestError("A message and a stable clientMessageId are required")
         params = {**_session_params(session_id, external_id), "content": content,
                   "clientMessageId": client_message_id, "cwd": cwd,
                   "selections": dict(selections or {})}
         if method == "createAndStartSession":
+            params["planningIntent"] = self.planning is not None and self.planning.state(session_id).requested_mode == "plan"
             params["agentPreset"] = agent_preset
         if attachments:
             capability_set = _object(await self._request("getRuntimeCapabilities"))
@@ -440,6 +488,17 @@ class DshRuntime(AgentRuntime):
                 await client.request("getRuntimeCapabilities"),
                 connector_id=self.host.connector_id,
             )
+            if self.planning is not None:
+                # Bootstrap through this already connected client. Re-entering
+                # _ensure_client from a Host capability callback would deadlock.
+                try:
+                    native_planning = (await client.request("getPlanning", {})).get("available") is True
+                except (BridgeRpcError, RuntimeError, OSError, ValueError, TimeoutError):
+                    native_planning = False
+                from dataclasses import replace
+                from connector.runtime_protocol.models import RuntimeCapability
+                items = tuple(item for item in capabilities.capabilities if item.capability_id != "session.planning")
+                capabilities = replace(capabilities, capabilities=(*items, RuntimeCapability(capability_id="session.planning", runtime="dsh", scope="runtime", supported=False, available=False, metadata={"nativePlanningAvailable": native_planning})))
             await self.host.runtime_capabilities_update(capabilities)
             supported = {item.capability_id for item in capabilities.capabilities if item.available and item.supported}
             for capability, method, decode, publish in (
@@ -457,10 +516,9 @@ class DshRuntime(AgentRuntime):
             self._client = client
             self._sync_mode = "events" if result.get("features", {}).get("syncMode") == "events" else "polling"
             if self._sync_mode == "events":
-                await self.host.runtime_health_update("starting", phase={
-                    "code": "syncing", "message": "正在同步 DSH 会话…", "retryable": True,
-                })
-                self._sync = SyncRelay(client, self.host, on_exit=self._relay_exited)
+                # The Bridge answers now; the event feed catching up is progress, not unavailability.
+                await self.host.runtime_health_update("running", phase=SYNCING_PHASE)
+                self._sync = SyncRelay(client, self.host, on_exit=self._relay_exited, quarantined=self._quarantined)
                 self._sync.start()
             else:
                 with suppress(Exception):
@@ -527,11 +585,11 @@ class DshRuntime(AgentRuntime):
             client = self._client
             if self._stopping or self._sync is not failed or client is None or not client.connected:
                 return
+            # Its quarantine retries now belong to the replacement.
+            await failed.close()
             with suppress(Exception):
-                await self.host.runtime_health_update("starting", phase={
-                    "code": "sync_interrupted", "message": "DSH 会话同步中断，正在重试…", "retryable": True,
-                })
-            self._sync = SyncRelay(client, self.host, on_exit=self._relay_exited)
+                await self.host.runtime_health_update("running", phase=SYNC_INTERRUPTED_PHASE)
+            self._sync = SyncRelay(client, self.host, on_exit=self._relay_exited, quarantined=self._quarantined)
             self._sync.start()
 
     async def _handle_exit(self, error: BaseException | None) -> None:

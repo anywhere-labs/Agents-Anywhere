@@ -58,6 +58,8 @@ data class AgentDevice(
     val online: Boolean,
     val lastSeenAt: String? = null,
     val createdAt: String? = null,
+    /** "cli", "desktop" and so on; null when the Server does not say. */
+    val connectorKind: String? = null,
 )
 
 data class RemoteFile(

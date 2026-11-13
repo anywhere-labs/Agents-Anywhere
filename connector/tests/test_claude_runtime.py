@@ -2498,6 +2498,94 @@ async def _test_claude_runtime_projects_tool_blocks_to_timeline() -> None:
     assert history_tool.status == "done"
 
 
+_INLINE_IMAGE_DATA = "iVBORw0KGgo" + "A" * 3989
+
+
+def _read_image_messages(session_id: str, *, history: bool) -> list[SimpleNamespace]:
+    def message(kind: str, uuid: str, role: str, content: Any, **extra: Any) -> SimpleNamespace:
+        fields = {"uuid": uuid} if history else {}
+        return SimpleNamespace(
+            type=kind,
+            session_id=session_id,
+            message={"role": role, "content": content},
+            **fields,
+            **extra,
+        )
+
+    image = {
+        "type": "image",
+        "source": {"type": "base64", "media_type": "image/png", "data": _INLINE_IMAGE_DATA},
+    }
+    messages = [
+        message(
+            "assistant", "image_tool_call", "assistant",
+            [
+                {"type": "tool_use", "id": "read_1", "name": "Read", "input": {"file_path": "/tmp/shot.png"}},
+                {"type": "tool_use", "id": "mcp_1", "name": "mcp__browser__screenshot", "input": {}},
+            ],
+        ),
+        message(
+            "user", "image_tool_result", "user",
+            [
+                {"type": "tool_result", "tool_use_id": "read_1", "content": [image]},
+                {
+                    "type": "tool_result", "tool_use_id": "mcp_1",
+                    "content": [{"type": "text", "text": "page loaded"}, image],
+                },
+            ],
+            toolUseResult={
+                "type": "image",
+                "file": {"base64": _INLINE_IMAGE_DATA, "type": "image/png", "originalSize": 3000},
+            },
+        ),
+    ]
+    if history:
+        messages.insert(0, message("user", "image_tool_user", "user", "show me the page"))
+    return messages
+
+
+def test_claude_tool_results_omit_inline_images() -> None:
+    asyncio.run(_test_claude_tool_results_omit_inline_images())
+
+
+async def _test_claude_tool_results_omit_inline_images() -> None:
+    host = _RecordingHost()
+    sdk = _HistorySdk(
+        messages={"claude_image_session": _read_image_messages("claude_image_session", history=True)}
+    )
+    client = _FakeClaudeClient(
+        messages=[
+            *_read_image_messages("claude_image_session", history=False),
+            SimpleNamespace(type="result", session_id="claude_image_session"),
+        ]
+    )
+    runtime = _runtime(host=host, client=client, sdk=sdk)
+
+    result = await runtime.start_turn("sess_images", "claude_image_session", "show me the page")
+    task = runtime._sessions["sess_images"].active_task
+    assert result.ok is True
+    assert task is not None
+    await task
+    handled = await runtime.sync_session_timeline("sess_images", "claude_image_session")
+    assert handled is True
+
+    live = [item for item in host.timeline_item_upserts if item.type == "tool" and item.status == "done"]
+    history = [item for item in host.timeline_syncs[-1]["items"] if item.type == "tool"]
+    for items in (live, history):
+        by_tool = {item.content["toolName"]: item.content for item in items}
+        read, screenshot = by_tool["Read"], by_tool["mcp__browser__screenshot"]
+        assert read["output"] == "[Image omitted: image/png, 2.9 KB]"
+        assert read["outputText"] == read["output"]
+        assert read["outputLength"] == len(read["output"])
+        assert read["result"] == [
+            {"type": "image", "source": {"type": "omitted", "byteSize": 3000, "media_type": "image/png"}},
+        ]
+        assert screenshot["output"] == "page loaded"
+        assert screenshot["result"][1]["source"]["type"] == "omitted"
+        for content in (read, screenshot):
+            assert "AAAA" not in json.dumps(content, default=str)
+
+
 def test_claude_runtime_closes_history_tool_calls_without_results() -> None:
     asyncio.run(_test_claude_runtime_closes_history_tool_calls_without_results())
 
@@ -3596,6 +3684,133 @@ async def _test_claude_runtime_materializes_attachments_for_turn_start() -> None
     assert Path(str(attachment["path"])).read_bytes() == b"hello attachment"
     assert client.queries[0].startswith("read this\n\nAttached files:")
     assert str(attachment["path"]) in client.queries[0]
+
+
+@pytest.mark.parametrize(
+    "files", [(), ("good",), ("missing",), ("missing", "good", "unnamed")]
+)
+def test_claude_attachment_delivery_notices(tmp_path, monkeypatch, files) -> None:
+    monkeypatch.setenv("AGENT_CONNECTOR_ATTACHMENTS_ROOT", str(tmp_path))
+
+    async def run() -> None:
+        host = _RecordingHost()
+        client = _FakeClaudeClient(
+            messages=[SimpleNamespace(type="result", session_id="claude_attachments")]
+        )
+        runtime = _runtime(host=host, client=client)
+        attempted = []
+
+        async def download(session_id, file_id):
+            attempted.append(file_id)
+            if file_id != "good":
+                raise OSError("download unavailable")
+            return RuntimeAttachmentContent(
+                file_id=file_id, name="good.txt", media_type="text/plain", content=b"ok"
+            )
+
+        monkeypatch.setattr(host, "attachment_download", download)
+        attachments = tuple(
+            RuntimeAttachment(
+                file_id=file_id, name=None if file_id == "unnamed" else f"{file_id}.txt"
+            )
+            for file_id in files
+        )
+        result = await runtime.start_turn(
+            "sess_attachments",
+            "claude_attachments",
+            "read this",
+            attachments=attachments,
+        )
+        task = runtime._sessions["sess_attachments"].active_task
+        assert result.ok is True
+        assert task is not None
+        await task
+        assert attempted == list(files)
+        assert len(client.queries) == 1
+        assert ("good.txt" in client.queries[0]) == ("good" in files)
+        assert "missing.txt" not in client.queries[0]
+        failed = [file_id for file_id in files if file_id != "good"]
+        if not failed:
+            assert host.notice_upserts == []
+            return
+        assert len(host.notice_upserts) == 1
+        notice = host.notice_upserts[0]
+        assert notice.type == "notification"
+        assert notice.severity == "warning"
+        assert notice.status == "open"
+        assert notice.blocking is None
+        assert notice.response_required is False
+        assert notice.context["failedFileIds"] == failed
+        assert "Please resend" in notice.message
+        assert "missing.txt" in notice.message
+        if "unnamed" in failed:
+            assert "- unnamed" in notice.message
+        assert await runtime.get_session_notices("sess_attachments") == (notice,)
+        assert await runtime.get_session_notices("other_session") == ()
+
+    asyncio.run(run())
+
+
+def test_claude_attachment_delivery_notice_reuses_id_and_resolves_on_success(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("AGENT_CONNECTOR_ATTACHMENTS_ROOT", str(tmp_path))
+
+    async def run() -> None:
+        host = _RecordingHost()
+        client = _FakeClaudeClient(
+            messages=[SimpleNamespace(type="result", session_id="claude_attachments")]
+        )
+        runtime = _runtime(host=host, client=client)
+        attachment = RuntimeAttachment(file_id="file_1", name="note.txt")
+
+        for _ in range(2):
+            await runtime.start_turn(
+                "sess_attachments",
+                "claude_attachments",
+                "read this",
+                attachments=(attachment,),
+            )
+            await runtime._sessions["sess_attachments"].active_task
+        assert len({notice.notice_id for notice in host.notice_upserts}) == 1
+        assert len(await runtime.get_session_notices("sess_attachments")) == 1
+        await runtime.start_turn("sess_attachments", "claude_attachments", "plain text")
+        await runtime._sessions["sess_attachments"].active_task
+        assert len(await runtime.get_session_notices("sess_attachments")) == 1
+        host.attachments["file_1"] = RuntimeAttachmentContent(
+            file_id="file_1", name="note.txt", media_type="text/plain", content=b"ok"
+        )
+        await runtime.start_turn(
+            "sess_attachments", "claude_attachments", "retry", attachments=(attachment,)
+        )
+        await runtime._sessions["sess_attachments"].active_task
+        assert host.notice_upserts[-1].status == "resolved"
+        assert await runtime.get_session_notices("sess_attachments") == ()
+
+    asyncio.run(run())
+
+
+def test_claude_attachment_download_cancellation_is_not_skipped(monkeypatch) -> None:
+    async def run() -> None:
+        host = _RecordingHost()
+        client = _FakeClaudeClient(messages=[])
+        runtime = _runtime(host=host, client=client)
+
+        async def download(session_id, file_id):
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(host, "attachment_download", download)
+        await runtime.start_turn(
+            "sess_attachments",
+            "claude_attachments",
+            "read this",
+            attachments=(RuntimeAttachment(file_id="file_1"),),
+        )
+        await runtime._sessions["sess_attachments"].active_task
+        assert client.queries == []
+        assert host.notice_upserts == []
+
+    asyncio.run(run())
 
 
 def test_claude_runtime_tool_approval_round_trips_to_sdk() -> None:

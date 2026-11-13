@@ -30,11 +30,28 @@ test('matches only the installed Desktop main process, including development arg
     executablePath: dev.executablePath, commandLine: '/usr/bin/electron /repo/desktop-workbench',
   }, 'linux'), true)
   assert.equal(matchesDesktopProcess(dev, {
+    executablePath: dev.executablePath, commandLine: '/usr/bin/electron .',
+  }, 'linux'), false)
+  assert.equal(matchesDesktopProcess(dev, {
     executablePath: dev.executablePath, commandLine: '/usr/bin/electron /repo/other-app',
   }, 'linux'), false)
   assert.equal(matchesDesktopProcess(dev, {
     executablePath: dev.executablePath, commandLine: '/usr/bin/electron /repo/desktop-workbench --type=gpu-process',
   }, 'linux'), false)
+
+  const localDev = {
+    executablePath: '/repo/desktop-workbench/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron',
+    launchArgs: ['/repo/desktop-workbench'],
+    packaged: false,
+  }
+  assert.equal(matchesDesktopProcess(localDev, {
+    executablePath: localDev.executablePath,
+    commandLine: `${localDev.executablePath} .`,
+  }, 'darwin'), true)
+  assert.equal(matchesDesktopProcess(localDev, {
+    executablePath: localDev.executablePath,
+    commandLine: `${localDev.executablePath} . --type=renderer`,
+  }, 'darwin'), false)
 
   assert.equal(matchesDesktopProcess({ executablePath: 'C:\\Program Files\\Agents Anywhere\\Agents Anywhere.exe', launchArgs: [], packaged: true }, {
     executablePath: 'c:\\program files\\agents anywhere\\agents anywhere.exe',

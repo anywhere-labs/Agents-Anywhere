@@ -4,21 +4,6 @@ import * as React from "react"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { RuntimeCommand, RuntimeStatusValue } from "@/features/dashboard/types"
 
-export function createRecoveredSubscriptionTracker(onReconnectRecovered: () => void) {
-  let initialConnection: number | null = null
-  let lastRecoveredConnection: number | null = null
-  return {
-    observed(connection: number) {
-      if (initialConnection === null) initialConnection = connection
-    },
-    recovered(connection: number) {
-      if (lastRecoveredConnection === connection) return
-      lastRecoveredConnection = connection
-      if (initialConnection !== null && connection !== initialConnection) onReconnectRecovered()
-    },
-  }
-}
-
 export function useRuntimeCommands({ token, sessionId, open, available, catalogRevision, runtimeStatus, recoveryGeneration = 0 }: {
   token: string
   sessionId: string | null

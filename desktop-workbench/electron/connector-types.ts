@@ -7,15 +7,23 @@ export type ConnectorLogLevel =
   | "ERROR"
   | "CRITICAL";
 
+export type ConnectorLogSource = "connector" | "bridge";
+
 export type ConnectorLogEntry = {
   seq: number;
   level: ConnectorLogLevel | string;
   message: string;
   time: string;
+  name?: string;
+  source?: ConnectorLogSource | string;
+  details?: string | null;
+  exception?: string | null;
+  gapBefore?: boolean;
   [key: string]: unknown;
 };
 
 export type ConnectorLogQuery = {
+  source?: ConnectorLogSource;
   pageSize?: number;
   beforeSeq?: number;
   afterSeq?: number;
@@ -26,7 +34,9 @@ export type ConnectorLogPage = {
   firstSeq: number | null;
   lastSeq: number | null;
   hasMoreBefore: boolean;
+  hasMoreAfter?: boolean;
   total: number;
+  logsPath?: string;
 };
 
 export type ConnectorPrivateConfig = {
@@ -80,6 +90,7 @@ export type ConnectorState = {
   configPath: string;
   runtimePath: string;
   dataPath: string;
+  logsPath?: string;
   connectorDir: string;
   resolvedUvPath: string;
   uvMissing: boolean;
@@ -89,6 +100,8 @@ export type ConnectorState = {
   pythonPath: string;
   uvPypiIndexUrl: string;
   uvPythonInstallMirror: string;
+  /** "" follows the system, "direct" skips any proxy, otherwise a proxy URL. */
+  connectorProxy: string;
   logChunkSizeKb: number;
   logRetainChunks: number;
   logRetentionDays: number;
@@ -96,6 +109,7 @@ export type ConnectorState = {
   startConnectorOnLaunch: boolean;
   silentLaunch: boolean;
   notificationsEnabled: boolean;
+  confirmQuitOnShutdown: boolean;
 };
 
 export type DesktopSettings = {
@@ -103,16 +117,25 @@ export type DesktopSettings = {
   startConnectorOnLaunch: boolean;
   silentLaunch: boolean;
   notificationsEnabled: boolean;
+  /**
+   * Whether a system shutdown asks before quitting. The server owns this
+   * device setting (docs/api/device-settings.md); Desktop keeps the last value
+   * the Connector handed over so shutdown works offline too.
+   */
+  confirmQuitOnShutdown: boolean;
   uvPath: string;
   pythonPath: string;
   uvPypiIndexUrl: string;
   uvPythonInstallMirror: string;
+  /** "" follows the system, "direct" skips any proxy, otherwise a proxy URL. */
+  connectorProxy: string;
   logChunkSizeKb: number;
   logRetainChunks: number;
   logRetentionDays: number;
 };
 
-export type DesktopSettingsPatch = Partial<DesktopSettings>;
+/** Device settings change through the server, never as a local Desktop setting. */
+export type DesktopSettingsPatch = Partial<Omit<DesktopSettings, "confirmQuitOnShutdown">>;
 
 export type DesktopNotificationInput = {
   title: string;

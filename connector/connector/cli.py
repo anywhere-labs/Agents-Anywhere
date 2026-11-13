@@ -16,6 +16,7 @@ from connector.core.runtime_owner import (
 from connector.logging import configure_connector_logging, logger
 from connector.mesh.host import serve_host
 from connector.server.client import BackendRpcClient
+from connector.server.network import open_http_client, sanitize_no_proxy_environment
 from connector.server.pairing import (
     poll_pairing,
     resolve_pair_server_url,
@@ -33,6 +34,7 @@ def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
     configure_connector_logging(debug=bool(getattr(args, "debug", False)))
+    sanitize_no_proxy_environment()
     try:
         if args.command in {"pair", "login"}:
             asyncio.run(_pair(args))
@@ -40,6 +42,12 @@ def main(argv: list[str] | None = None) -> None:
             _configure(args)
         elif args.command == "start":
             asyncio.run(_start(args))
+        elif args.command == "prepare-pi":
+            from connector.runtimes.acp.profiles.pi.environment import (
+                prepare_environment,
+            )
+
+            prepare_environment(args.root)
         elif args.command == "rpc":
             asyncio.run(_rpc(args))
         else:
@@ -79,7 +87,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="anywhere-cli", description="Agent Server Codex connector CLI"
     )
     subparsers = parser.add_subparsers(
-        dest="command", metavar="{start,pair,configure,rpc}"
+        dest="command", metavar="{start,pair,configure,rpc,prepare-pi}"
     )
 
     start = subparsers.add_parser("start", help="start the connector")
@@ -108,6 +116,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_config_args(rpc)
     _add_debug_arg(rpc)
+    prepare_pi = subparsers.add_parser(
+        "prepare-pi", help="prepare the Pi ACP adapter and dependencies"
+    )
+    prepare_pi.add_argument("--root", required=True, type=Path, help="npm runtime cache directory")
     return parser
 
 
@@ -170,7 +182,7 @@ async def _pair(args: argparse.Namespace) -> None:
 
 async def _pair_with_lease(args: argparse.Namespace, lease: RuntimeLease) -> None:
     server_url = await _resolve_server_url_for_pair(args.server, timeout=10)
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with await open_http_client(server_url, 30) as client:
         pairing = await start_pairing(client, server_url, args.timeout)
         pairing_id = pairing["pairingId"]
         code = pairing["code"]
@@ -212,6 +224,7 @@ async def _run_cli_connector(
     try:
         from connector.core import runtime_owner
         from connector.logging import install_rpc_log_sink
+        from connector.mesh.host import mount_host_services
         from connector.mesh.hub import LocalHub, set_local_hub
         from connector.mesh.logs import LogsService, open_log_hub
 
@@ -223,7 +236,7 @@ async def _run_cli_connector(
         try:
             try:
                 await hub.start()
-                await hub.mount(LogsService(logs))
+                await mount_host_services(hub, LogsService(logs))
             except Exception as error:  # noqa: BLE001 - runtime logging is auxiliary
                 # The Router is also how DSH reaches this Connector, so a failure
                 # only degrades DSH; Codex/Claude sessions keep running.

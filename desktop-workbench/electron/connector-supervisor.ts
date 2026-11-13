@@ -1,8 +1,11 @@
+import { ConnectorEnvironment, type ConnectorEnvironmentState } from "./connector-environment";
+import { ConnectorGuard, guardSessionActive } from "./connector-guard";
+import { terminateConnectorProcess } from "./connector-process";
 import { localRuntimePath } from "./local-runtime";
-import type { OwnershipState } from "./local-runtime";
+import type { OwnershipState, RuntimeOwner } from "./local-runtime";
 import { ConnectorRpcError, CONNECTOR_CONFLICT_MESSAGE } from "./connector-rpc-error";
 import { materializeConnectorProject } from "./connector-project";
-import { bundledPythonExecutable, environmentHome, environmentUsesPython } from "./connector-python";
+import { bundledPythonExecutable } from "./connector-python";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { Mesh as MeshConnection, Router as RouterEndpoint } from "meshcall" with { "resolution-mode": "import" };
@@ -18,6 +21,7 @@ import type {
   ConnectorLogEntry,
   ConnectorLogQuery,
   ConnectorLogPage,
+  ConnectorLogSource,
   ConnectorPrivateConfig,
   ConnectorPublicConfig,
   ConnectorState,
@@ -29,18 +33,13 @@ import {
 } from "./generated/connector-control";
 import { LogsServiceClient, type LogEntry, type LogPage } from "./generated/connector-logs";
 
-/**
- * A `uv run` without a matching project environment builds one first,
- * downloading every dependency (and, with no bundled Python, the interpreter)
- * before the Connector can answer anything, which takes minutes on a cold
- * cache. Normal RPCs stay fast, so only that first request gets the long
- * deadline.
- */
-const FIRST_RUN_TIMEOUT_MS = 15 * 60_000;
 /** The Connector restarts its Router within a couple of seconds; wait it out. */
 const CONTROL_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_RPC_TIMEOUT_MS = 30_000;
+const HEALTH_CHECK_INTERVAL_MS = 30_000;
+const HEALTH_CHECK_TIMEOUT_MS = 10_000;
 const PYTHON_BUILDS_GITHUB = "https://github.com/astral-sh/python-build-standalone/releases/download";
+const PYPI_SIMPLE = "https://pypi.org/simple";
 const UV_HTTP_TIMEOUT_SECONDS = "60";
 /** `exit` can arrive before stderr delivers the lines that explain it. */
 const OUTPUT_DRAIN_MS = 250;
@@ -62,14 +61,15 @@ export interface ConnectorChannel {
     events(since: number | null, options?: { signal?: AbortSignal }): AsyncIterable<{ seq: number; kind: string; state?: unknown }>;
   };
   logs: {
-    tail(since: number | null, source?: "connector" | "bridge" | null, options?: { signal?: AbortSignal }): AsyncIterable<LogEntry>;
-    read(source?: "connector" | "bridge" | null, beforeSeq?: number | null, afterSeq?: number | null, limit?: number): Promise<LogPage>;
-    clear(): Promise<LogPage>;
+    tail(since: number | null, source?: ConnectorLogSource | null, options?: { signal?: AbortSignal }): AsyncIterable<LogEntry>;
+    read(source?: ConnectorLogSource | null, beforeSeq?: number | null, afterSeq?: number | null, limit?: number): Promise<LogPage & { logsPath?: string }>;
+    clear(): Promise<LogPage & { logsPath?: string }>;
   };
   close?(): Promise<void>;
 }
 
 type ConnectorSupervisorOptions = {
+  onEnvironment?: (state: ConnectorEnvironmentState) => void;
   onOwnership?: (state: OwnershipState) => void;
   configPath: string;
   dataPath: string;
@@ -80,6 +80,8 @@ type ConnectorSupervisorOptions = {
   /** Directory holding `<platform>-<arch>/` CPython installs; packaged resources or `build/python`. */
   pythonBundleDir: string;
   packaged: boolean;
+  /** Electron main PID, supplied by the Desktop backend entry point. */
+  desktopPid?: number;
   homePath: string;
   shellEnvironment: NodeJS.ProcessEnv;
   settings: DesktopSettingsStore;
@@ -89,6 +91,8 @@ type ConnectorSupervisorOptions = {
   onLog: (entry: ConnectorLogEntry) => void;
   onRuntimeLog?: (entry: ConnectorLogEntry) => void;
   onLogSourceChanged?: () => void;
+  /** The Connector reported device settings the server handed over. */
+  onDeviceSettings?: (settings: { confirmQuitOnShutdown: boolean }) => void;
   /** Test seam; production connects a Mesh to the Connector's Router. */
   connectControl?: (rendezvous: Rendezvous) => Promise<ConnectorChannel>;
 };
@@ -100,11 +104,18 @@ type ConnectorLauncher = {
 };
 
 export class ConnectorSupervisor {
+  private readonly environment: ConnectorEnvironment;
+  private acquisition: Promise<void> | null = null;
+  private claimedProcess: ChildProcessWithoutNullStreams | null = null;
+  private maintenance: Promise<unknown> | null = null;
+  private generation = 0;
   private rpcProcess: ChildProcessWithoutNullStreams | null = null;
+  private rpcGuard: ConnectorGuard | null = null;
+  private cleanupFailure: Error | null = null;
   private rpcReader: readline.Interface | null = null;
   /** The current RPC process's recent stderr, quoted when a request fails. */
   private rpcOutput: RpcOutput | null = null;
-  private processGroupId: number | null = null;
+  private termination: Promise<void> | null = null;
   private mesh: MeshConnection | null = null;
   private channel: ConnectorChannel | null = null;
   private ready: { promise: Promise<ConnectorChannel>; resolve: (channel: ConnectorChannel) => void; reject: (error: Error) => void } | null = null;
@@ -116,6 +127,8 @@ export class ConnectorSupervisor {
   private crashCount = 0;
   private restartTimer: NodeJS.Timeout | null = null;
   private suppressProcessRestart = false;
+  /** Processes this supervisor is stopping on purpose; their exit is not an error. */
+  private readonly terminating = new WeakSet<ChildProcessWithoutNullStreams>();
   private shellEnvironment: NodeJS.ProcessEnv;
   private state: ConnectorState;
 
@@ -142,7 +155,43 @@ export class ConnectorSupervisor {
       resolvedPythonPath: "",
       ...this.publicSettings(),
     };
+    this.environment = new ConnectorEnvironment({
+      dataPath: options.dataPath,
+      resolve: (materialize = false) => {
+        const launcher = this.resolveLauncher(materialize);
+        if (!launcher) throw new Error(`Connector setup is not ready: ${this.state.setupIssue}`);
+        return { project: this.projectDir ?? options.connectorDir, environment: this.projectEnvironmentPath(),
+          uv: launcher.executable, python: this.resolvePythonPath(), env: this.connectorEnvironment(), direct: this.resolveDirectConnectorCli() };
+      },
+      onState: state => options.onEnvironment?.(state),
+      guardSessionActive: process.platform === "darwin" ? session => guardSessionActive(this.guardSource(), session) : undefined,
+      log: message => this.log({ level: "INFO", message }),
+    });
     this.refreshLocalState();
+  }
+
+  environmentState(): ConnectorEnvironmentState { return this.environment.getState(); }
+
+  prepareEnvironment(): Promise<void> {
+    if (this.cleanupFailure) return Promise.reject(this.cleanupFailure);
+    if (this.shuttingDown || this.maintenance) return Promise.reject(new Error("Connector environment is stopping."));
+    return this.rpcProcess ? Promise.resolve() : this.environment.prepare();
+  }
+
+  cancelEnvironment(stopOwned = false): Promise<ConnectorEnvironmentState> {
+    if (!stopOwned && !this.acquisition && !["checking", "preparing"].includes(this.environmentState().status)) return Promise.resolve(this.environmentState());
+    if (this.maintenance) return this.maintenance.then(() => this.environmentState());
+    this.generation++;
+    this.keepRuntimeRunning = false;
+    this.clearRestartTimer();
+    this.maintenance = (async () => {
+      await this.environment.cancel();
+      await this.terminateRpcProcess(true);
+      await this.acquisition?.catch(() => undefined);
+      if (this.cleanupFailure) throw this.cleanupFailure;
+      return this.environmentState();
+    })().finally(() => { this.maintenance = null; });
+    return this.maintenance as Promise<ConnectorEnvironmentState>;
   }
 
   setShellEnvironment(environment: NodeJS.ProcessEnv): void {
@@ -156,13 +205,16 @@ export class ConnectorSupervisor {
       previous.uvPath !== current.uvPath ||
       previous.pythonPath !== current.pythonPath ||
       previous.uvPypiIndexUrl !== current.uvPypiIndexUrl ||
-      previous.uvPythonInstallMirror !== current.uvPythonInstallMirror;
+      previous.uvPythonInstallMirror !== current.uvPythonInstallMirror ||
+      previous.connectorProxy !== current.connectorProxy;
     this.refreshLocalState();
     if (!launcherChanged) return this.emitState();
     if (!this.resolveLauncher()) {
       throw new Error(`Connector setup is not ready: ${this.state.setupIssue || "launcherMissing"}`);
     }
     const shouldRun = this.keepRuntimeRunning || this.state.running;
+    await this.cancelEnvironment(true);
+    await this.environment.shutdown();
     await this.rebuildRpcProcess(shouldRun);
     return this.emitState();
   }
@@ -181,14 +233,16 @@ export class ConnectorSupervisor {
 
   async readLogs(query: ConnectorLogQuery = {}): Promise<ConnectorLogPage> {
     if (!this.channel) return this.options.logs.read(query);
-    const page = await this.channel.logs.read(null, query.beforeSeq ?? null, query.afterSeq ?? null,
+    const page = await this.channel.logs.read(query.source ?? null, query.beforeSeq ?? null, query.afterSeq ?? null,
       Math.max(1, Math.min(1000, query.pageSize ?? 200)));
+    if (typeof page.logsPath === "string" && page.logsPath.trim()) this.state.logsPath = page.logsPath;
     return { ...page, items: page.items.map(entry => ({ ...entry })) };
   }
 
   async clearLogs(): Promise<ConnectorLogPage> {
     if (!this.channel) return this.options.logs.clear();
     const page = await this.channel.logs.clear();
+    if (typeof page.logsPath === "string" && page.logsPath.trim()) this.state.logsPath = page.logsPath;
     return { ...page, items: page.items.map(entry => ({ ...entry })) };
   }
 
@@ -242,27 +296,73 @@ export class ConnectorSupervisor {
     fs.accessSync(this.options.dataPath, fs.constants.R_OK | fs.constants.W_OK);
     const runtimeState = await this.request("connector.acquireOwnership", undefined, {
       requiresConfig: false,
-      timeoutMs: this.provisioningTimeoutMs(),
+      timeoutMs: DEFAULT_RPC_TIMEOUT_MS,
     });
     this.mergeRuntimeState(runtimeState);
     return this.emitState();
   }
 
-  async acquireOwnership(): Promise<void> {
+  acquireOwnership(): Promise<void> {
+    if (this.acquisition) return this.acquisition;
+    if (this.maintenance || this.shuttingDown) return Promise.reject(new Error("Connector environment is stopping."));
+    this.acquisition = this.acquire().finally(() => { this.acquisition = null; });
+    return this.acquisition;
+  }
+
+  private async acquire(): Promise<void> {
     try {
-      const timeoutMs = this.announceFirstRun();
-      await this.request("connector.acquireOwnership", undefined, { requiresConfig: false, timeoutMs });
+      // Revalidating a live lease must not unmount the workspace. Device-list
+      // refreshes also validate ownership and would otherwise restart that loop.
+      if (!this.rpcProcess || this.claimedProcess !== this.rpcProcess) {
+        this.options.onOwnership?.({ status: "checking" });
+      }
+      await this.request("connector.acquireOwnership", undefined, { requiresConfig: false, timeoutMs: CONTROL_CONNECT_TIMEOUT_MS });
+      this.claimedProcess = this.rpcProcess;
       this.options.onOwnership?.({ status: "owned" });
     } catch (error) {
+      this.claimedProcess = null;
       const conflict = error instanceof ConnectorRpcError && error.ownershipConflict;
-      // Every caller gets here, so rechecks and later acquisitions are logged too.
-      this.log({
-        level: conflict ? "WARNING" : "ERROR",
-        message: `Could not acquire Connector ownership: ${errorMessage(error)}`,
-      });
-      if (!conflict) this.options.onOwnership?.({ status: "error", message: errorMessage(error) });
+      const message = errorMessage(error);
+      this.log({ level: conflict ? "WARNING" : "ERROR", message: `Could not acquire Connector ownership: ${message}` });
+      // Environment failures are owned by their own state machine.
+      if (!conflict && !["failed", "cancelled"].includes(this.environmentState().status)) {
+        this.options.onOwnership?.({ status: "error", message });
+      }
       throw error;
     }
+  }
+
+  /**
+   * Deletes what `uv run` downloaded and built for this Desktop, so the next
+   * launch fetches everything again: the project environment and, when
+   * packaged, the uv cache and the project copy holding uv.lock. Development
+   * keeps the developer's own uv cache.
+   */
+  async resetEnvironment(): Promise<ConnectorState> {
+    if (this.cleanupFailure) throw this.cleanupFailure;
+    if (this.resolveDirectConnectorCli()) throw new Error("This Connector runs without a Python environment, so there is nothing to clear.");
+    await this.cancelEnvironment(true);
+    if (this.maintenance) { await this.maintenance; return this.emitState(); }
+    this.maintenance = this.environment.reset(context => {
+      // A configured path can be outside userData. Only remove a virtualenv.
+      if (fs.existsSync(path.join(context.environment, "pyvenv.cfg"))) {
+        fs.rmSync(context.environment, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      }
+      fs.rmSync(path.join(this.options.dataPath, "pi-npm-runtimes"), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      if (this.options.packaged) {
+        for (const name of ["uv-cache", "connector-source"]) fs.rmSync(path.join(this.options.dataPath, name), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+        this.projectDir = null;
+      }
+    }).finally(() => { this.maintenance = null; });
+    await this.maintenance;
+    this.options.onOwnership?.({ status: "checking" });
+    return this.emitState();
+  }
+
+  /** A failure outside any Connector request, such as the launch auto-start, still belongs in `lastError`. */
+  reportError(message: string): ConnectorState {
+    this.state.lastError = message;
+    return this.emitState();
   }
 
   getPublicConfig(): ConnectorPublicConfig {
@@ -337,7 +437,7 @@ export class ConnectorSupervisor {
     this.clearRestartTimer();
     const result = await this.request("connector.start", undefined, {
       requiresConfig: true,
-      timeoutMs: this.provisioningTimeoutMs(),
+      timeoutMs: DEFAULT_RPC_TIMEOUT_MS,
     });
     this.mergeRuntimeState(result);
     return this.emitState();
@@ -363,7 +463,7 @@ export class ConnectorSupervisor {
     this.clearRestartTimer();
     const result = await this.request("connector.restart", undefined, {
       requiresConfig: true,
-      timeoutMs: this.provisioningTimeoutMs(),
+      timeoutMs: DEFAULT_RPC_TIMEOUT_MS,
     });
     this.mergeRuntimeState(result);
     return this.emitState();
@@ -390,19 +490,24 @@ export class ConnectorSupervisor {
   async shutdown(): Promise<void> {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
+    this.generation++;
+    await this.environment.cancel();
+    if (this.acquisition) await this.terminateRpcProcess(true);
+    await this.acquisition?.catch(() => undefined);
     this.keepRuntimeRunning = false;
     this.clearRestartTimer();
-    if (this.rpcProcess) {
+    if (this.rpcProcess && this.channel) {
       try {
         await this.request("connector.stop", undefined, {
           requiresConfig: false,
-          timeoutMs: 4_000,
+          timeoutMs: 1_000,
         });
       } catch {
         // Process-tree termination below is the final shutdown fallback.
       }
     }
     await this.terminateRpcProcess();
+    if (!this.cleanupFailure) await this.environment.shutdown();
   }
 
   /** Call one method of `aa.local.v2.Control`; the first call also waits out provisioning. */
@@ -411,9 +516,13 @@ export class ConnectorSupervisor {
     params?: unknown,
     options: { requiresConfig?: boolean; timeoutMs?: number } = {},
   ): Promise<unknown> {
+    const generation = this.generation;
+    if (this.maintenance) throw new Error("Connector environment is stopping.");
+    if (!this.rpcProcess) await this.prepareEnvironment();
+    if (generation !== this.generation) throw new Error("Connector startup was cancelled.");
     this.ensureRpcProcess(options.requiresConfig !== false);
     const timeoutMs = options.timeoutMs ?? DEFAULT_RPC_TIMEOUT_MS;
-    const control = (await this.awaitControl(timeoutMs, method)).control;
+    const control = (await this.awaitControl(CONTROL_CONNECT_TIMEOUT_MS, method)).control;
     const call = { timeoutMs };
     try {
       switch (method) {
@@ -434,11 +543,12 @@ export class ConnectorSupervisor {
     const ready = this.ready;
     if (!ready) return Promise.reject(new Error("Connector RPC is not available."));
     const output = this.rpcOutput;
-    return new Promise((resolve, reject) => {
+    const child = this.rpcProcess;
+    return new Promise<ConnectorChannel>((resolve, reject) => {
       const timer = setTimeout(() => {
-        // A launch still installing dependencies says so in its last output.
         const message = `Connector RPC request timed out after ${Math.round(timeoutMs / 1_000)}s: ${method}`;
-        reject(new Error(withRecentOutput(message, output?.lines)));
+        const failure = new Error(withRecentOutput(message, output?.lines));
+        reject(failure);
       }, timeoutMs);
       ready.promise.then(
         client => { clearTimeout(timer); resolve(client); },
@@ -448,25 +558,51 @@ export class ConnectorSupervisor {
           reject(error);
         },
       );
+    }).catch(async error => {
+      if (this.rpcProcess === child) await this.terminateRpcProcess(true);
+      throw error;
     });
   }
 
   private connectorError(error: unknown): Error {
-    const value = error as { code?: unknown; details?: Record<string, unknown> } | null;
+    const value = error as { code?: unknown; message?: unknown; details?: Record<string, unknown> } | null;
     const code = value && typeof value.code === "string" ? value.code : "";
     if (!code) return error instanceof Error ? error : new Error(String(error));
     const details = value?.details;
     if (code === "connector_already_running") {
       this.keepRuntimeRunning = false;
       this.clearRestartTimer();
-      this.options.onOwnership?.({ status: "conflict", message: CONNECTOR_CONFLICT_MESSAGE });
-      return new ConnectorRpcError(-32009, CONNECTOR_CONFLICT_MESSAGE, { reason: "connector_already_running", ...(details ?? {}) });
+      const ownerRecord = details?.owner && typeof details.owner === "object" && !Array.isArray(details.owner)
+        ? details.owner as Record<string, unknown>
+        : undefined;
+      const rawMessage = typeof value?.message === "string" ? value.message.trim() : "";
+      const ownerParts = [
+        typeof ownerRecord?.kind === "string" && ownerRecord.kind.trim() ? ownerRecord.kind.trim() : "",
+        typeof ownerRecord?.pid === "number" && Number.isFinite(ownerRecord.pid) ? `PID ${ownerRecord.pid}` : "",
+      ].filter(Boolean);
+      const detailLine = rawMessage && rawMessage !== CONNECTOR_CONFLICT_MESSAGE
+        ? rawMessage
+        : ownerParts.length > 0
+          ? `Another Connector is running (${ownerParts.join(", ")}).`
+          : "";
+      const conflictMessage = detailLine ? `${CONNECTOR_CONFLICT_MESSAGE}\n${detailLine}` : CONNECTOR_CONFLICT_MESSAGE;
+      this.options.onOwnership?.({
+        status: "conflict",
+        message: conflictMessage,
+        ...(ownerRecord ? { owner: ownerRecord as unknown as RuntimeOwner } : {}),
+      });
+      return new ConnectorRpcError(-32009, conflictMessage, { reason: "connector_already_running", ...(details ?? {}) });
     }
     const message = error instanceof Error ? error.message : String(error);
     return new ConnectorRpcError(-32000, message || "Connector RPC error", details ?? { reason: code });
   }
 
+  private guardSource(): string {
+    return path.join(this.options.packaged ? this.options.resourcesPath : path.resolve(__dirname, ".."), "connector-guard");
+  }
+
   private ensureRpcProcess(requiresConfig: boolean): void {
+    if (this.cleanupFailure) throw this.cleanupFailure;
     if (this.rpcProcess) return;
     this.refreshLocalState();
     if (this.state.setupIssue && (requiresConfig || this.state.setupIssue !== "configMissing")) {
@@ -474,33 +610,79 @@ export class ConnectorSupervisor {
     }
     const launcher = this.resolveLauncher(true);
     if (!launcher) throw new Error(`Connector setup is not ready: ${this.state.setupIssue || "launcherMissing"}`);
-    const child = spawn(launcher.executable, launcher.args, {
-      cwd: this.projectDir ?? this.options.connectorDir,
-      env: this.connectorEnvironment(),
-      detached: process.platform !== "win32",
-      windowsHide: true,
-      stdio: ["pipe", "pipe", "pipe"],
+    const cwd = this.projectDir ?? this.options.connectorDir;
+    const env = this.connectorEnvironment();
+    const lines: string[] = [];
+    const guard = process.platform === "darwin" && this.options.desktopPid !== undefined
+      ? new ConnectorGuard({
+        source: this.guardSource(),
+        desktopPid: this.options.desktopPid,
+        cwd,
+        executable: launcher.executable,
+        args: launcher.args,
+        env,
+        onDiagnostic: message => {
+          if (message.startsWith("launch-error ")) this.handleStderrLine(message, lines);
+          else this.log({ level: message.startsWith("stopping ") ? "INFO" : "ERROR", message });
+        },
+      }) : null;
+    const child = guard?.child ?? spawn(launcher.executable, launcher.args, {
+      cwd, env, detached: process.platform !== "win32", windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
     });
     this.rpcProcess = child;
-    this.processGroupId = process.platform === "win32" ? null : child.pid ?? null;
+    this.rpcGuard = guard;
     this.log(`Starting Connector RPC with ${launcher.description}`);
     this.ready = deferredControl();
     this.rpcReader = readline.createInterface({ input: child.stdout });
     this.rpcReader.on("line", (line) => this.handleRpcLine(line));
     // Whole lines only: uv writes one message in several chunks.
-    const lines: string[] = [];
     const stderr = readline.createInterface({ input: child.stderr });
     stderr.on("line", (line) => this.handleStderrLine(line, lines));
     this.rpcOutput = { lines, closed: new Promise((resolve) => stderr.once("close", () => resolve())) };
-    child.once("error", (error) => {
-      this.finalizeRpcProcess(child, `Connector RPC failed to start: ${error.message}`);
-    });
-    child.once("exit", (code, signal) => {
-      this.finalizeRpcProcess(child, `Connector RPC exited${signal ? ` by ${signal}` : ""} with code ${code ?? "null"}`);
-    });
-    child.once("close", (code, signal) => {
-      this.finalizeRpcProcess(child, `Connector RPC closed${signal ? ` by ${signal}` : ""} with code ${code ?? "null"}`);
-    });
+    if (guard) {
+      let launchError: Error | undefined;
+      child.on("error", error => { launchError = error; });
+      void guard.closed.then(({ code, signal, cleaned }) => {
+        if (!cleaned) {
+          this.cleanupFailure = new Error("Connector RPC process group cleanup could not be confirmed.");
+          this.logError(this.cleanupFailure);
+        }
+        const message = launchError ? `Connector RPC failed to start: ${launchError.message}` :
+          `Connector RPC exited${signal ? ` by ${signal}` : ""} with code ${code ?? "null"}`;
+        this.finalizeRpcProcess(child, message, cleaned);
+      }).catch(error => this.logError(error));
+    } else {
+      child.once("error", (error) => {
+        this.finalizeRpcProcess(child, `Connector RPC failed to start: ${error.message}`);
+      });
+      child.once("exit", (code, signal) => {
+        this.finalizeRpcProcess(child, `Connector RPC exited${signal ? ` by ${signal}` : ""} with code ${code ?? "null"}`);
+      });
+      child.once("close", (code, signal) => {
+        this.finalizeRpcProcess(child, `Connector RPC closed${signal ? ` by ${signal}` : ""} with code ${code ?? "null"}`);
+      });
+    }
+    if (guard) {
+      // The guard waits for start until its session is recorded in the lease.
+      // The normal RPC readiness deadline also covers this handshake.
+      if (child.pid === undefined) return;
+      void guard.session().then(session => {
+        if (this.rpcProcess !== child) return;
+        this.environment.recordProcess(child.pid, session);
+        guard.start();
+      }).catch(error => {
+        if (this.rpcProcess !== child) return;
+        this.ready?.reject(error);
+        void this.terminateRpcProcess(true).catch(failure => this.logError(failure));
+      });
+    } else {
+      try {
+        this.environment.recordProcess(child.pid);
+      } catch (error) {
+        void this.terminateRpcProcess(true).catch(failure => this.logError(failure));
+        throw error;
+      }
+    }
   }
 
   private handleRpcLine(line: string): void {
@@ -511,15 +693,16 @@ export class ConnectorSupervisor {
       // stdout carries exactly one line: the ready message. Anything else is a
       // protocol error with no recovery path, so restart the process.
       ready.reject(new Error(`Connector RPC emitted an unexpected line: ${line.slice(0, RECENT_OUTPUT_LINE_LENGTH)}`));
-      void this.terminateRpcProcess();
+      void this.terminateRpcProcess().catch(error => this.logError(error));
       return;
     }
+    this.rpcGuard?.watch(rendezvous.pid);
     this.log({ level: "INFO", message: `Connector ready (${rendezvous.instanceId})` });
     void this.connect(rendezvous, ready).then(
       channel => ready.resolve(channel),
       error => {
         ready.reject(error);
-        void this.terminateRpcProcess();
+        void this.terminateRpcProcess().catch(error => this.logError(error));
       },
     );
   }
@@ -563,6 +746,30 @@ export class ConnectorSupervisor {
   private watchStreams(channel: ConnectorChannel): void {
     const controller = new AbortController();
     this.streams = controller;
+    const child = this.rpcProcess;
+    let probing = false;
+    let failures = 0;
+    // A live process can lose its control service or block its event loop.
+    // Stream resubscription alone cannot recover that process.
+    const healthCheck = setInterval(() => {
+      if (probing || controller.signal.aborted || this.shuttingDown || this.maintenance || !this.keepRuntimeRunning || this.state.authFailed) return;
+      probing = true;
+      void (async () => {
+        try {
+          await channel.control.getState({ timeoutMs: HEALTH_CHECK_TIMEOUT_MS });
+          failures = 0;
+        } catch (error) {
+          if (controller.signal.aborted || this.rpcProcess !== child || this.shuttingDown || this.maintenance || !this.keepRuntimeRunning || this.state.authFailed) return;
+          if (++failures < 2) return;
+          this.log({ level: "WARNING", message: `Connector control service is unresponsive; restarting RPC: ${errorMessage(error)}` });
+          await this.terminateRpcProcess();
+        } finally {
+          probing = false;
+        }
+      })().catch(error => this.logError(error));
+    }, HEALTH_CHECK_INTERVAL_MS);
+    healthCheck.unref();
+    controller.signal.addEventListener("abort", () => clearInterval(healthCheck), { once: true });
     this.options.onLogSourceChanged?.();
     const follow = async <T>(name: string, open: (since: number | null, signal: AbortSignal) => AsyncIterable<T>) => {
       let since: number | null = null;
@@ -612,15 +819,27 @@ export class ConnectorSupervisor {
     this.log({ level: match?.[1] ?? (uvMessage ? "INFO" : "ERROR"), message: plain });
   }
 
-  private finalizeRpcProcess(child: ChildProcessWithoutNullStreams, message: string): void {
+  private finalizeRpcProcess(child: ChildProcessWithoutNullStreams, message: string, cleaned = false): void {
     if (this.rpcProcess !== child) return;
+    const guarded = this.rpcGuard !== null;
+    if (guarded) {
+      if (cleaned) {
+        try { this.environment.recordProcess(); } catch (error) { this.logError(error); }
+      }
+      this.rpcGuard = null;
+    } else {
+      void terminateConnectorProcess(child).then(() => { if (!this.rpcProcess) this.environment.recordProcess(); }).catch(error => this.logError(error));
+    }
     this.log(message);
     this.rpcReader?.close();
     this.rpcReader = null;
+    if (guarded) {
+      child.stdin.destroy();
+      child.stdout.destroy();
+    }
     const output = this.rpcOutput;
     this.rpcOutput = null;
     this.rpcProcess = null;
-    this.processGroupId = null;
     const ready = this.ready;
     this.ready = null;
     this.streams?.abort();
@@ -632,16 +851,26 @@ export class ConnectorSupervisor {
     if (channel) this.options.onLogSourceChanged?.();
     void mesh?.close().catch(() => undefined);
     void channel?.close?.().catch(() => undefined);
-    if (ready) {
-      const drained = new Promise<void>(resolve => setTimeout(resolve, OUTPUT_DRAIN_MS));
-      void Promise.race([output?.closed ?? Promise.resolve(), drained]).then(() => {
-        ready.reject(new Error(withRecentOutput(message, output?.lines)));
-      });
-    }
+    const expected = this.shuttingDown || this.terminating.has(child);
+    const drained = Promise.race([
+      output?.closed ?? Promise.resolve(),
+      new Promise<void>(resolve => setTimeout(resolve, OUTPUT_DRAIN_MS)),
+    ]);
+    void drained.then(() => {
+      if (guarded) child.stderr.destroy();
+      const reason = withRecentOutput(message, output?.lines);
+      ready?.reject(new Error(reason));
+      // The Connector reports its own errors while it runs; an exit nobody
+      // asked for leaves none, so record it until a new process reports.
+      if (expected || this.rpcProcess !== null) return;
+      this.state.lastError = reason;
+      this.emitState();
+    });
     this.mergeRuntimeState({ running: false, status: "stopped" });
     this.emitState();
     if (
       this.keepRuntimeRunning &&
+      !this.cleanupFailure &&
       !this.shuttingDown &&
       !this.suppressProcessRestart &&
       !this.state.authFailed &&
@@ -682,52 +911,25 @@ export class ConnectorSupervisor {
     if (shouldRun) await this.start();
   }
 
-  private async terminateRpcProcess(suppressRestart = false): Promise<void> {
+  private terminateRpcProcess(suppressRestart = false): Promise<void> {
+    if (this.termination) return this.termination;
+    this.termination = this.terminate(suppressRestart).finally(() => { this.termination = null; });
+    return this.termination;
+  }
+
+  private async terminate(suppressRestart: boolean): Promise<void> {
     const child = this.rpcProcess;
     if (!child) return;
-    const groupId = this.processGroupId ?? child.pid ?? null;
+    this.terminating.add(child);
     const previousSuppression = this.suppressProcessRestart;
     this.suppressProcessRestart = this.suppressProcessRestart || suppressRestart;
-    const exited = new Promise<void>((resolve) => {
-      let settled = false;
-      const done = () => {
-        if (settled) return;
-        settled = true;
-        resolve();
-      };
-      child.once("error", done);
-      child.once("exit", done);
-      child.once("close", done);
-    });
-    child.stdin.end();
-    if (process.platform === "win32" && child.pid) {
-      spawn("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"], {
-        windowsHide: true,
-        stdio: "ignore",
-      });
-    } else if (child.pid) {
-      try {
-        process.kill(-groupId!, "SIGTERM");
-      } catch {
-        child.kill("SIGTERM");
-      }
+    try {
+      if (this.rpcGuard) await this.rpcGuard.stop();
+      else await terminateConnectorProcess(child);
+      if (this.rpcProcess === child) this.finalizeRpcProcess(child, "Connector RPC was terminated.");
+    } finally {
+      this.suppressProcessRestart = previousSuppression;
     }
-    const completed = await Promise.race([
-      exited.then(() => true),
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2_000)),
-    ]);
-    if (!completed && child.pid && process.platform !== "win32") {
-      try {
-        process.kill(-groupId!, "SIGKILL");
-      } catch {
-        child.kill("SIGKILL");
-      }
-      await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 1_000))]);
-    }
-    if (this.rpcProcess === child) {
-      this.finalizeRpcProcess(child, "Connector RPC was terminated.");
-    }
-    this.suppressProcessRestart = previousSuppression;
   }
 
   /** Only a launch materializes the project copy; state checks stay read-only. */
@@ -764,7 +966,7 @@ export class ConnectorSupervisor {
     const pythonArgs = python ? ["--python", python] : [];
     return {
       executable: uv,
-      args: ["run", "--project", projectDir, ...pythonArgs, "anywhere-cli", "rpc", "--config", this.options.configPath],
+      args: ["run", "--no-sync", "--project", projectDir, ...pythonArgs, "anywhere-cli", "rpc", "--config", this.options.configPath],
       description: `${uv} run --project ${projectDir}${python ? ` --python ${python}` : ""}`,
     };
   }
@@ -794,44 +996,7 @@ export class ConnectorSupervisor {
   private projectEnvironmentPath(): string {
     if (this.options.packaged) return path.join(this.options.dataPath, ".venv");
     const configured = (this.shellEnvironment.UV_PROJECT_ENVIRONMENT ?? process.env.UV_PROJECT_ENVIRONMENT)?.trim();
-    return configured || path.join(this.options.connectorDir, ".venv");
-  }
-
-  /**
-   * A prebuilt connector binary runs directly and never syncs an environment.
-   * Otherwise `uv run` builds the environment when there is none, and rebuilds
-   * it when another interpreter created it, e.g. the Python uv downloaded
-   * before this Desktop bundled one.
-   */
-  private needsFirstRunProvisioning(): boolean {
-    if (this.resolveDirectConnectorCli()) return false;
-    const home = environmentHome(this.projectEnvironmentPath());
-    if (home === null) return true;
-    const python = this.resolvePythonPath();
-    return Boolean(python) && !environmentUsesPython(home, python);
-  }
-
-  private provisioningTimeoutMs(): number {
-    return this.needsFirstRunProvisioning() ? FIRST_RUN_TIMEOUT_MS : DEFAULT_RPC_TIMEOUT_MS;
-  }
-
-  /**
-   * The first probe waits on `uv` installing every dependency (and, with no
-   * bundled Python, the interpreter). Tell the host that this is progress, not
-   * failure, so it can show it instead of an error dialog.
-   */
-  private announceFirstRun(): number {
-    const timeoutMs = this.provisioningTimeoutMs();
-    if (timeoutMs !== FIRST_RUN_TIMEOUT_MS) return timeoutMs;
-    this.options.onOwnership?.({ status: "preparing" });
-    const python = this.resolvePythonPath();
-    this.log({
-      level: "INFO",
-      message: python
-        ? `Preparing the Connector environment for ${python}: installing dependencies. This can take a few minutes.`
-        : "First run: installing the Connector environment (Python and dependencies). This can take a few minutes.",
-    });
-    return timeoutMs;
+    return configured ? path.resolve(this.projectDir ?? this.options.connectorDir, configured) : path.join(this.options.connectorDir, ".venv");
   }
 
   /**
@@ -887,6 +1052,7 @@ export class ConnectorSupervisor {
       ...process.env,
       ...this.shellEnvironment,
       AA_CONNECTOR_OWNER_KIND: "desktop-workbench",
+      AA_PI_NPM_ROOT: path.join(this.options.dataPath, "pi-npm-runtimes"),
       PATH: [...new Set(entries)].join(path.delimiter),
       PYTHONUNBUFFERED: "1",
       PYTHONDONTWRITEBYTECODE: "1",
@@ -896,16 +1062,24 @@ export class ConnectorSupervisor {
       environment.UV_PROJECT_ENVIRONMENT = this.projectEnvironmentPath();
       environment.UV_CACHE_DIR = path.join(this.options.dataPath, "uv-cache");
     }
-    // Also make the official-index choice explicit: the bundled project or
-    // inherited shell environment may declare a different default index.
+    // The chosen mirror is the first index and PyPI the fallback: uv takes
+    // each package from the first index that has it, so a mirror that
+    // filters large wheels (TUNA, USTC and BFSU carry no openai-codex) still
+    // installs. Every index is explicit because the bundled project or the
+    // inherited shell environment may declare others.
     const settings = this.options.settings.get();
-    const pypiIndexUrl = settings.uvPypiIndexUrl || "https://pypi.org/simple";
-    environment.UV_DEFAULT_INDEX = pypiIndexUrl;
-    environment.UV_INDEX_URL = pypiIndexUrl;
-    environment.PIP_INDEX_URL = pypiIndexUrl;
+    const mirror = settings.uvPypiIndexUrl.replace(/\/+$/, "");
+    environment.UV_DEFAULT_INDEX = PYPI_SIMPLE;
+    environment.UV_INDEX_URL = PYPI_SIMPLE;
+    if (mirror && mirror !== PYPI_SIMPLE) environment.UV_INDEX = mirror;
+    else delete environment.UV_INDEX;
+    environment.PIP_INDEX_URL = mirror || PYPI_SIMPLE;
     // Without a bundled or saved interpreter uv downloads CPython itself; the default is GitHub.
     environment.UV_PYTHON_INSTALL_MIRROR = settings.uvPythonInstallMirror || PYTHON_BUILDS_GITHUB;
     environment.UV_HTTP_TIMEOUT ||= UV_HTTP_TIMEOUT_SECONDS;
+    // The setting decides, so a value inherited from the shell cannot contradict the UI.
+    if (settings.connectorProxy) environment.AA_CONNECTOR_PROXY = settings.connectorProxy;
+    else delete environment.AA_CONNECTOR_PROXY;
     if (process.platform === "win32") {
       delete environment.Path;
       delete environment.path;
@@ -973,10 +1147,12 @@ export class ConnectorSupervisor {
     | "startConnectorOnLaunch"
     | "silentLaunch"
     | "notificationsEnabled"
+    | "confirmQuitOnShutdown"
     | "uvPath"
     | "pythonPath"
     | "uvPypiIndexUrl"
     | "uvPythonInstallMirror"
+    | "connectorProxy"
     | "logChunkSizeKb"
     | "logRetainChunks"
     | "logRetentionDays"
@@ -987,10 +1163,12 @@ export class ConnectorSupervisor {
       startConnectorOnLaunch: settings.startConnectorOnLaunch,
       silentLaunch: settings.silentLaunch,
       notificationsEnabled: settings.notificationsEnabled,
+      confirmQuitOnShutdown: settings.confirmQuitOnShutdown,
       uvPath: settings.uvPath,
       pythonPath: settings.pythonPath,
       uvPypiIndexUrl: settings.uvPypiIndexUrl,
       uvPythonInstallMirror: settings.uvPythonInstallMirror,
+      connectorProxy: settings.connectorProxy,
       logChunkSizeKb: settings.logChunkSizeKb,
       logRetainChunks: settings.logRetainChunks,
       logRetentionDays: settings.logRetentionDays,
@@ -1007,6 +1185,11 @@ export class ConnectorSupervisor {
     if (typeof next.hasConfig === "boolean") this.state.hasConfig = next.hasConfig;
     if (typeof next.configPath === "string") this.state.configPath = next.configPath;
     if (typeof next.runtimePath === "string") this.state.runtimePath = next.runtimePath;
+    if (typeof next.logsPath === "string" && next.logsPath.trim()) this.state.logsPath = next.logsPath;
+    const deviceSettings = next.deviceSettings as Record<string, unknown> | null | undefined;
+    if (deviceSettings && typeof deviceSettings.confirmQuitOnShutdown === "boolean") {
+      this.options.onDeviceSettings?.({ confirmQuitOnShutdown: deviceSettings.confirmQuitOnShutdown });
+    }
     if (this.state.authFailed) this.clearRestartTimer();
     if (this.state.running) this.crashCount = 0;
     this.refreshBindingState();

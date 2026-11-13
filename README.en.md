@@ -17,7 +17,7 @@
 
 <p align="center">
   <a href="docs/releases/2.0.3.md"><img src="https://img.shields.io/badge/release-2.0.3-222222?style=flat" alt="Release 2.0.3"></a>
-  <a href="#license"><img src="https://img.shields.io/badge/license-MIT-222222?style=flat" alt="MIT"></a>
+  <a href="#license"><img src="https://img.shields.io/badge/license-Apache--2.0-222222?style=flat" alt="Apache-2.0"></a>
   <a href="docker/README.md"><img src="https://img.shields.io/badge/self--hosted-Docker-222222?style=flat" alt="Self-host with Docker"></a>
 </p>
 
@@ -43,13 +43,13 @@ See the [download page](https://www.agents-anywhere.com/en/download) for platfor
 <details>
 <summary>Platform requirements, installers and updates</summary>
 
-- macOS: Universal for Apple Silicon / Intel; signed and notarized; requires macOS 12 or later.
+- macOS: Universal for Apple Silicon / Intel; signed and notarized; requires macOS 13 or later.
 - Windows: x64 desktop workbench with a managed Connector; the current installer is not code signed.
 - Android: Android 8.0 or later.
 - iOS / iPadOS: download from the App Store, or install the beta through TestFlight; beta availability is shown on the invitation page.
 - Linux / headless: run the Connector on the work machine and control it from another client.
 
-The macOS, Windows and Android files are **Agents Anywhere** installers hosted in the ModelScope repository `t4wefan/deepseek-harness-desktop`; the same files are also attached to the [v2.0.3 GitHub Release](https://github.com/anywhere-labs/Agents-Anywhere/releases/tag/v2.0.3). Historical 0.1.x GitHub Releases are not the 2.0 download channel. In-app update addresses in the current released clients are still placeholders; download manually using the links above.
+The macOS, Windows and Android files are **Agents Anywhere** installers hosted in the ModelScope repository `t4wefan/deepseek-harness-desktop`; the same files are also attached to the [v2.0.3 GitHub Release](https://github.com/anywhere-labs/Agents-Anywhere/releases/tag/v2.0.3). Historical 0.1.x GitHub Releases are not the 2.0 download channel. In-app update addresses in 2.0.3 and earlier clients are placeholders; download manually using the links above. Starting with 2.1.0, **Update now** in Desktop (macOS, Windows) and Android downloads the latest installer from the official site.
 
 `main` is the current development branch. New source fixes may not yet be included in the 2.0.3 installers. Each client and service releases PATCH versions independently, and database schema revisions are numbered separately; see the [versioning rules](docs/versioning.md). See the [2.0.3 release notes](docs/releases/2.0.3.md) for release scope.
 
@@ -160,4 +160,4 @@ Join the community to share your experience, report problems or contribute. Scan
 
 ## License
 
-MIT. See [image sources and reproduction](docs/readme-artwork/README.md) for product screenshot and brand-asset notes.
+Released under the [Apache License 2.0](LICENSE). The notice for code previously published under MIT is kept in [NOTICE](NOTICE). By contributing, you agree to license your contribution under the same terms. Third-party code and assets in this repository remain under their own licenses and terms; see [image sources and reproduction](docs/readme-artwork/README.md) for product screenshot and brand-asset notes.

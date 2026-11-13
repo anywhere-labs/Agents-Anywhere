@@ -92,6 +92,13 @@ User chooses selection
 The runtime may also update selections without direct user action. Web must
 treat RuntimeLive state updates as authoritative.
 
+For an existing session, a missing selection scope renders as “not synced” and
+must not select a default or first enabled catalog item. A present `null`
+renders as the Runtime default. `metadata.pendingSelectionScopes` marks values
+that are accepted but apply on the next turn; the pending label disappears
+when the Runtime publishes the next turn start. Sending a message never infers
+a selection patch from the currently rendered labels.
+
 ## Message composer
 
 For existing sessions:

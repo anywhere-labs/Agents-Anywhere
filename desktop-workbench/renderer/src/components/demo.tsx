@@ -1,5 +1,7 @@
 "use client"
 
+import { EmptyAgentPrompt } from '@/components/empty-agent-prompt'
+
 import * as React from "react"
 import type { PanelImperativeHandle } from "react-resizable-panels"
 
@@ -18,6 +20,7 @@ import { SidebarSwitch } from "@/components/sidebar-switch"
 import { AdminPage } from "@/components/admin/admin-page"
 import { AdminSidebar } from "@/components/admin/admin-sidebar"
 import { DevicePage } from "@/components/pages/device-page"
+import { TokensAnywherePage } from "@/components/pages/tokens-anywhere-page"
 import { MobileConnectionsPage } from "@/components/pages/mobile-connections-page"
 import { WorkspaceProvider, useWorkspace } from "@/components/workspace-context"
 import { LoadingState } from "@/components/loading-state"
@@ -59,6 +62,7 @@ export function Demo() {
           <DesktopSessionNotifications />
           <SidebarProvider>
             <DashboardShell />
+            <EmptyAgentPrompt />
           </SidebarProvider>
         </DesktopConnectorProvider>
       </DevicePairingProvider>
@@ -347,6 +351,7 @@ function WorkspaceMain() {
   const content =
     page === "settings" ? <SettingsPage /> :
     page === "admin" ? <AdminPage /> :
+    page === "tokens-anywhere" ? <TokensAnywherePage /> :
     page === "mobile-connections" ? <MobileConnectionsPage /> :
     page === "session" ? <SessionView /> :
     page === "device" ? <DevicePage /> :

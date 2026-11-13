@@ -12,12 +12,32 @@ on:
       - main
       - v2
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Checks to execute
+        type: choice
+        options: [all, server]
+        default: all
+      server_workers:
+        description: Verification workers (dependency recording uses at most 2)
+        type: choice
+        options: ['4', '2', '1']
+        default: '4'
+      server_mode:
+        description: Full verification (default), or optional dependency recording/selection diagnostics
+        type: choice
+        options: [verify, full, shadow, affected]
+        default: verify
+      server_sample_change:
+        description: Benchmark a harmless announcement function edit in this checkout
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -38,6 +58,7 @@ jobs:
     outputs:
       plugin: ${{ steps.paths.outputs.plugin }}
       connector: ${{ steps.paths.outputs.connector }}
+      acp: ${{ steps.paths.outputs.acp }}
       server: ${{ steps.paths.outputs.server }}
       web: ${{ steps.paths.outputs.web }}
       desktop: ${{ steps.paths.outputs.desktop }}
@@ -48,10 +69,12 @@ jobs:
         id: paths
         shell: bash
         env:
+          CHECK_SCOPE: ${{ inputs.scope }}
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: |
           plugin=false
           connector=false
+          acp=false
           server=false
           web=false
           desktop=false
@@ -60,13 +83,18 @@ jobs:
             echo "::notice::$1; running every check"
             plugin=true
             connector=true
+            acp=true
             server=true
             web=true
             desktop=true
           }
 
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
-            run_everything "manual run"
+            if [[ "$CHECK_SCOPE" == server ]]; then
+              server=true
+            else
+              run_everything "manual run"
+            fi
           elif [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then
             # A push that creates a branch has no `before` commit to diff against.
             run_everything "no base commit"
@@ -76,13 +104,25 @@ jobs:
             git diff --name-only --no-renames "$BASE_SHA" "$GITHUB_SHA" > "$RUNNER_TEMP/changed-paths"
             while IFS= read -r path; do
               case "$path" in
-                .github/workflows/*|contracts/*)
+                .github/workflows/pi-compat.yml)
+                  # Its own PR workflow verifies native Pi compatibility.
+                  [[ -f "$path" ]] || run_everything "independent workflow removed: $path"
+                  ;;
+                .github/workflows/dsh-bridge.yml) plugin=true ;;
+                .github/actions/setup-yarn/action.yml)
+                  plugin=true; web=true; desktop=true ;;
+                .github/workflows/*|.github/actions/*|contracts/*)
                   run_everything "shared file changed: $path"
                   ;;
                 dsh-bridge-next/*) plugin=true ;;
                 # Plugin integration tests run the Connector's DSH probe and the
                 # Server tests import the Connector package.
-                connector/*) connector=true; server=true; plugin=true ;;
+                connector/scripts/verify-acp-runtime.py|connector/scripts/verify-acp-processes.py|connector/scripts/verify-acp-generic-boundary.py|connector/scripts/verify-pi-managed.py)
+                  acp=true ;;
+                connector/scripts/verify-pi-native.py)
+                  # Verified by the separate Pi compatibility workflow.
+                  ;;
+                connector/*) connector=true; acp=true; server=true; plugin=true ;;
                 server/*) server=true; plugin=true ;;
                 web-next/*) web=true ;;
                 desktop-workbench/*) desktop=true ;;
@@ -90,7 +130,7 @@ jobs:
             done < "$RUNNER_TEMP/changed-paths"
           fi
 
-          for scope in plugin connector server web desktop; do
+          for scope in plugin connector acp server web desktop; do
             echo "$scope=${!scope}" >> "$GITHUB_OUTPUT"
             echo "$scope: ${!scope}"
           done
@@ -111,6 +151,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s
           --health-timeout 5s
@@ -122,10 +163,14 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - name: Install plugin dependencies
+        uses: ./.github/actions/setup-yarn
         with:
+          project: dsh-bridge-next
           node-version: ${{ env.NODE_VERSION }}
+        env:
+          # Validate explicitly pinned DSH release candidates immediately after publication.
+          YARN_NPM_MINIMAL_AGE_GATE: "0"
       - name: Set up uv and Python
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
@@ -135,20 +180,16 @@ jobs:
           cache-dependency-glob: |
             connector/pyproject.toml
             server/pyproject.toml
-      - name: Enable Corepack
-        run: corepack enable
       - name: Prepare Python integration fixtures
         run: |
           uv sync --project connector
           uv sync --project server
-      - name: Install plugin dependencies
-        working-directory: dsh-bridge-next
-        env:
-          # Validate explicitly pinned DSH release candidates immediately after publication.
-          YARN_NPM_MINIMAL_AGE_GATE: "0"
-        run: corepack yarn install
+          uv pip install --python server/.venv/bin/python --editable ./connector
       - name: Typecheck, build and test plugin
         working-directory: dsh-bridge-next
+        env:
+          # Nested Python probes reuse the prepared environments, without repeated resolution.
+          UV_NO_SYNC: "true"
         run: corepack yarn check
 
   connector:
@@ -173,10 +214,46 @@ jobs:
         working-directory: connector
         # `timeout` ends a stalled run with the faulthandler stacks still in the
         # log; the job timeout alone would discard them.
-        run: timeout 900 uv run --frozen pytest -q -o faulthandler_timeout=120
+        run: timeout --kill-after=30s 900 uv run --no-sync pytest -q --durations=20 -o faulthandler_timeout=120
+
+  acp:
+    name: ACP coordination (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.acp == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install Connector dependencies
+        run: uv sync --project connector
+      - name: Verify actual ACP transport and ownership
+        working-directory: connector
+        shell: bash
+        run: |
+          uv run python scripts/verify-acp-runtime.py
+          uv run python scripts/verify-acp-processes.py
+          uv run python scripts/verify-acp-generic-boundary.py
+      - name: Verify published Pi runtime with a local model
+        working-directory: connector
+        shell: bash
+        run: |
+          uv run --no-sync python scripts/verify-pi-managed.py --scenario all --cache-root "$RUNNER_TEMP/aa-pi-runtime-checks"
 
   server:
-    name: Server tests
+    name: ${{ github.event_name == 'workflow_dispatch' && inputs.server_mode != 'verify' && 'Server test diagnostics' || 'Server tests' }}
     needs: changes
     if: needs.changes.outputs.server == 'true'
     runs-on: ubuntu-latest
@@ -191,6 +268,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s
           --health-timeout 5s
@@ -201,6 +279,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Set up uv and Python
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
@@ -215,10 +295,69 @@ jobs:
         # and its dependencies have to live in the Server environment.
         run: |
           uv sync --project server
-          uv pip install --python server/.venv/bin/python ./connector
+          uv pip install --python server/.venv/bin/python --editable ./connector
+      - name: Check runtime workflow contracts
+        working-directory: server
+        run: uv run --no-sync python -m scripts.export_workflow_schemas --check
+      - name: Restore test dependency baseline
+        if: github.event_name == 'workflow_dispatch' && inputs.server_mode != 'verify'
+        uses: actions/cache/restore@v4
+        with:
+          path: server/.testmondata*
+          key: server-testmon-v1-${{ runner.os }}-${{ hashFiles('server/pyproject.toml', 'connector/pyproject.toml') }}-${{ github.sha }}
+          restore-keys: |
+            server-testmon-v1-${{ runner.os }}-${{ hashFiles('server/pyproject.toml', 'connector/pyproject.toml') }}-
+      - name: Prepare optional benchmark function change
+        if: github.event_name == 'workflow_dispatch' && inputs.server_sample_change
+        run: |
+          python - <<'PYTHON'
+          from pathlib import Path
+          path = Path('server/agent_server/api/announcements.py')
+          source = path.read_text()
+          before = 'response.headers["Cache-Control"] = "no-store"'
+          if before not in source:
+              raise SystemExit('Benchmark anchor missing; no source modified')
+          path.write_text(source.replace(before, before + '.strip()', 1))
+          print('Benchmark only: harmless announcement function edit in disposable CI checkout')
+          PYTHON
       - name: Test Server
         working-directory: server
-        run: timeout 1200 uv run --frozen pytest -q -o faulthandler_timeout=120
+        env:
+          CHECK_BASE: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.pull_request.base.sha || github.event.before }}
+        run: uv run --no-sync python -m scripts.check_tests --mode "${{ inputs.server_mode || 'verify' }}" --workers "${{ inputs.server_workers || '4' }}" --base "$CHECK_BASE"
+      - name: Publish Server timing and selection report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-test-report
+          include-hidden-files: true
+          path: server/.test-results/
+      - name: Summarize Server checks
+        if: always()
+        working-directory: server
+        run: |
+          python - <<'PYTHON'
+          import json, os
+          from pathlib import Path
+          path = Path('.test-results/summary.json')
+          if path.exists():
+              data = json.loads(path.read_text())
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+                  out.write('## Server test report\n\n')
+                  out.write(f"Fallback: {data['fallback'] or 'none'}\n\n")
+                  out.write('| Stage | Workers | Tests executed | Seconds | Exit |\n|---|---:|---:|---:|---:|\n')
+                  for stage in data['stages']:
+                      count = len({r['id'] for r in stage['reports']})
+                      out.write(f"| {stage['stage']} | {stage.get('workers', '?')} | {count} | {stage['wall_seconds']} | {stage['exit_code']} |\n")
+                  if 'missed_failures' in data:
+                      out.write(f"\nFast path reduction: {data['time_reduction_percent']}%; missed failing tests: {len(data['missed_failures'])}\n")
+          PYTHON
+      - name: Save successful test dependency baseline
+        if: success() && github.event_name == 'workflow_dispatch' && inputs.server_mode != 'verify'
+        uses: actions/cache/save@v4
+        with:
+          path: server/.testmondata*
+          key: server-testmon-v1-${{ runner.os }}-${{ hashFiles('server/pyproject.toml', 'connector/pyproject.toml') }}-${{ github.sha }}
 
   web:
     name: Web headless checks
@@ -232,17 +371,15 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      - name: Enable Corepack
-        run: corepack enable
       - name: Install client dependencies
-        run: corepack yarn install
+        uses: ./.github/actions/setup-yarn
+        with:
+          project: web-next
+          node-version: ${{ env.NODE_VERSION }}
       - name: Verify Web
         run: |
           corepack yarn test
+          node scripts/verify-runtime-workflows.mjs
           corepack yarn typecheck
           corepack yarn protocol:check
 
@@ -258,17 +395,15 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      - name: Enable Corepack
-        run: corepack enable
       - name: Install client dependencies
-        run: corepack yarn install
+        uses: ./.github/actions/setup-yarn
+        with:
+          project: desktop-workbench
+          node-version: ${{ env.NODE_VERSION }}
       - name: Verify Desktop renderer and main process
         run: |
           corepack yarn workspace agents-anywhere-desktop-renderer test
+          corepack yarn workspace agents-anywhere-desktop-renderer exec node scripts/verify-runtime-workflows.mjs
           corepack yarn renderer:typecheck
           corepack yarn workspace agents-anywhere-desktop-renderer protocol:check
           corepack yarn test:main

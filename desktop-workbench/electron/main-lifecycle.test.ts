@@ -6,6 +6,7 @@ import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
 import { normalizeServerOrigin, resolveDesktopServer, type DesktopServerConnection } from "./desktop-server";
+import { nextSilentLaunchState, type SilentLaunchState } from "./silent-launch";
 
 // Execute the actual Main entrypoint functions without loading Electron or
 // starting a Connector. Any new shutdown side effects must be accounted for.
@@ -106,6 +107,10 @@ test("Windows close hides the window without confirming quit, and reopening rest
     mainWindow: null,
     devOrigin: null,
     isQuitting: false,
+    silentLaunch: "owned" as SilentLaunchState,
+    ownership: { status: "owned" },
+    backend: { hasConnectorAuthFailure: () => authFailed },
+    nextSilentLaunchState,
     windowMaterialOptions: () => ({}),
     appWindowIcon: () => "icon.png",
     staticWorkbenchUrl: () => "aa-workbench://web/",
@@ -114,7 +119,9 @@ test("Windows close hides the window without confirming quit, and reopening rest
     showDockForWindow: () => {},
     requestQuit: () => assert.fail("Closing the Windows window must not request quit"),
   };
-  const { createMainWindow, showMainWindow } = loadFunctions(["createMainWindow", "showMainWindow"], globals);
+  let authFailed = false;
+  const { createMainWindow, showMainWindow, applySilentLaunchState } =
+    loadFunctions(["createMainWindow", "showMainWindow", "applySilentLaunchState"], globals);
   const window = createMainWindow(false) as Window;
   const previewOptions = window.openHandler!({ url: "aa-workbench://web/#/preview?path=main.ts" }) as {
     action: string;
@@ -136,6 +143,9 @@ test("Windows close hides the window without confirming quit, and reopening rest
   showMainWindow();
   assert.deepEqual(calls.slice(2), ["restore", "show", "focus"]);
   calls.length = 0;
+  authFailed = true;
+  applySilentLaunchState();
+  assert.deepEqual(calls, [], "a failure after opening from the tray does not reopen the window");
   globals.isQuitting = true;
   window.emit("close", { preventDefault: () => assert.fail("Confirmed quit must allow closing") });
   showMainWindow();
@@ -254,4 +264,127 @@ test("updates require an authenticated server matching a saved server and never 
   }
   syncDesktopUpdateSession(server.serverUrl);
   assert.deepEqual(calls.pop(), server);
+});
+
+test("a backend that stops after ready opens the gate, and its recheck starts a new backend", async () => {
+  const published: Array<{ status: string; recovery?: { kind: string } }> = [];
+  const clients: Array<{ options: { onExit: (message: string) => void; onEvent: (event: { event: string; data: unknown }) => void } }> = [];
+  let failStart = false;
+  class FakeBackendClient {
+    constructor(readonly options: { onExit: (message: string) => void; onEvent: (event: { event: string; data: unknown }) => void }) {
+      clients.push(this);
+    }
+    async start() { if (failStart) throw new Error("Desktop backend did not become ready in time."); }
+    getOwnership() { return { status: "checking" }; }
+  }
+  const globals = {
+    DesktopBackendClient: FakeBackendClient,
+    backend: null as unknown,
+    ownership: { status: "owned" } as { status: string },
+    isQuitting: false,
+    app: { isPackaged: false },
+    net: { fetch: () => assert.fail("no network in this test") },
+    backendInit: () => ({}),
+    applyLoginItemSettings: () => {},
+    appendMainLog: () => {},
+    errorMessage: (error: unknown) => error instanceof Error ? error.message : String(error),
+    sendToRenderer: (_channel: string, state: { status: string; recovery?: { kind: string } }) => published.push(state),
+    drainDesktopOAuthCallbacks: async () => {},
+    applySilentLaunchState: () => {},
+  };
+  const { startDesktopBackend, restartDesktopBackend } = loadFunctions(
+    ["startDesktopBackend", "restartDesktopBackend", "publishOwnership"],
+    globals,
+  ) as { startDesktopBackend: () => Promise<void>; restartDesktopBackend: () => Promise<{ status: string }> };
+
+  await startDesktopBackend();
+  globals.ownership = { status: "owned" };
+  clients[0].options.onExit("Desktop backend stopped unexpectedly (code 1).");
+  // States built inside the vm context have its prototypes; compare their data.
+  const plain = (value: unknown) => JSON.parse(JSON.stringify(value)) as unknown;
+  assert.deepEqual(plain(published.at(-1)), {
+    status: "error",
+    message: "Desktop backend stopped unexpectedly (code 1).",
+    recovery: { kind: "backendStopped" },
+  }, "an owned window is told the backend is gone");
+
+  assert.equal((await restartDesktopBackend()).status, "checking");
+  assert.equal(clients.length, 2);
+  assert.equal(globals.backend, clients[1]);
+  assert.equal(published.at(-1)?.status, "checking");
+  const count = published.length;
+  clients[0].options.onExit("late exit of the old backend");
+  clients[0].options.onEvent({ event: "ownership", data: { status: "conflict" } });
+  assert.equal(published.length, count, "the replaced backend no longer speaks for the window");
+
+  failStart = true;
+  const failed = await restartDesktopBackend();
+  assert.equal(failed.status, "error");
+  assert.deepEqual(plain(published.at(-1)?.recovery), { kind: "backendStopped" }, "a failed restart can be retried");
+});
+
+function shutdownFixture(options: { confirmSetting?: boolean; shuttingDown?: boolean; platform?: string } = {}) {
+  const calls: Array<{ confirm?: boolean; systemShutdown?: boolean } | undefined> = [];
+  const globals = {
+    systemShuttingDown: options.shuttingDown ?? false,
+    SYSTEM_SHUTDOWN_SIGNAL_GRACE_MS: 0,
+    process: { platform: options.platform ?? "darwin" },
+    setTimeout,
+    backend: { getSettings: () => ({ confirmQuitOnShutdown: options.confirmSetting ?? false }) },
+    // Copy into this realm: objects built inside the vm context are not deep-equal here.
+    requestQuit: async (request?: { confirm?: boolean; systemShutdown?: boolean }) => { calls.push({ ...request }); },
+  };
+  const functions = loadFunctions(
+    ["confirmsQuitOnShutdown", "handleAppQuitRequest", "handleSystemShutdown"],
+    globals,
+  ) as { handleAppQuitRequest: () => Promise<void>; handleSystemShutdown: () => void };
+  return { calls, globals, ...functions };
+}
+
+test("a system shutdown quits without asking by default", async () => {
+  const fixture = shutdownFixture({ shuttingDown: true });
+  await fixture.handleAppQuitRequest();
+  assert.deepEqual(fixture.calls, [{ systemShutdown: true }]);
+});
+
+test("a system shutdown asks first only when the device setting is on", async () => {
+  const fixture = shutdownFixture({ shuttingDown: true, confirmSetting: true });
+  await fixture.handleAppQuitRequest();
+  assert.deepEqual(fixture.calls, [{ confirm: true }]);
+});
+
+test("quitting outside a shutdown still asks, whatever the device setting", async () => {
+  for (const platform of ["darwin", "win32"]) {
+    const fixture = shutdownFixture({ platform });
+    await fixture.handleAppQuitRequest();
+    assert.deepEqual(fixture.calls, [{ confirm: true }]);
+  }
+});
+
+test("a macOS quit request that arrives just before the shutdown announcement does not ask", async () => {
+  const fixture = shutdownFixture();
+  const pending = fixture.handleAppQuitRequest();
+  fixture.handleSystemShutdown();
+  await pending;
+  assert.equal(fixture.globals.systemShuttingDown, true);
+  assert.deepEqual(fixture.calls, [{ systemShutdown: true }, { systemShutdown: true }]);
+});
+
+test("the shutdown announcement starts quitting unless the user wants to be asked", () => {
+  const quiet = shutdownFixture();
+  quiet.handleSystemShutdown();
+  assert.deepEqual(quiet.calls, [{ systemShutdown: true }]);
+
+  const asking = shutdownFixture({ confirmSetting: true });
+  asking.handleSystemShutdown();
+  assert.equal(asking.globals.systemShuttingDown, true);
+  assert.deepEqual(asking.calls, [], "the quit request that follows shows the confirmation");
+});
+
+test("a system shutdown does not wait for a slow local Connector", async () => {
+  const fixture = quitFixture({ shutdown: () => new Promise<void>(() => undefined) });
+  Object.assign(fixture.globals, { SYSTEM_SHUTDOWN_QUIT_BUDGET_MS: 10, setTimeout });
+  await (fixture.requestQuit as (options?: { systemShutdown?: boolean }) => Promise<void>)({ systemShutdown: true });
+  assert.deepEqual(fixture.calls, ["stop-updates", "destroy-renderer", "stop-local-connector", "quit"]);
+  assert.equal(fixture.globals.shutdownComplete, true);
 });

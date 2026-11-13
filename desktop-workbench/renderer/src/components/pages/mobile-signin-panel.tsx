@@ -12,7 +12,7 @@ import {
   Smartphone,
   XCircle,
 } from "lucide-react"
-import { useTranslations } from "next-intl"
+import { useLocale, useTranslations } from "next-intl"
 import { getDesktopServerConnection } from "@/features/desktop/server-connection"
 import QRCode from "qrcode"
 
@@ -48,10 +48,10 @@ type Stage = "install" | "generating" | "scan" | "confirming"
 const POLL_INTERVAL_MS = 1600
 const TOTAL_STEPS = 2
 
-function formatExpiry(value: string): string {
+function formatExpiry(value: string, locale: string): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  return date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })
 }
 
 function resolveMobileWebUrl(): string {
@@ -370,6 +370,7 @@ function DownloadLink() {
 
 function QrPanel({ image, expiresAt }: { image: string | null; expiresAt: string }) {
   const t = useTranslations("dashboard.mobileConnections")
+  const locale = useLocale()
   if (!image) return null
   return (
     <div className="flex flex-col items-center gap-4">
@@ -387,7 +388,7 @@ function QrPanel({ image, expiresAt }: { image: string | null; expiresAt: string
           <Loader2 className="size-4 animate-spin" />
           <span>{t("waitingForScan")}</span>
         </div>
-        <p className="text-xs text-muted-foreground">{t("expiresAt", { time: formatExpiry(expiresAt) })}</p>
+        <p className="text-xs text-muted-foreground">{t("expiresAt", { time: formatExpiry(expiresAt, locale) })}</p>
       </div>
     </div>
   )

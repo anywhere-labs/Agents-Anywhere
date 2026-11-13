@@ -4,8 +4,13 @@ xcuserdata/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.testmondata*
+.test-results/
 .ruff_cache/
 .venv/
+# Desktop Connector environment ownership leases.
+*.desktop-lock/
+*.desktop-lock.lease
 .next/
 web-next/out/
 .env.local
@@ -21,6 +26,7 @@ pnpm-lock.yaml
 # Local Claude tooling (launch.json, transcripts, worktree metadata)
 .claude/
 .codex-run/
+.worktrees/
 # Local editor/agent project marker (per-machine UUID)
 .freebuff/
 agent-server/*-review.html
@@ -46,3 +52,6 @@ docs/reference/*
 _reference/*
 !_reference/httpx-s3-client/
 !_reference/httpx-s3-client/**
+
+# Package dependencies are local, including linked worktree dependencies.
+**/node_modules

@@ -35,6 +35,8 @@ export class ConnectorLogStore {
       level: typeof entry === "string" ? "INFO" : entry.level ?? "INFO",
       message: redactSecrets(typeof entry === "string" ? entry : String(entry.message ?? "")),
       time: typeof entry === "string" ? new Date().toISOString() : entry.time ?? new Date().toISOString(),
+      ...(typeof details.details === "string" ? { details: redactSecrets(details.details) } : {}),
+      ...(typeof details.exception === "string" ? { exception: redactSecrets(details.exception) } : {}),
     };
     this.nextSequence = Math.max(this.nextSequence, normalized.seq + 1);
     try {
@@ -49,7 +51,10 @@ export class ConnectorLogStore {
 
   read(query: ConnectorLogQuery = {}): ConnectorLogPage {
     const pageSize = clamp(query.pageSize, DEFAULT_PAGE_SIZE, 20, 5_000);
-    const rows = this.readRows();
+    const allRows = this.readRows();
+    const rows = query.source
+      ? allRows.filter((row) => (row.source ?? "connector") === query.source)
+      : allRows;
     let items: ConnectorLogEntry[];
     if (Number.isInteger(query.afterSeq)) {
       items = rows.filter((row) => row.seq > Number(query.afterSeq)).slice(-pageSize);
@@ -66,6 +71,7 @@ export class ConnectorLogStore {
       lastSeq,
       hasMoreBefore: items.length > 0 && firstSeq != null && items[0].seq > firstSeq,
       total: rows.length,
+      logsPath: this.directory,
     };
   }
 
@@ -136,6 +142,8 @@ export class ConnectorLogStore {
               level: parsed.level ?? "INFO",
               message: redactSecrets(String(parsed.message ?? "")),
               time: parsed.time ?? fileTime,
+              ...(typeof parsed.details === "string" ? { details: redactSecrets(parsed.details) } : {}),
+              ...(typeof parsed.exception === "string" ? { exception: redactSecrets(parsed.exception) } : {}),
             });
           } catch {
             rows.push({

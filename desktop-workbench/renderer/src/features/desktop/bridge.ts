@@ -1,9 +1,19 @@
+import type { ConnectorEnvironmentState } from "../../../../shared/connector-environment"
+export type { ConnectorEnvironmentState } from "../../../../shared/connector-environment"
 /**
  * `checking` is the value before the first probe answers; `preparing` means the
  * first Connector environment install is still running. An `error` carries the
  * underlying failure in `message`.
  */
-export type LocalOwnershipState = { status: "owned" | "conflict" | "preparing" | "checking" | "error"; message?: string }
+/** Mirrors `OwnershipRecovery` in electron/local-runtime.ts. */
+export type LocalOwnershipRecovery =
+  | { kind: "provisioning"; pypiIndexUrl: string; pythonInstallMirror: string; downloadsPython: boolean }
+  | { kind: "backendStopped" }
+export type LocalOwnershipState = {
+  status: "owned" | "conflict" | "preparing" | "checking" | "error"
+  message?: string
+  recovery?: LocalOwnershipRecovery
+}
 import type { DesktopUpdateState } from "../../../../shared/desktop-updates"
 export type { DesktopUpdateState } from "../../../../shared/desktop-updates"
 
@@ -33,9 +43,12 @@ export type DesktopConnectorState = {
   startConnectorOnLaunch: boolean
   silentLaunch: boolean
   notificationsEnabled: boolean
+  /** The device setting the server last handed to this Desktop; change it through the server. */
+  confirmQuitOnShutdown?: boolean
   configPath?: string
   runtimePath?: string
   dataPath?: string
+  logsPath?: string
   connectorDir?: string
   resolvedUvPath?: string
   uvMissing?: boolean
@@ -48,6 +61,7 @@ export type DesktopConnectorState = {
   logRetentionDays?: number
   uvPypiIndexUrl?: string
   uvPythonInstallMirror?: string
+  connectorProxy?: string
 }
 
 export type DesktopLocalBinding = {
@@ -71,13 +85,20 @@ export type DesktopConnectorConfig = {
   [key: string]: unknown
 }
 
+export type DesktopConnectorLogSource = "connector" | "bridge"
+
 export type DesktopConnectorLog = {
   id?: string | number
   seq?: number
   timestamp?: string
   time?: string
   level?: string
+  name?: string
+  source?: DesktopConnectorLogSource | string
   message: string
+  details?: string | null
+  exception?: string | null
+  gapBefore?: boolean
   [key: string]: unknown
 }
 
@@ -86,7 +107,9 @@ export type DesktopConnectorLogPage = {
   firstSeq: number | null
   lastSeq: number | null
   hasMoreBefore: boolean
+  hasMoreAfter?: boolean
   total: number
+  logsPath?: string
 }
 
 export type DesktopConnectorSettings = Partial<Pick<
@@ -102,6 +125,7 @@ export type DesktopConnectorSettings = Partial<Pick<
   | "logRetentionDays"
   | "uvPypiIndexUrl"
   | "uvPythonInstallMirror"
+  | "connectorProxy"
 >>
 
 export type DesktopConnectorConfigPatch = Partial<Pick<
@@ -127,10 +151,21 @@ export type DesktopOnboardingOpen = {
 
 export type DesktopWorkbenchBridge = {
   platform: string
+  files?: {
+    droppedFolderPath: (file: File) => Promise<string | null>
+  }
   windowMaterial?: "transparent" | "mica" | "opaque"
+  environment?: {
+    getState: () => Promise<ConnectorEnvironmentState>
+    prepare: () => Promise<ConnectorEnvironmentState>
+    cancel: () => Promise<ConnectorEnvironmentState>
+    reset: () => Promise<unknown>
+    onState: (listener: (state: ConnectorEnvironmentState) => void) => () => void
+  }
   ownership?: {
     getState: () => Promise<LocalOwnershipState>
     recheck: () => Promise<LocalOwnershipState>
+    resetEnvironment?: () => Promise<void>
     quit: () => Promise<void>
     onState: (listener: (state: LocalOwnershipState) => void) => () => void
   }
@@ -209,7 +244,7 @@ export type DesktopWorkbenchBridge = {
     start: () => Promise<DesktopConnectorState>
     stop: () => Promise<DesktopConnectorState>
     restart: () => Promise<DesktopConnectorState>
-    getLogs: (options?: { pageSize?: number; beforeSeq?: number; afterSeq?: number }) => Promise<DesktopConnectorLogPage>
+    getLogs: (options?: { source?: DesktopConnectorLogSource; pageSize?: number; beforeSeq?: number; afterSeq?: number }) => Promise<DesktopConnectorLogPage>
     clearLogs: () => Promise<DesktopConnectorLogPage>
     saveSettings: (settings: DesktopConnectorSettings) => Promise<DesktopConnectorState>
     openDataFolder: () => Promise<string>

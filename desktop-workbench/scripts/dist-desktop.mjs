@@ -51,7 +51,10 @@ function run(command, args, env) {
     cwd: PROJECT_ROOT,
     env,
     stdio: "inherit",
-    shell: process.platform === "win32",
+    // Only `.cmd` shims such as yarn.cmd need cmd.exe. It joins the command
+    // line unquoted, so Node, electron-builder and any path containing a
+    // space (C:\Program Files\nodejs\node.exe) must be spawned directly.
+    shell: process.platform === "win32" && command.endsWith(".cmd"),
   });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} exited with ${result.status ?? "null"}`);
@@ -127,15 +130,18 @@ function artifactPaths() {
 }
 
 function verifyMac({ signed, notarized, artifact }) {
-  if (!signed) {
-    log("Artifact is unsigned; Gatekeeper will ask the user to confirm the first launch.");
-    return;
-  }
   const app = readdirSync(OUTPUT_DIR, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && entry.name.startsWith("mac"))
     .map((entry) => join(OUTPUT_DIR, entry.name, "Agents Anywhere.app"))
     .find((candidate) => existsSync(candidate));
   if (!app) fail("The packaged application was not found under release/, so it could not be verified.");
+  const guard = join(app, "Contents", "Resources", "connector-guard");
+  run("lipo", ["-verify_arch", "arm64", "x86_64", guard], process.env);
+  if (!signed) {
+    log("Artifact is unsigned; Gatekeeper will ask the user to confirm the first launch.");
+    return;
+  }
+  run("codesign", ["--verify", "--all-architectures", "--strict", guard], process.env);
   log(`Verifying the code signature of ${app}`);
   run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", app], process.env);
   const described = spawnSync("codesign", ["-dvv", app], { encoding: "utf8" });
@@ -177,7 +183,9 @@ async function main() {
   log(`uv and Python targets: ${bundleTargets.join(", ")}`);
 
   if (skipBuild) {
-    for (const relative of ["dist/electron/main.js", "renderer/out/index.html", ...bundleTargets.flatMap(bundledExecutables)]) {
+    const required = ["dist/electron/main.js", "renderer/out/index.html", ...bundleTargets.flatMap(bundledExecutables)];
+    if (platform === "mac") required.push("dist/connector-guard");
+    for (const relative of required) {
       if (!existsSync(join(PROJECT_ROOT, relative))) fail(`--skip-build requires ${relative}; run a full dist first.`);
     }
     log("Reusing compiled app, uv and Python bundles (--skip-build)");

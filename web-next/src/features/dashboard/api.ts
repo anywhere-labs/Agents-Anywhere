@@ -1,3 +1,4 @@
+import { assertSessionCreationAccepted } from "@/lib/api/session-creation-result";
 import { ApiClient, apiClient, apiPath } from "@/lib/api";
 import { shouldAuthorizeDownloadUrl } from "@/lib/api/download-auth";
 import type {
@@ -18,6 +19,7 @@ import type {
   FsReadTextResult,
   FsWriteResult,
   MessageSendOptions,
+  Notice,
   PairingClaimResponse,
   PairingPollResponse,
   PairingStartResponse,
@@ -69,6 +71,19 @@ export type SessionStateQuery = {
 
 export type SessionSnapshotRequestOptions = {
   reason?: string;
+};
+
+/** User-chosen device settings; see docs/api/device-settings.md. */
+export type ConnectorDeviceSettings = {
+  confirmQuitOnShutdown: boolean;
+};
+
+export type ConnectorDeviceSettingsResponse = {
+  connectorId: string;
+  settings: ConnectorDeviceSettings;
+  /** Only set by a write: whether the online device confirmed the change. */
+  delivered: boolean | null;
+  serverTime: string;
 };
 
 export class DashboardApi {
@@ -212,6 +227,25 @@ export class DashboardApi {
     return this.client.get("/sessions/list", { token });
   }
 
+  getConnectorDeviceSettings(token: string, connectorId: string): Promise<ConnectorDeviceSettingsResponse> {
+    return this.client.get<ConnectorDeviceSettingsResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/device-settings`,
+      { token },
+    );
+  }
+
+  updateConnectorDeviceSettings(
+    token: string,
+    connectorId: string,
+    body: Partial<ConnectorDeviceSettings>,
+  ): Promise<ConnectorDeviceSettingsResponse> {
+    return this.client.patch<ConnectorDeviceSettingsResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/device-settings`,
+      body,
+      { token },
+    );
+  }
+
   archiveConnectorSessions(
     token: string,
     connectorId: string,
@@ -231,11 +265,13 @@ export class DashboardApi {
     return this.client.post<SessionCreateResponse>("/sessions", body, { token });
   }
 
-  createAndStartSession(
+  async createAndStartSession(
     token: string,
     body: SessionCreateAndStartRequest,
   ): Promise<SessionCreateResponse> {
-    return this.client.post<SessionCreateResponse>("/sessions/create-and-start", body, { token });
+    const response = await this.client.post<SessionCreateResponse>("/sessions/create-and-start", body, { token });
+    assertSessionCreationAccepted(response);
+    return response;
   }
 
   patchSession(
@@ -747,6 +783,10 @@ export class DashboardApi {
       },
       { token },
     );
+  }
+
+  getSessionRuntimeNotices(token: string, sessionId: string): Promise<{ notices: Notice[]; serverTime: string }> {
+    return this.client.get(`/sessions/${encodeURIComponent(sessionId)}/runtime/notices`, { token });
   }
 
   getSessionRuntimeState(

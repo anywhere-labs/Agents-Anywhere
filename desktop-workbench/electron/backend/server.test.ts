@@ -11,10 +11,12 @@ const SETTINGS: DesktopSettings = {
   startConnectorOnLaunch: true,
   silentLaunch: true,
   notificationsEnabled: true,
+  confirmQuitOnShutdown: false,
   uvPath: "",
   pythonPath: "",
   uvPypiIndexUrl: "",
   uvPythonInstallMirror: "",
+  connectorProxy: "",
   logChunkSizeKb: 512,
   logRetainChunks: 20,
   logRetentionDays: 14,
@@ -24,6 +26,7 @@ const SETTINGS: DesktopSettings = {
 class FakeState {
   readonly listeners = new Map<string, Set<(data: unknown) => void>>();
   ownership: OwnershipState = { status: "checking" };
+  connectorState = { running: false, authFailed: false };
   appended: Array<Record<string, unknown>> = [];
   cleared = 0;
 
@@ -41,6 +44,10 @@ class FakeState {
     for (const listener of this.listeners.get(event) ?? []) listener(data);
   }
 
+  environmentState() { return { status: "unknown", phase: "checking" }; }
+  prepareEnvironment() { return { status: "ready", phase: "ready" }; }
+  cancelEnvironment() { return { status: "cancelled", phase: "cancelled" }; }
+
   ownershipState(): OwnershipState {
     return this.ownership;
   }
@@ -51,6 +58,10 @@ class FakeState {
 
   getConnectorState(): Promise<{ running: boolean }> {
     return Promise.resolve({ running: false });
+  }
+
+  connectorStateSnapshot() {
+    return this.connectorState;
   }
 
   getPublicConfig(): { connectorId: string } {
@@ -141,6 +152,7 @@ test("a sign-in can repoint the backend at another server", async () => {
 
 test("the event stream sends the current snapshot and then batched log events", async () => {
   await withServer(async (base, token, state) => {
+    state.connectorState = { running: false, authFailed: true };
     const controller = new AbortController();
     const response = await fetch(`${base}/events`, {
       headers: { [BACKEND_TOKEN_HEADER]: token, accept: "text/event-stream" },
@@ -180,19 +192,22 @@ test("the event stream sends the current snapshot and then batched log events", 
 
     await readFrame();
     await readFrame();
+    await readFrame();
+    await readFrame();
     // Before the first probe answers, a subscriber learns that it is still checking.
-    assert.deepEqual(frames.map((frame) => frame.event), ["ownership", "settings"]);
-    assert.deepEqual(frames[0]?.data, { status: "checking" });
+    assert.deepEqual(frames.map((frame) => frame.event), ["environment", "ownership", "state", "settings"]);
+    assert.deepEqual(frames[0]?.data, { status: "unknown", phase: "checking" });
+    assert.deepEqual(frames[2]?.data, { running: false, authFailed: true });
 
     state.emit("ownership", { status: "owned" });
     await readFrame();
-    assert.equal(frames[2]?.event, "ownership");
-    assert.deepEqual(frames[2]?.data, { status: "owned" });
+    assert.equal(frames[4]?.event, "ownership");
+    assert.deepEqual(frames[4]?.data, { status: "owned" });
 
     state.emit("logs", [{ seq: 1, level: "INFO", message: "one", time: "2026-01-01T00:00:00.000Z" }]);
     await readFrame();
-    assert.equal(frames[3]?.event, "logs");
-    assert.deepEqual(frames[3]?.data, [{ seq: 1, level: "INFO", message: "one", time: "2026-01-01T00:00:00.000Z" }]);
+    assert.equal(frames[5]?.event, "logs");
+    assert.deepEqual(frames[5]?.data, [{ seq: 1, level: "INFO", message: "one", time: "2026-01-01T00:00:00.000Z" }]);
 
     controller.abort();
   });

@@ -11,7 +11,8 @@ type Options = {
   currentVersion: string;
   /** Server version recorded at build time; a newer live Server means a newer Desktop exists. */
   serverVersion: string;
-  downloadUrl: string;
+  /** Installer address per `process.platform`; a platform without one cannot download updates. */
+  downloadUrls: Partial<Record<string, string>>;
   platform: string;
   fetcher: typeof fetch;
   openInstaller: (filePath: string) => Promise<void>;
@@ -114,8 +115,9 @@ export class DesktopUpdateService {
   download(): Promise<DesktopUpdateState> {
     if (this.downloadPromise) return this.downloadPromise;
     if (!this.state.available) return Promise.resolve(this.getState());
+    const downloadUrl = this.options.downloadUrls[this.options.platform] ?? "";
     try {
-      const url = new URL(this.options.downloadUrl);
+      const url = new URL(downloadUrl);
       if (url.protocol !== "https:" || url.hostname.endsWith(".invalid") || url.username || url.password) throw new Error();
     } catch {
       this.publish({ dialogOpen: true, error: "downloadNotConfigured" });
@@ -130,7 +132,7 @@ export class DesktopUpdateService {
       try {
         if (!this.installerPath || !fs.existsSync(this.installerPath)) {
           const downloadedPath = await downloadDesktopInstaller({
-            url: this.options.downloadUrl, directory: path.join(this.options.directory, "downloads"),
+            url: downloadUrl, directory: path.join(this.options.directory, "downloads"),
             platform: this.options.platform, fetcher: this.options.fetcher, signal: controller.signal,
             onProgress: (downloadedBytes, totalBytes) => {
               if (generation === this.generation) this.publish({ downloadedBytes, totalBytes });

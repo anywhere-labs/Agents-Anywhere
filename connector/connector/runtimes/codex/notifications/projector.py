@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
-from weakref import WeakValueDictionary
 
 from connector.runtime_protocol import (
     RuntimeSessionSourceStateCache,
@@ -38,9 +36,6 @@ class CodexNotificationProjector:
     notice_handler: CodexNoticeHandler = field(init=False)
     turn_lifecycle: CodexTurnLifecycleHandler = field(init=False)
     timeline_activity: CodexTimelineActivityHandler = field(init=False)
-    _session_locks: WeakValueDictionary[str, asyncio.Lock] = field(
-        default_factory=WeakValueDictionary, init=False
-    )
 
     def __post_init__(self) -> None:
         self.notice_handler = CodexNoticeHandler(
@@ -97,13 +92,15 @@ class CodexNotificationProjector:
             return
         # Ordinary SDK streams and native command turns share session state.
         # Finish each projection before a different stream updates that session.
-        lock = self._session_locks.setdefault(session_id, asyncio.Lock())
+        lock = self.turn_lifecycle.session_lock(session_id)
         async with lock:
             await self._project_event(session_id, thread_id, event)
 
     async def _project_event(
         self, session_id: str, thread_id: str, event: CodexSdkEvent
     ) -> None:
+        from connector.runtimes.codex.planning import observe_codex_plan
+        await observe_codex_plan(self.host, session_id, thread_id, event)
         source_availability = {
             "thread/archived": "archived",
             "thread/unarchived": "available",
@@ -177,6 +174,12 @@ class CodexNotificationProjector:
                 thread_id=thread_id,
                 event=event,
                 item=item,
+                track_activity=not self.turn_lifecycle.history_reconciled(thread_id, event.turn_id),
+            )
+            await self.notice_handler.sync_async_input_items(
+                session_id=session_id,
+                thread_id=thread_id,
+                items=(item,),
             )
         if (
             event.event_type == "thread/compacted"

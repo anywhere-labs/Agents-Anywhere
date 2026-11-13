@@ -9,7 +9,7 @@ import { ForgotPasswordScreen } from "./forgot-password-screen"
 import { OAuthNewUserScreen } from "./oauth-new-user-screen"
 import { OAuthLinkExistingScreen } from "./oauth-link-existing-screen"
 import { SignedOutScreen } from "./signed-out-screen"
-import { DesktopOAuthFlow, MobileOAuthFlow, PluginOAuthFlow } from "./mobile-oauth-page"
+import { TokensAnywhereOAuthFlow, DesktopOAuthFlow, MobileOAuthFlow, PluginOAuthFlow } from "./mobile-oauth-page"
 import { PluginOnboardingPage } from "@/components/onboarding/plugin-onboarding-page"
 import { Demo } from "@/components/demo"
 import { FilePreviewPage } from "@/components/file-preview-page"
@@ -31,6 +31,7 @@ function AuthRouterInner() {
   if (screen === "forgot-password") return <ForgotPasswordScreen />
   if (screen === "oauth-new-user") return <OAuthNewUserScreen />
   if (screen === "oauth-link-existing") return <OAuthLinkExistingScreen />
+  if (screen === "tokens-anywhere-oauth") return <TokensAnywhereOAuthFlow />
   if (screen === "mobile-oauth") return <MobileOAuthFlow />
   if (screen === "desktop-oauth") return <DesktopOAuthFlow />
   if (screen === "plugin-oauth") return <PluginOAuthFlow />

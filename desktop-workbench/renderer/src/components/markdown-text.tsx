@@ -1,15 +1,13 @@
 "use client"
 
 import * as React from "react"
-import { toast } from "sonner"
-import { copyText } from "@/lib/clipboard"
 import ReactMarkdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
 import { MermaidPreview } from "@/components/mermaid-preview"
 import rehypeKatex from "rehype-katex"
 import { remarkStandaloneDisplayMath } from "@/lib/markdown-math"
-import { Copy, Check, ExternalLink, GitBranch, Maximize2 } from "lucide-react"
+import { ExternalLink, GitBranch, Maximize2 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
@@ -19,12 +17,13 @@ import {
   useSessionFilePreviewOpener,
 } from "@/components/session/session-file-preview-context"
 import { cn } from "@/lib/utils"
-import { highlightCode } from "@/lib/code-highlight"
+import { SourceCodeBlock, SourceCodeContent } from "@/components/source-code-block"
 import { openNativeFilePreviewWindow } from "@/lib/file-preview-window"
+import { inlineCodeFilePath, isExternalMarkdownHref, markdownUrlTransform, sessionFileLinkPath } from "@/lib/session-file-link"
 import type { SessionView } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 
-export function MarkdownText({
+export const MarkdownText = React.memo(function MarkdownText({
   text,
   token,
   session,
@@ -36,7 +35,7 @@ export function MarkdownText({
   inverted?: boolean
 }) {
   return <MarkdownBody text={text} token={token} session={session} inverted={inverted} />
-}
+})
 
 // Keep the component identity stable while streamed message text changes.
 const MarkdownPre: Components["pre"] = ({ node, children, ...props }) => {
@@ -124,10 +123,11 @@ function MarkdownBody({
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath, remarkStandaloneDisplayMath, remarkGitDirectiveBadges]}
         rehypePlugins={[rehypeKatex]}
+        urlTransform={markdownUrlTransform}
         components={{
           pre: MarkdownPre,
           code({ className, children, node: _node, ...props }) {
-            const previewPath = typeof children === "string" ? parseInlineFileRef(children) : null
+            const previewPath = typeof children === "string" ? inlineCodeFilePath(children) : null
             if (previewPath && token && session) {
               return (
                 <span
@@ -159,17 +159,32 @@ function MarkdownBody({
             )
           },
           a({ href, children, node: _node, ...props }) {
-            const childText = textFromReactChildren(children)
-            const path = href && isMarkdownFilePath(href)
-              ? stripLineSuffix(href)
-              : parseInlineFileRef(childText)
-            if (!path || !token || !session) {
+            // Pure in-page anchors must scroll within the current page without
+            // touching location.hash, which would drive this hash-routed SPA to
+            // the login screen (e.g. `#section-1` is not an app route).
+            if (href?.startsWith("#")) {
+              return (
+                <a
+                  href={href}
+                  {...props}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    const id = href.slice(1)
+                    document.getElementById(id)?.scrollIntoView({ block: "start" })
+                  }}
+                >
+                  {children}
+                </a>
+              )
+            }
+            if (!href || isExternalMarkdownHref(href) || !token || !session) {
               return (
                 <a href={href} target="_blank" rel="noreferrer" {...props}>
                   {children}
                 </a>
               )
             }
+            const path = sessionFileLinkPath(href) ?? href
             return (
               <span
                 role="button"
@@ -570,79 +585,12 @@ function safeExternalUrl(value?: string): string | null {
 }
 
 function MarkdownCodeBlock({ code, language }: { code: string; language: string }) {
-  const tSession = useTranslations("dashboard.session")
-  const tCommon = useTranslations("common")
-  const [copied, setCopied] = React.useState(false)
-  const source = (
-    <ScrollArea
-      contentWide
-      className="min-w-0 max-w-full overflow-hidden"
-      viewportProps={{ className: "max-h-96" }}
-    >
-      <pre className="w-max min-w-full p-3 text-sm leading-relaxed">
-        <code>{highlightCode(code, language)}</code>
-      </pre>
-      <ScrollBar orientation="horizontal" />
-    </ScrollArea>
-  )
+  const source = <SourceCodeContent code={code} language={language} />
   return (
-    <div className="my-3 min-w-0 max-w-full overflow-hidden rounded-xl border border-border bg-background">
-      <div className="flex h-9 items-center justify-between border-b bg-muted/25 px-3">
-        <span className="text-xs text-muted-foreground">{language || "text"}</span>
-        <button
-          type="button"
-          className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-          onClick={async () => {
-            setCopied(false)
-            try {
-              await copyText(code)
-              setCopied(true)
-              setTimeout(() => setCopied(false), 1200)
-            } catch {
-              toast.error(tCommon("copyFailed"))
-            }
-          }}
-          aria-label={copied ? tCommon("copied") : tSession("copyCode")}
-        >
-          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-        </button>
-      </div>
-      {language.toLowerCase() === "mermaid" ? (
-        <MermaidPreview code={code}>{source}</MermaidPreview>
-      ) : source}
-    </div>
+    <SourceCodeBlock code={code} language={language}>
+      {language.toLowerCase() === "mermaid" ? <MermaidPreview code={code}>{source}</MermaidPreview> : source}
+    </SourceCodeBlock>
   )
-}
-
-function stripLineSuffix(path: string) {
-  return path.replace(/:\d+(?::\d+)?$/, "")
-}
-
-function parseInlineFileRef(text: string): string | null {
-  if (!text || text.includes(" ") || text.includes("://")) return null
-  if (!text.includes("/")) return null
-  if (!/\.[a-zA-Z0-9]+(?::\d+(?::\d+)?)?$/.test(text)) return null
-  return stripLineSuffix(text)
-}
-
-function textFromReactChildren(children: React.ReactNode): string {
-  if (typeof children === "string" || typeof children === "number") return String(children)
-  if (Array.isArray(children)) return children.map(textFromReactChildren).join("")
-  return ""
-}
-
-function isMarkdownFilePath(href: string): boolean {
-  if (!href) return false
-  if (
-    href.startsWith("http://") ||
-    href.startsWith("https://") ||
-    href.startsWith("mailto:") ||
-    href.startsWith("#") ||
-    href.startsWith("//")
-  ) {
-    return false
-  }
-  return true
 }
 
 export function openSessionFilePreview(

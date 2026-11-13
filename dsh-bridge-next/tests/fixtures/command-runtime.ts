@@ -1,6 +1,6 @@
 import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
-import JsonlPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
+import * as JsonlPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SqliteQuery from '@deepseek-ai/dsh-session-query-sqlite'
 import Storage from '@deepseek-ai/dsh-storage'
 import * as StorageJson from '@deepseek-ai/dsh-storage-json'
@@ -14,19 +14,21 @@ import { NativeRuntime } from '../../src/host/dsh-runtime/native.js'
 import { RuntimeRouter } from '../../src/host/dsh-runtime/router.js'
 import { sessionId } from '../../src/host/dsh-runtime/identity.js'
 import { mountAgents } from './agent-runtime.js'
+import { mountRemoteAccess } from './gateway-host.js'
 
 /** Real native services with no model adapter, prompt, browser or Host server. */
 export async function commandRuntime(home: string) {
   const ctx = new Context()
   try {
     await ctx.plugin(SessionStore).await()
-    await ctx.plugin(JsonlPersistence, { root: join(home, 'sessions'), compression: 'none' }).await()
+    await ctx.plugin(Reflect.get(JsonlPersistence, 'default') ?? JsonlPersistence, { root: join(home, 'sessions'), compression: 'none' }).await()
     await ctx.plugin(SqliteQuery, { path: ':memory:', openAt: 'never' }).await()
     await ctx.plugin(Storage).await()
     await ctx.plugin(StorageJson, { root: join(home, 'storage') }).await()
     await ctx.plugin(StorageDomain, { backend: 'json' }).await()
     await ctx.plugin(WorkspaceRegistry).await()
     await ctx.plugin(TypertRegistry).await()
+    await mountRemoteAccess(ctx)
     await ctx.plugin(Gateway).await()
     await mountAgents(ctx)
     const native = new NativeRuntime(ctx, join(home, 'create-intents'))

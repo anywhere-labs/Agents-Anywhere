@@ -39,6 +39,17 @@ function hasArgument(commandLine: string, argument: string, platform: string): b
   })
 }
 
+function isBundledDevExecutable(executablePath: string, appPath: string, platform: string): boolean {
+  const exe = (platform === 'win32' ? executablePath.toLowerCase() : executablePath).replaceAll('\\', '/')
+  const root = (platform === 'win32' ? appPath.toLowerCase() : appPath).replaceAll('\\', '/').replace(/\/+$/, '')
+  return Boolean(root) && exe.startsWith(`${root}/node_modules/`)
+}
+
+function matchesLaunchArgument(target: DesktopProcessTarget, commandLine: string, argument: string, platform: string): boolean {
+  if (hasArgument(commandLine, argument, platform)) return true
+  return isBundledDevExecutable(target.executablePath, argument, platform) && hasArgument(commandLine, '.', platform)
+}
+
 /** Never confuse Electron renderer/GPU helpers or another development Electron app with Main. */
 export function matchesDesktopProcess(target: DesktopProcessTarget, candidate: DesktopProcessCandidate, platform: string): boolean {
   const executableMatches = candidate.executablePath !== undefined && samePath(candidate.executablePath, target.executablePath, platform)
@@ -47,7 +58,7 @@ export function matchesDesktopProcess(target: DesktopProcessTarget, candidate: D
     candidate.executablePath?.startsWith(`${candidate.appDir}/`)
   if (!executableMatches && !appImageMatches) return false
   if (HELPER_ARGUMENT.test(candidate.commandLine) || BACKEND_ARGUMENT.test(candidate.commandLine) || candidate.electronRunAsNode) return false
-  return target.packaged || target.launchArgs.every(argument => hasArgument(candidate.commandLine, argument, platform))
+  return target.packaged || target.launchArgs.every(argument => matchesLaunchArgument(target, candidate.commandLine, argument, platform))
 }
 
 async function macProcesses(): Promise<DesktopProcessCandidate[]> {

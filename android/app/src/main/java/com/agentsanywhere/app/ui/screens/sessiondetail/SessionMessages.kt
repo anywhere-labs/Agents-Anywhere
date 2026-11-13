@@ -1,5 +1,8 @@
 package com.agentsanywhere.app.ui.screens.sessiondetail
 
+import android.net.Uri
+import com.agentsanywhere.app.api.PlanDocument
+import com.agentsanywhere.app.feature.sessiondetail.placePlanDocuments
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -36,7 +39,12 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.key
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -66,7 +74,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -83,6 +91,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.feature.files.MAX_WORKSPACE_IMAGES_PER_MESSAGE
 import com.agentsanywhere.app.feature.sessiondetail.MessageAuthor
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNotice
@@ -94,6 +103,7 @@ import com.agentsanywhere.app.feature.sessiondetail.TimelineMessageKind
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.valentinilk.shimmer.shimmer
+import coil3.compose.AsyncImage
 import com.composables.icons.lucide.ArrowDown
 import com.composables.icons.lucide.Bot
 import com.composables.icons.lucide.ChevronDown
@@ -110,6 +120,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import java.io.File
 import kotlin.math.abs
 
 private const val SESSION_WELCOME_WRITE_MS = 58L
@@ -247,11 +258,17 @@ private fun SkeletonBlock(
 
 @Composable
 internal fun MessageList(
+    planningContent: (@Composable () -> Unit)? = null,
+    planDocuments: List<PlanDocument> = emptyList(),
+    planEntry: (@Composable (PlanDocument) -> Unit)? = null,
+    hideMessage: (TimelineMessage) -> Boolean = { false },
     messages: List<TimelineMessage>,
     darkMode: Boolean,
     sessionId: String,
     workspaceRoot: String?,
     controller: SessionDetailController,
+    visit: com.agentsanywhere.app.feature.sessiondetail.SessionVisit? = null,
+    loadWorkspaceImage: WorkspaceImageLoader = UnavailableWorkspaceImageLoader,
     forceLatestRequest: Int,
     streamLatestRequest: Int,
     workingLabel: String?,
@@ -263,6 +280,7 @@ internal fun MessageList(
     bottomContentPadding: Dp = 168.dp,
     hasMore: Boolean,
     loadingOlder: Boolean,
+    historyError: Boolean = false,
     onLoadOlder: () -> Unit,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
     onOpenAttachment: (TimelineAttachment) -> Unit,
@@ -271,9 +289,12 @@ internal fun MessageList(
     onOpenFile: (String) -> Unit,
     onRespondNotice: (RuntimeNotice, RuntimeNoticeAction, Map<String, Any?>?) -> Unit = { _, _, _ -> },
 ) {
-    val listState = rememberLazyListState()
+    val listState = rememberLazyListState(
+        initialFirstVisibleItemIndex = visit?.readingPosition?.firstVisibleItemIndex ?: 0,
+        initialFirstVisibleItemScrollOffset = visit?.readingPosition?.firstVisibleItemScrollOffset ?: 0,
+    )
     val scope = rememberCoroutineScope()
-    val displayMessages = messages
+    val displayMessages = remember(messages, hideMessage) { messages.filterNot(hideMessage) }
     val displayWorkingLabel = workingLabel
     val openInteractions = remember(notices, sessionId) {
         notices.filter { it.openInteraction && !it.blocksSession(sessionId) }
@@ -288,38 +309,72 @@ internal fun MessageList(
     val timelineItems = remember(displayMessages, interactionTargetIds) {
         groupTimelineMessages(displayMessages, interactionTargetIds)
     }
+    val planPlacement = remember(planDocuments, timelineItems) {
+        placePlanDocuments(planDocuments, timelineItems.map { it.key to it.messages })
+    }
     val agentActionsByTurnEnd = remember(timelineItems, turnInProgress) {
         buildAgentActionsByTurnEnd(timelineItems, turnInProgress)
     }
     var showScrollToBottom by remember { mutableStateOf(false) }
-    var autoFollowLatest by remember(sessionId) { mutableStateOf(true) }
-    var userPausedAutoFollow by remember(sessionId) { mutableStateOf(false) }
-    var userScrollDirection by remember(sessionId) { mutableIntStateOf(0) }
+    val reading = rememberSaveable(sessionId, saver = TimelineReadingState.Saver) { TimelineReadingState.restore(visit?.readingPosition?.reading.orEmpty()) }
     var returnToLatestJob by remember(sessionId) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val scrollButtonBottomPadding = bottomContentPadding.coerceAtLeast(24.dp)
+    val density = LocalDensity.current
+    val topReadingInset = with(density) { 74.dp.toPx() }
+    val bottomReadingInset = with(density) { bottomContentPadding.toPx() }
+
+    val hasPlanningItem = planningContent != null || planPlacement.end.isNotEmpty()
+    val firstTimelineIndex = 1 +
+        (if (hasPlanningItem) 1 else 0) +
+        (if (displayWorkingLabel != null) 1 else 0) +
+        detachedNotices.size
+
+    SideEffect { reading.items(timelineItems, firstTimelineIndex, hasMore) }
 
     DisposableEffect(sessionId) {
         onDispose { returnToLatestJob?.cancel() }
     }
-
-    fun releaseReadLock() {
-        userPausedAutoFollow = false
-        autoFollowLatest = true
-        userScrollDirection = 0
+    DisposableEffect(reading, listState) {
+        reading.attach(listState)
+        onDispose {
+            visit?.readingPosition?.let { position ->
+                position.firstVisibleItemIndex = listState.firstVisibleItemIndex
+                position.firstVisibleItemScrollOffset = listState.firstVisibleItemScrollOffset
+                position.reading = reading.snapshot()
+            }
+            reading.detach(listState)
+        }
     }
 
-    fun pauseAutoFollowWithSnapshot() {
-        returnToLatestJob?.cancel()
-        returnToLatestJob = null
-        userPausedAutoFollow = true
-        autoFollowLatest = false
+    LaunchedEffect(visit, reading, listState) {
+        if (visit != null) snapshotFlow {
+            com.agentsanywhere.app.feature.sessiondetail.SessionReadingPosition(
+                listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, reading.snapshot(),
+            )
+        }.collectLatest { saved ->
+            visit.readingPosition.apply {
+                firstVisibleItemIndex = saved.firstVisibleItemIndex
+                firstVisibleItemScrollOffset = saved.firstVisibleItemScrollOffset
+                this.reading = saved.reading
+            }
+        }
     }
 
     fun observeUserScroll(deltaY: Float) {
         if (deltaY == 0f) return
-        // This LazyColumn is reversed: a downward finger motion reveals older items.
-        userScrollDirection = if (deltaY > 0f) 1 else -1
-        pauseAutoFollowWithSnapshot()
+        returnToLatestJob?.cancel()
+        returnToLatestJob = null
+        reading.gesture(deltaY)
+    }
+
+    LaunchedEffect(reading, listState) {
+        for (ignored in reading.changes) {
+            withFrameNanos { }
+            reading.settle(listState)
+        }
+    }
+    LaunchedEffect(reading, listState) {
+        snapshotFlow { listState.isScrollInProgress }.collectLatest { reading.invalidate() }
     }
 
     val scrollInput = remember(sessionId) {
@@ -332,68 +387,49 @@ internal fun MessageList(
     }
 
     LaunchedEffect(listState) {
-        var lastPosition = listState.firstVisibleItemIndex * 1_000 + listState.firstVisibleItemScrollOffset
+        var lastIndex = listState.firstVisibleItemIndex
+        var lastOffset = listState.firstVisibleItemScrollOffset
         var lastTime = System.nanoTime()
         snapshotFlow {
-            (listState.firstVisibleItemIndex * 1_000 + listState.firstVisibleItemScrollOffset) to listState.isScrollInProgress
-        }.collectLatest { (position, scrolling) ->
+            Triple(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, listState.isScrollInProgress)
+        }.collectLatest { (index, offset, scrolling) ->
+                val atBottom = index == 0 && offset == 0
+                if (atBottom) {
+                    lastIndex = 0
+                    lastOffset = 0
+                    lastTime = System.nanoTime()
+                    showScrollToBottom = false
+                    return@collectLatest
+                }
                 val now = System.nanoTime()
                 val elapsedMs = ((now - lastTime) / 1_000_000).coerceAtLeast(1)
-                val slowEnough = abs(position - lastPosition) / elapsedMs < 2
-                lastPosition = position
+                val moved = if (index == lastIndex) abs(offset - lastOffset) else 1_000
+                val slowEnough = moved / elapsedMs < 2
+                lastIndex = index
+                lastOffset = offset
                 lastTime = now
-                if (position > 0 && (slowEnough || !scrolling)) {
-                    delay(120)
+                if (showScrollToBottom || slowEnough || !scrolling) {
+                    if (!showScrollToBottom) delay(120)
                     showScrollToBottom = listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
-                } else {
-                    showScrollToBottom = false
                 }
         }
-    }
-
-    LaunchedEffect(listState, sessionId) {
-        snapshotFlow {
-            Triple(
-                listState.isAtLatest(),
-                userScrollDirection,
-                listState.isScrollInProgress,
-            )
-        }
-            .distinctUntilChanged()
-            .collectLatest { (atLatest, direction, scrolling) ->
-                // A stale bottom measurement during the start of an upward
-                // gesture must not re-enable following before the list moves.
-                if (atLatest && !scrolling && direction < 0) {
-                    releaseReadLock()
-                }
-            }
     }
 
     LaunchedEffect(forceLatestRequest, sessionId) {
         if (forceLatestRequest > 0) {
-            releaseReadLock()
+            returnToLatestJob?.cancel()
+            reading.release()
             listState.scrollToItem(0)
         }
     }
+    LaunchedEffect(streamLatestRequest, sessionId) { reading.invalidate() }
 
-    LaunchedEffect(streamLatestRequest, sessionId, userPausedAutoFollow, autoFollowLatest) {
-        if (shouldAutoFollowRealtime(
-                hasRealtimeUpdate = streamLatestRequest > 0,
-                autoFollowLatest = autoFollowLatest,
-                userPaused = userPausedAutoFollow,
-                scrolling = listState.isScrollInProgress,
-            )
-        ) {
-            listState.scrollToItem(0)
-        }
-    }
-
-    LaunchedEffect(listState, hasMore, loadingOlder, displayMessages.size) {
+    LaunchedEffect(listState, hasMore, loadingOlder, historyError, displayMessages.size) {
         snapshotFlow {
             val layout = listState.layoutInfo
             val total = layout.totalItemsCount
             val lastVisible = layout.visibleItemsInfo.maxOfOrNull { it.index } ?: -1
-            total > 0 && lastVisible >= total - LOAD_OLDER_VISIBLE_THRESHOLD
+            (!historyError && reading.needsOlder) || (total > 0 && lastVisible >= total - LOAD_OLDER_VISIBLE_THRESHOLD)
         }
             .distinctUntilChanged()
             .collectLatest { nearOldest ->
@@ -403,132 +439,176 @@ internal fun MessageList(
             }
     }
 
-    Box(Modifier.fillMaxSize()) {
-        SessionSelectionContainer(modifier = Modifier.fillMaxSize()) {
-            LazyColumn(
-                state = listState,
-                reverseLayout = true,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .imePadding()
-                    .nestedScroll(scrollInput)
-                    .pointerInput(sessionId) {
-                        awaitPointerEventScope {
-                            while (true) {
-                                val down = awaitPointerEvent(PointerEventPass.Initial)
-                                    .changes
-                                    .firstOrNull { it.pressed && !it.previousPressed }
-                                    ?: continue
-                                val pointerId = down.id
-                                var previousY = down.position.y
-
+    CompositionLocalProvider(LocalTimelineReading provides reading) {
+        Box(Modifier.fillMaxSize()) {
+            SessionSelectionContainer(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    state = listState,
+                    reverseLayout = true,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .imePadding()
+                        .nestedScroll(scrollInput)
+                        .then(reading.remeasurementModifier)
+                        .onGloballyPositioned {
+                            val bounds = it.boundsInWindow()
+                            reading.viewport(
+                                lazyBounds = bounds,
+                                readingBounds = bounds.copy(
+                                    top = bounds.top + topReadingInset,
+                                    bottom = (bounds.bottom - bottomReadingInset).coerceAtLeast(bounds.top + topReadingInset + 1f),
+                                ),
+                            )
+                        }
+                        .pointerInput(sessionId) {
+                            awaitPointerEventScope {
                                 while (true) {
-                                    val event = awaitPointerEvent(PointerEventPass.Initial)
-                                    val change = event.changes.firstOrNull { it.id == pointerId }
-                                        ?: event.changes.firstOrNull { it.pressed }
-                                        ?: break
-                                    if (!change.pressed) break
-                                    observeUserScroll(change.position.y - previousY)
-                                    previousY = change.position.y
+                                    val down = awaitPointerEvent(PointerEventPass.Initial)
+                                        .changes
+                                        .firstOrNull { it.pressed && !it.previousPressed }
+                                        ?: continue
+                                    val pointerId = down.id
+                                    var previousY = down.position.y
+                                    var travel = 0f
+                                    reading.touching = true
+                                    try {
+                                        while (true) {
+                                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                                            val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+                                            if (!change.pressed) {
+                                                if (travel <= viewConfiguration.touchSlop &&
+                                                    change.uptimeMillis - down.uptimeMillis >= viewConfiguration.longPressTimeoutMillis
+                                                ) reading.pauseAt()
+                                                break
+                                            }
+                                            val delta = change.position.y - previousY
+                                            travel += abs(delta)
+                                            if (travel > viewConfiguration.touchSlop) observeUserScroll(delta)
+                                            previousY = change.position.y
+                                        }
+                                    } finally {
+                                        reading.touching = false
+                                        reading.invalidate()
+                                    }
+                                }
+                            }
+                        }
+                        .padding(horizontal = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    item(key = "bottom-space") { Spacer(Modifier.height(bottomContentPadding)) }
+                    if (planningContent != null || planPlacement.end.isNotEmpty()) item(key = "planning") {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            if (planEntry != null) planPlacement.end.forEach { key("plan:${it.planId}:${it.revision}") { planEntry(it) } }
+                            planningContent?.invoke()
+                        }
+                    }
+                    if (displayWorkingLabel != null) {
+                        item(key = "working-indicator") {
+                            DisableSelection {
+                                WorkingIndicator(label = displayWorkingLabel)
+                            }
+                        }
+                    }
+                    items(detachedNotices.asReversed(), key = { "notice:${it.noticeId}" }) { notice ->
+                        RuntimeNoticeCard(
+                            notice = notice,
+                            busy = notice.noticeId in respondingNoticeIds,
+                            actionsDisabled = !canRespondToNotices || respondingNoticeIds.isNotEmpty(),
+                            errorMessage = noticeResponseErrors[notice.noticeId],
+                            onRespond = { action, input -> onRespondNotice(notice, action, input) },
+                            notificationOnly = notice.type == "notification",
+                        )
+                    }
+                    items(timelineItems.asReversed(), key = { it.key }) { item ->
+                        CompositionLocalProvider(LocalReadingMessage provides item.messages.first().id) {
+                            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                                // Plans that preceded this group, e.g. the plan an implementation started from.
+                                val plans = planPlacement.before[item.key].orEmpty()
+                                if (planEntry != null && plans.isNotEmpty()) Column(Modifier.padding(bottom = 9.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    plans.forEach { key("plan:${it.planId}:${it.revision}") { planEntry(it) } }
+                                }
+                                when (item) {
+                                    is TimelineRenderItem.Single -> ReadingMessage(item.message.id) {
+                                        TimelineMessageRow(
+                                            message = item.message,
+                                            darkMode = darkMode,
+                                            sessionId = sessionId,
+                                            workspaceRoot = workspaceRoot,
+                                            controller = controller,
+                                            loadWorkspaceImage = loadWorkspaceImage,
+                                            onPreviewAttachment = onPreviewAttachment,
+                                            onOpenAttachment = onOpenAttachment,
+                                            onCopyMessage = onCopyMessage,
+                                            onOpenFile = onOpenFile,
+                                            interaction = interactionByTarget[item.message.sourceItemId],
+                                            canRespondToNotices = canRespondToNotices,
+                                            respondingNoticeIds = respondingNoticeIds,
+                                            noticeResponseErrors = noticeResponseErrors,
+                                            onRespondNotice = onRespondNotice,
+                                        )
+                                    }
+                                    is TimelineRenderItem.ToolRun -> ToolRunGroup(
+                                        messages = item.messages,
+                                        darkMode = darkMode,
+                                        workspaceRoot = workspaceRoot,
+                                        onOpenFile = onOpenFile,
+                                        loadWorkspaceImage = loadWorkspaceImage,
+                                    )
+                                    is TimelineRenderItem.Reconnect -> ReconnectGroup(
+                                        messages = item.messages,
+                                        darkMode = darkMode,
+                                    )
+                                    is TimelineRenderItem.AgentCalls -> AgentCallGroup(
+                                        messages = item.messages,
+                                        darkMode = darkMode,
+                                    )
+                                }
+                                agentActionsByTurnEnd[item.key]?.let { action ->
+                                    DisableSelection {
+                                        AgentReplyActions(
+                                            darkMode = darkMode,
+                                            action = action,
+                                            onCopyMessage = onCopyMessage,
+                                            onShareReply = onShareReply,
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
-                    .padding(horizontal = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                item(key = "bottom-space") { Spacer(Modifier.height(bottomContentPadding)) }
-                if (displayWorkingLabel != null) {
-                    item(key = "working-indicator") {
-                        DisableSelection {
-                            WorkingIndicator(label = displayWorkingLabel)
-                        }
-                    }
-                }
-                items(detachedNotices.asReversed(), key = { "notice:${it.noticeId}" }) { notice ->
-                    RuntimeNoticeCard(
-                        notice = notice,
-                        busy = notice.noticeId in respondingNoticeIds,
-                        actionsDisabled = !canRespondToNotices || respondingNoticeIds.isNotEmpty(),
-                        errorMessage = noticeResponseErrors[notice.noticeId],
-                        onRespond = { action, input -> onRespondNotice(notice, action, input) },
-                        notificationOnly = notice.type == "notification",
-                    )
-                }
-                items(timelineItems.asReversed(), key = { it.key }) { item ->
-                    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                        when (item) {
-                            is TimelineRenderItem.Single -> TimelineMessageRow(
-                                message = item.message,
-                                darkMode = darkMode,
-                                listState = listState,
-                                sessionId = sessionId,
-                                workspaceRoot = workspaceRoot,
-                                controller = controller,
-                                onPreviewAttachment = onPreviewAttachment,
-                                onOpenAttachment = onOpenAttachment,
-                                onCopyMessage = onCopyMessage,
-                                onOpenFile = onOpenFile,
-                                interaction = interactionByTarget[item.message.sourceItemId],
-                                canRespondToNotices = canRespondToNotices,
-                                respondingNoticeIds = respondingNoticeIds,
-                                noticeResponseErrors = noticeResponseErrors,
-                                onRespondNotice = onRespondNotice,
-                            )
-                            is TimelineRenderItem.ToolRun -> ToolRunGroup(
-                                messages = item.messages,
-                                darkMode = darkMode,
-                                listState = listState,
-                                workspaceRoot = workspaceRoot,
-                                onOpenFile = onOpenFile,
-                            )
-                            is TimelineRenderItem.Reconnect -> ReconnectGroup(
-                                messages = item.messages,
-                                darkMode = darkMode,
-                            )
-                            is TimelineRenderItem.AgentCalls -> AgentCallGroup(
-                                messages = item.messages,
-                                darkMode = darkMode,
-                            )
-                        }
-                        agentActionsByTurnEnd[item.key]?.let { action ->
+                    if (loadingOlder) {
+                        item(key = "loading-older") {
                             DisableSelection {
-                                AgentReplyActions(
-                                    darkMode = darkMode,
-                                    action = action,
-                                    onCopyMessage = onCopyMessage,
-                                    onShareReply = onShareReply,
-                                )
+                                OlderMessagesLoadingIndicator()
                             }
                         }
                     }
+                    item(key = "top-space") { Spacer(Modifier.height(74.dp)) }
                 }
-                if (loadingOlder) {
-                    item(key = "loading-older") {
-                        DisableSelection {
-                            OlderMessagesLoadingIndicator()
-                        }
-                    }
-                }
-                item(key = "top-space") { Spacer(Modifier.height(74.dp)) }
             }
-        }
 
-        if (showScrollToBottom) {
-            ScrollToBottomButton(
-                onClick = {
-                    returnToLatestJob?.cancel()
-                    returnToLatestJob = scope.launch {
-                        listState.animateToLatestFromAnywhere()
-                        releaseReadLock()
-                        listState.scrollToItem(0)
-                    }
-                },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .imePadding()
-                    .padding(bottom = scrollButtonBottomPadding),
-            )
+            if (showScrollToBottom) {
+                ScrollToBottomButton(
+                    onClick = {
+                        returnToLatestJob?.cancel()
+                        returnToLatestJob = scope.launch {
+                            reading.returningToLatest = true
+                            try {
+                                listState.animateToLatestFromAnywhere()
+                                reading.release()
+                                listState.scrollToItem(0)
+                            } finally {
+                                reading.returningToLatest = false
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .imePadding()
+                        .padding(bottom = scrollButtonBottomPadding),
+                )
+            }
         }
     }
 }
@@ -538,17 +618,6 @@ private suspend fun LazyListState.animateToLatestFromAnywhere() {
         scrollToItem(RETURN_TO_LATEST_ANIMATION_WINDOW)
     }
     animateScrollToItem(0)
-}
-
-internal fun shouldAutoFollowRealtime(
-    hasRealtimeUpdate: Boolean,
-    autoFollowLatest: Boolean,
-    userPaused: Boolean,
-    scrolling: Boolean,
-): Boolean = hasRealtimeUpdate && autoFollowLatest && !userPaused && !scrolling
-
-private fun LazyListState.isAtLatest(): Boolean {
-    return firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0
 }
 
 @Composable
@@ -782,9 +851,9 @@ private fun OlderMessagesLoadingIndicator() {
 private fun ToolRunGroup(
     messages: List<TimelineMessage>,
     darkMode: Boolean,
-    listState: LazyListState,
     workspaceRoot: String?,
     onOpenFile: (String) -> Unit = {},
+    loadWorkspaceImage: WorkspaceImageLoader = UnavailableWorkspaceImageLoader,
 ) {
     val colors = LocalAAColors.current
     val primary = colors.ink
@@ -793,26 +862,16 @@ private fun ToolRunGroup(
     val haptic = LocalHapticFeedback.current
     val active = messages.any { it.status in setOf("pending", "running", "waiting_approval") }
     val failed = messages.any { it.status in setOf("failed", "cancelled", "interrupted") }
-    var expanded by remember(messages.joinToString(":") { it.id }) { mutableStateOf(false) }
-    var cardTop by remember(messages.joinToString(":") { it.id }) { mutableStateOf<Float?>(null) }
-    var lockedTop by remember(messages.joinToString(":") { it.id }) { mutableStateOf<Float?>(null) }
-
+    // Member identities survive append, regrouping and lazy-item disposal.
+    val reading = checkNotNull(LocalTimelineReading.current)
+    val members = messages.map { it.id }
+    val header = "group:tools:${members.first()}"
+    val expanded = reading.groupExpanded("tools", members)
     fun toggleExpanded() {
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-        lockedTop = cardTop
-        expanded = !expanded
+        reading.toggleGroup("tools", members, header)
     }
-
-    val modifier = Modifier
-        .fillMaxWidth()
-        .padding(horizontal = 4.dp)
-        .onGloballyPositioned {
-            val nextTop = it.positionInWindow().y
-            val delta = (lockedTop ?: nextTop) - nextTop
-            if (abs(delta) > 1f) listState.dispatchRawDelta(delta)
-            lockedTop = null
-            cardTop = nextTop
-        }
+    val modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp).readingRegion(header)
 
     if (!expanded) {
         Row(
@@ -882,24 +941,27 @@ private fun ToolRunGroup(
             )
         }
         messages.forEach { message ->
-            if (message.kind == TimelineMessageKind.Reasoning) {
-                ReasoningSection(
-                    message = message,
-                    darkMode = darkMode,
-                    listState = listState,
-                    embedded = true,
-                )
-            } else if (message.kind == TimelineMessageKind.AgentCall) {
-                AgentCallMarkerRow(message = message, darkMode = darkMode)
-            } else {
-                ToolActivityCard(
-                    message = message,
-                    darkMode = darkMode,
-                    listState = listState,
-                    embedded = true,
-                    workspaceRoot = workspaceRoot,
-                    onOpenFile = onOpenFile,
-                )
+            key(message.id) {
+                ReadingMessage(message.id) {
+                    if (message.kind == TimelineMessageKind.Reasoning) {
+                        ReasoningSection(
+                            message = message,
+                            darkMode = darkMode,
+                            embedded = true,
+                        )
+                    } else if (message.kind == TimelineMessageKind.AgentCall) {
+                        AgentCallMarkerRow(message = message, darkMode = darkMode)
+                    } else {
+                        ToolActivityCard(
+                            message = message,
+                            darkMode = darkMode,
+                            embedded = true,
+                            workspaceRoot = workspaceRoot,
+                            onOpenFile = onOpenFile,
+                            loadWorkspaceImage = loadWorkspaceImage,
+                        )
+                    }
+                }
             }
         }
     }
@@ -914,7 +976,11 @@ private fun AgentCallGroup(
     val muted = colors.muted
     val active = messages.any { it.status in setOf("pending", "running", "waiting_approval") }
     val failed = messages.any { it.status in setOf("failed", "cancelled", "interrupted") }
-    var expanded by remember(messages.joinToString(":") { it.id }) { mutableStateOf(false) }
+    val reading = checkNotNull(LocalTimelineReading.current)
+    val members = messages.map { it.id }
+    val groupKind = if (messages.first().isReconnectError()) "reconnect" else "agent-calls"
+    val header = "group:$groupKind:${members.first()}"
+    val expanded = reading.groupExpanded(groupKind, members)
 
     Column(
         modifier = Modifier
@@ -926,7 +992,8 @@ private fun AgentCallGroup(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 34.dp)
-                .noRippleClickable { expanded = !expanded }
+                .readingRegion(header)
+                .noRippleClickable { reading.toggleGroup(groupKind, members, header) }
                 .padding(horizontal = 6.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -967,7 +1034,7 @@ private fun AgentCallGroup(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 messages.forEach { message ->
-                    AgentCallMarkerRow(message = message, darkMode = darkMode)
+                    key(message.id) { ReadingMessage(message.id) { AgentCallMarkerRow(message = message, darkMode = darkMode) } }
                 }
             }
         }
@@ -1032,7 +1099,11 @@ private fun toolRunSummary(messages: List<TimelineMessage>): String {
 @Composable
 private fun ReconnectGroup(messages: List<TimelineMessage>, darkMode: Boolean) {
     val muted = LocalAAColors.current.muted
-    var expanded by remember(messages.joinToString(":") { it.id }) { mutableStateOf(false) }
+    val reading = checkNotNull(LocalTimelineReading.current)
+    val members = messages.map { it.id }
+    val groupKind = if (messages.first().isReconnectError()) "reconnect" else "agent-calls"
+    val header = "group:$groupKind:${members.first()}"
+    val expanded = reading.groupExpanded(groupKind, members)
     val attempts = messages.mapNotNull { message ->
         Regex("(\\d+\\s*/\\s*\\d+)").find(message.text)?.groupValues?.getOrNull(1)?.replace(" ", "")
     }
@@ -1044,7 +1115,8 @@ private fun ReconnectGroup(messages: List<TimelineMessage>, darkMode: Boolean) {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 4.dp, vertical = 6.dp)
-                .noRippleClickable { expanded = !expanded },
+                .readingRegion(header)
+                .noRippleClickable { reading.toggleGroup(groupKind, members, header) },
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -1064,7 +1136,7 @@ private fun ReconnectGroup(messages: List<TimelineMessage>, darkMode: Boolean) {
             )
         }
         if (expanded) {
-            messages.forEach { message -> ToolPlaceholder(message, darkMode) }
+            messages.forEach { message -> key(message.id) { ReadingMessage(message.id) { ToolPlaceholder(message, darkMode) } } }
         }
     }
 }
@@ -1149,10 +1221,10 @@ private fun ScrollToBottomButton(
 private fun TimelineMessageRow(
     message: TimelineMessage,
     darkMode: Boolean,
-    listState: LazyListState,
     sessionId: String,
     workspaceRoot: String?,
     controller: SessionDetailController,
+    loadWorkspaceImage: WorkspaceImageLoader,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
     onOpenAttachment: (TimelineAttachment) -> Unit,
     onCopyMessage: (String) -> Unit,
@@ -1163,11 +1235,19 @@ private fun TimelineMessageRow(
     noticeResponseErrors: Map<String, String> = emptyMap(),
     onRespondNotice: (RuntimeNotice, RuntimeNoticeAction, Map<String, Any?>?) -> Unit = { _, _, _ -> },
 ) {
+    if(message.contentKind=="goal") {
+        val goal=runCatching { org.json.JSONObject(message.rawContent).optJSONObject("goal") }.getOrNull()
+        val status=goal?.optString("status")
+        if(status=="complete" || status=="failed") {
+            val title=if(status=="failed") stringResource(R.string.goal_failed) else if(goal?.has("timeUsedSeconds")==true && !goal.isNull("timeUsedSeconds")) stringResource(R.string.goal_achieved,goal.optLong("timeUsedSeconds").toString()) else stringResource(R.string.goal_achieved_unknown_time)
+            Text(title,style=androidx.compose.material3.MaterialTheme.typography.labelSmall)
+        }
+        return
+    }
     when (message.kind) {
         TimelineMessageKind.Reasoning -> ReasoningSection(
             message = message,
             darkMode = darkMode,
-            listState = listState,
         )
         TimelineMessageKind.AgentCall -> if (interaction == null) {
             AgentCallMarkerRow(message = message, darkMode = darkMode)
@@ -1175,9 +1255,9 @@ private fun TimelineMessageRow(
             ToolActivityCard(
                 message = message,
                 darkMode = darkMode,
-                listState = listState,
-                workspaceRoot = workspaceRoot,
+                    workspaceRoot = workspaceRoot,
                 onOpenFile = onOpenFile,
+                loadWorkspaceImage = loadWorkspaceImage,
                 interaction = interaction,
                 interactionBusy = interaction.noticeId in respondingNoticeIds,
                 actionsDisabled = !canRespondToNotices || respondingNoticeIds.isNotEmpty(),
@@ -1191,9 +1271,9 @@ private fun TimelineMessageRow(
         TimelineMessageKind.Artifact -> ToolActivityCard(
             message = message,
             darkMode = darkMode,
-            listState = listState,
             workspaceRoot = workspaceRoot,
             onOpenFile = onOpenFile,
+            loadWorkspaceImage = loadWorkspaceImage,
             interaction = interaction,
             interactionBusy = interaction?.noticeId?.let { it in respondingNoticeIds } == true,
             actionsDisabled = !canRespondToNotices || respondingNoticeIds.isNotEmpty(),
@@ -1246,7 +1326,10 @@ private fun AgentMessageContent(
     onOpenFile: (String) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (message.text.isNotBlank()) AgentMarkdownText(message.text, darkMode, onOpenFile = onOpenFile)
+        if (message.text.isNotBlank()) {
+            AgentMarkdownText(message.text, darkMode, onOpenFile = onOpenFile)
+            GeneratedFileCards(markdown = message.text, onOpenFile = onOpenFile)
+        }
         UserAttachmentStrip(
             attachments = message.attachments,
             darkMode = darkMode,
@@ -1312,7 +1395,8 @@ private fun UserBubble(
                     .trimEnd('\r', '\n')
                     .takeUnless { it == "(No text content.)" && hasAttachments }
                     .orEmpty()
-                var expanded by remember(message.id, text) { mutableStateOf(false) }
+                val reading = checkNotNull(LocalTimelineReading.current)
+                val expanded = reading.expanded[message.id] ?: false
                 var canExpand by remember(message.id, text) { mutableStateOf(false) }
                 UserAttachmentStrip(
                     attachments = message.attachments,
@@ -1366,7 +1450,7 @@ private fun UserBubble(
                                             color = LocalAAColors.current.noticeWarning,
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.noRippleClickable { expanded = !expanded },
+                                            modifier = Modifier.noRippleClickable { reading.toggle(message.id, "header:${message.id}") },
                                         )
                                     }
                                 }
@@ -1530,7 +1614,6 @@ private fun UserFileAttachmentCard(
 private fun ReasoningSection(
     message: TimelineMessage,
     darkMode: Boolean,
-    listState: LazyListState,
     embedded: Boolean = false,
 ) {
     val colors = LocalAAColors.current
@@ -1543,25 +1626,14 @@ private fun ReasoningSection(
         else -> stringResource(R.string.session_reasoning)
     }
     val expandable = segments.isNotEmpty() && inlineSummary == null
-    var expanded by remember(message.id) { mutableStateOf(false) }
-    var sectionTop by remember(message.id) { mutableStateOf<Float?>(null) }
-    var lockedTop by remember(message.id) { mutableStateOf<Float?>(null) }
-
-    fun toggleExpanded() {
-        lockedTop = sectionTop
-        expanded = !expanded
-    }
+    val reading = checkNotNull(LocalTimelineReading.current)
+    val expanded = reading.expanded[message.id] ?: false
+    fun toggleExpanded() { reading.toggle(message.id, "header:${message.id}") }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .onGloballyPositioned {
-                val nextTop = it.positionInWindow().y
-                val delta = (lockedTop ?: nextTop) - nextTop
-                if (abs(delta) > 1f) listState.dispatchRawDelta(delta)
-                lockedTop = null
-                sectionTop = nextTop
-            }
+            .readingRegion("header:${message.id}")
             .then(if (embedded) Modifier else Modifier.padding(horizontal = 4.dp)),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -1625,10 +1697,10 @@ private val TimelineActivityLabelWeight = FontWeight.Normal
 private fun ToolActivityCard(
     message: TimelineMessage,
     darkMode: Boolean,
-    listState: LazyListState,
     embedded: Boolean = false,
     workspaceRoot: String? = null,
     onOpenFile: (String) -> Unit = {},
+    loadWorkspaceImage: WorkspaceImageLoader = UnavailableWorkspaceImageLoader,
     interaction: RuntimeNotice? = null,
     interactionBusy: Boolean = false,
     actionsDisabled: Boolean = false,
@@ -1649,27 +1721,19 @@ private fun ToolActivityCard(
     val active = message.status in setOf("pending", "running", "waiting_approval")
     val failed = message.status in setOf("failed", "cancelled", "interrupted")
     val haptic = LocalHapticFeedback.current
-    var expanded by remember(message.id) { mutableStateOf(interaction != null) }
-    var cardTop by remember(message.id) { mutableStateOf<Float?>(null) }
-    var lockedTop by remember(message.id) { mutableStateOf<Float?>(null) }
+    val reading = checkNotNull(LocalTimelineReading.current)
+    val expanded = reading.expanded[message.id] ?: (interaction != null)
     fun toggleExpanded() {
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-        lockedTop = cardTop
-        expanded = !expanded
+        reading.toggle(message.id, "header:${message.id}", interaction != null)
     }
     LaunchedEffect(interaction?.noticeId) {
-        if (interaction != null) expanded = true
+        if (interaction != null) reading.expanded[message.id] = true
     }
     val target = toolActivitySummary(message)
     val cardModifier = Modifier
         .fillMaxWidth()
-        .onGloballyPositioned {
-            val nextTop = it.positionInWindow().y
-            val delta = (lockedTop ?: nextTop) - nextTop
-            if (abs(delta) > 1f) listState.dispatchRawDelta(delta)
-            lockedTop = null
-            cardTop = nextTop
-        }
+        .readingRegion("header:${message.id}")
         .then(if (embedded) Modifier else Modifier.padding(horizontal = 4.dp))
 
     Column(
@@ -1717,6 +1781,17 @@ private fun ToolActivityCard(
                 CompactStatusPill(label = message.status)
             }
         }
+        // Screenshots and workspace images are message content, not a debugging
+        // detail: show them inline as soon as the row is composed, like a chat
+        // picture bubble. Keep the expanded card for the surrounding tool output.
+        message.workspaceImages.take(MAX_WORKSPACE_IMAGES_PER_MESSAGE).forEach { path ->
+            WorkspaceImagePreview(
+                path = path,
+                darkMode = darkMode,
+                onOpenFile = onOpenFile,
+                loadWorkspaceImage = loadWorkspaceImage,
+            )
+        }
         if (expanded && expandable) {
             if (hasDetail) {
                 DisableSelection {
@@ -1725,6 +1800,7 @@ private fun ToolActivityCard(
                         darkMode = darkMode,
                         workspaceRoot = workspaceRoot,
                         onOpenFile = onOpenFile,
+                        loadWorkspaceImage = loadWorkspaceImage,
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(14.dp))
@@ -1808,6 +1884,7 @@ private fun ToolActivityDetailCard(
     darkMode: Boolean,
     workspaceRoot: String?,
     onOpenFile: (String) -> Unit = {},
+    loadWorkspaceImage: WorkspaceImageLoader = UnavailableWorkspaceImageLoader,
     modifier: Modifier = Modifier,
 ) {
     val muted = LocalAAColors.current.muted
@@ -1864,7 +1941,12 @@ private fun ToolActivityDetailCard(
                 }
             }
             TimelineMessageKind.ToolCall -> {
-                ToolCallPreview(message = message, darkMode = darkMode)
+                ToolCallPreview(
+                    message = message,
+                    darkMode = darkMode,
+                    onOpenFile = onOpenFile,
+                    loadWorkspaceImage = loadWorkspaceImage,
+                )
             }
             TimelineMessageKind.AgentCall -> Unit
             TimelineMessageKind.Artifact -> {
@@ -1913,8 +1995,100 @@ internal fun TimelineMessage.toolSummaryTarget(): String {
     }
 }
 
+/**
+ * Loads a workspace image shown in a timeline row. With `cacheOnly` it never
+ * touches the network and returns null when nothing was downloaded yet.
+ */
+internal typealias WorkspaceImageLoader = suspend (path: String, cacheOnly: Boolean) -> Result<File?>
+
+private val UnavailableWorkspaceImageLoader: WorkspaceImageLoader = { _, _ ->
+    Result.failure(IllegalStateException("Workspace image loading is unavailable."))
+}
+
 @Composable
-private fun ToolCallPreview(message: TimelineMessage, darkMode: Boolean) {
+private fun WorkspaceImagePreview(
+    path: String,
+    darkMode: Boolean,
+    onOpenFile: (String) -> Unit,
+    loadWorkspaceImage: WorkspaceImageLoader,
+) {
+    val colors = LocalAAColors.current
+    var image by remember(path) { mutableStateOf<File?>(null) }
+    var requested by remember(path) { mutableStateOf(false) }
+    var attempt by remember(path) { mutableStateOf(0) }
+    var loading by remember(path) { mutableStateOf(false) }
+    var error by remember(path) { mutableStateOf<String?>(null) }
+    LaunchedEffect(path, requested, attempt) {
+        if (image != null) return@LaunchedEffect
+        if (!requested) {
+            // Rows are recomposed when they scroll back into view: reuse an
+            // image downloaded earlier instead of asking for another tap.
+            loadWorkspaceImage(path, true).getOrNull()?.let { image = it }
+            return@LaunchedEffect
+        }
+        loading = true
+        error = null
+        loadWorkspaceImage(path, false)
+            .onSuccess { image = it }
+            .onFailure { error = it.message }
+        loading = false
+    }
+    val shape = RoundedCornerShape(10.dp)
+    val loadedImage = image
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 72.dp, max = 300.dp)
+            .clip(shape)
+            .background(if (darkMode) Color(0xFF18181B) else Color(0xFFF5F4F0))
+            .border(1.dp, colors.border, shape)
+            .noRippleClickable {
+                when {
+                    image != null -> onOpenFile(path)
+                    loading -> Unit
+                    else -> {
+                        requested = true
+                        attempt += 1
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        when {
+            loading -> CircularProgressIndicator(
+                modifier = Modifier.size(22.dp),
+                strokeWidth = 2.dp,
+                color = colors.muted,
+            )
+            loadedImage != null -> AsyncImage(
+                model = Uri.fromFile(loadedImage),
+                contentDescription = path.substringAfterLast('/').substringAfterLast('\\'),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 72.dp, max = 300.dp),
+                contentScale = ContentScale.Fit,
+            )
+            else -> Text(
+                text = error ?: if (requested) {
+                    stringResource(R.string.files_open_file_to_preview)
+                } else {
+                    stringResource(R.string.session_workspace_image_tap_to_load)
+                },
+                color = colors.muted,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(12.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ToolCallPreview(
+    message: TimelineMessage,
+    darkMode: Boolean,
+    onOpenFile: (String) -> Unit,
+    loadWorkspaceImage: WorkspaceImageLoader,
+) {
     val input = message.input.ifBlank { message.detail }
     val output = message.output
     val error = message.toolError
@@ -1948,7 +2122,7 @@ private fun ToolCallPreview(message: TimelineMessage, darkMode: Boolean) {
 
 private val TimelineMessage.hasToolCallDetail: Boolean
     get() = input.isNotBlank() || output.isNotBlank() || toolError.isNotBlank() ||
-        detail.isNotBlank() || body.isNotBlank()
+        detail.isNotBlank() || body.isNotBlank() || workspaceImages.isNotEmpty()
 
 @Composable
 private fun CommandPreview(command: String, output: String, darkMode: Boolean) {
@@ -2042,12 +2216,9 @@ private fun CommandPreviewSection(
             )
             CopyToolValueButton(value = text, darkMode = darkMode)
         }
-        SoraCodeBlock(
-            text = text,
-            languageHint = languageHint,
-            darkMode = darkMode,
-            maxHeight = maxHeight,
-        )
+        CompositionLocalProvider(LocalReadingPart provides label) {
+            SoraCodeBlock(text = text, languageHint = languageHint, darkMode = darkMode, maxHeight = maxHeight)
+        }
     }
 }
 
@@ -2197,6 +2368,25 @@ private fun TimelineShimmerText(
 }
 
 @Composable
+private fun modelRetryText(message: TimelineMessage): String? {
+    val content = remember(message.rawContent) {
+        runCatching { org.json.JSONObject(message.rawContent) }.getOrNull()
+    } ?: return null
+    if (content.optString("code") != "model_request_retry") return null
+    return when (content.optString("state")) {
+        "completed" -> stringResource(R.string.session_model_retry_completed)
+        "interrupted" -> stringResource(R.string.session_model_retry_interrupted)
+        "failed" -> stringResource(R.string.session_model_retry_failed)
+        else -> listOfNotNull(
+            stringResource(if (content.optString("reason") == "rate_limit") R.string.session_model_retry_busy else R.string.session_model_retry_unavailable),
+            if (content.has("maxAttempts")) stringResource(R.string.session_model_retry_progress, content.optInt("attempt", 1), content.optInt("maxAttempts"))
+            else stringResource(R.string.session_model_retry_attempt, content.optInt("attempt", 1)),
+            if (content.has("retryInMs")) stringResource(R.string.session_model_retry_delay, kotlin.math.ceil(content.optDouble("retryInMs") / 1000).toInt()) else null,
+        ).joinToString(" ")
+    }
+}
+
+@Composable
 private fun ToolPlaceholder(
     message: TimelineMessage,
     darkMode: Boolean,
@@ -2213,7 +2403,9 @@ private fun ToolPlaceholder(
         )
         return
     }
+    val retryText = modelRetryText(message)
     val displayText = when {
+        retryText != null -> retryText
         message.kind == TimelineMessageKind.Diagnostic -> stringResource(
             R.string.session_timeline_unknown_item,
             listOf(message.type, message.contentKind).filter(String::isNotBlank).joinToString(" / "),
@@ -2221,14 +2413,16 @@ private fun ToolPlaceholder(
         else -> message.text.ifBlank { message.type }
     }
     val expandable = message.rawContent.isNotBlank()
-    var expanded by remember(message.id) { mutableStateOf(false) }
+    val reading = checkNotNull(LocalTimelineReading.current)
+    val expanded = reading.expanded[message.id] ?: false
     val colors = LocalAAColors.current
     val muted = if (destructive) colors.errorIcon else colors.muted
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
             modifier = Modifier
                 .padding(horizontal = 4.dp)
-                .then(if (expandable) Modifier.noRippleClickable { expanded = !expanded } else Modifier),
+                .readingRegion("header:${message.id}")
+                .then(if (expandable) Modifier.noRippleClickable { reading.toggle(message.id, "header:${message.id}") } else Modifier),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

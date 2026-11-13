@@ -1,6 +1,8 @@
 "use client"
 
 import * as React from "react"
+import { runtimeFailureOf, useRuntimeErrorText } from "@/lib/runtime-error-text"
+import { parsePlanningCommand } from "@/features/planning/commands"
 import { ArrowUp, Check, ChevronDown, Loader2, Square, X } from "lucide-react"
 import { toast } from "sonner"
 
@@ -10,7 +12,10 @@ import { Badge } from "@/components/ui/badge"
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -40,6 +45,8 @@ import {
   catalogItemDisabledReason,
   catalogItemEnabled,
   catalogI18nText,
+  groupModelOptions,
+  modelSectionRows,
   isDshAutoReviewPermission,
   modelCatalogDisplayName,
   modelIdsForSelectionId,
@@ -49,7 +56,7 @@ import {
   selectionIdForPermissionCatalog,
 } from "@/components/session/catalog-selection"
 import { SelectionSettingsDrawer } from "@/components/session/selection-settings-drawer"
-import { CAPABILITY, capabilityIsUsable, findCapability, attachmentMimeTypes } from "@/components/session/capabilities"
+import { CAPABILITY, capabilityIsUsable, findCapability, attachmentMimeTypes, attachmentImagesAllowed } from "@/components/session/capabilities"
 import { useElementWidth } from "@/hooks/use-element-width"
 import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
 
@@ -121,6 +128,9 @@ export function SessionComposer({
 }) {
   const tSession = useTranslations("dashboard.session")
   const tNew = useTranslations("dashboard.new")
+  const tPlanning = useTranslations("planning")
+  const tGoal = useTranslations("goal")
+  const [goalMode,setGoalMode]=React.useState(false)
   const composerRef = React.useRef<HTMLDivElement | null>(null)
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null)
   const valueRef = React.useRef(value)
@@ -141,6 +151,7 @@ export function SessionComposer({
   const [menuDismissedFor, setMenuDismissedFor] = React.useState<string | null>(null)
   const commandMenuId = React.useId()
   React.useEffect(() => {
+    setGoalMode(false)
     setCommandFeedback(null)
     setCommandInputError(null)
     setMenuDismissedFor(null)
@@ -153,6 +164,13 @@ export function SessionComposer({
   const composerWidth = useElementWidth(composerRef)
   const runtimeStatus = effectiveRuntimeStatus(runtimeState, session)
   const runtimeSelections = runtimeState?.selections ?? {}
+  const runtimePermissionKnown = Object.prototype.hasOwnProperty.call(runtimeSelections, "permission")
+  const runtimeModelKnown = Object.prototype.hasOwnProperty.call(runtimeSelections, "model")
+  const pendingSelectionScopes = Array.isArray(runtimeState?.metadata.pendingSelectionScopes)
+    ? runtimeState.metadata.pendingSelectionScopes.filter((scope): scope is string => typeof scope === "string")
+    : []
+  const permissionPending = pendingSelectionScopes.includes("permission")
+  const modelPending = pendingSelectionScopes.includes("model")
   const dsh = sessionRuntimeType(session) === "dsh"
   const actualModel = runtimeState?.metadata.modelSelection as { provider?: string; model?: string; reasoningEffort?: string } | undefined
   const actualPermission = runtimeState?.metadata.permissionPreset as { id?: string; name?: string } | undefined
@@ -166,6 +184,7 @@ export function SessionComposer({
   const isStopping = runtimeStatus === "stopping"
   const isWaiting = runtimeStatus === "waiting" || runtimeStatus === "pending"
   const isError = runtimeStatus === "error"
+  const runtimeErrorText = useRuntimeErrorText()
   const isDisconnected = runtimeStatus === "disconnected"
   const sourceUnavailable = session.archived
   const connectorOnline = session.connectorStatus === "online"
@@ -190,6 +209,7 @@ export function SessionComposer({
   )
   const canUseEffortCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.effortCatalog, runtimeScope)
   const canUseAttachments = capabilityIsUsable(effectiveCapabilities, CAPABILITY.attachment, runtimeScope)
+  const imagesAllowed = attachmentImagesAllowed(effectiveCapabilities, runtimeScope)
   const allowedMimeTypes = React.useMemo(() => attachmentMimeTypes(effectiveCapabilities, runtimeScope), [effectiveCapabilities, runtimeScope])
   const {
     attachments,
@@ -206,7 +226,7 @@ export function SessionComposer({
     onDragLeave,
     onDragOver,
     onDrop,
-  } = useAttachments({ sessionId: creatingSession ? undefined : session.id, token, enabled: canUseAttachments, allowedMimeTypes })
+  } = useAttachments({ sessionId: creatingSession ? undefined : session.id, token, enabled: canUseAttachments, allowedMimeTypes, imagesAllowed })
   const canSend =
     canUseSendMessage &&
     !creatingSession &&
@@ -249,6 +269,7 @@ export function SessionComposer({
     enabled: catalogItemEnabled(item),
     disabledReason: catalogItemDisabledReason(item),
     selectionId: item.selectionId,
+    group: item.group ?? null,
     reasoningItems: item.reasoningItems.map((reasoning) => ({
       id: reasoning.id,
       label: catalogI18nText(tNew, reasoning.metadata, "labelKey", reasoning.displayName),
@@ -269,8 +290,10 @@ export function SessionComposer({
     permissionItems.find((item) => item.id === selectedPermissionMode)?.label ??
     (dsh && actualPermission
       ? catalogI18nText(tNew, { preset: actualPermission.id }, "labelKey", actualPermission.name)
-      : null) ?? tNew("permissionMode")
-  const modelLabel = selectedModelItem?.label ?? (dsh && actualModel?.model ? `${actualModel.model}（${actualModel.provider}）` : tNew("model"))
+      : null) ?? (!creatingSession && !runtimePermissionKnown ? tNew("permissionUnsynced") : tNew("runtimeDefault"))
+  const modelLabel = selectedModelItem?.label ?? (dsh && actualModel?.model
+    ? `${actualModel.model}（${actualModel.provider}）`
+    : !creatingSession && !runtimeModelKnown ? tNew("modelUnsynced") : tNew("runtimeDefault"))
   const effortLabel = effortItems.find((item) => item.id === selectedReasoning)?.label ?? (dsh ? actualModel?.reasoningEffort : null) ?? tNew("reasoning")
   const hasSelectors = Boolean(permissionItems.length > 0 || modelItems.length > 0)
   const compactSelectors = hasSelectors && ((composerWidth > 0 && composerWidth < 560) || selectorRequest > 0)
@@ -282,43 +305,47 @@ export function SessionComposer({
   React.useEffect(() => {
     if (dsh) { setSelectedPermissionMode(permissionValue); return }
     const hasRuntimePermission = permissionItems.some((item) => item.id === permissionValue && item.enabled)
+    const defaultPermission = permissionItems.find((item) => item.default && item.enabled)?.id ?? ""
+    const createPermission = defaultPermission || permissionItems.find((item) => item.enabled)?.id || ""
     const nextPermission = hasRuntimePermission
       ? permissionValue
-      : permissionItems.find((item) => item.default && item.enabled)?.id
-        ?? permissionItems.find((item) => item.enabled)?.id
-        ?? ""
-    setSelectedPermissionMode((current) =>
-      hasRuntimePermission || !current || !permissionItems.some((item) => item.id === current && item.enabled)
-        ? nextPermission
-        : current,
-    )
-  }, [dsh, permissionItems, permissionValue])
+      : creatingSession
+        ? createPermission
+        : runtimePermissionKnown && runtimeSelections.permission === null
+        ? defaultPermission
+        : ""
+    setSelectedPermissionMode(nextPermission)
+  }, [creatingSession, dsh, permissionItems, permissionValue, runtimePermissionKnown, runtimeSelections.permission])
 
   React.useEffect(() => {
     if (dsh) { setSelectedModel(modelValue); return }
     const hasRuntimeModel = modelItems.some((item) => item.id === modelValue && item.enabled)
+    const defaultModel = modelItems.find((item) => item.default && item.enabled)?.id ?? ""
+    const createModel = defaultModel || modelItems.find((item) => item.enabled)?.id || ""
     const nextModel = hasRuntimeModel
       ? modelValue
-      : modelItems.find((item) => item.default && item.enabled)?.id
-        ?? modelItems.find((item) => item.enabled)?.id
-        ?? ""
-    setSelectedModel((current) =>
-      hasRuntimeModel || !current || !modelItems.some((item) => item.id === current && item.enabled) ? nextModel : current,
-    )
-  }, [dsh, modelItems, modelValue])
+      : creatingSession
+        ? createModel
+        : runtimeModelKnown && runtimeSelections.model === null
+        ? defaultModel
+        : ""
+    setSelectedModel(nextModel)
+  }, [creatingSession, dsh, modelItems, modelValue, runtimeModelKnown, runtimeSelections.model])
 
   React.useEffect(() => {
     if (dsh) { setSelectedReasoning(effortValue); return }
     const hasRuntimeEffort = effortItems.some((item) => item.id === effortValue && item.enabled)
+    const defaultEffort = effortItems.find((item) => item.default && item.enabled)?.id ?? ""
+    const createEffort = defaultEffort || effortItems.find((item) => item.enabled)?.id || ""
     const nextEffort = hasRuntimeEffort
       ? effortValue
-      : effortItems.find((item) => item.default && item.enabled)?.id
-        ?? effortItems.find((item) => item.enabled)?.id
-        ?? ""
-    setSelectedReasoning((current) =>
-      hasRuntimeEffort || !current || !effortItems.some((item) => item.id === current && item.enabled) ? nextEffort : current,
-    )
-  }, [dsh, effortItems, effortValue])
+      : creatingSession
+        ? createEffort
+        : runtimeModelKnown && runtimeSelections.model === null
+        ? defaultEffort
+        : ""
+    setSelectedReasoning(nextEffort)
+  }, [creatingSession, dsh, effortItems, effortValue, runtimeModelKnown, runtimeSelections.model])
   const selectedModelSelection = selectionIdForModelCatalog(modelCatalog, selectedModel, selectedReasoning) ?? (dsh ? runtimeSelections.model : null)
   const selectedPermissionSelection = selectionIdForPermissionCatalog(permissionCatalog, selectedPermissionMode) ?? (dsh && actualPermission?.id !== 'custom' ? runtimeSelections.permission : null)
   const choosePermission = (permissionId: string) => {
@@ -363,23 +390,38 @@ export function SessionComposer({
             : isWaitingApproval || isBlocked
               ? tSession("waitingApprovalPlaceholder")
               : isError
-                ? tSession("errorPlaceholder")
+                ? runtimeErrorText(runtimeFailureOf({ code: runtimeState?.error?.code }), tSession("errorPlaceholder"))
                 : tSession("replyPlaceholder")
-  const slashIntent = parseSlashIntent(value)
+  const planningIntent = parsePlanningCommand(value)
+  const goalUsable = capabilityIsUsable(effectiveCapabilities, "session.goal", runtimeScope) && connectorOnline
+  const goalIntent = goalUsable && /^\/goal(?:\s|$)/.test(value.trimStart())
+  const slashIntent = planningIntent || goalIntent ? null : parseSlashIntent(value)
   // "/Users/me/file.ts" and other non-command slash text never opens the menu.
   const slashCandidate = slashIntent && commandLikeToken(slashIntent) ? slashIntent : null
   const commandQuery = slashCandidate?.command ?? null
   const catalogUsable = canUseCommands && connectorOnline
   const mode = slashMode(slashIntent, runtimeCommands, { usable: catalogUsable, loading: commandsLoading, error: commandsError })
+  // `/plan` is parsed by AA, not run by the runtime; offer it wherever planning is usable.
+  const planningUsable = capabilityIsUsable(effectiveCapabilities, CAPABILITY.planning, runtimeScope) && connectorOnline
+  const planCommand = React.useMemo<RuntimeCommand>(() => ({
+    id: "plan", title: "/plan", description: tPlanning("commandDescription"), aliases: [], category: null, scope: "session",
+    enabled: true, disabledReason: null, acceptsArgs: true, argsSchema: null,
+    metadata: { ui: { kind: "execute", argumentHint: tPlanning("commandHint") } },
+  }), [tPlanning])
+  const baseOfferedCommands = React.useMemo(
+    () => planningUsable && !runtimeCommands.some((command) => command.id === "plan") ? [planCommand, ...runtimeCommands] : runtimeCommands,
+    [planCommand, planningUsable, runtimeCommands],
+  )
+  const offeredCommands:RuntimeCommand[] = goalUsable ? [{...planCommand,id:"goal",title:"/goal",description:tGoal("commandDescription"),metadata:{ui:{kind:"execute",argumentHint:tGoal("objective")}}},...baseOfferedCommands.filter(command=>command.id!=="goal")] : baseOfferedCommands
   const commandSuggestions = React.useMemo(
-    () => (commandQuery === null ? [] : runtimeCommands.filter((command) => commandMatchesQuery(command, commandQuery))),
-    [commandQuery, runtimeCommands],
+    () => (commandQuery === null ? [] : offeredCommands.filter((command) => commandMatchesQuery(command, commandQuery))),
+    [commandQuery, offeredCommands],
   )
   // A bare "/" in a session that cannot run commands explains why instead of
   // doing nothing, e.g. a runtime or bridge that predates native commands.
   const commandsCapability = findCapability(effectiveCapabilities, CAPABILITY.commands, runtimeScope)
   const commandsUnavailable =
-    commandsCapability !== null && !catalogUsable && slashCandidate?.command === "" && slashCandidate.suffix === ""
+    commandsCapability !== null && !catalogUsable && !planningUsable && slashCandidate?.command === "" && slashCandidate.suffix === ""
       ? !connectorOnline
         ? tSession("commandBlocked_offline")
         : !commandsCapability.supported
@@ -389,7 +431,7 @@ export function SessionComposer({
   const showUnavailableMenu = commandsUnavailable !== null && attachments.length === 0 && menuDismissedFor !== value
   const showCommandMenu =
     slashCandidate !== null &&
-    catalogUsable &&
+    (catalogUsable || planningUsable || goalUsable) &&
     slashCandidate.suffix === "" &&
     attachments.length === 0 &&
     menuDismissedFor !== value &&
@@ -398,12 +440,12 @@ export function SessionComposer({
     ? commandSuggestions[Math.min(activeCommandIndex, commandSuggestions.length - 1)]
     : null
   React.useEffect(() => { setActiveCommandIndex(0) }, [commandQuery])
-  const showInterruptAction = showInterrupt && mode.kind === "message" && !showCommandMenu
+  const showInterruptAction = showInterrupt && (mode.kind === "message" || goalIntent || goalMode) && !showCommandMenu
   React.useEffect(() => {
     onCommandQueryChange(commandQuery)
   }, [commandQuery, onCommandQueryChange])
   const commandBusy = sending || interrupting || commandPending
-  const blockOf = (command: RuntimeCommand): CommandBlock | null => commandBusy ? "busy" : commandBlock(command, runtimeStatus, {
+  const blockOf = (command: RuntimeCommand): CommandBlock | null => (command === planCommand || (command.id === "goal" && goalUsable)) ? null : commandBusy ? "busy" : commandBlock(command, runtimeStatus, {
     capability: canUseCommands,
     writable: session.takeover && !sourceUnavailable && !creatingSession,
     online: connectorOnline,
@@ -414,9 +456,12 @@ export function SessionComposer({
       ? tSession(`commandReason_${command.disabledReason}`)
       : command.disabledReason || tSession("commandUnavailable")
   }
+  // AA's own commands carry translated descriptions; native commands keep the runtime's text.
+  const commandDescription = (command: RuntimeCommand): string =>
+    tSession.has(`commandDescription_${command.id}`) ? tSession(`commandDescription_${command.id}`) : command.description || command.title
   const canSubmitCommand = mode.kind === "command" && !commandPending && connectorOnline
   const canSubmitMessage =
-    canSend &&
+    (canSend || Boolean((goalMode || goalIntent) && goalUsable && !sending && !interrupting) || Boolean(planningIntent && capabilityIsUsable(effectiveCapabilities, CAPABILITY.planning, runtimeScope) && !sending && !interrupting && !commandPending)) &&
     session.takeover &&
     hasInput &&
     attachmentsReady &&
@@ -429,6 +474,7 @@ export function SessionComposer({
   }, [onValueChange])
 
   const chooseCommand = (command: RuntimeCommand) => {
+    if(command.id==="goal" && goalUsable){setGoalMode(true);updateValue("");textareaRef.current?.focus();return}
     const block = blockOf(command)
     if (block) { setCommandInputError(blockMessage(command, block)); return }
     const sourceDraft = valueRef.current
@@ -442,6 +488,7 @@ export function SessionComposer({
     void runCommand(command, raw, sourceDraft)
   }
   const completeCommand = (command: RuntimeCommand) => {
+    if(command.id==="goal" && goalUsable){setGoalMode(true);updateValue("");textareaRef.current?.focus();return}
     updateValue(`/${command.id}${command.acceptsArgs ? " " : ""}`)
     textareaRef.current?.focus()
   }
@@ -501,6 +548,15 @@ export function SessionComposer({
   }
 
   const submit = async () => {
+    if(goalIntent && !value.trimStart().slice(5).trim() && goalUsable){setGoalMode(true);updateValue("");return}
+    if((goalMode || goalIntent) && goalUsable && !sending && !interrupting && attachmentsReady && session.takeover){
+      const text=value,files=attachments,currentVisit=sessionVisitRef.current
+      const objective=goalIntent?text.trimStart().slice(5).trim():text.trim()
+      if(!objective)return
+      const sent=await onSend("/goal "+objective,files,{})
+      if(sent && sessionVisitRef.current===currentVisit){if(valueRef.current===text)updateValue("");files.forEach(file=>remove(file.id));setGoalMode(false)}
+      return
+    }
     if (!hasInput) return
     if (mode.kind === "pending") {
       setCommandInputError(tSession(commandsError ? "commandCatalogError" : "commandLoading"))
@@ -514,6 +570,18 @@ export function SessionComposer({
     if (!canSubmitMessage) return
     const text = value
     const files = attachments
+    if (planningIntent) {
+      const currentVisit = sessionVisitRef.current
+      const sent = await onSend(text, files, {
+        ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
+        ...(selectedPermissionSelection ? { permission: selectedPermissionSelection } : {}),
+      })
+      if (sent && sessionVisitRef.current === currentVisit) {
+        if (valueRef.current === text) updateValue("")
+        files.forEach(file => remove(file.id))
+      }
+      return
+    }
     updateValue("")
     clear({ revokePreviews: false })
     const sent = await onSend(text, files, {
@@ -533,6 +601,66 @@ export function SessionComposer({
     void submit()
   }
 
+  const renderModelMenuItem = (modelItem: (typeof modelItems)[number]) => {
+    const modelEfforts = modelItem.reasoningItems
+    if (modelEfforts.length === 0) {
+      return (
+        <DropdownMenuItem
+          key={modelItem.id}
+          disabled={!modelItem.enabled}
+          className="gap-2"
+          onSelect={() => chooseModel(modelItem.id, "")}
+        >
+          <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate">{modelItem.label}</span>
+            {!modelItem.enabled && modelItem.disabledReason ? (
+              <span className="block truncate text-xs text-muted-foreground">
+                {modelItem.disabledReason}
+              </span>
+            ) : null}
+          </span>
+        </DropdownMenuItem>
+      )
+    }
+    return (
+      <DropdownMenuSub key={modelItem.id}>
+        <DropdownMenuSubTrigger
+          className="gap-2"
+          disabled={effortSelectorDisabled || !modelItem.enabled}
+        >
+          <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
+          <span className="max-w-40 truncate" title={modelItem.disabledReason ?? undefined}>
+            {modelItem.label}
+          </span>
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent className="w-56">
+          {modelEfforts.map((item) => (
+            <DropdownMenuItem
+              key={item.id}
+              disabled={!item.enabled}
+              className="gap-2"
+              onSelect={() => chooseModel(modelItem.id, item.id)}
+            >
+              <Check className={cn(
+                "size-3.5",
+                selectedModel === modelItem.id && selectedReasoning === item.id ? "opacity-100" : "opacity-0",
+              )} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{item.label}</span>
+                {!item.enabled && item.disabledReason ? (
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {item.disabledReason}
+                  </span>
+                ) : null}
+              </span>
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+    )
+  }
+
   return (
     <div
       className="shrink-0 px-4 pb-4 pt-2"
@@ -541,6 +669,7 @@ export function SessionComposer({
       onDragOver={onDragOver}
       onDrop={onDrop}
     >
+      {goalMode && <Badge variant="outline">{tGoal("title")}<Button type="button" variant="ghost" size="icon-sm" aria-label={tGoal("clearMode")} onClick={()=>setGoalMode(false)}><X/></Button></Badge>}
       <DragOverlay isDragging={isDragging} />
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
         {commandFeedback ? (
@@ -608,7 +737,7 @@ export function SessionComposer({
                         /{command.id}{hint ? <span className="text-muted-foreground"> {hint}</span> : null}
                       </span>
                       <span className={cn("min-w-0 flex-1 truncate text-xs", block ? "text-muted-foreground/80" : "text-muted-foreground")}>
-                        {block ? blockMessage(command, block) : command.description || command.title}
+                        {block ? blockMessage(command, block) : commandDescription(command)}
                       </span>
                     </button>
                   )
@@ -697,7 +826,7 @@ export function SessionComposer({
                   permissionDisabled={permissionSelectorDisabled}
                   modelDisabled={modelSelectorDisabled}
                   reasoningDisabled={effortSelectorDisabled}
-                  buttonLabel={tNew("selectionSettings")}
+                  buttonLabel={pendingSelectionScopes.length > 0 ? `${tNew("selectionSettings")} · ${tNew("nextTurn")}` : tNew("selectionSettings")}
                   title={tNew("selectionSettings")}
                   description={tNew("selectionSettingsDescription")}
                   permissionLabel={tNew("permissionMode")}
@@ -725,6 +854,7 @@ export function SessionComposer({
                       >
                         <span className="size-1.5 shrink-0 rounded-full bg-primary" />
                         <span className="min-w-0 truncate text-foreground">{permissionLabel}</span>
+                        {permissionPending ? <Badge variant="secondary">{tNew("nextTurn")}</Badge> : null}
                         {permissionItems.find((item) => item.id === selectedPermissionMode)?.badge
                           ? <Badge variant="secondary">EXP</Badge>
                           : null}
@@ -772,71 +902,22 @@ export function SessionComposer({
                         {effortItems.length > 0 ? <span className="text-foreground">{effortLabel}</span> : null}
                         {effortItems.length > 0 ? <span className="text-muted-foreground/50">·</span> : null}
                         <span className="min-w-0 max-w-40 truncate text-foreground">{modelLabel}</span>
+                        {modelPending ? <Badge variant="secondary">{tNew("nextTurn")}</Badge> : null}
                         <ChevronDown className="size-3.5 opacity-60" />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start" className="w-56">
-                      {modelItems.length > 0 ? (
-                        modelItems.map((modelItem) => {
-                          const modelEfforts = modelItem.reasoningItems
-                          if (modelEfforts.length === 0) {
-                            return (
-                              <DropdownMenuItem
-                                key={modelItem.id}
-                                disabled={!modelItem.enabled}
-                                className="gap-2"
-                                onSelect={() => chooseModel(modelItem.id, "")}
-                              >
-                                <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
-                                <span className="min-w-0 flex-1">
-                                  <span className="block truncate">{modelItem.label}</span>
-                                  {!modelItem.enabled && modelItem.disabledReason ? (
-                                    <span className="block truncate text-xs text-muted-foreground">
-                                      {modelItem.disabledReason}
-                                    </span>
-                                  ) : null}
-                                </span>
-                              </DropdownMenuItem>
-                            )
-                          }
-                          return (
-                            <DropdownMenuSub key={modelItem.id}>
-                              <DropdownMenuSubTrigger
-                                className="gap-2"
-                                disabled={effortSelectorDisabled || !modelItem.enabled}
-                              >
-                                <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
-                                <span className="max-w-40 truncate" title={modelItem.disabledReason ?? undefined}>
-                                  {modelItem.label}
-                                </span>
-                              </DropdownMenuSubTrigger>
-                              <DropdownMenuSubContent className="w-56">
-                                {modelEfforts.map((item) => (
-                                  <DropdownMenuItem
-                                    key={item.id}
-                                    disabled={!item.enabled}
-                                    className="gap-2"
-                                    onSelect={() => chooseModel(modelItem.id, item.id)}
-                                  >
-                                    <Check className={cn(
-                                      "size-3.5",
-                                      selectedModel === modelItem.id && selectedReasoning === item.id ? "opacity-100" : "opacity-0",
-                                    )} />
-                                    <span className="min-w-0 flex-1">
-                                      <span className="block truncate">{item.label}</span>
-                                      {!item.enabled && item.disabledReason ? (
-                                        <span className="block truncate text-xs text-muted-foreground">
-                                          {item.disabledReason}
-                                        </span>
-                                      ) : null}
-                                    </span>
-                                  </DropdownMenuItem>
-                                ))}
-                              </DropdownMenuSubContent>
-                            </DropdownMenuSub>
-                          )
-                        })
-                      ) : null}
+                      {groupModelOptions(modelItems).map((section, index) => (
+                        <React.Fragment key={section.id === null ? "ungrouped" : `group:${section.id}`}>
+                          {index > 0 ? <DropdownMenuSeparator /> : null}
+                          {section.displayName ? (
+                            <DropdownMenuGroup>
+                              <DropdownMenuLabel>{section.displayName}</DropdownMenuLabel>
+                              {modelSectionRows(section).map(renderModelMenuItem)}
+                            </DropdownMenuGroup>
+                          ) : section.items.map(renderModelMenuItem)}
+                        </React.Fragment>
+                      ))}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 ) : null}

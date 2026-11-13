@@ -18,6 +18,11 @@ protocol V2ConnectorAPIProtocol {
     func permissionCatalog(connectorId: V2ConnectorID, runtimeId: V2RuntimeID) async throws -> V2PermissionCatalogResponse
     func commands(connectorId: V2ConnectorID, runtimeId: V2RuntimeID) async throws -> V2RuntimeCommandListResponse
     func preferences(connectorId: V2ConnectorID) async throws -> V2ConnectorPreferencesResponse
+    func deviceSettings(connectorId: V2ConnectorID) async throws -> V2ConnectorDeviceSettingsResponse
+    func updateDeviceSettings(
+        connectorId: V2ConnectorID,
+        request: V2ConnectorDeviceSettingsPatch
+    ) async throws -> V2ConnectorDeviceSettingsResponse
     func readWorkspaceText(connectorId: V2ConnectorID, root: String, request: V2WorkspaceTextRequest) async throws -> V2WorkspaceTextResponse
     func listRuntimes(connectorId: V2ConnectorID) async throws -> V2DeviceRuntimeListResponse
     func discoverRuntimes(connectorId: V2ConnectorID) async throws -> V2DeviceRuntimeListResponse
@@ -250,6 +255,21 @@ struct V2ConnectorAPI: V2ConnectorAPIProtocol {
 
     func preferences(connectorId: V2ConnectorID) async throws -> V2ConnectorPreferencesResponse {
         try await get(path: "\(connectorPath(connectorId))/preferences")
+    }
+
+    func deviceSettings(connectorId: V2ConnectorID) async throws -> V2ConnectorDeviceSettingsResponse {
+        try await get(path: "\(connectorPath(connectorId))/device-settings")
+    }
+
+    func updateDeviceSettings(
+        connectorId: V2ConnectorID,
+        request body: V2ConnectorDeviceSettingsPatch
+    ) async throws -> V2ConnectorDeviceSettingsResponse {
+        try await transport.send(HTTPRequest<V2ConnectorDeviceSettingsPatch, V2ConnectorDeviceSettingsResponse>(
+            method: .patch,
+            path: "\(connectorPath(connectorId))/device-settings",
+            body: body
+        ))
     }
 
     func readWorkspaceText(connectorId: V2ConnectorID, root: String, request: V2WorkspaceTextRequest) async throws -> V2WorkspaceTextResponse {

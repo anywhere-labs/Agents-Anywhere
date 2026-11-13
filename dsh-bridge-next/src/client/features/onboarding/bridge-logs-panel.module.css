@@ -30,6 +30,7 @@ details[open] > .summary::before { transform: rotate(90deg); }
 .loadOlder { padding: 8px 0; }
 
 .sources { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+.startupFailures { padding: 0; margin: 0 0 16px; list-style: none; user-select: text; }
 .terminal { height: 52dvh; min-height: 180px; overflow: auto; overscroll-behavior: contain; padding: 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; user-select: text; }
 .terminalLine { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .terminalLine time { color: var(--dsw-alias-label-secondary); }

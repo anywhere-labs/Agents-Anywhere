@@ -20,7 +20,7 @@
 - **iOS / iPadOS：** 在 [App Store](https://apps.apple.com/cn/app/agents-anywhere/id6787125178) 下载安装；也可以通过 [TestFlight](https://testflight.apple.com/join/GKGaut99) 安装测试版，以邀请页的可用状态为准。
 - **Web：** 打开 [web.agents-anywhere.com](https://web.agents-anywhere.com)。
 
-在工作设备上使用桌面客户端，或按 [Connector CLI 说明](../connector/README.md#run)接入无图形界面的机器。手机、平板和 Web 用于访问已连接的工作设备。
+在工作设备上使用桌面客户端，或按 [Connector CLI 说明](../connector/README.md#run)接入无图形界面的机器。使用 DSH 时，也可以在 DSH 中安装 Agents Anywhere 插件，直接从 DSH 连接本机，步骤见 [DSH 插件说明](../dsh-bridge-next/README.md)。手机、平板和 Web 用于访问已连接的工作设备。
 
 ## 2. 登录服务
 
@@ -89,7 +89,7 @@ curl -i https://web.agents-anywhere.com/api/v2/health
 
 ### 更新提示无法下载
 
-当前发布客户端的应用内更新地址仍是占位配置。请从 [README 下载表](../README.md#下载与入口)手动获取安装包。上传新安装包不会更新已安装客户端中的下载地址。
+2.0.3 及更早版本的应用内更新地址是占位配置，点击「立即更新」会提示更新下载暂未开放，请从 [README 下载表](../README.md#下载与入口)手动获取安装包。从 2.1.0 起，Desktop（macOS、Windows）和 Android 的「立即更新」会从官网下载最新安装包；下载失败时检查网络后重试，仍然失败可以手动下载。
 
 ### Agent 和数据在哪里？
 

@@ -1,5 +1,6 @@
 package com.agentsanywhere.app.feature.realtime
 
+import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.RealtimeTransport
 import com.agentsanywhere.app.api.RemoteSessionEventEnvelope
 import com.agentsanywhere.app.api.eventCursorSequence
@@ -12,7 +13,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.WebSocket
 import java.util.concurrent.atomic.AtomicBoolean
@@ -55,17 +59,26 @@ class SessionRealtimeController(
         onSnapshotRequired: suspend (reason: String) -> Unit,
         onRuntimeRefreshRequired: suspend (connectionGeneration: Long, refreshGeneration: Long) -> Unit,
         onConnectionChanged: (connected: Boolean, recovering: Boolean, attempt: Int, error: String?) -> Unit,
+        onAccessRevoked: suspend (Throwable) -> Unit = {},
     ): Job {
         val job = scope.launch(Dispatchers.IO) {
+        val visitJob = coroutineContext.job
         var attempt = 0
         var hasConnected = false
-        var lastSnapshotRequiredCursor: String? = null
-        suspend fun requestSnapshotOnce(reason: String, connectionGeneration: Long) {
-            if (!isCurrentConnection(connectionGeneration)) return
-            val currentCursor = cursor()
-            if (lastSnapshotRequiredCursor == currentCursor) return
-            lastSnapshotRequiredCursor = currentCursor
-            onSnapshotRequired(reason)
+        val snapshotMutex = Mutex()
+        var pendingSnapshotReason: String? = null
+        var lastSnapshotRequest: Pair<Long, String>? = null
+        suspend fun requestSnapshot(reason: String?, connectionGeneration: Long): Boolean = snapshotMutex.withLock {
+            if (!isCurrentConnection(connectionGeneration)) return@withLock false
+            val requiredReason = pendingSnapshotReason ?: reason ?: return@withLock false
+            val request = connectionGeneration to cursor()
+            if (pendingSnapshotReason == null && lastSnapshotRequest == request) return@withLock true
+            // Retain the requirement across reconnects even if live events advance the cursor.
+            pendingSnapshotReason = requiredReason
+            onSnapshotRequired(requiredReason)
+            lastSnapshotRequest = request
+            pendingSnapshotReason = null
+            true
         }
         while (isActive) {
             val serverUrl = sessionStore.readServerUrl()
@@ -81,6 +94,7 @@ class SessionRealtimeController(
             val opened = AtomicBoolean(false)
             val openSignal = CompletableDeferred<Boolean>()
             var recoveryJob: Job? = null
+            var snapshotJob: Job? = null
             var runtimeRefreshJob: Job? = null
             var latestRuntimeRefreshGeneration = 0L
             try {
@@ -117,28 +131,46 @@ class SessionRealtimeController(
                     }
                 }
 
+                suspend fun recoverWithFailureHandling(recovery: suspend () -> Unit) {
+                    try {
+                        recovery()
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        if (!isCurrentConnection(connectionGeneration)) return
+                        if (error is ApiException && error.statusCode in listOf(403, 404)) {
+                            onAccessRevoked(error)
+                            visitJob.cancel()
+                        } else {
+                            onConnectionChanged(false, false, attempt, error.message)
+                            socket?.cancel()
+                        }
+                    }
+                }
+
                 fun recoverFrom(recoveryCursor: String) {
                     recoveryJob?.cancel()
                     recoveryJob = launch {
-                        try {
-                            recover(
-                                serverUrl = serverUrl,
-                                accessToken = accessToken,
-                                sessionId = sessionId,
-                                initialCursor = recoveryCursor,
-                                onEvents = { events ->
-                                    if (isCurrentConnection(connectionGeneration)) onEvents(events)
-                                },
-                                onCursorAdvanced = { recoveredCursor ->
-                                    if (isCurrentConnection(connectionGeneration)) {
-                                        onCursorAdvanced(recoveredCursor)
-                                    }
-                                },
-                                onSnapshotRequired = { reason ->
-                                    requestSnapshotOnce(reason, connectionGeneration)
-                                },
-                            )
-                        } finally {
+                        recoverWithFailureHandling {
+                            if (!requestSnapshot(null, connectionGeneration)) {
+                                recover(
+                                    serverUrl = serverUrl,
+                                    accessToken = accessToken,
+                                    sessionId = sessionId,
+                                    initialCursor = recoveryCursor,
+                                    onEvents = { events ->
+                                        if (isCurrentConnection(connectionGeneration)) onEvents(events)
+                                    },
+                                    onCursorAdvanced = { recoveredCursor ->
+                                        if (isCurrentConnection(connectionGeneration)) {
+                                            onCursorAdvanced(recoveredCursor)
+                                        }
+                                    },
+                                    onSnapshotRequired = { reason ->
+                                        requestSnapshot(reason, connectionGeneration)
+                                    },
+                                )
+                            }
                             if (isCurrentConnection(connectionGeneration)) {
                                 onConnectionChanged(true, false, 0, null)
                             }
@@ -148,8 +180,7 @@ class SessionRealtimeController(
 
                 if (hasConnected) {
                     onConnectionChanged(true, true, 0, null)
-                    val recoveryCursor = cursor()
-                    if (lastSnapshotRequiredCursor != recoveryCursor) recoverFrom(recoveryCursor)
+                    recoverFrom(cursor())
                     refreshRuntime()
                 }
                 for (firstMessage in incoming) {
@@ -185,7 +216,11 @@ class SessionRealtimeController(
                             }
                         }
                         "session.refetch_required" -> {
-                            launch { requestSnapshotOnce("session.refetch_required", connectionGeneration) }
+                            if (snapshotJob?.isActive != true) snapshotJob = launch {
+                                recoverWithFailureHandling {
+                                    requestSnapshot("session.refetch_required", connectionGeneration)
+                                }
+                            }
                         }
                         "runtime.refetch_required" -> {
                             refreshRuntime()
@@ -198,6 +233,11 @@ class SessionRealtimeController(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
+                if (isCurrentConnection(connectionGeneration) &&
+                    error is ApiException && error.statusCode in listOf(403, 404)) {
+                    onAccessRevoked(error)
+                    return@launch
+                }
                 if (isCurrentConnection(connectionGeneration)) {
                     onConnectionChanged(false, false, attempt, error.message)
                 }
@@ -210,6 +250,7 @@ class SessionRealtimeController(
                 }
                 activeRuntimeRefreshGeneration.compareAndSet(latestRuntimeRefreshGeneration, 0)
                 recoveryJob?.cancel()
+                snapshotJob?.cancel()
                 runtimeRefreshJob?.cancel()
                 socket?.cancel()
                 incoming.close()
@@ -242,8 +283,10 @@ class SessionRealtimeController(
                 onSnapshotRequired("events.snapshotRequired")
                 return
             }
-            val events = response.events.sortedWith(
-                compareBy<RemoteSessionEventEnvelope> { it.sequence }.thenBy { it.eventId },
+            val events = recoveredEventsToApply(
+                response.events.sortedWith(
+                    compareBy<RemoteSessionEventEnvelope> { it.sequence }.thenBy { it.eventId },
+                ),
             )
             if (events.isNotEmpty()) onEvents(events)
             val next = response.nextCursor
@@ -266,6 +309,20 @@ class SessionRealtimeController(
 
 private fun RemoteSessionEventEnvelope.isTimelineUpsert(): Boolean =
     type == "timeline.item_created" || type == "timeline.item_updated"
+
+/**
+ * Recovered capabilities are projected from stored connector facts and can be
+ * older than pushes applied while the request was in flight. Every recovery
+ * also re-reads live capabilities, so, as on Web, stored ones are only applied
+ * while the connector is offline and that read cannot succeed.
+ */
+private fun recoveredEventsToApply(events: List<RemoteSessionEventEnvelope>): List<RemoteSessionEventEnvelope> {
+    val session = events.lastOrNull { it.type == "session.meta.updated" && it.payload.session != null }
+        ?.payload
+        ?.session
+    if (session?.connectorStatus != "online") return events
+    return events.filterNot { it.type == "runtime.capability.updated" }
+}
 
 private fun remainingBatchMillis(deadline: Long): Long =
     ((deadline - System.nanoTime() + 999_999L) / 1_000_000L).coerceAtLeast(0L)

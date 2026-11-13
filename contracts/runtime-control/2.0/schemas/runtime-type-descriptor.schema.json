@@ -1,5 +1,156 @@
 {
   "$defs": {
+    "Maturity": {
+      "description": "How mature the runtime or capability is. It is declared by the adapter and shown next to, never instead of, the lifecycle status.",
+      "enum": [
+        "experimental",
+        "beta",
+        "stable"
+      ],
+      "type": "string"
+    },
+    "ModelConnectionCapability": {
+      "additionalProperties": false,
+      "description": "How the runtime takes a model connection from the unified configuration. Absent or null means the runtime does not support one.",
+      "properties": {
+        "apply": {
+          "description": "When a saved connection takes effect.",
+          "enum": [
+            "immediate",
+            "new_session",
+            "restart"
+          ],
+          "type": "string"
+        },
+        "catalog": {
+          "additionalProperties": false,
+          "properties": {
+            "auto": {
+              "type": "boolean"
+            },
+            "manual": {
+              "type": "boolean"
+            },
+            "required": {
+              "description": "The connection is only used with models listed in `modelsField`; absent means false.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "auto",
+            "manual"
+          ],
+          "type": "object"
+        },
+        "configField": {
+          "description": "Top-level configuration field holding {baseUrl, apiKey}.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "maturity": {
+          "$ref": "#/$defs/Maturity"
+        },
+        "modeField": {
+          "description": "Configuration field that selects one of `modes`, when the runtime has modes.",
+          "oneOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "modelsField": {
+          "oneOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "modes": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "reason": {
+                "oneOf": [
+                  {
+                    "maxLength": 1024,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "supported": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "supported"
+            ],
+            "type": "object"
+          },
+          "maxItems": 16,
+          "type": "array"
+        },
+        "protocols": {
+          "items": {
+            "enum": [
+              "openai_responses",
+              "openai_chat",
+              "anthropic"
+            ],
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "scope": {
+          "description": "What a saved connection changes: an AA-managed instance, one session, or the runtime's native global configuration.",
+          "enum": [
+            "instance",
+            "session",
+            "native_global"
+          ],
+          "type": "string"
+        },
+        "modelField": {
+          "description": "Top-level configuration field holding the model new sessions use, {modelId, effortId?}. With a connection, modelId must be one of the models in `modelsField`. A change applies without restarting the runtime and never changes existing sessions; absent means the runtime takes no model setting.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "maturity",
+        "configField",
+        "modelsField",
+        "protocols",
+        "scope",
+        "catalog",
+        "apply"
+      ],
+      "type": "object"
+    },
     "RuntimeConfigSchema": {
       "additionalProperties": false,
       "description": "Provider-owned configuration contract for this runtime type.",
@@ -164,13 +315,6 @@
       "minLength": 1,
       "type": "string"
     },
-    "instancePolicy": {
-      "enum": [
-        "single",
-        "multiple"
-      ],
-      "type": "string"
-    },
     "implementationType": {
       "description": "Optional implementation category, separate from the stable provider identity.",
       "oneOf": [
@@ -183,6 +327,16 @@
           "type": "null"
         }
       ]
+    },
+    "instancePolicy": {
+      "enum": [
+        "single",
+        "multiple"
+      ],
+      "type": "string"
+    },
+    "maturity": {
+      "$ref": "#/$defs/Maturity"
     },
     "maxInstances": {
       "oneOf": [
@@ -200,6 +354,16 @@
       "additionalProperties": true,
       "type": "object"
     },
+    "modelConnection": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ModelConnectionCapability"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "reason": {
       "oneOf": [
         {
@@ -212,9 +376,6 @@
         }
       ]
     },
-    "recommended": {
-      "type": "boolean"
-    },
     "recommendationRank": {
       "oneOf": [
         {
@@ -226,6 +387,9 @@
           "type": "null"
         }
       ]
+    },
+    "recommended": {
+      "type": "boolean"
     },
     "runtimeType": {
       "maxLength": 64,

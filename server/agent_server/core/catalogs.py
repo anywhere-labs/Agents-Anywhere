@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
+
+from pydantic import ValidationError
 
 from agent_server.core.protocol import (
     ProtocolModelCatalog,
@@ -9,10 +11,51 @@ from agent_server.core.protocol import (
 
 CatalogType = Literal["model", "permission"]
 CatalogUpdateOutcome = Literal["accepted", "idempotent", "stale", "conflict"]
+SameRevisionMatch = Literal["idempotent", "regrouped", "conflict"]
 
 
 class CatalogDomainError(ValueError):
     pass
+
+
+def compare_same_revision_catalogs(
+    catalog_type: CatalogType,
+    stored: Any,
+    incoming: dict[str, Any],
+) -> SameRevisionMatch:
+    """Compare two catalogs that report the same revision.
+
+    A stored catalog may predate fields added to the protocol since it was
+    written, so both sides go through the current model first: a difference
+    that is only a field's default is the same catalog. Model groups are
+    derived by the Connector from the rest of the catalog (DSH provider
+    metadata), so a newer Connector can add them without the runtime bumping
+    its revision; that is ``regrouped`` and should replace the stored copy.
+    """
+
+    model = ProtocolModelCatalog if catalog_type == "model" else ProtocolPermissionCatalog
+    try:
+        current = model.model_validate(stored).model_dump(mode="json")
+        reported = model.model_validate(incoming).model_dump(mode="json")
+    except ValidationError:
+        return "idempotent" if stored == incoming else "conflict"
+    if current == reported:
+        return "idempotent"
+    if catalog_type == "model" and _without_model_groups(current) == _without_model_groups(
+        reported
+    ):
+        return "regrouped"
+    return "conflict"
+
+
+def _without_model_groups(catalog: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **catalog,
+        "models": [
+            {key: value for key, value in item.items() if key != "group"}
+            for item in catalog.get("models", [])
+        ],
+    }
 
 
 def validate_model_catalog(catalog: ProtocolModelCatalog) -> None:

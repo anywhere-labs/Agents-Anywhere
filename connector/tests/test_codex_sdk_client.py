@@ -611,18 +611,17 @@ async def _test_codex_sdk_client_uses_low_level_permission_payloads() -> None:
     assert native.initialized is True
     assert native.low_level.thread_start_params[0]["approvalPolicy"] == "on-request"
     assert native.low_level.thread_start_params[0]["approvalsReviewer"] == "user"
-    assert native.low_level.thread_start_params[0]["sandbox"] == "workspace-write"
+    # Permissions go by profile name, never together with the sandbox fields.
+    assert native.low_level.thread_start_params[0]["permissions"] == ":workspace"
+    assert "sandbox" not in native.low_level.thread_start_params[0]
     assert native.low_level.turn_start_params[0]["approvalPolicy"] == "on-request"
     assert native.low_level.turn_start_params[0]["approvalsReviewer"] == "auto_review"
-    assert native.low_level.turn_start_params[0]["sandboxPolicy"]["type"] == (
-        "workspaceWrite"
-    )
-    assert (
-        native.low_level.turn_start_params[0]["sandboxPolicy"]["networkAccess"] is False
-    )
+    assert native.low_level.turn_start_params[0]["permissions"] == ":workspace"
+    assert "sandboxPolicy" not in native.low_level.turn_start_params[0]
     assert native.low_level.thread_start_params[1]["approvalPolicy"] == "never"
     assert "approvalsReviewer" not in native.low_level.thread_start_params[1]
-    assert native.low_level.thread_start_params[1]["sandbox"] == "danger-full-access"
+    assert native.low_level.thread_start_params[1]["permissions"] == ":danger-full-access"
+    assert "sandbox" not in native.low_level.thread_start_params[1]
 
 
 async def _test_codex_sdk_client_sends_attachments_as_user_input() -> None:
@@ -701,7 +700,8 @@ async def _test_codex_sdk_client_resumes_thread_before_low_level_turn_start() ->
     assert native.low_level.thread_resume_params[0]["model"] == "gpt-example"
     assert native.low_level.thread_resume_params[0]["approvalPolicy"] == "on-request"
     assert native.low_level.thread_resume_params[0]["approvalsReviewer"] == "user"
-    assert native.low_level.thread_resume_params[0]["sandbox"] == "workspace-write"
+    assert native.low_level.thread_resume_params[0]["permissions"] == ":workspace"
+    assert "sandbox" not in native.low_level.thread_resume_params[0]
 
 
 async def _test_codex_sdk_client_resumes_thread_after_read_handle_cache() -> None:
@@ -850,6 +850,48 @@ async def _test_codex_sdk_client_applies_gateway_to_thread_start_and_resume() ->
     assert resume["config"]["model_providers"]["agents_anywhere_gateway"][
         "experimental_bearer_token"
     ] == "gateway-secret"
+
+
+@pytest.mark.parametrize(
+    ("saved_route", "expected_provider", "expected_model"),
+    [
+        (
+            {"modelProvider": "agents_anywhere_gateway", "model": "gateway-model"},
+            "agents_anywhere_gateway",
+            "gateway-model",
+        ),
+        ({"modelProvider": "kimi", "model": "kimi-k2"}, None, None),
+        ({}, "agents_anywhere_gateway", None),
+    ],
+    ids=["gateway-thread", "own-provider-thread", "unknown-provider"],
+)
+def test_codex_sdk_client_resumes_threads_on_their_saved_provider(
+    saved_route: dict[str, str],
+    expected_provider: str | None,
+    expected_model: str | None,
+) -> None:
+    async def scenario() -> dict[str, Any]:
+        native = _FakeLowLevelAsyncCodex()
+        native.low_level.saved_thread_route = saved_route
+        client = CodexSdkClient(
+            native,
+            sdk=_FakeLowLevelSdkModule(),
+            model_gateway=ModelGateway(
+                base_url="https://gateway.example/v1",
+                api_key="gateway-secret",
+            ),
+        )
+        await client.start_turn(
+            CodexStartTurnRequest(thread_id="thread_existing", content="hello")
+        )
+        return native.low_level.thread_resume_params[0]
+
+    resume = asyncio.run(scenario())
+
+    assert resume.get("modelProvider") == expected_provider
+    assert resume.get("model") == expected_model
+    if expected_provider is None:
+        assert "config" not in resume or resume["config"] is None
 
 
 class _NativeSdkClient:
@@ -1048,6 +1090,7 @@ class _FakeLowLevelClient:
         self.turn_start_params: list[dict[str, Any]] = []
         self.fail_next_turn_start: Exception | None = None
         self.raw_requests: list[tuple[str, dict[str, Any]]] = []
+        self.saved_thread_route: dict[str, str] = {}
 
     async def request(
         self,
@@ -1062,6 +1105,7 @@ class _FakeLowLevelClient:
                 {
                     "thread": {
                         "id": params["threadId"],
+                        **self.saved_thread_route,
                         "turns": (
                             [
                                 {
@@ -1185,8 +1229,10 @@ class _FakeLowLevelAsyncCodex:
 
 
 def generated_params_payload(
-    params: ThreadResumeParams | ThreadStartParams | TurnStartParams,
+    params: ThreadResumeParams | ThreadStartParams | TurnStartParams | dict[str, Any],
 ) -> dict[str, Any]:
+    if isinstance(params, dict):
+        return dict(params)
     payload = params.model_dump(
         by_alias=True,
         exclude_none=True,

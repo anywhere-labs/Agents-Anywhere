@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-import time
 import asyncio
 import copy
-from collections.abc import Iterable, Awaitable, Callable, Mapping
+import time
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Any
+
+import httpx
+from websockets.exceptions import ConnectionClosed
 
 from connector.logging import logger
 from connector.runtime_protocol import (
@@ -17,7 +20,9 @@ from connector.runtime_protocol import (
     SessionNotice,
     SessionSourceObservation,
 )
+from connector.runtime_protocol.errors import RuntimeNoticePublishError
 from connector.runtime_protocol.host import RuntimeHostClient, UploadProgress
+from connector.server.errors import ConnectorIngestClosedError, ConnectorNetworkError
 from connector.server.runtime_rpc_payloads import (
     DeferredServerPayload,
     capability_set_payload,
@@ -27,8 +32,12 @@ from connector.server.runtime_rpc_payloads import (
     session_notice_payload,
     session_source_observation_payload,
 )
-from connector.server.sync_state import JsonSyncStateStore, RuntimeSyncState, SyncStateStore
 from connector.server.runtime_storage import RuntimeStorageManager
+from connector.server.sync_state import (
+    JsonSyncStateStore,
+    RuntimeSyncState,
+    SyncStateStore,
+)
 
 BackendNotifier = Callable[[str, dict[str, Any]], Awaitable[None]]
 AttachmentDownloader = Callable[[str, str], Awaitable[tuple[bytes, str, str]]]
@@ -77,11 +86,12 @@ class ConnectorRuntimeHost(RuntimeHostClient):
 
     async def publish_runtime_snapshot(
         self, runtime: str, session_id: str, meta: dict[str, Any], items: Iterable[dict[str, Any]],
-        *, runtime_id: str | None = None, on_progress: UploadProgress | None = None,
+        *, runtime_id: str | None = None, on_progress: UploadProgress | None = None, ordered: bool = True,
     ) -> None:
         if self._ingest_snapshot is None:
             raise RuntimeError("Snapshot ingestion is unavailable")
-        await self._ingest_snapshot(runtime, runtime_id or runtime, session_id, meta, items, on_progress=on_progress)
+        kwargs = {} if ordered else {"ordered": False}
+        await self._ingest_snapshot(runtime, runtime_id or runtime, session_id, meta, items, on_progress=on_progress, **kwargs)
 
     async def publish_runtime_notifications(
         self, runtime: str, notifications: list[dict[str, Any]], *, runtime_id: str | None = None,
@@ -91,7 +101,7 @@ class ConnectorRuntimeHost(RuntimeHostClient):
             raise RuntimeError("Synchronous notification ingestion is unavailable")
         allowed = {"session.meta.upsert", "session.source.updated", "session.state.updated",
                    "session.turnEnded", "session.inventory.begin", "session.inventory.complete",
-                   "timeline.sync", "timeline.itemUpsert"}
+                   "timeline.sync", "timeline.itemUpsert", "notice.upsert", "runtime.capability.updated"}
         bound = []
         for notice in notifications:
             if notice.get("method") not in allowed or not isinstance(notice.get("params"), dict):
@@ -104,6 +114,25 @@ class ConnectorRuntimeHost(RuntimeHostClient):
     @property
     def connector_id(self) -> str:
         return self._connector_id
+
+    async def publish_goal(self, snapshot: dict, durable: bool = False) -> None:
+        if durable:
+            if self._ingest_notifications is None:
+                raise RuntimeError("Durable goal ingestion is unavailable")
+            await self._ingest_notifications(
+                [{"method": "session.goal.updated", "params": snapshot}]
+            )
+        else:
+            await self._notify_server("session.goal.updated", snapshot)
+
+    async def publish_planning(self, snapshot: dict, durable: bool = False) -> None:
+        notification = {"method": "session.planning.updated", "params": snapshot}
+        if durable:
+            if self._ingest_notifications is None:
+                raise RuntimeError("Durable plan ingestion is unavailable")
+            await self._ingest_notifications([notification])
+        else:
+            await self._notify_server(notification["method"], snapshot)
 
     async def session_meta_upsert(
         self,
@@ -315,10 +344,22 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         self,
         notice: SessionNotice,
     ) -> None:
-        await self._notify_server(
-            "notice.upsert",
-            session_notice_payload(notice),
-        )
+        payload = session_notice_payload(notice)
+        try:
+            await self._notify_server("notice.upsert", payload)
+        except (
+            ConnectionError,
+            TimeoutError,
+            httpx.NetworkError,
+            httpx.TimeoutException,
+            httpx.RemoteProtocolError,
+            ConnectionClosed,
+            ConnectorNetworkError,
+            ConnectorIngestClosedError,
+        ) as exc:
+            raise RuntimeNoticePublishError(
+                f"could not publish notice {notice.notice_id}"
+            ) from exc
 
     async def runtime_error(
         self,

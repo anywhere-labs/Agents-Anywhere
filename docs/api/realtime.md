@@ -40,6 +40,10 @@ POST /api/v2/ws-ticket
 
 ### Intended lifecycle
 
+Returning to a cached session reuses its applied event cursor before subscribing
+and reconciling. Cache lifetime, reading restoration and invalidation rules for
+Web, Desktop and Android are defined in [会话访问缓存](../session-cache.md).
+
 ```text
 GET /sessions/{sessionId}/snapshot
   -> reads durable meta/timeline from Server and RuntimeLive facts from runtime RPC
@@ -91,9 +95,15 @@ Use `runtime.state.updated`, `runtime.capability.updated`,
 - Server returns `snapshotRequired=true` only when durable meta/timeline
   recovery is explicitly impossible.
 - Client pulls snapshot only for initial load or `snapshotRequired=true`.
-- Runtime state and catalogs are not recovered from Server DB. After reconnect,
-  Web calls the relevant runtime live endpoint if it needs current state or
-  catalogs.
+- Runtime state and catalogs are not recovered from Server DB. After the
+  initial session subscription and reconnect, Web and Desktop read
+  `GET /sessions/{sessionId}/runtime/state` after successful event recovery.
+  This read also runs when the connector is offline, using the endpoint's
+  cached/persisted fallback. Older runtime-state revisions are ignored; events
+  received before the live read participate in its version check, while events
+  received during the read are applied afterwards. Failed live reads retain
+  the existing state and buffered events. Catalogs use their runtime live
+  endpoints when needed.
 - Runtime notices are recovered when Server has a sequence-backed projection.
   Session meta and the latest persisted effective capability projection are
   also returned when recovery starts at the current cursor, because presence
@@ -140,7 +150,19 @@ The current dashboard WebSocket sends:
 dashboard.snapshot
 ```
 
-on connect, and sends another full snapshot when a debounced `dashboard.changed` invalidation arrives.
+on connect, and sends another full snapshot when a `dashboard.changed` invalidation arrives.
+
+Invalidations are throttled per user on each Server worker. The first change after a
+quiet period is delivered at once; further changes within
+`AGENT_SERVER_DASHBOARD_MIN_INTERVAL_SECONDS` (default 2 seconds) collapse into one
+trailing delivery, and every Dashboard socket of that user on the worker shares one
+snapshot build. A client therefore sees the latest state at most one interval late
+and never misses the final change of a burst.
+
+The snapshot also carries the owned runtime instances (`runtimes`) and the model
+configuration overview (`modelConfig`: profiles, where they are applied and the
+Tokens Anywhere link). Neither contains API keys or tokens; see
+[Model configuration API](./model-config.md).
 
 Each snapshot contains the complete owned project and session metadata inventories,
 including both active and archived sessions. `sessionPages` reports no more pages.
@@ -148,6 +170,11 @@ Web and iOS group, filter and sort these sessions locally. Expanding a project,
 switching a device filter or opening archives does not fetch another session list.
 An explicit HTTP refresh reads `/projects` and `/sessions/list` once each, alongside
 the connector list; it does not issue a request for every project or archive state.
+
+Building the session inventory does not read the timeline. Each timeline write
+stores a summary of the session's newest timeline item (its order, `orderSeq` and
+display time) on the session in the same transaction, and the snapshot reads only
+session rows. `lastItemAt`, `lastItemOrderSeq` and `sortAt` keep their meaning.
 
 Project mutations refresh the shared project list. A session with an unknown or
 missing project binding also triggers a shared project refresh and remains visible
@@ -217,6 +244,13 @@ turn.steer
 turn.interrupt
 ```
 
+`interaction.respond` also answers Runtime questionnaires projected as
+`input_request` notices. Codex synchronous questions reply to the pending
+app-server request. Codex asynchronous questions use the same Notice/Form
+contract, while Connector converts the submitted answers into the native
+question-reply message and sends it to the active turn or starts a new turn.
+No separate client endpoint is required.
+
 `runtime.configSchema` performs a live provider read for UI/CLI configuration
 forms. `runtime.config` returns saved raw values when the runtime is stopped,
 and the running runtime's read-only effective `RuntimeConfig` projection when
@@ -227,12 +261,14 @@ updates.
 The `runtime.start` reply and the `runtime.statusChanged` notification carry
 the instance lifecycle `status` plus an optional `error` (only meaningful for
 `error`) and an optional `phase` (`{code, message, retryable?}`) that names the
-step a non-error status is in, for example `syncing` while a DSH instance is
-`starting`. A phase is progress, not a fault: the Server stores it on the
-runtime instance (`phase` in `RuntimeInstanceStatus`), does not re-issue
-`runtime.start` while an instance reports a starting phase (session operations
-get a retryable `409 runtime_starting` instead), and clients render it as
-progress text next to the `starting` badge.
+step a non-error status is in, for example `waiting_bridge` while a DSH
+instance is `starting`, or `syncing` / `sync_interrupted` while a `running` DSH
+instance rebuilds its session baseline (session operations already work then).
+A phase is progress, not a fault: the Server stores it on the runtime instance
+(`phase` in `RuntimeInstanceStatus`), does not re-issue `runtime.start` while
+an instance reports a starting phase (session operations get a retryable
+`409 runtime_starting` instead), and clients render it as progress text next to
+the `starting` or `running` badge.
 
 `runtime.discover` includes runtime-native capability inputs. They are not the
 primary frontend contract. The frontend contract is effective capability:
@@ -253,6 +289,18 @@ explicit bulk sync and disconnected WebSocket fallback; it must still compute
 changed timeline items and publish session WebSocket events for frontend
 convergence.
 
+`timeline.sync` with `complete: true` replaces the whole session timeline: the
+Server writes only changed items and deletes items the snapshot no longer holds.
+A snapshot too large for one request is sent as pages, each carrying the optional
+`snapshotRange: {afterOrderSeq?, throughOrderSeq?}`. A page with a range holds every
+snapshot item with `afterOrderSeq < orderSeq <= throughOrderSeq` (a missing or null
+bound is unbounded), and the Server replaces only that range regardless of
+`complete`. Such a page never resets clients to its items: changed items are
+published incrementally, and a page that deletes or moves stored rows raises the
+timeline reset fence and asks clients to refetch. An inverted or out-of-range
+bound is rejected with `invalid_snapshot_range`. See
+[DSH snapshot uploads](../dsh-snapshot-uploads.md).
+
 `POST /api/v2/connector/ingest` isolates notification failures inside a batch.
 One malformed or conflicting notification must not produce HTTP 500 or prevent
 later notifications in the same request from being applied. The response
@@ -267,7 +315,8 @@ includes:
       "method": "timeline.itemUpsert",
       "code": "notification_failed",
       "message": "...",
-      "errorType": "ValidationError"
+      "errorType": "ValidationError",
+      "retryable": false
     }
   ],
   "serverTime": "..."
@@ -279,6 +328,30 @@ per-notification failures using the original zero-based batch index. Explicit
 protocol violations that are intentionally unsupported may still return HTTP
 400; unexpected processing failures should be logged and reported through
 `rejected` instead of surfacing as HTTP 500.
+
+`retryable` is `true` when the same notification can be sent again unchanged
+after a short backoff, because it was refused by contention that clears on its
+own: a bounded lock wait (the Redis `session-revision` lock, or the PostgreSQL
+timeline writer lock under `lock_timeout`), an exhausted database connection
+pool, a deadlock or a serialization failure. Connectors must not treat such a
+rejection as a permanent validation or size failure. A Connector retries a
+response only when every rejected notification is retryable, and it resends the
+whole batch in order, so notifications the Server already accepted may arrive
+again (delivery is at least once). A mixed batch keeps the permanent failure
+visible. Servers older than 2.2.0 omit the field; a missing `retryable` means
+`false`.
+
+时间线通知中的 `orderSeq` 必须在 PostgreSQL `integer` 范围内
+（−2147483648–2147483647）。单条通知请求中的越界值返回 HTTP 400
+`invalid_order_seq`；混合批次通过 `rejected` 返回该通知的原始索引和
+`invalid_order_seq`，继续处理同一批次的其他通知。`timeline.sync` 的任一条目
+越界时拒绝整条同步通知，避免部分应用完整快照。
+
+旧版本遗留在缓冲中的越界条目会按原顺序移到持久时间线末尾；接收新条目前
+先完成修复，滚动升级时已缓存的会话也遵循这一顺序。修复会在同一数据库
+事务中推进会话游标并记录时间线重置边界。客户端收到 `session.refetch_required`
+后，使用修复前游标请求 `/events` 将得到 `snapshotRequired: true`，随后读取
+快照获得新排序；断线重连也通过同一边界恢复。
 
 The target semantic connector notification methods are:
 

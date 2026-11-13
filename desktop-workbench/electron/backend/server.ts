@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
+import type { ConnectorLogSource } from "../connector-types";
 import { BACKEND_TOKEN_HEADER, type BackendEventName } from "./protocol";
 import type { BackendState } from "./state";
 
@@ -8,7 +9,7 @@ const MAX_BODY_BYTES = 1_024 * 1_024;
 const SSE_PING_MS = 15_000;
 const SSE_RETRY_MS = 1_000;
 
-const EVENTS: readonly BackendEventName[] = ["ownership", "state", "logs", "logsCleared", "settings"];
+const EVENTS: readonly BackendEventName[] = ["environment", "ownership", "state", "logs", "logsCleared", "settings"];
 
 /**
  * Loopback HTTP API for the Desktop backend.
@@ -102,8 +103,10 @@ export class BackendServer {
       if (path === "/config") return this.state.getPublicConfig();
       if (path === "/settings") return this.state.getSettings();
       if (path === "/onboarding") return this.state.getOnboarding();
+      if (path === "/environment") return this.state.environmentState();
       if (path === "/ownership") return this.state.ownershipState();
       if (path === "/logs") return this.state.readLogs({
+        source: logSourceOrUndefined(url.searchParams.get("source")),
         pageSize: numberOrUndefined(url.searchParams.get("pageSize")),
         beforeSeq: numberOrUndefined(url.searchParams.get("beforeSeq")),
         afterSeq: numberOrUndefined(url.searchParams.get("afterSeq")),
@@ -118,6 +121,9 @@ export class BackendServer {
       if (path === "/stop") return this.state.stopConnector();
       if (path === "/restart") return this.state.restartConnector();
       if (path === "/ownership/recheck") return this.state.recheckOwnership();
+      if (path === "/environment/prepare") return this.state.prepareEnvironment();
+      if (path === "/environment/cancel") return this.state.cancelEnvironment();
+      if (path === "/environment/reset") return this.state.resetConnectorEnvironment();
       if (path === "/ownership/acquire") return this.state.acquireOwnershipOrThrow();
       if (path === "/server") return this.state.setServerConnection(body);
       if (path === "/logs/clear") return this.state.clearLogs();
@@ -125,6 +131,10 @@ export class BackendServer {
         this.state.appendLog({
           level: typeof body.level === "string" ? body.level : "INFO",
           message: String(body.message ?? ""),
+          ...(typeof body.name === "string" ? { name: body.name } : {}),
+          ...(typeof body.source === "string" ? { source: body.source } : {}),
+          ...(typeof body.details === "string" || body.details === null ? { details: body.details } : {}),
+          ...(typeof body.exception === "string" || body.exception === null ? { exception: body.exception } : {}),
         });
         return { appended: true };
       }
@@ -140,8 +150,8 @@ export class BackendServer {
 
   /**
    * One SSE stream per subscriber. The initial frames carry the current
-   * ownership and settings so a late subscriber is never blind, and log entries
-   * arrive pre-batched from `BackendState`.
+   * snapshots, including failures that happened before the client subscribed.
+   * Log entries arrive pre-batched from `BackendState`.
    */
   private streamEvents(request: IncomingMessage, response: ServerResponse): void {
     response.writeHead(200, {
@@ -153,7 +163,9 @@ export class BackendServer {
     response.write(`retry: ${SSE_RETRY_MS}\n\n`);
     // Before the first probe answers, ownership is `checking`, which the
     // renderer shows as progress, so even the earliest frame is safe to send.
+    this.send(response, "environment", this.state.environmentState());
     this.send(response, "ownership", this.state.ownershipState());
+    this.send(response, "state", this.state.connectorStateSnapshot());
     this.send(response, "settings", this.state.getSettings());
     this.clients.add(response);
     const ping = setInterval(() => {
@@ -229,6 +241,12 @@ function numberOrUndefined(value: string | null): number | undefined {
   if (value === null || value.trim() === "") return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function logSourceOrUndefined(value: string | null): ConnectorLogSource | undefined {
+  const trimmed = value?.trim();
+  if (trimmed === "connector" || trimmed === "bridge") return trimmed;
+  return undefined;
 }
 
 function errorMessage(error: unknown): string {

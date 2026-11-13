@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from agent_server.core.models import SessionView
-from agent_server.services.connector_presence import ConnectorPresencePort
+from agent_server.services.connector_presence import (
+    ConnectorPresencePort,
+    connector_online_statuses,
+)
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 
 
@@ -10,7 +13,9 @@ async def project_session_meta_for_dashboard(
     runtime_state_cache: SessionRuntimeStateCache,
     sessions: list[SessionView],
 ) -> list[SessionView]:
-    connector_statuses = await connector_online_statuses(presence, sessions)
+    connector_statuses = await connector_online_statuses(
+        presence, [session.connectorId for session in sessions]
+    )
     runtime_states = await runtime_state_cache.get_many([session.id for session in sessions])
     projected_sessions: list[SessionView] = []
     for session in sessions:
@@ -31,18 +36,3 @@ async def project_session_meta_for_dashboard(
             )
         projected_sessions.append(projected)
     return projected_sessions
-
-
-async def connector_online_statuses(
-    presence: ConnectorPresencePort,
-    sessions: list[SessionView],
-) -> dict[str, bool]:
-    connector_ids = [session.connectorId for session in sessions]
-    batch = getattr(presence, "online_statuses", None)
-    if callable(batch):
-        return await batch(connector_ids)
-    unique_ids = list(dict.fromkeys(connector_ids))
-    return {
-        connector_id: await presence.is_online(connector_id)
-        for connector_id in unique_ids
-    }

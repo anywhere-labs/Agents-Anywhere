@@ -1,0 +1,498 @@
+{
+  "version": "1.0",
+  "description": "User-facing text for stable runtime and workflow error codes. Clients show the entry for a known code in the UI language and fall back to the server or Connector message only for unknown codes.",
+  "messages": {
+    "agent_acp_unavailable": {
+      "zh-CN": "Agent 的 ACP 入口不可用，请确认它安装完整，并能在本机运行它的 ACP 检查命令。",
+      "en": "The agent's ACP entry point is unavailable. Make sure the agent is fully installed and its ACP check runs on this device."
+    },
+    "agent_authentication_required": {
+      "zh-CN": "Agent 需要先在本机完成登录或模型配置。",
+      "en": "Sign in to the agent or configure its model on this device first."
+    },
+    "agent_capability_unsupported": {
+      "zh-CN": "Agent 未提供此能力。",
+      "en": "The agent does not provide this capability."
+    },
+    "agent_cli_missing": {
+      "zh-CN": "未找到本机的 Agent 命令行。请先安装该 Agent，或在实例配置中填写它的路径。",
+      "en": "The agent's command-line tool was not found on this device. Install the agent, or set its path in the instance configuration."
+    },
+    "agent_cli_unsupported": {
+      "zh-CN": "无法直接启动该 Agent 的批处理入口，请在实例配置中填写实际可执行文件的路径。",
+      "en": "The agent's batch-file launcher cannot be started directly. Set the path of the actual executable in the instance configuration."
+    },
+    "agent_configuration_failed": {
+      "zh-CN": "配置或提交尚未完成，请先查询原操作。",
+      "en": "Configuration or submission has not finished. Check the original operation first."
+    },
+    "agent_guarantees_missing": {
+      "zh-CN": "当前 Agent 不能满足该会话的恢复保证。",
+      "en": "The current agent cannot meet this session's recovery guarantees."
+    },
+    "agent_install_failed": {
+      "zh-CN": "Agent 运行环境安装失败，请检查网络后重试。",
+      "en": "Installing the agent runtime failed. Check the network and try again."
+    },
+    "agent_open_failed": {
+      "zh-CN": "Agent 初始化未完成，请先查询原操作。",
+      "en": "Agent initialization has not finished. Check the original operation first."
+    },
+    "agent_projection_failed": {
+      "zh-CN": "Agent 更新未能可靠保存，需要恢复校准。",
+      "en": "An agent update could not be saved reliably. The session needs to be recovered."
+    },
+    "agent_recovery_required": {
+      "zh-CN": "会话执行者需要恢复。",
+      "en": "The session's agent needs to be recovered."
+    },
+    "agent_resume_unsupported": {
+      "zh-CN": "Agent 未提供会话恢复能力。",
+      "en": "The agent does not support resuming sessions."
+    },
+    "agent_session_failed": {
+      "zh-CN": "Agent 无法创建会话，请在本机检查它的模型与认证配置。",
+      "en": "The agent could not create a session. Check its model and sign-in settings on this device."
+    },
+    "agent_session_mismatch": {
+      "zh-CN": "原生会话身份不一致，已停止操作。",
+      "en": "The native session identity does not match. The operation was stopped."
+    },
+    "agent_session_missing": {
+      "zh-CN": "原操作尚未确认原生会话身份。",
+      "en": "The original operation has not confirmed the native session yet."
+    },
+    "agent_session_unavailable": {
+      "zh-CN": "Agent 无法恢复此会话：原会话可能已不存在，或 Agent 配置已变化。",
+      "en": "The agent could not resume this session. The original session may no longer exist, or the agent's configuration changed."
+    },
+    "agent_steer_attachments_unsupported": {
+      "zh-CN": "当前 Agent 运行中追加指令暂不支持附件。",
+      "en": "This agent does not accept attachments when adding instructions to a running turn."
+    },
+    "agent_version_unsupported": {
+      "zh-CN": "当前 Agent 版本不受支持，请升级后重试。",
+      "en": "This agent version is not supported. Upgrade it and try again."
+    },
+    "attachment_cache_invalid": {
+      "zh-CN": "本机附件缓存校验失败。",
+      "en": "The local attachment cache failed verification."
+    },
+    "attachment_mismatch": {
+      "zh-CN": "附件内容与上传记录不一致。",
+      "en": "The attachment content does not match its upload record."
+    },
+    "attachments_too_large": {
+      "zh-CN": "附件超过上限：每条消息最多 16 个，总大小不超过 32 MiB。",
+      "en": "Attachments exceed the limit: up to 16 per message and 32 MiB in total."
+    },
+    "attachments_unsupported": {
+      "zh-CN": "当前执行者不支持首条附件。",
+      "en": "The current agent does not support attachments on the first message."
+    },
+    "capability_unavailable": {
+      "zh-CN": "该会话当前不能执行此操作。",
+      "en": "This session cannot perform this action right now."
+    },
+    "claude_resume_no_response": {
+      "zh-CN": "Claude 恢复会话后没有回复这条消息。",
+      "en": "Claude did not reply to this message after resuming the session."
+    },
+    "command_unavailable": {
+      "zh-CN": "命令目录已变化，请刷新。",
+      "en": "The command list has changed. Refresh it."
+    },
+    "configuration_changed": {
+      "zh-CN": "配置选项已不可用。",
+      "en": "The configuration option is no longer available."
+    },
+    "configuration_conflict": {
+      "zh-CN": "选择之间不一致，请重新选择模型和推理强度。",
+      "en": "The selections conflict. Choose the model and reasoning effort again."
+    },
+    "configuration_mapping_unavailable": {
+      "zh-CN": "该旧选择没有唯一且无损的 Agent 配置映射。",
+      "en": "This earlier selection has no exact agent configuration mapping."
+    },
+    "image_input_unsupported": {
+      "zh-CN": "当前模型声明不支持图片输入，请移除图片或切换支持图片的模型。",
+      "en": "The current model does not declare image input. Remove the image or switch to a model that supports images."
+    },
+    "initialization_interrupted": {
+      "zh-CN": "初始化执行者已退出，首条消息尚未提交，请重新准备。",
+      "en": "The initializing agent exited before the first message was submitted. Prepare again."
+    },
+    "interaction_capacity": {
+      "zh-CN": "待回答请求已达到上限。",
+      "en": "Too many requests are waiting for an answer."
+    },
+    "interaction_closed": {
+      "zh-CN": "交互已结束。",
+      "en": "The interaction has ended."
+    },
+    "interaction_scope_mismatch": {
+      "zh-CN": "回答不属于该操作。",
+      "en": "The answer does not belong to this operation."
+    },
+    "interaction_stale": {
+      "zh-CN": "交互所属执行者或版本已变化。",
+      "en": "The interaction's agent or version has changed."
+    },
+    "invalid_agent_configuration": {
+      "zh-CN": "Agent 配置身份无效或重复。",
+      "en": "The agent configuration identity is invalid or duplicated."
+    },
+    "invalid_agent_executable": {
+      "zh-CN": "Agent 需要已安装的绝对入口路径。",
+      "en": "The agent needs an absolute path to an installed executable."
+    },
+    "invalid_attachment": {
+      "zh-CN": "附件身份无效或重复。",
+      "en": "An attachment identity is invalid or duplicated."
+    },
+    "invalid_command": {
+      "zh-CN": "命令与原始输入不一致。",
+      "en": "The command does not match the original input."
+    },
+    "invalid_configuration_value": {
+      "zh-CN": "配置值不在当前可用范围。",
+      "en": "The configuration value is outside the available range."
+    },
+    "invalid_cwd": {
+      "zh-CN": "请选择存在的绝对工作目录。",
+      "en": "Choose an existing absolute working directory."
+    },
+    "invalid_form_action": {
+      "zh-CN": "表单操作无效。",
+      "en": "The form action is invalid."
+    },
+    "invalid_form_response": {
+      "zh-CN": "表单回答不符合请求要求。",
+      "en": "The form answer does not meet the request's requirements."
+    },
+    "invalid_form_schema": {
+      "zh-CN": "Agent 表单结构无效。",
+      "en": "The agent's form structure is invalid."
+    },
+    "invalid_permission": {
+      "zh-CN": "权限选项无效。",
+      "en": "The permission option is invalid."
+    },
+    "invalid_permission_choice": {
+      "zh-CN": "审批选项已变化。",
+      "en": "The approval options have changed."
+    },
+    "invalid_runtime_response": {
+      "zh-CN": "Runtime 返回的结果无效，请更新 Connector 后重试。",
+      "en": "The runtime returned an invalid result. Update the Connector and try again."
+    },
+    "invalid_selection": {
+      "zh-CN": "模型与推理强度选择无效。",
+      "en": "The model and reasoning effort selection is invalid."
+    },
+    "message_identity_required": {
+      "zh-CN": "消息需要稳定身份。",
+      "en": "The message needs a stable identity."
+    },
+    "message_rejected": {
+      "zh-CN": "当前权限或用户审批未允许此消息。",
+      "en": "The current permissions or approvals do not allow this message."
+    },
+    "native_history_recovery_failed": {
+      "zh-CN": "恢复失败，请查看原生历史后重试。",
+      "en": "Recovery failed. Review the native history and try again."
+    },
+    "native_history_recovery_unconfirmed": {
+      "zh-CN": "恢复结果尚未确认，请先查询原操作。",
+      "en": "The recovery outcome is unconfirmed. Check the existing operation first."
+    },
+    "native_history_release_unconfirmed": {
+      "zh-CN": "未能确认已释放执行，请刷新后再试。",
+      "en": "Releasing execution could not be confirmed. Refresh and try again."
+    },
+    "node_abi_unsupported": {
+      "zh-CN": "自动安装的 Linux Node 运行环境需要 glibc。",
+      "en": "The automatically installed Linux Node runtime requires glibc."
+    },
+    "node_archive_invalid": {
+      "zh-CN": "Node 安装包路径无效。",
+      "en": "The Node package contains an invalid path."
+    },
+    "node_archive_too_large": {
+      "zh-CN": "Node 下载超过大小上限。",
+      "en": "The Node download exceeds the size limit."
+    },
+    "node_checksum_mismatch": {
+      "zh-CN": "Node 下载校验失败，请重试。",
+      "en": "The Node download failed verification. Try again."
+    },
+    "node_checksum_missing": {
+      "zh-CN": "Node 发布包缺少校验记录。",
+      "en": "The Node release has no checksum record."
+    },
+    "node_install_invalid": {
+      "zh-CN": "Node 运行环境校验失败。",
+      "en": "The Node runtime failed verification."
+    },
+    "node_platform_unsupported": {
+      "zh-CN": "此设备平台暂不支持自动准备 Node。",
+      "en": "Automatic Node setup is not supported on this device platform."
+    },
+    "not_pending": {
+      "zh-CN": "该创建已明确拒绝，没有待回答请求。",
+      "en": "This creation was rejected and has no pending request."
+    },
+    "operation_input_conflict": {
+      "zh-CN": "相同操作身份不能用于不同输入。",
+      "en": "The same operation identity cannot be used for different input."
+    },
+    "operation_not_found": {
+      "zh-CN": "操作或会话不存在。",
+      "en": "The operation or session does not exist."
+    },
+    "operation_outcome_unknown": {
+      "zh-CN": "结果尚不确定，请先查询原操作，不要重复提交。",
+      "en": "The outcome is uncertain. Check the original operation instead of submitting again."
+    },
+    "outcome_unknown": {
+      "zh-CN": "结果尚不确定，请先查询原操作，不要重复提交。",
+      "en": "The outcome is uncertain. Check the original operation instead of submitting again."
+    },
+    "owner_changed": {
+      "zh-CN": "会话执行者已变化，请刷新。",
+      "en": "The session's agent has changed. Refresh and try again."
+    },
+    "permission_denied": {
+      "zh-CN": "当前权限或用户审批未允许此命令。",
+      "en": "The current permissions or approvals do not allow this command."
+    },
+    "pi_adapter_cache_corrupt": {
+      "zh-CN": "Pi ACP 缓存依赖来源已变化。",
+      "en": "The cached Pi ACP dependencies have changed."
+    },
+    "pi_adapter_dependencies_missing": {
+      "zh-CN": "Pi ACP 依赖目录不存在。",
+      "en": "The Pi ACP dependency directory is missing."
+    },
+    "pi_adapter_incompatible": {
+      "zh-CN": "Pi ACP 适配器版本不受支持，需要 0.1.x。",
+      "en": "The Pi ACP adapter version is not supported; 0.1.x is required."
+    },
+    "pi_adapter_integrity_failed": {
+      "zh-CN": "Pi ACP 发布包摘要不匹配，未应用兼容补丁。",
+      "en": "The Pi ACP package digest does not match, so the compatibility patch was not applied."
+    },
+    "pi_adapter_patch_failed": {
+      "zh-CN": "Pi ACP 适配器的兼容入口已变化，暂不支持此版本。",
+      "en": "The Pi ACP adapter's compatibility entry points changed, so this version is not supported yet."
+    },
+    "pi_authentication_required": {
+      "zh-CN": "Pi 没有可用的模型或认证：本机模式请先运行 pi 完成登录或模型配置，受管环境请检查模型网关。",
+      "en": "Pi has no usable model or credentials. In local mode, run pi to sign in or configure a model first; in the managed environment, check the model gateway."
+    },
+    "pi_cli_exit_required": {
+      "zh-CN": "请先退出 CLI 中对应会话，并确认后继续。",
+      "en": "Exit the session in the CLI first, then confirm to continue."
+    },
+    "pi_cli_missing": {
+      "zh-CN": "未找到本机 pi，请指定 CLI 路径或明确选择受管环境。",
+      "en": "No local pi was found. Specify the CLI path or choose the managed environment."
+    },
+    "pi_continue_required": {
+      "zh-CN": "这是本机原生会话，退出 CLI 后点击「继续任务」即可在 AA 中继续。",
+      "en": "This is a local native session. Exit the CLI, then choose Continue to resume it in AA."
+    },
+    "pi_dependency_resolution_failed": {
+      "zh-CN": "无法校验本机 Pi 的完整依赖来源。",
+      "en": "Could not verify the full dependency source of the local Pi."
+    },
+    "pi_environment_failed": {
+      "zh-CN": "Pi 执行环境准备失败，请检查安装与网络。",
+      "en": "Preparing the Pi environment failed. Check the installation and network."
+    },
+    "pi_execution_source_changed": {
+      "zh-CN": "此 Pi 实例的运行模式或配置目录已变化；请恢复原配置，或新建 Pi 实例。",
+      "en": "The run mode or configuration directory of this Pi instance changed. Restore the previous setting or create a new Pi instance."
+    },
+    "pi_history_incomplete": {
+      "zh-CN": "原生历史正在写入或存在损坏记录，请重新校准。",
+      "en": "The native history is still being written or has damaged records. Recheck it."
+    },
+    "pi_history_invalid": {
+      "zh-CN": "文件没有有效的 Pi 原生会话头。",
+      "en": "The file has no valid Pi session header."
+    },
+    "pi_history_migration_required": {
+      "zh-CN": "此历史需要格式迁移，当前仅开放浏览，未修改源文件。",
+      "en": "This history needs a format migration. It is browse-only for now and the source file is unchanged."
+    },
+    "pi_history_outside_source": {
+      "zh-CN": "历史位置已超出配置的来源目录。",
+      "en": "The history location is outside the configured source directory."
+    },
+    "pi_history_too_large": {
+      "zh-CN": "历史文件超过单文件读取上限。",
+      "en": "The history file exceeds the per-file read limit."
+    },
+    "pi_history_unreadable": {
+      "zh-CN": "原生历史文件无法读取。",
+      "en": "The native history file cannot be read."
+    },
+    "pi_installation_ambiguous": {
+      "zh-CN": "发现多个本机 Pi 安装，请在 CLI 路径中指定要使用的一个。",
+      "en": "Several local Pi installations were found. Specify the one to use in the CLI path."
+    },
+    "pi_installation_unsupported": {
+      "zh-CN": "无法将此 pi 入口绑定到兼容 SDK；请指定 npm 安装的真实 pi 入口。",
+      "en": "This pi entry cannot be bound to a compatible SDK. Specify the real pi entry installed with npm."
+    },
+    "pi_model_unavailable": {
+      "zh-CN": "原会话模型不可用，请先恢复对应原生模型配置。",
+      "en": "The original session's model is unavailable. Restore its native model configuration first."
+    },
+    "pi_models_required": {
+      "zh-CN": "请在自定义模型中至少添加一个模型。",
+      "en": "Add at least one model under custom models."
+    },
+    "pi_models_unavailable": {
+      "zh-CN": "无法获取模型列表，请在自定义模型中填写模型 ID 后重试。",
+      "en": "Could not load the model list. Enter a model ID under custom models and try again."
+    },
+    "pi_node_incompatible": {
+      "zh-CN": "本机 Pi 需要可用的 Node 22.19 或更高版本。",
+      "en": "The local Pi needs Node 22.19 or later."
+    },
+    "pi_permissions_failed": {
+      "zh-CN": "Pi 审批守卫异常，执行已停止。",
+      "en": "The Pi approval guard failed. Execution was stopped."
+    },
+    "pi_permissions_unavailable": {
+      "zh-CN": "Pi 工具审批扩展未能加载，已阻止执行。",
+      "en": "The Pi tool approval extension failed to load. Execution was blocked."
+    },
+    "pi_recovery_interrupted": {
+      "zh-CN": "Connector 重启中断了恢复，请查看最新历史并重新确认继续。",
+      "en": "A Connector restart interrupted the recovery. Review the latest history and confirm again to continue."
+    },
+    "pi_resume_failed": {
+      "zh-CN": "Pi 恢复失败，请检查原生模型、认证与扩展兼容性。",
+      "en": "Resuming Pi failed. Check the native model, authentication and extension compatibility."
+    },
+    "pi_scan_failed": {
+      "zh-CN": "扫描原生历史失败。",
+      "en": "Scanning the native history failed."
+    },
+    "pi_sdk_incompatible": {
+      "zh-CN": "此 Pi 版本不受支持：需要 1.2.0 及之后的 1.x npm 安装，且能加载 AA 需要的 SDK 接口；不会使用其他 SDK 替代。",
+      "en": "This Pi version is not supported. A Pi 1.x npm installation from 1.2.0 on whose SDK provides the interfaces AA needs is required; no other SDK is used instead."
+    },
+    "pi_session_already_running": {
+      "zh-CN": "此会话已在 AA 执行。",
+      "en": "This session is already running in AA."
+    },
+    "pi_source_ambiguous": {
+      "zh-CN": "多个历史文件具有相同会话身份，请先确认来源。",
+      "en": "Several history files share the same session identity. Confirm the source first."
+    },
+    "pi_source_busy": {
+      "zh-CN": "另一 AA 执行实例正在使用此原生会话。",
+      "en": "Another AA instance is using this native session."
+    },
+    "pi_source_changed": {
+      "zh-CN": "原生历史已变化，请查看最新内容后重新继续。",
+      "en": "The native history has changed. Review the latest content and continue again."
+    },
+    "pi_source_conflict": {
+      "zh-CN": "原生历史已被外部修改，已停止 AA 执行；请退出并发 CLI 后重新校准。",
+      "en": "The native history was modified elsewhere, so AA stopped. Exit the concurrent CLI and recheck."
+    },
+    "pi_source_identity_changed": {
+      "zh-CN": "原生历史身份或位置已变化，旧历史仍保留，但不能继续原绑定。",
+      "en": "The native history identity or location changed. The old history is kept but cannot continue its binding."
+    },
+    "pi_source_mismatch": {
+      "zh-CN": "恢复返回的原生历史位置不匹配，已停止执行。",
+      "en": "The recovered native history location does not match. Execution was stopped."
+    },
+    "pi_source_missing": {
+      "zh-CN": "原生历史来源暂时不可用，已保留浏览内容。",
+      "en": "The native history source is temporarily unavailable. The browsed content is kept."
+    },
+    "pi_source_unreadable": {
+      "zh-CN": "原生历史来源当前无法读取，已保留浏览内容。",
+      "en": "The native history source cannot be read right now. The browsed content is kept."
+    },
+    "pi_workspace_missing": {
+      "zh-CN": "原会话的项目工作目录不存在或无效。",
+      "en": "The original session's working directory is missing or invalid."
+    },
+    "pi_writer_unavailable": {
+      "zh-CN": "原生历史写入校验尚未就绪。",
+      "en": "Native history write verification is not ready yet."
+    },
+    "preparation_consumed": {
+      "zh-CN": "工作区准备已绑定其他创建操作。",
+      "en": "The workspace preparation is already bound to another creation."
+    },
+    "preparation_not_reserved": {
+      "zh-CN": "工作区准备尚未为当前创建操作预留。",
+      "en": "The workspace preparation has not been reserved for this creation."
+    },
+    "preparation_stale": {
+      "zh-CN": "工作区准备已失效，请重新准备。",
+      "en": "The workspace preparation is no longer valid. Prepare again."
+    },
+    "project_workspace_mismatch": {
+      "zh-CN": "项目不属于所选设备。",
+      "en": "The project does not belong to the selected device."
+    },
+    "recovery_required": {
+      "zh-CN": "会话需要恢复后才能继续。",
+      "en": "The session needs to be recovered before it can continue."
+    },
+    "response_input_conflict": {
+      "zh-CN": "回答身份已用于其他内容。",
+      "en": "The answer identity was already used for other content."
+    },
+    "run_capacity": {
+      "zh-CN": "并发执行已达到上限。",
+      "en": "Too many runs are in progress."
+    },
+    "runtime_not_running": {
+      "zh-CN": "请先启动 Runtime。",
+      "en": "Start the runtime first."
+    },
+    "runtime_stopping": {
+      "zh-CN": "Runtime 正在关闭。",
+      "en": "The runtime is shutting down."
+    },
+    "session_not_ready": {
+      "zh-CN": "会话尚未空闲或需要恢复。",
+      "en": "The session is not idle yet or needs to be recovered."
+    },
+    "sync_backpressure": {
+      "zh-CN": "同步积压已达到上限，请恢复连接。",
+      "en": "Too much sync work is pending. Restore the connection."
+    },
+    "takeover_required": {
+      "zh-CN": "请先授权工作台控制此会话。",
+      "en": "Allow the workbench to control this session first."
+    },
+    "unsupported_acp_version": {
+      "zh-CN": "该入口只启用了 ACP v1。",
+      "en": "This executable only supports ACP v1."
+    },
+    "unsupported_operation": {
+      "zh-CN": "Agent 尚未提供此操作。",
+      "en": "The agent does not provide this operation yet."
+    },
+    "worker_capacity": {
+      "zh-CN": "Agent 执行进程已达到上限。",
+      "en": "Too many agent processes are running."
+    },
+    "workflow_unsupported": {
+      "zh-CN": "该 Runtime 不支持工作区准备。",
+      "en": "This runtime does not support workspace preparation."
+    }
+  }
+}

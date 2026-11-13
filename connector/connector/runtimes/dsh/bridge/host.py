@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -29,10 +29,14 @@ from connector.mesh.hub import (
     write_private_json,
 )
 from connector.runtimes.dsh import provider_config
+from connector.server.errors import ConnectorNetworkError
 
 RENDEZVOUS_VERSION = 2
 # Application error: the request names a subscription this process does not run.
 SUBSCRIPTION_UNKNOWN = "subscription_unknown"
+# The Server could not be reached. The subscription is intact, so the plugin
+# sends the same batch again instead of ending the feed and starting over.
+BACKEND_UNAVAILABLE = "backend_unavailable"
 
 
 class SyncBatch(BaseModel):
@@ -120,11 +124,17 @@ class SyncService:
 
     async def _call[T](self, work: Callable[[SyncSubscriber], Awaitable[T]], subscription_id: str) -> T:
         subscriber = self._subscriber(subscription_id)
-        return await run_on_loop(self._loop, work(subscriber))
+        return await self._on_loop(work(subscriber))
 
     async def _serialized[T](self, work: Callable[[SyncSubscriber], Awaitable[T]], subscription_id: str) -> T:
         subscriber = self._subscriber(subscription_id)
-        return await run_on_loop(self._loop, subscriber.serialized(lambda: work(subscriber)))
+        return await self._on_loop(subscriber.serialized(lambda: work(subscriber)))
+
+    async def _on_loop[T](self, work: Coroutine[Any, Any, T]) -> T:
+        try:
+            return await run_on_loop(self._loop, work)
+        except ConnectorNetworkError as exc:
+            raise MeshCallError(BACKEND_UNAVAILABLE, str(exc), retryable=True) from exc
 
     @mutates(idempotent=True)
     async def ingestBatch(self, batch: SyncBatch) -> IngestResult:
@@ -199,13 +209,34 @@ class BridgeHost:
     def __init__(self, hub: LocalHub) -> None:
         self.hub = hub
         self.registry = SubscriptionRegistry()
-        self._mounted = False
+        self._service: SyncService | None = None
         self._published: Path | None = None
 
+    def service(self) -> SyncService:
+        """The Sync service to mount; the host mounts it together with Control and Logs."""
+        if self._service is None:
+            self._service = SyncService(self.registry, asyncio.get_running_loop())
+        return self._service
+
+    @property
+    def mounted(self) -> bool:
+        # Asked of the hub rather than remembered: when mounting registered the
+        # service but serving failed, the hub's supervisor serves it once the
+        # Router recovers, so it counts as mounted.
+        return self._service is not None and self.hub.has_service(self._service)
+
     async def start(self) -> None:
-        if not self._mounted:
-            await self.hub.mount(SyncService(self.registry, asyncio.get_running_loop()))
-            self._mounted = True
+        if not self.mounted:
+            if self.hub.serving:
+                # MeshCall freezes its service list once serving starts, so a
+                # late mount has to stop and restart the Router server. That
+                # cancels the Desktop's long-lived Control/Logs streams and
+                # takes the device offline. The host mounts the bridge together
+                # with them; a late call must fail instead of disconnecting them.
+                raise RuntimeError(
+                    "DSH bridge must be mounted before the local router starts serving"
+                )
+            await self.hub.mount(self.service())
         self.publish()
 
     def publish(self) -> None:
@@ -230,13 +261,18 @@ class BridgeHost:
 _hosts: dict[int, BridgeHost] = {}
 
 
-async def bridge_host() -> BridgeHost:
-    """The DSH bridge services of this process's Router, started on first use."""
-    hub = await local_hub()
+def host_for(hub: LocalHub) -> BridgeHost:
+    """The DSH bridge of ``hub``, created but not mounted."""
     host = _hosts.get(id(hub))
     if host is None:
         host = _hosts[id(hub)] = BridgeHost(hub)
         hub.on_stop(_forget(hub, host))
+    return host
+
+
+async def bridge_host() -> BridgeHost:
+    """The DSH bridge services of this process's Router, started on first use."""
+    host = host_for(await local_hub())
     await host.start()
     return host
 
