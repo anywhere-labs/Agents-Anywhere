@@ -1,4 +1,5 @@
 import { ConnectorEnvironment, type ConnectorEnvironmentState } from "./connector-environment";
+import { ConnectorGuard, guardSessionActive } from "./connector-guard";
 import { terminateConnectorProcess } from "./connector-process";
 import { localRuntimePath } from "./local-runtime";
 import type { OwnershipState, RuntimeOwner } from "./local-runtime";
@@ -79,6 +80,8 @@ type ConnectorSupervisorOptions = {
   /** Directory holding `<platform>-<arch>/` CPython installs; packaged resources or `build/python`. */
   pythonBundleDir: string;
   packaged: boolean;
+  /** Electron main PID, supplied by the Desktop backend entry point. */
+  desktopPid?: number;
   homePath: string;
   shellEnvironment: NodeJS.ProcessEnv;
   settings: DesktopSettingsStore;
@@ -107,6 +110,8 @@ export class ConnectorSupervisor {
   private maintenance: Promise<unknown> | null = null;
   private generation = 0;
   private rpcProcess: ChildProcessWithoutNullStreams | null = null;
+  private rpcGuard: ConnectorGuard | null = null;
+  private cleanupFailure: Error | null = null;
   private rpcReader: readline.Interface | null = null;
   /** The current RPC process's recent stderr, quoted when a request fails. */
   private rpcOutput: RpcOutput | null = null;
@@ -159,6 +164,7 @@ export class ConnectorSupervisor {
           uv: launcher.executable, python: this.resolvePythonPath(), env: this.connectorEnvironment(), direct: this.resolveDirectConnectorCli() };
       },
       onState: state => options.onEnvironment?.(state),
+      guardSessionActive: process.platform === "darwin" ? session => guardSessionActive(this.guardSource(), session) : undefined,
       log: message => this.log({ level: "INFO", message }),
     });
     this.refreshLocalState();
@@ -167,6 +173,7 @@ export class ConnectorSupervisor {
   environmentState(): ConnectorEnvironmentState { return this.environment.getState(); }
 
   prepareEnvironment(): Promise<void> {
+    if (this.cleanupFailure) return Promise.reject(this.cleanupFailure);
     if (this.shuttingDown || this.maintenance) return Promise.reject(new Error("Connector environment is stopping."));
     return this.rpcProcess ? Promise.resolve() : this.environment.prepare();
   }
@@ -181,6 +188,7 @@ export class ConnectorSupervisor {
       await this.environment.cancel();
       await this.terminateRpcProcess(true);
       await this.acquisition?.catch(() => undefined);
+      if (this.cleanupFailure) throw this.cleanupFailure;
       return this.environmentState();
     })().finally(() => { this.maintenance = null; });
     return this.maintenance as Promise<ConnectorEnvironmentState>;
@@ -331,6 +339,7 @@ export class ConnectorSupervisor {
    * keeps the developer's own uv cache.
    */
   async resetEnvironment(): Promise<ConnectorState> {
+    if (this.cleanupFailure) throw this.cleanupFailure;
     if (this.resolveDirectConnectorCli()) throw new Error("This Connector runs without a Python environment, so there is nothing to clear.");
     await this.cancelEnvironment(true);
     if (this.maintenance) { await this.maintenance; return this.emitState(); }
@@ -498,7 +507,7 @@ export class ConnectorSupervisor {
       }
     }
     await this.terminateRpcProcess();
-    await this.environment.shutdown();
+    if (!this.cleanupFailure) await this.environment.shutdown();
   }
 
   /** Call one method of `aa.local.v2.Control`; the first call also waits out provisioning. */
@@ -588,7 +597,12 @@ export class ConnectorSupervisor {
     return new ConnectorRpcError(-32000, message || "Connector RPC error", details ?? { reason: code });
   }
 
+  private guardSource(): string {
+    return path.join(this.options.packaged ? this.options.resourcesPath : path.resolve(__dirname, ".."), "connector-guard");
+  }
+
   private ensureRpcProcess(requiresConfig: boolean): void {
+    if (this.cleanupFailure) throw this.cleanupFailure;
     if (this.rpcProcess) return;
     this.refreshLocalState();
     if (this.state.setupIssue && (requiresConfig || this.state.setupIssue !== "configMissing")) {
@@ -596,33 +610,79 @@ export class ConnectorSupervisor {
     }
     const launcher = this.resolveLauncher(true);
     if (!launcher) throw new Error(`Connector setup is not ready: ${this.state.setupIssue || "launcherMissing"}`);
-    const child = spawn(launcher.executable, launcher.args, {
-      cwd: this.projectDir ?? this.options.connectorDir,
-      env: this.connectorEnvironment(),
-      detached: process.platform !== "win32",
-      windowsHide: true,
-      stdio: ["pipe", "pipe", "pipe"],
+    const cwd = this.projectDir ?? this.options.connectorDir;
+    const env = this.connectorEnvironment();
+    const lines: string[] = [];
+    const guard = process.platform === "darwin" && this.options.desktopPid !== undefined
+      ? new ConnectorGuard({
+        source: this.guardSource(),
+        desktopPid: this.options.desktopPid,
+        cwd,
+        executable: launcher.executable,
+        args: launcher.args,
+        env,
+        onDiagnostic: message => {
+          if (message.startsWith("launch-error ")) this.handleStderrLine(message, lines);
+          else this.log({ level: message.startsWith("stopping ") ? "INFO" : "ERROR", message });
+        },
+      }) : null;
+    const child = guard?.child ?? spawn(launcher.executable, launcher.args, {
+      cwd, env, detached: process.platform !== "win32", windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
     });
     this.rpcProcess = child;
-    this.environment.recordProcess(child.pid);
+    this.rpcGuard = guard;
     this.log(`Starting Connector RPC with ${launcher.description}`);
     this.ready = deferredControl();
     this.rpcReader = readline.createInterface({ input: child.stdout });
     this.rpcReader.on("line", (line) => this.handleRpcLine(line));
     // Whole lines only: uv writes one message in several chunks.
-    const lines: string[] = [];
     const stderr = readline.createInterface({ input: child.stderr });
     stderr.on("line", (line) => this.handleStderrLine(line, lines));
     this.rpcOutput = { lines, closed: new Promise((resolve) => stderr.once("close", () => resolve())) };
-    child.once("error", (error) => {
-      this.finalizeRpcProcess(child, `Connector RPC failed to start: ${error.message}`);
-    });
-    child.once("exit", (code, signal) => {
-      this.finalizeRpcProcess(child, `Connector RPC exited${signal ? ` by ${signal}` : ""} with code ${code ?? "null"}`);
-    });
-    child.once("close", (code, signal) => {
-      this.finalizeRpcProcess(child, `Connector RPC closed${signal ? ` by ${signal}` : ""} with code ${code ?? "null"}`);
-    });
+    if (guard) {
+      let launchError: Error | undefined;
+      child.on("error", error => { launchError = error; });
+      void guard.closed.then(({ code, signal, cleaned }) => {
+        if (!cleaned) {
+          this.cleanupFailure = new Error("Connector RPC process group cleanup could not be confirmed.");
+          this.logError(this.cleanupFailure);
+        }
+        const message = launchError ? `Connector RPC failed to start: ${launchError.message}` :
+          `Connector RPC exited${signal ? ` by ${signal}` : ""} with code ${code ?? "null"}`;
+        this.finalizeRpcProcess(child, message, cleaned);
+      }).catch(error => this.logError(error));
+    } else {
+      child.once("error", (error) => {
+        this.finalizeRpcProcess(child, `Connector RPC failed to start: ${error.message}`);
+      });
+      child.once("exit", (code, signal) => {
+        this.finalizeRpcProcess(child, `Connector RPC exited${signal ? ` by ${signal}` : ""} with code ${code ?? "null"}`);
+      });
+      child.once("close", (code, signal) => {
+        this.finalizeRpcProcess(child, `Connector RPC closed${signal ? ` by ${signal}` : ""} with code ${code ?? "null"}`);
+      });
+    }
+    if (guard) {
+      // The guard waits for start until its session is recorded in the lease.
+      // The normal RPC readiness deadline also covers this handshake.
+      if (child.pid === undefined) return;
+      void guard.session().then(session => {
+        if (this.rpcProcess !== child) return;
+        this.environment.recordProcess(child.pid, session);
+        guard.start();
+      }).catch(error => {
+        if (this.rpcProcess !== child) return;
+        this.ready?.reject(error);
+        void this.terminateRpcProcess(true).catch(failure => this.logError(failure));
+      });
+    } else {
+      try {
+        this.environment.recordProcess(child.pid);
+      } catch (error) {
+        void this.terminateRpcProcess(true).catch(failure => this.logError(failure));
+        throw error;
+      }
+    }
   }
 
   private handleRpcLine(line: string): void {
@@ -633,15 +693,16 @@ export class ConnectorSupervisor {
       // stdout carries exactly one line: the ready message. Anything else is a
       // protocol error with no recovery path, so restart the process.
       ready.reject(new Error(`Connector RPC emitted an unexpected line: ${line.slice(0, RECENT_OUTPUT_LINE_LENGTH)}`));
-      void this.terminateRpcProcess();
+      void this.terminateRpcProcess().catch(error => this.logError(error));
       return;
     }
+    this.rpcGuard?.watch(rendezvous.pid);
     this.log({ level: "INFO", message: `Connector ready (${rendezvous.instanceId})` });
     void this.connect(rendezvous, ready).then(
       channel => ready.resolve(channel),
       error => {
         ready.reject(error);
-        void this.terminateRpcProcess();
+        void this.terminateRpcProcess().catch(error => this.logError(error));
       },
     );
   }
@@ -758,12 +819,24 @@ export class ConnectorSupervisor {
     this.log({ level: match?.[1] ?? (uvMessage ? "INFO" : "ERROR"), message: plain });
   }
 
-  private finalizeRpcProcess(child: ChildProcessWithoutNullStreams, message: string): void {
+  private finalizeRpcProcess(child: ChildProcessWithoutNullStreams, message: string, cleaned = false): void {
     if (this.rpcProcess !== child) return;
-    void terminateConnectorProcess(child).then(() => { if (!this.rpcProcess) this.environment.recordProcess(); }).catch(error => this.logError(error));
+    const guarded = this.rpcGuard !== null;
+    if (guarded) {
+      if (cleaned) {
+        try { this.environment.recordProcess(); } catch (error) { this.logError(error); }
+      }
+      this.rpcGuard = null;
+    } else {
+      void terminateConnectorProcess(child).then(() => { if (!this.rpcProcess) this.environment.recordProcess(); }).catch(error => this.logError(error));
+    }
     this.log(message);
     this.rpcReader?.close();
     this.rpcReader = null;
+    if (guarded) {
+      child.stdin.destroy();
+      child.stdout.destroy();
+    }
     const output = this.rpcOutput;
     this.rpcOutput = null;
     this.rpcProcess = null;
@@ -784,6 +857,7 @@ export class ConnectorSupervisor {
       new Promise<void>(resolve => setTimeout(resolve, OUTPUT_DRAIN_MS)),
     ]);
     void drained.then(() => {
+      if (guarded) child.stderr.destroy();
       const reason = withRecentOutput(message, output?.lines);
       ready?.reject(new Error(reason));
       // The Connector reports its own errors while it runs; an exit nobody
@@ -796,6 +870,7 @@ export class ConnectorSupervisor {
     this.emitState();
     if (
       this.keepRuntimeRunning &&
+      !this.cleanupFailure &&
       !this.shuttingDown &&
       !this.suppressProcessRestart &&
       !this.state.authFailed &&
@@ -848,9 +923,13 @@ export class ConnectorSupervisor {
     this.terminating.add(child);
     const previousSuppression = this.suppressProcessRestart;
     this.suppressProcessRestart = this.suppressProcessRestart || suppressRestart;
-    await terminateConnectorProcess(child);
-    if (this.rpcProcess === child) this.finalizeRpcProcess(child, "Connector RPC was terminated.");
-    this.suppressProcessRestart = previousSuppression;
+    try {
+      if (this.rpcGuard) await this.rpcGuard.stop();
+      else await terminateConnectorProcess(child);
+      if (this.rpcProcess === child) this.finalizeRpcProcess(child, "Connector RPC was terminated.");
+    } finally {
+      this.suppressProcessRestart = previousSuppression;
+    }
   }
 
   /** Only a launch materializes the project copy; state checks stay read-only. */

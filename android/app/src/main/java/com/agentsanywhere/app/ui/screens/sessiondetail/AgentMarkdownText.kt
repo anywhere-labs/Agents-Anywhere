@@ -1243,8 +1243,10 @@ private fun MarkdownWrappingCodeChip(
         fontFamily = FontFamily.Monospace,
         textDecoration = if (path != null) TextDecoration.Underline else null,
     )
+    val blockKey = "block:${LocalReadingMessage.current}:${LocalReadingPart.current}"
     Box(
         modifier = Modifier
+            .readingRegion(blockKey)
             .clip(RoundedCornerShape(5.dp))
             .background(styles.codeBackground)
             .border(1.dp, styles.codeBorder, RoundedCornerShape(5.dp))
@@ -1304,7 +1306,8 @@ private fun SelectableMarkdownCodeBlock(
     val token = remember(label, code) { selectionCodeToken(label, code) }
     RegisterSessionSelectionCopyToken(token = token, replacement = code)
 
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
+    val blockKey = "block:${LocalReadingMessage.current}:${LocalReadingPart.current}:$label"
+    BoxWithConstraints(Modifier.fillMaxWidth().readingRegion(blockKey)) {
         // Anchor placeholder geometry to a physical 1.dp font unit so device
         // font scaling cannot enlarge the embedded code panel.
         val layoutUnitFontSize = with(density) { 1.dp.toSp() }

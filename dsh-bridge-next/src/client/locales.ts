@@ -95,6 +95,11 @@ const hostMessages = {
   "设备暂未上线，请检查网络后在插件中重试。": "The device is not online yet. Check the network, then try again in the plugin.",
   "本机连接已中断，正在检查设备状态…": "The local connection was interrupted. Checking device status…",
   "账号登录已失效，请重新登录后恢复设备连接。": "Your session has expired. Sign in again to restore the device connection.",
+  "账号登录已失效，请重新登录。": "Your account session has expired. Sign in again.",
+  "本机设备凭据已失效，且账号登录已过期，请重新登录后恢复连接。": "The device credential is no longer valid and your account session has expired. Sign in again to restore the connection.",
+  "账号登录已过期，同步不受影响；手机连接等账号功能需要重新登录。": "Your account session has expired. Sync continues; sign in again to use account features such as mobile connection.",
+  "账号登录已过期，请重新登录。": "Your account session has expired. Sign in again.",
+  "{detail}（{seconds} 秒后自动重试）": "{detail} (retrying automatically in {seconds} s)",
   "暂时无法确认设备状态，请检查网络后重试。": "Unable to verify device status. Check the network and try again.",
   "设备状态已变化，请重新打开插件。": "The device status has changed. Reopen the plugin.",
   "设备状态已变化，请先重新检查。": "The device status has changed. Check it again first.",
@@ -317,6 +322,8 @@ export const zh = { ...Object.fromEntries(Object.keys(en).map(key => [key, key])
 export function translateMessage(t: Translate, message: string | null | undefined): string {
   if (!message) return ''
   if (Object.hasOwn(en, message)) return t(message as LocaleKey)
+  const retry = /^(.+)（(\d+) 秒后自动重试）$/s.exec(message)
+  if (retry) return t('{detail}（{seconds} 秒后自动重试）', { detail: translateMessage(t, retry[1]), seconds: retry[2]! })
   const http = /^服务请求失败（HTTP (\d+)），请重试。$/.exec(message)
   if (http) return t('服务请求失败（HTTP {status}），请重试。', { status: http[1] })
   const exit = /^Connector 已退出（(.+)）。请在日志页切换到 Connector 查看原因。$/.exec(message)

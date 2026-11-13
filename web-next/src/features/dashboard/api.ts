@@ -19,6 +19,7 @@ import type {
   FsReadTextResult,
   FsWriteResult,
   MessageSendOptions,
+  Notice,
   PairingClaimResponse,
   PairingPollResponse,
   PairingStartResponse,
@@ -782,6 +783,10 @@ export class DashboardApi {
       },
       { token },
     );
+  }
+
+  getSessionRuntimeNotices(token: string, sessionId: string): Promise<{ notices: Notice[]; serverTime: string }> {
+    return this.client.get(`/sessions/${encodeURIComponent(sessionId)}/runtime/notices`, { token });
   }
 
   getSessionRuntimeState(

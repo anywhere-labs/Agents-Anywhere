@@ -40,6 +40,10 @@ POST /api/v2/ws-ticket
 
 ### Intended lifecycle
 
+Returning to a cached session reuses its applied event cursor before subscribing
+and reconciling. Cache lifetime, reading restoration and invalidation rules for
+Web, Desktop and Android are defined in [会话访问缓存](../session-cache.md).
+
 ```text
 GET /sessions/{sessionId}/snapshot
   -> reads durable meta/timeline from Server and RuntimeLive facts from runtime RPC

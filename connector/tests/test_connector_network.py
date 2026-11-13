@@ -397,3 +397,195 @@ def test_certificate_hint_recognises_every_wording() -> None:
         hint = certificate_hint(error, SERVER)
         assert hint is not None and "web.example.com" in hint
     assert certificate_hint(ConnectionRefusedError("refused"), SERVER) is None
+
+
+class _ScriptedTransport:
+    """A pool whose requests follow ``script``: an exception to raise, a status to return."""
+
+    def __init__(self, script: list[object], default: object) -> None:
+        self.script = script
+        self.default = default
+        self.closed = False
+        self.requests = 0
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.requests += 1
+        step = self.script.pop(0) if self.script else self.default
+        if isinstance(step, asyncio.Event):
+            await step.wait()
+            raise httpx.PoolTimeout("")
+        if isinstance(step, BaseException):
+            raise step
+        assert isinstance(step, int)
+        return httpx.Response(step, request=request)
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class _ScriptedRoute:
+    def __init__(self, egress: Egress, transport: _ScriptedTransport) -> None:
+        self.egress, self.transport = egress, transport
+        self.active = 0
+        self.pool_timeouts = 0
+
+
+class _ScriptedPools:
+    """Each new pool takes the next script; pools without one answer 200."""
+
+    def __init__(self) -> None:
+        self.created: list[_ScriptedRoute] = []
+        self._scripts: list[tuple[list[object], object]] = []
+
+    def script(self, steps: list[object], default: object = 200) -> None:
+        self._scripts.append((steps, default))
+
+    def route(self, egress: Egress) -> _ScriptedRoute:
+        steps, default = self._scripts.pop(0) if self._scripts else ([], 200)
+        route = _ScriptedRoute(egress, _ScriptedTransport(steps, default))
+        self.created.append(route)
+        return route
+
+
+@pytest.fixture
+def scripted_pools(monkeypatch: pytest.MonkeyPatch) -> _ScriptedPools:
+    scripted = _ScriptedPools()
+    monkeypatch.setattr(network, "_Route", scripted.route)
+    return scripted
+
+
+def test_pool_timeouts_retire_a_wedged_pool_without_the_websocket(
+    scripted_pools: _ScriptedPools,
+) -> None:
+    # Ingest, DSH sync and transfers share this client while the WebSocket stays
+    # up; their pool timeouts alone must move the client onto a fresh pool.
+    scripted_pools.script([], httpx.PoolTimeout(""))
+    egress = NetworkEgress(SERVER)
+    client = egress.http_client(1)
+
+    async def run() -> int:
+        for _ in range(network.POOL_TIMEOUTS_BEFORE_RETIRE):
+            with pytest.raises(httpx.PoolTimeout):
+                await client.get(SERVER)
+            assert len(scripted_pools.created) == 1
+        response = await client.get(SERVER)
+        await client.aclose()
+        return response.status_code
+
+    assert asyncio.run(run()) == 200
+    assert len(scripted_pools.created) == 2
+    assert scripted_pools.created[0].transport.closed is True
+
+
+def test_any_response_resets_the_pool_timeout_count(
+    scripted_pools: _ScriptedPools,
+) -> None:
+    # A 5xx or 401 still came over a connection the pool handed out.
+    timeout = httpx.PoolTimeout("")
+    scripted_pools.script([timeout, timeout, 503, timeout, timeout, 401, timeout, timeout])
+    client = NetworkEgress(SERVER).http_client(1)
+
+    async def run() -> None:
+        for _ in range(8):
+            try:
+                await client.get(SERVER)
+            except httpx.PoolTimeout:
+                pass
+        await client.aclose()
+
+    asyncio.run(run())
+    assert len(scripted_pools.created) == 1
+
+
+def test_other_network_failures_keep_the_pool(scripted_pools: _ScriptedPools) -> None:
+    # A refused or timed-out connection is not the pool's fault; a new pool
+    # would fail the same way, and the caller already retries with backoff.
+    scripted_pools.script([], httpx.ConnectError("refused"))
+    client = NetworkEgress(SERVER).http_client(1)
+
+    async def run() -> None:
+        for _ in range(network.POOL_TIMEOUTS_BEFORE_RETIRE * 2):
+            with pytest.raises(httpx.ConnectError):
+                await client.get(SERVER)
+        await client.aclose()
+
+    asyncio.run(run())
+    assert len(scripted_pools.created) == 1
+
+
+def test_late_timeouts_from_a_retired_pool_do_not_count_against_its_successor(
+    scripted_pools: _ScriptedPools,
+) -> None:
+    threshold = network.POOL_TIMEOUTS_BEFORE_RETIRE
+    waits = [asyncio.Event() for _ in range(threshold * 2)]
+    scripted_pools.script(list(waits))
+    client = NetworkEgress(SERVER).http_client(1)
+
+    async def run() -> None:
+        stuck = [asyncio.create_task(client.get(SERVER)) for _ in waits]
+        await asyncio.sleep(0)
+        wedged = scripted_pools.created[0]
+        for event in waits[:threshold]:
+            event.set()
+        await asyncio.gather(*stuck[:threshold], return_exceptions=True)
+        # Retired, but still serving the requests that are in flight.
+        assert wedged.transport.closed is False
+        assert (await client.get(SERVER)).status_code == 200
+        fresh = scripted_pools.created[1]
+        for event in waits[threshold:]:
+            event.set()
+        await asyncio.gather(*stuck[threshold:], return_exceptions=True)
+        assert fresh.pool_timeouts == 0
+        assert wedged.transport.closed is True
+        assert fresh.transport.closed is False
+        assert (await client.get(SERVER)).status_code == 200
+        assert len(scripted_pools.created) == 2
+        await client.aclose()
+
+    asyncio.run(run())
+
+
+def test_retiring_a_route_keeps_in_flight_requests_alive() -> None:
+    # Closing the pool outright aborts the requests still running on it, and the
+    # resulting ClosedResourceError stops the Connector (issue #381 regression).
+    egress = NetworkEgress(SERVER)
+    transport = egress.http_client(1)._transport
+    route = network._Route(egress.current)
+    route.active = 1
+    transport._route = route
+    try:
+        asyncio.run(transport.retire_route())
+        assert transport._route is None
+        assert route in transport._retired
+        route.active = 0
+        asyncio.run(transport._close_if_idle(route))
+        assert route not in transport._retired
+    finally:
+        asyncio.run(transport.aclose())
+
+
+def test_route_selection_survives_a_concurrent_retire() -> None:
+    # retire_route may run while _current_route is closing the previous pool;
+    # the request must still get a fresh, current route instead of None or a
+    # route that was closed underneath it.
+    egress = NetworkEgress(SERVER)
+    transport = egress.http_client(1)._transport
+    stale = network._Route(egress.current)
+    transport._route = stale
+    egress._current = Egress("http://127.0.0.1:1", "config")
+    original = transport._close_if_idle
+    state = {"retired": False}
+
+    async def close_then_retire(route: network._Route) -> None:
+        await original(route)
+        if not state["retired"]:
+            state["retired"] = True
+            await transport.retire_route()
+
+    transport._close_if_idle = close_then_retire  # type: ignore[method-assign]
+    try:
+        route = asyncio.run(transport._current_route())
+        assert route is transport._route
+        assert route not in transport._retired
+    finally:
+        asyncio.run(transport.aclose())

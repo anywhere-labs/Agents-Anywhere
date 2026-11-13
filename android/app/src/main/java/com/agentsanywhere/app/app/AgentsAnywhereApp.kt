@@ -162,11 +162,14 @@ fun AgentsAnywhereApp(
             sessionStore = sessionStore,
         )
     }
-    val sessionDetailController = remember(context, sessionStore, apiClient) {
+    val sessionDetailController = remember(context, sessionStore, apiClient, sessionStore.readAuthSessionId()) {
         SessionDetailController(
             sessionsApi = SessionsApi(apiClient),
             sessionStore = sessionStore,
         )
+    }
+    DisposableEffect(sessionDetailController) {
+        onDispose { sessionDetailController.dispose() }
     }
     val filesController = remember(context, sessionStore, apiClient) {
         FilesController(

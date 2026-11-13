@@ -51,6 +51,8 @@ export interface OnboardingSnapshot {
   stage: FlowStage
   message: string
   account: AccountProfile | null
+  /** The account token has expired; the Connector may still run on its device credential. */
+  accountExpired?: boolean
   webAppUrl: string
   connectorId: string | null
   connectorRunning: boolean

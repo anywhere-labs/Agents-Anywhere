@@ -31,6 +31,7 @@
 ### Codex 与 Claude
 
 - 从 Agents Anywhere 新建的 Codex 会话，在 Codex App 里点开后不再从所属项目跳到无项目的对话里。（[#620](https://github.com/anywhere-labs/Agents-Anywhere/pull/620)）
+- 使用 Codex 时，Connector 长时间运行不再逐渐占满文件句柄，不再因「Too many open files」连不上服务器、设备变成离线；读写计划记录后也不再留下未关闭的数据库文件。（[#632](https://github.com/anywhere-labs/Agents-Anywhere/pull/632)）
 - Claude 的动态唤醒在等待时会保留原进程，恢复会话后的首条消息会与旧后台任务通知区分，通知伴随消息且 Claude 未回复时会显示错误。（[#619](https://github.com/anywhere-labs/Agents-Anywhere/pull/619)）
 - 修复 Codex 接管后原客户端离线导致发送失败、停止无效，以及任务已完成却仍显示运行中的问题；发送结果未知时不会自动重发消息，恢复旧任务状态时不会结束新回合或重复报告完成。（[#541](https://github.com/anywhere-labs/Agents-Anywhere/pull/541)）
 - Codex 的定时会话扫描只写入真正变化的会话，会话数量较多的部署数据库写入明显下降，并减少这些写入拖慢其他请求的情况。（[#557](https://github.com/anywhere-labs/Agents-Anywhere/pull/557)）
@@ -45,8 +46,11 @@
 
 ### 本机连接
 
+- 网络抖动后 Connector 不再永久卡在连接池超时：连续几次拿不到连接时会换用新的连接池，即使实时连接一直没断，历史和 DSH 同步也会恢复上传，设备无需重启桌面端即可恢复在线。（[#580](https://github.com/anywhere-labs/Agents-Anywhere/pull/580)）
+- 启用 DSH 时，桌面端启动后或之后再打开 DSH，都不再断开与 Connector 的控制连接，设备保持在线。（[#580](https://github.com/anywhere-labs/Agents-Anywhere/pull/580)）
+- macOS 上 Desktop 或本机连接异常退出时，会自动回收残留的 Connector 进程，清理完成后可重新启动本机连接。（[#628](https://github.com/anywhere-labs/Agents-Anywhere/pull/628)）
 - 电脑关机、重启或注销时，Desktop 不再弹出「退出 Agents Anywhere？」阻止关机，而是直接停止本机连接并退出；需要确认的用户可以打开「关机时询问是否退出」。在 Desktop 里手动退出时仍会确认。（[#596](https://github.com/anywhere-labs/Agents-Anywhere/pull/596)）
-- 打开「登录时打开」和「登录时静默启动」后，开机登录时 Desktop 不再弹出主窗口，即使本机连接要过很久才就绪；只有本机连接被其他程序占用或启动出错时才显示窗口。更新后由安装器重新启动时，隐藏的窗口也不再被拉到前台。（[#403](https://github.com/anywhere-labs/Agents-Anywhere/pull/403)）
+- Desktop 登录时静默启动会在本机连接正常或仍在准备时保持隐藏，安装器从后台重新启动也不会拉起隐藏窗口，遇到本机连接被占用、归属检查失败或设备凭据失效时会自动打开一次窗口，凭据失效时可在窗口中重新连接。（[#403](https://github.com/anywhere-labs/Agents-Anywhere/pull/403)、[#627](https://github.com/anywhere-labs/Agents-Anywhere/pull/627)）
 - Desktop 和 DSH 插件的设置里新增「Connector 网络」，可选跟随系统、直连或自定义代理；Connector 的接口请求、实时连接和终端都走同一条路，日志里记录实际走的路径。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
 - 在系统代理里把服务器地址加入例外现在对 Connector 生效；只设置 `NO_PROXY` 不再让 Connector 绕过系统代理。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
 - 系统代理开关开着但本机代理软件已退出时，Connector 改为直连，不再一直连不上服务器。（[#549](https://github.com/anywhere-labs/Agents-Anywhere/pull/549)）
@@ -58,6 +62,8 @@
 
 ### DSH 同步
 
+- DSH 插件的账号登录 7 天到期后，同步不再悄悄停止：重启 DSH 时 Connector 会用本机设备凭据继续连接，面板提示登录已过期并提供「重新登录」，只有手机连接等账号功能需要重新登录后才能用。（[#636](https://github.com/anywhere-labs/Agents-Anywhere/pull/636)）
+- DSH 开机自启时网络或服务器还没就绪，插件会自动重试启动 Connector 直到上线，面板显示失败原因和下次重试时间，不再停在「运行异常」等手动点「连接」。（[#636](https://github.com/anywhere-labs/Agents-Anywhere/pull/636)）
 - 修复安装主题等其他插件后「远程控制」面板无法通过关闭按钮、Esc 或遮罩关闭，以及焦点被无关浮层干扰的问题。（[#615](https://github.com/anywhere-labs/Agents-Anywhere/pull/615)）
 - 经本地代理上传大批量会话时，不再因为等待服务器响应超过 60 秒而反复失败；上行很慢（低于约 64 KB/s）时每次重试会等得更久，不再在同一个大会话上反复重传、卡住后面所有会话的同步；上传失败的日志会写明错误类型、数据大小和耗时。（[#551](https://github.com/anywhere-labs/Agents-Anywhere/pull/551)、[#593](https://github.com/anywhere-labs/Agents-Anywhere/pull/593)）
 - 连不上服务器时，DSH 插件会重发当前批次并在恢复后继续，不再断开同步后重新扫描全部会话。（[#551](https://github.com/anywhere-labs/Agents-Anywhere/pull/551)）
@@ -82,7 +88,7 @@
 
 - 新建 ACP 会话时，模型加载状态显示在 Agent 旁边，不再出现在输入框上方。（[#606](https://github.com/anywhere-labs/Agents-Anywhere/pull/606)）
 - Desktop 的「关机时询问是否退出」开关统一放在「设置 → 启动与通知」，不再出现在 Desktop 设备详情页；其他客户端修改的设置仍会同步，设备离线时修改，会在它下次上线时生效。（[#596](https://github.com/anywhere-labs/Agents-Anywhere/pull/596)、[#598](https://github.com/anywhere-labs/Agents-Anywhere/pull/598)）
-- Desktop 切回最近查看的会话时立即显示消息并恢复阅读位置，随后补齐新消息和运行信息，修复重连时漏补消息，以及切换会话或刷新登录凭据时消息、审批与模型和权限选择的状态错乱。（[#609](https://github.com/anywhere-labs/Agents-Anywhere/pull/609)）
+- Web 与 Desktop 切回最近查看的会话时立即显示消息并恢复阅读位置，随后补齐新消息和运行信息，修复重连时漏补消息，以及切换会话或刷新登录凭据时消息、审批与模型和权限选择的状态错乱；Web 在模型或权限列表不可用时保留历史，确认会话已删除或无权访问时清除旧消息与缓存。（[#609](https://github.com/anywhere-labs/Agents-Anywhere/pull/609)、[#618](https://github.com/anywhere-labs/Agents-Anywhere/pull/618)）
 - Agent 连接断开后，没有原生历史的会话会显示「恢复会话」，不用新建会话就能接着用，未确认的消息不会自动重发。（[#591](https://github.com/anywhere-labs/Agents-Anywhere/pull/591)）
 - Tokens Anywhere 可以用 Agents Anywhere 账号登录：Web 会先显示「登录 Tokens Anywhere」确认页，确认后才向 Tokens Anywhere 提供名称、邮箱和头像，选「取消」则不提供任何信息。部署者设置 `AGENT_SERVER_TOKENS_ANYWHERE_CLIENT_SECRET` 和 `AGENT_SERVER_TOKENS_ANYWHERE_REDIRECT_URI` 后开启。（[#571](https://github.com/anywhere-labs/Agents-Anywhere/pull/571)）
 - 侧边栏新增 Tokens Anywhere 入口，仅显示官网手写体字标：已链接账户时直接在页面里打开 Tokens Anywhere 控制台，不用再登录；未链接时点「授权 Tokens Anywhere」一次即可完成链接，Desktop 页面不再重复显示侧栏折叠按钮。不需要时可以在页面上或「设置 → 外观」里隐藏。实例设置了 Tokens Anywhere 地址后才会出现这个入口，自部署实例不需要重新构建。（[#571](https://github.com/anywhere-labs/Agents-Anywhere/pull/571)、[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)、[#598](https://github.com/anywhere-labs/Agents-Anywhere/pull/598)）
@@ -91,10 +97,12 @@
 - Beta 和实验性的 Runtime 会在状态旁显示「Beta」「实验性」标记。模型网关的 Key 保存后只保留开头和结尾几位；不改 Key 时可以留空，更换地址时需要重新填写。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 新建会话输入框下方不再显示模型加载时返回的原始错误提示，保留模型状态和重试入口。（[#515](https://github.com/anywhere-labs/Agents-Anywhere/pull/515)）
 - 管理看板打开更快：使用报表改为读取按小时的汇总，耗时不再随使用事件增多而线性增长；顶部的实时状态也不再随设备数和事件数变慢。轮次耗时和审批等待分位数改为统计范围内的全部样本，不再只取最新的 20 万条。（[#472](https://github.com/anywhere-labs/Agents-Anywhere/pull/472)、[#473](https://github.com/anywhere-labs/Agents-Anywhere/pull/473)）
+- 点击会话中 Agent 回复的文件超链接（`file://`、带空格或中文的路径、`#L12`/`:行:列` 等）时，现在会在会话内打开预览标签页，不再新开窗口或跳回主页；不支持的格式或读取不到的路径在预览页里提示无法预览，仍可正常查看外链与页内锚点。行内代码里的文件引用也能识别，命令如 `ls -la 文件.pdf` 不会被误当成文件。（[#622](https://github.com/anywhere-labs/Agents-Anywhere/pull/622)）
 
 ### Android
 
 - 折叠屏展开或使用宽窗口时，可以在左侧切换项目和会话、在右侧查看消息，并按需收起侧栏；窄窗口保留手机单栏导航，切换会话或窗口宽度时保留各会话草稿和阅读位置。（[#478](https://github.com/anywhere-labs/Agents-Anywhere/pull/478)）
+- 切回最近查看的会话时立即显示已加载的消息，保留历史阅读位置和展开状态，再补齐新消息、运行信息与计划状态；模型或权限列表不可用时仍可阅读历史，历史重建失败时自动重试，迟到的旧请求不会覆盖重建后的历史。（[#618](https://github.com/anywhere-labs/Agents-Anywhere/pull/618)）
 
 - Desktop 设备的详情页新增「设备设置」，可以远程打开或关闭「关机时询问是否退出」。（[#596](https://github.com/anywhere-labs/Agents-Anywhere/pull/596)）
 - Agent 连接断开后，没有原生历史的会话可以点「恢复会话」接着用。（[#591](https://github.com/anywhere-labs/Agents-Anywhere/pull/591)）
@@ -108,7 +116,7 @@
 
   [#567](https://github.com/anywhere-labs/Agents-Anywhere/pull/567)
 
-- Agent 还在输出时往上翻看长回复或之前的消息，正在读的内容不再随新输出反复跳动闪烁。（[#567](https://github.com/anywhere-labs/Agents-Anywhere/pull/567)）
+- Agent 还在输出时往上翻到长回复开头从前往后读或浏览之前的消息，滑动与停留期间正在读的内容和回到底部按钮都不再随新输出跳动闪烁。（[#567](https://github.com/anywhere-labs/Agents-Anywhere/pull/567)、[#624](https://github.com/anywhere-labs/Agents-Anywhere/pull/624)）
 
 ### iOS
 

@@ -224,6 +224,7 @@ async def _run_cli_connector(
     try:
         from connector.core import runtime_owner
         from connector.logging import install_rpc_log_sink
+        from connector.mesh.host import mount_host_services
         from connector.mesh.hub import LocalHub, set_local_hub
         from connector.mesh.logs import LogsService, open_log_hub
 
@@ -235,7 +236,7 @@ async def _run_cli_connector(
         try:
             try:
                 await hub.start()
-                await hub.mount(LogsService(logs))
+                await mount_host_services(hub, LogsService(logs))
             except Exception as error:  # noqa: BLE001 - runtime logging is auxiliary
                 # The Router is also how DSH reaches this Connector, so a failure
                 # only degrades DSH; Codex/Claude sessions keep running.
