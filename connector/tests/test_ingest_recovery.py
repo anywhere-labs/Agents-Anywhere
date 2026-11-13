@@ -240,6 +240,129 @@ def test_synchronous_batch_does_not_retry_permanent_rejections():
     asyncio.run(run())
 
 
+def _rejection(index: int, *, retryable: bool) -> dict:
+    return {
+        "index": index,
+        "method": "timeline.itemUpsert",
+        "code": "notification_failed",
+        "message": "timed out acquiring distributed lock" if retryable else "invalid timeline item",
+        "errorType": "TimeoutError" if retryable else "ValueError",
+        "retryable": retryable,
+    }
+
+
+def _scripted_ingest(responses):
+    """An ingest client whose Server answers ``responses`` in turn (the last one repeats)."""
+
+    attempts: list[list[dict]] = []
+
+    async def token(force):
+        return "token"
+
+    async def transport(request):
+        attempts.append(json.loads(request.content)["notifications"])
+        return httpx.Response(200, json=responses[min(len(attempts), len(responses)) - 1])
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(transport))
+    ingest = ConnectorIngestClient("https://server.test", token, lambda: http, lambda timeout: http)
+    return ingest, http, attempts
+
+
+TWO_SESSIONS = [
+    {"method": "timeline.itemUpsert", "params": {"sessionId": "sess_1"}},
+    {"method": "timeline.itemUpsert", "params": {"sessionId": "sess_2"}},
+]
+
+
+def test_mixed_rejection_batch_stays_permanent(monkeypatch):
+    monkeypatch.setattr(ingest_module, "SYNC_BATCH_RETRY_BACKOFF_SECONDS", 0.001)
+
+    async def run():
+        ingest, http, attempts = _scripted_ingest(
+            [{"accepted": 0, "rejected": [_rejection(0, retryable=True), _rejection(1, retryable=False)]}]
+        )
+        async with http:
+            with pytest.raises(ConnectorIngestRejectedError) as caught:
+                await ingest.ingest_notifications(TWO_SESSIONS)
+        # The permanent failure is reported as such instead of being retried away.
+        assert not isinstance(caught.value, ConnectorNetworkError)
+        assert len(attempts) == 1
+
+    asyncio.run(run())
+
+
+def test_rejection_without_retryable_flag_stays_permanent(monkeypatch):
+    """An older Server sends no ``retryable``; its rejections keep their meaning."""
+
+    monkeypatch.setattr(ingest_module, "SYNC_BATCH_RETRY_BACKOFF_SECONDS", 0.001)
+    legacy = _rejection(0, retryable=True)
+    del legacy["retryable"]
+
+    async def run():
+        ingest, http, attempts = _scripted_ingest([{"accepted": 0, "rejected": [legacy]}])
+        async with http:
+            with pytest.raises(ConnectorIngestRejectedError):
+                await ingest.ingest_notifications(TWO_SESSIONS[:1])
+        assert len(attempts) == 1
+
+    asyncio.run(run())
+
+
+def test_partially_accepted_batch_is_resent_whole_and_in_order(monkeypatch):
+    """Delivery stays at least once: notifications are retried as the batch they came in."""
+
+    monkeypatch.setattr(ingest_module, "SYNC_BATCH_RETRY_BACKOFF_SECONDS", 0.001)
+
+    async def run():
+        ingest, http, attempts = _scripted_ingest(
+            [
+                {"accepted": 1, "rejected": [_rejection(0, retryable=True)]},
+                {"accepted": 2, "rejected": []},
+            ]
+        )
+        async with http:
+            await ingest.ingest_notifications(TWO_SESSIONS)
+        assert attempts == [TWO_SESSIONS, TWO_SESSIONS]
+
+    asyncio.run(run())
+
+
+def test_retryable_rejections_surface_as_network_errors_once_retries_run_out(monkeypatch):
+    monkeypatch.setattr(ingest_module, "SYNC_BATCH_RETRY_BACKOFF_SECONDS", 0.001)
+
+    async def run():
+        ingest, http, attempts = _scripted_ingest(
+            [{"accepted": 0, "rejected": [_rejection(0, retryable=True)]}]
+        )
+        async with http:
+            with pytest.raises(ingest_module.ConnectorIngestRetryableError):
+                await ingest.ingest_notifications(TWO_SESSIONS[:1])
+        assert len(attempts) == ingest_module.SYNC_BATCH_RETRIES + 1
+
+    asyncio.run(run())
+
+
+def test_flush_loop_keeps_a_retryable_rejection_until_it_is_accepted():
+    async def run():
+        responses = [
+            {"accepted": 0, "rejected": [_rejection(0, retryable=True)]},
+            {"accepted": 1, "rejected": []},
+        ]
+        ingest, http, attempts = _scripted_ingest(responses)
+        async with http:
+            ingest._retry_delay = 0.001
+            await ingest.enqueue("session.state.updated", {"status": "idle"})
+            task = asyncio.create_task(ingest.flush_loop())
+            while len(attempts) < 2:
+                await asyncio.sleep(0.001)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            assert attempts[0] == attempts[1]
+            assert not ingest.has_pending
+
+    asyncio.run(run())
+
+
 def test_revoked_credentials_stop_retry_and_reject_new_admission():
     async def run():
         async def token(force):
@@ -423,3 +546,9 @@ def test_unreachable_server_reaches_the_plugin_as_a_retryable_code() -> None:
     assert mapped.retryable is True
     other = asyncio.run(outcome(ValueError("Out-of-order event batch")))
     assert isinstance(other, ValueError)
+    contended = asyncio.run(outcome(ingest_module.ConnectorIngestRetryableError("session lock busy")))
+    assert isinstance(contended, MeshCallError)
+    assert contended.code == BACKEND_UNAVAILABLE
+    assert contended.retryable is True
+    refused = asyncio.run(outcome(ConnectorIngestRejectedError("invalid timeline item")))
+    assert isinstance(refused, ConnectorIngestRejectedError)

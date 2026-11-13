@@ -329,12 +329,17 @@ protocol violations that are intentionally unsupported may still return HTTP
 400; unexpected processing failures should be logged and reported through
 `rejected` instead of surfacing as HTTP 500.
 
-`retryable` is `true` when the same notification can be retried after a short
-backoff without changing the payload, for example when a session-level
-distributed lock acquisition times out. Connectors must not treat such a
-rejection as a permanent validation or size failure. A mixed batch keeps the
-permanent failure visible; the connector retries only when every rejected
-notification is retryable.
+`retryable` is `true` when the same notification can be sent again unchanged
+after a short backoff, because it was refused by contention that clears on its
+own: a bounded lock wait (the Redis `session-revision` lock, or the PostgreSQL
+timeline writer lock under `lock_timeout`), an exhausted database connection
+pool, a deadlock or a serialization failure. Connectors must not treat such a
+rejection as a permanent validation or size failure. A Connector retries a
+response only when every rejected notification is retryable, and it resends the
+whole batch in order, so notifications the Server already accepted may arrive
+again (delivery is at least once). A mixed batch keeps the permanent failure
+visible. Servers older than 2.2.0 omit the field; a missing `retryable` means
+`false`.
 
 时间线通知中的 `orderSeq` 必须在 PostgreSQL `integer` 范围内
 （−2147483648–2147483647）。单条通知请求中的越界值返回 HTTP 400
