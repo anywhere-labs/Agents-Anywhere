@@ -102,6 +102,7 @@
 
 ### Android
 
+- 在 Android 上新建会话时不改标题，会话不再全部叫「新建会话」，标题交给 Claude Code 等 Agent 自动生成。（[#364](https://github.com/anywhere-labs/Agents-Anywhere/pull/364)）
 - 同步自 Codex 等的会话里，第一条用户消息不再被排到最后，按原来的顺序显示。（[#639](https://github.com/anywhere-labs/Agents-Anywhere/pull/639)）
 - 折叠屏展开或使用宽窗口时，可以在左侧切换项目和会话、在右侧查看消息，并按需收起侧栏；窄窗口保留手机单栏导航，切换会话或窗口宽度时保留各会话草稿和阅读位置。（[#478](https://github.com/anywhere-labs/Agents-Anywhere/pull/478)）
 - 切回最近查看的会话时立即显示已加载的消息，保留历史阅读位置和展开状态，再补齐新消息、运行信息与计划状态；模型或权限列表不可用时仍可阅读历史，历史重建失败时自动重试，迟到的旧请求不会覆盖重建后的历史。（[#618](https://github.com/anywhere-labs/Agents-Anywhere/pull/618)）
