@@ -31,10 +31,32 @@ function DropdownMenuTrigger({
   )
 }
 
+const MENU_VIEWPORT_MARGIN = 8
+
+/**
+ * Keep menus clear of the window edges and of the desktop title bar. The
+ * Windows title bar is a native drag region with the window controls drawn on
+ * top, so a menu that flips up into it loses hover and clicks there. Radix
+ * derives the menu's max height from this padding, so long lists scroll.
+ */
+function menuCollisionPadding() {
+  if (typeof document === "undefined") return MENU_VIEWPORT_MARGIN
+  const root = document.documentElement
+  if (!("windowsTitleBar" in root.dataset)) return MENU_VIEWPORT_MARGIN
+  const titleBar = Number.parseFloat(getComputedStyle(root).getPropertyValue("--aa-title-bar-height")) || 0
+  return {
+    top: titleBar + MENU_VIEWPORT_MARGIN,
+    right: MENU_VIEWPORT_MARGIN,
+    bottom: MENU_VIEWPORT_MARGIN,
+    left: MENU_VIEWPORT_MARGIN,
+  }
+}
+
 function DropdownMenuContent({
   className,
   align = "start",
   sideOffset = 4,
+  collisionPadding,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
   return (
@@ -43,6 +65,7 @@ function DropdownMenuContent({
         data-slot="dropdown-menu-content"
         sideOffset={sideOffset}
         align={align}
+        collisionPadding={collisionPadding ?? menuCollisionPadding()}
         className={cn("z-50 max-h-(--radix-dropdown-menu-content-available-height) w-(--radix-dropdown-menu-trigger-width) min-w-32 origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-2xl bg-popover p-1 text-popover-foreground shadow-lg ring-1 ring-foreground/5 duration-100 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:overflow-hidden dark:ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95", className )}
         {...props}
       />
@@ -239,14 +262,20 @@ function DropdownMenuSubTrigger({
 
 function DropdownMenuSubContent({
   className,
+  collisionPadding,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.SubContent>) {
+  // A portal keeps the submenu out of the parent menu's scroll container, so a
+  // long, scrolled model list cannot clip it.
   return (
-    <DropdownMenuPrimitive.SubContent
-      data-slot="dropdown-menu-sub-content"
-      className={cn("z-50 min-w-[96px] origin-(--radix-dropdown-menu-content-transform-origin) overflow-hidden rounded-2xl bg-popover p-1 text-popover-foreground shadow-lg ring-1 ring-foreground/5 duration-100 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 dark:ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95", className )}
-      {...props}
-    />
+    <DropdownMenuPrimitive.Portal>
+      <DropdownMenuPrimitive.SubContent
+        data-slot="dropdown-menu-sub-content"
+        collisionPadding={collisionPadding ?? menuCollisionPadding()}
+        className={cn("z-50 max-h-(--radix-dropdown-menu-content-available-height) min-w-[96px] origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-2xl bg-popover p-1 text-popover-foreground shadow-lg ring-1 ring-foreground/5 duration-100 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 dark:ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95", className )}
+        {...props}
+      />
+    </DropdownMenuPrimitive.Portal>
   )
 }
 
