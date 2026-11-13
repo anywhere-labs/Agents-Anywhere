@@ -12,6 +12,7 @@ import { sessionId, nativeSessionId } from './identity.js'
 import type { NativeRuntime } from './native.js'
 import { lastTurnEndKind } from './native.js'
 import { SyncFeed, type SyncTransport } from './sync.js'
+import { turnOutcomeNotice } from './turn-outcome.js'
 import type { TimelineItem } from './types.js'
 
 export interface SessionReader {
@@ -228,7 +229,9 @@ export class RuntimeRouter {
       }
       case 'getSessionNotices': {
         const id = await this.resolve(params, signal)
-        return { notices: [...(this.reader.native?.questions.notices(this.namespace, id) ?? []), ...(this.reader.native?.approvals.notices(this.namespace, id) ?? [])] }
+        const native = this.reader.native
+        return { notices: [...(native?.questions.notices(this.namespace, id) ?? []), ...(native?.approvals.notices(this.namespace, id) ?? []),
+          ...(native ? await this.turnOutcomeNotices(native, id) : [])] }
       }
       case 'respondInteraction': {
         const id = await this.resolve(params, signal)
@@ -250,6 +253,17 @@ export class RuntimeRouter {
       }
       default:
         throw new BridgeError('METHOD_NOT_FOUND', 'The DSH runtime does not support this method.')
+    }
+  }
+
+  /** The open error card of the latest turn; reading it must never fail the other notices. */
+  private async turnOutcomeNotices(native: NativeRuntime, id: SessionId) {
+    try {
+      const outcome = (await native.stateFacts(id)).turnOutcome
+      return outcome ? [turnOutcomeNotice(this.namespace, id, outcome)] : []
+    } catch (error) {
+      native.diagnostics.log('warn', 'session.turn_outcome_unavailable', { sessionId: id }, error)
+      return []
     }
   }
 
