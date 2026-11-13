@@ -30,7 +30,7 @@
 
 ### Codex 与 Claude
 
-- 支持历史替换扩展的 Codex ACP 会话回滚后，旧消息会随完整历史一起更新；回放失败时保留原记录并提示恢复，不再把历史消息当成本轮新回复。（[#646](https://github.com/anywhere-labs/Agents-Anywhere/pull/646)）
+- 支持历史替换扩展的 Codex ACP 会话回滚后，旧消息会随完整历史一起更新，正在生成的回复可以接着续写；回放失败时保留原记录并提示恢复，不再把历史消息当成本轮新回复。（[#646](https://github.com/anywhere-labs/Agents-Anywhere/pull/646)）
 - 使用 Codex 时，Connector 长时间运行不再逐渐占满文件句柄，不再因「Too many open files」连不上服务器、设备变成离线；读写计划记录后也不再留下未关闭的数据库文件。（[#632](https://github.com/anywhere-labs/Agents-Anywhere/pull/632)）
 - Claude 的动态唤醒在等待时会保留原进程，恢复会话后的首条消息会与旧后台任务通知区分，通知伴随消息且 Claude 未回复时会显示错误。（[#619](https://github.com/anywhere-labs/Agents-Anywhere/pull/619)）
 - 修复 Codex 接管后原客户端离线导致发送失败、停止无效，以及任务已完成却仍显示运行中的问题；发送结果未知时不会自动重发消息，恢复旧任务状态时不会结束新回合或重复报告完成。（[#541](https://github.com/anywhere-labs/Agents-Anywhere/pull/541)）

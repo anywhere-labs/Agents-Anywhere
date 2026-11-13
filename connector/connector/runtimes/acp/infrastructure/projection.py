@@ -43,7 +43,13 @@ class Projection:
                 self.message_index += 1
                 self.current_kind = kind
             message_id = update.get("messageId")
-            key = fingerprint([self.session_id, kind, message_id]) if message_id and update.get("aaProjectionVerified") else fingerprint([self.session_id, self.epoch, kind, self.message_index])
+            if isinstance(message_id, str) and message_id:
+                # ACP message IDs join replayed prefixes to later live chunks.
+                # Unverified identities stay local to this projection epoch.
+                identity = [self.session_id, kind, message_id] if update.get("aaProjectionVerified") else [self.session_id, self.epoch, kind, message_id]
+            else:
+                identity = [self.session_id, self.epoch, kind, self.message_index]
+            key = fingerprint(identity)
             old = self.items.get(key, {})
             content = update.get("content", {})
             if content.get("type") != "text":

@@ -104,6 +104,52 @@ def test_empty_complete_replay_removes_previous_history(engine):
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("kind", ["agent_message_chunk", "agent_thought_chunk"])
+def test_replayed_message_continues_by_local_identity(engine, kind):
+    app, context, agent = engine
+
+    async def run():
+        await reset(agent, "begin")
+        for message_id, text in (("completed", "historical message"), ("live", "rewritten prefix")):
+            await agent.callbacks.session_update("native", {**update(text, kind), "messageId": message_id})
+        await reset(agent, "commit")
+        replayed = list(context["projection"].items.values())
+        assert [item["content"]["text"] for item in replayed] == ["historical message", "rewritten prefix"]
+        assert all(item["status"] == "done" for item in replayed)
+        live_id = replayed[1]["id"]
+
+        await agent.callbacks.session_update("native", {**update(" and its continuation", kind), "messageId": "live"})
+        continued = context["projection"].items
+        assert len(continued) == 2
+        assert continued[live_id]["content"]["text"] == "rewritten prefix and its continuation"
+        assert continued[live_id]["status"] == "running"
+        assert continued[replayed[0]["id"]]["status"] == "done"
+        assert notifications(app)[-1]["params"]["item"]["id"] == live_id
+
+        await agent.callbacks.session_update("native", {**update("a new message", kind), "messageId": "next"})
+        assert len(continued) == 3
+        assert agent.callbacks.failure is None
+
+    asyncio.run(run())
+
+
+def test_unverified_message_identity_is_isolated_between_replacements(engine):
+    _, context, agent = engine
+
+    async def run():
+        previous_id = None
+        for revision in ("first", "second"):
+            await reset(agent, "begin", revision)
+            await agent.callbacks.session_update("native", {**update("replacement text"), "messageId": "same-native-id"})
+            await reset(agent, "commit", revision)
+            item, = context["projection"].items.values()
+            assert item["id"] != previous_id
+            assert item["content"]["text"] == "replacement text"
+            previous_id = item["id"]
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("cause", ["abort", "close", "limit", "invalid_update", "outbox_failure", "outbox_full"])
 def test_failed_replay_keeps_old_history_and_requires_recovery(engine, cause, monkeypatch):
     app, context, agent = engine
