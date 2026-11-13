@@ -376,7 +376,8 @@ function SessionDetailVisit({
     ? { runtimeId: sessionRuntimeId(session), runtimeType: sessionRuntimeType(session) }
     : undefined
   const effectiveCapabilities = state?.effectiveCapabilities ?? null
-  const goals = useSessionGoal(token, sessionId, Boolean(session?.takeover && !session.archived && session.connectorStatus === "online" && capabilityIsUsable(effectiveCapabilities,"session.goal",sessionRuntimeScope)))
+  const isLocalOptimisticSession = isOptimisticSession(sessionId)
+  const goals = useSessionGoal(token, sessionId, Boolean(session?.takeover && !session.archived && session.connectorStatus === "online" && capabilityIsUsable(effectiveCapabilities,"session.goal",sessionRuntimeScope)), !isLocalOptimisticSession)
   const commandSessionId = session?.id === sessionId ? sessionId : null
   const commandCapability = session ? findCapability(effectiveCapabilities, CAPABILITY.commands, sessionRuntimeScope) : null
   const catalogMetadata = commandCapability?.metadata as Record<string, unknown> | undefined
@@ -419,7 +420,6 @@ function SessionDetailVisit({
   }, [runtimeState, runtimeStatus, session, state?.eventCursor, state?.serverTime])
 
   const composerDraft = composerDraftState.sessionId === sessionId ? composerDraftState.value : ""
-  const isLocalOptimisticSession = isOptimisticSession(sessionId)
   const creation = sessionCreations[sessionId]
   const creationFailed = creation?.status === "failed"
   const hasInitialSessionState = state !== null
