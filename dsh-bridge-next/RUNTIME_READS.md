@@ -46,7 +46,7 @@ Connector 先验证发现文件、进程与回环地址，再执行限时鉴权�
 | DSH 原始记录 | 统一 Timeline | 处理方式 |
 |---|---|---|
 | 真正用户的 `user/message` 文本 | `message`，role=user | 保留消息来源 |
-| 插件注入的 user-role 消息 | 不输出 | 环境、技能等内部注入不进入 Timeline |
+| 插件注入的 user-role 消息、失败后「继续」写入的空 retry 消息 | 不输出 | 环境、技能等内部注入不进入 Timeline，继续生成不显示空气泡 |
 | assistant 文本 | `message / markdown` | 流式片段和最终消息使用相同 ID、顺序 |
 | reasoning | `system / reasoning` | 与普通文本分开 |
 | image | 附件引用及必要的占位 | AA 发送的图片通过持久化回执恢复平台附件 ID；原生图片保留原生引用，不伪造平台文件 ID |
@@ -59,7 +59,7 @@ Connector 先验证发现文件、进程与回环地址，再执行限时鉴权�
 | ask_user_question / exit_plan_mode | `tool / input_request` | 历史只读，不发起新交互 |
 | run_code 子调用 | 独立 `tool` | 保留 rootCallId、parentItemId |
 | approval/asked、approval/decided | 同一条 `tool / permission` | 合并审批历史，不重新弹审批框 |
-| turn/start、turn/end | 状态/结束通知 | 投影内用于归并，后端不保存轮次标记；一轮以错误结束，或正常结束但没有文字、图片或工具调用时，发一张不阻塞输入的 `execution_error` 卡片，下一轮开始时关闭 |
+| turn/start、turn/end | 状态/结束通知 | 投影内用于归并，后端不保存轮次标记；一轮以错误结束，或正常结束但没有文字、图片或工具调用时，发一张不阻塞输入的 `execution_error` 卡片，下一轮开始时关闭。DSH 的 `conversationContinuation` 投影（0.2.2-rc.3 起）表示这次失败可以继续时，卡片带「继续」，回应后插件用空提示请 DSH 开启新一轮；更早的 DSH 没有这个投影，不显示该操作 |
 | compaction | `marker / compact` | 原始历史保留，不以压缩后上下文覆盖聊天记录 |
 | 其他内部信息事件 | 不输出 | 不生成兜底 notice |
 

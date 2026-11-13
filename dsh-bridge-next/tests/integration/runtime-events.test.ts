@@ -8,7 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { SessionId, type Session } from '@deepseek-ai/dsh-session'
-import { createAssistantMessage, createToolResultMessage, createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
+import { createAssistantMessage, createToolResultMessage, createUserMessage, LlmError, ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { LocalRouter, Mesh, MeshCallError, Router } from 'meshcall'
 import { bridgePath, nativeRuntime } from '../fixtures/native-runtime.js'
 import { corruptHistory } from '../fixtures/corrupt-history.js'
@@ -19,6 +19,7 @@ import type { NativeChange } from '../../src/host/dsh-runtime/native.js'
 import { projectHistory } from '../../src/host/dsh-runtime/history.js'
 import { nativeSessionId, sessionId } from '../../src/host/dsh-runtime/identity.js'
 import { RuntimeRouter } from '../../src/host/dsh-runtime/router.js'
+import { continuationRequestId } from '../../src/host/dsh-runtime/turn-outcome.js'
 
 async function until(check: () => boolean, label: string) {
   for (let n = 0; n < 400; n++) { if (check()) return; await delay(10) }
@@ -909,4 +910,92 @@ test('a failed turn or a turn without a reply opens an error card that the next 
     assert.deepEqual(await readNotices(), [])
     assert.deepEqual(stream.errors, [])
   } finally { router.close(); stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
+
+/** Fails the requests whose failure codes are queued, then replies like TextAdapter. */
+class FlakyAdapter extends TextAdapter {
+  failures: string[] = []
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    const code = this.failures.shift()
+    if (code === undefined) return yield* super.stream(options)
+    this.requests.push(options)
+    throw new LlmError('upstream unavailable', code)
+  }
+}
+
+test('a failure DSH can continue offers to continue on its card, without resending the message', { timeout: 30_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-turn-continue-'))
+  const adapter = new FlakyAdapter()
+  const fixture = await nativeRuntime(home, ctx => mountAgents(ctx, adapter))
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  const stream = follow(native)
+  const router = new RuntimeRouter({ native, query: fixture.ctx.sessionQuery, status: id => native.status(id) }, 'test')
+  const request = (method: string, params: Record<string, unknown>) => router.request(method, params, AbortSignal.timeout(5_000))
+  const id = SessionId(nativeSessionId('test', 'sess_continue'))
+  const params = { sessionId: 'sess_continue', externalSessionId: id }
+  type Notice = { noticeId: string, status: string, actions: { actionId: string }[], context: Record<string, unknown>,
+    metadata: { turnEndSeq: number } }
+  const cards = () => notifications(stream.ops()).filter(note => note.method === 'notice.upsert')
+    .map(note => note.params as unknown as Notice).filter(notice => notice.context.kind === 'execution_error')
+  const opened = (count: number) => until(() => cards().filter(card => card.status === 'open').length === count, `card ${count} opens`)
+  const readCards = async () => ((await request('getSessionNotices', params)) as { notices: Notice[] })
+    .notices.filter(notice => notice.context.kind === 'execution_error')
+  const send = (clientMessageId: string, content: string) => request('startTurn', { ...params, clientMessageId, content })
+  const respond = (noticeId: string) => request('respondInteraction', { ...params, noticeId, actionId: 'continue', inputData: {} })
+  const continued = (noticeId: string) => ({ ok: true, result: { resolved: true, noticeId, sessionId: 'sess_continue' } })
+  const unavailable = { ok: false, code: 'dsh_continue_unavailable', message: '这一轮已无法继续生成，请重新发送消息。' }
+  const idle = () => fixture.ctx.agents.get(id)!.whenIdle()
+  try {
+    await until(() => notifications(stream.ops()).some(note => note.method === 'session.inventory.complete'), 'baseline')
+    adapter.failures.push('SERVER')
+    assert.equal((await request('createAndStartSession', { sessionId: 'sess_continue', clientMessageId: 'first', content: '你好',
+      cwd: home, agentPreset: 'standard', selections: initialSelections }) as { accepted: boolean }).accepted, true)
+    await opened(1)
+    const failed = cards()[0]!
+    assert.deepEqual(failed.actions, [{ actionId: 'continue', label: '继续', style: 'primary' }])
+    assert.deepEqual((await readCards()).map(card => [card.noticeId, card.actions]), [[failed.noticeId, failed.actions]],
+      'a client that reloads can continue too')
+
+    assert.deepEqual(await respond(failed.noticeId), continued(failed.noticeId))
+    await until(() => adapter.requests.length === 2 && !!adapter.release, 'DSH retries the request in a new turn')
+    await until(() => cards().some(card => card.noticeId === failed.noticeId && card.status === 'closed'), 'the new turn closes the card')
+    assert.deepEqual(await respond(failed.noticeId), continued(failed.noticeId), 'a repeated response is a no-op')
+    adapter.release!()
+    await idle()
+    assert.equal(adapter.requests.length, 2)
+    const events = fixture.ctx.sessions.get(id)!.snapshotEvents()
+    const retries = events.flatMap(event => event.type === 'user/message' && event.data.source.kind === 'retry' ? [event.data] : [])
+    assert.deepEqual(retries.map(message => [message.content, (message.source as { rpcId?: string }).rpcId]),
+      [[[], continuationRequestId(id, failed.metadata.turnEndSeq)]])
+    assert.deepEqual(projectHistory(await native.read(id), 'sess_continue').filter(item => item.role === 'user')
+      .map(item => item.content.text), ['你好'], 'the empty retry message never shows as a bubble')
+    assert.deepEqual(await readCards(), [])
+
+    // Resending instead of continuing makes the card stale, even while a newer failure can continue.
+    adapter.failures.push('TIMEOUT', 'SERVER')
+    await send('second', '再试一次')
+    await opened(2)
+    const stale = cards().at(-1)!
+    assert.deepEqual(stale.actions.map(action => action.actionId), ['continue'])
+    await send('third', '换个说法')
+    await opened(3)
+    const latest = cards().at(-1)!
+    assert.notEqual(latest.noticeId, stale.noticeId)
+    assert.deepEqual(await respond(stale.noticeId), unavailable)
+    assert.equal(adapter.requests.length, 4, 'the stale card never continues the newer failure')
+    assert.deepEqual(await respond(latest.noticeId), continued(latest.noticeId))
+    await until(() => adapter.requests.length === 5 && !!adapter.release, 'the latest failure continues')
+    adapter.release!()
+    await idle()
+
+    adapter.failures.push('AUTH')
+    await send('fourth', '最后一次')
+    await opened(4)
+    const final = cards().at(-1)!
+    assert.deepEqual(final.actions, [], 'DSH does not continue an authentication failure')
+    assert.deepEqual((await readCards()).map(card => card.actions), [[]])
+    assert.deepEqual(await respond(final.noticeId), unavailable)
+    assert.equal(adapter.requests.length, 6)
+    assert.deepEqual(stream.errors, [])
+  } finally { adapter.release?.(); router.close(); stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })

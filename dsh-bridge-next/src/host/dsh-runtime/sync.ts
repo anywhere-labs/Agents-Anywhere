@@ -353,7 +353,7 @@ export class SyncFeed {
    * turn closes the previous one. Both read the live log, so a card the Bridge
    * opened before a restart is still closed.
    */
-  private outcomeNotice(id: string, event: SessionEvent): ReturnType<typeof turnOutcomeNotice> | undefined {
+  private async outcomeNotice(id: string, event: SessionEvent): Promise<ReturnType<typeof turnOutcomeNotice> | undefined> {
     const events = this.native.ctx.sessions.get(id as SessionId)?.snapshotEvents()
     if (!events) return undefined
     if (event.type === 'turn/start') {
@@ -364,7 +364,8 @@ export class SyncFeed {
     if (!outcome) return undefined
     this.native.diagnostics.log('warn', outcome.kind === 'failed' ? 'turn.failed' : 'turn.no_reply', { streamId: this.id, sessionId: id,
       reason: outcome.reason, steps: outcome.steps, ...(outcome.error ? { code: outcome.error.code } : {}) })
-    return turnOutcomeNotice(this.namespace, id, outcome)
+    const continuable = outcome.kind === 'failed' && await this.native.continuable(id as SessionId, outcome.endSeq)
+    return turnOutcomeNotice(this.namespace, id, { ...outcome, continuable })
   }
   private async state(id: string, snapshot?: SessionLogSnapshot & { bridgeRevision?: string }): Promise<void> {
     if (!this.published.has(id) || !await this.native.visible(id)) return
@@ -551,7 +552,7 @@ export class SyncFeed {
               : ['aborted', 'interrupted'].includes(change.event.data.reason.kind) ? 'interrupted' : 'completed',
           }])
           if (change.event.type === 'turn/start' || change.event.type === 'turn/end') {
-            const notice = this.outcomeNotice(id, change.event)
+            const notice = await this.outcomeNotice(id, change.event)
             if (notice) outcomes.push([id, notice])
           }
           if (['turn/start', 'turn/end', 'approval/asked', 'approval/decided', 'model/selection', 'request/header',

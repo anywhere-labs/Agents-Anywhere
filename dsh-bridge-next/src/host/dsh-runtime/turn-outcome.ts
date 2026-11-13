@@ -1,5 +1,5 @@
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { itemId, sessionId } from './identity.js'
+import { itemId, sessionId, userMessageId } from './identity.js'
 import { record } from './types.js'
 
 /**
@@ -16,6 +16,21 @@ export interface TurnOutcome {
   /** Steps (model calls) the turn entered; 0 means the model was never called. */
   steps: number
   error?: { code: string, message: string }
+  /** DSH would continue this failed turn without a new message. */
+  continuable?: boolean
+}
+
+/** Card action that asks DSH to continue a failed turn instead of resending the message. */
+export const CONTINUE_ACTION = 'continue'
+
+/** Card identity of the turn closed by the `turn/end` at `endSeq`. */
+export function turnOutcomeNoticeId(platformId: string, endSeq: number): string {
+  return itemId(platformId, 'turn-outcome', String(endSeq))
+}
+
+/** Prompt identity that continues the turn closed at `endSeq`; DSH admits it once. */
+export function continuationRequestId(externalId: string, endSeq: number): string {
+  return userMessageId(externalId, `continue:${endSeq}`)
 }
 
 /** Reasons that end a turn on the user's request or by bookkeeping, never by surprise. */
@@ -74,12 +89,14 @@ export function latestTurnOutcome(events: readonly SessionEvent[], beforeSeq = I
 /**
  * A non-blocking error card, like Codex's failed-turn notice: the turn is
  * already over, so the composer stays usable and the next turn closes it.
+ * A failure DSH can continue offers to do so without resending the message.
  */
 export function turnOutcomeNotice(namespace: string, externalId: string, outcome: TurnOutcome, status: 'open' | 'closed' = 'open') {
   const platformId = sessionId(namespace, externalId)
   const failed = outcome.kind === 'failed'
+  const continuable = status === 'open' && outcome.continuable === true
   return {
-    noticeId: itemId(platformId, 'turn-outcome', String(outcome.endSeq)), sessionId: platformId, runtime: 'dsh',
+    noticeId: turnOutcomeNoticeId(platformId, outcome.endSeq), sessionId: platformId, runtime: 'dsh',
     type: 'interaction', interactionType: 'execution_error',
     title: failed ? 'DSH 本轮执行失败' : 'DSH 本轮没有回复',
     message: failed
@@ -87,7 +104,8 @@ export function turnOutcomeNotice(namespace: string, externalId: string, outcome
       : outcome.steps === 0
         ? '本轮已结束，但没有调用模型，也没有生成回复。可以重新发送这条消息。'
         : '本轮已结束，但模型没有生成任何回复。可以重新发送或换个说法再试。',
-    severity: failed ? 'error' : 'warning', status, responseRequired: false, blocking: null, actions: [],
+    severity: failed ? 'error' : 'warning', status, responseRequired: false, blocking: null,
+    actions: continuable ? [{ actionId: CONTINUE_ACTION, label: '继续', style: 'primary' }] : [],
     source: { runtime: 'dsh', component: 'dsh.turn' },
     context: { kind: 'execution_error', outcome: outcome.kind, turnEndReason: outcome.reason, steps: outcome.steps,
       ...(outcome.error ? { error: outcome.error } : {}) },

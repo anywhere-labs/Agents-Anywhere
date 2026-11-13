@@ -12,7 +12,7 @@ import { sessionId, nativeSessionId } from './identity.js'
 import type { NativeRuntime } from './native.js'
 import { lastTurnEndKind } from './native.js'
 import { SyncFeed, type SyncTransport } from './sync.js'
-import { turnOutcomeNotice } from './turn-outcome.js'
+import { CONTINUE_ACTION, turnOutcomeNotice } from './turn-outcome.js'
 import type { TimelineItem } from './types.js'
 
 export interface SessionReader {
@@ -237,6 +237,7 @@ export class RuntimeRouter {
         const id = await this.resolve(params, signal)
         if (!this.reader.native || typeof params.noticeId !== 'string' || typeof params.actionId !== 'string') throw new BridgeError('INVALID_PARAMS', 'A question and action are required.')
         if (this.reader.native.approvals.owns(this.namespace, id, params.noticeId)) return this.reader.native.approvals.respond(this.namespace, id, params.noticeId, params.actionId)
+        if (params.actionId === CONTINUE_ACTION) return this.reader.native.continueTurn(this.namespace, id, params.noticeId, signal)
         return this.reader.native.questions.respond(this.namespace, id, params.noticeId, params.actionId, params.inputData)
       }
       case 'getSessionCapabilities': {
@@ -260,7 +261,9 @@ export class RuntimeRouter {
   private async turnOutcomeNotices(native: NativeRuntime, id: SessionId) {
     try {
       const outcome = (await native.stateFacts(id)).turnOutcome
-      return outcome ? [turnOutcomeNotice(this.namespace, id, outcome)] : []
+      if (!outcome) return []
+      const continuable = outcome.kind === 'failed' && await native.continuable(id, outcome.endSeq)
+      return [turnOutcomeNotice(this.namespace, id, { ...outcome, continuable })]
     } catch (error) {
       native.diagnostics.log('warn', 'session.turn_outcome_unavailable', { sessionId: id }, error)
       return []
