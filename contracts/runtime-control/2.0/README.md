@@ -132,8 +132,9 @@ the bound or replace a timestamp revision with an unbounded content hash.
 `code` and human-readable `message`; optional provider details are preserved.
 A non-error status may carry an optional `phase` (`code`, `message`, optional
 `retryable`) describing the step the instance is in, for example
-`{"code": "syncing", "message": "正在同步 DSH 会话…"}` while `status` is
-`starting`. A phase is informational and never implies a fault; only `status`
+`{"code": "waiting_bridge", ...}` while `status` is `starting`, or
+`{"code": "syncing", "message": "正在同步 DSH 会话…"}` while a `running` DSH
+instance rebuilds its session baseline. A phase is informational and never implies a fault; only `status`
 decides whether the instance is usable. All timestamps use RFC 3339 date-time
 strings.
 

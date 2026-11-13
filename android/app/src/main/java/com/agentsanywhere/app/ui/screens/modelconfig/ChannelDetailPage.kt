@@ -33,7 +33,6 @@ import com.agentsanywhere.app.feature.modelconfig.usedBy
 import com.agentsanywhere.app.feature.modelconfig.usersOf
 import com.agentsanywhere.app.feature.modelconfig.uses
 import com.agentsanywhere.app.model.AgentDevice
-import com.agentsanywhere.app.model.CHANNEL_NATIVE
 import com.agentsanywhere.app.model.ModelChannelState
 import com.agentsanywhere.app.model.ModelConfigOverview
 import com.agentsanywhere.app.model.ModelProfile
@@ -90,12 +89,8 @@ internal fun ChannelDetailPage(
         )
     }
     when (channelKind(channelId)) {
-        ChannelKind.Native -> {
-            MutedText(stringResource(R.string.model_config_native_description), Modifier.padding(horizontal = 4.dp))
-            applyCard(true)
-            // With no runtime on it, applying is all the page needs.
-            if (channel.rowsFor(CHANNEL_NATIVE).isNotEmpty()) runtimesBlock(true)
-        }
+        // Not listed, so never opened: signing out of Tokens Anywhere switches back to it.
+        ChannelKind.Native -> Unit
         ChannelKind.Tokens -> overview.tokens?.let { tokens ->
             TokensChannelDetail(
                 tokens = tokens,
@@ -103,7 +98,6 @@ internal fun ChannelDetailPage(
                 channel = channel,
                 controller = controller,
                 pendingBar = pendingBar,
-                applyCard = applyCard,
                 runtimesBlock = runtimesBlock,
                 exiting = exiting,
                 exited = exited,

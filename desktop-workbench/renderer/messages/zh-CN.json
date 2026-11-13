@@ -1387,14 +1387,24 @@
       "addDevice": "添加设备"
     },
     "tokensAnywhere": {
+      "title": "Tokens Anywhere",
       "headline": "所有模型，\n一个密钥。",
       "description": "用你熟悉的 SDK，以 OpenAI、Anthropic 或 Gemini 格式调用模型。\n几分钟接入 Claude Code、Codex 或 DeepSeek Harness。",
-      "getApiKey": "获取 API 密钥",
+      "authorize": "授权 Tokens Anywhere",
+      "reauthorize": "重新授权",
+      "authorizeHint": "授权后，这里会显示你的 Tokens Anywhere 控制台并自动应用其网关，相关 Runtime 的运行中任务会被中断。",
+      "reauthHint": "授权已失效，重新授权后才能打开控制台。",
+      "waiting": "正在浏览器中等待授权…",
+      "loadFailed": "暂时打不开 Tokens Anywhere 控制台。",
+      "retry": "重试",
+      "reload": "重新载入",
+      "openInBrowser": "在浏览器中打开",
       "hideFromSidebar": "在侧边栏隐藏",
       "showInSidebar": "在侧边栏显示",
       "hiddenToast": "已在侧边栏隐藏“Tokens Anywhere”，可在设置 → 外观中重新显示。",
       "shownToast": "已在侧边栏显示“Tokens Anywhere”。",
-      "unavailable": "Tokens Anywhere 暂未配置。"
+      "unavailable": "Tokens Anywhere 暂未配置。",
+      "secretMissing": "服务器还没有配置 AGENT_SERVER_SECRET（至少 32 个字符）。请管理员配置后再保存 Key 或链接 Tokens Anywhere。"
     }
   },
   "desktopConnector": {
@@ -1900,7 +1910,7 @@
           "secret_unconfigured": "服务器还没有配置 AGENT_SERVER_SECRET（至少 32 个字符），暂时不能保存 Key 或链接账号。",
           "secret_required": "更换了地址，请重新填写 API Key。",
           "profile_changed": "这份配置已在其他地方修改，请刷新后再试。",
-          "profile_in_use": "这份配置已被应用或仍有 Runtime 在用，请先切换到其他渠道。",
+          "profile_in_use": "这份配置已被应用或仍有 Runtime 在用，请先切换到其他网关。",
           "profile_read_only": "这份配置由来源管理，不能在这里修改。",
           "profile_detached": "这份配置已断开，不能再使用。",
           "busy": "有任务正在运行，允许中断后才能应用。",
@@ -1926,9 +1936,9 @@
           "models_required": "这个 Runtime 需要至少导入一个模型。",
           "key_rotated": "Key 已轮换，请重新应用这份配置。",
           "key_not_kept": "Tokens Anywhere 没有保存本实例的 Key，无法再次取回。请让 Tokens Anywhere 的部署者设置 TOKENS_SECRETS_KEY，然后断开并重新链接。",
-          "channel_not_found": "这个渠道已不存在，请刷新后再试。",
-          "channel_in_use": "还有 Runtime 想要或正在使用 Tokens Anywhere 渠道，请先切换到其他渠道。",
-          "runtime_switching": "这个 Runtime 正在切换渠道，请稍后再试。",
+          "channel_not_found": "这个网关已不存在，请刷新后再试。",
+          "channel_in_use": "还有 Runtime 想要或正在使用 Tokens Anywhere 网关，请先切换到其他网关。",
+          "runtime_switching": "这个 Runtime 正在切换网关，请稍后再试。",
           "gateway_address_not_allowed": "这个地址在内网，服务器不会访问，无法自动识别。",
           "gateway_unreachable": "服务器连不上这个地址，请检查地址。",
           "gateway_key_rejected": "模型服务拒绝了这个 Key，请检查后重试。",
@@ -2014,42 +2024,39 @@
         },
         "channel": {
           "link": "链接账户",
-          "title": "Tokens Anywhere 渠道",
-          "description": "链接 Tokens Anywhere 账户后，可以应用 Tokens Anywhere 渠道，各设备的 Runtime 会自动接入 Tokens Anywhere 提供的模型。",
+          "title": "Tokens Anywhere 网关",
+          "description": "链接 Tokens Anywhere 账户后自动应用其网关，未单独指定网关的 Runtime 会切换，运行中的任务会被中断。",
           "waiting": "等待浏览器授权"
         },
         "channels": {
-          "title": "模型渠道",
+          "title": "模型网关",
           "anywhere": "Tokens Anywhere",
           "manual": "模型服务",
           "detached": "已断开",
           "connection": "连接"
         },
-        "rotated": "Key 已轮换，正在写入使用 Tokens Anywhere 渠道的 Runtime。",
+        "rotated": "Key 已轮换，正在写入使用 Tokens Anywhere 网关的 Runtime。",
         "deleteInUse": "这份配置已被应用、被某个 Runtime 指定或仍在使用，不能删除。",
         "current": {
-          "title": "应用渠道",
-          "description": "立即应用此渠道，运行中的任务会被中断。没有单独指定渠道的 Runtime 都会使用它。",
+          "title": "应用网关",
+          "description": "立即应用此网关，运行中的任务会被中断。没有单独指定网关的 Runtime 都会使用它。",
           "native": "设备自带配置",
           "makeCurrent": "应用",
           "inUse": "已应用",
-          "switched": "渠道已应用，各 Runtime 正在切换。"
-        },
-        "native": {
-          "description": "不写入模型连接，Runtime 使用设备上它自己的模型配置。"
+          "switched": "网关已应用，各 Runtime 正在切换。"
         },
         "runtimes": {
           "title": "Runtime",
-          "count": "{count} 个 Runtime 使用这个渠道",
+          "count": "{count} 个 Runtime 使用这个网关",
           "switching": "正在切换",
           "attention": "有 Runtime 需要处理"
         },
         "status": {
-          "none": "还没有 Runtime 使用这个渠道。",
+          "none": "还没有 Runtime 使用这个网关。",
           "running": "正在切换 {applied}/{total} 个 Runtime",
           "done": "已在 {count} 个 Runtime 生效",
           "attention": "{applied}/{total} 已生效",
-          "restored": "{count} 个切换失败，已恢复原渠道",
+          "restored": "{count} 个切换失败，已恢复原网关",
           "failed": "{count} 个需要处理",
           "waitingOnline": "{count} 台设备离线，上线后切换"
         },
@@ -2058,8 +2065,8 @@
           "offline": "离线",
           "unsupported": "{count} 个 Runtime 不支持",
           "using": "当前使用「{name}」",
-          "follow": "跟随已应用渠道",
-          "channelFor": "{runtime} 使用的渠道",
+          "follow": "跟随已应用网关",
+          "channelFor": "{runtime} 使用的网关",
           "nativeGlobalTitle": "修改 Runtime 自身的全局配置？",
           "nativeGlobalDescription": "「{runtime}」没有 AA 管理的独立实例。使用「{channel}」会改写它自身的全局配置，也会影响不经过 AA 使用它的地方。",
           "nativeGlobalConfirm": "确认修改"
@@ -2070,7 +2077,7 @@
           "waiting_online": "设备离线，上线后切换",
           "switching": "切换中",
           "restoring": "正在恢复原配置",
-          "restored": "切换失败，已恢复原渠道",
+          "restored": "切换失败，已恢复原网关",
           "failed": "切换失败，需要处理",
           "unsupported": "不支持"
         },
@@ -2085,10 +2092,10 @@
           "format_unsupported": "没有共同支持的协议",
           "mode_unsupported": "当前模式不能使用模型连接",
           "models_required": "需要至少导入一个模型",
-          "model_unavailable": "所选模型不在这个渠道里",
+          "model_unavailable": "所选模型不在这个网关里",
           "confirmation_required": "会修改它自身的全局配置，需要单独指定并确认",
-          "connector_upgrade_required": "请升级 Connector 后同步渠道",
-          "profile_unavailable": "渠道已不可用",
+          "connector_upgrade_required": "请升级 Connector 后同步网关",
+          "profile_unavailable": "网关已不可用",
           "validate_failed": "新配置没有通过校验",
           "start_failed": "Runtime 没能启动",
           "verify_failed": "Runtime 回报的连接与目标不一致",
@@ -2102,9 +2109,9 @@
         "detecting": "正在识别…",
         "manualProtocols": "也可以手动选择协议并填写模型："
       },
-      "modelConfigsTitle": "模型渠道",
+      "modelConfigsTitle": "模型网关",
       "modelsGroup": "模型",
-      "channelSwitchTitle": "渠道切换"
+      "channelSwitchTitle": "网关切换"
     },
     "team": {
       "title": "团队",
@@ -2626,6 +2633,7 @@
     "attachments_too_large": "附件超过上限：每条消息最多 16 个，总大小不超过 32 MiB。",
     "attachments_unsupported": "当前执行者不支持首条附件。",
     "capability_unavailable": "该会话当前不能执行此操作。",
+    "claude_resume_no_response": "Claude 恢复会话后没有回复这条消息。",
     "command_unavailable": "命令目录已变化，请刷新。",
     "configuration_changed": "配置选项已不可用。",
     "configuration_conflict": "选择之间不一致，请重新选择模型和推理强度。",

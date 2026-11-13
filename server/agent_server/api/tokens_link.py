@@ -10,6 +10,7 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
+    Response,
 )
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -37,6 +38,13 @@ class RotateKeyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     allowInterrupt: bool = False
+
+
+class EmbedTicketRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # The console page to open; the user returns there when an embed session expires.
+    next: str = Field(default="/console/", max_length=512)
 
 
 class TokensSettingsRequest(BaseModel):
@@ -127,6 +135,18 @@ async def get_tokens_usage(
 ) -> dict[str, Any]:
     try:
         return await service.usage(user_id=user_id, days=days)
+    except TokensLinkError as exc:
+        _raise(exc)
+
+
+@router.post("/integrations/tokens/embed-ticket")
+async def create_tokens_embed_ticket(
+    payload: EmbedTicketRequest, response: Response, service: Service, user_id: UserId
+) -> dict[str, Any]:
+    """A single-use address that opens the linked account's console in an iframe."""
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await service.embed_ticket(user_id=user_id, next_path=payload.next)
     except TokensLinkError as exc:
         _raise(exc)
 

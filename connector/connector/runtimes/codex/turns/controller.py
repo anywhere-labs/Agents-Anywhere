@@ -12,11 +12,15 @@ from connector.runtime_protocol import (
     RuntimePermissionCatalog,
     RuntimeSessionSourceStateCache,
     RuntimeSessionStateCache,
+    SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
 from connector.runtimes.codex.domain.pending_messages import (
     PendingClientMessageRegistry,
+)
+from connector.runtimes.codex.notifications.turn_lifecycle import (
+    CodexTurnLifecycleHandler,
 )
 from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
@@ -44,6 +48,7 @@ class CodexTurnController:
     list_permission_catalog: ListPermissionCatalog
     pending_messages: PendingClientMessageRegistry
     timeline: CodexTimelineAccumulator
+    turn_lifecycle: CodexTurnLifecycleHandler | None = None
     actions: CodexTurnActions = field(init=False)
     commands: CodexCommandController = field(init=False)
     interactions: CodexInteractionController = field(init=False)
@@ -60,6 +65,7 @@ class CodexTurnController:
             notices=self.notices,
             ensure_started=self.ensure_started,
             pending_messages=self.pending_messages,
+            turn_lifecycle=self.turn_lifecycle,
             list_model_catalog=self.list_model_catalog,
             list_permission_catalog=self.list_permission_catalog,
         )
@@ -115,6 +121,11 @@ class CodexTurnController:
             attachments=attachments,
             client_message_id=client_message_id,
         )
+
+    async def reconcile_history_state(
+        self, state: SessionState | None, expected: SessionState | None,
+    ) -> SessionState | None:
+        return await self.actions.reconcile_history_state(state, expected)
 
     async def start_turn(
         self,

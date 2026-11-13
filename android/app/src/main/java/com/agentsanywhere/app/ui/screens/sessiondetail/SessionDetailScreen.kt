@@ -83,9 +83,14 @@ import com.agentsanywhere.app.R
 import com.agentsanywhere.app.api.AttachmentTransferException
 import com.agentsanywhere.app.api.AttachmentTransferFailure
 import com.agentsanywhere.app.api.UploadFilePart
+import com.agentsanywhere.app.feature.files.FilePreviewTarget
 import com.agentsanywhere.app.feature.files.FilesController
 import com.agentsanywhere.app.feature.files.MAX_INLINE_WORKSPACE_IMAGE_BYTES
+import com.agentsanywhere.app.feature.files.opensInFilePreview
+import com.agentsanywhere.app.feature.files.remoteFileRequest
 import com.agentsanywhere.app.feature.files.resolvePathInWorkspace
+import com.agentsanywhere.app.feature.files.sessionFileLinkPath
+import com.agentsanywhere.app.feature.files.windowsDriveRoot
 import com.agentsanywhere.app.feature.realtime.SessionRealtimeController
 import com.agentsanywhere.app.feature.sessiondetail.DownloadedAttachment
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
@@ -151,6 +156,7 @@ import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.runtimePermissionLocalizer
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.agentsanywhere.app.ui.screens.files.RemoteFilePreviewDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -183,7 +189,63 @@ fun SessionDetailScreen(
     filesController: FilesController,
     terminalPool: RemoteTerminalPool,
     composerDraftStore: SessionComposerDraftStore,
+    backHandlingEnabled: Boolean = true,
     onSessionChanged: (AgentSession) -> Unit = {},
+) {
+    androidx.compose.runtime.key(controller.visitKey(), sessionId, preparedSession?.localSessionId) {
+        val visit = remember { sessionId?.let(controller::openVisit) }
+        val active = remember { AtomicBoolean(true) }
+        DisposableEffect(Unit) { onDispose { active.set(false) } }
+        SessionDetailVisit(
+            navigate = navigate,
+            sessionId = sessionId,
+            initialSession = initialSession,
+            preparedSession = preparedSession,
+            onCreatePreparedSession = onCreatePreparedSession,
+            onPreparedSessionCreated = { if (active.get()) onPreparedSessionCreated(it) },
+            onLoadPreparedModelCatalog = onLoadPreparedModelCatalog,
+            onLoadPreparedPermissionCatalog = onLoadPreparedPermissionCatalog,
+            devices = devices,
+            controller = controller,
+            realtimeController = realtimeController,
+            filesController = filesController,
+            terminalPool = terminalPool,
+            composerDraftStore = composerDraftStore,
+            backHandlingEnabled = backHandlingEnabled,
+            onSessionChanged = { if (active.get() && (visit == null || controller.isCurrentVisit(visit))) onSessionChanged(it) },
+            visit = visit,
+            isVisitActive = { active.get() && (visit == null || controller.isCurrentVisit(visit)) },
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SessionDetailVisit(
+    navigate: (AppDestination) -> Unit,
+    sessionId: String?,
+    initialSession: AgentSession?,
+    preparedSession: NewSessionDraft? = null,
+    onCreatePreparedSession: suspend (NewSessionCreateDraft) -> NewSessionCreateOutcome = {
+        NewSessionCreateOutcome.Failed(IllegalStateException("Prepared session creation is unavailable."))
+    },
+    onPreparedSessionCreated: (AgentSession) -> Unit = {},
+    onLoadPreparedModelCatalog: suspend (String, String) -> Result<NewSessionModelCatalog> = { _, _ ->
+        Result.failure(IllegalStateException("Model catalog is unavailable."))
+    },
+    onLoadPreparedPermissionCatalog: suspend (String, String) -> Result<NewSessionPermissionCatalog> = { _, _ ->
+        Result.failure(IllegalStateException("Permission catalog is unavailable."))
+    },
+    devices: List<AgentDevice>,
+    controller: SessionDetailController,
+    realtimeController: SessionRealtimeController,
+    filesController: FilesController,
+    terminalPool: RemoteTerminalPool,
+    composerDraftStore: SessionComposerDraftStore,
+    backHandlingEnabled: Boolean,
+    onSessionChanged: (AgentSession) -> Unit = {},
+    visit: com.agentsanywhere.app.feature.sessiondetail.SessionVisit?,
+    isVisitActive: () -> Boolean,
 ) {
     var planningCreation by remember(sessionId, preparedSession?.localSessionId) { mutableStateOf(false) }
     var goalState by remember(sessionId){mutableStateOf<com.agentsanywhere.app.api.RemoteGoalState?>(null)}
@@ -192,7 +254,7 @@ fun SessionDetailScreen(
     var goalReplacement by remember(sessionId){mutableStateOf<Pair<String,List<com.agentsanywhere.app.feature.sessiondetail.TimelineAttachment>>?>(null)}
     LaunchedEffect(sessionId) {
         val id=sessionId
-        if(id!=null)while(true){controller.loadGoal(id).onSuccess{goalState=it};delay(3000)}
+        if(id!=null)while(isVisitActive()){controller.loadGoal(id).onSuccess{if(isVisitActive())goalState=it};delay(3000)}
     }
 
     var planningBusy by remember(sessionId) { mutableStateOf(false) }
@@ -248,6 +310,7 @@ fun SessionDetailScreen(
     var shareScope by remember(sessionId) { mutableStateOf(SessionShareScope.Reply) }
     var shareBusy by remember(sessionId) { mutableStateOf(false) }
     var pendingOpenFilePath by remember(sessionId) { mutableStateOf<String?>(null) }
+    var filePreviewTarget by remember(sessionId) { mutableStateOf<FilePreviewTarget?>(null) }
     var terminalVerticalDragActive by remember(sessionId) { mutableStateOf(false) }
     var composerHeightPx by remember { mutableStateOf(0) }
     var readOnlyComposerTapCount by remember(sessionId) { mutableStateOf(0) }
@@ -266,7 +329,7 @@ fun SessionDetailScreen(
             ?.let(controller::optimisticMessages)
             .orEmpty()
         mutableStateOf(
-            SessionDetailState(
+            visit?.cached ?: SessionDetailState(
                 meta = SessionMeta(
                     session = initialSession?.takeIf { preparedSession != null || it.id == sessionId },
                     isLoading = sessionId != null,
@@ -278,6 +341,23 @@ fun SessionDetailScreen(
                 sending = optimisticMessages.hasPendingOptimisticSend(),
             ),
         )
+    }
+
+    androidx.compose.runtime.SideEffect { visit?.latestState = state }
+    DisposableEffect(visit) {
+        onDispose { if (visit != null) controller.sessionCache.close(visit, state) }
+    }
+
+    fun invalidateAccess(error: Throwable): Boolean {
+        if (error !is com.agentsanywhere.app.api.ApiException || error.statusCode !in listOf(403, 404)) return false
+        if (!isVisitActive()) return true
+        if (visit != null) controller.sessionCache.invalidate(visit)
+        goalState = null
+        planReader.value = null
+        showRuntimeSettings = false
+        state = SessionDetailState(meta = SessionMeta(errorMessage = error.message),
+            timeline = SessionTimelineState(errorMessage = error.message))
+        return true
     }
 
     fun showError(message: String) {
@@ -414,8 +494,23 @@ fun SessionDetailScreen(
     }
 
     fun openReferencedFile(path: String) {
-        val trimmed = path.trim()
+        val raw = path.trim()
+        // Artifacts may report a file:// URI; Markdown links arrive already decoded.
+        val trimmed = if (raw.startsWith("file:", ignoreCase = true)) sessionFileLinkPath(raw) ?: raw else raw
         if (trimmed.isBlank()) return
+        val session = state.session
+        if (session != null && opensInFilePreview(trimmed)) {
+            val workspace = session.cwd?.takeIf { it.isNotBlank() }
+            val deviceOs = currentDevices.firstOrNull { it.id == session.connectorId }?.deviceOs
+                ?: workspace?.takeIf { windowsDriveRoot(it) != null }?.let { "windows" }
+            val request = remoteFileRequest(targetPath = trimmed, deviceOs = deviceOs, fallbackRoot = workspace)
+            filePreviewTarget = FilePreviewTarget(
+                connectorId = session.connectorId,
+                root = request.root,
+                path = request.path,
+            )
+            return
+        }
         pendingOpenFilePath = trimmed
         scope.launch { pagerState.animateScrollToPage(1) }
     }
@@ -451,6 +546,7 @@ fun SessionDetailScreen(
         nextAttachments: List<PendingAttachment>,
         clientMessageId: String? = retryClientMessageId,
     ) {
+        if (!isVisitActive()) return
         composerDraftStore.save(composerDraftSessionId, nextDraft, nextAttachments, clientMessageId)
     }
 
@@ -467,6 +563,7 @@ fun SessionDetailScreen(
     }
 
     fun clearComposerDraft() {
+        if (!isVisitActive()) return
         draft = ""
         attachments = emptyList()
         composerDraftStore.clear(composerDraftSessionId)
@@ -660,31 +757,41 @@ fun SessionDetailScreen(
         }
     }
 
-    suspend fun loadInitialSnapshot() {
-        val id = sessionId ?: return
-        if (!appVisible) return
-        if (!refetchInFlight.compareAndSet(false, true)) return
+    suspend fun loadInitialSnapshot(replaceHistory: Boolean = false): Boolean {
+        val id = sessionId ?: return false
+        if (!appVisible || !isVisitActive()) return false
+        if (!refetchInFlight.compareAndSet(false, true)) return false
         val hadInitializedState = state.initialized
         try {
             state = state.beginSnapshotLoad(clearErrors = !hadInitializedState)
             val requestState = state
-            controller.loadInitialSnapshot(id, devices, requestState).fold(
+            return controller.loadInitialSnapshot(id, devices, requestState).fold(
                 onSuccess = { loaded ->
+                    if (!isVisitActive()) return@fold false
                     if (!appVisible) {
                         state = state.failSnapshotLoad(null)
+                        false
                     } else {
-                        state = controller.mergeSnapshotWithLiveState(id, loaded, state, requestState)
+                        state = controller.mergeSnapshotWithLiveState(id, loaded, state, requestState, replaceHistory)
                             .completeSnapshotLoad()
                         state.session?.let(onSessionChanged)
+                        true
                     }
                 },
                 onFailure = {
+                    if (!isVisitActive()) return@fold false
+                    if (replaceHistory) {
+                        state = state.failSnapshotLoad(null)
+                        throw it
+                    }
+                    if (invalidateAccess(it)) return@fold false
                     if (!appVisible) {
                         state = state.failSnapshotLoad(null)
                     } else {
                         val initialLoadError = context.getString(R.string.session_load_messages_failed)
                         state = state.failSnapshotLoad(initialLoadError.takeUnless { hadInitializedState })
                     }
+                    false
                 },
             )
         } finally {
@@ -694,7 +801,7 @@ fun SessionDetailScreen(
 
     fun loadOlderMessages() {
         val id = sessionId ?: return
-        if (!appVisible || !state.hasMore || state.timeline.loadingOlder) return
+        if (!appVisible || !state.hasMore || state.timeline.loadingOlder || refetchInFlight.get()) return
         if (!olderInFlight.compareAndSet(false, true)) return
         val beforeOrderSeq = state.timeline.orderingItems
             .minOfOrNull { it.orderSeq }
@@ -706,6 +813,7 @@ fun SessionDetailScreen(
             )
             return
         }
+        val historyGeneration = state.timeline.historyGeneration
         state = state.copy(
             timeline = state.timeline.copy(loadingOlder = true, historyErrorMessage = null),
             actionError = null,
@@ -714,10 +822,12 @@ fun SessionDetailScreen(
             try {
                 controller.loadOlder(id, beforeOrderSeq)
                     .onSuccess { older ->
-                        if (!appVisible) return@onSuccess
-                        state = controller.applyOlder(id, state, older)
+                        if (!isVisitActive() || !appVisible) return@onSuccess
+                        state = controller.applyOlder(id, state, older, historyGeneration)
                     }
                     .onFailure { error ->
+                        if (!isVisitActive() || invalidateAccess(error)) return@onFailure
+                        if (state.timeline.historyGeneration != historyGeneration) return@onFailure
                         val message = error.message ?: context.getString(R.string.session_load_messages_failed)
                         state = state.copy(
                             timeline = state.timeline.copy(
@@ -1151,7 +1261,7 @@ fun SessionDetailScreen(
         }
     }
 
-    BackHandler {
+    BackHandler(enabled = backHandlingEnabled) {
         if (pagerState.currentPage == 1) {
             scope.launch { pagerState.animateScrollToPage(0) }
         } else {
@@ -1211,7 +1321,7 @@ fun SessionDetailScreen(
             sessionId = id,
             cursor = { withContext(Dispatchers.Main.immediate) { state.realtime.cursor } },
             onEvents = { events ->
-                if (sessionId != id || !appVisible) return@start
+                if (!isVisitActive() || sessionId != id || !appVisible) return@start
                 withContext(Dispatchers.Main.immediate) {
                     for(event in events) {
                         val observed=event.payload.goal
@@ -1227,7 +1337,7 @@ fun SessionDetailScreen(
             },
             onCursorAdvanced = { cursor ->
                 withContext(Dispatchers.Main.immediate) {
-                    if (sessionId == id) {
+                    if (isVisitActive() && sessionId == id) {
                         state = state.copy(
                             realtime = state.realtime.copy(
                                 cursor = com.agentsanywhere.app.feature.sessiondetail.laterEventCursor(
@@ -1240,16 +1350,24 @@ fun SessionDetailScreen(
                 }
             },
             onSnapshotRequired = { _ ->
-                if (sessionId == id && appVisible) {
-                    withContext(Dispatchers.Main.immediate) { loadInitialSnapshot() }
+                withContext(Dispatchers.Main.immediate) {
+                    if (!isVisitActive() || !appVisible) throw kotlinx.coroutines.CancellationException()
+                    check(loadInitialSnapshot(replaceHistory = true)) {
+                        context.getString(R.string.session_load_messages_failed)
+                    }
                 }
             },
             onRuntimeRefreshRequired = { connectionGeneration, refreshGeneration ->
-                if (sessionId == id && appVisible) {
+                if (isVisitActive() && sessionId == id && appVisible) {
                     val requestState = withContext(Dispatchers.Main.immediate) { state }
-                    val refreshed = controller.refreshRuntimeLiveDomains(id, requestState)
+                    val refreshed = try {
+                        controller.refreshRuntimeLiveDomains(id, requestState)
+                    } catch (error: com.agentsanywhere.app.api.ApiException) {
+                        withContext(Dispatchers.Main.immediate) { invalidateAccess(error) }
+                        return@start
+                    }
                     withContext(Dispatchers.Main.immediate) {
-                        if (sessionId == id && appVisible &&
+                        if (isVisitActive() && sessionId == id && appVisible &&
                             realtimeController.isCurrentRuntimeRefresh(
                                 connectionGeneration,
                                 refreshGeneration,
@@ -1260,9 +1378,12 @@ fun SessionDetailScreen(
                     }
                 }
             },
+            onAccessRevoked = { error ->
+                withContext(Dispatchers.Main.immediate) { invalidateAccess(error) }
+            },
             onConnectionChanged = { connected, recovering, attempt, error ->
                 scope.launch {
-                    if (sessionId != id) return@launch
+                    if (!isVisitActive() || sessionId != id) return@launch
                     state = state.copy(
                         realtime = state.realtime.copy(
                             connected = connected,
@@ -1745,7 +1866,9 @@ fun SessionDetailScreen(
             stringResource(R.string.session_busy_placeholder)
         runtimeStatus in setOf(SessionRuntimeStatus.WaitingApproval, SessionRuntimeStatus.Blocked) ->
             stringResource(R.string.session_waiting_approval_placeholder)
-        runtimeStatus == SessionRuntimeStatus.Error -> stringResource(R.string.session_error_placeholder)
+        runtimeStatus == SessionRuntimeStatus.Error ->
+            runtimeErrorText(context, state.runtime.error?.get("code") as? String, null)
+                ?: stringResource(R.string.session_error_placeholder)
         runtimeStatus == SessionRuntimeStatus.Disconnected -> stringResource(R.string.session_device_offline_placeholder)
         !canUseSendMessage && !canUseCommands -> stringResource(R.string.session_send_unavailable)
         inputEnabled -> stringResource(R.string.session_reply_to, replyTarget)
@@ -1826,6 +1949,7 @@ fun SessionDetailScreen(
                                 sessionId = sessionId.orEmpty(),
                                 workspaceRoot = state.session?.cwd,
                                 controller = controller,
+                                visit = visit,
                                 loadWorkspaceImage = { path, cacheOnly ->
                                     val session = state.session
                                     val root = session?.cwd.orEmpty()
@@ -1857,6 +1981,7 @@ fun SessionDetailScreen(
                                 bottomContentPadding = timelineBottomPadding,
                                 hasMore = state.hasMore,
                                 loadingOlder = state.timeline.loadingOlder,
+                                historyError = state.timeline.historyErrorMessage != null,
                                 onLoadOlder = { loadOlderMessages() },
                                 onPreviewAttachment = { previewImage = AttachmentPreview.Remote(it) },
                                 onOpenAttachment = ::openAttachment,
@@ -2087,6 +2212,13 @@ fun SessionDetailScreen(
             .filter(TimelineAttachment::isImage)
             .distinctBy(TimelineAttachment::fileId)
             .map(AttachmentPreview::Remote)
+    }
+    filePreviewTarget?.let { target ->
+        RemoteFilePreviewDialog(
+            target = target,
+            filesController = filesController,
+            onDismiss = { filePreviewTarget = null },
+        )
     }
     previewImage?.let { preview ->
         AttachmentPreviewDialog(

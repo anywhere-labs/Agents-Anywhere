@@ -6,15 +6,27 @@ import com.agentsanywhere.app.feature.sessions.toAgentSession
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 
+private val LIVE_PROJECTION_EVENT_TYPES = setOf(
+    "session.meta.updated",
+    "runtime.state.updated",
+    "runtime.capability.updated",
+    "runtime.catalog.updated",
+)
+
 internal fun reduceRealtimeEvent(
     current: SessionDetailState,
     event: RemoteSessionEventEnvelope,
     devices: List<AgentDevice>,
 ): SessionDetailState {
     if (event.protocolVersion !in setOf("1.0", "1.1") || event.sessionId != current.session?.id) return current
-    if (event.eventId in current.realtime.processedEventIds) return current
+    // Live facts can return to an earlier value without advancing the durable
+    // sequence, reusing that value's event ID even across cached visits.
+    val durable = event.type !in LIVE_PROJECTION_EVENT_TYPES
+    if (durable && event.eventId in current.realtime.processedEventIds) return current
 
-    var next = current.copy(realtime = current.realtime.rememberEvent(event.eventId, event.cursor))
+    val realtime = if (durable) current.realtime.rememberEvent(event.eventId, event.cursor)
+        else current.realtime.copy(cursor = laterEventCursor(current.realtime.cursor, event.cursor))
+    var next = current.copy(realtime = realtime)
     when (event.type) {
         "planning.state.updated" -> event.payload.planning?.let { observed ->
             val previous = next.planning
@@ -209,6 +221,7 @@ internal fun reduceRuntimeLiveState(
         },
     )
     return current.copy(
+        planning = if (current.planning == requestState.planning) refreshed.planning else current.planning,
         runtime = runtime,
         capabilities = capabilities,
         notices = notices,
@@ -221,7 +234,39 @@ internal fun reduceSnapshotWithLiveState(
     snapshot: SessionDetailState,
     live: SessionDetailState,
     requestState: SessionDetailState,
+    replaceHistory: Boolean = false,
 ): SessionDetailState {
+    if (replaceHistory && live.initialized) {
+        // A required snapshot is authoritative, including after a Server cursor reset.
+        // Keep only observations that arrived while this snapshot was in flight.
+        val previousMessages = requestState.messages.associateBy { it.id }
+        val previousOrdering = requestState.timeline.orderingItems.associateBy { it.id }
+        val changedOrdering = live.timeline.orderingItems.filter { previousOrdering[it.id] != it }
+        val changedMessages = live.messages.filter { it.optimistic || previousMessages[it.id] != it }
+        val observed = live.copy(
+            meta = if (live.session != requestState.session) live.meta else snapshot.meta,
+            timeline = snapshot.timeline.copy(
+                historyGeneration = live.timeline.historyGeneration,
+                messages = changedMessages,
+                orderingItems = changedOrdering,
+                nextSeq = maxOf(snapshot.nextSeq, changedOrdering.maxOfOrNull { it.updatedSeq } ?: 0),
+            ),
+            runtime = if (live.runtime.copy(isLoading = false, errorMessage = null) !=
+                requestState.runtime.copy(isLoading = false, errorMessage = null)) live.runtime else snapshot.runtime,
+            notices = if (live.notices.notices != requestState.notices.notices ||
+                live.notices.eventSequence != requestState.notices.eventSequence) live.notices else snapshot.notices,
+            catalogs = live.catalogs.copy(
+                model = if (live.catalogs.model != requestState.catalogs.model) live.catalogs.model else snapshot.catalogs.model,
+                permission = if (live.catalogs.permission != requestState.catalogs.permission) live.catalogs.permission else snapshot.catalogs.permission,
+            ),
+            realtime = live.realtime.copy(
+                cursor = if (live.realtime.cursor == requestState.realtime.cursor) snapshot.realtime.cursor
+                    else laterEventCursor(snapshot.realtime.cursor, live.realtime.cursor),
+                processedEventIds = live.realtime.processedEventIds - requestState.realtime.processedEventIds,
+            ),
+        )
+        return reduceSnapshotWithLiveState(snapshot, observed, requestState)
+    }
     if (!live.initialized) {
         return snapshot.copy(
             realtime = mergeRealtimeState(snapshot.realtime, live.realtime),
@@ -241,6 +286,7 @@ internal fun reduceSnapshotWithLiveState(
     val liveReal = live.messages.filterNot { it.optimistic }
     val mergedReal = mergeTimelineMessages(snapshotReal, liveReal, mergedOrdering)
     val timeline = snapshot.timeline.copy(
+        historyGeneration = live.timeline.historyGeneration,
         messages = mergeReducerOptimistic(mergedReal, live.messages, mergedOrdering),
         orderingItems = mergedOrdering,
         nextSeq = maxOf(snapshot.timeline.nextSeq, live.timeline.nextSeq),
@@ -331,6 +377,8 @@ private fun SessionDetailState.applyTimelineRealtimeItems(
         timeline = timeline.copy(
             messages = messages,
             orderingItems = projection.orderingItems,
+            historyGeneration = timeline.historyGeneration + if (replace) 1 else 0,
+            loadingOlder = if (replace) false else timeline.loadingOlder,
             nextSeq = maxOf(timeline.nextSeq, cursorSequence),
             eventCursor = laterEventCursor(timeline.eventCursor, cursor),
             isLoading = false,

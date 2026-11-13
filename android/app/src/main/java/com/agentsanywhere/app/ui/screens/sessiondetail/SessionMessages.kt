@@ -267,6 +267,7 @@ internal fun MessageList(
     sessionId: String,
     workspaceRoot: String?,
     controller: SessionDetailController,
+    visit: com.agentsanywhere.app.feature.sessiondetail.SessionVisit? = null,
     loadWorkspaceImage: WorkspaceImageLoader = UnavailableWorkspaceImageLoader,
     forceLatestRequest: Int,
     streamLatestRequest: Int,
@@ -279,6 +280,7 @@ internal fun MessageList(
     bottomContentPadding: Dp = 168.dp,
     hasMore: Boolean,
     loadingOlder: Boolean,
+    historyError: Boolean = false,
     onLoadOlder: () -> Unit,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
     onOpenAttachment: (TimelineAttachment) -> Unit,
@@ -287,7 +289,10 @@ internal fun MessageList(
     onOpenFile: (String) -> Unit,
     onRespondNotice: (RuntimeNotice, RuntimeNoticeAction, Map<String, Any?>?) -> Unit = { _, _, _ -> },
 ) {
-    val listState = rememberLazyListState()
+    val listState = rememberLazyListState(
+        initialFirstVisibleItemIndex = visit?.readingPosition?.firstVisibleItemIndex ?: 0,
+        initialFirstVisibleItemScrollOffset = visit?.readingPosition?.firstVisibleItemScrollOffset ?: 0,
+    )
     val scope = rememberCoroutineScope()
     val displayMessages = remember(messages, hideMessage) { messages.filterNot(hideMessage) }
     val displayWorkingLabel = workingLabel
@@ -311,17 +316,48 @@ internal fun MessageList(
         buildAgentActionsByTurnEnd(timelineItems, turnInProgress)
     }
     var showScrollToBottom by remember { mutableStateOf(false) }
-    val reading = rememberSaveable(sessionId, saver = TimelineReadingState.Saver) { TimelineReadingState() }
+    val reading = rememberSaveable(sessionId, saver = TimelineReadingState.Saver) { TimelineReadingState.restore(visit?.readingPosition?.reading.orEmpty()) }
     var returnToLatestJob by remember(sessionId) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val scrollButtonBottomPadding = bottomContentPadding.coerceAtLeast(24.dp)
     val density = LocalDensity.current
     val topReadingInset = with(density) { 74.dp.toPx() }
     val bottomReadingInset = with(density) { bottomContentPadding.toPx() }
 
-    SideEffect { reading.items(timelineItems, 1 + (if (displayWorkingLabel != null) 1 else 0) + detachedNotices.size) }
+    val hasPlanningItem = planningContent != null || planPlacement.end.isNotEmpty()
+    val firstTimelineIndex = 1 +
+        (if (hasPlanningItem) 1 else 0) +
+        (if (displayWorkingLabel != null) 1 else 0) +
+        detachedNotices.size
+
+    SideEffect { reading.items(timelineItems, firstTimelineIndex, hasMore) }
 
     DisposableEffect(sessionId) {
         onDispose { returnToLatestJob?.cancel() }
+    }
+    DisposableEffect(reading, listState) {
+        reading.attach(listState)
+        onDispose {
+            visit?.readingPosition?.let { position ->
+                position.firstVisibleItemIndex = listState.firstVisibleItemIndex
+                position.firstVisibleItemScrollOffset = listState.firstVisibleItemScrollOffset
+                position.reading = reading.snapshot()
+            }
+            reading.detach(listState)
+        }
+    }
+
+    LaunchedEffect(visit, reading, listState) {
+        if (visit != null) snapshotFlow {
+            com.agentsanywhere.app.feature.sessiondetail.SessionReadingPosition(
+                listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, reading.snapshot(),
+            )
+        }.collectLatest { saved ->
+            visit.readingPosition.apply {
+                firstVisibleItemIndex = saved.firstVisibleItemIndex
+                firstVisibleItemScrollOffset = saved.firstVisibleItemScrollOffset
+                this.reading = saved.reading
+            }
+        }
     }
 
     fun observeUserScroll(deltaY: Float) {
@@ -351,21 +387,30 @@ internal fun MessageList(
     }
 
     LaunchedEffect(listState) {
-        var lastPosition = listState.firstVisibleItemIndex * 1_000 + listState.firstVisibleItemScrollOffset
+        var lastIndex = listState.firstVisibleItemIndex
+        var lastOffset = listState.firstVisibleItemScrollOffset
         var lastTime = System.nanoTime()
         snapshotFlow {
-            (listState.firstVisibleItemIndex * 1_000 + listState.firstVisibleItemScrollOffset) to listState.isScrollInProgress
-        }.collectLatest { (position, scrolling) ->
+            Triple(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, listState.isScrollInProgress)
+        }.collectLatest { (index, offset, scrolling) ->
+                val atBottom = index == 0 && offset == 0
+                if (atBottom) {
+                    lastIndex = 0
+                    lastOffset = 0
+                    lastTime = System.nanoTime()
+                    showScrollToBottom = false
+                    return@collectLatest
+                }
                 val now = System.nanoTime()
                 val elapsedMs = ((now - lastTime) / 1_000_000).coerceAtLeast(1)
-                val slowEnough = abs(position - lastPosition) / elapsedMs < 2
-                lastPosition = position
+                val moved = if (index == lastIndex) abs(offset - lastOffset) else 1_000
+                val slowEnough = moved / elapsedMs < 2
+                lastIndex = index
+                lastOffset = offset
                 lastTime = now
-                if (position > 0 && (slowEnough || !scrolling)) {
-                    delay(120)
+                if (showScrollToBottom || slowEnough || !scrolling) {
+                    if (!showScrollToBottom) delay(120)
                     showScrollToBottom = listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
-                } else {
-                    showScrollToBottom = false
                 }
         }
     }
@@ -379,12 +424,12 @@ internal fun MessageList(
     }
     LaunchedEffect(streamLatestRequest, sessionId) { reading.invalidate() }
 
-    LaunchedEffect(listState, hasMore, loadingOlder, displayMessages.size) {
+    LaunchedEffect(listState, hasMore, loadingOlder, historyError, displayMessages.size) {
         snapshotFlow {
             val layout = listState.layoutInfo
             val total = layout.totalItemsCount
             val lastVisible = layout.visibleItemsInfo.maxOfOrNull { it.index } ?: -1
-            total > 0 && lastVisible >= total - LOAD_OLDER_VISIBLE_THRESHOLD
+            (!historyError && reading.needsOlder) || (total > 0 && lastVisible >= total - LOAD_OLDER_VISIBLE_THRESHOLD)
         }
             .distinctUntilChanged()
             .collectLatest { nearOldest ->
@@ -404,10 +449,16 @@ internal fun MessageList(
                         .fillMaxSize()
                         .imePadding()
                         .nestedScroll(scrollInput)
+                        .then(reading.remeasurementModifier)
                         .onGloballyPositioned {
                             val bounds = it.boundsInWindow()
-                            reading.viewport(bounds.copy(top = bounds.top + topReadingInset,
-                                bottom = (bounds.bottom - bottomReadingInset).coerceAtLeast(bounds.top + topReadingInset + 1f)))
+                            reading.viewport(
+                                lazyBounds = bounds,
+                                readingBounds = bounds.copy(
+                                    top = bounds.top + topReadingInset,
+                                    bottom = (bounds.bottom - bottomReadingInset).coerceAtLeast(bounds.top + topReadingInset + 1f),
+                                ),
+                            )
                         }
                         .pointerInput(sessionId) {
                             awaitPointerEventScope {
@@ -425,7 +476,9 @@ internal fun MessageList(
                                             val event = awaitPointerEvent(PointerEventPass.Initial)
                                             val change = event.changes.firstOrNull { it.id == pointerId } ?: break
                                             if (!change.pressed) {
-                                                if (change.uptimeMillis - down.uptimeMillis >= viewConfiguration.longPressTimeoutMillis) reading.pauseAt()
+                                                if (travel <= viewConfiguration.touchSlop &&
+                                                    change.uptimeMillis - down.uptimeMillis >= viewConfiguration.longPressTimeoutMillis
+                                                ) reading.pauseAt()
                                                 break
                                             }
                                             val delta = change.position.y - previousY
@@ -540,9 +593,14 @@ internal fun MessageList(
                     onClick = {
                         returnToLatestJob?.cancel()
                         returnToLatestJob = scope.launch {
-                            listState.animateToLatestFromAnywhere()
-                            reading.release()
-                            listState.scrollToItem(0)
+                            reading.returningToLatest = true
+                            try {
+                                listState.animateToLatestFromAnywhere()
+                                reading.release()
+                                listState.scrollToItem(0)
+                            } finally {
+                                reading.returningToLatest = false
+                            }
                         }
                     },
                     modifier = Modifier
@@ -1268,7 +1326,10 @@ private fun AgentMessageContent(
     onOpenFile: (String) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (message.text.isNotBlank()) AgentMarkdownText(message.text, darkMode, onOpenFile = onOpenFile)
+        if (message.text.isNotBlank()) {
+            AgentMarkdownText(message.text, darkMode, onOpenFile = onOpenFile)
+            GeneratedFileCards(markdown = message.text, onOpenFile = onOpenFile)
+        }
         UserAttachmentStrip(
             attachments = message.attachments,
             darkMode = darkMode,

@@ -41,6 +41,7 @@ import type { BackendInit } from "./backend/protocol";
 import { DesktopBackendClient } from "./backend-client";
 import { readDesktopSettings } from "./desktop-settings";
 import { ConnectorLogStore } from "./log-store";
+import { allowWorkbenchFrame } from "./embedded-console";
 import { windowMaterialOptions } from "./window-material";
 import buildInfo from "../build-info.json";
 import { droppedFolderPath } from "./dropped-folder";
@@ -93,8 +94,8 @@ const API_ROUTE_PREFIXES = [
 /** `checking` until the backend's first probe answers; the renderer shows it as progress. */
 let ownership: OwnershipState = { status: "checking" };
 let recheckingOwnership: Promise<OwnershipState> | null = null;
-/** Only a silent login-item launch holds its window back; anything else is `settled`. */
-let silentLaunch: SilentLaunchState = "settled";
+/** Window reveal policy for this process's launch. */
+let silentLaunch: SilentLaunchState = "inactive";
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -281,6 +282,22 @@ function shouldProxyApiPath(pathname: string): boolean {
   if (namespace) return pathname === namespace || pathname.startsWith(`${namespace}/`);
   return API_ROUTE_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
+
+/** Lets the workbench frame the Tokens Anywhere console its instance may frame; see embedded-console. */
+function registerEmbeddedConsoleFrames(): void {
+  session.defaultSession.webRequest.onHeadersReceived(
+    { urls: ["https://*/*", "http://*/*"] },
+    (details, callback) => {
+      if (details.resourceType !== "subFrame") {
+        callback({});
+        return;
+      }
+      const origins = [`${WEB_PROTOCOL}://${WEB_HOST}`, ...(devOrigin ? [devOrigin] : [])];
+      const responseHeaders = allowWorkbenchFrame(details.responseHeaders, origins);
+      callback(responseHeaders ? { responseHeaders } : {});
+    },
   );
 }
 
@@ -479,6 +496,7 @@ function createMainWindow(showOnReady = true, route = "/"): BrowserWindow {
 
 function showMainWindow(): void {
   if (isQuitting) return;
+  silentLaunch = "revealed";
   const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : createMainWindow(false);
   showDockForWindow();
   if (window.isMinimized()) window.restore();
@@ -923,6 +941,7 @@ async function startDesktopBackend(): Promise<void> {
         publishOwnership(event.data as OwnershipState);
         return;
       }
+      if (event.event === "state") applySilentLaunchState();
       if (event.event === "settings") applyLoginItemSettings();
     },
     onExit: (message) => {
@@ -957,22 +976,16 @@ function publishOwnership(state: OwnershipState): void {
   ownership = state;
   sendToRenderer("workbench:ownership:state", ownership);
   if (ownership.status === "owned" && app.isPackaged) void drainDesktopOAuthCallbacks();
-  applyOwnershipToSilentLaunch(ownership);
+  applySilentLaunchState();
 }
 
-/**
- * A silent login-item launch holds its window back until ownership settles, so a
- * slow cold start no longer flashes it (a fixed 10 s wait used to show the
- * window on every boot, because the Connector can take minutes to start).
- * The window is only revealed for a result the user has to resolve.
- */
-function applyOwnershipToSilentLaunch(state: OwnershipState): void {
-  const next = nextSilentLaunchState(silentLaunch, state.status);
+/** Only reveal an untouched login-item window for a failure the user can act on. */
+function applySilentLaunchState(): void {
+  if (!mainWindow || mainWindow.isDestroyed() || isQuitting) return;
+  const next = nextSilentLaunchState(silentLaunch, ownership.status, backend?.hasConnectorAuthFailure() ?? false);
   const revealed = next === "revealed" && silentLaunch !== "revealed";
   silentLaunch = next;
-  // A result that arrives before the launch window exists is applied again by
-  // the caller once it does.
-  if (revealed && mainWindow && !mainWindow.isDestroyed()) showMainWindow();
+  if (revealed) showMainWindow();
 }
 
 async function confirmQuit(): Promise<boolean> {
@@ -1094,6 +1107,7 @@ if (hasSingleInstanceLock) {
     // macOS and Linux announce a shutdown here; Windows uses the window events.
     powerMonitor.on("shutdown", handleSystemShutdown);
     registerStaticWebProtocol();
+    registerEmbeddedConsoleFrames();
     await initializeDesktopServices();
     updates = new DesktopUpdateService({
       directory: path.join(app.getPath("userData"), "updates"),
@@ -1111,9 +1125,7 @@ if (hasSingleInstanceLock) {
       onState: (state) => sendToRenderer("workbench:updates:state", state),
     });
     createWindowsTray();
-    // A silent login-item launch never reveals its window on its own: the tray is
-    // the entry point. It is only shown when ownership settles into a state the
-    // user has to resolve, so a slow cold start stays invisible.
+    // A silent login-item launch stays hidden during a slow cold start.
     //
     // `backend.getSettings()` is null until the Connector reports its settings,
     // which on a cold boot happens long after this decision. Reading it too early
@@ -1127,15 +1139,15 @@ if (hasSingleInstanceLock) {
     });
     const showOnLaunch = !silentLoginLaunch;
     createMainWindow(showOnLaunch, await resolveLaunchRoute(silentLoginLaunch));
-    if (silentLoginLaunch) {
-      // Start holding after the window exists, then settle against the result
-      // the backend has already published (if any).
+    if (silentLoginLaunch && silentLaunch === "inactive") {
+      hideDockIfIdle();
+      // Apply any ownership and authentication results received before the
+      // window existed. Later results arrive on the same backend stream.
       silentLaunch = "holding";
-      applyOwnershipToSilentLaunch(ownership);
+      applySilentLaunchState();
     }
     if (app.isPackaged && ownership.status === "owned") await drainDesktopOAuthCallbacks();
     if (process.platform === "darwin" && app.dock) app.dock.setIcon(appWindowIcon());
-    if (!showOnLaunch) hideDockIfIdle();
   }).catch((error) => {
     console.error("Failed to initialize Desktop Workbench", error);
     appendMainLog({ level: "ERROR", message: `Desktop failed to start: ${errorMessage(error)}` });

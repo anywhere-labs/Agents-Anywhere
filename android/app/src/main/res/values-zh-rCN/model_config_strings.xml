@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="model_config_title">模型渠道</string>
+    <string name="model_config_title">模型网关</string>
     <string name="model_config_secret_missing">服务器还没有配置 AGENT_SERVER_SECRET（至少 32 个字符）。请管理员配置后再保存 Key 或链接 Tokens Anywhere。</string>
     <string name="model_config_tokens_reauth">授权已失效，请重新链接。</string>
     <string name="model_config_synced">模型已同步</string>
@@ -32,7 +32,7 @@
     <string name="model_config_error_secret_unconfigured">服务器还没有配置 AGENT_SERVER_SECRET（至少 32 个字符），暂时不能保存 Key 或链接账号。</string>
     <string name="model_config_error_secret_required">更换了地址，请重新填写 API Key。</string>
     <string name="model_config_error_profile_changed">这份配置已在其他地方修改，请刷新后再试。</string>
-    <string name="model_config_error_profile_in_use">这份配置已被应用或仍有 Runtime 在用，请先切换到其他渠道。</string>
+    <string name="model_config_error_profile_in_use">这份配置已被应用或仍有 Runtime 在用，请先切换到其他网关。</string>
     <string name="model_config_error_profile_read_only">这份配置由来源管理，不能在这里修改。</string>
     <string name="model_config_error_profile_detached">这份配置已断开，不能再使用。</string>
     <string name="model_config_error_busy">有任务正在运行，允许中断后才能应用。</string>
@@ -114,13 +114,13 @@
     <plurals name="model_config_account_pending">
         <item quantity="other">有 %1$d 项改动未保存</item>
     </plurals>
-    <string name="model_config_channel_description">链接 Tokens Anywhere 账户后，可以应用 Tokens Anywhere 渠道，各设备的 Runtime 会自动接入 Tokens Anywhere 提供的模型。</string>
+    <string name="model_config_channel_description">链接 Tokens Anywhere 账户后自动应用其网关，未单独指定网关的 Runtime 会切换，运行中的任务会被中断。</string>
     <string name="model_config_channel_link">链接账户</string>
     <string name="model_config_channel_native">设备自带配置</string>
     <string name="model_config_channel_tokens">Tokens Anywhere</string>
-    <string name="model_config_channel_follow">跟随已应用渠道</string>
+    <string name="model_config_channel_follow">跟随已应用网关</string>
     <string name="model_config_channel_using">当前使用「%1$s」</string>
-    <string name="model_config_channel_no_runtimes">还没有 Runtime 使用这个渠道。</string>
+    <string name="model_config_channel_no_runtimes">还没有 Runtime 使用这个网关。</string>
     <string name="model_config_channel_retry">重试</string>
     <string name="model_config_channel_native_global_title">修改 Runtime 自身的全局配置？</string>
     <string name="model_config_channel_native_global_description">「%1$s」没有 AA 管理的独立实例。使用「%2$s」会改写它自身的全局配置，也会影响不经过 AA 使用它的地方。</string>
@@ -132,7 +132,7 @@
     <string name="model_config_channel_state_waiting_online">设备离线，上线后切换</string>
     <string name="model_config_channel_state_switching">切换中</string>
     <string name="model_config_channel_state_restoring">正在恢复原配置</string>
-    <string name="model_config_channel_state_restored">切换失败，已恢复原渠道</string>
+    <string name="model_config_channel_state_restored">切换失败，已恢复原网关</string>
     <string name="model_config_channel_state_failed">切换失败，需要处理</string>
     <string name="model_config_channel_state_unsupported">不支持</string>
     <string name="model_config_channel_step_preparing">准备</string>
@@ -143,9 +143,9 @@
     <string name="model_config_reason_format_unsupported">没有共同支持的协议</string>
     <string name="model_config_reason_mode_unsupported">当前模式不能使用模型连接</string>
     <string name="model_config_reason_models_required">需要至少导入一个模型</string>
-    <string name="model_config_reason_model_unavailable">所选模型不在这个渠道里</string>
+    <string name="model_config_reason_model_unavailable">所选模型不在这个网关里</string>
     <string name="model_config_reason_confirmation_required">会修改它自身的全局配置，需要单独指定并确认</string>
-    <string name="model_config_reason_profile_unavailable">渠道已不可用</string>
+    <string name="model_config_reason_profile_unavailable">网关已不可用</string>
     <string name="model_config_reason_validate_failed">新配置没有通过校验</string>
     <string name="model_config_reason_start_failed">Runtime 没能启动</string>
     <string name="model_config_reason_verify_failed">Runtime 回报的连接与目标不一致</string>
@@ -155,10 +155,10 @@
     <string name="model_config_reason_rollback_failed">恢复原配置也没有成功</string>
     <string name="model_config_reason_superseded">已被更新的切换取代</string>
     <string name="model_config_reason_unknown">暂时不能切换</string>
-    <string name="model_config_rotated">Key 已轮换，正在写入使用 Tokens Anywhere 渠道的 Runtime。</string>
-    <string name="model_config_error_channel_not_found">这个渠道已不存在，请刷新后再试。</string>
-    <string name="model_config_error_channel_in_use">还有 Runtime 想要或正在使用 Tokens Anywhere 渠道，请先切换到其他渠道。</string>
-    <string name="model_config_error_runtime_switching">这个 Runtime 正在切换渠道，请稍后再试。</string>
+    <string name="model_config_rotated">Key 已轮换，正在写入使用 Tokens Anywhere 网关的 Runtime。</string>
+    <string name="model_config_error_channel_not_found">这个网关已不存在，请刷新后再试。</string>
+    <string name="model_config_error_channel_in_use">还有 Runtime 想要或正在使用 Tokens Anywhere 网关，请先切换到其他网关。</string>
+    <string name="model_config_error_runtime_switching">这个 Runtime 正在切换网关，请稍后再试。</string>
     <plurals name="model_config_channel_progress_running">
         <item quantity="other">正在切换 %1$d/%2$d 个 Runtime</item>
     </plurals>
@@ -169,7 +169,7 @@
         <item quantity="other">%1$d 台设备离线，上线后切换</item>
     </plurals>
     <plurals name="model_config_channel_restored">
-        <item quantity="other">%1$d 个切换失败，已恢复原渠道</item>
+        <item quantity="other">%1$d 个切换失败，已恢复原网关</item>
     </plurals>
     <plurals name="model_config_channel_failed">
         <item quantity="other">%1$d 个需要处理</item>
@@ -177,7 +177,7 @@
     <plurals name="model_config_channel_unsupported">
         <item quantity="other">%1$d 个 Runtime 不支持</item>
     </plurals>
-    <string name="model_config_reason_connector_upgrade_required">请升级 Connector 后同步渠道</string>
+    <string name="model_config_reason_connector_upgrade_required">请升级 Connector 后同步网关</string>
     <string name="model_config_error_rotation_pending">上一次 Key 轮换仍在核实，请稍后重试。</string>
     <string name="model_config_detect_address_placeholder">https://api.example.com/v1</string>
     <string name="model_config_detecting">正在识别…</string>
@@ -196,9 +196,8 @@
     <string name="model_config_exit_failed">退出失败，请再次点击「退出」继续。</string>
     <string name="model_config_connection">连接</string>
     <string name="model_config_channels_manual">模型服务</string>
-    <string name="model_config_apply_description">立即应用此渠道，运行中的任务会被中断。没有单独指定渠道的 Runtime 都会使用它。</string>
-    <string name="model_config_switched">渠道已应用，各 Runtime 正在切换。</string>
-    <string name="model_config_native_description">不写入模型连接，Runtime 使用设备上它自己的模型配置。</string>
+    <string name="model_config_apply_description">立即应用此网关，运行中的任务会被中断。没有单独指定网关的 Runtime 都会使用它。</string>
+    <string name="model_config_switched">网关已应用，各 Runtime 正在切换。</string>
     <string name="model_config_account_tab_account">账户</string>
     <string name="model_config_account_tab_models_connection">模型与连接</string>
     <string name="model_config_runtimes_title">Runtime</string>
@@ -213,5 +212,5 @@
     <string name="model_config_details_online">在线</string>
     <string name="model_config_details_offline">离线</string>
     <string name="model_config_status_attention">%1$d/%2$d 已生效</string>
-    <string name="model_config_channel_for">%1$s 使用的渠道</string>
+    <string name="model_config_channel_for">%1$s 使用的网关</string>
 </resources>

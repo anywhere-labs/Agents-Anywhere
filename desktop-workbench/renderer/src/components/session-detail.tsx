@@ -32,13 +32,7 @@ import { cn } from "@/lib/utils"
 import { dashboardApi } from "@/features/dashboard/api"
 import type {
   Notice,
-  ProtocolCapabilitySet,
-  ProtocolEventEnvelope,
-  ProtocolModelCatalog,
-  ProtocolPermissionCatalog,
-  RuntimeStatusValue,
   SessionLocalTimelineState,
-  SessionSnapshotResponse,
   SessionRuntimeState,
   SessionView,
   TimelineItem,
@@ -59,31 +53,20 @@ import { AgentRecoveryNotice } from "@/components/session/agent-recovery-notice"
 import { NativeSessionHandoff } from "@/components/session/native-session-handoff"
 import { needsOlderTimelinePage } from "@/components/session/timeline-autofill"
 import { createTimelineScrollFollow } from "@/components/session/timeline-scroll-follow"
-import { createSessionEventBuffer } from "@/components/session/session-event-buffer"
+import { createSessionController, type SessionController } from "@/components/session/session-controller"
+import { traceSessionSwitch } from "@/components/session/session-switch-performance"
 import { CAPABILITY, capabilityIsUsable, findCapability } from "@/components/session/capabilities"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
 import { commandResult, commandTransportFailure, type CommandOutcome } from "@/components/session/runtime-command-model"
-import { createRecoveredSubscriptionTracker, useRuntimeCommands } from "@/components/session/use-runtime-commands"
-import {
-  acceptSessionEventId,
-  bufferedEventsAfterLiveCapabilityRead,
-  drainSessionEventBuffer,
-  mergeEffectiveCapabilities,
-  SessionEventSequenceCursor,
-  settleSessionEventRecovery,
-  sessionEventUsesDurableEventIdDedup,
-  stableStringify,
-} from "@/components/session/session-event-state"
+import { useRuntimeCommands } from "@/components/session/use-runtime-commands"
 import {
   buildOptimisticUserMessage,
   isOptimisticTimelineItem,
   markOptimisticItemFailed,
   mergeTimelineItems,
-  mergeTimelineSnapshot,
   preserveOptimisticItems,
   timelineClientMessageId,
 } from "@/components/session/optimistic-timeline"
-import { nextTimelineResetVersion } from "@/components/session/session-review-history"
 import { createTurnReviewDisplaySelector, type SessionReviewTarget } from "@/components/session/session-review-model"
 import { SessionReviewCard } from "@/components/session/session-review-card"
 import { SessionReviewTag } from "@/components/session/session-review-tag"
@@ -91,6 +74,8 @@ import { isVisibleTimelineItem, messageText, runtimeLabel, textOf } from "@/comp
 import { stripInjectedAttachmentMentions } from "@/features/dashboard/attachments"
 import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
 import { useWorkspace } from "@/components/workspace-context"
+import { INITIAL_TIMELINE_LIMIT, loadInitialSessionState, effectiveRuntimeStatus } from "@/components/session/session-remote-state"
+import type { SessionRemoteState, SessionStateCache } from "@/components/session/session-state-cache"
 
 type SessionDetailProps = {
   token: string
@@ -115,24 +100,6 @@ export type SessionMemorySnapshot = {
   pendingInteractionCount: number
 }
 
-type SessionRemoteState = {
-  session: SessionView
-  state?: SessionRuntimeState | null
-  items: TimelineItem[]
-  notices: Notice[]
-  nextSeq: number
-  hasMore: boolean
-  timelineResetVersion: number
-  serverTime: string
-  eventCursor: string
-  effectiveCapabilities: ProtocolCapabilitySet | null
-  catalogs: {
-    model?: ProtocolModelCatalog
-    permission?: ProtocolPermissionCatalog
-    [key: string]: unknown
-  }
-}
-
 function remoteStateFromOptimisticState(optimisticState: SessionLocalTimelineState): SessionRemoteState {
   return {
     ...optimisticState,
@@ -144,7 +111,6 @@ function remoteStateFromOptimisticState(optimisticState: SessionLocalTimelineSta
   }
 }
 
-const INITIAL_TIMELINE_LIMIT = 100
 const TIMELINE_PAGE_LIMIT = 100
 const LOAD_OLDER_SCROLL_THRESHOLD = 96
 const SCROLL_TO_BOTTOM_PRUNE_DISTANCE = 180
@@ -161,68 +127,6 @@ type SessionSourceErrorCode =
   | "session_unavailable"
   | "session_deleted"
   | "session_missing"
-
-async function loadInitialSessionState(
-  token: string,
-  sessionId: string,
-  options: { reason?: string } = {},
-): Promise<SessionRemoteState> {
-  const reason = options.reason ?? "session-detail.initial-load"
-  const snapshot = await dashboardApi.getSessionSnapshot(token, sessionId, INITIAL_TIMELINE_LIMIT, {
-    reason,
-  })
-  const state = sessionStateFromSnapshot(snapshot)
-  console.info("[session_status_trace]", {
-    layer: "frontend-snapshot",
-    reason,
-    sessionId,
-    sessionStatus: state.session.status,
-    runtimeStatus: state.state?.status ?? null,
-    effectiveStatus: effectiveRuntimeStatus(state.state, state.session),
-    sessionUpdatedSeq: state.session.updatedSeq,
-    runtimeUpdatedSeq: state.state?.updatedSeq ?? null,
-    runtimeSource: state.state?.metadata?.source ?? null,
-    eventCursor: state.eventCursor,
-  })
-  return state
-}
-
-function sessionStateFromSnapshot(snapshot: SessionSnapshotResponse): SessionRemoteState {
-  return {
-    session: snapshot.session,
-    state: snapshot.state ?? null,
-    items: mergeTimelineItems([], snapshot.timeline.items),
-    notices: snapshot.notices,
-    nextSeq: snapshot.timeline.nextSeq,
-    hasMore: snapshot.timeline.hasMore,
-    timelineResetVersion: 0,
-    serverTime: snapshot.serverTime,
-    eventCursor: snapshot.eventCursor,
-    effectiveCapabilities: snapshot.effectiveCapabilities,
-    catalogs: snapshot.catalogs ?? {},
-  }
-}
-
-function mergeSessionSnapshot(
-  current: SessionRemoteState,
-  incoming: SessionRemoteState,
-): SessionRemoteState {
-  const timeline = mergeTimelineSnapshot(
-    current.items,
-    current.nextSeq,
-    incoming.items,
-    incoming.nextSeq,
-  )
-  return {
-    ...incoming,
-    items: timeline.items,
-    nextSeq: timeline.nextSeq,
-    timelineResetVersion: nextTimelineResetVersion(current.timelineResetVersion, true),
-    eventCursor: incoming.nextSeq >= current.nextSeq
-      ? incoming.eventCursor
-      : current.eventCursor,
-  }
-}
 
 function nextOptimisticRuntimeState(
   state: SessionRuntimeState | null | undefined,
@@ -326,7 +230,16 @@ function writeComposerDraft(sessionId: string, value: string) {
   }
 }
 
-export function SessionDetail({
+export function SessionDetail(props: SessionDetailProps) {
+  const { sessionStateCache } = useWorkspace()
+  return <SessionDetailVisit
+    key={JSON.stringify([sessionStateCache.scope, props.sessionId])}
+    {...props}
+    cache={sessionStateCache}
+  />
+}
+
+function SessionDetailVisit({
   token,
   sessionId,
   fallbackSession,
@@ -335,7 +248,8 @@ export function SessionDetail({
   onSessionUpdated,
   onMemorySnapshotUpdated,
   onStreamProgress,
-}: SessionDetailProps) {
+  cache,
+}: SessionDetailProps & { cache: SessionStateCache }) {
   const tSession = useTranslations("dashboard.session")
   const tPlanning = useTranslations("planning")
   const tNew = useTranslations("dashboard.new")
@@ -355,13 +269,31 @@ export function SessionDetail({
     openSession,
     markOptimisticMessageFailed,
     replaceHome,
+    sessionControllers,
   } = useWorkspace()
   const initialOptimisticState = getOptimisticSessionState(sessionId)
-  const [state, setState] = React.useState<SessionRemoteState | null>(() =>
-    initialOptimisticState ? remoteStateFromOptimisticState(initialOptimisticState) : null,
-  )
-  const [loading, setLoading] = React.useState(() => !initialOptimisticState)
-  const [error, setError] = React.useState<string | null>(null)
+  const [cached] = React.useState(() => cache.get(sessionId))
+  const previousControllerRef = React.useRef<SessionController | null>(null)
+  const controller = React.useMemo(() => sessionControllers.get(sessionId, () => {
+    const previous = previousControllerRef.current?.getSnapshot()
+    return createSessionController({
+      token, sessionId,
+      loadFailedMessage: tSession("loadFailed"),
+      initialState: previous?.state ?? cached?.state ?? (initialOptimisticState ? remoteStateFromOptimisticState(initialOptimisticState) : null),
+      hasSnapshot: Boolean(previous?.state ? previous.hasSnapshot : cached?.hasSnapshot),
+      applyOptimisticItems: next => ({ ...next, items: preserveOptimisticItems(next.items, getOptimisticItems(sessionId)) }),
+      clearResolvedOptimisticMessages,
+      onSessionUpdated,
+      onInvalidated: () => cache.delete(sessionId),
+    })
+  }, token), [sessionControllers, sessionId, token])
+  previousControllerRef.current = controller
+  const remote = React.useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot)
+  const state = remote.state
+  const setState = controller.updateState
+  const [loading, setLoading] = React.useState(() => !state)
+  const error = remote.error
+  const [switchTrace] = React.useState(() => traceSessionSwitch(sessionId, Boolean(cached || state && remote.initialLoadComplete)))
   const planning = useSessionPlanning(token, sessionId)
   const runtimeErrorText = useRuntimeErrorText()
   const planReader = usePlanReader(sessionId)
@@ -379,11 +311,10 @@ export function SessionDetail({
   } | null>(null)
   const [sourceErrorCode, setSourceErrorCode] = React.useState<SessionSourceErrorCode | null>(null)
   const [commandQuery, setCommandQuery] = React.useState<string | null>(null)
-  const [catalogRecoveryGeneration, setCatalogRecoveryGeneration] = React.useState(0)
   const [blockingInteractionStackHeight, setBlockingInteractionStackHeight] = React.useState(0)
   const [composerHeight, setComposerHeight] = React.useState(144)
-  const [timelineGroupOpenByKey, setTimelineGroupOpenByKey] = React.useState<Record<string, boolean>>({})
-  const [timelineItemOpenById, setTimelineItemOpenById] = React.useState<Record<string, boolean>>({})
+  const [timelineGroupOpenByKey, setTimelineGroupOpenByKey] = React.useState<Record<string, boolean>>(cached?.groupOpen ?? {})
+  const [timelineItemOpenById, setTimelineItemOpenById] = React.useState<Record<string, boolean>>(cached?.itemOpen ?? {})
   const [composerDraftState, setComposerDraftState] = React.useState<ComposerDraftState>(() => ({
     sessionId,
     value: readComposerDraft(sessionId),
@@ -391,14 +322,6 @@ export function SessionDetail({
   const timelineRef = React.useRef<HTMLDivElement | null>(null)
   const timelineContentRef = React.useRef<HTMLDivElement | null>(null)
   const composerContainerRef = React.useRef<HTMLDivElement | null>(null)
-  const eventSequenceCursorRef = React.useRef<SessionEventSequenceCursor | null>(null)
-  if (eventSequenceCursorRef.current === null) {
-    eventSequenceCursorRef.current = new SessionEventSequenceCursor(
-      sessionId,
-      initialOptimisticState?.nextSeq ?? 0,
-    )
-  }
-  const eventSequenceCursor = eventSequenceCursorRef.current
   const timelineFollowRef = React.useRef<ReturnType<typeof createTimelineScrollFollow> | null>(null)
   const initialScrollDoneRef = React.useRef(false)
   const loadingOlderRef = React.useRef(false)
@@ -407,16 +330,33 @@ export function SessionDetail({
   const initialScrollFallbackTimerRef = React.useRef<number | null>(null)
   const pruneAfterScrollTimerRef = React.useRef<number | null>(null)
   const pruneAfterScrollCleanupRef = React.useRef<(() => void) | null>(null)
-  const streamConnectedRef = React.useRef(false)
-  const catalogFetchKeyRef = React.useRef<string | null>(null)
-  const selectionUpdateSeqRef = React.useRef(0)
-  const selectionWritesRef = React.useRef(new Map<string, Promise<unknown>>())
-  const commandVisitRef = React.useRef({ sessionId, sequence: 0 })
-  if (commandVisitRef.current.sessionId !== sessionId) {
-    commandVisitRef.current = { sessionId, sequence: commandVisitRef.current.sequence + 1 }
-  }
+  const selectionChanges = controller.selectionChanges
   const commandRequestSeqRef = React.useRef(0)
   const activeCommandRequestRef = React.useRef<number | null>(null)
+  const activeVisitRef = React.useRef(false)
+  React.useLayoutEffect(() => {
+    activeVisitRef.current = true
+    return () => { activeVisitRef.current = false }
+  }, [])
+  const latestCacheStateRef = React.useRef({ groupOpen: timelineGroupOpenByKey, itemOpen: timelineItemOpenById })
+  React.useLayoutEffect(() => {
+    latestCacheStateRef.current = { groupOpen: timelineGroupOpenByKey, itemOpen: timelineItemOpenById }
+  })
+  // Layout cleanup runs while the viewport still exists. Keying each visit
+  // also isolates every late async callback from the newly selected session.
+  React.useLayoutEffect(() => () => {
+    const latest = latestCacheStateRef.current
+    const viewport = timelineRef.current
+    const retained = controller.getSnapshot()
+    if (!retained.state || retained.invalidated) return
+    cache.set(sessionId, {
+      ...latest,
+      state: retained.state,
+      hasSnapshot: retained.hasSnapshot,
+      scrollTop: viewport?.scrollTop ?? 0,
+      following: timelineFollowRef.current?.isFollowing() ?? true,
+    })
+  }, [cache, controller, sessionId])
 
   const session = state?.session ?? fallbackSession
   const runtimeState = state?.state ?? null
@@ -432,22 +372,11 @@ export function SessionDetail({
     runtimeStatus: string | null
     effectiveStatus: string
   } | null>(null)
-  const sessionRuntime = session ? sessionRuntimeId(session) : null
   const sessionRuntimeScope = session
     ? { runtimeId: sessionRuntimeId(session), runtimeType: sessionRuntimeType(session) }
     : undefined
   const effectiveCapabilities = state?.effectiveCapabilities ?? null
   const goals = useSessionGoal(token, sessionId, Boolean(session?.takeover && !session.archived && session.connectorStatus === "online" && capabilityIsUsable(effectiveCapabilities,"session.goal",sessionRuntimeScope)))
-  const canUseModelCatalog = Boolean(
-    sessionRuntime &&
-      effectiveCapabilities &&
-      capabilityIsUsable(effectiveCapabilities, CAPABILITY.modelCatalog, sessionRuntimeScope),
-  )
-  const canUsePermissionCatalog = Boolean(
-    sessionRuntime &&
-      effectiveCapabilities &&
-      capabilityIsUsable(effectiveCapabilities, CAPABILITY.permissionCatalog, sessionRuntimeScope),
-  )
   const commandSessionId = session?.id === sessionId ? sessionId : null
   const commandCapability = session ? findCapability(effectiveCapabilities, CAPABILITY.commands, sessionRuntimeScope) : null
   const catalogMetadata = commandCapability?.metadata as Record<string, unknown> | undefined
@@ -455,7 +384,7 @@ export function SessionDetail({
   const commandAvailable = Boolean(commandCapability?.supported && commandCapability.available && commandCapability.allowed && session?.connectorStatus === "online")
   const { commands: runtimeCommands, loading: commandsLoading, error: commandsError } = useRuntimeCommands({
     token, sessionId: commandSessionId, open: commandQuery !== null,
-    available: commandAvailable, catalogRevision, runtimeStatus, recoveryGeneration: catalogRecoveryGeneration,
+    available: commandAvailable, catalogRevision, runtimeStatus, recoveryGeneration: remote.recoveryGeneration,
   })
 
   React.useEffect(() => {
@@ -496,18 +425,11 @@ export function SessionDetail({
   const hasInitialSessionState = state !== null
 
   React.useEffect(() => {
-    setSourceErrorCode(null)
-    activeCommandRequestRef.current = null
-    return () => { activeCommandRequestRef.current = null }
-  }, [sessionId])
-
-  React.useEffect(() => {
-    setPendingTakeover(null)
     return () => {
       interactionTakeoverRef.current?.resolve(false)
       interactionTakeoverRef.current = null
     }
-  }, [sessionId])
+  }, [])
 
   React.useEffect(() => {
     if (session?.id === sessionId && session.sourceAvailability === "archived") {
@@ -539,8 +461,8 @@ export function SessionDetail({
     if (Object.keys(selectionPatch).length === 0) return true
 
     const previousRuntimeState = state?.state ?? null
-    const selectionUpdateSeq = selectionUpdateSeqRef.current + 1
-    selectionUpdateSeqRef.current = selectionUpdateSeq
+    const selectionUpdateSeq = selectionChanges.revision + 1
+    selectionChanges.revision = selectionUpdateSeq
     setState((current) =>
       current
         ? {
@@ -550,13 +472,13 @@ export function SessionDetail({
         : current,
     )
     try {
-      const previousWrite = selectionWritesRef.current.get(session.id) ?? Promise.resolve()
+      const previousWrite = selectionChanges.writes.get(session.id) ?? Promise.resolve()
       const write = previousWrite.catch(() => undefined).then(() => dashboardApi.updateSessionSelections(token, session.id, selectionPatch))
-      selectionWritesRef.current.set(session.id, write)
+      selectionChanges.writes.set(session.id, write)
       const result = await write.finally(() => {
-        if (selectionWritesRef.current.get(session.id) === write) selectionWritesRef.current.delete(session.id)
+        if (selectionChanges.writes.get(session.id) === write) selectionChanges.writes.delete(session.id)
       })
-      if (selectionUpdateSeqRef.current !== selectionUpdateSeq) return true
+      if (selectionChanges.revision !== selectionUpdateSeq) return true
       setState((current) =>
         current
           ? {
@@ -574,7 +496,7 @@ export function SessionDetail({
     } catch (err) {
       // An official operation can partially succeed. Read the actual selection before rolling back.
       const actual = await dashboardApi.getSessionRuntimeState(token, session.id).catch(() => null)
-      if (selectionUpdateSeqRef.current === selectionUpdateSeq) {
+      if (selectionChanges.revision === selectionUpdateSeq) {
         setState((current) =>
           current
             ? {
@@ -589,100 +511,42 @@ export function SessionDetail({
             : current,
         )
       }
-      if (selectionUpdateSeqRef.current === selectionUpdateSeq) {
+      if (selectionChanges.revision === selectionUpdateSeq) {
         toast.error(err instanceof Error ? err.message : tSession("updateSelectionsFailed"))
       }
-      return selectionUpdateSeqRef.current !== selectionUpdateSeq
+      return selectionChanges.revision !== selectionUpdateSeq
     }
   }
 
-  const applyOptimisticItems = React.useCallback((next: SessionRemoteState): SessionRemoteState => ({
-    ...next,
-    items: preserveOptimisticItems(next.items, getOptimisticItems(sessionId)),
-  }), [getOptimisticItems, sessionId])
-  const applyOptimisticItemsRef = React.useRef(applyOptimisticItems)
-  const clearResolvedOptimisticMessagesRef = React.useRef(clearResolvedOptimisticMessages)
-  const getOptimisticSessionStateRef = React.useRef(getOptimisticSessionState)
-  const onSessionUpdatedRef = React.useRef(onSessionUpdated)
-  const tSessionRef = React.useRef(tSession)
+  React.useLayoutEffect(() => {
+    controller.configure({
+      token, sessionId, initialState: null, hasSnapshot: false,
+      loadFailedMessage: tSession("loadFailed"),
+      applyOptimisticItems: next => ({ ...next, items: preserveOptimisticItems(next.items, getOptimisticItems(sessionId)) }),
+      clearResolvedOptimisticMessages, onSessionUpdated,
+      onInvalidated: () => cache.delete(sessionId),
+    })
+  }, [cache, controller, token, sessionId, getOptimisticItems, clearResolvedOptimisticMessages, onSessionUpdated, tSession])
+
+  React.useLayoutEffect(() => {
+    if (state) switchTrace.mark("content-committed")
+    if (remote.subscribed) switchTrace.mark("subscribed")
+    if (remote.recovered) switchTrace.mark("messages-recovered")
+    if (remote.recovered && !remote.runtimeRefreshing) switchTrace.mark("runtime-settled")
+  }, [state, remote.subscribed, remote.recovered, remote.runtimeRefreshing, switchTrace])
 
   React.useEffect(() => {
-    applyOptimisticItemsRef.current = applyOptimisticItems
-    clearResolvedOptimisticMessagesRef.current = clearResolvedOptimisticMessages
-    getOptimisticSessionStateRef.current = getOptimisticSessionState
-    onSessionUpdatedRef.current = onSessionUpdated
-    tSessionRef.current = tSession
-  }, [applyOptimisticItems, clearResolvedOptimisticMessages, getOptimisticSessionState, onSessionUpdated, tSession])
+    if (remote.initialLoadComplete && !state) setLoading(false)
+  }, [remote.initialLoadComplete, state])
 
+  const goalEvent = remote.domainEvents.get("goal.state.updated")
+  const planningEvent = remote.domainEvents.get("planning.state.updated")
   React.useEffect(() => {
-    setTimelineGroupOpenByKey({})
-    setTimelineItemOpenById({})
-    catalogFetchKeyRef.current = null
-  }, [sessionId])
-
+    if (goalEvent) goals.ingest(goalEvent.payload.state as import("@/generated/protocol/v1_1/goal-state").GoalState)
+  }, [goalEvent, goals.ingest])
   React.useEffect(() => {
-    const runtime = sessionRuntime
-    if (!runtime) return
-    const needsModelCatalog = canUseModelCatalog && !state?.catalogs.model
-    const needsPermissionCatalog = canUsePermissionCatalog && !state?.catalogs.permission
-    if (!needsModelCatalog && !needsPermissionCatalog) return
-    const catalogFetchKey = [
-      sessionId,
-      runtime,
-      needsModelCatalog ? "model" : "no-model",
-      needsPermissionCatalog ? "permission" : "no-permission",
-    ].join(":")
-    if (catalogFetchKeyRef.current === catalogFetchKey) return
-    catalogFetchKeyRef.current = catalogFetchKey
-
-    let cancelled = false
-    void Promise.all([
-      needsModelCatalog
-        ? dashboardApi.getSessionModelCatalog(token, sessionId)
-        : Promise.resolve(null),
-      needsPermissionCatalog
-        ? dashboardApi.getSessionPermissionCatalog(token, sessionId)
-        : Promise.resolve(null),
-    ])
-      .then(([modelCatalogResponse, permissionCatalogResponse]) => {
-        if (cancelled) return
-        setState((current) => {
-          if (!current || current.session.id !== sessionId) return current
-          return {
-            ...current,
-            catalogs: {
-              ...current.catalogs,
-              ...(modelCatalogResponse ? { model: modelCatalogResponse.catalog } : {}),
-              ...(permissionCatalogResponse
-                ? { permission: permissionCatalogResponse.catalog }
-                : {}),
-            },
-          }
-        })
-      })
-      .catch(() => {
-        if (catalogFetchKeyRef.current === catalogFetchKey) {
-          catalogFetchKeyRef.current = null
-        }
-        if (cancelled || process.env.NODE_ENV === "production") return
-        console.debug("[AgentsAnywhere] session catalog refresh failed", {
-          sessionId,
-          runtime,
-        })
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [
-    canUseModelCatalog,
-    canUsePermissionCatalog,
-    sessionId,
-    sessionRuntime,
-    state?.catalogs.model,
-    state?.catalogs.permission,
-    token,
-  ])
+    if (planningEvent) planning.ingest(planningEvent.payload.state as import("@/generated/protocol/v1/planning-state").PlanningState)
+  }, [planningEvent, planning.ingest])
 
   React.useEffect(() => {
     const optimisticState = getOptimisticSessionState(sessionId)
@@ -698,11 +562,7 @@ export function SessionDetail({
       const serverItems = current.items.filter((item) => !isOptimisticTimelineItem(item))
       return { ...current, items: preserveOptimisticItems(serverItems, optimisticItems) }
     })
-  }, [getOptimisticItems, getOptimisticSessionState, isLocalOptimisticSession, sessionId])
-
-  React.useEffect(() => {
-    setComposerDraftState({ sessionId, value: readComposerDraft(sessionId) })
-  }, [sessionId])
+  }, [getOptimisticItems, getOptimisticSessionState, isLocalOptimisticSession, sessionId, setState])
 
   React.useEffect(() => {
     writeComposerDraft(composerDraftState.sessionId, composerDraftState.value)
@@ -769,12 +629,17 @@ export function SessionDetail({
       pruneAfterScrollCleanupRef.current?.()
     })
     timelineFollowRef.current = follow
+    if (cached && !cached.following) {
+      follow.pause()
+      viewport.scrollTop = cached.scrollTop
+      updateScrollBottomState()
+    }
     return () => {
       follow.dispose()
       timelineFollowRef.current = null
       pruneAfterScrollCleanupRef.current?.()
     }
-  }, [session?.id, sessionId, updateScrollBottomState])
+  }, [cached, session?.id, sessionId, updateScrollBottomState])
 
   React.useEffect(() => {
     return () => {
@@ -798,6 +663,7 @@ export function SessionDetail({
     const viewport = timelineRef.current
     const previousScrollHeight = viewport?.scrollHeight ?? 0
     const previousScrollTop = viewport?.scrollTop ?? 0
+    const resetVersion = state.timelineResetVersion
 
     loadingOlderRef.current = true
     setLoadingOlder(true)
@@ -808,8 +674,9 @@ export function SessionDetail({
         oldestItem.orderSeq,
         TIMELINE_PAGE_LIMIT,
       )
+      if (!activeVisitRef.current) return
       setState((current) => {
-        if (!current) return current
+        if (!current || current.session.id !== sessionId || current.timelineResetVersion !== resetVersion) return current
         if (older.items.length === 0) return { ...current, hasMore: older.hasMore, serverTime: older.serverTime }
         const items = mergeTimelineItems(older.items, current.items)
         pendingPrependScrollRestoreRef.current = {
@@ -820,17 +687,18 @@ export function SessionDetail({
           ...current,
           items,
           hasMore: older.hasMore,
-          nextSeq: Math.max(current.nextSeq, older.nextSeq),
+          // A history page does not cover intervening live events. Advancing
+          // their watermark here could discard them on a later cache restore.
           serverTime: older.serverTime,
         }
       })
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : tSession("loadFailed"))
+      if (activeVisitRef.current) toast.error(err instanceof Error ? err.message : tSession("loadFailed"))
     } finally {
       loadingOlderRef.current = false
-      setLoadingOlder(false)
+      if (activeVisitRef.current) setLoadingOlder(false)
     }
-  }, [loadingOlder, sessionId, state?.hasMore, state?.items, tSession, token])
+  }, [loadingOlder, sessionId, setState, state?.hasMore, state?.items, state?.timelineResetVersion, tSession, token])
 
   const handleTimelineScroll = React.useCallback(() => {
     const viewport = timelineRef.current
@@ -848,359 +716,8 @@ export function SessionDetail({
   }, [loadOlderTimeline, loading, loadingOlder, state])
 
   React.useEffect(() => {
-    initialScrollDoneRef.current = false
-    if (initialScrollQuietTimerRef.current !== null) {
-      window.clearTimeout(initialScrollQuietTimerRef.current)
-      initialScrollQuietTimerRef.current = null
-    }
-    if (initialScrollFallbackTimerRef.current !== null) {
-      window.clearTimeout(initialScrollFallbackTimerRef.current)
-      initialScrollFallbackTimerRef.current = null
-    }
-    setSending(false)
-    setInterrupting(false)
-    setError(null)
-    const optimisticState = getOptimisticSessionStateRef.current(sessionId)
-    eventSequenceCursor.switchTo(sessionId, optimisticState?.nextSeq ?? 0)
-    if (optimisticState) {
-      setState(remoteStateFromOptimisticState(optimisticState))
-      eventSequenceCursor.advance(sessionId, optimisticState.nextSeq)
-      setLoading(false)
-    } else {
-      setLoading(true)
-      setState(null)
-    }
-  }, [
-    isLocalOptimisticSession,
-    onSessionUpdated,
-    sessionId,
-    token,
-  ])
-
-  React.useEffect(() => {
-    if (isLocalOptimisticSession) return
-    let cancelled = false
-    let socket: WebSocket | null = null
-    let reconnectTimer: number | null = null
-    let refetchPromise: Promise<void> | null = null
-    let recoveryPromise: Promise<void> | null = null
-    let recoveryStarting = false
-    let snapshotReady = false
-    let socketSubscribed = false
-    let connectionSequence = 0
-    const recoveredSubscriptions = createRecoveredSubscriptionTracker(() => {
-      if (!cancelled) setCatalogRecoveryGeneration((generation) => generation + 1)
-    })
-    let bufferedEvents: ProtocolEventEnvelope[] = []
-    let processedEventIds = new Set<string>()
-    const renderBuffer = createSessionEventBuffer((events) => {
-      if (cancelled) return
-      setState((current) => events.reduce((next, event) =>
-        next && event.sequence < next.nextSeq ? next : mergeSessionEvent(next, event), current))
-      const items = events.flatMap((event) => {
-        const item = readPayloadValue<TimelineItem>(event.payload.item)
-        if (item) return [item]
-        return Array.isArray(event.payload.items) ? event.payload.items.filter(isTimelineItem) : []
-      })
-      if (items.length > 0) clearResolvedOptimisticMessagesRef.current(sessionId, items)
-    })
-    const refetch = (reason: string) => {
-      if (refetchPromise) return refetchPromise
-      refetchPromise = loadInitialSessionState(token, sessionId, { reason })
-        .then((next) => {
-          if (cancelled) return
-          const merged = applyOptimisticItemsRef.current(next)
-          renderBuffer.clear()
-          clearResolvedOptimisticMessagesRef.current(sessionId, merged.items)
-          eventSequenceCursor.replaceFromSnapshot(
-            sessionId,
-            cursorSequence(next.eventCursor) || next.nextSeq,
-          )
-          processedEventIds = new Set()
-          setState((current) => ({
-            ...merged,
-            timelineResetVersion: nextTimelineResetVersion(current?.timelineResetVersion ?? 0, true),
-          }))
-          onSessionUpdatedRef.current?.(next.session)
-        })
-        .catch(() => undefined)
-        .finally(() => {
-          refetchPromise = null
-        })
-      return refetchPromise
-    }
-
-    const applyEvent = (event: ProtocolEventEnvelope) => {
-      if (cancelled || event.sessionId !== sessionId) return
-      if (event.type === "goal.state.updated") { goals.ingest(event.payload.state as import("@/generated/protocol/v1_1/goal-state").GoalState); return }
-      if (event.type === "planning.state.updated") { planning.ingest(event.payload.state as import("@/generated/protocol/v1/planning-state").PlanningState); return }
-      if (event.type === "keepalive") return
-      const usesDurableEventIdDedup = sessionEventUsesDurableEventIdDedup(event)
-      if (!eventSequenceCursor.accepts(sessionId, event.sequence)) return
-      if (!acceptSessionEventId(event, processedEventIds)) return
-      if (usesDurableEventIdDedup) {
-        if (processedEventIds.size > 1000) {
-          processedEventIds = new Set(Array.from(processedEventIds).slice(-500))
-        }
-      }
-      if (event.type === "session.refetch_required") {
-        void recoverEvents(
-          eventSequenceCursor.current(sessionId),
-          "session.refetch_required",
-        )
-        return
-      }
-      if (!sessionEventCanUpdateState(event)) {
-        eventSequenceCursor.advance(sessionId, event.sequence)
-        return
-      }
-      renderBuffer.push(event)
-      eventSequenceCursor.advance(sessionId, event.sequence)
-    }
-
-    const recoverEvents = async (afterSeq: number, reason: string) => {
-      if (recoveryPromise || recoveryStarting) return recoveryPromise
-      recoveryStarting = true
-      // Events received before this recovery request causally precede its
-      // response. Apply them first so the recovered live projection wins at
-      // the same sequence; events received during the request remain queued.
-      // recoveryStarting also makes a buffered refetch_required join this
-      // recovery instead of recursively starting another one.
-      drainBufferedEvents({ allowWhileRecoveryStarting: true })
-      const recoveryAfterSeq = Math.max(
-        afterSeq,
-        eventSequenceCursor.current(sessionId),
-      )
-      try {
-        const recoveryRequest = dashboardApi.getSessionEvents(token, sessionId, `seq:${recoveryAfterSeq}`)
-          .then(async (recovery) => {
-            if (cancelled) return
-            if (recovery.snapshotRequired) {
-              return refetch(`${reason}:snapshot-required`)
-            }
-            const recoveredSession = recovery.events.reduce<SessionView | null>(
-              (latest, event) => {
-                if (event.type !== "session.meta.updated") return latest
-                return readPayloadValue<SessionView>(event.payload.session) ?? latest
-              },
-              null,
-            )
-            const shouldReadLiveCapabilities = recoveredSession?.connectorStatus === "online"
-            for (const event of recovery.events) {
-              if (event.type === "runtime.capability.updated" && shouldReadLiveCapabilities) {
-                continue
-              }
-              applyEvent(event)
-            }
-            eventSequenceCursor.advance(
-              sessionId,
-              cursorSequence(recovery.nextCursor),
-            )
-            // Runtime state is not recovered by /events. Read it even when
-            // offline so the Server can return its last cached/persisted fact.
-            // Keep events received during these reads queued until both settle.
-            const bufferedBeforeLiveRead = bufferedEvents
-            bufferedEvents = []
-            const liveReadConnection = connectionSequence
-            const [stateResult, capabilitiesResult] = await Promise.allSettled([
-              dashboardApi.getSessionRuntimeState(token, sessionId),
-              shouldReadLiveCapabilities
-                ? dashboardApi.getSessionRuntimeCapabilities(token, sessionId)
-                : Promise.resolve(null),
-            ])
-            if (cancelled) return
-            const liveReadIsCurrent = liveReadConnection === connectionSequence
-            const liveState = liveReadIsCurrent && stateResult.status === "fulfilled"
-              ? stateResult.value
-              : null
-            const liveCapabilities = liveReadIsCurrent && capabilitiesResult.status === "fulfilled"
-              ? capabilitiesResult.value
-              : null
-            bufferedEvents = bufferedEventsAfterLiveCapabilityRead(
-              liveState
-                ? bufferedBeforeLiveRead.filter((event) => event.type !== "runtime.state.updated")
-                : bufferedBeforeLiveRead,
-              bufferedEvents,
-              liveCapabilities !== null,
-            )
-            renderBuffer.flush()
-            setState((current) => {
-              if (!current || current.session.id !== sessionId) return current
-              // Include facts received before the read in its version check.
-              // Other buffered domains (including refetch signals) keep their
-              // existing ordering and are drained after recovery is released.
-              const stateBeforeRead = bufferedBeforeLiveRead.reduce(
-                (latest, event) => event.type === "runtime.state.updated" && event.sessionId === sessionId
-                  ? mergeRuntimeState(
-                      latest,
-                      readPayloadValue<SessionRuntimeState>(event.payload.state),
-                      sessionId,
-                    )
-                  : latest,
-                current.state,
-              )
-              const nextRuntimeState = mergeRuntimeState(stateBeforeRead, liveState?.state, sessionId)
-              const nextCapabilities = mergeEffectiveCapabilities(
-                current.effectiveCapabilities,
-                liveCapabilities?.capabilitySet ?? null,
-              )
-              return nextRuntimeState === current.state && nextCapabilities === current.effectiveCapabilities
-                ? current
-                : {
-                    ...current,
-                    state: nextRuntimeState,
-                    effectiveCapabilities: nextCapabilities,
-                    serverTime: liveState?.serverTime ?? liveCapabilities?.serverTime ?? current.serverTime,
-                  }
-            })
-          })
-          .catch(() => refetch(`${reason}:recovery-failed`))
-        recoveryPromise = settleSessionEventRecovery(
-          recoveryRequest,
-          () => {
-            recoveryPromise = null
-            recoveryStarting = false
-          },
-          drainBufferedEvents,
-        )
-        return recoveryPromise
-      } catch {
-        return undefined
-      } finally {
-        // Synchronous setup failures happen before settleSessionEventRecovery
-        // owns cleanup.
-        if (!recoveryPromise) {
-          recoveryStarting = false
-          drainBufferedEvents()
-        }
-      }
-    }
-
-    function drainBufferedEvents(
-      options: { allowWhileRecoveryStarting?: boolean } = {},
-    ) {
-      const pending = bufferedEvents
-      bufferedEvents = []
-      const remaining = drainSessionEventBuffer(
-        pending,
-        applyEvent,
-        () => Boolean(
-          recoveryPromise || (
-            recoveryStarting && !options.allowWhileRecoveryStarting
-          ),
-        ),
-      )
-      if (remaining.length > 0) {
-        bufferedEvents = [...remaining, ...bufferedEvents]
-      }
-    }
-
-    const recoverAfterSubscription = async (reason: string, connection: number) => {
-      const pendingRecovery = recoveryPromise
-      if (pendingRecovery) await pendingRecovery
-      if (cancelled || !snapshotReady || !socketSubscribed) return
-      await recoverEvents(eventSequenceCursor.current(sessionId), reason)
-      if (!cancelled && socketSubscribed && connection === connectionSequence) recoveredSubscriptions.recovered(connection)
-    }
-
-    const connect = async () => {
-      const connection = ++connectionSequence
-      recoveredSubscriptions.observed(connection)
-      try {
-        const ticket = await dashboardApi.createWsTicket(token, createClientId("web"), sessionId)
-        if (cancelled) return
-        socketSubscribed = false
-        socket = new WebSocket(dashboardApi.sessionWebSocketUrl(sessionId, ticket.ticket))
-        socket.onopen = () => {
-          if (!cancelled) streamConnectedRef.current = true
-        }
-        socket.onmessage = (message) => {
-          if (cancelled || typeof message.data !== "string") return
-          const event = parseProtocolEvent(message.data)
-          if (!event) return
-          if (event.type === "session.subscribed") {
-            // The Server registers the broker subscription before emitting this
-            // event. Recover only after that point so a same-sequence live
-            // projection cannot fall between recovery and socket registration.
-            socketSubscribed = true
-            if (snapshotReady) {
-              void recoverAfterSubscription("websocket.subscribed", connection)
-            }
-            return
-          }
-          if (!snapshotReady || recoveryPromise || recoveryStarting) {
-            bufferedEvents.push(event)
-            return
-          }
-          applyEvent(event)
-        }
-        socket.onclose = () => {
-          if (cancelled) return
-          socketSubscribed = false
-          streamConnectedRef.current = false
-          reconnectTimer = window.setTimeout(() => {
-            reconnectTimer = null
-            void connect()
-          }, 1200)
-        }
-      } catch {
-        if (cancelled) return
-        reconnectTimer = window.setTimeout(() => {
-          reconnectTimer = null
-          void connect()
-        }, 2000)
-      }
-    }
-
-    void connect()
-
-    loadInitialSessionState(token, sessionId, {
-      reason: "session-detail.initial-load",
-    })
-      .then((next) => {
-        if (cancelled) return
-        setError(null)
-        const merged = applyOptimisticItemsRef.current(next)
-        clearResolvedOptimisticMessagesRef.current(sessionId, merged.items)
-        setState((current) => current ? mergeSessionSnapshot(current, merged) : merged)
-        eventSequenceCursor.advance(
-          sessionId,
-          cursorSequence(next.eventCursor) || next.nextSeq,
-        )
-        onSessionUpdatedRef.current?.(next.session)
-        snapshotReady = true
-        if (socketSubscribed) {
-          void recoverAfterSubscription("websocket.initial-subscription", connectionSequence)
-        } else {
-          drainBufferedEvents()
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          snapshotReady = true
-          setError(err instanceof Error ? err.message : tSessionRef.current("loadFailed"))
-          setLoading(false)
-          if (socketSubscribed) {
-            void recoverAfterSubscription("websocket.initial-subscription", connectionSequence)
-          } else {
-            drainBufferedEvents()
-          }
-        }
-      })
-
-    return () => {
-      cancelled = true
-      renderBuffer.dispose()
-      bufferedEvents = []
-      streamConnectedRef.current = false
-      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
-      socket?.close()
-    }
-  }, [
-    isLocalOptimisticSession,
-    sessionId,
-    token,
-  ])
+    return sessionControllers.retain(sessionId, controller, { start: !isLocalOptimisticSession })
+  }, [controller, isLocalOptimisticSession, sessionControllers, sessionId])
 
   const handleSend = async (
     content: string,
@@ -1212,7 +729,7 @@ export function SessionDetail({
       const objective=content.trimStart().slice(5).trim()
       const refs=attachments.flatMap(file=>file.uploaded?[file.uploaded]:[])
       if(!objective || refs.length!==attachments.length)return false
-      try { await selectionWritesRef.current.get(session.id) } catch { return false }
+      try { await selectionChanges.writes.get(session.id) } catch { return false }
       return goals.set(objective,refs)
     }
     const planIntent = parsePlanningCommand(content)
@@ -1222,7 +739,7 @@ export function SessionDetail({
       if (planIntent.command !== "submit_task" && attachments.length) { toast.error(tPlanning("commandAttachments")); return false }
       try {
         // Selections are written when changed; only wait for a pending write.
-        await selectionWritesRef.current.get(session.id)
+        await selectionChanges.writes.get(session.id)
       } catch (error) {
         toast.error(error instanceof Error ? error.message : tSession("updateSelectionsFailed")); return false
       }
@@ -1242,25 +759,28 @@ export function SessionDetail({
       text: messageText,
       attachments,
       items: state?.items ?? [],
-      nextSeq: state?.nextSeq ?? eventSequenceCursor.current(sessionId),
+      nextSeq: state?.nextSeq ?? 0,
     })
     addOptimisticMessage({
       clientMessageId,
       sessionId: session.id,
       item: optimisticMessage,
     })
-    const previousRuntimeState = state?.state ?? null
+    let previousRuntimeState = state?.state ?? null
+    let pendingRuntimeState: SessionRuntimeState | null = null
     setState((current) => {
       if (!current) return current
+      previousRuntimeState = current.state ?? null
+      pendingRuntimeState = nextOptimisticRuntimeState(current.state, current.session, "waiting")
       return {
         ...current,
-        state: nextOptimisticRuntimeState(current.state, current.session, "waiting"),
+        state: pendingRuntimeState,
         items: mergeTimelineItems(current.items, [optimisticMessage]),
       }
     })
     setSending(true)
     try {
-      await selectionWritesRef.current.get(session.id)
+      await selectionChanges.writes.get(session.id)
       await dashboardApi.sendSessionMessage(token, session.id, messageText, {
         attachments: uploadedAttachments.map((attachment) => ({ fileId: attachment.fileId })),
         clientMessageId,
@@ -1279,7 +799,7 @@ export function SessionDetail({
         return {
           ...current,
           state:
-            current.state?.status === "waiting"
+            current.state === pendingRuntimeState
               ? previousRuntimeState
               : current.state,
           items: current.items.map((item) =>
@@ -1356,17 +876,16 @@ export function SessionDetail({
     command: string,
     options: { args: string[]; raw: string },
   ): Promise<CommandOutcome> => {
-    const visit = commandVisitRef.current
-    if (!session || session.id !== visit.sessionId) {
+    if (!session || session.id !== sessionId) {
       return { ok: false, state: "completed", code: "session_unavailable", message: tSession("commandUnavailable"), result: null }
     }
     const request = ++commandRequestSeqRef.current
     activeCommandRequestRef.current = request
-    const isCurrentRequest = () => commandVisitRef.current === visit && activeCommandRequestRef.current === request
+    const isCurrentRequest = () => activeVisitRef.current && activeCommandRequestRef.current === request
     try {
-      const response = await dashboardApi.sendSessionCommand(token, visit.sessionId, command, options)
-      if (isCurrentRequest() && response.session?.id === visit.sessionId) {
-        setState((current) => current?.session.id === visit.sessionId ? { ...current, session: response.session! } : current)
+      const response = await dashboardApi.sendSessionCommand(token, sessionId, command, options)
+      if (isCurrentRequest() && response.session?.id === sessionId) {
+        setState((current) => current?.session.id === sessionId ? { ...current, session: response.session! } : current)
         onSessionUpdated?.(response.session)
       }
       return commandResult(response)
@@ -1387,7 +906,7 @@ export function SessionDetail({
         notices: current.notices.filter((notice) => notice.noticeId !== noticeId),
       }
     })
-  }, [])
+  }, [setState])
 
   const handleRespondInteraction = React.useCallback(async (
     noticeId: string,
@@ -1578,7 +1097,7 @@ export function SessionDetail({
       scheduleCheck()
     }
     timelineFollowRef.current?.resume("smooth")
-  }, [distanceFromBottom, state?.items.length, updateScrollBottomState])
+  }, [distanceFromBottom, setState, state?.items.length, updateScrollBottomState])
 
   const interactions = React.useMemo(
     () => openInteractions(state?.notices ?? [], session?.id ?? sessionId),
@@ -1832,12 +1351,14 @@ export function SessionDetail({
           <NativeSessionHandoff key={sessionId} token={token} session={session} state={runtimeState}
             capabilities={state?.effectiveCapabilities ?? null} onSettled={async () => {
               const refreshed = await loadInitialSessionState(token, sessionId, { reason: "native-history.handoff" })
+              if (!activeVisitRef.current) return
               setState(current => current?.session.id === sessionId ? refreshed : current)
               onSessionUpdated?.(refreshed.session)
             }} />
           <AgentRecoveryNotice key={`recovery:${sessionId}`} token={token} session={session} state={runtimeState}
             capabilities={state?.effectiveCapabilities ?? null} onSettled={async () => {
               const refreshed = await loadInitialSessionState(token, sessionId, { reason: "agent.recovery" })
+              if (!activeVisitRef.current) return
               setState(current => current?.session.id === sessionId ? refreshed : current)
               onSessionUpdated?.(refreshed.session)
             }} />
@@ -2608,329 +2129,6 @@ function toolRunSummary(
   if (counts.reasoning > 0) parts.push(tSession("toolSummaryReasoning", { count: counts.reasoning }))
   if (counts.tools > 0) parts.push(tSession("toolSummaryTools", { count: counts.tools }))
   return parts.length > 0 ? parts.join(", ") : tSession("toolSummaryItems", { count: items.length })
-}
-
-function mergeSessionEvent(
-  current: SessionRemoteState | null,
-  event: ProtocolEventEnvelope,
-): SessionRemoteState | null {
-  if (!current) return current
-
-  const session = event.type === "session.meta.updated"
-    ? readPayloadValue<SessionView>(event.payload.session)
-    : null
-  const runtimeState = event.type === "runtime.state.updated"
-    ? readPayloadValue<SessionRuntimeState>(event.payload.state)
-    : null
-  const item = event.type === "timeline.item_created" || event.type === "timeline.item_updated"
-    ? readPayloadValue<TimelineItem>(event.payload.item)
-    : null
-  const timelineSnapshot = event.type === "timeline.snapshot" && Array.isArray(event.payload.items)
-    ? event.payload.items.filter(isTimelineItem)
-    : null
-  const notice = event.type === "runtime.notice.updated"
-    ? readPayloadValue<Notice>(event.payload.notice)
-    : null
-  const noticeSnapshot = event.type === "runtime.notice.snapshot" && Array.isArray(event.payload.notices)
-    ? event.payload.notices.filter(isNotice)
-    : null
-  const capabilitySet = event.type === "runtime.capability.updated"
-    ? readPayloadValue<ProtocolCapabilitySet>(event.payload.capabilitySet)
-    : null
-  const catalogUpdate = event.type === "runtime.catalog.updated"
-    ? catalogUpdateFromEvent(event)
-    : null
-
-  const nextNotices = noticeSnapshot
-    ? noticeSnapshot
-    : notice
-      ? mergeNotices(current.notices, [notice])
-      : current.notices
-  const nextItems = timelineSnapshot
-    ? mergeTimelineSnapshot(
-        current.items,
-        current.nextSeq,
-        timelineSnapshot,
-        event.sequence,
-      ).items
-    : item
-      ? mergeTimelineItems(current.items, [item])
-      : current.items
-  const timelineResetVersion = nextTimelineResetVersion(
-    current.timelineResetVersion,
-    timelineSnapshot !== null,
-  )
-  const acceptsSession = Boolean(session && session.updatedSeq >= current.session.updatedSeq)
-  const nextSession = acceptsSession && session && !sessionSemanticallyEqual(current.session, session)
-    ? session
-    : current.session
-  const acceptsRuntimeState = Boolean(
-    runtimeState &&
-      runtimeState.sessionId === current.session.id &&
-      runtimeState.updatedSeq >= (current.state?.updatedSeq ?? 0),
-  )
-  if (session || runtimeState) {
-    console.info("[session_status_trace]", {
-      layer: "frontend-event",
-      sessionId: event.sessionId,
-      eventType: event.type,
-      eventId: event.eventId,
-      eventSequence: event.sequence,
-      currentSessionStatus: current.session.status,
-      incomingSessionStatus: session?.status ?? null,
-      currentRuntimeStatus: current.state?.status ?? null,
-      incomingRuntimeStatus: runtimeState?.status ?? null,
-      incomingRuntimeSource: runtimeState?.metadata?.source ?? null,
-      currentSessionUpdatedSeq: current.session.updatedSeq,
-      incomingSessionUpdatedSeq: session?.updatedSeq ?? null,
-      currentRuntimeUpdatedSeq: current.state?.updatedSeq ?? null,
-      incomingRuntimeUpdatedSeq: runtimeState?.updatedSeq ?? null,
-      acceptsSession,
-      acceptsRuntimeState,
-    })
-  }
-  const nextRuntimeState = mergeRuntimeState(current.state, runtimeState, current.session.id)
-  const nextEffectiveCapabilities = mergeEffectiveCapabilities(
-    current.effectiveCapabilities,
-    capabilitySet,
-  )
-  const nextCatalogs = catalogUpdate && !catalogsSemanticallyEqual(current.catalogs[catalogUpdate.catalogType], catalogUpdate.catalog)
-    ? {
-        ...current.catalogs,
-        [catalogUpdate.catalogType]: catalogUpdate.catalog,
-      }
-    : current.catalogs
-  const nextSeq = Math.max(current.nextSeq, event.sequence)
-  const nextEventCursor = event.sequence >= current.nextSeq ? event.cursor : current.eventCursor
-
-  if (
-    nextSession === current.session &&
-    nextRuntimeState === current.state &&
-    nextItems === current.items &&
-    nextNotices === current.notices &&
-    nextEffectiveCapabilities === current.effectiveCapabilities &&
-    nextCatalogs === current.catalogs &&
-    nextSeq === current.nextSeq &&
-    timelineResetVersion === current.timelineResetVersion &&
-    nextEventCursor === current.eventCursor
-  ) {
-    return current
-  }
-
-  return {
-    ...current,
-    session: nextSession,
-    state: nextRuntimeState,
-    items: nextItems,
-    notices: nextNotices,
-    nextSeq,
-    timelineResetVersion,
-    eventCursor: nextEventCursor,
-    effectiveCapabilities: nextEffectiveCapabilities,
-    catalogs: nextCatalogs,
-    serverTime: event.emittedAt ?? current.serverTime,
-  }
-}
-
-function sessionEventCanUpdateState(event: ProtocolEventEnvelope): boolean {
-  return (
-    event.type === "session.meta.updated" ||
-    event.type === "runtime.state.updated" ||
-    event.type === "runtime.capability.updated" ||
-    event.type === "runtime.catalog.updated" ||
-    event.type === "runtime.notice.updated" ||
-    event.type === "runtime.notice.snapshot" ||
-    event.type === "timeline.item_created" ||
-    event.type === "timeline.item_updated" ||
-    event.type === "timeline.snapshot"
-  )
-}
-
-function catalogUpdateFromEvent(
-  event: ProtocolEventEnvelope,
-): { catalogType: "model"; catalog: ProtocolModelCatalog } | { catalogType: "permission"; catalog: ProtocolPermissionCatalog } | null {
-  if (event.payload.catalogType === "model") {
-    const catalog = readPayloadValue<ProtocolModelCatalog>(event.payload.catalog)
-    return catalog ? { catalogType: "model", catalog } : null
-  }
-  if (event.payload.catalogType === "permission") {
-    const catalog = readPayloadValue<ProtocolPermissionCatalog>(event.payload.catalog)
-    return catalog ? { catalogType: "permission", catalog } : null
-  }
-  return null
-}
-
-function catalogsSemanticallyEqual(
-  left: unknown,
-  right: ProtocolModelCatalog | ProtocolPermissionCatalog,
-): boolean {
-  if (!left) return false
-  return stableStringify(left) === stableStringify(right)
-}
-
-function sessionSemanticallyEqual(left: SessionView, right: SessionView): boolean {
-  return stableStringify({
-    id: left.id,
-    connectorId: left.connectorId,
-    connectorStatus: left.connectorStatus,
-    runtime: left.runtime,
-    externalSessionId: left.externalSessionId,
-    title: left.title,
-    cwd: left.cwd,
-    status: left.status,
-    takeover: left.takeover,
-    pinned: left.pinned,
-    pinnedAt: left.pinnedAt,
-    archived: left.archived,
-    archivedAt: left.archivedAt,
-    unread: left.unread,
-    lastReadSeq: left.lastReadSeq,
-    lastSyncedAt: left.lastSyncedAt,
-    sourceObservedAt: left.sourceObservedAt,
-    lastActivityAt: left.lastActivityAt,
-    lastItemAt: left.lastItemAt,
-    lastItemOrderSeq: left.lastItemOrderSeq,
-    sortAt: left.sortAt,
-    effectiveRunMode: left.effectiveRunMode,
-    runtimeSettings: left.runtimeSettings,
-    runtimeSettingsOverride: left.runtimeSettingsOverride,
-  }) === stableStringify({
-    id: right.id,
-    connectorId: right.connectorId,
-    connectorStatus: right.connectorStatus,
-    runtime: right.runtime,
-    externalSessionId: right.externalSessionId,
-    title: right.title,
-    cwd: right.cwd,
-    status: right.status,
-    takeover: right.takeover,
-    pinned: right.pinned,
-    pinnedAt: right.pinnedAt,
-    archived: right.archived,
-    archivedAt: right.archivedAt,
-    unread: right.unread,
-    lastReadSeq: right.lastReadSeq,
-    lastSyncedAt: right.lastSyncedAt,
-    sourceObservedAt: right.sourceObservedAt,
-    lastActivityAt: right.lastActivityAt,
-    lastItemAt: right.lastItemAt,
-    lastItemOrderSeq: right.lastItemOrderSeq,
-    sortAt: right.sortAt,
-    effectiveRunMode: right.effectiveRunMode,
-    runtimeSettings: right.runtimeSettings,
-    runtimeSettingsOverride: right.runtimeSettingsOverride,
-  })
-}
-
-function mergeRuntimeState(
-  current: SessionRuntimeState | null | undefined,
-  incoming: SessionRuntimeState | null | undefined,
-  sessionId: string,
-): SessionRuntimeState | null | undefined {
-  if (!incoming || incoming.sessionId !== sessionId || incoming.updatedSeq < (current?.updatedSeq ?? 0)) {
-    return current
-  }
-  // Even identical facts must advance the version watermark. Otherwise a
-  // later, older observation could replace them with different facts.
-  return current && incoming.updatedSeq === current.updatedSeq && runtimeStatesSemanticallyEqual(current, incoming)
-    ? current
-    : incoming
-}
-
-function runtimeStatesSemanticallyEqual(
-  left: SessionRuntimeState | null,
-  right: SessionRuntimeState,
-): boolean {
-  if (!left) return false
-  return stableStringify({
-    sessionId: left.sessionId,
-    runtime: left.runtime,
-    externalSessionId: left.externalSessionId,
-    status: left.status,
-    selections: left.selections,
-    statusReason: left.statusReason,
-    error: left.error,
-  }) === stableStringify({
-    sessionId: right.sessionId,
-    runtime: right.runtime,
-    externalSessionId: right.externalSessionId,
-    status: right.status,
-    selections: right.selections,
-    statusReason: right.statusReason,
-    error: right.error,
-  })
-}
-
-function effectiveRuntimeStatus(
-  runtimeState: SessionRuntimeState | null | undefined,
-  session: SessionView | null | undefined,
-): RuntimeStatusValue {
-  if (runtimeState) return runtimeState.status
-  if (session?.connectorStatus === "offline") return "disconnected"
-  return session?.status ?? "idle"
-}
-
-function mergeNotices(current: Notice[], incoming: Notice[]): Notice[] {
-  if (incoming.length === 0) return current
-  const byId = new Map(current.map((notice) => [notice.noticeId, notice]))
-  for (const notice of incoming) {
-    const existing = byId.get(notice.noticeId)
-    if (!existing || existing.updatedSeq <= notice.updatedSeq) byId.set(notice.noticeId, notice)
-  }
-  return Array.from(byId.values()).sort((a, b) => a.updatedSeq - b.updatedSeq || a.noticeId.localeCompare(b.noticeId))
-}
-
-function parseProtocolEvent(data: string): ProtocolEventEnvelope | null {
-  try {
-    const event = JSON.parse(data) as Partial<ProtocolEventEnvelope>
-    if (!event || typeof event.type !== "string") return null
-    if (event.type === "keepalive") return null
-    if (
-      event.protocolVersion !== "1.0" ||
-      typeof event.eventId !== "string" ||
-      typeof event.emittedAt !== "string" ||
-      typeof event.sessionId !== "string" ||
-      typeof event.sequence !== "number" ||
-      typeof event.cursor !== "string"
-    ) {
-      return null
-    }
-    return {
-      protocolVersion: event.protocolVersion,
-      eventId: event.eventId,
-      sequence: event.sequence,
-      cursor: event.cursor,
-      type: event.type,
-      sessionId: event.sessionId,
-      emittedAt: event.emittedAt,
-      payload: event.payload ?? {},
-    }
-  } catch {
-    return null
-  }
-}
-
-function cursorSequence(cursor: string | null | undefined): number {
-  if (!cursor) return 0
-  const raw = cursor.startsWith("seq:") ? cursor.slice(4) : cursor
-  const value = Number(raw)
-  return Number.isFinite(value) ? value : 0
-}
-
-function readPayloadValue<T>(value: unknown): T | null {
-  return value && typeof value === "object" ? value as T : null
-}
-
-function isTimelineItem(value: unknown): value is TimelineItem {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false
-  const item = value as Partial<TimelineItem>
-  return typeof item.id === "string" && typeof item.updatedSeq === "number"
-}
-
-function isNotice(value: unknown): value is Notice {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false
-  const notice = value as Partial<Notice>
-  return typeof notice.noticeId === "string" && typeof notice.updatedSeq === "number"
 }
 
 function openInteractions(notices: Notice[], _sessionId?: string): Notice[] {

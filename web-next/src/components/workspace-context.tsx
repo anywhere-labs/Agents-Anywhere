@@ -11,6 +11,9 @@ import {
   type SessionView as DemoSessionView,
 } from "@/lib/demo-api"
 import { useAuth } from "@/components/auth/auth-context"
+import { createSessionStateCache, type SessionStateCache } from "@/components/session/session-state-cache"
+import { createSessionControllerStore, type SessionControllerStore } from "@/components/session/session-controller-store"
+import { markSessionNavigation } from "@/components/session/session-switch-performance"
 import {
   DEFAULT_ADMIN_SECTION,
   legacyAdminRoutes,
@@ -292,6 +295,8 @@ export type WorkspaceState = ReturnType<typeof useSessionCreation> & {
   activeSession: SessionView | null
   activeSessionFallback: RealSessionView | null
   activeSessionPending: boolean
+  sessionStateCache: SessionStateCache
+  sessionControllers: SessionControllerStore
   activeConnectorId: string | null
   newSessionProjectId: string | null
   newSessionProject: ProjectView | null
@@ -454,6 +459,13 @@ export function useOptionalWorkspace(): WorkspaceState | null {
 
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const { session: authSession } = useAuth()
+  const cacheScope = JSON.stringify([process.env.NEXT_PUBLIC_AGENTS_ANYWHERE_API ?? "", authSession?.userId ?? null])
+  const sessionStateCache = React.useMemo(() => createSessionStateCache(cacheScope), [cacheScope])
+  const sessionControllers = React.useMemo(() => createSessionControllerStore(sessionStateCache), [sessionStateCache])
+  React.useEffect(() => {
+    sessionControllers.activate()
+    return () => sessionControllers.deactivate()
+  }, [sessionControllers])
   const currentAccessTokenRef = React.useRef(authSession?.accessToken ?? null)
   currentAccessTokenRef.current = authSession?.accessToken ?? null
   const [connectors, setConnectors] = React.useState<ConnectorView[]>([])
@@ -933,6 +945,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   const openSession = React.useCallback(
     (id: string) => {
+      markSessionNavigation(id)
       markSessionRead(id)
       pushRoute({ page: "session", sessionId: id })
     },
@@ -1369,8 +1382,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const getOptimisticItems = React.useCallback((sessionId: string) => {
-    return optimisticMessages
-      .filter((message) => optimisticMessageMatchesSession(message, sessionId, sessionAliases))
+    return optimisticMessagesRef.current
+      .filter((message) => optimisticMessageMatchesSession(message, sessionId, sessionAliasesRef.current))
       .map((message) => message.item)
   }, [optimisticMessages, sessionAliases])
 
@@ -1457,6 +1470,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     activeSession,
     activeSessionFallback: activeSessionOptimisticState?.session ?? null,
     activeSessionPending,
+    sessionStateCache,
+    sessionControllers,
     activeConnectorId,
     newSessionProjectId,
     newSessionProject,

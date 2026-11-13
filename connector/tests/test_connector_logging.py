@@ -80,3 +80,27 @@ def test_log_service_access_logs_are_excluded_to_prevent_feedback() -> None:
         assert len(events) == 1
         assert 'call-1' in events[0]['details']
     asyncio.run(exercise())
+
+
+def test_rpc_log_sink_records_the_exception_traceback() -> None:
+    async def exercise() -> list[Any]:
+        events: list[Any] = []
+
+        def notify(method: str, params: Any) -> None:
+            events.append(params)
+
+        sink = install_rpc_log_sink(notify, level="INFO")
+        try:
+            try:
+                raise ValueError("Batch for a subscription that already ended")
+            except ValueError:
+                logger.exception("Unhandled exception in aa.dsh.v2.Sync.ingestBatch")
+        finally:
+            await sink.close()
+        return events
+
+    exception = asyncio.run(exercise())[0]["exception"]
+    # Readable traceback text instead of the repr of Loguru's record tuple.
+    assert exception.startswith("Traceback (most recent call last):")
+    assert "in exercise" in exception
+    assert exception.rstrip().endswith("ValueError: Batch for a subscription that already ended")

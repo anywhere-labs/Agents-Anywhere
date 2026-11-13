@@ -94,6 +94,10 @@
       "zh-CN": "该会话当前不能执行此操作。",
       "en": "This session cannot perform this action right now."
     },
+    "claude_resume_no_response": {
+      "zh-CN": "Claude 恢复会话后没有回复这条消息。",
+      "en": "Claude did not reply to this message after resuming the session."
+    },
     "command_unavailable": {
       "zh-CN": "命令目录已变化，请刷新。",
       "en": "The command list has changed. Refresh it."

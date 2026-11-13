@@ -40,6 +40,10 @@ POST /api/v2/ws-ticket
 
 ### Intended lifecycle
 
+Returning to a cached session reuses its applied event cursor before subscribing
+and reconciling. Cache lifetime, reading restoration and invalidation rules for
+Web, Desktop and Android are defined in [会话访问缓存](../session-cache.md).
+
 ```text
 GET /sessions/{sessionId}/snapshot
   -> reads durable meta/timeline from Server and RuntimeLive facts from runtime RPC
@@ -257,12 +261,14 @@ updates.
 The `runtime.start` reply and the `runtime.statusChanged` notification carry
 the instance lifecycle `status` plus an optional `error` (only meaningful for
 `error`) and an optional `phase` (`{code, message, retryable?}`) that names the
-step a non-error status is in, for example `syncing` while a DSH instance is
-`starting`. A phase is progress, not a fault: the Server stores it on the
-runtime instance (`phase` in `RuntimeInstanceStatus`), does not re-issue
-`runtime.start` while an instance reports a starting phase (session operations
-get a retryable `409 runtime_starting` instead), and clients render it as
-progress text next to the `starting` badge.
+step a non-error status is in, for example `waiting_bridge` while a DSH
+instance is `starting`, or `syncing` / `sync_interrupted` while a `running` DSH
+instance rebuilds its session baseline (session operations already work then).
+A phase is progress, not a fault: the Server stores it on the runtime instance
+(`phase` in `RuntimeInstanceStatus`), does not re-issue `runtime.start` while
+an instance reports a starting phase (session operations get a retryable
+`409 runtime_starting` instead), and clients render it as progress text next to
+the `starting` or `running` badge.
 
 `runtime.discover` includes runtime-native capability inputs. They are not the
 primary frontend contract. The frontend contract is effective capability:

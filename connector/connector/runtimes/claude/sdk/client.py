@@ -36,6 +36,8 @@ def new_sdk_client(
     cli_models: Sequence[Mapping[str, Any]] = (),
     on_tool_result: Any | None = None,
     before_tool: Any | None = None,
+    on_stop: Any | None = None,
+    on_user_prompt: Any | None = None,
 ) -> Any:
     options = build_sdk_options(
         sdk,
@@ -47,6 +49,8 @@ def new_sdk_client(
         cli_models=cli_models,
         on_tool_result=on_tool_result,
         before_tool=before_tool,
+        on_stop=on_stop,
+        on_user_prompt=on_user_prompt,
     )
     if client_factory is not None:
         return client_factory(sdk, options)
@@ -69,6 +73,8 @@ def build_sdk_options(
     cli_models: Sequence[Mapping[str, Any]] = (),
     on_tool_result: Any | None = None,
     before_tool: Any | None = None,
+    on_stop: Any | None = None,
+    on_user_prompt: Any | None = None,
 ) -> Any:
     values = dict(config_values)
     kwargs: dict[str, Any] = {
@@ -109,7 +115,7 @@ def build_sdk_options(
         kwargs["stderr"] = stderr
     if settings_path is not None:
         kwargs["settings"] = settings_path
-    hooks = _permission_hooks(sdk, on_tool_result, before_tool)
+    hooks = _permission_hooks(sdk, on_tool_result, before_tool, on_stop, on_user_prompt)
     if hooks is not None:
         kwargs["hooks"] = hooks
     options_cls = getattr(sdk, "ClaudeAgentOptions", None) or getattr(
@@ -191,7 +197,11 @@ async def maybe_await(value: Any) -> Any:
 
 
 def _permission_hooks(
-    sdk: Any, on_tool_result: Any | None = None, before_tool: Any | None = None
+    sdk: Any,
+    on_tool_result: Any | None,
+    before_tool: Any | None,
+    on_stop: Any | None,
+    on_user_prompt: Any | None,
 ) -> dict[str, Any] | None:
     hook_matcher = _optional_attr(sdk, "HookMatcher", "types.HookMatcher")
     if hook_matcher is None:
@@ -213,9 +223,13 @@ def _permission_hooks(
     }
     if on_tool_result is not None:
         hooks["PostToolUse"] = [
-            hook_matcher(matcher="^Cron(Create|Delete|List)$", hooks=[on_tool_result]),
+            hook_matcher(matcher="^(Cron(Create|Delete|List)|ScheduleWakeup)$", hooks=[on_tool_result]),
             hook_matcher(matcher="^(Write|Edit|EnterPlanMode|ExitPlanMode)$", hooks=[on_tool_result])
         ]
+    if on_stop is not None:
+        hooks["Stop"] = [hook_matcher(matcher=None, hooks=[on_stop])]
+    if on_user_prompt is not None:
+        hooks["UserPromptSubmit"] = [hook_matcher(matcher=None, hooks=[on_user_prompt])]
     return hooks
 
 

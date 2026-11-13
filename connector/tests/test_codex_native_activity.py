@@ -7,6 +7,25 @@ from connector.runtimes.codex.sessions.history_index import NativeThreadActivity
 from connector.runtimes.codex.sessions.reader import reconcile_native_activity
 
 
+@pytest.mark.parametrize("event,status", [("task_complete", "completed"), ("turn_aborted", "interrupted")])
+def test_terminal_rollout_fallback_never_ends_a_newer_turn(tmp_path, event, status):
+    import json
+
+    from connector.runtimes.codex.sessions.history_index import (
+        read_rollout_terminal_activity,
+    )
+    path = tmp_path / "history.jsonl"
+    rows = [{"type": "session_meta", "payload": {"id": "thread"}},
+            {"type": "event_msg", "payload": {"type": event, "turn_id": "ended"}}]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    thread = {"id": "thread", "path": str(path)}
+    assert read_rollout_terminal_activity(thread) == NativeThreadActivity("idle", "ended", status, "terminal")
+    with path.open("a") as stream:
+        stream.write(json.dumps({"type": "event_msg", "payload": {"type": "task_started", "turn_id": "new"}}) + "\n")
+    assert read_rollout_terminal_activity(thread) is None
+    assert read_rollout_terminal_activity({**thread, "id": "another"}) is None
+
+
 @pytest.mark.parametrize("status", ["waiting", "waiting_approval", "blocked"])
 def test_native_running_preserves_current_interaction(status: str) -> None:
     cached = SessionState(

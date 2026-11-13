@@ -10,6 +10,7 @@ import json
 import sqlite3
 import time
 from collections.abc import Mapping
+from contextlib import closing
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -56,7 +57,8 @@ def read_native_thread_activity(
     source, thread_id, database_path = native_source
     try:
         database_uri = database_path.as_uri() + "?mode=ro"
-        with sqlite3.connect(database_uri, uri=True, timeout=0.1) as database:
+        # Connection's own context manager only commits; it never closes the file.
+        with closing(sqlite3.connect(database_uri, uri=True, timeout=0.1)) as database:
             row = database.execute(
                 "SELECT turn_id, status FROM thread_turns "
                 "WHERE thread_id=? ORDER BY rollout_ordinal DESC LIMIT 1",
@@ -107,6 +109,47 @@ def _source_is_recent(source: Mapping[str, Any]) -> bool:
         return False
     age_ns = time.time_ns() - mtime_ns
     return age_ns <= _NATIVE_ACTIVITY_STARTUP_GRACE_SECONDS * 1_000_000_000
+
+
+def read_rollout_terminal_activity(thread: Mapping[str, Any]) -> NativeThreadActivity | None:
+    """Use explicit terminal events when the optional SQLite projection is unavailable."""
+    source = source_signature(thread)
+    if source is None:
+        return None
+    try:
+        with Path(source["path"]).open("rb") as stream:
+            header = json.loads(stream.readline(1024 * 1024))
+            if header.get("type") != "session_meta" or header.get("payload", {}).get("id") != thread.get("id"):
+                return None
+            offset = max(0, source["size"] - 256 * 1024)
+            stream.seek(offset)
+            if offset:
+                stream.readline()  # Never parse a partial first record.
+            lines = stream.read().splitlines()
+        for line in reversed(lines):
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(record, dict) or record.get("type") != "event_msg":
+                continue
+            payload = record.get("payload", {})
+            if not isinstance(payload, dict):
+                continue
+            event = payload.get("type")
+            if event == "task_started":
+                return None  # Never infer completion from an earlier turn.
+            if event not in {"task_complete", "task_completed", "turn_aborted"}:
+                continue
+            turn_id = payload.get("turn_id")
+            if not isinstance(turn_id, str) or not turn_id or source_signature(thread) != source:
+                return None
+            return NativeThreadActivity(
+                "idle", turn_id, "interrupted" if event == "turn_aborted" else "completed", "terminal",
+            )
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+    return None
 
 
 def _source_is_open_by_codex(source: Mapping[str, Any]) -> bool:
