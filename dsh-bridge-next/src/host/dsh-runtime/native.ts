@@ -23,6 +23,7 @@ import { RuntimePlanning } from './planning.js'
 import type { Selections } from './selections.js'
 import { capabilities } from './capabilities.js'
 import { CreationIntents } from './creation-intents.js'
+import { latestTurnOutcome, type TurnOutcome } from './turn-outcome.js'
 import { RuntimeAttachments, attachmentFingerprint, attachmentReferences, type AttachmentSnapshot, type StagedAttachment } from './attachments.js'
 declare module '@deepseek-ai/cordis' {
   interface Events { 'llm/adapters-updated'(): void }
@@ -43,6 +44,8 @@ export const MAX_RETAINED_FACTS = 128
 export interface SessionFacts {
   configuration: Awaited<ReturnType<RuntimeConfiguration['state']>>
   lastTurnEndKind: string | undefined
+  /** The latest finished turn's failure or missing reply, while no turn has started since. */
+  turnOutcome: TurnOutcome | undefined
 }
 
 /** Last terminal turn outcome, which decides a cold session's status. */
@@ -227,6 +230,7 @@ export class NativeRuntime {
     const value: SessionFacts = {
       configuration,
       lastTurnEndKind: lastTurnEndKind(events),
+      turnOutcome: latestTurnOutcome(events),
     }
     const actualRevision = log && 'bridgeRevision' in log && typeof log.bridgeRevision === 'string' ? log.bridgeRevision : revision
     if (actualRevision !== undefined) {

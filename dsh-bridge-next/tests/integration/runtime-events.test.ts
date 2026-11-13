@@ -850,3 +850,63 @@ test('a session someone works in streams before the startup scan finishes', { ti
     stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true })
   }
 })
+
+test('a failed turn or a turn without a reply opens an error card that the next turn closes (#543)', { timeout: 30_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-turn-outcome-'))
+  const fixture = await nativeRuntime(home)
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  const stream = follow(native)
+  const router = new RuntimeRouter({ native, query: fixture.ctx.sessionQuery, status: id => native.status(id) }, 'test')
+  const params = { sessionId: sessionId('test', fixture.session.id), externalSessionId: fixture.session.id }
+  type Notice = { noticeId: string, status: string, severity: string, interactionType: string, message: string,
+    blocking: unknown, responseRequired: boolean, context: Record<string, unknown> }
+  const cards = () => notifications(stream.ops()).filter(note => note.method === 'notice.upsert')
+    .map(note => note.params as unknown as Notice).filter(notice => notice.context.kind === 'execution_error')
+  const readNotices = async () => ((await router.request('getSessionNotices', params, AbortSignal.timeout(5_000))) as { notices: Notice[] })
+    .notices.filter(notice => notice.context.kind === 'execution_error')
+  try {
+    await until(() => notifications(stream.ops()).some(note => note.method === 'session.inventory.complete'), 'baseline')
+    assert.deepEqual(await readNotices(), [], 'a session whose last turn replied has no card')
+
+    fixture.session.append('turn/start', { turn: 2 })
+    fixture.session.append('step/start', { turn: 2, step: 1 })
+    fixture.session.append('turn/end', { turn: 2, reason: { kind: 'error', error: { message: 'provider overloaded', code: 'RATE_LIMITED' } } })
+    await until(() => cards().length === 1, 'the failed turn opens a card')
+    const failed = cards()[0]!
+    assert.equal(failed.status, 'open')
+    assert.equal(failed.severity, 'error')
+    assert.equal(failed.interactionType, 'execution_error')
+    assert.equal(failed.message, 'provider overloaded')
+    assert.equal(failed.blocking, null, 'the card never locks the composer')
+    assert.equal(failed.responseRequired, false)
+    assert.deepEqual((failed.context.error as Record<string, unknown>).code, 'RATE_LIMITED')
+    assert.deepEqual((await readNotices()).map(notice => [notice.noticeId, notice.status]), [[failed.noticeId, 'open']],
+      'a client that reloads still sees the card')
+
+    // DSH ends a turn as completed without calling the model when a pre-step
+    // hook has nothing to send; the user saw no reply at all.
+    fixture.session.append('turn/start', { turn: 3 })
+    fixture.session.append('turn/end', { turn: 3, reason: { kind: 'completed' } })
+    await until(() => cards().length === 3, 'the next turn closes the card and its empty ending opens another')
+    assert.deepEqual(cards().slice(1).map(notice => [notice.noticeId === failed.noticeId, notice.status, notice.severity]),
+      [[true, 'closed', 'error'], [false, 'open', 'warning']])
+    const empty = cards()[2]!
+    assert.equal(empty.context.outcome, 'no_reply')
+    assert.equal(empty.context.steps, 0)
+
+    fixture.session.append('turn/start', { turn: 4 })
+    fixture.session.append('step/start', { turn: 4, step: 1 })
+    fixture.session.append('assistant/message', { turn: 4, step: 1, message: createAssistantMessage({
+      source: { provider: 'test', model: 'text' }, content: [{ type: 'text', text: '好的' }],
+    }) }, { surfaceOp: 'append' })
+    fixture.session.append('turn/end', { turn: 4, reason: { kind: 'completed' } })
+    fixture.session.append('turn/start', { turn: 5 })
+    fixture.session.append('turn/end', { turn: 5, reason: { kind: 'interrupted' } })
+    await until(() => notifications(stream.ops()).filter(note => note.method === 'session.turnEnded').length === 4, 'all turns end')
+    await delay(SYNC_FLUSH_MS * 3)
+    assert.deepEqual(cards().slice(3).map(notice => [notice.noticeId, notice.status]), [[empty.noticeId, 'closed']],
+      'a turn with a reply or one the user interrupted opens no card')
+    assert.deepEqual(await readNotices(), [])
+    assert.deepEqual(stream.errors, [])
+  } finally { router.close(); stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})

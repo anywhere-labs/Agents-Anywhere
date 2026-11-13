@@ -59,7 +59,7 @@ Connector 先验证发现文件、进程与回环地址，再执行限时鉴权�
 | ask_user_question / exit_plan_mode | `tool / input_request` | 历史只读，不发起新交互 |
 | run_code 子调用 | 独立 `tool` | 保留 rootCallId、parentItemId |
 | approval/asked、approval/decided | 同一条 `tool / permission` | 合并审批历史，不重新弹审批框 |
-| turn/start、turn/end | 状态/结束通知 | 投影内用于归并，后端不保存轮次标记 |
+| turn/start、turn/end | 状态/结束通知 | 投影内用于归并，后端不保存轮次标记；一轮以错误结束，或正常结束但没有文字、图片或工具调用时，发一张不阻塞输入的 `execution_error` 卡片，下一轮开始时关闭 |
 | compaction | `marker / compact` | 原始历史保留，不以压缩后上下文覆盖聊天记录 |
 | 其他内部信息事件 | 不输出 | 不生成兜底 notice |
 

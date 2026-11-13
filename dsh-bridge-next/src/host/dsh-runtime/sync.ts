@@ -5,13 +5,14 @@ import { receiptKey } from './attachments.js'
 import type { SnapshotPage, SnapshotRequest, SnapshotResult, SyncBatch as WireBatch } from '../generated/dsh-sync.js'
 import { MeshCallError } from 'meshcall'
 import { setTimeout as delay } from 'node:timers/promises'
-import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { SessionLogSnapshot } from '@deepseek-ai/dsh-session-query'
 import { createProjection, replayHistory, PROJECTION_VERSION, type SessionProjection } from './history.js'
 import { sessionId } from './identity.js'
 import type { NativeChange, NativeRuntime } from './native.js'
 import { record, type TimelineItem } from './types.js'
+import { latestTurnOutcome, turnOutcome, turnOutcomeNotice } from './turn-outcome.js'
 import type { SourceState } from './sessions/source.js'
 
 export type SyncOperation = { kind: string, [key: string]: unknown }
@@ -347,6 +348,24 @@ export class SyncFeed {
   private async notices(id: string): Promise<void> {
     for (const notice of [...this.native.questions.notices(this.namespace, id), ...this.native.approvals.notices(this.namespace, id)]) await this.notification('notice.upsert', notice)
   }
+  /**
+   * A turn that failed or ended without a reply opens an error card; the next
+   * turn closes the previous one. Both read the live log, so a card the Bridge
+   * opened before a restart is still closed.
+   */
+  private outcomeNotice(id: string, event: SessionEvent): ReturnType<typeof turnOutcomeNotice> | undefined {
+    const events = this.native.ctx.sessions.get(id as SessionId)?.snapshotEvents()
+    if (!events) return undefined
+    if (event.type === 'turn/start') {
+      const previous = latestTurnOutcome(events, Number(event.seq))
+      return previous && turnOutcomeNotice(this.namespace, id, previous, 'closed')
+    }
+    const outcome = turnOutcome(events, Number(event.seq))
+    if (!outcome) return undefined
+    this.native.diagnostics.log('warn', outcome.kind === 'failed' ? 'turn.failed' : 'turn.no_reply', { streamId: this.id, sessionId: id,
+      reason: outcome.reason, steps: outcome.steps, ...(outcome.error ? { code: outcome.error.code } : {}) })
+    return turnOutcomeNotice(this.namespace, id, outcome)
+  }
   private async state(id: string, snapshot?: SessionLogSnapshot & { bridgeRevision?: string }): Promise<void> {
     if (!this.published.has(id) || !await this.native.visible(id)) return
     const log = this.native.ctx.sessions.get(id as SessionId)
@@ -465,6 +484,7 @@ export class SyncFeed {
   private async changes(changes: NativeChange[], reconcileNow = true): Promise<boolean> {
     const touched = new Set<string>(), statuses = new Set<string>(), capabilities = new Set<string>()
     const ended: [string, Record<string, unknown>][] = []
+    const outcomes: [string, ReturnType<typeof turnOutcomeNotice>][] = []
     let reconcile = false, runtimeCapabilities = false, allSessionCapabilities = false
     for (const change of changes) {
       if (change.type === 'capabilities' || change.type === 'commands') {
@@ -530,6 +550,10 @@ export class SyncFeed {
             outcome: change.event.data.reason.kind === 'error' ? 'failed'
               : ['aborted', 'interrupted'].includes(change.event.data.reason.kind) ? 'interrupted' : 'completed',
           }])
+          if (change.event.type === 'turn/start' || change.event.type === 'turn/end') {
+            const notice = this.outcomeNotice(id, change.event)
+            if (notice) outcomes.push([id, notice])
+          }
           if (['turn/start', 'turn/end', 'approval/asked', 'approval/decided', 'model/selection', 'request/header',
             'permission/preset', 'sandbox/mode', 'approval/policy', 'agent-preset/selected'].includes(change.event.type)) statuses.add(id)
           // An evicted projection resumes from its committed checkpoint; the replayed log already holds this event.
@@ -557,6 +581,9 @@ export class SyncFeed {
     })
     for (const [id, params] of ended) await this.sessionOperation(id, 'turnEnded', async () => {
       if (this.published.has(id) && await this.native.visible(id)) await this.notification('session.turnEnded', params)
+    })
+    for (const [id, notice] of outcomes) await this.sessionOperation(id, 'turnOutcome', async () => {
+      if (this.published.has(id) && await this.native.visible(id)) await this.notification('notice.upsert', notice)
     })
     for (const id of statuses) await this.sessionOperation(id, 'state', () => this.state(id))
     if (runtimeCapabilities) await this.runtimeOperation('capabilities', async () => this.notification('runtime.capability.updated', await this.native.capabilities()))
