@@ -45,6 +45,8 @@
 
 ### 本机连接
 
+- 网络抖动后 Connector 不再永久卡在连接池超时：连续几次拿不到连接时会换用新的连接池，即使实时连接一直没断，历史和 DSH 同步也会恢复上传，设备无需重启桌面端即可恢复在线。（[#580](https://github.com/anywhere-labs/Agents-Anywhere/pull/580)）
+- 启用 DSH 时，桌面端启动后或之后再打开 DSH，都不再断开与 Connector 的控制连接，设备保持在线。（[#580](https://github.com/anywhere-labs/Agents-Anywhere/pull/580)）
 - macOS 上 Desktop 或本机连接异常退出时，会自动回收残留的 Connector 进程，清理完成后可重新启动本机连接。（[#628](https://github.com/anywhere-labs/Agents-Anywhere/pull/628)）
 - 电脑关机、重启或注销时，Desktop 不再弹出「退出 Agents Anywhere？」阻止关机，而是直接停止本机连接并退出；需要确认的用户可以打开「关机时询问是否退出」。在 Desktop 里手动退出时仍会确认。（[#596](https://github.com/anywhere-labs/Agents-Anywhere/pull/596)）
 - Desktop 登录时静默启动会在本机连接正常或仍在准备时保持隐藏，安装器从后台重新启动也不会拉起隐藏窗口，遇到本机连接被占用、归属检查失败或设备凭据失效时会自动打开一次窗口，凭据失效时可在窗口中重新连接。（[#403](https://github.com/anywhere-labs/Agents-Anywhere/pull/403)、[#627](https://github.com/anywhere-labs/Agents-Anywhere/pull/627)）
