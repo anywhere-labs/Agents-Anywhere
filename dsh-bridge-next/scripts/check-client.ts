@@ -19,7 +19,8 @@ export async function checkClient(source: string, packageId: string): Promise<vo
   const { document } = dom.window
   const globals = { window: dom.window, document, navigator: dom.window.navigator,
     Element: dom.window.Element, Node: dom.window.Node, HTMLElement: dom.window.HTMLElement,
-    HTMLIFrameElement: dom.window.HTMLIFrameElement, MutationObserver: dom.window.MutationObserver, IS_REACT_ACT_ENVIRONMENT: true }
+    HTMLButtonElement: dom.window.HTMLButtonElement, HTMLIFrameElement: dom.window.HTMLIFrameElement,
+    MutationObserver: dom.window.MutationObserver, IS_REACT_ACT_ENVIRONMENT: true }
   const previous = Object.fromEntries(Object.keys(globals).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]))
   for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value })
 
