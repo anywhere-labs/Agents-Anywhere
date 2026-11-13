@@ -107,6 +107,8 @@ class AgentClient:
         self.callbacks = Callbacks(self.receive_update, self.request_interaction)
         self.connection = None
         self.capabilities = {}
+        #: The Agent's whole ``initialize`` response, including its top-level ``_meta``.
+        self.handshake: dict = {}
         self.turns: dict[str, Turn] = {}
         self.commands: dict[str, list] = {}
         self.configuration: dict[str, list] = {}
@@ -211,6 +213,7 @@ class AgentClient:
                             }
                         ),
                         client_info=Implementation(name="agents-anywhere", version="1"),
+                        **self.dialect.initialize_meta(),
                     ),
                     20,
                 )
@@ -224,6 +227,7 @@ class AgentClient:
 
     def initialized(self, result: dict):
         """Narrow the dialect's ceiling to what the Agent declared in its handshake."""
+        self.handshake = result
         self.capabilities = result.get("agentCapabilities", {})
         aa = self.capabilities.setdefault("_meta", {}).setdefault("aa", {})
         aa.setdefault("capabilities", [])
@@ -236,25 +240,32 @@ class AgentClient:
         aa["guarantees"] = sorted(set(aa.get("guarantees", [])) | set(self.dialect.guarantees))
         self.callbacks.guarantees = frozenset(aa["guarantees"])
 
+    def meta(self, method: str, session_id: str | None, message_id: str | None = None) -> dict:
+        return self.dialect.request_meta(self.handshake, method, session_id, message_id)
+
     async def open_session(self, cwd: str, **metadata) -> dict:
+        metadata = {**self.meta("session/new", None), **metadata}
         try:
             result = wire(
                 await self.connection.new_session(cwd=cwd, mcp_servers=[], **metadata)
             )
         except RequestError as error:
             raise self.classify(error, "open") from error
+        await self.dialect.after_open(self, result["sessionId"], result)
         return self.adapt_session(result["sessionId"], result)
 
     async def resume(self, session_id: str, cwd: str, **metadata) -> dict:
         await self.dialect.prepare_resume(session_id, metadata)
         try:
             if self.capabilities.get("sessionCapabilities", {}).get("resume") is not None:
+                metadata = {**self.meta("session/resume", session_id), **metadata}
                 result = wire(
                     await self.connection.resume_session(
                         session_id=session_id, cwd=cwd, mcp_servers=[], **metadata
                     )
                 )
             elif self.capabilities.get("loadSession") is True:
+                metadata = {**self.meta("session/load", session_id), **metadata}
                 result = wire(
                     await self.connection.load_session(
                         session_id=session_id, cwd=cwd, mcp_servers=[], **metadata
@@ -264,6 +275,7 @@ class AgentClient:
                 raise AcpError("agent_resume_unsupported", "Agent 未提供会话恢复能力。")
         except RequestError as error:
             raise self.classify(error, "resume") from error
+        await self.dialect.after_open(self, session_id, result)
         return self.adapt_session(session_id, result)
 
     # Input
@@ -279,8 +291,15 @@ class AgentClient:
         finally:
             self.turns.pop(session_id, None)
 
-    async def send_prompt(self, session_id: str, text: str, operation_id: str, blocks=None) -> dict:
+    async def send_prompt(
+        self, session_id: str, text: str, operation_id: str, blocks=None, *, command=False
+    ) -> dict:
         """One ``session/prompt`` without turn bookkeeping (commands and steering)."""
+        extra = (
+            self.meta("session/command", session_id)
+            if command
+            else self.meta("session/prompt", session_id, operation_id)
+        )
         result = wire(
             await self.connection.prompt(
                 session_id=session_id,
@@ -293,6 +312,7 @@ class AgentClient:
                     ).model_validate(block)
                     for block in (blocks or [])
                 ],
+                **extra,
                 aa={"clientMessageId": operation_id},
             )
         )
@@ -315,12 +335,14 @@ class AgentClient:
         await self.dialect.before_prompt(self, session_id, values["content"], blocks, "steer")
         message_id = values["clientMessageId"]
         if isinstance(method, ExtensionSteer):
+            extra = self.meta("steer", session_id, message_id)
             result = await self.connection.ext_method(
                 method.method.removeprefix("_"),
                 {
                     "sessionId": session_id,
                     "aa": {"clientMessageId": message_id},
                     "prompt": [{"type": "text", "text": values["content"]}, *blocks],
+                    **({"_meta": extra} if extra else {}),
                 },
             )
         else:
@@ -356,7 +378,10 @@ class AgentClient:
                 "code": error.code,
                 "message": str(error),
             }
-        return {"ok": True, "result": await self.send_prompt(session_id, text, "command")}
+        return {
+            "ok": True,
+            "result": await self.send_prompt(session_id, text, "command", command=True),
+        }
 
     async def configure(self, session_id: str, key: str, value: str | bool) -> dict:
         options = await self.dialect.configure(self, session_id, key, value)

@@ -17,7 +17,7 @@ Web / Desktop / Android / iOS
   → Pi SDK
 ```
 
-默认 Provider 为 Codex、Claude、DSH、Pi、Hermes。Pi 使用 `runtimeType=pi`、`implementationType=acp-stdio`，ACP 是内部对接协议。通用 `AcpRuntime` 通过注入 `AgentProfile`、启动配置、准备策略复用协调逻辑，其他 Agent 可以有自己的 Provider 身份；默认列表没有单独名为 ACP 的入口。
+默认 Provider 为 Codex、Claude、DSH、Pi、Hermes、Codex (ACP)。Pi 使用 `runtimeType=pi`、`implementationType=acp-stdio`，ACP 是内部对接协议。通用 `AcpRuntime` 通过注入 `AgentProfile`、启动配置、准备策略复用协调逻辑，其他 Agent 可以有自己的 Provider 身份；默认列表没有单独名为 ACP 的入口。
 
 Pi 的 `PiProvider` 直接实现 `RuntimeProvider` 的配置、发现和启动流程，优先复用本机 npm 安装的 Pi SDK，第三方 `@openma/pi-acp` 提供 ACP 入口并在自己的进程内调用该 SDK。
 
@@ -130,12 +130,12 @@ TUI 协作、最终模型请求守卫、持久接纳回执和原生位置选择�
 
 ## 通用接入：Agent 定义、方言与公共引擎
 
-每个 ACP Agent 由三部分组成，Pi 和 Hermes 都按这个结构实现，新增 Agent 时一般只写前两部分：
+每个 ACP Agent 由三部分组成，Pi、Hermes 和 Codex (ACP) 都按这个结构实现，新增 Agent 时一般只写前两部分：
 
 | 部分 | 位置 | 负责 |
 | --- | --- | --- |
 | Agent 定义 | `profiles/<agent>/definition.py`，类型见 `domain/agents.py` | 身份、本机可执行文件与固定启动参数、启动前检查、实例配置、能力上限、权限选项；需要时提供 `prepare_launch`（安装、补丁）和 `runtime`（后台准备、原生历史）钩子 |
-| 方言 | 同上，接口见 `domain/dialect.py` | 标准 ACP 没有规定的差异：配置项归类、私有更新的翻译或丢弃、额外接纳证据、交互转换、发送前校验、会话核验、运行中追加方式、错误识别 |
+| 方言 | 同上，接口见 `domain/dialect.py` | 标准 ACP 没有规定的差异：握手与请求附带的 `_meta`、配置项归类、私有更新的翻译或丢弃、额外接纳证据、交互转换、发送前校验、会话核验、运行中追加方式、错误识别 |
 | 公共引擎 | `infrastructure/acp/client.py`、`application/sessions.py`、`runtime.py` | 进程与连接、握手、新建与恢复、发送与中断、接纳判定、用户消息写入、能力推导、命令、交互、历史重放和同步 |
 
 `provider.py` 的 `AcpAgentProvider` 把定义装配成 RuntimeProvider；Pi 和 Hermes 的 Provider 只是它的薄封装。
@@ -145,6 +145,8 @@ TUI 协作、最终模型请求守卫、持久接纳回执和原生位置选择�
 **能力**：定义给出能力上限，引擎按握手收窄：`promptCapabilities.image` 为真才开放附件，收到 `available_commands_update` 才开放命令，方言提供追加方式才开放 `session.steer`；恢复和关闭按 `loadSession`、`sessionCapabilities` 判断。方言可以补充额外能力。
 
 **配置**：ACP 的 `thought_level` 统一归为推理强度，其他归类由方言决定，选项和名称保持 Agent 原样。
+
+**Agent 自行运行的回合**：方言可以在 `session_info_update` 的 `_meta.aa.agentExecution` 里报告 Agent 不经 AA 运行的回合（`running`、`idle`、`unknown`），例如原窗口里发起的回合。引擎按当前连接代际记录；AA 自己没有回合、Agent 报告 `running` 时，会话状态为运行中（`statusReason=agent_external_turn`），此时可以插话和停止，不能发送新消息；断线恢复后旧记录失效。
 
 **错误**：常见 Agent 错误使用统一错误码，四端按界面语言显示：`agent_cli_missing`、`agent_cli_unsupported`、`agent_acp_unavailable`、`agent_version_unsupported`、`agent_authentication_required`（ACP 的 `auth_required`）、`agent_session_failed`、`agent_session_unavailable`、`agent_steer_attachments_unsupported`，以及 `image_input_unsupported`、`command_unavailable`、`invalid_command`。方言可以把 Agent 的具体错误识别成更准确的错误码，例如 Pi 的 `pi_authentication_required`。
 
@@ -190,12 +192,45 @@ Hermes 决定哪些命令需要审批，AA 不声明 `managed_tool_permissions`�
 PYTHONPATH=connector connector/.venv/bin/python connector/scripts/verify-acp-agent.py --definition hermes --executable "$(command -v hermes)"
 ```
 
+## Codex (ACP)
+
+Codex (ACP) 的定义、方言与原生会话继续在 `profiles/codex/`：`runtimeType=codex-acp`、`implementationType=acp-stdio`、成熟度 `experimental`，启动本机扩展版 [`codex-acp`](https://github.com/anywhere-labs/codex-acp/pull/3)（需要包含 `_meta.codexIpc` 的版本）。它与现有的 `codex` Runtime（Python SDK + IPC）并存，互不替代。
+
+| 配置 | 含义 |
+| --- | --- |
+| `cliPath` | 可选的 codex-acp 入口；默认查找 PATH 和 `~/.local/bin/codex-acp` |
+| `codexHome` | 可选的 Codex 配置目录，作为 `CODEX_HOME` 传入 |
+| `codexPath` | 可选的 codex 可执行文件，作为 `CODEX_PATH` 传入 |
+| `ipcSocket` | 可选的 Codex App IPC 地址，原样作为 `CODEX_ACP_IPC_SOCKET` 传入；默认 macOS/Linux 为 `<CODEX_HOME>/ipc/ipc.sock`，Windows 为 `\\.\pipe\codex-ipc`，适配器按需连接 |
+
+| AA | codex-acp |
+| --- | --- |
+| 握手 | `initialize._meta.codexIpc = {approvals: true, settings: true}`，让原窗口的审批、问答和设置经 AA 回答 |
+| 恢复 | 适配器声明 `codexIpc.automaticRouting` 时，`session/resume`/`session/load` 附带 `_meta.codexIpc.mode = "auto"`：原窗口持有时跟随，锁未被占用时在适配器自己的 App Server 恢复，无法核实控制通道时报 `codex_owner_unavailable` |
+| 消息身份 | `session/prompt` 与插话附带 `_meta.codexIpc.clientMessageId`（AA 的 `clientMessageId`，不符合 `[A-Za-z0-9_-]{1,128}` 时不发送），命令不带；原窗口回显中带同一 ID 的用户消息被丢弃，原窗口里输入的消息按其 `messageId` 作为一条完整用户消息写入 |
+| 插话 | `_session/steering`，附带 `_meta.steering.idleBehavior = "promptRequired"`，没有运行中的回合时返回 `promptRequired`，AA 视为未接纳；支持附件 |
+| 权限 | `mode` 配置项（类别 `mode`，审批与沙箱预设）归为权限；`thought_level` 归为推理强度；`collaboration_mode`（计划模式）保持原类别 |
+| 实际路由 | 恢复响应的 `_meta.codexIpc.route`（`follow`、`daemon`、`local`）；响应不带路由的旧版适配器，退回到恢复后调用一次 `_codex/session/inspect` |
+| 原窗口队列 | 路由为 `follow` 才声明 `session.queue.read/update`；`queue.get`/`queue.clear` 映射到 `_codex/session/queue` 的 `read`/`clear` |
+| 原窗口回合状态 | `session_info_update` 的 `_meta.codexIpc.execution`（接上时报告一次，之后随回合变化）：`running`、`waitingForInput` 记为 `running`，`idle` 记为 `idle`，按上文的 Agent 自行运行的回合处理 |
+| 原生历史 | `session/list` 的条目作为只读原生会话；浏览时 `aa/read_history` 映射到 `_codex/session/read` |
+
+**继续 Codex App 会话**：原生会话提供 `session.recover`，元数据带 `nativeHistory: true`、`handoff: "follow"` 和固定的 `ownerGeneration`（`codex-native`）。`recover_session` 在后台先把 `_codex/session/read` 返回的已保存历史写入 Timeline 一次，再以 `mode: "auto"` 恢复同一 thread；成功后该会话成为普通 AA 会话，原窗口继续持有并保持打开。同一 `operationId` 的后续查询返回已保存的结果；不要求 `cliExited`。
+
+当前限制：
+
+- 写入历史与恢复之间原窗口产生的内容不会补进 Timeline，需要重新打开会话核对。
+- 原窗口回合的运行状态需要会在接上时报告执行状态的 codex-acp；旧版只在回合开始、结束和断线恢复时报告，接上时原窗口已在运行的回合要等它结束才更新。
+- 计划审阅、子会话、后台终端、目标、审阅、改名、复制、归档和已读状态还没有映射到 AA 的操作和事件。
+- 四端「继续任务」的确认文案仍是 Pi 的「先退出 CLI」，尚未按 `handoff: "follow"` 区分。
+
 ## 源码与维护入口
 
 - [默认 Provider 注册](../../connector/connector/runtimes/providers.py)
 - [Pi Provider 与固定依赖](../../connector/connector/runtimes/acp/profiles/pi/provider.py)、[配置生成](../../connector/connector/runtimes/acp/profiles/pi/settings.py)
 - [Agent 定义](../../connector/connector/runtimes/acp/domain/agents.py)、[方言接口](../../connector/connector/runtimes/acp/domain/dialect.py)、[通用 Provider](../../connector/connector/runtimes/acp/provider.py)、[公共引擎 Client](../../connector/connector/runtimes/acp/infrastructure/acp/client.py)
 - [Hermes 定义与方言](../../connector/connector/runtimes/acp/profiles/hermes/definition.py)
+- [Codex (ACP) 定义与方言](../../connector/connector/runtimes/acp/profiles/codex/definition.py)、[继续原生会话](../../connector/connector/runtimes/acp/profiles/codex/runtime.py)
 - [Pi 定义](../../connector/connector/runtimes/acp/profiles/pi/definition.py)、[Pi 方言](../../connector/connector/runtimes/acp/profiles/pi/dialect.py)、[工具权限扩展](../../connector/connector/runtimes/acp/profiles/pi/permissions.mjs)
 - [npm / Node 安装器](../../connector/connector/runtimes/acp/infrastructure/npm.py)
 - [通用 Runtime](../../connector/connector/runtimes/acp/runtime.py)、[会话用例](../../connector/connector/runtimes/acp/application/sessions.py)、[同步](../../connector/connector/runtimes/acp/application/synchronization.py)

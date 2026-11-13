@@ -43,6 +43,20 @@ class AcpDialect:
     #: AA guarantees this Agent satisfies, such as ``managed_tool_permissions``.
     guarantees: frozenset[str] = frozenset()
 
+    def initialize_meta(self) -> dict:
+        """Extra ``_meta`` keys the client sends with ``initialize`` (opt-in extensions)."""
+        return {}
+
+    def request_meta(
+        self, initialized: dict, method: str, session_id: str | None, message_id: str | None = None
+    ) -> dict:
+        """Extra ``_meta`` keys for ``session/new``, ``session/resume``, ``session/load``,
+        ``session/prompt``, ``session/command`` or ``steer``.
+
+        ``message_id`` is AA's stable identity of the user's input; commands have none.
+        """
+        return {}
+
     def capabilities(self, initialized: dict) -> Iterable[str]:
         """Extra AA session capabilities beyond those derived from the handshake."""
         return ()
@@ -55,7 +69,12 @@ class AcpDialect:
         return options
 
     def translate_update(self, session_id: str, update: dict) -> dict | None:
-        """Rewrite a private update as a standard one, or ``None`` to drop it."""
+        """Rewrite a private update as a standard one, or ``None`` to drop it.
+
+        A ``session_info_update`` may carry ``_meta.aa.agentExecution`` (``running``,
+        ``idle`` or ``unknown``) for turns the Agent runs without AA; while AA itself
+        has no turn, ``running`` shows the session as running.
+        """
         return update
 
     def acceptance_evidence(self, session_id: str, update: dict) -> bool:
@@ -78,6 +97,9 @@ class AcpDialect:
 
     async def prepare_resume(self, session_id: str, metadata: dict) -> None:
         """Restore Agent-side state that must exist before resuming."""
+
+    async def after_open(self, client: Any, session_id: str, result: dict) -> None:
+        """Inspect a new or resumed session through the open connection before AA exposes it."""
 
     async def configure(
         self, client: Any, session_id: str, key: str, value: Any
