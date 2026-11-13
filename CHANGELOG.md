@@ -62,7 +62,7 @@
 
 ### DSH 同步
 
-- Windows 上在插件设置里点「打开数据目录」或「打开日志目录」时，目录打开后不再同时提示「无法打开目录」。（PRPLACEHOLDER）
+- Windows 上在插件设置里点「打开数据目录」或「打开日志目录」时，目录打开后不再同时提示「无法打开目录」。（[#637](https://github.com/anywhere-labs/Agents-Anywhere/pull/637)）
 - DSH 插件的账号登录 7 天到期后，同步不再悄悄停止：重启 DSH 时 Connector 会用本机设备凭据继续连接，面板提示登录已过期并提供「重新登录」，只有手机连接等账号功能需要重新登录后才能用。（[#636](https://github.com/anywhere-labs/Agents-Anywhere/pull/636)）
 - DSH 开机自启时网络或服务器还没就绪，插件会自动重试启动 Connector 直到上线，面板显示失败原因和下次重试时间，不再停在「运行异常」等手动点「连接」。（[#636](https://github.com/anywhere-labs/Agents-Anywhere/pull/636)）
 - 修复安装主题等其他插件后「远程控制」面板无法通过关闭按钮、Esc 或遮罩关闭，以及焦点被无关浮层干扰的问题。（[#615](https://github.com/anywhere-labs/Agents-Anywhere/pull/615)）
