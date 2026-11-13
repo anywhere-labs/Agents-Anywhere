@@ -389,26 +389,25 @@ class MessageListScrollFollowTest {
      */
     @Test
     fun nonTextAnchoredViewportDoesNotOscillateBetweenFramesWhileStreaming() {
-        val codeFence = "```kotlin\n" + (1..80).joinToString("\n") { "val line$it = \"stable code block filling viewport $it\"" } + "\n```"
+        val codeFence = "```kotlin\n" + (1..120).joinToString("\n") { "val line$it = \"stable code block filling viewport $it\"" } + "\n```"
         val tail = (1..8).joinToString("\n\n") { "Tail paragraph $it below the code block. " + "Generated words. ".repeat(10) }
         val session = TestSession(initialMessages().map {
             if (it.id == "assistant-last") it.copy(text = "$codeFence\n\n$tail") else it
         })
         showMessageList(session)
-        // Scroll until the code block label "kotlin" is just above the reading top, so the entire
-        // visible reading area is filled by the code panel alone.
-        var swipes = 0
-        while (swipes++ < 35 && compose.onAllNodesWithText("kotlin").fetchSemanticsNodes()
-                .firstOrNull()?.let { it.positionInRoot.y in -400f..180f } != true) {
-            compose.onNode(hasScrollAction()).performTouchInput {
-                swipeDown(startY = height * .3f, endY = height * .55f, durationMillis = 400)
-            }
-            compose.waitForIdle()
-        }
+        // Put the code block label "kotlin" just above the reading top, so the entire visible reading
+        // area is filled by the code panel alone. Positioned relative to the viewport instead of a
+        // pixel window, because a fixed swipe can step over a narrow window on taller screens.
+        val labelHeight = compose.onNodeWithText("kotlin").fetchSemanticsNode().size.height
+        dragTextTo("kotlin", targetY = -labelHeight - with(compose.density) { 24.dp.toPx() })
         compose.mainClock.advanceTimeBy(1_000)
         compose.waitForIdle()
         val before = compose.onNodeWithText("kotlin").fetchSemanticsNode().positionInRoot.y
-        assertTrue("Code panel header should sit near/above viewport top so code fills the viewport, was $before", before in -500f..260f)
+        val viewport = compose.onNode(hasScrollAction()).fetchSemanticsNode()
+        assertTrue("Code panel label should sit above the viewport top, was $before", before + labelHeight <= viewport.positionInRoot.y)
+        val tailTop = compose.onAllNodesWithText("Tail paragraph 1 ", substring = true).fetchSemanticsNodes()
+            .firstOrNull()?.positionInRoot?.y ?: Float.POSITIVE_INFINITY
+        assertTrue("Code panel should fill the viewport, tail starts at $tailTop", tailTop >= viewport.positionInRoot.y + viewport.size.height)
 
         val label = compose.onNodeWithText("kotlin").fetchSemanticsNode()
         compose.mainClock.autoAdvance = false
@@ -461,6 +460,32 @@ class MessageListScrollFollowTest {
         } finally {
             compose.mainClock.autoAdvance = true
         }
+    }
+
+    /**
+     * Drags the list without fling until [text] sits at [targetY] in root coordinates. Each drag covers
+     * the remaining distance plus touch slop (at most 30% of the viewport) and pauses before lifting, so the result does
+     * not depend on screen size, density or fling distance.
+     */
+    private fun dragTextTo(text: String, targetY: Float, tolerance: Float = 8f) {
+        var y = Float.NaN
+        repeat(40) {
+            y = compose.onAllNodesWithText(text).fetchSemanticsNodes().firstOrNull()?.positionInRoot?.y
+                ?: throw AssertionError("\"$text\" is no longer composed while dragging towards $targetY")
+            val remaining = targetY - y
+            if (kotlin.math.abs(remaining) <= tolerance) return
+            compose.onNode(hasScrollAction()).performTouchInput {
+                // The scrollable consumes touch slop before it starts scrolling, so add it back.
+                val step = (remaining + kotlin.math.sign(remaining) * viewConfiguration.touchSlop)
+                    .coerceIn(-height * .3f, height * .3f)
+                down(Offset(width * .5f, height * .5f - step / 2))
+                repeat(10) { moveBy(Offset(0f, step / 10), delayMillis = 16) }
+                moveBy(Offset.Zero, delayMillis = 150)
+                up()
+            }
+            compose.waitForIdle()
+        }
+        throw AssertionError("\"$text\" did not reach $targetY, stopped at $y")
     }
 
     private fun scrollMarkerIntoReadingArea(marker: String, minY: Float, swipe: Float) {
