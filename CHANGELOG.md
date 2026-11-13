@@ -21,6 +21,7 @@
 
 ### 会话创建与消息交付
 
+- 实验性的「Codex (ACP)」Agent 通过本机 `codex-acp` 运行 Codex，可以浏览 Codex 的历史会话，并继续 Codex App 或 IDE 窗口里已打开的会话：在 Agents Anywhere 发送、插话、停止、回答原窗口的审批和问答、修改模型与权限，原窗口保持打开，不会出现重复消息。（[#625](https://github.com/anywhere-labs/Agents-Anywhere/pull/625)）
 - 现在可以把本机安装的 Hermes Agent 作为 Agent 使用：支持对话、工具审批、文本和图片附件、运行中追加指令、中断与恢复；暂不支持浏览 Hermes 的旧会话。（[#591](https://github.com/anywhere-labs/Agents-Anywhere/pull/591)）
 - Hermes、Pi 等 ACP Agent 未安装、ACP 入口不可用、需要登录、无法创建或恢复会话时，Web、Desktop、Android 和 iOS 按界面语言显示统一说明，英文界面不再出现中文。（[#599](https://github.com/anywhere-labs/Agents-Anywhere/pull/599)）
 - 会话很多或多个会话同时运行时，会话列表的实时刷新不再拖慢 Server 数据库：读取会话列表不再逐个去查每个会话的最新记录，同一用户的连续变化最多每 2 秒合并推送一次，部署者可用 `AGENT_SERVER_DASHBOARD_MIN_INTERVAL_SECONDS` 调整。（[#552](https://github.com/anywhere-labs/Agents-Anywhere/pull/552)、[#595](https://github.com/anywhere-labs/Agents-Anywhere/pull/595)）

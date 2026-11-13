@@ -125,10 +125,12 @@ class AcpAgentProvider(RuntimeProvider):
         return validated_runtime(context, client_factory)
 
 
-def validated_runtime(context: AgentContext, client_factory) -> AcpRuntime:
+def validated_runtime(
+    context: AgentContext, client_factory, *, runtime_class: type[AcpRuntime] = AcpRuntime
+) -> AcpRuntime:
     """The shared runtime: the launch is checked again before every preparation and resume."""
     definition, config = context.definition, context.config
-    runtime = AcpRuntime(
+    runtime = runtime_class(
         config,
         context.host,
         definition.profile,
