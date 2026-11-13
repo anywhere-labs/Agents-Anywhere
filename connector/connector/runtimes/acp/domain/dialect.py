@@ -69,7 +69,12 @@ class AcpDialect:
         return options
 
     def translate_update(self, session_id: str, update: dict) -> dict | None:
-        """Rewrite a private update as a standard one, or ``None`` to drop it."""
+        """Rewrite a private update as a standard one, or ``None`` to drop it.
+
+        A ``session_info_update`` may carry ``_meta.aa.agentExecution`` (``running``,
+        ``idle`` or ``unknown``) for turns the Agent runs without AA; while AA itself
+        has no turn, ``running`` shows the session as running.
+        """
         return update
 
     def acceptance_evidence(self, session_id: str, update: dict) -> bool:

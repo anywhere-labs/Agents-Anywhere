@@ -255,6 +255,14 @@ class SessionService:
                 "cancelling": "stopping",
             }.get(row["foreground"], row["foreground"])
         )
+        external = self.store.get("agent_execution", session_id) or {}
+        running_elsewhere = (
+            status == "idle"
+            and external.get("generation") == row["connection_generation"]
+            and external.get("execution") == "running"
+        )
+        if running_elsewhere:
+            status = "running"
         from ..domain.catalogs import selection_id
         selections = {option["category"]: option["currentValue"]
                       for option in self.configurations.snapshot(session_id).options
@@ -268,7 +276,11 @@ class SessionService:
             "externalSessionId": row["agent_session_id"],
             "runtime": self.runtime_type,
             "status": status,
-            "statusReason": "agent_recovery_required" if status == "blocked" else None,
+            "statusReason": "agent_recovery_required"
+            if status == "blocked"
+            else "agent_external_turn"
+            if running_elsewhere
+            else None,
             "metadata": {
                 "agentObservation": observation,
                 "contextUsage": {"used": observation.get("usage_update", {}).get("used"),
@@ -897,10 +909,19 @@ class SessionService:
                 return
             if update.get("sessionUpdate") in {"usage_update", "session_info_update", "compaction_update", "available_commands_update"}:
                 key = context["sessionId"]
+                execution = (update.get("_meta") or {}).get("aa", {}).get("agentExecution")
+                if execution is not None:
+                    # A turn the Agent runs without AA, such as one started in its own window.
+                    self.store.put("agent_execution", key, {
+                        "generation": context["generation"], "execution": execution,
+                    })
                 observed = self.store.get("agent_observation", key) or {}
                 observed[update["sessionUpdate"]] = update
                 self.store.put("agent_observation", key, observed)
                 self._emit("session.state.updated", self.state(key))
+                if execution is not None and self.on_binding_changed is not None:
+                    # Sending, steering and stopping depend on whether a turn runs.
+                    self.on_binding_changed(key)
                 return
             item = context["projection"].apply(update)
             if item:

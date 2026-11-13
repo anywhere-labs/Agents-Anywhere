@@ -31,6 +31,8 @@ CLIENT_MESSAGE_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 # AA input identities remembered per session to recognize the owner's echo.
 REMEMBERED_MESSAGES = 256
 IPC_SOCKET = "CODEX_ACP_IPC_SOCKET"
+# A pending owner approval or question still occupies its turn.
+OWNER_EXECUTION = {"running": "running", "waitingForInput": "running", "idle": "idle"}
 
 
 def ipc_capabilities(initialized: dict) -> dict:
@@ -80,16 +82,19 @@ class CodexDialect(AcpDialect):
             sent.append(message_id)
 
     async def after_open(self, client, session_id, result):
-        # The resume response does not say which route the adapter chose; only
-        # followed conversations have the owner's queue.
+        # Only followed conversations have the owner's queue.
         self.followed.discard(session_id)
         if not ipc_capabilities(client.handshake).get("queue"):
             return
-        try:
-            route = await client.connection.ext_method("codex/session/inspect", {"sessionId": session_id})
-        except Exception:  # noqa: BLE001 -- an unknown route keeps the queue unavailable
-            return
-        if route.get("route") == "follow":
+        route = ((result.get("_meta") or {}).get("codexIpc") or {}).get("route")
+        if route is None:
+            # Adapters before the response carried its route; inspecting again can race a reroute.
+            try:
+                inspected = await client.connection.ext_method("codex/session/inspect", {"sessionId": session_id})
+            except Exception:  # noqa: BLE001 -- an unknown route keeps the queue unavailable
+                return
+            route = inspected.get("route")
+        if route == "follow":
             self.followed.add(session_id)
             client.declare("session.queue.read")
             client.declare("session.queue.update")
@@ -113,6 +118,8 @@ class CodexDialect(AcpDialect):
     # Updates
 
     def translate_update(self, session_id, update):
+        if update.get("sessionUpdate") == "session_info_update":
+            return self.execution_update(update)
         if update.get("sessionUpdate") != "user_message_chunk":
             return update
         metadata = update.get("_meta") or {}
@@ -129,6 +136,15 @@ class CodexDialect(AcpDialect):
             "aaProjectionVerified": True,
             "_meta": {**metadata, "aa": {**metadata.get("aa", {}), "boundary": True}},
         }
+
+    def execution_update(self, update):
+        """The owner window's turn state, reported on attach and on every turn change."""
+        metadata = update.get("_meta") or {}
+        execution = (metadata.get("codexIpc") or {}).get("execution")
+        if execution is None:
+            return update
+        aa = {**metadata.get("aa", {}), "agentExecution": OWNER_EXECUTION.get(execution, "unknown")}
+        return {**update, "_meta": {**metadata, "aa": aa}}
 
     # Operations
 

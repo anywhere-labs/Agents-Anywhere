@@ -36,9 +36,11 @@ HANDSHAKE = {
 
 
 class Connection:
-    def __init__(self, route="follow"):
+    def __init__(self, route="follow", *, reported=False):
         self.calls = []
         self.route = route
+        # Whether the resume response itself names the route, as newer adapters do.
+        self.reported = reported
         self.history = [
             {"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": "earlier"}},
             {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "answer"}},
@@ -49,6 +51,8 @@ class Connection:
 
     async def resume_session(self, **values):
         self.record("resume", values)
+        if self.reported:
+            return {"configOptions": [], "_meta": {"codexIpc": {"route": self.route}}}
         return {"configOptions": []}
 
     async def load_session(self, **values):
@@ -133,6 +137,27 @@ def test_a_session_on_the_adapters_own_app_server_has_no_owner_queue():
         asyncio.run(agent.extension("aa/operate", {
             "sessionId": "thread-1", "operation": "queue.get", "operationId": "op",
         }))
+
+
+@pytest.mark.parametrize(("route", "queue"), [("follow", True), ("local", False)])
+def test_the_route_in_the_resume_response_needs_no_second_inspection(route, queue):
+    agent, _ = client(Connection(route=route, reported=True))
+    asyncio.run(agent.resume("thread-1", "/tmp"))
+    assert [name for name, _values in agent.connection.calls] == ["resume"]
+    assert ("session.queue.read" in agent.capabilities["_meta"]["aa"]["capabilities"]) is queue
+
+
+@pytest.mark.parametrize(("execution", "expected"), [
+    ("running", "running"), ("waitingForInput", "running"), ("idle", "idle"), ("unknown", "unknown"),
+])
+def test_owner_execution_is_reported_in_aa_terms(execution, expected):
+    agent, updates = client()
+    asyncio.run(agent.receive_update("thread-1", {
+        "sessionUpdate": "session_info_update",
+        "_meta": {"codexIpc": {"ownership": "external", "execution": execution, "control": "ipc"}},
+    }))
+    assert updates[-1]["_meta"]["aa"]["agentExecution"] == expected
+    assert updates[-1]["_meta"]["codexIpc"]["execution"] == execution
 
 
 def test_resume_without_automatic_routing_sends_no_ipc_mode():
@@ -327,6 +352,25 @@ def test_a_native_codex_session_can_be_continued_and_keeps_its_history(tmp_path)
             assert caps["session.queue.read"].supported
             # The session is now an ordinary binding, not a second native row.
             assert [item.session_id for item in await runtime.list_sessions()] == [row.session_id]
+
+            # A turn started in the owner window shows as running until the owner reports idle.
+            live = runtime.app.sessions[row.session_id]["client"]
+
+            async def owner(execution):
+                await live.receive_update("thread-1", {
+                    "sessionUpdate": "session_info_update",
+                    "_meta": {"codexIpc": {"ownership": "external", "execution": execution, "control": "ipc"}},
+                })
+                await asyncio.sleep(0)
+
+            await owner("running")
+            state = await runtime.get_session_state(row.session_id)
+            assert (state.status, state.status_reason) == ("running", "agent_external_turn")
+            caps = {cap.capability_id: cap for cap in (await runtime.get_session_capabilities(row.session_id)).capabilities}
+            assert not caps["session.send_message"].available
+            assert caps["session.steer"].available and caps["session.interrupt"].available
+            await owner("idle")
+            assert (await runtime.get_session_state(row.session_id)).status == "idle"
         finally:
             await runtime.stop()
 

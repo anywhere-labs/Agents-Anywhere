@@ -146,6 +146,8 @@ TUI 协作、最终模型请求守卫、持久接纳回执和原生位置选择�
 
 **配置**：ACP 的 `thought_level` 统一归为推理强度，其他归类由方言决定，选项和名称保持 Agent 原样。
 
+**Agent 自行运行的回合**：方言可以在 `session_info_update` 的 `_meta.aa.agentExecution` 里报告 Agent 不经 AA 运行的回合（`running`、`idle`、`unknown`），例如原窗口里发起的回合。引擎按当前连接代际记录；AA 自己没有回合、Agent 报告 `running` 时，会话状态为运行中（`statusReason=agent_external_turn`），此时可以插话和停止，不能发送新消息；断线恢复后旧记录失效。
+
 **错误**：常见 Agent 错误使用统一错误码，四端按界面语言显示：`agent_cli_missing`、`agent_cli_unsupported`、`agent_acp_unavailable`、`agent_version_unsupported`、`agent_authentication_required`（ACP 的 `auth_required`）、`agent_session_failed`、`agent_session_unavailable`、`agent_steer_attachments_unsupported`，以及 `image_input_unsupported`、`command_unavailable`、`invalid_command`。方言可以把 Agent 的具体错误识别成更准确的错误码，例如 Pi 的 `pi_authentication_required`。
 
 **安全**：实例配置可经 Server 修改，因此启动参数和注入的环境变量只由定义决定；注册时拒绝含 `command`、`args`、`env` 等字段或允许未知字段的配置结构。
@@ -208,7 +210,9 @@ Codex (ACP) 的定义、方言与原生会话继续在 `profiles/codex/`：`runt
 | 消息身份 | `session/prompt` 与插话附带 `_meta.codexIpc.clientMessageId`（AA 的 `clientMessageId`，不符合 `[A-Za-z0-9_-]{1,128}` 时不发送），命令不带；原窗口回显中带同一 ID 的用户消息被丢弃，原窗口里输入的消息按其 `messageId` 作为一条完整用户消息写入 |
 | 插话 | `_session/steering`，附带 `_meta.steering.idleBehavior = "promptRequired"`，没有运行中的回合时返回 `promptRequired`，AA 视为未接纳；支持附件 |
 | 权限 | `mode` 配置项（类别 `mode`，审批与沙箱预设）归为权限；`thought_level` 归为推理强度；`collaboration_mode`（计划模式）保持原类别 |
-| 原窗口队列 | 恢复后用 `_codex/session/inspect` 确认路由为 `follow` 才声明 `session.queue.read/update`；`queue.get`/`queue.clear` 映射到 `_codex/session/queue` 的 `read`/`clear` |
+| 实际路由 | 恢复响应的 `_meta.codexIpc.route`（`follow`、`daemon`、`local`）；响应不带路由的旧版适配器，退回到恢复后调用一次 `_codex/session/inspect` |
+| 原窗口队列 | 路由为 `follow` 才声明 `session.queue.read/update`；`queue.get`/`queue.clear` 映射到 `_codex/session/queue` 的 `read`/`clear` |
+| 原窗口回合状态 | `session_info_update` 的 `_meta.codexIpc.execution`（接上时报告一次，之后随回合变化）：`running`、`waitingForInput` 记为 `running`，`idle` 记为 `idle`，按上文的 Agent 自行运行的回合处理 |
 | 原生历史 | `session/list` 的条目作为只读原生会话；浏览时 `aa/read_history` 映射到 `_codex/session/read` |
 
 **继续 Codex App 会话**：原生会话提供 `session.recover`，元数据带 `nativeHistory: true`、`handoff: "follow"` 和固定的 `ownerGeneration`（`codex-native`）。`recover_session` 在后台先把 `_codex/session/read` 返回的已保存历史写入 Timeline 一次，再以 `mode: "auto"` 恢复同一 thread；成功后该会话成为普通 AA 会话，原窗口继续持有并保持打开。同一 `operationId` 的后续查询返回已保存的结果；不要求 `cliExited`。
@@ -216,7 +220,7 @@ Codex (ACP) 的定义、方言与原生会话继续在 `profiles/codex/`：`runt
 当前限制：
 
 - 写入历史与恢复之间原窗口产生的内容不会补进 Timeline，需要重新打开会话核对。
-- 原窗口自己发起的回合会写入 Timeline，但 AA 的会话状态不会因此变为运行中。
+- 原窗口回合的运行状态需要会在接上时报告执行状态的 codex-acp；旧版只在回合开始、结束和断线恢复时报告，接上时原窗口已在运行的回合要等它结束才更新。
 - 计划审阅、子会话、后台终端、目标、审阅、改名、复制、归档和已读状态还没有映射到 AA 的操作和事件。
 - 四端「继续任务」的确认文案仍是 Pi 的「先退出 CLI」，尚未按 `handoff: "follow"` 区分。
 
