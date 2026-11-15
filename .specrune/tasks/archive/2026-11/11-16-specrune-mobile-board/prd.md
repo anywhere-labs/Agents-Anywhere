@@ -34,14 +34,14 @@ iOS 端能**只读**浏览工作设备上的 SpecRune 任务看板：项目列�
 
 ## Acceptance Criteria
 
-- [ ] iOS 能经 `shell/exec` 从工作设备取到真实任务列表并渲染，`Views/SpecRune` 主路径不再依赖 mock 数据
-- [ ] iOS 能显示任务详情：摘要 + `prd.md`/`design.md`/`implement.md` 正文 + 验收清单（`implement.md` 的 `- [ ]` 项）
-- [ ] iOS 有独立入口可进入任务看板，compact 与 regular 宽度下均可到达
-- [ ] iOS 会话页在存在关联任务时显示所属任务，无关联时不显示空壳
-- [ ] 非 SpecRune 项目 / CLI 缺失 / 设备离线时显示可读空态，不崩溃
-- [ ] **零改上游**：`connector/` 与 `server/` 无任何改动（`git diff` 为空），功能全部位于 `ios/Packages/SpecRuneKit` + 主 app 入口注册
-- [ ] iOS `swiftc -typecheck` 通过
-- [ ] 契约、CHANGELOG 与相关文档同步更新
+- [x] iOS 能经 `shell/exec` 从工作设备取到真实任务列表并渲染，`Views/SpecRune` 主路径不再依赖 mock 数据
+- [x] iOS 能显示任务详情：摘要 + `prd.md`/`design.md`/`implement.md` 正文 + 验收清单（`implement.md` 的 `- [ ]` 项）
+- [x] iOS 有独立入口可进入任务看板，compact 与 regular 宽度下均可到达
+- [x] iOS 会话页在存在关联任务时显示所属任务，无关联时不显示空壳
+- [x] 非 SpecRune 项目 / CLI 缺失 / 设备离线时显示可读空态，不崩溃
+- [x] **零改上游**：`connector/` 与 `server/` 无任何改动（`git diff` 为空），功能全部位于 `ios/Packages/SpecRuneKit` + 主 app 入口注册
+- [x] iOS `swiftc -typecheck` 通过
+- [x] 契约、CHANGELOG 与相关文档同步更新
 
 ## Out of Scope
 
