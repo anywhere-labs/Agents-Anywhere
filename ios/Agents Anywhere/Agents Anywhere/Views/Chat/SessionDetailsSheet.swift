@@ -4,6 +4,8 @@ import UniformTypeIdentifiers
 struct SessionDetailsSheet: View {
     let chat: SessionChatModel
     let service: V2SessionDetailService
+    /// 该会话当前绑定的 SpecRune 任务（有才显示）。
+    var specRuneTaskRef: String?
     @Environment(\.dismiss) private var dismiss
     @State private var exportRequest: String?
     @State private var document: TimelineJSONDocument?
@@ -21,6 +23,9 @@ struct SessionDetailsSheet: View {
                         row(String(localized: "状态"), (chat.session.runtime.state?.status ?? meta.status).displayName)
                         row(String(localized: "dashboard.session.workspace"), meta.cwd ?? String(localized: "无"))
                         row(String(localized: "接管"), meta.takeover ? String(localized: "已开启") : String(localized: "只读"))
+                        if let specRuneTaskRef {
+                            row(String(localized: "SpecRune 任务"), specRuneTaskRef)
+                        }
                     }
                     Section(String(localized: "标识与时间线")) {
                         row(String(localized: "Session ID"), meta.id)

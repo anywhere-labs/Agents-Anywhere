@@ -1,5 +1,6 @@
 import SwiftUI
 import QuickLook
+import SpecRuneKit
 
 struct SessionChatView: View, Equatable {
     @StateObject private var storage: StableViewModel<SessionChatModel>
@@ -22,6 +23,8 @@ struct SessionChatView: View, Equatable {
     @State private var pendingTakeover: Bool?
     @State private var confirmingNativeContinue = false
     @State private var hasStartedLoading = false
+    /// 该会话当前绑定的 SpecRune 任务（读工作设备的 .runtime/sessions/*.json）。
+    @State private var specRuneTaskRef: String?
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.chatRail) private var chatRail
     @ScaledMetric(relativeTo: .body) private var bodyLineHeight: CGFloat = 22
@@ -46,6 +49,25 @@ struct SessionChatView: View, Equatable {
     private var controls: ChatControlMetrics { .init(bodyLineHeight: bodyLineHeight) }
     private var session: V2SessionModel { model.session }
     private var requiresTakeover: Bool { session.metadata?.takeover == false }
+
+    /// 只在会话身份或工作目录变化时重查；其它状态变化不触发。
+    private var specRuneLookupKey: String {
+        let meta = session.metadata
+        return "\(meta?.externalSessionId ?? ""):\(meta?.cwd ?? ""):\(meta?.connectorId ?? "")"
+    }
+
+    /// 读该会话在工作设备上的 SpecRune 任务关联；取不到就返回 nil（界面隐藏）。
+    private func loadSpecRuneTask() async -> String? {
+        guard let meta = session.metadata,
+              let cwd = meta.cwd, !cwd.isEmpty,
+              let externalId = meta.externalSessionId, !externalId.isEmpty
+        else { return nil }
+        let client = SpecRuneClient(transport: SpecRuneConnectorTransport(
+            api: fileService.connectorAPI,
+            connectorId: meta.connectorId
+        ))
+        return await client.sessionTask(repo: cwd, sessionId: externalId)?.taskRef
+    }
     // Sidebar motion changes the containing card, not the session. Observable
     // model changes and real size/environment changes still update this subtree.
     static func == (lhs: Self, rhs: Self) -> Bool {
@@ -158,6 +180,9 @@ struct SessionChatView: View, Equatable {
             transaction.disablesAnimations = true
             withTransaction(transaction) { hasStartedLoading = true }
         }
+        .task(id: specRuneLookupKey) {
+            specRuneTaskRef = await loadSpecRuneTask()
+        }
         .task(id: hasStartedLoading) {
             guard hasStartedLoading else { return }
             // Reattaching a loaded detail only resumes observation.
@@ -168,7 +193,8 @@ struct SessionChatView: View, Equatable {
         .sheet(item: $sheet) { destination in
             switch destination {
             case .notices: SessionNoticesSheet(model: model, initialNoticeID: expandedNoticeID)
-            case .details: SessionDetailsSheet(chat: model, service: detailService)
+            case .details: SessionDetailsSheet(chat: model, service: detailService,
+                                              specRuneTaskRef: specRuneTaskRef)
             case .files:
                 if let meta = session.metadata, let cwd = meta.cwd {
                     WorkspaceFilesSheet(connectorId: meta.connectorId,

@@ -1,0 +1,134 @@
+{
+  "$id": "urn:agents-anywhere:specrune:1.0:task-list-response",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SpecRuneTaskListResponse",
+  "description": "GET /api/v2/connectors/{id}/specrune/tasks?repo= 的返回体。来自 specrune task list --json，并给每条补上目录 stat 时间。tasks=活跃任务，archive=归档任务。",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["tasks", "archive"],
+  "properties": {
+    "tasks": {
+      "type": "array",
+      "description": "活跃任务（.specrune/tasks/<dir>）。",
+      "items": { "$ref": "#/$defs/TaskListItem" }
+    },
+    "archive": {
+      "type": "array",
+      "description": "归档任务（.specrune/tasks/archive/<月>/<dir>）。",
+      "items": { "$ref": "#/$defs/TaskListItem" }
+    }
+  },
+  "$defs": {
+    "TaskListItem": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["dir", "name", "title", "status", "archived", "active"],
+      "properties": {
+        "dir": { "type": "string", "description": "[CLI] 任务目录名（如 11-12-c1），即活跃任务的 ref。" },
+        "name": { "type": "string", "description": "[CLI] 任务短名。" },
+        "title": { "type": "string", "description": "[CLI] 任务标题。" },
+        "status": {
+          "type": "string",
+          "description": "[CLI] 任务状态。已知值：planning / in_progress / completed 等；客户端不硬编码枚举，按 STATUS_LABEL 兜底显示原值。"
+        },
+        "priority": {
+          "anyOf": [{ "type": "string" }, { "type": "null" }],
+          "default": null,
+          "description": "[CLI] 优先级，如 P1 / P2。"
+        },
+        "assignee": {
+          "anyOf": [{ "type": "string" }, { "type": "null" }],
+          "default": null,
+          "description": "[CLI] 负责人。"
+        },
+        "parent": {
+          "anyOf": [{ "type": "string" }, { "type": "null" }],
+          "default": null,
+          "description": "[CLI] 父任务 dir；无则缺省或 null。"
+        },
+        "children": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "[CLI] 子任务 dir 列表。"
+        },
+        "childDone": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "[CLI] 已完成子任务数。"
+        },
+        "dependsOn": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "[CLI] 依赖的任务 dir。"
+        },
+        "decomposeReason": {
+          "anyOf": [{ "type": "string" }, { "type": "null" }],
+          "default": null,
+          "description": "[CLI] 拆分原因（仅在派生任务上出现）。"
+        },
+        "implDone": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "[CLI] implement 清单已完成项数。"
+        },
+        "implTotal": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "[CLI] implement 清单总项数。"
+        },
+        "hasPrd": { "type": "boolean", "default": false, "description": "[CLI] 是否存在 prd.md。" },
+        "hasDesign": { "type": "boolean", "default": false, "description": "[CLI] 是否存在 design.md。" },
+        "hasImplement": { "type": "boolean", "default": false, "description": "[CLI] 是否存在 implement.md。" },
+        "contextCount": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "[CLI] 上下文条目数（implement.jsonl + check.jsonl 行数）。"
+        },
+        "specRefs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "[CLI] 该任务引用的规范路径（相对 repo，位于 .specrune/spec/ 下）。缺失表示无引用。"
+        },
+        "createdAt": {
+          "anyOf": [{ "type": "string" }, { "type": "null" }],
+          "default": null,
+          "description": "[CLI] 创建日期（YYYY-MM-DD，精度到日）。"
+        },
+        "completedAt": {
+          "anyOf": [{ "type": "string" }, { "type": "null" }],
+          "default": null,
+          "description": "[CLI] 完成日期；未完成则 null。"
+        },
+        "archived": { "type": "boolean", "description": "[CLI] 是否已归档。" },
+        "archiveMonth": {
+          "anyOf": [{ "type": "string" }, { "type": "null" }],
+          "default": null,
+          "description": "[CLI] 归档月份（YYYY-MM），仅归档任务有。"
+        },
+        "active": { "type": "boolean", "description": "[CLI] 是否为当前活跃任务。" },
+        "path": {
+          "type": "string",
+          "description": "[CLI] 任务目录的绝对路径（工作设备上）。客户端可用于定位，但不应据此拼文件路径。"
+        },
+        "at": {
+          "anyOf": [{ "type": "string" }, { "type": "null" }],
+          "default": null,
+          "description": "[FS] 任务目录 mtime（ISO 8601，本地时区，秒级）——列表按时间排序用它（createdAt 只到日，精度不够）。"
+        },
+        "born": {
+          "anyOf": [{ "type": "string" }, { "type": "null" }],
+          "default": null,
+          "description": "[FS] 任务目录 birthtime（ISO 8601，本地时区，秒级）；不可用时回退 mtime。"
+        }
+      }
+    }
+  },
+  "x-direction": "egress",
+  "x-protocol-version": "1.0"
+}

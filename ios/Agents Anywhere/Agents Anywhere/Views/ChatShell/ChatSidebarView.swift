@@ -22,6 +22,10 @@ struct ChatSidebarView: View {
     let isLoadingSessions: Bool
     let onNewSession: () -> Void
     let onOpenDevice: (V2ConnectorID) -> Void
+    /// 打开 SpecRune 任务看板；参数是承载看板的设备。
+    let onOpenSpecRune: (V2ConnectorID) -> Void
+    /// 当前是否停在该设备的看板上（用于高亮）。
+    var specRuneDeviceId: V2ConnectorID?
     let onOpenSession: (V2SessionID) -> Void
     let onRenameSession: (V2SessionID, String) -> Void
     let onToggleSessionPinned: (V2SessionID, Bool) -> Void
@@ -50,6 +54,12 @@ struct ChatSidebarView: View {
                 ChatSidebarPairDeviceButton {
                     agentSetup?.pairingFormPresented = true
                     isShowingPairing = true
+                }
+                // SpecRune 看板入口：需要至少一台设备承载（数据来自设备上的项目）。
+                if let device = devices.first(where: { $0.id == specRuneDeviceId })?.id ?? devices.first?.id {
+                    ChatSidebarSpecRuneButton(isSelected: specRuneDeviceId == device) {
+                        onOpenSpecRune(device)
+                    }
                 }
 
                 if let setup = agentSetup {
@@ -230,6 +240,27 @@ private struct ChatSidebarPairDeviceButton: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10)
                 .frame(minHeight: 46)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct ChatSidebarSpecRuneButton: View {
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label("SpecRune", appSymbol: "checkmark.circle")
+                .font(.body.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .frame(minHeight: 46)
+                .background(
+                    isSelected ? Color.primary.opacity(0.08) : Color.clear,
+                    in: .rect(cornerRadius: 8)
+                )
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

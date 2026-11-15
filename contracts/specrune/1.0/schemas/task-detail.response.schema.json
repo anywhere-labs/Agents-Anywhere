@@ -1,0 +1,133 @@
+{
+  "$id": "urn:agents-anywhere:specrune:1.0:task-detail-response",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SpecRuneTaskDetailResponse",
+  "description": "GET /api/v2/connectors/{id}/specrune/task?repo=&ref= 的返回体。= specrune task show --json 摘要 + 产物文档正文 + 上下文清单 + 目录时间 + 调研目录清单。字段与 ~/.dsh/specrune/panel/lib/index.js 的 /specrune/task 处理器一致。",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["dir", "name", "title", "status", "docs", "files", "context"],
+  "properties": {
+    "dir": { "type": "string", "description": "[CLI] 任务目录名 = 活跃任务 ref；归档任务为 archive/<月>/<目录>。" },
+    "name": { "type": "string", "description": "[CLI] 任务短名。" },
+    "title": { "type": "string", "description": "[CLI] 任务标题。" },
+    "status": { "type": "string", "description": "[CLI] 任务状态。" },
+    "priority": { "anyOf": [{ "type": "string" }, { "type": "null" }], "default": null },
+    "assignee": { "anyOf": [{ "type": "string" }, { "type": "null" }], "default": null },
+    "parent": { "anyOf": [{ "type": "string" }, { "type": "null" }], "default": null },
+    "children": { "type": "array", "items": { "type": "string" }, "default": [] },
+    "childDone": { "type": "integer", "minimum": 0, "default": 0 },
+    "dependsOn": { "type": "array", "items": { "type": "string" }, "default": [] },
+    "implDone": { "type": "integer", "minimum": 0, "default": 0 },
+    "implTotal": { "type": "integer", "minimum": 0, "default": 0 },
+    "hasPrd": { "type": "boolean", "default": false },
+    "hasDesign": { "type": "boolean", "default": false },
+    "hasImplement": { "type": "boolean", "default": false },
+    "contextCount": { "type": "integer", "minimum": 0, "default": 0 },
+    "specRefs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "[CLI] 规范引用路径（相对 repo，位于 .specrune/spec/ 下）；客户端据此调 spec 端点就地展开。"
+    },
+    "createdAt": { "anyOf": [{ "type": "string" }, { "type": "null" }], "default": null },
+    "completedAt": { "anyOf": [{ "type": "string" }, { "type": "null" }], "default": null },
+    "archived": { "type": "boolean", "default": false },
+    "active": { "type": "boolean", "default": false },
+    "path": { "type": "string", "description": "[CLI] 任务目录绝对路径。" },
+    "worktreePath": {
+      "anyOf": [{ "type": "string" }, { "type": "null" }],
+      "default": null,
+      "description": "[CLI] 该任务关联的 worktree 路径；无则 null。1.0 只展示不操作。"
+    },
+    "files": {
+      "$ref": "#/$defs/DocPresence",
+      "description": "[FS] 各文档是否存在。"
+    },
+    "docs": {
+      "type": "object",
+      "description": "[FS] 存在的文档正文，键取 prd/design/implement/record/research；不存在的文档不出现在此对象里（以 files 为准）。",
+      "additionalProperties": { "$ref": "#/$defs/DocContent" }
+    },
+    "times": {
+      "$ref": "#/$defs/DocTimes",
+      "description": "[FS] 各文档的精确 mtime（前端排序/展示的唯一来源）。"
+    },
+    "researchFiles": {
+      "type": "array",
+      "description": "[FS] 调研目录（research/*.md）清单，按 mtime 倒序；无 research/ 目录时为空数组。用于 research 维度多份报告。",
+      "items": { "$ref": "#/$defs/ResearchFile" }
+    },
+    "context": {
+      "$ref": "#/$defs/TaskContext",
+      "description": "[FS] 实现/检查上下文清单（implement.jsonl / check.jsonl 逐行解析）。"
+    }
+  },
+  "$defs": {
+    "DocPresence": {
+      "type": "object",
+      "additionalProperties": { "type": "boolean" },
+      "description": "键固定为 prd/design/implement/record/research，值为是否存在对应 .md。",
+      "properties": {
+        "prd": { "type": "boolean" },
+        "design": { "type": "boolean" },
+        "implement": { "type": "boolean" },
+        "record": { "type": "boolean" },
+        "research": { "type": "boolean" }
+      }
+    },
+    "DocContent": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["content", "bytes", "truncated"],
+      "properties": {
+        "content": { "type": "string", "description": "[FS] 文档正文（UTF-8），最多 1 MiB。" },
+        "bytes": { "type": "integer", "minimum": 0, "description": "[FS] 真实字节数（未截断前）。" },
+        "truncated": { "type": "boolean", "description": "[FS] 是否因超过 1 MiB 被截断。" }
+      }
+    },
+    "DocTimes": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "键为文档 key（prd/design/implement/record/research），值为该文件 mtime。",
+      "properties": {
+        "prd": { "anyOf": [{ "type": "string" }, { "type": "null" }], "default": null },
+        "design": { "anyOf": [{ "type": "string" }, { "type": "null" }], "default": null },
+        "implement": { "anyOf": [{ "type": "string" }, { "type": "null" }], "default": null },
+        "record": { "anyOf": [{ "type": "string" }, { "type": "null" }], "default": null },
+        "research": { "anyOf": [{ "type": "string" }, { "type": "null" }], "default": null }
+      }
+    },
+    "ResearchFile": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "bytes", "truncated", "content"],
+      "properties": {
+        "name": { "type": "string", "description": "[FS] 文件名（research/<name>）。" },
+        "at": { "anyOf": [{ "type": "string" }, { "type": "null" }], "default": null, "description": "[FS] mtime（ISO 8601）。" },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "truncated": { "type": "boolean" },
+        "content": { "type": "string", "description": "[FS] 正文，最多 1 MiB。" }
+      }
+    },
+    "TaskContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["implement", "check"],
+      "properties": {
+        "implement": { "type": "array", "items": { "$ref": "#/$defs/ContextRow" }, "description": "[FS] implement.jsonl 解析结果。" },
+        "check": { "type": "array", "items": { "$ref": "#/$defs/ContextRow" }, "description": "[FS] check.jsonl 解析结果。" }
+      }
+    },
+    "ContextRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "reason", "example"],
+      "properties": {
+        "file": { "type": "string", "description": "[FS] 上下文文件路径（行内 file 或 path 字段）。示例行时为 \"\"。" },
+        "reason": { "type": "string", "description": "[FS] 加入原因（行内 reason 或 description 字段）。" },
+        "example": { "type": "boolean", "description": "[FS] 是否为模板占位示例行（行内含 _example 键）；true 时客户端显示为「示例」而非真实条目。" }
+      }
+    }
+  },
+  "x-direction": "egress",
+  "x-protocol-version": "1.0"
+}

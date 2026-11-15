@@ -237,6 +237,8 @@ struct ChatShellView: View {
                 isLoadingSessions: appState.isDashboardLoading && !appState.hasLoadedSessions,
                 onNewSession: startNewSession,
                 onOpenDevice: openDevice,
+                onOpenSpecRune: openSpecRune,
+                specRuneDeviceId: specRuneDeviceId,
                 onOpenSession: openSession,
                 onRenameSession: renameSession,
                 onToggleSessionPinned: setSessionPinned,
@@ -298,6 +300,8 @@ struct ChatShellView: View {
             return appState.connectors.first { $0.id == id }?.name
         case let .session(id):
             return appState.sessions.first { $0.id == id }?.title
+        case .specRune:
+            return "SpecRune"
         }
     }
 
@@ -314,7 +318,16 @@ struct ChatShellView: View {
 
     @ViewBuilder
     private var mainContent: some View {
-        if case let .device(connectorId) = selection,
+        if case let .specRune(connectorId) = selection,
+           let workspaceFilesService = appState.workspaceFilesService
+        {
+            SpecRuneTasksView(
+                connectorId: connectorId,
+                projects: appState.projects.filter { $0.connectorId == connectorId },
+                api: workspaceFilesService.connectorAPI
+            )
+            .id(connectorId)
+        } else if case let .device(connectorId) = selection,
            let connector = appState.connectors.first(where: { $0.id == connectorId }),
            let clients = appState.nativeChatServices,
            let service = appState.deviceManagementService,
@@ -404,6 +417,18 @@ struct ChatShellView: View {
     private func openSession(_ id: V2SessionID) {
         selection = .session(id)
         sidebar.selectDestination()
+    }
+
+    /// 打开 SpecRune 任务看板（数据来自该设备上的项目）。
+    private func openSpecRune(_ id: V2ConnectorID) {
+        selection = .specRune(id)
+        sidebar.selectDestination()
+    }
+
+    /// 当前是否停在看板上；用于侧栏高亮。
+    private var specRuneDeviceId: V2ConnectorID? {
+        if case let .specRune(id) = selection { return id }
+        return nil
     }
 
     private func removeConnector(_ id: V2ConnectorID) {

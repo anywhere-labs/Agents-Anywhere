@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		000000000000000130000001 /* Textual in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000300000001 /* Textual */; };
+		000000000000000130000002 /* SpecRuneKit in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000300000003 /* SpecRuneKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -28,6 +29,7 @@
 			isa = PBXFrameworksBuildPhase;
 			files = (
 				000000000000000130000001 /* Textual in Frameworks */,
+				000000000000000130000002 /* SpecRuneKit in Frameworks */,
 			);
 		};
 /* End PBXFrameworksBuildPhase section */
@@ -69,6 +71,7 @@
 			name = "Agents Anywhere";
 			packageProductDependencies = (
 				000000000000000300000001 /* Textual */,
+				000000000000000300000003 /* SpecRuneKit */,
 			);
 			productName = MyApp;
 			productReference = 000000000000000000000120 /* Agents Anywhere.app */;
@@ -104,6 +107,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				000000000000000300000000 /* XCLocalSwiftPackageReference "../Packages/Textual" */,
+				000000000000000300000002 /* XCLocalSwiftPackageReference "../Packages/SpecRuneKit" */,
 			);
 			preferredProjectObjectVersion = 90;
 			productRefGroup = 000000000000000000000020 /* Products */;
@@ -408,6 +412,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../Packages/Textual;
 		};
+		000000000000000300000002 /* XCLocalSwiftPackageReference "../Packages/SpecRuneKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../Packages/SpecRuneKit;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -415,6 +423,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 000000000000000300000000 /* XCLocalSwiftPackageReference "../Packages/Textual" */;
 			productName = Textual;
+		};
+		000000000000000300000003 /* SpecRuneKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 000000000000000300000002 /* XCLocalSwiftPackageReference "../Packages/SpecRuneKit" */;
+			productName = SpecRuneKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

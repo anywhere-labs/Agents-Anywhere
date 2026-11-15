@@ -1,0 +1,45 @@
+{
+  "$id": "urn:agents-anywhere:specrune:1.0:session-task-response",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SpecRuneSessionTaskResponse",
+  "description": "GET /api/v2/connectors/{id}/specrune/session-task?repo=&session= 的返回体。会话与任务的关联（一条或多条）。纯只读，缺失即 entry 为 null / 空数组。",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["entry"],
+  "properties": {
+    "entry": {
+      "anyOf": [
+        { "$ref": "#/$defs/SessionTaskEntry" },
+        { "type": "array", "items": { "$ref": "#/$defs/SessionTaskEntry" } },
+        { "type": "null" }
+      ],
+      "default": null,
+      "description": "[FS] 该会话关联的任务条目；未关联时 null（或空数组）。字段形态以 Connector 关联账为准。"
+    }
+  },
+  "$defs": {
+    "SessionTaskEntry": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["taskRef"],
+      "properties": {
+        "taskRef": {
+          "type": "string",
+          "description": "[FS] 关联任务的 ref（活跃 = 目录名；归档 = archive/<月>/<目录>），与 tasks/task 端点的 ref 语义一致。"
+        },
+        "title": {
+          "anyOf": [{ "type": "string" }, { "type": "null" }],
+          "default": null,
+          "description": "[DERIVED] 任务标题，便于客户端不额外请求 task 详情即可显示。"
+        },
+        "createdAt": {
+          "anyOf": [{ "type": "string" }, { "type": "null" }],
+          "default": null,
+          "description": "[FS] 关联建立时间（ISO 8601，本地时区），无则 null。"
+        }
+      }
+    }
+  },
+  "x-direction": "egress",
+  "x-protocol-version": "1.0"
+}

@@ -1,0 +1,49 @@
+{
+  "$id": "urn:agents-anywhere:specrune:1.0:project-list-response",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SpecRuneProjectListResponse",
+  "description": "GET /api/v2/connectors/{id}/specrune/projects 的返回体。项目清单 = Connector 工作设备上的工作区注册表投影，只保留装了 SpecRune 的项目。",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["projects"],
+  "properties": {
+    "projects": {
+      "type": "array",
+      "description": "去重后的项目列表；分支 worktree 不一并列出（归一到主仓）。",
+      "items": { "$ref": "#/$defs/Project" }
+    },
+    "active": {
+      "anyOf": [{ "type": "string" }, { "type": "null" }],
+      "default": null,
+      "description": "[DERIVED] 当前活跃项目的绝对路径（Connector 维护的 active-repo，归一为主仓根）；无则 null。"
+    }
+  },
+  "$defs": {
+    "Project": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["dir", "title", "hasSpecrune"],
+      "properties": {
+        "dir": {
+          "type": "string",
+          "description": "[FS] 项目绝对路径（工作设备上的真实路径，非 repo 内相对路径）。"
+        },
+        "title": {
+          "type": "string",
+          "description": "[DERIVED] 展示名：工作区注册表的 title，缺失时取 dir 的 basename。"
+        },
+        "hasSpecrune": {
+          "type": "boolean",
+          "description": "[FS] 该目录是否存在 .specrune/workflow.md；false 的项客户端应隐藏或置灰。"
+        },
+        "version": {
+          "anyOf": [{ "type": "string" }, { "type": "null" }],
+          "default": null,
+          "description": "[FS] .specrune/.version 内容（仅作卡头徽标，权威升级判定不依赖它）；无则 null。"
+        }
+      }
+    }
+  },
+  "x-direction": "egress",
+  "x-protocol-version": "1.0"
+}

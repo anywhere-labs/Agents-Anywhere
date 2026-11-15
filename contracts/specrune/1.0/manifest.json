@@ -1,0 +1,42 @@
+{
+  "artifacts": [
+    {
+      "direction": "egress",
+      "model": "SpecRuneProjectListResponse",
+      "path": "schemas/project-list.response.schema.json",
+      "slug": "project-list-response",
+      "sha256": "b354e43c214304b5349eea9023545dce3ca32ddaed853c15f371e00bdd1bbe4e"
+    },
+    {
+      "direction": "egress",
+      "model": "SpecRuneSessionTaskResponse",
+      "path": "schemas/session-task.response.schema.json",
+      "slug": "session-task-response",
+      "sha256": "07bef833e6ab01ce473f0293c4dd8c2ecf1b6f7a8298fe7f217dfc01ed651e06"
+    },
+    {
+      "direction": "egress",
+      "model": "SpecRuneSpecDocumentResponse",
+      "path": "schemas/spec-document.response.schema.json",
+      "slug": "spec-document-response",
+      "sha256": "90e6ee3f1669dfbbb5bc0a64b5524bc0f7deac29aa7582f0e0fa3e28f586a05e"
+    },
+    {
+      "direction": "egress",
+      "model": "SpecRuneTaskDetailResponse",
+      "path": "schemas/task-detail.response.schema.json",
+      "slug": "task-detail-response",
+      "sha256": "09f81aba1f06598f399e5c215fda1b866d55a0f62ad73202654c46cc449f0ad1"
+    },
+    {
+      "direction": "egress",
+      "model": "SpecRuneTaskListResponse",
+      "path": "schemas/task-list.response.schema.json",
+      "slug": "task-list-response",
+      "sha256": "1422fefa25027255854351ebd7a9e40569855d5088f1b037398e6f421c53cb37"
+    }
+  ],
+  "jsonSchemaDraft": "https://json-schema.org/draft/2020-12/schema",
+  "specruneContractVersion": "1.0",
+  "description": "SpecRune 看板只读契约：projects / tasks / task / spec / session-task。字段来源见 README。"
+}

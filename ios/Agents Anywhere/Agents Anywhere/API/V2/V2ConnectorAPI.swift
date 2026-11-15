@@ -24,6 +24,10 @@ protocol V2ConnectorAPIProtocol {
         request: V2ConnectorDeviceSettingsPatch
     ) async throws -> V2ConnectorDeviceSettingsResponse
     func readWorkspaceText(connectorId: V2ConnectorID, root: String, request: V2WorkspaceTextRequest) async throws -> V2WorkspaceTextResponse
+    /// 在 Connector 所在设备上执行一条 shell 命令。SpecRune 看板用它跑
+    /// `specrune task list/show --json`——这是官方 Server 既有的端点，
+    /// 因此不需要改动 Server 或 Connector。
+    func shellExec(connectorId: V2ConnectorID, root: String, request: V2ShellExecRequest) async throws -> V2ShellExecResponse
     func listRuntimes(connectorId: V2ConnectorID) async throws -> V2DeviceRuntimeListResponse
     func discoverRuntimes(connectorId: V2ConnectorID) async throws -> V2DeviceRuntimeListResponse
     func updateRuntimeConfig(
@@ -276,6 +280,15 @@ struct V2ConnectorAPI: V2ConnectorAPIProtocol {
         try await transport.send(HTTPRequest<V2WorkspaceTextRequest, V2WorkspaceTextResponse>(
             method: .post,
             path: "\(connectorPath(connectorId))/fs/readText",
+            queryItems: [URLQueryItem(name: "root", value: root)],
+            body: request
+        ))
+    }
+
+    func shellExec(connectorId: V2ConnectorID, root: String, request: V2ShellExecRequest) async throws -> V2ShellExecResponse {
+        try await transport.send(HTTPRequest<V2ShellExecRequest, V2ShellExecResponse>(
+            method: .post,
+            path: "\(connectorPath(connectorId))/shell/exec",
             queryItems: [URLQueryItem(name: "root", value: root)],
             body: request
         ))

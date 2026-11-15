@@ -1,0 +1,30 @@
+{
+  "$id": "urn:agents-anywhere:specrune:1.0:spec-document-response",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SpecRuneSpecDocumentResponse",
+  "description": "GET /api/v2/connectors/{id}/specrune/spec?repo=&path= 的返回体。任务详情「规范引用」就地展开用。只放行 repo 的 .specrune/spec/ 下的相对路径。",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["path", "content", "bytes", "truncated"],
+  "properties": {
+    "path": {
+      "type": "string",
+      "description": "[FS] 规范化后的仓库内相对路径（形如 .specrune/spec/backend/xxx.md）。"
+    },
+    "content": {
+      "type": "string",
+      "description": "[FS] 规范正文（UTF-8），最多 1 MiB。"
+    },
+    "bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "[FS] 真实字节数（未截断前）。"
+    },
+    "truncated": {
+      "type": "boolean",
+      "description": "[FS] 是否因超过 1 MiB 被截断。"
+    }
+  },
+  "x-direction": "egress",
+  "x-protocol-version": "1.0"
+}

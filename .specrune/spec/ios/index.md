@@ -18,6 +18,11 @@
 - 改宽度前先读 duo-layout.md 的"三层宽度约束"清单。
 - 动 Textual 前先读 textual-vendor.md——本地是 vendor 定制版，
   升级须手动合并并保留性能定制。
+- `ios/Packages/` 下除 Textual 外还有本地扩展包 `SpecRuneKit`（SpecRune 任务
+  看板的数据层，零依赖，经 `SpecRuneTransport` 由主 app 注入传输）。新增此类
+  包要在 `Agents Anywhere.xcodeproj` 加 `XCLocalSwiftPackageReference`，包的
+  `platforms` 必须与 target 的 `IPHONEOS_DEPLOYMENT_TARGET` 一致（否则报
+  "module has a minimum deployment target of …"）。
 - 改 `SessionChatView` 这类大体量 SwiftUI body 前注意：body 表达式再加
   任何内容就可能触发 "unable to type-check in reasonable time"。对策是把
   子树/修饰链提取为私有方法或 ViewModifier（现有 timelinePane/bottomDock/
