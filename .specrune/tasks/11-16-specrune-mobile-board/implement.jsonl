@@ -1,0 +1,4 @@
+{"file":"contracts/specrune/1.0/README.md","reason":"只读契约：五端点字段/error code/路径约束，实现的权威依据"}
+{"file":"docs/specrune-panel-mobile-feasibility.md","reason":"可行性调研：数据来源全在本机、Connector 代理路径与分层结论"}
+{"file":"server/agent_server/api/connector_files.py","reason":"只读转发样板：require_owned_online_connector + request_connector 用法"}
+{"file":"connector/connector/server/local_rpc.py","reason":"本地 RPC 注册表：METHODS 与 dispatch 需同步加五个方法"}
