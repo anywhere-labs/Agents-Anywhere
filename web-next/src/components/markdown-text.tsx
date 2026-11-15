@@ -7,7 +7,8 @@ import remarkMath from "remark-math"
 import { MermaidPreview } from "@/components/mermaid-preview"
 import rehypeKatex from "rehype-katex"
 import { remarkStandaloneDisplayMath } from "@/lib/markdown-math"
-import { ExternalLink, GitBranch, Maximize2 } from "lucide-react"
+import { Check, Copy, Download, ExternalLink, GitBranch, Maximize2 } from "lucide-react"
+import { copyText } from "@/lib/clipboard"
 
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
@@ -55,28 +56,92 @@ const MarkdownTable: Components["table"] = ({ node: _node, children, ...props })
   <MarkdownTableBlock {...props}>{children}</MarkdownTableBlock>
 )
 
+function TableAction({
+  label,
+  onClick,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-md text-muted-foreground transition hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
+    >
+      {children}
+    </button>
+  )
+}
+
 function MarkdownTableBlock({ children, ...props }: React.ComponentProps<"table">) {
   const tSession = useTranslations("dashboard.session")
   const [fullscreen, setFullscreen] = React.useState(false)
+  const [copied, setCopied] = React.useState(false)
+  const tableRef = React.useRef<HTMLTableElement>(null)
   const label = tSession("tableFullscreen")
 
+  const readRows = React.useCallback((): string[][] => {
+    const table = tableRef.current
+    if (!table) return []
+    return Array.from(table.rows).map((row) =>
+      Array.from(row.cells).map((cell) => (cell.textContent ?? "").replace(/\s+/g, " ").trim()),
+    )
+  }, [])
+
+  const copyTable = async () => {
+    const rows = readRows()
+    if (!rows.length) return
+    await copyText(rows.map((row) => row.join("\t")).join("\n"))
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1500)
+  }
+
+  const downloadTable = () => {
+    const rows = readRows()
+    if (!rows.length) return
+    const csvCell = (value: string) =>
+      /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value
+    const csv = rows.map((row) => row.map(csvCell).join(",")).join("\r\n")
+    // BOM：Excel 才会按 UTF-8 打开，中文不乱码。
+    const url = URL.createObjectURL(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" }))
+    const link = document.createElement("a")
+    link.href = url
+    link.download = "table.csv"
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  }
+
   return (
-    <div className="relative my-3 min-w-0 max-w-full">
-      <ScrollArea contentWide className="min-w-0 max-w-full rounded-xl border border-border">
-        <table className="w-full min-w-max border-collapse text-sm" {...props}>
+    <div className="my-3 min-w-0 max-w-full overflow-hidden rounded-xl border border-border">
+      <div className="flex h-10 items-center justify-between gap-2 border-b border-border bg-muted/40 pr-1 pl-3">
+        <span className="truncate text-xs font-medium text-muted-foreground">
+          {tSession("tableTitle")}
+        </span>
+        <div className="flex items-center gap-1">
+          <TableAction label={tSession("tableCopy")} onClick={copyTable}>
+            {copied ? <Check className="size-3.5 text-primary" /> : <Copy className="size-3.5" />}
+          </TableAction>
+          <TableAction label={tSession("tableDownload")} onClick={downloadTable}>
+            <Download className="size-3.5" />
+          </TableAction>
+          <TableAction label={label} onClick={() => setFullscreen(true)}>
+            <Maximize2 className="size-3.5" />
+          </TableAction>
+        </div>
+      </div>
+      <ScrollArea contentWide className="min-w-0 max-w-full">
+        <table ref={tableRef} className="w-full min-w-max border-collapse text-sm" {...props}>
           {children}
         </table>
         <ScrollBar orientation="horizontal" />
       </ScrollArea>
-      <button
-        type="button"
-        onClick={() => setFullscreen(true)}
-        aria-label={label}
-        title={label}
-        className="absolute top-1.5 right-1.5 z-10 rounded-md border border-border/60 bg-background/90 p-1 text-muted-foreground opacity-70 shadow-sm transition hover:bg-accent hover:text-foreground hover:opacity-100 focus-visible:opacity-100 supports-backdrop-filter:backdrop-blur-sm"
-      >
-        <Maximize2 className="size-3.5" />
-      </button>
       <Dialog open={fullscreen} onOpenChange={setFullscreen}>
         <DialogContent
           aria-describedby={undefined}
