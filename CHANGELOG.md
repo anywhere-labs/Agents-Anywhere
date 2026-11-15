@@ -2,6 +2,12 @@
 
 按版本记录用户能感知到的变化，最新版本在最前，每项一句话。接口变化、各端最低配套版本、数据库迁移和安装包记录见各版本的[发布说明](docs/releases/)。
 
+## 未发布
+
+### Web 与 Desktop 界面
+
+- 会话里的表格新增复制、下载和全屏按钮，长表格可以直接导出为 CSV。（[#655](https://github.com/anywhere-labs/Agents-Anywhere/pull/655)）
+
 ## 2.2.0（2026-11-14）
 
 [发布说明](docs/releases/2.2.0.md) · [与 2.1.0 的差异](https://github.com/anywhere-labs/Agents-Anywhere/compare/v2.1.0...v2.2.0)
