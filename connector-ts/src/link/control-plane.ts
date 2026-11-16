@@ -36,6 +36,14 @@ export interface MeshGrant {
 
 export const MESH_MAX_FRAME_BYTES = 4 * 1024 * 1024
 
+/** `/api/v3/device/auth` refused the device credential: retrying cannot help until the user pairs again. */
+export class CredentialRejected extends HttpError {
+  public constructor(status: number, body: unknown) {
+    super(status, 'credential_rejected', `the Server refused this device's credential (HTTP ${status})`, body)
+    this.name = 'CredentialRejected'
+  }
+}
+
 export function meshGrant(welcome: LinkWelcome): MeshGrant {
   const mesh = welcome.mesh
   const expires = mesh.expiresAt === undefined || mesh.expiresAt === null ? Number.NaN : Date.parse(mesh.expiresAt)
@@ -90,6 +98,9 @@ export class ControlPlane {
       headers: { authorization: `Connector ${credential.deviceId}:${credential.token}`, 'x-device-os': this.options.os, 'x-connector-version': this.options.connectorVersion },
       timeoutMs: this.options.timeoutMs ?? 15_000,
       ...(signal !== undefined ? { signal } : {}),
+    }).catch((error: unknown) => {
+      if (error instanceof HttpError && (error.status === 401 || error.status === 403)) throw new CredentialRejected(error.status, error.body)
+      throw error
     })
     if (typeof response?.accessToken !== 'string') throw new HttpError(502, 'bad_response', 'device auth returned no accessToken', response)
     this.access = { token: response.accessToken, expiresAt: this.now() + (typeof response.expiresIn === 'number' ? response.expiresIn : 900) * 1000 }
@@ -110,7 +121,7 @@ export class ControlPlane {
           ...(signal !== undefined ? { signal } : {}),
         })
       } catch (error) {
-        if (error instanceof HttpError && error.status === 401 && attempt === 0) {
+        if (error instanceof HttpError && !(error instanceof CredentialRejected) && error.status === 401 && attempt === 0) {
           this.invalidate()
           continue
         }

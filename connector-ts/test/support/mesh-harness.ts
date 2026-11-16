@@ -141,7 +141,8 @@ export class FakeServer {
   private http: HttpServer | null = null
   public port = 0
   public deviceId: string
-  private readonly credential: string
+  /** Change it to make the device's stored credential stale. */
+  public credential: string
   public connectionId: string | null = null
   private tokenId: string | null = null
   private generation = 0
@@ -191,9 +192,9 @@ export class FakeServer {
     this.calls.push(request.url ?? '')
     if (request.url === '/api/v3/device/auth') {
       if (auth !== `Connector ${this.deviceId}:${this.credential}`) return send(response, 401, { detail: 'invalid connector credential' })
-      return send(response, 200, { accessToken: `at_${this.deviceId}`, expiresIn: 900 })
+      return send(response, 200, { accessToken: `at_${this.credential}`, expiresIn: 900 })
     }
-    if (auth !== `Bearer at_${this.deviceId}`) return send(response, 401, { detail: 'invalid connector access token' })
+    if (auth !== `Bearer at_${this.credential}`) return send(response, 401, { detail: 'invalid connector access token' })
     if (request.url === '/api/v3/device/hello') return send(response, 200, await this.hello(body))
     if (request.url === '/api/v3/device/ready') {
       this.readies++

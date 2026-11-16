@@ -176,7 +176,8 @@ describe.skipIf(binary === null)('DeviceLink against a real Router', () => {
     service = new ConversationService({ store, feed, live: { emit: () => undefined }, runtimes, clock, ids: { newId: (prefix: string) => `${prefix}${Math.random().toString(36).slice(2)}` } })
     const inbox = new CommandInbox(store, clock, service)
     const outboxSignal = new OutboxSignal()
-    const handshake = new ControlPlane({ serverUrl: server.url, credential: () => server.deviceCredential, egress: () => egressValue, connectorVersion: '3.0.0-test', os: 'darwin' })
+    const stored = server.deviceCredential
+    const handshake = new ControlPlane({ serverUrl: server.url, credential: () => stored, egress: () => egressValue, connectorVersion: '3.0.0-test', os: 'darwin' })
     link = new DeviceLink({
       deviceId: server.deviceId,
       host: 'cli',
@@ -279,6 +280,16 @@ describe.skipIf(binary === null)('DeviceLink against a real Router', () => {
     link.attach.emit('port.listening', { ports: [{ port: 5173 }] })
     await until(() => (server.held?.events.length ?? 0) > 0, 5000, 'event')
     expect(server.held?.events.map(event => event.m)).toEqual(['port.listening'])
+  }, 20_000)
+
+  it('stops with credential_rejected when the Server refuses the device credential', async () => {
+    startLink()
+    await until(() => link.state === 'online', 10_000, 'online')
+    // Pairing replaced the credential elsewhere: the next hello cannot authenticate.
+    server.credential = 'ct_rotated'
+    await server.revokeToken()
+    await expect(running).rejects.toMatchObject({ code: 'credential_rejected' })
+    expect(link.state).toBe('stopped')
   }, 20_000)
 
   it('reaches the Router through an HTTP CONNECT proxy', async () => {
