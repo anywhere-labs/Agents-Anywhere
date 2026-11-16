@@ -25226,6 +25226,60 @@
           }
         }
       }
+    },
+    "设备离线，上线后查看。": {
+      "comment": "Mirrors Web session.historyOfflineEmpty: empty timeline while the device is offline (protocol 1.2).",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The device is offline. Messages appear once it is back online."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备离线，上线后查看。"
+          }
+        }
+      }
+    },
+    "显示的是本机缓存。更早的消息和新的进展要等设备上线后才能看到。": {
+      "comment": "Mirrors Web session.historyOfflineCached: notice above the composer while the device is offline.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Showing what this device cached earlier. Older messages and new progress appear once the device is back online."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示的是本机缓存。更早的消息和新的进展要等设备上线后才能看到。"
+          }
+        }
+      }
+    },
+    "计划待审阅": {
+      "comment": "Session list badge: the session's plan waits for the user's review.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plan awaiting review"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "计划待审阅"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

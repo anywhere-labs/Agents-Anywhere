@@ -668,6 +668,10 @@ final class AppState {
         accountSyncTask?.cancel(); accountSyncTask = nil; isRetryingServerConnection = false
         restoration.clear(scope: cachedServices?.scope)
         cachedServices?.shutdown(removingCache: true)
+        // Also remove offline content of any account that has no live services
+        // (for example a sign-out before the profile was read).
+        let offlineRoot = cachedServices?.offlineRoot ?? V2ClientServices.defaultOfflineRoot
+        Task.detached(priority: .utility) { V2LocalStore.removeScopes(in: offlineRoot, keeping: nil) }
         cachedServices = nil
         cachedServicesTokenProvider?.update(nil)
         cachedServicesTokenProvider = nil
@@ -789,13 +793,17 @@ final class AppState {
         dashboardUpdatesTask = nil
         isDashboardLoading = false
         cachedServicesTokenProvider?.update(nil)
-        cachedServices?.shutdown()
+        // Another server or account replaces this one: its offline content goes.
+        cachedServices?.shutdown(removingCache: cachedServices?.scope != scope)
         let tokenProvider = MutableAuthTokenProvider(token: token)
         let api = V2APIClient(
             serverURL: serverURL,
             tokenProvider: tokenProvider
         )
         let services = V2ClientServices(api: api, accountID: accountID)
+        // Only the signed-in account keeps offline content on this device.
+        let offlineRoot = services.offlineRoot, offlineScope = services.offlineScopeKey
+        Task.detached(priority: .utility) { V2LocalStore.removeScopes(in: offlineRoot, keeping: offlineScope) }
         cachedServices = services
         cachedServicesTokenProvider = tokenProvider
         services.dashboardRepository.reconcile = { [weak services] in services?.sessionReads.ingest($0) ?? $0 }

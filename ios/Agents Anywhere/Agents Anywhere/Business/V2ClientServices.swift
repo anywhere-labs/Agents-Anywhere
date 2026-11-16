@@ -28,13 +28,19 @@ final class V2ClientServices {
     let modelConfigAPI: V2ModelConfigAPI
     let newSession: NewSessionModel
 
-    init(api: V2APIClient, accountID: String) {
+    /// Parent of every account's offline directory (one per server + account).
+    nonisolated static let defaultOfflineRoot = URL.applicationSupportDirectory.appendingPathComponent("AgentsAnywhere/Offline/v1")
+    let offlineRoot: URL
+    /// This account's directory name below `offlineRoot`.
+    var offlineScopeKey: String { V2RestorationStore.scopeKey(scope) }
+
+    init(api: V2APIClient, accountID: String, offlineRoot: URL = V2ClientServices.defaultOfflineRoot) {
         self.api = api
+        self.offlineRoot = offlineRoot
         runtimeWorkflows = V2RuntimeWorkflowAPI(transport: api.sessions.transport)
         modelConfigAPI = api.modelConfig
         scope = V2ClientScope(serverURL: api.serverURL, accountID: accountID)
-        let cacheDirectory = URL.applicationSupportDirectory.appendingPathComponent("AgentsAnywhere/Offline/v1")
-            .appendingPathComponent(V2RestorationStore.scopeKey(scope))
+        let cacheDirectory = offlineRoot.appendingPathComponent(V2RestorationStore.scopeKey(scope))
         localStore = V2LocalStore(directory: cacheDirectory)
         sessionPreparation = V2SessionPreparationService(connectorAPI: api.connectors)
         account = V2AccountService(accountAPI: api.account)
@@ -137,9 +143,13 @@ final class V2ClientServices {
         await sessionRepository.flushCache()
     }
 
+    /// Signing out or switching accounts passes `removingCache`: the account's
+    /// offline directory is deleted and nothing from a closing page can write it back.
     func shutdown(removingCache: Bool = false) {
         onSelectPage = nil; onCreationBound = nil
         newSession.onStaged = nil; newSession.onBound = nil; newSession.onFailed = nil; newSession.onProjectResolved = nil
+        // Refuse writes now; the actor deletes the directory after any write in progress.
+        if removingCache { localStore.invalidate() }
         Task { await localStore.close(removing: removingCache) }
         agentSetup.invalidate()
         agentModels.values.forEach { $0.invalidate() }; agentModels = [:]

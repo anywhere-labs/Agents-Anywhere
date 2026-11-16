@@ -3,7 +3,7 @@ import Foundation
 /// Presentation can choose recovery actions without interpreting localized messages.
 nonisolated struct V2ClientFailure: Error, Hashable, LocalizedError {
     enum Kind: Hashable { case offline, transient, authentication, unavailable, rejected, cancelled, invalidResponse }
-    let kind: Kind
+    private(set) var kind: Kind
     let message: String
     let code: String?
 
@@ -39,7 +39,14 @@ nonisolated struct V2ClientFailure: Error, Hashable, LocalizedError {
         else if error is DecodingError { kind = .invalidResponse }
         else if error is V2BusinessError { kind = .rejected }
         else { kind = .transient }
+        // A command that may have run is never a rejection, whatever its HTTP status.
+        if let code, Self.outcomeUnknownCodes.contains(code), kind == .rejected { kind = .transient }
     }
+
+    /// The command was sent but its result could not be confirmed (runtime-errors
+    /// 1.1 `command_outcome_unknown`). Never resend automatically; refresh to check.
+    static let outcomeUnknownCodes: Set<String> = ["command_outcome_unknown", "operation_outcome_unknown", "outcome_unknown"]
+    var isOutcomeUnknown: Bool { code.map(Self.outcomeUnknownCodes.contains) ?? false }
 
     var errorDescription: String? { message }
     var permitsAutomaticReconnect: Bool { kind == .transient || kind == .offline }
@@ -47,6 +54,7 @@ nonisolated struct V2ClientFailure: Error, Hashable, LocalizedError {
     /// Once a write has started, only a definite local/HTTP rejection proves it was not accepted.
     /// RPC timeouts, 5xx, decoding failures and cancellation can all follow server execution.
     static func isDefiniteWriteRejection(_ error: Error) -> Bool {
+        if Self(error).isOutcomeUnknown { return false }
         if let failure = error as? V2RuntimeWorkflowFailure { return failure.definitelyNotAccepted }
         if error is V2BusinessError { return true }
         if let failure = error as? Self { return [.offline, .rejected, .authentication, .unavailable].contains(failure.kind) }

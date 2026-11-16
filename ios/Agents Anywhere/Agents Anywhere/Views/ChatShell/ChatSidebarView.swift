@@ -452,6 +452,12 @@ struct ChatSidebarSessionIndicator: View {
                 .foregroundStyle(.mint).padding(.horizontal, 8).padding(.vertical, 3)
                 .background(.mint.opacity(0.16), in: .capsule)
                 .fixedSize().accessibilityLabel(String(localized: "等待批准"))
+        case .planReview:
+            badge(String(localized: "计划待审阅"), tint: .orange)
+        case .goalActive:
+            badge(String(localized: "目标进行中"), tint: .blue)
+        case .goalPaused:
+            badge(String(localized: "目标已暂停"), tint: .secondary)
         case .running:
             ProgressView().controlSize(.mini).tint(.primary)
                 .frame(width: 14, height: 14).accessibilityLabel(String(localized: "运行中"))
@@ -460,6 +466,13 @@ struct ChatSidebarSessionIndicator: View {
         case .none:
             EmptyView()
         }
+    }
+
+    private func badge(_ title: String, tint: Color) -> some View {
+        Text(title).font(.system(size: 11, weight: .medium))
+            .foregroundStyle(tint).padding(.horizontal, 8).padding(.vertical, 3)
+            .background(tint.opacity(0.16), in: .capsule)
+            .fixedSize().accessibilityLabel(title)
     }
 }
 

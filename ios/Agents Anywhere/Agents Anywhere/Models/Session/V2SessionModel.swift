@@ -106,6 +106,9 @@ final class V2SessionModel: Identifiable {
     private(set) var failure: V2ClientFailure?
     private(set) var hasOlderItems = false
     private(set) var hasNewerItems = false
+    /// Protocol 1.2: the device is offline and the Server cannot read its history.
+    /// Retained content stays readable; older pages and new progress wait for it.
+    private(set) var historyUnavailable = false
     private(set) var isLoading = false
     private(set) var isLoadingHistory = false
     private(set) var isValid = true
@@ -292,6 +295,7 @@ final class V2SessionModel: Identifiable {
         if queue != data?.queue { queue = data?.queue }
         if hasOlderItems != (data?.hasOlderItems ?? false) { hasOlderItems = data?.hasOlderItems ?? false }
         if hasNewerItems != (data?.hasNewerItems ?? false) { hasNewerItems = data?.hasNewerItems ?? false }
+        if historyUnavailable != (data?.historyUnavailable ?? false) { historyUnavailable = data?.historyUnavailable ?? false }
         // A streamed token updates one existing row. Keep the id index across
         // ticks and only republish the array when membership or order changed.
         let items = data?.items ?? []

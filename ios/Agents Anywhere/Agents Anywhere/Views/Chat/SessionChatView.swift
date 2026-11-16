@@ -63,7 +63,9 @@ struct SessionChatView: View, Equatable {
                 .overlay {
                     if model.isOpeningReady && model.timeline.rows.isEmpty && model.timeline.pendingMessages.isEmpty && session.planning?.draft == nil && session.planning?.proposal == nil {
                         VStack(spacing: 12) {
-                            Text(String(localized: "在这里继续你的任务")).foregroundStyle(.secondary)
+                            // Protocol 1.2: an offline device's history is not on the Server.
+                            Text(session.historyUnavailable ? String(localized: "设备离线，上线后查看。")
+                                : String(localized: "在这里继续你的任务")).foregroundStyle(.secondary)
                         }.allowsHitTesting(false)
                     }
                 }
@@ -88,6 +90,9 @@ struct SessionChatView: View, Equatable {
                         }
                         SessionGoalPanel(chat:model)
                         SessionMessageQueuePanel(chat: model)
+                        if session.historyUnavailable && !session.timeline.isEmpty {
+                            deviceOfflineNotice
+                        }
                         ChatComposerDock(draft: session.composer, settings: model.settings,
                             maximumEditorHeight: min(160, max(72, geometry.size.height * 0.30)), controls: controls,
                             canSend: session.canSend || session.queueMode || ((model.goalMode || session.composer.text.hasPrefix("/goal")) && session.runtime.allows("session.goal")) || (V2PlanningCommand.parse(session.composer.text) != nil && session.runtime.allows("session.planning")), canAttach: model.canAttach,
@@ -245,6 +250,17 @@ struct SessionChatView: View, Equatable {
                 }
             }.buttonStyle(.bordered)
         }.padding(.horizontal, 16).padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Retained content is shown while the device cannot serve its history.
+    private var deviceOfflineNotice: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(String(localized: "设备离线")).font(.subheadline.weight(.medium))
+            Text(String(localized: "显示的是本机缓存。更早的消息和新的进展要等设备上线后才能看到。"))
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 
     private var agentRecoveryControls: some View {

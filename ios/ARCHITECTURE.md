@@ -113,6 +113,13 @@ atomic writes, iOS data protection and backup exclusion. Launch reads local stat
 before rendering the restored page; profile validation, dashboard refresh and
 session recovery run afterwards. Connectivity failures keep that page available.
 Only a definitive authentication rejection transitions to signed out.
+Protocol 1.2 offline reads (`deviceOffline`, `historySource: unavailable`) never
+replace retained content or move its cursor; an offline read without retained
+content is not a baseline and is not archived. `session.catchup_required`, the
+device returning online and live timeline frames received while history was
+unavailable recover from the repository's own cursor. Signing out invalidates
+the store synchronously and deletes every account's directory; signing in
+removes other accounts' directories. Rules: [session cache](../docs/session-cache.md).
 
 `DeviceAgentModel` distinguishes available types from configured instances.
 `AgentSetupCoordinator` owns pending pairing observations at account scope, so

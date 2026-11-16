@@ -33,6 +33,13 @@ nonisolated struct V2SessionData: Hashable {
     var liveStateIsFresh = false
     var lastExtensionEvent: V2SessionEvent?
     var queue: V2SessionQueueState?
+    /// The Server could not read history because the device is offline (protocol 1.2).
+    /// Live status only: never archived.
+    var historyUnavailable = false
+    /// False for a projection built from an offline snapshot without any retained
+    /// content. It is not an authoritative base: its cursor is `seq:0`, its timeline
+    /// is not archived and the next online read replaces it with a snapshot.
+    var hasBaseline = true
 
     init(snapshot: V2SessionSnapshot) {
         session = snapshot.session
@@ -43,6 +50,7 @@ nonisolated struct V2SessionData: Hashable {
         notices = snapshot.notices
         cursor = snapshot.eventCursor
         queue = snapshot.queue
+        historyUnavailable = snapshot.historyUnavailable
     }
 }
 

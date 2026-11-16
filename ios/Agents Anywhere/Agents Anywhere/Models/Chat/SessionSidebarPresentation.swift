@@ -1,14 +1,18 @@
 import Foundation
 
 struct SessionSidebarPresentation: Equatable {
-    enum Indicator { case none, running, waitingApproval, unread }
+    enum Indicator { case none, running, waitingApproval, planReview, goalActive, goalPaused, unread }
     let indicator: Indicator
     let isRunning: Bool
     let sortTime: TimeInterval
 
     init(_ session: V2SessionMeta) {
         if session.status == .waitingApproval { indicator = .waitingApproval }
+        // Protocol 1.2 directory states stay readable while the device is offline.
+        else if session.planState == .awaitingReview { indicator = .planReview }
         else if [.running, .waiting, .pending].contains(session.status) { indicator = .running }
+        else if session.goalState == .active { indicator = .goalActive }
+        else if session.goalState == .paused { indicator = .goalPaused }
         else if session.unread && session.status == .idle { indicator = .unread }
         else { indicator = .none }
         isRunning = session.status == .running

@@ -11,6 +11,33 @@ nonisolated enum V2ConnectorPresence: String, Codable, Hashable {
     }
 }
 
+/// Protocol 1.2 directory state of the session's plan. Servers before 1.2 omit it.
+nonisolated enum V2SessionPlanState: String, Codable, Hashable {
+    case none
+    case planning
+    case awaitingReview = "awaiting_review"
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let value = try decoder.singleValueContainer().decode(String.self)
+        self = Self(rawValue: value) ?? .unknown
+    }
+}
+
+/// Protocol 1.2 directory state of the session's goal, readable while the device is offline.
+nonisolated enum V2SessionGoalState: String, Codable, Hashable {
+    case none
+    case active
+    case paused
+    case completed
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let value = try decoder.singleValueContainer().decode(String.self)
+        self = Self(rawValue: value) ?? .unknown
+    }
+}
+
 nonisolated struct V2SessionMeta: Codable, Identifiable, Hashable {
     let id: V2SessionID
     let connectorId: V2ConnectorID
@@ -47,6 +74,9 @@ nonisolated struct V2SessionMeta: Codable, Identifiable, Hashable {
     let sortAt: String?
     let updatedSeq: Int
     var createdAt: String? = nil
+    /// Protocol 1.2; nil from older Servers.
+    var planState: V2SessionPlanState? = nil
+    var goalState: V2SessionGoalState? = nil
 
     var effectiveRuntimeId: V2RuntimeID { runtimeId ?? runtime }
 }
