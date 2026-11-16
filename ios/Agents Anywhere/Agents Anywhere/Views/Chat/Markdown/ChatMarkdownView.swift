@@ -39,7 +39,10 @@ struct ChatMarkdownView: View {
             } onCancel: {
                 worker.cancel()
             }
-            guard !Task.isCancelled, case .success(let parsed) = result else { return }
+            // 不要因取消就丢弃结果：视图身份稳定时 .task 只跑一次，那一次
+            // 若被取消（布局重建、页面切换），blocks 会永远是空数组，表现为
+            // 整块正文空白且再也不恢复。过期结果由下面的 blocks != next 兜住。
+            guard case .success(let parsed) = result else { return }
             parseState = parsed.state
             let next = parsed.blocks
             guard blocks != next else { return }
