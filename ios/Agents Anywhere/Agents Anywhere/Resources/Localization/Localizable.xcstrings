@@ -1428,6 +1428,23 @@
         }
       }
     },
+    "另一个进程正在准备 Agent 运行环境，请稍后重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Another process is preparing the agent runtime. Try again shortly."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "另一个进程正在准备 Agent 运行环境，请稍后重试。"
+          }
+        }
+      }
+    },
     "Agent 运行环境安装失败，请检查网络后重试。": {
       "extractionState": "manual",
       "localizations": {
@@ -5505,6 +5522,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "还没有工作目录。"
+          }
+        }
+      }
+    },
+    "Node 下载失败，请检查网络后重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloading Node failed. Check the network and try again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Node 下载失败，请检查网络后重试。"
           }
         }
       }

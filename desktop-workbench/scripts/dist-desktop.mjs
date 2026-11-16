@@ -4,7 +4,7 @@
  * Order of operations, mirroring the DSH desktop release scripts:
  *
  * 1. read and validate the signing/notarization environment (all-or-nothing)
- * 2. run the uv and Python bundles and the app build with every secret stripped
+ * 2. run the uv, Python and Pi bundles and the app build with every secret stripped
  * 3. hand the secrets to electron-builder only, which is the step that signs
  * 4. verify the produced artifact
  *
@@ -183,15 +183,17 @@ async function main() {
   log(`uv and Python targets: ${bundleTargets.join(", ")}`);
 
   if (skipBuild) {
-    const required = ["dist/electron/main.js", "renderer/out/index.html", ...bundleTargets.flatMap(bundledExecutables)];
+    const required = ["dist/electron/main.js", "renderer/out/index.html", "build/pi-runtime/package.json", ...bundleTargets.flatMap(bundledExecutables)];
     if (platform === "mac") required.push("dist/connector-guard");
     for (const relative of required) {
       if (!existsSync(join(PROJECT_ROOT, relative))) fail(`--skip-build requires ${relative}; run a full dist first.`);
     }
-    log("Reusing compiled app, uv and Python bundles (--skip-build)");
+    log("Reusing compiled app, uv, Python and Pi bundles (--skip-build)");
   } else {
     yarn(["bundle:uv"], { ...cleanEnvironment, UV_BUNDLE_TARGETS: bundleTargets.join(",") });
     yarn(["bundle:python"], { ...cleanEnvironment, PYTHON_BUNDLE_TARGETS: bundleTargets.join(",") });
+    // Pi's prebuilt native modules use the same `<platform>-<arch>` keys.
+    yarn(["bundle:pi"], { ...cleanEnvironment, PI_BUNDLE_TARGETS: bundleTargets.join(",") });
     yarn(["build"], cleanEnvironment);
   }
   rmSync(OUTPUT_DIR, { recursive: true, force: true });

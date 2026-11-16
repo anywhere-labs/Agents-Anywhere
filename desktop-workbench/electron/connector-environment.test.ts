@@ -167,13 +167,14 @@ test("structured uv output and recovery classification preserve useful facts", (
   assert.deepEqual(installed.progress, { totalPackages: 12, completedPackages: 8 });
 });
 
-test("Pi preparation blocks readiness, reports failure with a reusable Python environment, and retries", async t => {
+test("Pi preparation failure does not block readiness, keeps the Python environment, and retries on the next start", async t => {
   if (process.platform === "win32") { t.skip("POSIX fixture executable"); return; }
   const f = fixture(t);
-  f.context.env.FAIL_PI = "network error: Pi adapter download failed";
-  await assert.rejects(f.manager.prepare(), /Pi adapter download failed/);
-  assert.equal(f.manager.getState().status, "failed");
-  assert.equal(f.manager.getState().error?.kind, "network");
+  f.context.env.FAIL_PI = "OSError: [Errno 36] Resource deadlock avoided";
+  await f.manager.prepare();
+  assert.equal(f.manager.getState().status, "ready");
+  assert.equal(f.manager.getState().error, undefined);
+  assert.match(f.manager.getState().message, /Pi ACP will be prepared when it is used/);
   assert.equal(f.calls().length, 1);
   delete f.context.env.FAIL_PI;
   f.context.env.WAIT_PI = path.join(f.root, "pi-finish");
@@ -183,6 +184,7 @@ test("Pi preparation blocks readiness, reports failure with a reusable Python en
   fs.writeFileSync(f.context.env.WAIT_PI, "");
   await retry;
   assert.equal(f.manager.getState().status, "ready");
+  assert.equal(f.manager.getState().message, "Connector environment is ready.");
   assert.equal(f.calls().length, 1, "Pi failure does not reinstall Python dependencies");
   const calls = fs.readFileSync(f.context.env.CALLS!, "utf8").trim().split("\n").map(line => JSON.parse(line) as string[]);
   const pi = calls.filter(args => args.includes("prepare-pi"));
