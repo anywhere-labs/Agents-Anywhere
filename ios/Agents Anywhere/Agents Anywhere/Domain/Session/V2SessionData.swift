@@ -32,6 +32,7 @@ nonisolated struct V2SessionData: Hashable {
     var cursor: String
     var liveStateIsFresh = false
     var lastExtensionEvent: V2SessionEvent?
+    var queue: V2SessionQueueState?
 
     init(snapshot: V2SessionSnapshot) {
         session = snapshot.session
@@ -41,6 +42,7 @@ nonisolated struct V2SessionData: Hashable {
         capabilities = snapshot.effectiveCapabilities
         notices = snapshot.notices
         cursor = snapshot.eventCursor
+        queue = snapshot.queue
     }
 }
 

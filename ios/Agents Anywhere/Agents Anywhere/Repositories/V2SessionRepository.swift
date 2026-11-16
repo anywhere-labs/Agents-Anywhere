@@ -330,6 +330,33 @@ final class V2SessionRepository {
         return response
     }
 
+    /// Sends a message the Server may keep in the session queue (`queue` is
+    /// `auto` or `interrupt`). A queued answer updates the queue at once.
+    func sendQueued(sessionId: V2SessionID, content: String, attachmentIDs: [V2AttachmentID] = [], clientMessageID: String,
+                    queue: String) async throws -> V2RuntimeActionResponse {
+        try requireNetwork()
+        let entry = entry(for: sessionId)
+        let response = try await detail.sendMessage(sessionId: sessionId, content: content, attachmentIds: attachmentIDs,
+                                                    clientMessageId: clientMessageID, queue: queue)
+        try requireCurrent(entry)
+        if let queued = V2SessionQueueState.queued(in: response) { applyQueue(queued, entry: entry) }
+        return response
+    }
+
+    @discardableResult
+    func queue(sessionId: V2SessionID, action: V2SessionQueueAction) async throws -> V2SessionQueueState {
+        try requireNetwork()
+        let entry = entry(for: sessionId)
+        let queue = try await detail.queue(sessionId: sessionId, action: action)
+        try requireCurrent(entry)
+        applyQueue(queue, entry: entry)
+        return queue
+    }
+
+    private func applyQueue(_ queue: V2SessionQueueState, entry: Entry) {
+        if entry.projection?.applyQueue(queue) == true { emit(entry, persist: false) }
+    }
+
     func steer(sessionId: V2SessionID, content: String, attachmentIDs: [V2AttachmentID] = [], clientMessageID: String) async throws -> V2RuntimeActionResponse {
         try requireNetwork()
         let entry = entry(for: sessionId)
@@ -478,7 +505,10 @@ final class V2SessionRepository {
             let snapshot = try await detail.load(sessionId: entry.id)
             try requireCurrent(entry, version: version)
             guard snapshot.session.id == entry.id else { throw CacheError.invalidated }
+            let observedQueue = entry.projection?.data.queue
             entry.projection = V2SessionProjection(snapshot: snapshot, maximumItems: policy.maximumTimelineItems)
+            // A queue event may have overtaken this snapshot; the newer revision wins.
+            if let observedQueue { entry.projection?.applyQueue(observedQueue) }
             invalidateCatalogs(entry)
             entry.error = nil
             emit(entry)
@@ -558,6 +588,13 @@ final class V2SessionRepository {
             return
         }
         if let pending = entry.loadTask { _ = try await pending.value }
+        if event.type == "runtime.queue.updated" {
+            // Its sequence is the session's watermark, not a gap to recover.
+            try requireCurrent(entry)
+            try entry.projection?.apply(event)
+            emitAfterBacklog(entry)
+            return
+        }
         if let pending = entry.recoveryTask { try await pending.value }
         if event.type == "session.refetch_required" || event.sequence > (entry.projection?.sequence ?? 0) + 1 {
             try await reconcile(entry)

@@ -1,6 +1,6 @@
 # 运行中继续发消息：服务端消息队列实施方案
 
-> 状态：P1（Server、契约、Web、Desktop）已实现，当前行为见[运行中排队消息](session-message-queue.md)。P2（Android、iOS）未开始。
+> 状态：P1（Server、契约、Web、Desktop）和 P2（Android、iOS）均已实现，当前行为见[运行中排队消息](session-message-queue.md)。
 > 关联：[#423](https://github.com/anywhere-labs/Agents-Anywhere/issues/423)（运行中排队）、[#158](https://github.com/anywhere-labs/Agents-Anywhere/issues/158)（steer 未接入 Web / Desktop）、[#265](https://github.com/anywhere-labs/Agents-Anywhere/issues/265)（远端插话）、[#88](https://github.com/anywhere-labs/Agents-Anywhere/issues/88)。
 > 设计来源：[会话接口 2.2 提案](session-queue-plan-goal-proposal.md)第 1 节（P1）。本方案在两点上偏离该提案：**保留原生 steer**（见 §2.3），以及队列表改名（见 §4.1）。
 

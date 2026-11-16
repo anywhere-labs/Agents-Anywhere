@@ -407,7 +407,15 @@ final class SessionChatModel {
             if try await repository.executeGoal(sessionId:session.id,request:request),session.composer.text==text,session.composer.attachments.map(\.id)==selected.map(\.id) { session.composer.clear();goalMode=false }
         } catch { self.error=error.localizedDescription }
     }
-    func send(_ text: String) async {
+    /// Other ways to send while the Agent runs, offered on long-press of send.
+    var alternativeDeliveries: [V2MessageDelivery] {
+        guard session.queueMode, isRunning else { return [] }
+        return [V2MessageDelivery.interrupt, .steer].filter(session.canDeliver)
+    }
+
+    func send(_ text: String) async { await send(text, delivery: nil) }
+
+    func send(_ text: String, delivery requested: V2MessageDelivery?) async {
         let trimmed=text.trimmingCharacters(in:.whitespacesAndNewlines)
         if trimmed=="/goal",session.runtime.allows("session.goal") { goalMode=true;session.composer.text="";return }
         if goalMode || (goalUsable && trimmed.hasPrefix("/goal ")) { await sendGoal(text);return }
@@ -433,7 +441,8 @@ final class SessionChatModel {
             await runCommand(command, raw: text)
             return
         }
-        guard !isWorking, session.canSend, !session.composer.isComposing else { return }
+        let delivery = requested ?? (session.queueMode ? .queue : .send)
+        guard !isWorking, session.canDeliver(delivery), !session.composer.isComposing else { return }
         let draft = session.composer
         draft.text = text
         let selected = draft.attachments
@@ -446,7 +455,7 @@ final class SessionChatModel {
         isWorking = true
         error = nil
         defer { isWorking = false }
-        _ = await session.sendDraft { pending in
+        _ = await session.sendDraft(delivery: delivery) { pending in
                 for attachment in pending.attachments where attachment.uploaded == nil {
                     let uploaded = try await self.attachments.upload(sessionId: self.session.id, attachments: [attachment.local])
                     guard self.session.isValid, !Task.isCancelled else { throw CancellationError() }
@@ -455,6 +464,27 @@ final class SessionChatModel {
                     self.session.attachmentPreviews.remember(pending.attachments, clientID: pending.id)
                     self.repository.draftDidChange(sessionID: self.session.id)
                 }
+        }
+    }
+
+    // MARK: Message queue
+
+    /// Queue changes need takeover and an online device, like sending.
+    var canManageQueue: Bool { session.canQueue && connectorOnline }
+    private(set) var queueBusyID: String?
+
+    func queueAction(_ action: V2SessionQueueAction) async {
+        guard queueBusyID == nil, canManageQueue else { return }
+        switch action {
+        case let .edit(id, _), let .delete(id), let .retry(id), let .sendNow(id): queueBusyID = id
+        case .read, .resume, .clear: queueBusyID = "*"
+        }
+        defer { queueBusyID = nil }
+        do { try await repository.queue(sessionId: session.id, action: action) }
+        catch {
+            guard session.isValid else { return }
+            self.error = error.localizedDescription
+            _ = try? await repository.queue(sessionId: session.id, action: .read)
         }
     }
 

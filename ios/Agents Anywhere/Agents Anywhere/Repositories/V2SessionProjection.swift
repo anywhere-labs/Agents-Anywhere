@@ -69,8 +69,22 @@ struct V2SessionProjection {
         data.state = state
     }
 
+    /// The queue is replaced whole; a lower revision never wins.
+    @discardableResult mutating func applyQueue(_ queue: V2SessionQueueState) -> Bool {
+        guard queue.sessionId == data.session.id,
+              let merged = V2SessionQueueState.merge(data.queue, queue), merged != data.queue else { return false }
+        data.queue = merged
+        return true
+    }
+
     mutating func apply(_ event: V2SessionEvent) throws {
         guard event.sessionId == data.session.id else { return }
+        if event.type == "runtime.queue.updated" {
+            // Ordered by its own revision. The envelope borrows the session's
+            // current sequence, so it never advances the cursor or deduplicates.
+            applyQueue(try payload("queue", in: event))
+            return
+        }
         guard event.sequence >= sequence else { return }
         if !event.isLiveProjection, eventIDs.contains(event.eventId) { return }
         switch event.type {

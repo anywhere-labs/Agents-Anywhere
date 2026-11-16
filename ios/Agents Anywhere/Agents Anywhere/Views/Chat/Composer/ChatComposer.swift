@@ -20,6 +20,12 @@ struct ChatComposer: View {
     /// Reports draft mutations from this subtree only. Persisting the draft
     /// must not make the page root observe the editor's text.
     var onDraftChange: () -> Void = {}
+    /// While the Agent runs and messages can queue, a typed draft is sent to
+    /// the queue; an empty draft still stops the turn.
+    var queueMode = false
+    /// Other ways to send, offered on long-press of the send button.
+    var alternativeDeliveries: [V2MessageDelivery] = []
+    var onSendWith: (V2MessageDelivery) -> Void = { _ in }
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var glass
@@ -49,18 +55,27 @@ struct ChatComposer: View {
                         NativeComposerEditor(draft: draft, controller: editor, maximumHeight: maximumEditorHeight, onCommandSend: onSend)
                     }
 
-                    Button(action: isStreaming ? onStop : onSend) {
-                        AppSymbol(isStreaming ? "stop.fill" : "arrow.up", size: isStreaming ? 13 : 18)
+                    Button(action: showsStop ? onStop : onSend) {
+                        AppSymbol(showsStop ? "stop.fill" : "arrow.up", size: showsStop ? 13 : 18)
                             .contentTransition(.symbolEffect(.replace))
                             .foregroundStyle(AppTheme.primaryControlForeground(colorScheme))
                             .frame(width: controls.sendDiameter, height: controls.sendDiameter)
-                            .background(AppTheme.primaryControlBackground(colorScheme).opacity((isStreaming ? canStop : canSend && draft.canAttemptSend) && !isBusy ? 1 : 0.42), in: Circle())
+                            .background(AppTheme.primaryControlBackground(colorScheme).opacity((showsStop ? canStop : canSend && draft.canAttemptSend) && !isBusy ? 1 : 0.42), in: Circle())
                             .frame(width: controls.touchTarget, height: controls.touchTarget)
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
-                    .disabled(isBusy || (isStreaming ? !canStop : !canSend || !draft.canAttemptSend))
-                    .accessibilityLabel(isStreaming ? String(localized: "停止生成") : String(localized: "发送消息"))
+                    .disabled(isBusy || (showsStop ? !canStop : !canSend || !draft.canAttemptSend))
+                    .contextMenu {
+                        if !showsStop, !isBusy, canSend, draft.canAttemptSend, !alternativeDeliveries.isEmpty {
+                            Button(String(localized: "排队"), systemImage: "text.badge.plus", action: onSend)
+                            ForEach(alternativeDeliveries, id: \.self) { delivery in
+                                Button(delivery == .steer ? String(localized: "引导当前任务") : String(localized: "打断并发送"),
+                                       systemImage: delivery == .steer ? "arrow.turn.down.right" : "bolt") { onSendWith(delivery) }
+                            }
+                        }
+                    }
+                    .accessibilityLabel(showsStop ? String(localized: "停止生成") : queueMode && isStreaming ? String(localized: "排队") : String(localized: "发送消息"))
                     .accessibilityHint(draft.isComposing ? String(localized: "请先确认输入法候选文字") : "")
                     .accessibilityIdentifier("chat.composer.send")
 
@@ -91,6 +106,8 @@ struct ChatComposer: View {
         .onChange(of: draft.text) { _, _ in onDraftChange() }
         .onChange(of: draft.attachments) { _, _ in onDraftChange() }
     }
+
+    private var showsStop: Bool { isStreaming && !(queueMode && draft.hasSendableContent) }
 
     private var attachmentTray: some View {
         ScrollView(.horizontal) {

@@ -1,5 +1,6 @@
 package com.agentsanywhere.app.feature.sessiondetail
 
+import com.agentsanywhere.app.api.RemoteSessionQueueState
 import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.RemoteRpcResponse
 import com.agentsanywhere.app.api.RemoteSessionEventEnvelope
@@ -186,6 +187,7 @@ class SessionDetailController(
                 )
                 SessionDetailState(
                     planning = runCatching { sessionsApi.planning(auth.serverUrl, auth.accessToken, sessionId) }.getOrNull() ?: currentState?.planning,
+                    queue = mergeQueueState(currentState?.queue, snapshot.queue),
                     meta = SessionMeta(
                         session = snapshot.session.toAgentSession(devices.associateBy { it.id }),
                         serverTime = snapshot.serverTime,
@@ -571,6 +573,7 @@ class SessionDetailController(
         clientMessageId: String,
         attachments: List<UploadFilePart> = emptyList(),
         uploadedAttachments: List<TimelineAttachment> = emptyList(),
+        delivery: MessageDelivery = MessageDelivery.Send,
     ): Result<SendMessageResult> {
         return withContext(Dispatchers.IO) {
             runCatching {
@@ -583,20 +586,75 @@ class SessionDetailController(
                 } else {
                     attachmentTransfer.upload(auth.serverUrl, auth.accessToken, sessionId, attachments)
                 }
+                val refs = uploaded.map { it.toRemoteAttachmentRef() }
+                if (delivery == MessageDelivery.Steer) {
+                    val response = sessionsApi.steerSession(
+                        serverUrl = auth.serverUrl,
+                        authorizationToken = auth.accessToken,
+                        sessionId = sessionId,
+                        content = content,
+                        clientMessageId = clientMessageId,
+                        attachments = refs,
+                    )
+                    // The turn may end just before the message reaches it.
+                    if (!response.ok || response.resultOk == false) {
+                        throw SteerRejected(response.resultMessage ?: response.errorMessage)
+                    }
+                    return@runCatching SendMessageResult(attachments = uploaded)
+                }
                 val response = sessionsApi.sendSessionMessage(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     sessionId = sessionId,
                     content = content,
                     clientMessageId = clientMessageId,
-                    attachments = uploaded.map { it.toRemoteAttachmentRef() },
+                    attachments = refs,
+                    queue = delivery.queueField,
                 )
                 if (!response.ok) {
                     throw IllegalStateException(response.failureMessage("Runtime rejected the message."))
                 }
-                SendMessageResult(attachments = uploaded)
+                SendMessageResult(
+                    attachments = uploaded,
+                    queued = response.delivery == "queued",
+                    queue = response.queue,
+                )
             }
         }
+    }
+
+    suspend fun loadQueue(sessionId: String): Result<RemoteSessionQueueState> = queueAction { auth ->
+        sessionsApi.getSessionQueue(auth.serverUrl, auth.accessToken, sessionId)
+    }
+
+    suspend fun editQueueItem(sessionId: String, messageId: String, content: String) = queueAction { auth ->
+        sessionsApi.updateSessionQueueItem(auth.serverUrl, auth.accessToken, sessionId, messageId, content)
+    }
+
+    suspend fun deleteQueueItem(sessionId: String, messageId: String) = queueAction { auth ->
+        sessionsApi.deleteSessionQueueItem(auth.serverUrl, auth.accessToken, sessionId, messageId)
+    }
+
+    suspend fun retryQueueItem(sessionId: String, messageId: String) = queueAction { auth ->
+        sessionsApi.retrySessionQueueItem(auth.serverUrl, auth.accessToken, sessionId, messageId)
+    }
+
+    suspend fun sendQueueItemNow(sessionId: String, messageId: String) = queueAction { auth ->
+        sessionsApi.sendSessionQueueItemNow(auth.serverUrl, auth.accessToken, sessionId, messageId)
+    }
+
+    suspend fun resumeQueue(sessionId: String) = queueAction { auth ->
+        sessionsApi.resumeSessionQueue(auth.serverUrl, auth.accessToken, sessionId)
+    }
+
+    suspend fun clearQueue(sessionId: String) = queueAction { auth ->
+        sessionsApi.clearSessionQueue(auth.serverUrl, auth.accessToken, sessionId)
+    }
+
+    private suspend fun queueAction(
+        action: (ApiAuth) -> RemoteSessionQueueState,
+    ): Result<RemoteSessionQueueState> = withContext(Dispatchers.IO) {
+        runCatching { action(authSession()) }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
     }
 
     suspend fun uploadAttachments(
@@ -980,5 +1038,11 @@ internal class RuntimeNoticeResponseException(
 
 data class SendMessageResult(
     val attachments: List<TimelineAttachment>,
+    /** The Server kept the message in the session queue instead of sending it. */
+    val queued: Boolean = false,
+    val queue: RemoteSessionQueueState? = null,
 )
+
+/** The running turn declined the message, usually because it had just ended. */
+class SteerRejected(message: String?) : IllegalStateException(message)
 

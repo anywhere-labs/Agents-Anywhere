@@ -173,6 +173,8 @@ data class RemoteSessionSnapshot(
     val catalogs: RemoteSessionRuntimeCatalogs,
     val eventCursor: String,
     val serverTime: String?,
+    /** Null when the Server predates the message queue. */
+    val queue: RemoteSessionQueueState? = null,
 )
 
 data class RemoteSessionRuntimeCatalogs(
@@ -210,6 +212,13 @@ data class RemoteRpcResponse(
     val ok: Boolean,
     val errorCode: String?,
     val errorMessage: String?,
+    /** `queued` when the Server kept the message for later; null when it was sent. */
+    val delivery: String? = null,
+    /** The whole queue returned with a queued message. */
+    val queue: RemoteSessionQueueState? = null,
+    /** False when the Runtime answered but declined, e.g. a steer after the turn ended. */
+    val resultOk: Boolean? = null,
+    val resultMessage: String? = null,
 )
 
 data class RemoteSessionSelectionPatchResponse(

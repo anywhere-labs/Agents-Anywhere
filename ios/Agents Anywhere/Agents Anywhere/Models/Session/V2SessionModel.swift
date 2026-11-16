@@ -40,6 +40,9 @@ final class V2SessionRuntimeModel {
 final class V2PendingMessage: Identifiable {
     enum Delivery: Hashable {
         case sending, accepted, confirmed
+        /// The Server kept the message in the session queue; the queue shows it
+        /// from here on and the local bubble is dropped.
+        case queued
         case uncertain(V2ClientFailure)
         case rejected(V2ClientFailure)
     }
@@ -93,6 +96,8 @@ final class V2SessionModel: Identifiable {
         planning = next
     }
     let runtime = V2SessionRuntimeModel()
+    /// The server-owned message queue, from the snapshot and `runtime.queue.updated`.
+    private(set) var queue: V2SessionQueueState?
     let notices = SessionNoticeStore()
     private(set) var metadata: V2SessionMeta?
     private(set) var timeline: [V2TimelineItemModel] = []
@@ -122,6 +127,24 @@ final class V2SessionModel: Identifiable {
     }
 
     var canSend: Bool { isValid && runtime.allows("session.send_message") && !notices.notices.contains { $0.blocks(id) } }
+    var canQueue: Bool { isValid && runtime.allows("session.queue") }
+    /// While a turn runs, or earlier messages still wait, a new message goes to
+    /// the server-owned queue instead of being refused.
+    var queueMode: Bool {
+        guard canQueue, metadata?.connectorStatus == .online, runtime.state?.status != .disconnected else { return false }
+        return V2SessionQueueState.messageMustWait(status: runtime.state?.status, queue: queue)
+    }
+    var canSteer: Bool {
+        isValid && runtime.allows("session.steer") && V2SessionQueueState.busyStatuses.contains(runtime.state?.status ?? .unknown)
+    }
+    func canDeliver(_ delivery: V2MessageDelivery) -> Bool {
+        switch delivery {
+        case .send: canSend
+        case .queue: queueMode
+        case .interrupt: queueMode && runtime.allows("session.interrupt")
+        case .steer: canSteer
+        }
+    }
     var hasLocalWork: Bool { !draft.isEmpty || !composer.attachments.isEmpty || !draftAttachmentIDs.isEmpty || !pendingMessages.isEmpty || notices.hasDraft }
 
     func connect() async {
@@ -165,8 +188,8 @@ final class V2SessionModel: Identifiable {
 
     /// Explicit user action only. No outbox replay: clientMessageId correlates an echo
     /// but is not a promise of backend idempotency.
-    @discardableResult func sendDraft(upload: ((V2PendingMessage) async throws -> Void)? = nil) async -> V2PendingMessage? {
-        guard let repository, canSend else {
+    @discardableResult func sendDraft(delivery: V2MessageDelivery = .send, upload: ((V2PendingMessage) async throws -> Void)? = nil) async -> V2PendingMessage? {
+        guard let repository, canDeliver(delivery) else {
             failure = V2ClientFailure(kind: .unavailable, message: String(localized: "Wait for the session to reconnect before sending."))
             return nil
         }
@@ -185,7 +208,9 @@ final class V2SessionModel: Identifiable {
         let pending = V2PendingMessage(id: UUID().uuidString, content: content, attachmentIDs: attachments,
                                       localAttachmentIDs: composer.attachments.map(\.id), attachments: composer.attachments)
         attachmentPreviews.remember(pending.attachments, clientID: pending.id)
-        pendingMessages.append(pending); awaitingReplyID = pending.id
+        // A queued message shows in the queue, not as a timeline bubble.
+        let queues = delivery.queueField != nil
+        if !queues { pendingMessages.append(pending); awaitingReplyID = pending.id }
         // Commit the local bubble and release the editor immediately. A failed
         // write restores this snapshot only if the user has not started a new draft.
         composer.clear(); draftAttachmentIDs = []
@@ -200,7 +225,25 @@ final class V2SessionModel: Identifiable {
             await repository.flushCache(sessionID: id)
             guard isValid, !Task.isCancelled else { throw CancellationError() }
             didSubmit = true
-            _ = try await repository.send(sessionId: id, content: content, attachmentIDs: pending.attachmentIDs, clientMessageID: pending.id)
+            switch delivery {
+            case .send:
+                _ = try await repository.send(sessionId: id, content: content, attachmentIDs: pending.attachmentIDs, clientMessageID: pending.id)
+            case .steer:
+                _ = try await repository.steer(sessionId: id, content: content, attachmentIDs: pending.attachmentIDs, clientMessageID: pending.id)
+            case .queue, .interrupt:
+                let response = try await repository.sendQueued(sessionId: id, content: content, attachmentIDs: pending.attachmentIDs,
+                                                               clientMessageID: pending.id, queue: delivery.queueField ?? "auto")
+                guard isValid else { return pending }
+                if response.result?["delivery"]?.stringValue == "queued" {
+                    // Handed over to the server queue; nothing local is left to track.
+                    pending.update(.queued)
+                    repository.localWorkDidChange(sessionID: id)
+                    return pending
+                }
+                // The session took it as a new turn after all: track it like a send.
+                if !pendingMessages.contains(where: { $0 === pending }) { pendingMessages.append(pending) }
+                awaitingReplyID = pending.id
+            }
             guard isValid else { return pending }
             pending.update(.accepted)
             clearDraft(ifMatching: pending)
@@ -208,6 +251,16 @@ final class V2SessionModel: Identifiable {
             guard isValid else { return pending }
             if awaitingReplyID == pending.id { awaitingReplyID = nil }
             let failure = V2ClientFailure(error)
+            if queues, !pendingMessages.contains(where: { $0 === pending }) {
+                // Nothing was shown for it: report the failure and give the text back.
+                pending.update(.rejected(failure))
+                self.failure = failure
+                if draft.isEmpty && composer.attachments.isEmpty && !composer.isComposing {
+                    draft = pending.content; composer.attachments = pending.attachments; draftAttachmentIDs = pending.attachmentIDs
+                }
+                repository.localWorkDidChange(sessionID: id)
+                return pending
+            }
             pending.update(!didSubmit || V2ClientFailure.isDefiniteWriteRejection(error) ? .rejected(failure) : .uncertain(failure))
             if pending.delivery == .confirmed { clearDraft(ifMatching: pending) }
             else {
@@ -236,6 +289,7 @@ final class V2SessionModel: Identifiable {
         if self.network != network { self.network = network }
         if failure != observation.error { failure = observation.error }
         if runtime.update(data, connected: connection == .connected) { notices.update(runtime.notices, sessionID: id) }
+        if queue != data?.queue { queue = data?.queue }
         if hasOlderItems != (data?.hasOlderItems ?? false) { hasOlderItems = data?.hasOlderItems ?? false }
         if hasNewerItems != (data?.hasNewerItems ?? false) { hasNewerItems = data?.hasNewerItems ?? false }
         // A streamed token updates one existing row. Keep the id index across
@@ -311,6 +365,7 @@ final class V2SessionModel: Identifiable {
 
     func invalidate() {
         runtime.update(nil, connected: false)
+        queue = nil
         metadata = nil; timeline = []; rowsByID = [:]; pendingMessages = []; awaitingReplyID = nil; draft = ""; draftAttachmentIDs = []
         composer.invalidate()
         attachmentPreviews.clear()

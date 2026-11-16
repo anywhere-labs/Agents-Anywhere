@@ -4,6 +4,8 @@ import com.agentsanywhere.app.model.AgentSession
 
 data class SessionDetailState(
     val planning: com.agentsanywhere.app.api.RemotePlanningState? = null,
+    /** The server-owned message queue; replaced whole, newest revision wins. */
+    val queue: com.agentsanywhere.app.api.RemoteSessionQueueState? = null,
     val meta: SessionMeta = SessionMeta(),
     val timeline: SessionTimelineState = SessionTimelineState(),
     val runtime: SessionRuntimeState = SessionRuntimeState(),

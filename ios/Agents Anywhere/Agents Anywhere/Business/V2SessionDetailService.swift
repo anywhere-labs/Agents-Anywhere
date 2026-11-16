@@ -36,7 +36,8 @@ struct V2SessionDetailService {
         sessionId: V2SessionID,
         content: String,
         attachmentIds: [V2AttachmentID],
-        clientMessageId: String
+        clientMessageId: String,
+        queue: String? = nil
     ) async throws -> V2RuntimeActionResponse {
         let normalizedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
         if attachmentIds.count > 10 { throw V2BusinessError.tooManyAttachments(maximum: 10) }
@@ -48,9 +49,14 @@ struct V2SessionDetailService {
             request: V2RuntimeMessageSendRequest(
                 content: normalizedContent,
                 attachments: attachmentIds.map { V2AttachmentSendReference(fileId: $0) },
-                clientMessageId: clientMessageId
+                clientMessageId: clientMessageId,
+                queue: queue
             )
         ).requireSuccess()
+    }
+
+    func queue(sessionId: V2SessionID, action: V2SessionQueueAction) async throws -> V2SessionQueueState {
+        try await runtimeAPI.queue(sessionId: sessionId, action: action)
     }
 
     func steer(

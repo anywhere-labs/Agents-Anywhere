@@ -19,6 +19,12 @@ internal fun reduceRealtimeEvent(
     devices: List<AgentDevice>,
 ): SessionDetailState {
     if (event.protocolVersion !in setOf("1.0", "1.1") || event.sessionId != current.session?.id) return current
+    if (event.type == "runtime.queue.updated") {
+        // The queue orders itself by revision. Its envelope borrows the session's
+        // current sequence, so it neither advances the cursor nor deduplicates.
+        val observed = event.payload.queue?.takeIf { it.sessionId == event.sessionId } ?: return current
+        return current.copy(queue = mergeQueueState(current.queue, observed))
+    }
     // Live facts can return to an earlier value without advancing the durable
     // sequence, reusing that value's event ID even across cached visits.
     val durable = event.type !in LIVE_PROJECTION_EVENT_TYPES
@@ -322,6 +328,7 @@ internal fun reduceSnapshotWithLiveState(
             ?: snapshot.catalogs.permission,
     )
     return snapshot.copy(
+        queue = mergeQueueState(live.queue, snapshot.queue),
         meta = meta,
         timeline = timeline,
         runtime = runtime,

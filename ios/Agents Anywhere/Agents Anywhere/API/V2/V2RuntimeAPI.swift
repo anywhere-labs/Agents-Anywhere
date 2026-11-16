@@ -13,6 +13,18 @@ protocol V2RuntimeAPIProtocol {
     func interrupt(sessionId: V2SessionID) async throws -> V2RuntimeActionResponse
     func notices(sessionId: V2SessionID) async throws -> V2RuntimeNoticeSnapshot
     func respondToNotice(sessionId: V2SessionID, noticeId: V2NoticeID, request: V2RuntimeNoticeRespondRequest) async throws -> V2RuntimeActionResponse
+    func queue(sessionId: V2SessionID, action: V2SessionQueueAction) async throws -> V2SessionQueueState
+}
+
+/// A management call on the server-owned message queue; each returns the whole queue.
+nonisolated enum V2SessionQueueAction: Hashable {
+    case read
+    case edit(messageId: String, content: String)
+    case delete(messageId: String)
+    case retry(messageId: String)
+    case sendNow(messageId: String)
+    case resume
+    case clear
 }
 
 struct V2RuntimeAPI: V2RuntimeAPIProtocol {
@@ -82,6 +94,24 @@ struct V2RuntimeAPI: V2RuntimeAPIProtocol {
     ) async throws -> V2RuntimeActionResponse {
         let suffix = "notices/\(noticeId.v2URLPathComponentEncoded)/respond"
         return try await send(sessionId: sessionId, suffix: suffix, method: .post, body: body)
+    }
+
+    func queue(sessionId: V2SessionID, action: V2SessionQueueAction) async throws -> V2SessionQueueState {
+        func item(_ id: String) -> String { "queue/\(id.v2URLPathComponentEncoded)" }
+        switch action {
+        case .read: return try await get(sessionId: sessionId, suffix: "queue")
+        case let .edit(id, content):
+            return try await send(sessionId: sessionId, suffix: item(id), method: .patch, body: V2SessionQueueEditRequest(content: content))
+        case let .delete(id): return try await bodiless(sessionId: sessionId, suffix: item(id), method: .delete)
+        case let .retry(id): return try await bodiless(sessionId: sessionId, suffix: item(id) + "/retry", method: .post)
+        case let .sendNow(id): return try await bodiless(sessionId: sessionId, suffix: item(id) + "/send-now", method: .post)
+        case .resume: return try await bodiless(sessionId: sessionId, suffix: "queue/resume", method: .post)
+        case .clear: return try await bodiless(sessionId: sessionId, suffix: "queue", method: .delete)
+        }
+    }
+
+    private func bodiless<Response: Decodable>(sessionId: V2SessionID, suffix: String, method: HTTPMethod) async throws -> Response {
+        try await transport.send(HTTPRequest<EmptyRequestBody, Response>(method: method, path: runtimePath(sessionId, suffix: suffix)))
     }
 
     private func get<Response: Decodable>(sessionId: V2SessionID, suffix: String) async throws -> Response {

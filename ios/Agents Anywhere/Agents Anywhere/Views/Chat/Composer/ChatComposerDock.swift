@@ -26,6 +26,9 @@ struct ChatComposerDock: View {
     var onApplySettings: () async -> Bool = { true }
     var applyError: () -> String? = { nil }
     var onDraftChange: () -> Void = {}
+    var queueMode = false
+    var alternativeDeliveries: [V2MessageDelivery] = []
+    var onSendWith: (String, V2MessageDelivery) async -> Void = { _, _ in }
 
     @State private var editor = ComposerEditorController()
     @State private var showsOptions = false
@@ -52,7 +55,9 @@ struct ChatComposerDock: View {
                 onOptions: { showsOptions = true },
                 showsCommands: sessionChat?.offersCommands == true, commandsActive: showsCommandMenu,
                 onCommands: { showsCommandMenu.toggle() },
-                onDraftChange: onDraftChange)
+                onDraftChange: onDraftChange,
+                queueMode: queueMode, alternativeDeliveries: alternativeDeliveries,
+                onSendWith: { send($0) })
         }
         .onChange(of: sessionChat?.optionsRequest) { _, _ in showsOptions = true }
         .frame(maxWidth: ChatControlMetrics.maximumContentWidth)
@@ -84,13 +89,15 @@ struct ChatComposerDock: View {
         } message: { Text(attachmentError ?? "") }
     }
 
-    private func send() {
-        guard !isSending, !isBusy, importCount == 0, canSend, !isStreaming else { return }
+    private func send() { send(nil) }
+
+    private func send(_ delivery: V2MessageDelivery?) {
+        guard !isSending, !isBusy, importCount == 0, canSend, !isStreaming || queueMode else { return }
         isSending = true
         Task { @MainActor in
             defer { isSending = false }
             guard let text = await editor.committedTextForSend() else { return }
-            await onSend(text)
+            if let delivery { await onSendWith(text, delivery) } else { await onSend(text) }
         }
     }
 
