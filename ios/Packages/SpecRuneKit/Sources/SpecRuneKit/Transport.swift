@@ -39,9 +39,22 @@ public nonisolated struct SpecRuneTextFile: Hashable, Sendable {
     }
 }
 
+/// 目录中的一项。
+public nonisolated struct SpecRuneDirectoryEntry: Hashable, Sendable {
+    public let name: String
+    public let isDirectory: Bool
+
+    public init(name: String, isDirectory: Bool) {
+        self.name = name
+        self.isDirectory = isDirectory
+    }
+}
+
 public nonisolated protocol SpecRuneTransport: Sendable {
     /// 在 `repo` 根执行 shell 命令。
     func shell(repo: String, command: String) async throws -> SpecRuneShellResult
     /// 读 `repo` 内文本文件；不存在返回 nil，其它错误抛出。
     func readText(repo: String, path: String) async throws -> SpecRuneTextFile?
+    /// 列 `repo` 内某个目录的直接子项。
+    func listDirectory(repo: String, path: String) async throws -> [SpecRuneDirectoryEntry]
 }

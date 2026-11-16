@@ -63,4 +63,18 @@ nonisolated struct SpecRuneConnectorTransport: SpecRuneTransport, @unchecked Sen
             throw error
         }
     }
+
+    func listDirectory(repo: String, path: String) async throws -> [SpecRuneDirectoryEntry] {
+        let response = try await api.listWorkspaceFiles(
+            connectorId: connectorId,
+            request: V2WorkspaceFilesListRequest(root: repo, path: path)
+        )
+        guard let directory = response.result else {
+            throw SpecRuneError.offline(response.error?.message ?? "目录读取失败")
+        }
+        return directory.entries.map {
+            SpecRuneDirectoryEntry(name: $0.name, isDirectory: $0.isDirectory)
+        }
+    }
+
 }

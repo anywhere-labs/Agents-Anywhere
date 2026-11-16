@@ -33,6 +33,47 @@ public nonisolated struct SpecRuneTaskSummary: Decodable, Hashable, Sendable, Id
     public let path: String
 
     public var id: String { dir }
+
+    /// 供「文件系统回退路径」手工组装（CLI 输出超限时用）。
+    public init(
+        dir: String,
+        title: String,
+        status: String,
+        priority: String? = nil,
+        assignee: String? = nil,
+        parent: String? = nil,
+        children: [String]? = nil,
+        createdAt: String? = nil,
+        completedAt: String? = nil,
+        archived: Bool = false,
+        archiveMonth: String? = nil,
+        path: String
+    ) {
+        self.dir = dir
+        self.name = dir
+        self.title = title
+        self.status = status
+        self.priority = priority
+        self.assignee = assignee
+        self.parent = parent
+        self.children = children
+        self.childDone = nil
+        self.dependsOn = nil
+        self.decomposeReason = nil
+        self.implDone = nil
+        self.implTotal = nil
+        self.hasPrd = nil
+        self.hasDesign = nil
+        self.hasImplement = nil
+        self.contextCount = nil
+        self.specRefs = nil
+        self.createdAt = createdAt
+        self.completedAt = completedAt
+        self.archived = archived
+        self.archiveMonth = archiveMonth
+        self.active = nil
+        self.path = path
+    }
 }
 
 /// `specrune task list --json` 的顶层。

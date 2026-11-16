@@ -44,13 +44,88 @@ public nonisolated struct SpecRuneClient: Sendable {
         do {
             return try await fetchTaskList(repo: repo, arguments: ["task", "list", "--json", "--all"])
         } catch SpecRuneError.truncated {
-            let merged = await fetchTaskListByStatus(repo: repo)
-            // 分批也一条都没拿到才报错；只要拿到部分就先展示。
-            if merged.tasks.isEmpty && merged.archive.isEmpty {
+            // 单批也可能超限（实测 239 条归档的 completed 批仍有 219KB），
+            // 所以归档改走文件系统逐月读 task.json——不再受 stdout 上限约束。
+            let active = await fetchActiveByStatus(repo: repo)
+            let archive = await listArchiveViaFileSystem(repo: repo)
+            if active.isEmpty && archive.isEmpty {
                 throw SpecRuneError.truncated
             }
-            return merged
+            return SpecRuneTaskList(tasks: active, archive: archive)
         }
+    }
+
+    /// 活跃任务按状态逐个拉（这些通常很少，单批不会超限）。
+    private func fetchActiveByStatus(repo: String) async -> [SpecRuneTaskSummary] {
+        var rows: [SpecRuneTaskSummary] = []
+        var seen = Set<String>()
+        for status in ["planning", "in_progress", "blocked"] {
+            guard let part = try? await fetchTaskList(
+                repo: repo,
+                arguments: ["task", "list", "--json", "--all", "--status", status]
+            ) else { continue }
+            for task in part.tasks where seen.insert(task.dir).inserted {
+                rows.append(task)
+            }
+        }
+        return rows
+    }
+
+    /// 归档任务改读文件系统：`.specrune/tasks/archive/<月>/<dir>/task.json`。
+    ///
+    /// CLI 的 `--json --all` 一次吐出全部归档，任务多时必然超过 shell 的
+    /// 64 000 字符上限；逐目录读文件不受这个限制。读取并发进行。
+    private func listArchiveViaFileSystem(repo: String) async -> [SpecRuneTaskSummary] {
+        guard let months = try? await transport.listDirectory(repo: repo, path: ".specrune/tasks/archive")
+        else { return [] }
+
+        let monthNames = months.filter(\.isDirectory).map(\.name).sorted(by: >)
+        return await withTaskGroup(of: [SpecRuneTaskSummary].self) { group in
+            for month in monthNames {
+                group.addTask { await self.readArchiveMonth(repo: repo, month: month) }
+            }
+            var rows: [SpecRuneTaskSummary] = []
+            for await part in group { rows.append(contentsOf: part) }
+            return rows
+        }
+    }
+
+    private func readArchiveMonth(repo: String, month: String) async -> [SpecRuneTaskSummary] {
+        let monthPath = ".specrune/tasks/archive/\(month)"
+        guard let entries = try? await transport.listDirectory(repo: repo, path: monthPath) else { return [] }
+        let dirs = entries.filter(\.isDirectory).map(\.name)
+
+        return await withTaskGroup(of: SpecRuneTaskSummary?.self) { group in
+            for dir in dirs {
+                group.addTask { await self.readArchivedTask(repo: repo, month: month, dir: dir) }
+            }
+            var rows: [SpecRuneTaskSummary] = []
+            for await row in group { if let row { rows.append(row) } }
+            return rows
+        }
+    }
+
+    private func readArchivedTask(repo: String, month: String, dir: String) async -> SpecRuneTaskSummary? {
+        let relative = ".specrune/tasks/archive/\(month)/\(dir)"
+        guard let file = try? await transport.readText(repo: repo, path: "\(relative)/task.json"),
+              let data = file.content.data(using: .utf8),
+              let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+
+        return SpecRuneTaskSummary(
+            dir: dir,
+            title: (raw["title"] as? String) ?? dir,
+            status: (raw["status"] as? String) ?? "completed",
+            priority: raw["priority"] as? String,
+            assignee: raw["assignee"] as? String,
+            parent: raw["parent"] as? String,
+            children: raw["children"] as? [String],
+            createdAt: raw["createdAt"] as? String,
+            completedAt: raw["completedAt"] as? String,
+            archived: true,
+            archiveMonth: month,
+            path: "\(repo)/\(relative)"
+        )
     }
 
     /// 执行一次 `task list` 并解码。
