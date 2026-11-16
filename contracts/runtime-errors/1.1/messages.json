@@ -127,8 +127,8 @@
       "en": "This earlier selection has no exact agent configuration mapping."
     },
     "device_pin_mismatch": {
-      "zh-CN": "设备身份发生了变化，需要重新配对。",
-      "en": "The device identity has changed. Pair with it again."
+      "zh-CN": "设备身份与配对时不一致，请在设备上重新生成配对链接（手机上扫二维码）后再配对。",
+      "en": "The device identity does not match the one you paired with. Create a new pairing link on the device (scan the QR code on a phone) and pair again."
     },
     "device_read_timeout": {
       "zh-CN": "设备响应较慢，请稍后重试。",
@@ -137,10 +137,22 @@
     "device_upgrade_required": {
       "zh-CN": "这台设备上的 Agents Anywhere 版本过旧，Server 已不再保存会话内容。请在设备上升级 Agents Anywhere 后再打开会话。",
       "en": "Agents Anywhere on this device is out of date, and the server no longer stores session content. Upgrade Agents Anywhere on the device to open this session."
+      },
+    "e2ee_downgrade_refused": {
+      "zh-CN": "这台设备要求端到端加密，已拒绝未加密的连接。",
+      "en": "This device requires end-to-end encryption; the unencrypted connection was refused."
+    },
+    "e2ee_handshake_failed": {
+      "zh-CN": "加密连接没有建立：设备可能重装过或身份已变化，请重新配对。",
+      "en": "The encrypted connection could not be set up. The device may have been reinstalled; pair with it again."
     },
     "e2ee_not_paired": {
-      "zh-CN": "这台设备还没有授权当前客户端，请先配对。",
-      "en": "This device has not authorised this client yet. Pair with it first."
+      "zh-CN": "这台设备还没有授权当前客户端，请在设备上生成配对链接（手机上扫二维码）后配对。",
+      "en": "This device has not authorised this client yet. Create a pairing link on the device (scan the QR code on a phone) and pair."
+    },
+    "e2ee_protocol_error": {
+      "zh-CN": "加密通道出现错误，已断开，请重试。",
+      "en": "The encrypted channel failed and was closed. Try again."
     },
     "e2ee_required": {
       "zh-CN": "这个服务器启用了端到端加密，需要先和设备配对。",
@@ -299,8 +311,8 @@
       "en": "The session's agent has changed. Refresh and try again."
     },
     "pairing_expired": {
-      "zh-CN": "配对码已失效，请在电脑上重新生成。",
-      "en": "The pairing code has expired. Generate a new one on the computer."
+      "zh-CN": "配对链接已过期或已经用过，请在设备上重新生成（手机上重新扫二维码）。",
+      "en": "This pairing link has expired or was already used. Create a new one on the device (scan the new QR code on a phone)."
     },
     "permission_denied": {
       "zh-CN": "当前权限或用户审批未允许此命令。",

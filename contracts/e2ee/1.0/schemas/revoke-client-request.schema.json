@@ -1,9 +1,11 @@
 {
   "$id": "urn:agents-anywhere:e2ee:1.0:revoke-client-request",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``POST /e2ee/v1/trust/revoke``.",
   "properties": {
     "clientId": {
-      "minLength": 1,
+      "description": "client_id_for(identity public key)",
+      "pattern": "^cli_[a-z2-7]{26}$",
       "title": "Clientid",
       "type": "string"
     }

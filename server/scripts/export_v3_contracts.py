@@ -107,15 +107,25 @@ E2EE = Contract(
     (
         _a("pairing-payload", e2ee.PairingPayload),
         _a("handshake-envelope", e2ee.HandshakeEnvelope),
+        _a("pairing-device-hello", e2ee.PairingDeviceHello),
+        _a("pairing-client-hello", e2ee.PairingClientHello),
         _a("directory-key-grant", e2ee.DirectoryKeyGrant),
+        _a("pair-committed", e2ee.PairCommitted),
+        _a("channel-ready", e2ee.ChannelReady),
+        _a("channel-close", e2ee.ChannelClose),
         _a("client-grant-view", e2ee.ClientGrantView),
         _a("approve-client-request", e2ee.ApproveClientRequest),
         _a("revoke-client-request", e2ee.RevokeClientRequest),
         _a("trust-list-response", e2ee.TrustListResponse),
         _a("client-tunnel-frame", e2ee.ClientTunnelFrame),
+        _a("client-tunnel-end", e2ee.ClientTunnelEnd),
         _a("tunnel-request", e2ee.TunnelRequest),
         _a("tunnel-response", e2ee.TunnelResponse),
+        _a("tunnel-subscribe", e2ee.TunnelSubscribe),
+        _a("tunnel-unsubscribe", e2ee.TunnelUnsubscribe),
         _a("tunnel-event", e2ee.TunnelEvent),
+        _a("sealed-attachment-key", e2ee.SealedAttachmentKey),
+        _a("tunnel-file-chunk", e2ee.TunnelFileChunk),
         _a("command-registration", e2ee.CommandRegistration, "ingress"),
     ),
 )
@@ -338,6 +348,25 @@ def render_mesh_errors() -> dict[str, Any]:
     }
 
 
+def render_e2ee_registration() -> dict[str, Any]:
+    """What a device registers in each E2EE mode, and which attach events may stay in plaintext."""
+
+    return {
+        "modes": {mode: dl.registered_services(mode) for mode in ("off", "required")},
+        "attachEvents": {"off": list(dl.EVENT_METHODS), "required": list(dl.E2EE_EVENT_METHODS)},
+        "outbox": list(dl.OUTBOX_METHODS),
+        "contentFreeInRequired": {
+            "command.result": "r is null; e carries only code and retryable",
+            "command.ack": "r is null; e carries only code and retryable",
+            "command.status": "r is null; e carries only code and retryable",
+            "session.summary": "displayDevice is sealed with the current directory key",
+            "session.inventory": "every displayDevice is sealed",
+            "attachment.consumed": "sha256 is the digest of the stored ciphertext",
+            "runtime.status": "status codes only, no free text taken from a session",
+        },
+    }
+
+
 def _json_bytes(value: object) -> bytes:
     return (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
 
@@ -390,6 +419,7 @@ def render(contract: Contract) -> dict[str, bytes]:
         for rel, value in (
             ("device.meshcall.json", render_mesh_contract()),
             ("mesh-errors.json", render_mesh_errors()),
+            ("e2ee-registration.json", render_e2ee_registration()),
         ):
             data = _json_bytes(value)
             files[rel] = data

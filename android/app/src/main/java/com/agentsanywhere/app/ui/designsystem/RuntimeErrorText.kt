@@ -40,7 +40,11 @@ fun runtimeErrorRes(code: String?): Int? = when (code) {
     "configuration_mapping_unavailable" -> R.string.runtime_error_configuration_mapping_unavailable
     "device_pin_mismatch" -> R.string.runtime_error_device_pin_mismatch
     "device_read_timeout" -> R.string.runtime_error_device_read_timeout
+    "device_upgrade_required" -> R.string.runtime_error_device_upgrade_required
+    "e2ee_downgrade_refused" -> R.string.runtime_error_e2ee_downgrade_refused
+    "e2ee_handshake_failed" -> R.string.runtime_error_e2ee_handshake_failed
     "e2ee_not_paired" -> R.string.runtime_error_e2ee_not_paired
+    "e2ee_protocol_error" -> R.string.runtime_error_e2ee_protocol_error
     "e2ee_required" -> R.string.runtime_error_e2ee_required
     "image_input_unsupported" -> R.string.runtime_error_image_input_unsupported
     "initialization_interrupted" -> R.string.runtime_error_initialization_interrupted
@@ -128,9 +132,11 @@ fun runtimeErrorRes(code: String?): Int? = when (code) {
     "preparation_consumed" -> R.string.runtime_error_preparation_consumed
     "preparation_not_reserved" -> R.string.runtime_error_preparation_not_reserved
     "preparation_stale" -> R.string.runtime_error_preparation_stale
+    "preview_disabled" -> R.string.runtime_error_preview_disabled
     "preview_domain_not_configured" -> R.string.runtime_error_preview_domain_not_configured
     "preview_limit_reached" -> R.string.runtime_error_preview_limit_reached
     "preview_port_not_allowed" -> R.string.runtime_error_preview_port_not_allowed
+    "preview_unavailable" -> R.string.runtime_error_preview_unavailable
     "project_workspace_mismatch" -> R.string.runtime_error_project_workspace_mismatch
     "recovery_required" -> R.string.runtime_error_recovery_required
     "response_input_conflict" -> R.string.runtime_error_response_input_conflict

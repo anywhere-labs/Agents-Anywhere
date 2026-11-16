@@ -259,6 +259,10 @@
     {
       "path": "mesh-errors.json",
       "sha256": "5bb8ebbf8523543774df089202b382b0e12dfa0f7273c28d47d140cd337b9b5d"
+    },
+    {
+      "path": "e2ee-registration.json",
+      "sha256": "3d7d489c30843f530317dbcf5ef40eec4e33223f2537be47fbfba2b66b7f026a"
     }
   ],
   "jsonSchemaDraft": "https://json-schema.org/draft/2020-12/schema",
