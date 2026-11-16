@@ -22,9 +22,12 @@ const connectorTs = new URL('../../../connector-ts/', import.meta.url)
 const installed = existsSync(new URL('node_modules/meshcall/package.json', connectorTs))
 const meshcallVersion = (base: URL) => (JSON.parse(readFileSync(new URL('node_modules/meshcall/package.json', base), 'utf8')) as { version: string }).version
 
-/** The Router binary of the Connector's meshcall (0.4.0-dev has no release to download). */
+/**
+ * The Router binary of the Connector's meshcall (0.4.0-dev has no release to download): the same
+ * lookup as connector-ts/test/support/mesh-harness.ts. Without one the test is skipped.
+ */
 function v3RouterBinary(): string | undefined {
-  for (const path of [process.env.MESHCALL_V3_ROUTER_BINARY, '/tmp/aa-mc/bin/meshcall-router']) {
+  for (const path of [process.env.MESHCALL_V3_ROUTER_BINARY, process.env.MESHCALL_ROUTER_BINARY, '/tmp/aa-mc/bin/meshcall-router']) {
     if (!path) continue
     try { accessSync(path, constants.X_OK); return path } catch { /* next */ }
   }
