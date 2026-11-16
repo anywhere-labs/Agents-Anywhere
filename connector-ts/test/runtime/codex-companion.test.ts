@@ -384,7 +384,7 @@ describe('Codex companion handle', () => {
     return agent
   }
 
-  function companion(agent: FakeAcpAgent, options: { platform?: NodeJS.Platform; app?: boolean; locks?: FakeLocks } = {}) {
+  function companion(agent: FakeAcpAgent, options: { platform?: NodeJS.Platform; app?: boolean; locks?: FakeLocks; codexHome?: string } = {}) {
     const routes = new Map<string, CodexOpenRoute>()
     const dialect = codexDialect({ openRoute: ref => routes.get(ref.nativeSessionId) ?? 'auto' })
     const inner = new AcpRuntimeHandle({ type: 'codex', instanceId: 'i1', dialect, connect: peerConnection(agent.clientPeer, dialect) })
@@ -392,7 +392,7 @@ describe('Codex companion handle', () => {
     if (options.app !== false) processes.table = [APP]
     const opened: string[] = []
     const handle = new CodexRuntimeHandle(inner, routes, {
-      codexHome: '/nonexistent',
+      codexHome: options.codexHome ?? '/nonexistent',
       platform: options.platform ?? 'darwin',
       uid: 501,
       processes,
@@ -472,6 +472,26 @@ describe('Codex companion handle', () => {
     expect(await free.handle.ownerRelease.prepare({ nativeSessionId: T1 }, { sessionId: 'aa_8' })).toEqual({ status: 'not_needed' })
     const gone = companion(codexAgent(() => blockedHeld), { app: false })
     expect(await gone.handle.ownerRelease.prepare({ nativeSessionId: T1 }, { sessionId: 'aa_9' })).toEqual({ status: 'unavailable', reason: 'owner_not_running' })
+  })
+
+  it('fills the permission of threads that are not open from their rollout', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'aa-codex-list-'))
+    const created = threadCreatedAt(T1)!
+    const day = join(home, 'sessions', String(created.getFullYear()), String(created.getMonth() + 1).padStart(2, '0'), String(created.getDate()).padStart(2, '0'))
+    mkdirSync(day, { recursive: true })
+    writeFileSync(join(day, `rollout-2026-11-16T23-44-56-${T1}.jsonl`), JSON.stringify({ type: 'turn_context', payload: { approval_policy: 'never', sandbox_policy: { type: 'danger-full-access' } } }))
+    const agent = codexAgent(() => resumable)
+    agent.peer.onRequest('session/list', () => ({ sessions: [{ sessionId: T1, cwd: '/w', updatedAt: '2026-11-16T15:00:00Z' }, { sessionId: T2, cwd: '/w' }, { sessionId: 'not-a-thread', cwd: '/w' }] }))
+    const { handle } = companion(agent, { codexHome: home })
+    const page = await handle.listNativeSessions()
+    expect(page.sessions.map(s => [s.nativeSessionId, s.permission])).toEqual([
+      [T1, codexPermissionSelectionId('full_access', { permission_mode: 'full_access' })],
+      [T2, undefined], // 找不到 rollout：不填，不代入默认值
+      ['not-a-thread', undefined],
+    ])
+    // 已打开的线程以会话配置为准，不再读 rollout
+    await handle.open({ kind: 'existing', ref: { nativeSessionId: T1 } }, { sessionId: 'aa_1', replay: 'none' })
+    expect((await handle.listNativeSessions()).sessions.find(s => s.nativeSessionId === T1)?.permission).toBeUndefined()
   })
 
   it('emits follow suggestions as runtime events, skipping threads AA has open', async () => {
