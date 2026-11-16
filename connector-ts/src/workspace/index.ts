@@ -8,6 +8,7 @@ export { AttachmentCache, safeFileName, type AttachmentSource, type FetchFile, t
 export { WorkspaceError, fsError } from './errors.js'
 export { FileOps, mimeOf, type DirEntry, type PreparedDownload, type ReadDirResult, type ReadTextResult, type WriteFileResult } from './files.js'
 export { MAX_DIR_ENTRIES, MAX_OUTPUT_CHARS, MAX_READ_TEXT_BYTES, type Params } from './params.js'
+export * from './preview/index.js'
 export { PortWatcher, listeningPorts, mergeByPort, parseLsof, parseNetstat, parseProcNetTcp, parseTasklist, type ListeningPort } from './ports.js'
 export { RootPolicy, expandHome, realPathOf, rootsFromEnv, type RootPolicyOptions } from './roots.js'
 export { ShellOps, type Notify, type ShellResult } from './shell.js'
