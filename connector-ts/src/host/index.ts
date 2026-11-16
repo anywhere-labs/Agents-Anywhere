@@ -20,3 +20,39 @@ export { RuntimeRecordError, readRuntimeState, runtimeTransaction, type RuntimeO
 export { machineStateLockRecordPath, ownerAlive as lockOwnerAlive, withMachineStateLock, type MachineStateLockOptions, type MachineStateLockRecord } from './state-lock.js'
 export { LogStore, cleanRecord, type LogEntry, type LogPage, type LogPolicy, type LogRecord, type LogSource, type LogWrite } from './logs.js'
 export { redact } from './redact.js'
+export { ConfigError, ConfigFile, defaultConfigPath, defaultSettings, settingsFrom, type ConnectorSettings } from './config.js'
+export {
+  ConnectorBusy,
+  ConnectorClosing,
+  ConnectorController,
+  isCredentialFailure,
+  type ConnectorRuntime,
+  type ConnectorState,
+  type ConnectorStatus,
+  type ControllerOptions,
+  type HandoverPolicy,
+  type HandoverRequester,
+  type PairingStatus,
+  type RuntimeFactory,
+  type RuntimeHooks,
+} from './controller.js'
+export { CONNECTOR_ERROR, ControlEvents, controlService, handoverPath, handoverRequester, logsService, publishHandover, type ControlEvent, type HandoverRendezvous } from './control-service.js'
+export { EventHub, type Sequenced } from './events.js'
+export {
+  CONTROL_SERVICE,
+  DSH_BRIDGE_SERVICE,
+  DSH_SYNC_SERVICE,
+  LOGS_SERVICE,
+  LocalHub,
+  REGISTRY_SERVICE,
+  ROLE_PERMISSIONS,
+  apiKey,
+  routerDirectory,
+  sweepStaleSockets,
+  writePrivateJson,
+  type LocalDescriptor,
+  type LocalEndpoint,
+  type LocalHubOptions,
+  type LocalRole,
+} from './local-hub.js'
+export { pollPairing, resolvePairServerUrl, startPairing, type FetchJson, type HttpFailure, type PairingStart } from './pairing.js'
