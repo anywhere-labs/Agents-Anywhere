@@ -1442,6 +1442,12 @@
       "login": "Open sign-in page",
       "title": "Signed out"
     },
+    "e2eeWebUnavailable": {
+      "title": "This server requires end-to-end encryption",
+      "description": "The administrator turned off the Web client because a browser can't keep session content end-to-end encrypted.",
+      "useApps": "Sign in with Agents Anywhere Desktop or the mobile app.",
+      "signOut": "Sign out"
+    },
     "mobileOAuth": {
       "cancel": "Cancel",
       "continue": "Continue",

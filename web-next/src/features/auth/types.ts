@@ -11,6 +11,14 @@ export type AuthConfig = {
   passwordResetEnabled?: boolean;
   setupTokenExpiresAt: string | null;
   serverTime: string;
+  /** End-to-end encryption mode (docs/api/e2ee.md); missing on servers without it, which means off. */
+  e2ee?: E2eeServerConfig;
+};
+
+export type E2eeServerConfig = {
+  mode: "off" | "required";
+  web: "allow" | "deny";
+  preview: "allow" | "deny";
 };
 
 export type AuthResponse = {
