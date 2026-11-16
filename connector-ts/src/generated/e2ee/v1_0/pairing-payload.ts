@@ -3,7 +3,7 @@
 
 export type Deviceid = string
 /**
- * base64url without padding
+ * 32 bytes, base64url without padding
  */
 export type Deviceidentitypub = string
 export type E2Eemode = "off" | "required"

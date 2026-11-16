@@ -40,6 +40,9 @@ DEFAULT_BYTE_BUDGET = 1024 * 1024
 SEQ_CEILING_STRIDE = 1024
 ATTACH_HEARTBEAT_SECONDS = 20
 PRESENCE_LEASE_SECONDS = 60
+# A heartbeat the device could not write for this long (no stream credit) means the holder is stuck.
+ATTACH_STALL_SECONDS = 2 * ATTACH_HEARTBEAT_SECONDS
+READY_RETRY_MAX_SECONDS = 30
 CONNECTION_ID_METADATA = "aa-connection-id"
 
 Seq = Annotated[int, Field(ge=0, le=PROTOCOL_MAX_REVISION)]
@@ -534,6 +537,65 @@ OUTBOX_METHODS: tuple[str, ...] = (
     "attachment.consumed",
     "usage.report",
 )
+
+
+# ---------------------------------------------------------------------------
+# E2EE ``required`` mode: what the device registers and what may leave it in plaintext
+# ---------------------------------------------------------------------------
+#
+# In ``required`` mode the device registers only the routes below. Everything a user starts
+# (reads, subscriptions, every other command, catalogs) goes through ``Secure/channel`` instead, so
+# the Server has no plaintext target even if it wanted one (docs/v3/06-protocols.md §2.6).
+E2EE_REQUEST_METHODS: tuple[str, ...] = ("command.status",)
+E2EE_COMMAND_METHODS: tuple[str, ...] = (
+    "runtime.apply",
+    "device.settings.apply",
+    "channel.switch",
+    "preview.open",
+    "preview.close",
+)
+# ``runtime.notice.updated`` and ``runtime.queue.updated`` carry notice and queued-message text, so
+# in ``required`` mode they go only to the channels that subscribed to the session.
+E2EE_EVENT_METHODS: tuple[str, ...] = ("runtime.status", "port.listening", "port.closed")
+
+
+def registered_routes(mode: E2eeMode) -> tuple[MeshRoute, ...]:
+    """Routes the device registers on the Router in the given mode."""
+
+    if mode == "off":
+        routes = [r for name, r in LINK_ROUTES.items() if name != "secure.channel"]
+        routes += REQUEST_METHODS.values()
+        routes += [command_route(name) for name in COMMAND_METHODS]
+        return tuple(routes)
+    routes = list(LINK_ROUTES.values())
+    routes += [REQUEST_METHODS[name] for name in E2EE_REQUEST_METHODS]
+    routes += [command_route(name) for name in E2EE_COMMAND_METHODS]
+    return tuple(routes)
+
+
+def registered_services(mode: E2eeMode) -> dict[str, list[str]]:
+    """``{service: [method, …]}`` for ``server.register`` and for the Mesh token scopes."""
+
+    services: dict[str, list[str]] = {}
+    for route in registered_routes(mode):
+        services.setdefault(route.service, []).append(route.method)
+    return services
+
+
+def scrub_for_e2ee(method: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Drop content a device must not send in ``required`` mode, before the Server stores or logs it.
+
+    Defence in depth for E-1: a correct device already sends nothing here. Applies to outbox
+    messages (``OUTBOX_METHODS``) and command receipts (``CommandAck``, ``CommandStatusResponse``).
+    """
+
+    out = dict(payload)
+    if method in {"command.result", "command.ack", "command.status"}:
+        out["r"] = None
+        error = out.get("e")
+        if isinstance(error, dict):
+            out["e"] = {"code": error.get("code", "error"), "message": "", "retryable": bool(error.get("retryable"))}
+    return out
 
 
 # MeshCall error -> how the Server reports it. ``not_delivered``: the call never reached the

@@ -4,7 +4,7 @@
 export type Deviceid = string
 export type Epoch = number
 /**
- * base64url without padding
+ * 32 bytes, base64url without padding
  */
 export type Key = string
 export type Keyid = string

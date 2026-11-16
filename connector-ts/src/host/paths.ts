@@ -23,6 +23,12 @@ export function dataDir(env: NodeJS.ProcessEnv = process.env, home = systemHome(
   return override !== undefined && override !== '' ? override : join(agentsAnywhereHome(home), 'v3')
 }
 
+/** v2's data directory (its files live in `<dir>/<connectorId>/<runtimeId>/`): `AGENT_CONNECTOR_DATA_DIR` or `~/.agents-anywhere`. */
+export function legacyDataDir(env: NodeJS.ProcessEnv = process.env, home = systemHome()): string {
+  const override = env.AGENT_CONNECTOR_DATA_DIR?.trim()
+  return override !== undefined && override !== '' ? override : agentsAnywhereHome(home)
+}
+
 /** Creates `dir` (and parents) readable by the user only. */
 export async function ensurePrivateDir(dir: string): Promise<string> {
   await mkdir(dir, { recursive: true, mode: 0o700 })

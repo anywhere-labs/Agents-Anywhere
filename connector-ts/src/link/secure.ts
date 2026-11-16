@@ -3,15 +3,21 @@ import { MeshCallError, type DuplexChannel, type RpcContext } from 'meshcall'
 import type { SecureChannelHandler } from './services.js'
 
 /** What `channel/`'s `SecureChannelHub` offers (structural, so `link/` does not depend on `channel/`). */
+/** One `SecureChannelItem` (`{n, ct}`): the Noise frame counter and the ciphertext. */
+export interface SecureChannelFrame {
+  readonly n: number
+  readonly ct: string
+}
+
 export interface SecureChannelWire {
-  send(item: Record<string, unknown>): void | Promise<void>
+  send(item: SecureChannelFrame): void | Promise<void>
   /** Ends the channel; `code` travels as the MeshCall error code. */
   end(code?: string): void
 }
 
 export interface SecureChannelLike {
   readonly isClosed: boolean
-  receive(item: Record<string, unknown>): Promise<void>
+  receive(item: SecureChannelFrame): Promise<void>
   close(reason: 'shutdown', code?: string): Promise<void>
 }
 
@@ -32,7 +38,7 @@ export function secureChannelVia(hub: SecureChannelHubLike): SecureChannelHandle
       finish = resolve
     })
     const channel = hub.open({ clientId: String(request.clientId), ch: String(request.ch) }, {
-      send: item => duplex.send(item),
+      send: item => duplex.send({ ...item }),
       end: code => finish(code),
     })
     const onAbort = (): void => {
@@ -44,7 +50,7 @@ export function secureChannelVia(hub: SecureChannelHubLike): SecureChannelHandle
       try {
         for await (const item of duplex) {
           if (channel.isClosed) break
-          await channel.receive(item)
+          await channel.receive({ n: Number(item.n), ct: String(item.ct ?? '') })
         }
       } catch {
         // The call ended under us; the channel is closed below.
