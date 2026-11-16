@@ -128,130 +128,6 @@ class ConnectorRepositoryMixin:
             return True
 
 
-    async def record_connector_terminal_root(
-        self,
-        *,
-        connector_id: str,
-        terminal_id: str,
-        session_id: str,
-        root: str,
-        cwd: str,
-    ) -> None:
-        now = utc_now()
-        async with self._engine.begin() as conn:
-            existing = (
-                await conn.execute(
-                    select(connector_terminal_roots_t.c.terminal_id).where(
-                        connector_terminal_roots_t.c.connector_id == connector_id,
-                        connector_terminal_roots_t.c.terminal_id == terminal_id,
-                    )
-                )
-            ).first()
-            values = {
-                "session_id": session_id,
-                "root": root,
-                "cwd": cwd,
-                "updated_at": now,
-            }
-            if existing is None:
-                await conn.execute(
-                    insert(connector_terminal_roots_t).values(
-                        connector_id=connector_id,
-                        terminal_id=terminal_id,
-                        created_at=now,
-                        **values,
-                    )
-                )
-                return
-            await conn.execute(
-                update(connector_terminal_roots_t)
-                .where(
-                    connector_terminal_roots_t.c.connector_id == connector_id,
-                    connector_terminal_roots_t.c.terminal_id == terminal_id,
-                )
-                .values(**values)
-            )
-
-
-    async def list_connector_terminal_roots(
-        self,
-        *,
-        connector_id: str,
-        session_id: str,
-    ) -> dict[str, dict[str, str]]:
-        async with read_connection(self._engine) as conn:
-            rows = (
-                await conn.execute(
-                    select(connector_terminal_roots_t).where(
-                        connector_terminal_roots_t.c.connector_id == connector_id,
-                        connector_terminal_roots_t.c.session_id == session_id,
-                    )
-                )
-            ).mappings().all()
-        return {
-            row["terminal_id"]: {
-                "root": row["root"],
-                "cwd": row["cwd"],
-            }
-            for row in rows
-        }
-
-
-    async def get_connector_terminal_root(
-        self,
-        *,
-        connector_id: str,
-        terminal_id: str,
-    ) -> dict[str, str] | None:
-        async with read_connection(self._engine) as conn:
-            row = (
-                await conn.execute(
-                    select(connector_terminal_roots_t).where(
-                        connector_terminal_roots_t.c.connector_id == connector_id,
-                        connector_terminal_roots_t.c.terminal_id == terminal_id,
-                    )
-                )
-            ).mappings().first()
-        if row is None:
-            return None
-        return {
-            "root": row["root"],
-            "cwd": row["cwd"],
-        }
-
-
-    async def prune_connector_terminal_roots(
-        self,
-        *,
-        connector_id: str,
-        session_id: str,
-        terminal_ids: set[str],
-    ) -> None:
-        async with self._engine.begin() as conn:
-            stmt = delete(connector_terminal_roots_t).where(
-                connector_terminal_roots_t.c.connector_id == connector_id,
-                connector_terminal_roots_t.c.session_id == session_id,
-            )
-            if terminal_ids:
-                stmt = stmt.where(~connector_terminal_roots_t.c.terminal_id.in_(terminal_ids))
-            await conn.execute(stmt)
-
-
-    async def forget_connector_terminal_root(
-        self,
-        *,
-        connector_id: str,
-        terminal_id: str,
-    ) -> None:
-        async with self._engine.begin() as conn:
-            await conn.execute(
-                delete(connector_terminal_roots_t).where(
-                    connector_terminal_roots_t.c.connector_id == connector_id,
-                    connector_terminal_roots_t.c.terminal_id == terminal_id,
-                )
-            )
-
-
     async def create_connector(
         self,
         *,
@@ -439,9 +315,12 @@ class ConnectorRepositoryMixin:
             await conn.execute(
                 delete(projects_t).where(projects_t.c.connector_id == connector_id)
             )
-            # Runtime configuration, catalogs, preview tokens and terminal roots
-            # all reference the connector with ON DELETE CASCADE.
+            # Runtime configuration, catalogs and preview tokens all reference
+            # the connector with ON DELETE CASCADE.
             await conn.execute(delete(connectors_t).where(connectors_t.c.id == connector_id))
+            # Terminal roots live in Redis. Clear them before the commit so a
+            # failure keeps the deletion pending for a retry.
+            await self.terminal_roots.forget_connector_terminal_roots(connector_id)
             # Keep the rows discoverable for a retry if storage cleanup fails.
             # Files cannot be rolled back, so run this after all SQL deletions.
             for session_id in session_ids:

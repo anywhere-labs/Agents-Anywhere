@@ -25,7 +25,7 @@ modules, or the concrete `Store` facade. These rules are enforced by
 | Users, connectors, the session directory (titles, status, read marks), catalogs, runtime config, command receipts | PostgreSQL | Durable, Alembic-versioned |
 | Session content: timeline, plans, goals, queued messages | The device (v3 Connector) | Read through the device link; the Server stores none of it (from `v2_60`) |
 | Current runtime notices and interaction/approval status | Runtime | Read live via Connector RPC and relayed as events; not persisted as current state in Server PostgreSQL |
-| Connector ownership lease, cross-instance RPC routing, invalidation Pub/Sub, distributed locks, short-lived tickets and transfer coordination | Redis | Reconstructible coordination state, finite TTL where retained |
+| Connector ownership lease, cross-instance RPC routing, invalidation Pub/Sub, distributed locks, short-lived tickets and transfer coordination, pairing codes, the workspace root each Connector terminal was opened with (from `v2_62`) | Redis | Reconstructible coordination state, finite TTL where retained; held in the process when Redis is not configured |
 | Local WebSockets, pending RPC futures, send locks, listener tasks | Server process | Process lifetime only |
 | Attachments staged until the device fetches them, and files a share exposes | Configured file backend | Durable according to backend policy |
 

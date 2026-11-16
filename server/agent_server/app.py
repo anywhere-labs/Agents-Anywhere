@@ -70,6 +70,7 @@ from agent_server.infra.model_gateway_probe import (
     private_gateways_allowed,
 )
 from agent_server.infra.pairing_store import PairingStore
+from agent_server.infra.terminal_roots import TerminalRootStore
 from agent_server.infra.preview_state import PreviewStateStore
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.repositories.facade import Store
@@ -312,6 +313,8 @@ def create_app(
         instance_id=process_settings.instance_id(),
     )
     app.state.store.bind_connector_lifecycle(app.state.rpc.lifecycle_guard)
+    app.state.terminal_roots = TerminalRootStore(app.state.redis)
+    app.state.store.bind_terminal_roots(app.state.terminal_roots)
     app.state.device_mesh = DeviceMesh(MeshSettings.from_environment())
     app.state.device_link_hub = DeviceLinkHub(
         app.state.device_mesh, app.state.redis, worker_id=app.state.rpc.instance_id

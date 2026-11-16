@@ -18,7 +18,6 @@ DEVICE_CHILD_TABLES = (
     db.device_runtimes,
     db.connector_runtime_catalogs,
     db.connector_protocol_capabilities,
-    db.connector_terminal_roots,
     db.fs_preview_tokens,
 )
 SESSION_CHILD_TABLES = (db.session_active_runs, db.session_shares)
@@ -136,18 +135,6 @@ async def add_related_data(store, device, session):
             ),
         ),
         (
-            db.connector_terminal_roots,
-            dict(
-                connector_id=device,
-                terminal_id="terminal",
-                session_id=session,
-                root="/work",
-                cwd="/work",
-                created_at=now,
-                updated_at=now,
-            ),
-        ),
-        (
             db.fs_preview_tokens,
             dict(
                 token_hash=device,
@@ -185,6 +172,9 @@ async def add_related_data(store, device, session):
     async with store.engine.begin() as conn:
         for table, values in rows:
             await conn.execute(insert(table).values(**values))
+    await store.terminal_roots.record_connector_terminal_root(
+        connector_id=device, terminal_id="terminal", session_id=session, root="/work", cwd="/work"
+    )
     return await store.save_user_uploaded_file(
         session_id=session,
         user_id=owner,
@@ -306,6 +296,9 @@ def test_device_deletion_physically_removes_all_related_data(api):
                 ) == [other_session], table.name
         assert not await store.files.exists(active_session, deleted_file["fileId"])
         assert not (store.files.root / active_session).exists()
+        roots = client.app.state.terminal_roots
+        assert await roots.get_connector_terminal_root(connector_id=device, terminal_id="terminal") is None
+        assert await roots.get_connector_terminal_root(connector_id=other, terminal_id="terminal") is not None
         assert await store.files.exists(other_session, other_file["fileId"])
         for terminal_id in deleted_terminals:
             assert await terminals.get(terminal_id) is None
@@ -439,6 +432,10 @@ def test_failed_project_cleanup_rolls_back_all_database_deletions(api, request):
                     await connection.execute(select(table.c.session_id))
                 ).scalar_one() == session
         assert await client.app.state.store.files.exists(session, saved["fileId"])
+        # The Redis cleanup runs before the commit, so it never ran here.
+        assert await client.app.state.terminal_roots.get_connector_terminal_root(
+            connector_id=device, terminal_id="terminal"
+        ) == {"root": "/work", "cwd": "/work"}
 
     asyncio.run(check_rows())
 

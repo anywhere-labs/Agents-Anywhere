@@ -91,17 +91,13 @@ async def add_session(app, device, runtime, name):
                 created_at=now,
             )
         )
-        await conn.execute(
-            insert(db.connector_terminal_roots).values(
-                connector_id=device,
-                terminal_id=session.id,
-                session_id=session.id,
-                root="/work/shared",
-                cwd="/work/shared",
-                created_at=now,
-                updated_at=now,
-            )
-        )
+    await app.state.terminal_roots.record_connector_terminal_root(
+        connector_id=device,
+        terminal_id=session.id,
+        session_id=session.id,
+        root="/work/shared",
+        cwd="/work/shared",
+    )
     await store.save_user_uploaded_file(
         session_id=session.id, user_id=owner, name="private.txt", data=b"attachment"
     )
@@ -134,15 +130,19 @@ async def assert_session_data(app, expected_ids):
             set((await conn.execute(select(db.sessions.c.id))).scalars())
             == expected_ids
         )
-        for table in (
-            db.session_active_runs,
-            db.session_shares,
-            db.connector_terminal_roots,
-        ):
+        for table in (db.session_active_runs, db.session_shares):
             assert (
                 set((await conn.execute(select(table.c.session_id))).scalars())
                 == expected_ids
             ), table.name
+        devices = list((await conn.execute(select(db.connectors.c.id))).scalars())
+    recorded = {
+        terminal_id: record["sessionId"]
+        for device in devices
+        for terminal_id, record in (await app.state.terminal_roots._all(device)).items()
+    }
+    # Each session's terminal was recorded under the session's own ID.
+    assert recorded == {session_id: session_id for session_id in expected_ids}
     for session_id in expected_ids:
         assert (store.files.root / session_id).exists()
         assert await app.state.session_runtime_state_cache.get(session_id) is not None
