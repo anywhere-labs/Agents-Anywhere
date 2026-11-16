@@ -11,10 +11,12 @@ from sqlalchemy import select
 from starlette.websockets import WebSocketDisconnect
 from test_backend_mvp import auth_headers, create_connector_and_session, make_client
 
-from agent_server.core.e2ee import input_digest
-from agent_server.core.e2ee_settings import (
+from agent_server.core.e2ee import (
     SEALED_UPLOAD_HEADER,
     SEALED_UPLOAD_VALUE,
+    input_digest,
+)
+from agent_server.core.e2ee_settings import (
     E2eeSettings,
     accept_display_envelope,
     requires_secure_channel,

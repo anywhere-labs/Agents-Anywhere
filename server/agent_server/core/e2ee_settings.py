@@ -80,9 +80,7 @@ _CONTENT_ROUTE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
     )
 )
 
-#: Encrypted uploads (sealed segments, e2ee 1.0) are allowed on the attachment route in required mode.
-SEALED_UPLOAD_HEADER = "x-aa-sealed"
-SEALED_UPLOAD_VALUE = "segments-v1"
+#: Encrypted uploads (``agent_server.core.e2ee.SEALED_UPLOAD_HEADER``) are allowed on the attachment route.
 _ATTACHMENT_UPLOAD = re.compile(rf"/api/v2/sessions/{_SID}/attachments")
 
 

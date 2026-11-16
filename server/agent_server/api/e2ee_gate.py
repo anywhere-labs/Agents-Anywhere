@@ -12,9 +12,8 @@ import json
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from agent_server.core.e2ee import SEALED_UPLOAD_HEADER, SEALED_UPLOAD_VALUE
 from agent_server.core.e2ee_settings import (
-    SEALED_UPLOAD_HEADER,
-    SEALED_UPLOAD_VALUE,
     E2eeSettings,
     e2ee_required_error,
     requires_secure_channel,
