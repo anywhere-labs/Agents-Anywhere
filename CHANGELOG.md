@@ -24,7 +24,7 @@
 
 ### Web 与 Desktop 界面
 
-- 服务器开启端到端加密并关闭 Web 客户端时，Web 登录页和工作台改为提示「这个服务器要求端到端加密」，引导使用 Desktop 或手机 App；已登录的用户可以在这里退出登录。（#PR）
+- 服务器开启端到端加密并关闭 Web 客户端时，Web 登录页和工作台改为提示「这个服务器要求端到端加密」，引导使用 Desktop 或手机 App；已登录的用户可以在这里退出登录。（[#714](https://github.com/anywhere-labs/Agents-Anywhere/pull/714)）
 
 ### Android
 
