@@ -49,6 +49,8 @@ export type BackendInit = {
   connectorEntry: string;
   /** The bundled local MeshCall Router, or empty for meshcall's own lookup. */
   routerBinary: string;
+  /** The bundled frp client for port preview; empty refuses previews. */
+  frpcBinary: string;
   homePath: string;
   documentsPath: string;
   packaged: boolean;

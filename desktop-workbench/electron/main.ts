@@ -590,6 +590,15 @@ function resolveRouterBinary(): string {
   return process.env.MESHCALL_ROUTER_BINARY?.trim() ?? "";
 }
 
+/** The frp client port preview runs (`yarn bundle:frpc`); empty when it is not bundled. */
+function resolveFrpcBinary(): string {
+  const name = process.platform === "win32" ? "frpc.exe" : "frpc";
+  const base = app.isPackaged ? path.join(process.resourcesPath, "frpc") : path.join(app.getAppPath(), "build", "frpc");
+  const bundled = path.join(base, `${process.platform}-${process.arch}`, name);
+  if (fs.existsSync(bundled)) return bundled;
+  return process.env.AA_FRPC_BINARY?.trim() ?? "";
+}
+
 function forkConnector(entry: string, env: Record<string, string>) {
   // `stdio: pipe` keeps the Connector's own output in Desktop's log; its
   // service name is what Activity Monitor and Task Manager show.
@@ -903,6 +912,7 @@ function backendInit(): BackendInit {
     resourcesPath: process.resourcesPath,
     connectorEntry: resolveConnectorEntry(),
     routerBinary: resolveRouterBinary(),
+    frpcBinary: resolveFrpcBinary(),
     homePath: app.getPath("home"),
     documentsPath: app.getPath("documents"),
     packaged: app.isPackaged,

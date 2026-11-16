@@ -83,6 +83,8 @@ type ConnectorSupervisorOptions = {
   homePath: string;
   /** The bundled local MeshCall Router; empty uses `MESHCALL_ROUTER_BINARY` or meshcall's lookup. */
   routerBinary?: string;
+  /** The bundled frp client for port preview; empty refuses previews. */
+  frpcBinary?: string;
   shellEnvironment: NodeJS.ProcessEnv;
   settings: DesktopSettingsStore;
   binding: DesktopBindingStore;
@@ -730,6 +732,11 @@ export class ConnectorSupervisor {
     };
     delete environment.ELECTRON_RUN_AS_NODE;
     if (this.options.routerBinary) environment.MESHCALL_ROUTER_BINARY = this.options.routerBinary;
+    if (this.options.frpcBinary) environment.AA_FRPC_BINARY = this.options.frpcBinary;
+    // A preview tunnel leaves the way the device link does when that is an explicit proxy.
+    const proxy = this.options.settings.get().connectorProxy;
+    if (proxy && proxy !== "direct") environment.AA_PREVIEW_PROXY = proxy;
+    else delete environment.AA_PREVIEW_PROXY;
     const piBundle = this.options.packaged
       ? path.join(this.options.resourcesPath, "pi-runtime")
       : path.resolve(__dirname, "..", "..", "build", "pi-runtime");

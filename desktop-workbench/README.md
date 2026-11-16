@@ -156,14 +156,25 @@ Connector's dependencies installed once (`cd ../connector-ts && yarn install`).
 `build/meshcall-router/<platform>-<arch>/meshcall-router[.exe]` from the MeshCall
 commit `vendor/meshcall` pins (0.4.0 has no release binaries yet), so it needs
 Go and git; `MESHCALL_SOURCE_DIR` points at an existing checkout instead of
-cloning into `.cache/meshcall`. `yarn dev` and `yarn start` run both steps
-first. Overrides:
+cloning into `.cache/meshcall`. `yarn dev` and `yarn start` run these steps
+and `bundle:frpc` first. Overrides:
 
 ```bash
 WORKBENCH_CONNECTOR_ENTRY=/absolute/path/to/desktop-main.js yarn dev
-WORKBENCH_CONNECTOR_SOURCE=/absolute/path/to/connector-ts yarn bundle:connector
 MESHCALL_ROUTER_BINARY=/absolute/path/to/meshcall-router yarn dev
 ```
+
+Desktop's Connector entry is `connector-entry/desktop-main.mts`: connector-ts's
+desktop-host plus port preview (`previewHost` from
+`connector-ts/src/workspace/preview`), which registers the `preview.open` /
+`preview.close` commands and sends `port.listening` / `port.closed` on
+`Link/attach`. Previews run on the frp client `yarn bundle:frpc` places in
+`build/frpc/<platform>-<arch>/` (frp 0.72.0, sha256 pinned in
+`scripts/prepare-frpc.mjs`, cached under `.cache/frp`; packaged as
+`resources/frpc`, `FRPC_BUNDLE_TARGETS` like the Router). Without it every
+preview is refused. A custom proxy in the Connector network setting is frpc's
+proxy too; the system proxy is not applied to frpc yet. `bundle:connector`
+type-checks the entry with connector-ts's TypeScript before bundling.
 
 The Connector keeps using Desktop's `userData/connector/connector.json`, so an
 upgraded Desktop keeps its device credential and binding. Its data lives in the
@@ -210,8 +221,8 @@ yarn pack                   # unpacked Electron application
 yarn dist                   # host-platform release (universal on macOS)
 ```
 
-`dist`, `dist:mac` and `dist:win` read the signing environment, run the Router
-and Pi bundles and the app build with those secrets stripped, and hand them to electron-builder
+`dist`, `dist:mac` and `dist:win` read the signing environment, run the Router,
+frpc and Pi bundles and the app build with those secrets stripped, and hand them to electron-builder
 only. The signing material is therefore never visible to a build or test
 subprocess. Add `--arm64`, `--x64` or `--universal` (macOS) to select the
 architecture, or `--dir` for an unpacked build. `dist:mac` must run on macOS and

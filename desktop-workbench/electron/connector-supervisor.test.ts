@@ -105,6 +105,7 @@ function fixture(t: TestContext, options: {
   boot?: (child: FakeProcess) => void;
   credentials?: boolean;
   routerBinary?: string;
+  frpcBinary?: string;
   onShutdown?: "exit" | "hang";
 } = {}): Fixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-desktop-supervisor-"));
@@ -124,6 +125,7 @@ function fixture(t: TestContext, options: {
     packaged: false,
     homePath: root,
     routerBinary: options.routerBinary ?? "",
+    frpcBinary: options.frpcBinary ?? "",
     shellEnvironment: { PATH: "/shell/bin" },
     settings,
     binding: new DesktopBindingStore(path.join(root, "binding.json")),
@@ -146,13 +148,17 @@ function fixture(t: TestContext, options: {
 const isConflict = (error: unknown) => error instanceof ConnectorRpcError && error.ownershipConflict && error.code === -32009;
 
 test("the embedded Connector runs with Desktop's config, its Router and the desktop owner kind", async (t) => {
-  const f = fixture(t, { routerBinary: "/bundle/meshcall-router" });
+  const f = fixture(t, { routerBinary: "/bundle/meshcall-router", frpcBinary: "/bundle/frpc" });
+  f.settings.save({ connectorProxy: "http://127.0.0.1:7890" });
   await f.supervisor.acquireOwnership();
   assert.equal(f.processes.length, 1);
   const env = f.processes[0]!.env;
   assert.equal(env.AGENT_CONNECTOR_CONFIG, f.configPath);
   assert.equal(env.AA_CONNECTOR_OWNER_KIND, "desktop-workbench");
   assert.equal(env.MESHCALL_ROUTER_BINARY, "/bundle/meshcall-router");
+  // Port preview: the bundled frpc, leaving through the same explicit proxy as the device link.
+  assert.equal(env.AA_FRPC_BINARY, "/bundle/frpc");
+  assert.equal(env.AA_PREVIEW_PROXY, "http://127.0.0.1:7890");
   assert.equal(env.ELECTRON_RUN_AS_NODE, undefined);
   // The shared v3 data directory is the Connector's own default, never Desktop's.
   assert.equal(env.AGENT_CONNECTOR_DATA_DIR, process.env.AGENT_CONNECTOR_DATA_DIR);

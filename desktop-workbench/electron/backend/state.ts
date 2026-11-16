@@ -72,6 +72,7 @@ export class BackendState {
       dataPath: init.dataPath,
       resourcesPath: init.resourcesPath,
       routerBinary: init.routerBinary,
+      frpcBinary: init.frpcBinary,
       packaged: init.packaged,
       launch,
       homePath: init.homePath,

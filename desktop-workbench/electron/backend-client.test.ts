@@ -37,6 +37,7 @@ function initFor(root: string): BackendInit {
     resourcesPath: root,
     connectorEntry: path.join(root, "connector", "desktop-main.js"),
     routerBinary: "",
+    frpcBinary: "",
     homePath: root,
     documentsPath: root,
     packaged: false,

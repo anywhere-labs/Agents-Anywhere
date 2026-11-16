@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ensureFrpcBundle } from "./prepare-frpc.mjs";
 import { ensureRouterBundle } from "./prepare-router.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -87,6 +88,12 @@ async function prepareConnector() {
   } catch (error) {
     console.warn(`Could not build meshcall-router: ${error instanceof Error ? error.message : error}`);
     console.warn("Install Go, or set MESHCALL_ROUTER_BINARY to a router built from vendor/meshcall's commit.");
+  }
+  try {
+    const [frpcPath] = await ensureFrpcBundle({ log: (message) => console.log(message) });
+    console.log(`Using frpc at ${frpcPath}`);
+  } catch (error) {
+    console.warn(`Could not prepare frpc; port preview stays unavailable: ${error instanceof Error ? error.message : error}`);
   }
   const result = spawnSync(process.execPath, [path.join(root, "scripts", "bundle-connector.mjs")], { cwd: root, stdio: "inherit" });
   if (result.status !== 0) console.warn("Could not bundle the Connector; run `yarn bundle:connector` after installing connector-ts dependencies.");

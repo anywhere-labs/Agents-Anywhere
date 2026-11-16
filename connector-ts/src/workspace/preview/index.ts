@@ -14,3 +14,4 @@ export {
   type ProcessParents,
   type SessionHints,
 } from './session-ports.js'
+export { PORT_REFRESH_MS, previewHost, type AttachTarget, type PreviewHost, type PreviewHostOptions } from './host-wiring.js'

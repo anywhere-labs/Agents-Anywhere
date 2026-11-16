@@ -19,13 +19,14 @@
     "typecheck": "yarn build:info && tsc -p tsconfig.json --noEmit",
     "test:main": "yarn build:main && node --test dist/electron/*.test.js dist/electron/backend/*.test.js",
     "dev": "yarn build:main && node scripts/dev.mjs",
-    "start": "yarn bundle:router && yarn bundle:connector && yarn build:main && electron .",
+    "start": "yarn bundle:router && yarn bundle:frpc && yarn bundle:connector && yarn build:main && electron .",
     "build:web": "node scripts/build-web.mjs",
     "build": "yarn bundle:connector && yarn build:main && yarn build:web",
     "bundle:connector": "node scripts/bundle-connector.mjs",
     "bundle:router": "node scripts/prepare-router.mjs",
+    "bundle:frpc": "node scripts/prepare-frpc.mjs",
     "bundle:pi": "node scripts/prepare-pi-runtime.mjs",
-    "pack": "yarn bundle:router && yarn bundle:pi && yarn build && electron-builder --dir",
+    "pack": "yarn bundle:router && yarn bundle:frpc && yarn bundle:pi && yarn build && electron-builder --dir",
     "dist": "node scripts/dist-desktop.mjs",
     "dist:mac": "node scripts/dist-desktop.mjs mac",
     "dist:win": "node scripts/dist-desktop.mjs win"
@@ -83,6 +84,15 @@
           "**/meshcall-router",
           "**/meshcall-router.exe"
         ]
+      },
+      {
+        "from": "build/frpc",
+        "to": "frpc",
+        "filter": [
+          "**/frpc",
+          "**/frpc.exe",
+          "**/LICENSE"
+        ]
       }
     ],
     "directories": {
@@ -119,7 +129,7 @@
           ]
         }
       ],
-      "x64ArchFiles": "{Contents/Resources/meshcall-router/darwin-*/meshcall-router,Contents/Resources/app.asar.unpacked/node_modules/{@img/sharp-darwin-*,@img/sharp-libvips-darwin-*,@next/swc-darwin-*,@swc/core-darwin-*,@parcel/watcher-darwin-*,@tailwindcss/oxide-darwin-*,lightningcss-darwin-*}/**}",
+      "x64ArchFiles": "{Contents/Resources/meshcall-router/darwin-*/meshcall-router,Contents/Resources/frpc/darwin-*/frpc,Contents/Resources/app.asar.unpacked/node_modules/{@img/sharp-darwin-*,@img/sharp-libvips-darwin-*,@next/swc-darwin-*,@swc/core-darwin-*,@parcel/watcher-darwin-*,@tailwindcss/oxide-darwin-*,lightningcss-darwin-*}/**}",
       "signIgnore": [
         "\\.(?:pak|dat|wasm)$"
       ]

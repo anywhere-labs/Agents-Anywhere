@@ -4,7 +4,7 @@
  * Order of operations, mirroring the DSH desktop release scripts:
  *
  * 1. read and validate the signing/notarization environment (all-or-nothing)
- * 2. run the Router and Pi bundles and the app build with every secret stripped
+ * 2. run the Router, frpc and Pi bundles and the app build with every secret stripped
  * 3. hand the secrets to electron-builder only, which is the step that signs
  * 4. verify the produced artifact
  *
@@ -98,9 +98,13 @@ function resolveTargets({ platform, archFlag }) {
   return { builderFlags: [`--${arch}`], bundleTargets: [BUNDLE_TARGETS[`darwin-${arch}`]] };
 }
 
-/** The Router executable `bundle:router` leaves for a target. */
+/** The Router and frpc executables `bundle:router` and `bundle:frpc` leave for a target. */
 function bundledExecutables(target) {
-  return [`build/meshcall-router/${target}/${target.startsWith("win32") ? "meshcall-router.exe" : "meshcall-router"}`];
+  const windows = target.startsWith("win32");
+  return [
+    `build/meshcall-router/${target}/${windows ? "meshcall-router.exe" : "meshcall-router"}`,
+    `build/frpc/${target}/${windows ? "frpc.exe" : "frpc"}`,
+  ];
 }
 
 /** The first Developer ID Application identity in the Keychain, if any. */
@@ -173,16 +177,17 @@ async function main() {
   } else {
     log(`Signing: ${describeSigning(credentials, "no signing certificate")}`);
   }
-  log(`Router targets: ${bundleTargets.join(", ")}`);
+  log(`Router and frpc targets: ${bundleTargets.join(", ")}`);
 
   if (skipBuild) {
     const required = ["dist/electron/main.js", "dist/connector/desktop-main.js", "renderer/out/index.html", "build/pi-runtime/package.json", ...bundleTargets.flatMap(bundledExecutables)];
     for (const relative of required) {
       if (!existsSync(join(PROJECT_ROOT, relative))) fail(`--skip-build requires ${relative}; run a full dist first.`);
     }
-    log("Reusing compiled app, Connector, Router and Pi bundles (--skip-build)");
+    log("Reusing compiled app, Connector, Router, frpc and Pi bundles (--skip-build)");
   } else {
     yarn(["bundle:router"], { ...cleanEnvironment, ROUTER_BUNDLE_TARGETS: bundleTargets.join(",") });
+    yarn(["bundle:frpc"], { ...cleanEnvironment, FRPC_BUNDLE_TARGETS: bundleTargets.join(",") });
     // Pi's prebuilt native modules use the same `<platform>-<arch>` keys.
     yarn(["bundle:pi"], { ...cleanEnvironment, PI_BUNDLE_TARGETS: bundleTargets.join(",") });
     yarn(["build"], cleanEnvironment);
