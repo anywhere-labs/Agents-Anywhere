@@ -48,6 +48,7 @@ import {
   ToolMarkerRowContent,
 } from "@/components/session/session-tool-cards"
 import { timelineRunCounts } from "@/components/session/timeline-summary"
+import { PortPreviewCard } from "@/components/session/port-preview-card"
 import { RuntimeCreationStatus } from "@/components/session/runtime-creation-status"
 import { AgentRecoveryNotice } from "@/components/session/agent-recovery-notice"
 import { NativeSessionHandoff } from "@/components/session/native-session-handoff"
@@ -1463,6 +1464,10 @@ function SessionDetailVisit({
                 <AlertDescription>{tSession("historyOfflineCached")}</AlertDescription>
               </Alert>
             </div>
+          ) : null}
+          {session && !session.archived ? (
+            <PortPreviewCard token={token} sessionId={session.id} deviceId={session.connectorId}
+              ports={remote.listeningPorts} canPreview={session.connectorStatus === "online"} />
           ) : null}
           <RuntimeCreationStatus sessionId={sessionId} />
           <NativeSessionHandoff key={sessionId} token={token} session={session} state={runtimeState}

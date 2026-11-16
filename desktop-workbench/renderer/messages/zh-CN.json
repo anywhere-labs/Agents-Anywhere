@@ -2530,6 +2530,31 @@
     "keepEditing": "继续编辑",
     "discardChanges": "放弃修改"
   },
+  "portPreview": {
+    "detected": "检测到",
+    "previewOnPhone": "在手机上预览",
+    "showPreview": "查看预览",
+    "dialogTitle": "端口 {port} 的预览",
+    "dialogDescription": "用手机扫码或复制链接打开。预览只有你登录后能看到，关掉端口或点「停止预览」就会失效。",
+    "opening": "正在建立预览…",
+    "qrAlt": "预览链接二维码",
+    "copy": "复制链接",
+    "copied": "已复制预览链接",
+    "openHere": "在浏览器中打开",
+    "stop": "停止预览",
+    "plaintextTitle": "预览不是端到端加密的",
+    "plaintextDescription": "会话内容已端到端加密，但预览页面的流量会经过服务器转发，服务器能看到页面内容。",
+    "limitations": "页面里写死的 localhost 地址（例如接口地址）在手机上打不开，需要改成相对路径。",
+    "errors": {
+      "failed": "无法建立预览，请稍后重试。",
+      "port_not_listening": "这个端口已经没有在监听了。",
+      "port_not_local": "只能预览本机地址上的端口。",
+      "preview_limit": "同时打开的预览已达上限，请先停止其他预览。",
+      "preview_unavailable": "设备上的预览通道暂时不可用，请稍后重试。",
+      "preview_disabled": "这个服务器没有开启端口预览。",
+      "connector_offline": "设备离线，上线后才能预览。"
+    }
+  },
   "desktopUpdates": {
     "title": "发现新版本",
     "description": "服务已升级，建议更新 Desktop 以保持兼容。继续使用旧版本可能导致部分功能无法使用。",

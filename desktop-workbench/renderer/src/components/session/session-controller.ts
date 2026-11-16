@@ -2,6 +2,7 @@ import { dashboardApi } from "@/features/dashboard/api"
 import { isApiError } from "@/lib/api/errors"
 import { createClientId } from "@/lib/id"
 import { contentTransportFor, socketEventStream, type SessionEventStream } from "@/lib/transport/content-transport"
+import { applySessionPortEvent, isPortEventType, type ListeningPort } from "@/features/preview/session-ports"
 import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
 import type { ProtocolEventEnvelope, SessionView, TimelineItem } from "@/features/dashboard/types"
 import type { SessionRemoteState } from "./session-state-cache"
@@ -63,6 +64,8 @@ export type SessionControllerSnapshot = {
   recoveryGeneration: number
   invalidated: boolean
   domainEvents: ReadonlyMap<string, ProtocolEventEnvelope>
+  /** Ports this session's processes listen on (port preview, preview 1.0 events). */
+  listeningPorts: ReadonlyMap<number, ListeningPort>
 }
 
 export type SessionControllerOptions = {
@@ -91,6 +94,7 @@ export function createSessionController(options: SessionControllerOptions) {
     recoveryGeneration: 0,
     invalidated: false,
     domainEvents: new Map(),
+    listeningPorts: new Map(),
   }
   const listeners = new Set<() => void>()
   const errors = new Map<string, string>()
@@ -136,6 +140,8 @@ export function createSessionController(options: SessionControllerOptions) {
         releaseLiveReads()
         clearError("capabilities")
         clearError("notices")
+        // An offline device serves nothing; its ports return with its next report.
+        if (snapshot.listeningPorts.size) publish({ listeningPorts: new Map() })
       }
     } else if (state.effectiveCapabilities !== previous?.effectiveCapabilities) refreshCatalogs(false)
   }
@@ -206,6 +212,11 @@ export function createSessionController(options: SessionControllerOptions) {
       return
     }
     if (event.type === "keepalive") return
+    if (isPortEventType(event.type)) {
+      const listeningPorts = applySessionPortEvent(snapshot.listeningPorts, event.type, event.payload, sessionId)
+      if (listeningPorts !== snapshot.listeningPorts) publish({ listeningPorts })
+      return
+    }
     if (event.type === CATCHUP_REQUIRED) {
       requestCatchup()
       return

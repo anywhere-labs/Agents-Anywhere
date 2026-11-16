@@ -32,6 +32,8 @@ export function apiPath(path: string): string {
   if (path.startsWith("http")) return path;
   if (!API_NAMESPACE) return path.startsWith("/") ? path : `/${path}`;
   if (path === API_NAMESPACE || path.startsWith(`${API_NAMESPACE}/`)) return path;
+  // Another API version (v3 port preview, the E2EE tunnel) is already absolute.
+  if (/^\/api\/v\d+(?:\/|$)/.test(path)) return path;
   const normalized = path.startsWith("/") ? path : `/${path}`;
   return `${API_NAMESPACE}${normalized}`;
 }

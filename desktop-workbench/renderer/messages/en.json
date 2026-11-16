@@ -2530,6 +2530,31 @@
     "keepEditing": "Keep editing",
     "discardChanges": "Discard changes"
   },
+  "portPreview": {
+    "detected": "Detected",
+    "previewOnPhone": "Preview on phone",
+    "showPreview": "Show preview",
+    "dialogTitle": "Preview of port {port}",
+    "dialogDescription": "Scan the code with your phone or copy the link. Only you can open it after signing in; it stops working when the port closes or you stop the preview.",
+    "opening": "Setting up the preview…",
+    "qrAlt": "Preview link QR code",
+    "copy": "Copy link",
+    "copied": "Preview link copied",
+    "openHere": "Open in browser",
+    "stop": "Stop preview",
+    "plaintextTitle": "The preview is not end-to-end encrypted",
+    "plaintextDescription": "Session content is end-to-end encrypted, but preview traffic is relayed by the server, which can see the page.",
+    "limitations": "Hard-coded localhost addresses in the page (such as API URLs) won't work on a phone; use relative paths instead.",
+    "errors": {
+      "failed": "Couldn't set up the preview. Try again later.",
+      "port_not_listening": "Nothing is listening on this port anymore.",
+      "port_not_local": "Only ports on local addresses can be previewed.",
+      "preview_limit": "Too many previews are open. Stop another preview first.",
+      "preview_unavailable": "The device's preview tunnel is unavailable. Try again later.",
+      "preview_disabled": "Port preview isn't enabled on this server.",
+      "connector_offline": "The device is offline. Preview is available once it's back."
+    }
+  },
   "desktopUpdates": {
     "title": "Update available",
     "description": "The service has been upgraded. Update Desktop to stay compatible. Some features may stop working on older versions.",

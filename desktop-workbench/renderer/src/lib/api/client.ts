@@ -34,6 +34,8 @@ export function apiPath(path: string): string {
   const namespace = getDesktopServerConnection()?.apiNamespace ?? API_NAMESPACE;
   if (!namespace) return path.startsWith("/") ? path : `/${path}`;
   if (path === namespace || path.startsWith(`${namespace}/`)) return path;
+  // Another API version (v3 port preview, the E2EE tunnel) is already absolute.
+  if (/^\/api\/v\d+(?:\/|$)/.test(path)) return path;
   const normalized = path.startsWith("/") ? path : `/${path}`;
   return `${namespace}${normalized}`;
 }
