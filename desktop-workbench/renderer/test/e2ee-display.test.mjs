@@ -162,20 +162,20 @@ test("normal mode: no envelopes renders exactly as before; plain envelopes use t
     displayDevice: { mode: "plain", keyId: null, payload: { title: "Device", cwd: "/dev", preview: "p", ignored: true } },
     displayUser: { mode: "plain", keyId: null, payload: { title: "User" } },
   })
-  // The Server's own fields win in normal mode; the envelopes only add what they lack (here, the preview).
-  assert.deepEqual(decryptor.read(plain), { title: "Old", cwd: "/old", preview: "p", state: "plain" })
+  // Normal mode: displayUser, then displayDevice, then the legacy fields.
+  assert.deepEqual(decryptor.read(plain), { title: "User", cwd: "/dev", preview: "p", state: "plain" })
   const envelopesOnly = session("ses_plain2b", {
     displayDevice: plain.displayDevice,
     displayUser: plain.displayUser,
   })
   assert.deepEqual(decryptor.read(envelopesOnly), { title: "User", cwd: "/dev", preview: "p", state: "plain" })
-  // A rename in normal mode only updates the Server's title: it wins over the device's plain envelope.
-  const renamed = session("ses_plain4", {
-    title: "Renamed",
+  // Envelopes come before the legacy fields; a legacy field only fills what no envelope has.
+  const partial = session("ses_plain4", {
+    title: "Legacy",
     cwd: "/srv",
-    displayDevice: { mode: "plain", keyId: null, payload: { title: "Device", cwd: "/dev" } },
+    displayDevice: { mode: "plain", keyId: null, payload: { title: "Device" } },
   })
-  assert.deepEqual(decryptor.read(renamed), { title: "Renamed", cwd: "/srv", preview: null, state: "plain" })
+  assert.deepEqual(decryptor.read(partial), { title: "Device", cwd: "/srv", preview: null, state: "plain" })
   // An envelope of an unknown mode is ignored.
   const odd = session("ses_plain5", { title: "Legacy", displayDevice: { mode: "future", keyId: null, payload: "x" } })
   assert.equal(decryptor.read(odd).title, "Legacy")
