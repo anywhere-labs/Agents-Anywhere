@@ -1,19 +1,7 @@
-import type { DisplayFields, SummaryFacts } from '../domain/conversation/index.js'
+import type { DisplaySealer } from '../application/ports/index.js'
+import type { SummaryFacts } from '../domain/conversation/index.js'
 
-/**
- * The display envelope (02-domain-model.md §5.4): fields only people read (title, preview, working directory).
- * Plain in normal mode; sealed with the directory key in E2EE mode. The Server stores it and never reads it.
- */
-export interface DisplayEnvelope {
-  mode: 'plain' | 'sealed'
-  keyId: string | null
-  payload: Record<string, unknown> | string
-}
-
-/** Seals display fields for the outbox. The E2EE implementation lives with Device Trust (F). */
-export interface DisplaySealer {
-  seal(fields: DisplayFields): DisplayEnvelope
-}
+export type { DisplayEnvelope, DisplaySealer } from '../application/ports/index.js'
 
 export const plainSealer: DisplaySealer = {
   seal(fields) {

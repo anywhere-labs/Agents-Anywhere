@@ -49,6 +49,8 @@ export interface ConversationDeps {
   readonly coalesceMs?: number
   /** Resolves a Server file id to a local path once the attachment is downloaded (workspace). */
   readonly attachments?: (sessionId: string, ref: AttachmentRef) => Promise<PromptAttachment>
+  /** Projects the latest page of an existing native session before it is opened (04-connector.md §6.6). */
+  readonly history?: { ensureLatest(sessionId: string): Promise<void> }
 }
 
 export interface AttachmentRef {
@@ -367,6 +369,10 @@ export class ConversationService {
     const session = await this.requireSession(sessionId)
     const handle = await this.deps.runtimes.handle(session.runtimeId)
     if (handle === null) throw new UseCaseError('runtime_unavailable', `runtime ${session.runtimeId} is not available on this device`)
+    // History first: live items then count up from the newest projected one.
+    if (session.externalSessionId !== null && this.deps.history !== undefined) {
+      await this.deps.history.ensureLatest(sessionId).catch(error => this.reportError(sessionId, error))
+    }
     const runtimeSession = session.externalSessionId !== null
       ? await handle.open({ kind: 'existing', ref: { nativeSessionId: session.externalSessionId } }, { sessionId, replay: 'none' })
       : await handle.open({

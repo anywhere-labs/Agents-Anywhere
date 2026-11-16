@@ -2,4 +2,5 @@
 
 export * from './coalescer.js'
 export * from './conversation-service.js'
+export * from './history.js'
 export * from './projection.js'
