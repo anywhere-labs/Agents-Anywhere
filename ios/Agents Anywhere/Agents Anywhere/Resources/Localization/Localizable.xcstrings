@@ -25277,6 +25277,57 @@
           }
         }
       }
+    },
+    "设备身份与配对时不一致，请在设备上重新生成配对链接（手机上扫二维码）后再配对。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The device identity does not match the one you paired with. Create a new pairing link on the device (scan the QR code on a phone) and pair again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备身份与配对时不一致，请在设备上重新生成配对链接（手机上扫二维码）后再配对。"
+          }
+        }
+      }
+    },
+    "这台设备还没有授权当前客户端，请在设备上生成配对链接（手机上扫二维码）后配对。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This device has not authorised this client yet. Create a pairing link on the device (scan the QR code on a phone) and pair."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这台设备还没有授权当前客户端，请在设备上生成配对链接（手机上扫二维码）后配对。"
+          }
+        }
+      }
+    },
+    "配对链接已过期或已经用过，请在设备上重新生成（手机上重新扫二维码）。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This pairing link has expired or was already used. Create a new one on the device (scan the new QR code on a phone)."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "配对链接已过期或已经用过，请在设备上重新生成（手机上重新扫二维码）。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
