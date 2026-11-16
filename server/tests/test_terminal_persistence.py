@@ -11,46 +11,12 @@ from agent_server.api import connector_ingress as connector_ingress_api
 from agent_server.api import connector_terminal as connector_terminal_api
 from agent_server.core.models import TerminalCreateRequest, TerminalPersistenceRequest
 from agent_server.infra.connector_rpc import ConnectorRpcError
+from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.terminal_broker import Terminal, TerminalBroker
+from agent_server.infra.terminal_roots import TerminalRootStore
 from agent_server.services import terminal as terminal_service_module
 from agent_server.services.connector_rpc import ConnectorUpstreamError
 from agent_server.services.terminal import TerminalService
-
-
-class _FakeStore:
-    def __init__(self) -> None:
-        self.recorded_root: dict[str, Any] | None = None
-
-    async def record_connector_terminal_root(self, **values: Any) -> None:
-        self.recorded_root = values
-
-    async def get_connector_terminal_root(
-        self,
-        *,
-        connector_id: str,
-        terminal_id: str,
-    ) -> dict[str, Any] | None:
-        if self.recorded_root is None:
-            return None
-        if (
-            self.recorded_root["connector_id"] != connector_id
-            or self.recorded_root["terminal_id"] != terminal_id
-        ):
-            return None
-        return self.recorded_root
-
-    async def forget_connector_terminal_root(
-        self,
-        *,
-        connector_id: str,
-        terminal_id: str,
-    ) -> None:
-        if (
-            self.recorded_root is not None
-            and self.recorded_root["connector_id"] == connector_id
-            and self.recorded_root["terminal_id"] == terminal_id
-        ):
-            self.recorded_root = None
 
 
 class _FakeManager:
@@ -123,17 +89,21 @@ def test_terminal_create_paths_forward_persistent(monkeypatch) -> None:
             request_connector,
         )
 
-        store = _FakeStore()
+        roots = TerminalRootStore(RedisCoordinator())
         response = await connector_terminal_api.connector_terminal_create_v2(
             "conn_1",
             TerminalCreateRequest(cwd="src"),
             root="/repo",
             user_id="user_1",
-            db=store,  # type: ignore[arg-type]
+            db=object(),  # type: ignore[arg-type]
             manager=object(),  # type: ignore[arg-type]
+            terminal_roots=roots,
         )
 
         assert direct_calls[0][1] == "terminal.create"
+        assert await roots.get_connector_terminal_root(
+            connector_id="conn_1", terminal_id=response.result["terminalId"]
+        ) == {"root": "/repo", "cwd": "/repo/src"}
         assert direct_calls[0][2]["persistent"] is False
         assert response.result["persistent"] is False
 
@@ -142,8 +112,9 @@ def test_terminal_create_paths_forward_persistent(monkeypatch) -> None:
             response.result["terminalId"],
             TerminalPersistenceRequest(persistent=True),
             user_id="user_1",
-            db=store,  # type: ignore[arg-type]
+            db=object(),  # type: ignore[arg-type]
             manager=object(),  # type: ignore[arg-type]
+            terminal_roots=roots,
         )
 
         assert direct_calls[1][1] == "terminal.setPersistent"
@@ -165,11 +136,17 @@ def test_terminal_create_paths_forward_persistent(monkeypatch) -> None:
                 response.result["terminalId"],
                 TerminalPersistenceRequest(persistent=True),
                 user_id="user_1",
-                db=store,  # type: ignore[arg-type]
+                db=object(),  # type: ignore[arg-type]
                 manager=object(),  # type: ignore[arg-type]
+                terminal_roots=roots,
             )
         assert exc_info.value.status_code == 404
-        assert store.recorded_root is None
+        assert (
+            await roots.get_connector_terminal_root(
+                connector_id="conn_1", terminal_id=response.result["terminalId"]
+            )
+            is None
+        )
 
         session_calls: list[tuple[str, dict[str, Any]]] = []
 

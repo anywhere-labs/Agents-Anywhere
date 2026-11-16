@@ -16,7 +16,6 @@ from agent_server.core.runtime_identity import (
 from agent_server.core.utc import utc_now
 from agent_server.infra.db import connector_runtime_catalogs as catalogs_t
 from agent_server.infra.db import connector_runtime_types as runtime_types_t
-from agent_server.infra.db import connector_terminal_roots as terminal_roots_t
 from agent_server.infra.db import connectors as connectors_t
 from agent_server.infra.db import device_runtimes as device_runtimes_t
 from agent_server.infra.db import retired_device_runtimes as retired_runtimes_t
@@ -543,14 +542,10 @@ class DeviceRuntimeRepositoryMixin:
             if result.rowcount == 0:
                 raise KeyError(runtime_id)
             session_ids = list((await conn.execute(session_query)).scalars())
-            # Terminal roots have no session FK. Timeline, active runs and shares
-            # cascade from sessions; projects can be shared by other instances.
-            await conn.execute(
-                delete(terminal_roots_t).where(
-                    terminal_roots_t.c.connector_id == connector_id,
-                    terminal_roots_t.c.session_id.in_(session_query),
-                )
-            )
+            # Terminal roots live in Redis and have no session FK. Timeline,
+            # active runs and shares cascade from sessions; projects can be
+            # shared by other instances.
+            await self.terminal_roots.forget_session_terminal_roots(connector_id, session_ids)
             await conn.execute(
                 delete(sessions_t).where(
                     sessions_t.c.connector_id == connector_id,

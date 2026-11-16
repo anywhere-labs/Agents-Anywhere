@@ -33,7 +33,6 @@ from agent_server.infra.db import (
     connector_protocol_capabilities as connector_protocol_capabilities_t,
     connector_runtime_catalogs as connector_runtime_catalogs_t,
     connector_runtime_types as connector_runtime_types_t,
-    connector_terminal_roots as connector_terminal_roots_t,
     connectors as connectors_t,
     device_runtimes as device_runtimes_t,
     fs_preview_tokens as fs_preview_tokens_t,

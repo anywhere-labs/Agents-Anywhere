@@ -284,6 +284,7 @@ def test_v2_0_database_upgrades_through_current_revision(fresh_database_url) -> 
         ("v2_58", "v2_59"),
         ("v2_59", "v2_60"),
         ("v2_60", "v2_61"),
+        ("v2_61", "v2_62"),
     ],
 )
 def test_every_adjacent_schema_upgrade(tmp_path,
@@ -1024,9 +1025,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_61() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_61"
-    assert CURRENT_SCHEMA_VERSION == "2.61"
+def test_current_schema_version_is_v2_62() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_62"
+    assert CURRENT_SCHEMA_VERSION == "2.62"
 
 
 def test_v2_57_starts_the_seq_ceiling_above_v2_sequences(fresh_database_url) -> None:
@@ -2779,3 +2780,58 @@ def test_v2_61_adds_port_previews(fresh_database_url) -> None:
         assert not inspect(engine).has_table("previews")
     finally:
         engine.dispose()
+
+
+def test_v2_62_moves_terminal_roots_out_of_the_database(fresh_database_url) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_61")
+    engine = create_engine(_sync_url(url))
+    try:
+        with engine.begin() as connection:
+            _insert_required(connection, "users", {"id": "alice"})
+            _insert_required(connection, "connectors", {"id": "c1", "user_id": "alice"})
+            _insert_required(connection, "connector_terminal_roots", {
+                "connector_id": "c1", "terminal_id": "trm_1", "session_id": "browse_c1",
+                "root": "/work", "cwd": "/work",
+            })
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=url, revision="v2_62")
+
+    engine = create_engine(_sync_url(url))
+    try:
+        assert not inspect(engine).has_table("connector_terminal_roots")
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE alembic_version"))
+    finally:
+        engine.dispose()
+    assert asyncio.run(classify_database(url)) == UnversionedDatabase("v2", "v2_62")
+
+    command.stamp(_alembic_config(url), "v2_62")
+    command.downgrade(_alembic_config(url), "v2_61")
+    engine = create_engine(_sync_url(url))
+    try:
+        inspector = inspect(engine)
+        assert inspector.has_table("connector_terminal_roots")
+        assert {index["name"] for index in inspector.get_indexes("connector_terminal_roots")} == {
+            "idx_connector_terminal_roots_session"
+        }
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE alembic_version"))
+    finally:
+        engine.dispose()
+    assert asyncio.run(classify_database(url)) == UnversionedDatabase("v2", "v2_61")
+
+
+def test_v2_60_layout_without_terminal_roots_is_not_guessed(fresh_database_url) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_60")
+    engine = create_engine(_sync_url(url))
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE alembic_version"))
+            connection.execute(text("DROP TABLE connector_terminal_roots"))
+    finally:
+        engine.dispose()
+    assert asyncio.run(classify_database(url)).kind == "unknown"
