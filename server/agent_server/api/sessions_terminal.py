@@ -10,13 +10,16 @@
 
 from __future__ import annotations
 
-import urllib.parse
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+)
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
-
-from agent_server.core.auth import verify_user_access_token
-from agent_server.infra.connector_rpc import ConnectorRpcManager
-from agent_server.deps import current_user_id, get_terminal_service
+from agent_server.api.ws_auth import websocket_user_id
 from agent_server.core.models import (
     TerminalCreateRequest,
     TerminalListResponse,
@@ -24,10 +27,15 @@ from agent_server.core.models import (
     TerminalResizeRequest,
     TerminalResponse,
 )
-from agent_server.services.terminal import TerminalNotFoundError, TerminalService, TerminalServiceError
+from agent_server.deps import current_user_id, get_terminal_service
+from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
-
+from agent_server.services.terminal import (
+    TerminalNotFoundError,
+    TerminalService,
+    TerminalServiceError,
+)
 
 router = APIRouter(prefix="/sessions", tags=["sessions-terminal"])
 
@@ -120,17 +128,8 @@ async def terminal_stream(
     terminal_id: str,
     fromSeq: int = Query(default=0, ge=0),
 ) -> None:
-    # Auth via either the standard Authorization header (rare for browsers) or
-    # a ?token=... query param (typical, because browser WS APIs can't set
-    # arbitrary headers).
-    token = websocket.query_params.get("token")
-    auth_header = websocket.headers.get("authorization")
-    if not token and auth_header and auth_header.startswith("Bearer "):
-        token = auth_header[len("Bearer "):]
-    if not token:
-        await websocket.close(code=4401)
-        return
-    user_id = verify_user_access_token(urllib.parse.unquote(token))
+    # A one-time ticket for this session (``?ticket=``); the access token in the URL is deprecated.
+    user_id = await websocket_user_id(websocket, ticket_scope=session_id)
     if user_id is None:
         await websocket.close(code=4401)
         return

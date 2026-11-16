@@ -700,22 +700,6 @@ usage_inventory_snapshots = Table(
 )
 
 
-pairing_codes = Table(
-    "pairing_codes",
-    metadata,
-    Column("id", Text, primary_key=True),
-    Column("code", Text, nullable=False, unique=True),
-    Column("status", Text, nullable=False),
-    Column("server_url", Text),
-    Column("connector_id", Text),
-    Column("connector_token", Text),
-    Column("expires_at", Text, nullable=False),
-    Column("created_at", Text, nullable=False),
-    Column("claimed_at", Text),
-    Column("consumed_at", Text),
-)
-
-
 runtime_workflows = Table(
     "runtime_workflows", metadata,
     Column("user_id", Text, primary_key=True), Column("kind", Text, primary_key=True), Column("id", Text, primary_key=True),

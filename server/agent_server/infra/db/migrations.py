@@ -21,8 +21,8 @@ from sqlalchemy.pool import NullPool
 from agent_server.infra.db.engine import resolve_db_url
 
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_57"
-CURRENT_SCHEMA_VERSION = "2.57"
+CURRENT_SCHEMA_REVISION = "v2_58"
+CURRENT_SCHEMA_VERSION = "2.58"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -594,6 +594,9 @@ def _classify_sync(connection) -> UnversionedDatabase:
                 if revision != "v2_56" or "link_contract" not in connector_columns:
                     return UnversionedDatabase("unknown")
                 revision = "v2_57"
+            # v2_58 moves pairing codes to Redis.
+            if revision == "v2_57" and "pairing_codes" not in tables:
+                revision = "v2_58"
             return UnversionedDatabase("v2", revision)
         if "approvals" in tables:
             if {"presence_instance_id", "presence_connection_id"}.issubset(

@@ -399,6 +399,14 @@ WS /api/v2/connectors/{connectorId}/terminals-v2/{terminalId}/stream
 WS /api/v2/connector/terminals/{terminalId}/relay
 ```
 
+Authenticate the three client streams with a one-time ticket, the same as the
+session WebSocket: `POST /ws-ticket` with `{"scope": {"sessionId": ...}}` for the
+session stream and `{"scope": {"dashboard": true}}` for the connector streams,
+then open `...?ticket=<ticket>`. A ticket works once and expires after a short
+time. Passing the long-lived access token in `?token=` or an `Authorization`
+header still works for now but is deprecated: query strings end up in proxy and
+access logs.
+
 Terminal APIs are local capability APIs, not Agent Runtime Protocol session APIs. They can be cleaned up later as a separate local-capabilities interface pass.
 
 Do not block the runtime protocol migration on terminal endpoint consolidation.
