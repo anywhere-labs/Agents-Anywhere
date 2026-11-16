@@ -2547,11 +2547,7 @@
     "limitations": "页面里写死的 localhost 地址（例如接口地址）在手机上打不开，需要改成相对路径。",
     "errors": {
       "failed": "无法建立预览，请稍后重试。",
-      "port_not_listening": "这个端口已经没有在监听了。",
-      "port_not_local": "只能预览本机地址上的端口。",
-      "preview_limit": "同时打开的预览已达上限，请先停止其他预览。",
       "preview_unavailable": "设备上的预览通道暂时不可用，请稍后重试。",
-      "preview_disabled": "这个服务器没有开启端口预览。",
       "connector_offline": "设备离线，上线后才能预览。"
     }
   },

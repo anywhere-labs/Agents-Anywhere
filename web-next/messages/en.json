@@ -2367,11 +2367,7 @@
     "limitations": "Hard-coded localhost addresses in the page (such as API URLs) won't work on a phone; use relative paths instead.",
     "errors": {
       "failed": "Couldn't set up the preview. Try again later.",
-      "port_not_listening": "Nothing is listening on this port anymore.",
-      "port_not_local": "Only ports on local addresses can be previewed.",
-      "preview_limit": "Too many previews are open. Stop another preview first.",
       "preview_unavailable": "The device's preview tunnel is unavailable. Try again later.",
-      "preview_disabled": "Port preview isn't enabled on this server.",
       "connector_offline": "The device is offline. Preview is available once it's back."
     }
   },

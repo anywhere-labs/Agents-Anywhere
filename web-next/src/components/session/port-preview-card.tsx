@@ -10,14 +10,18 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { isApiError } from "@/lib/api/errors"
+import { runtimeFailureOf, useRuntimeErrorText } from "@/lib/runtime-error-text"
 import { copyText } from "@/lib/clipboard"
 import { previewApi, type PreviewView } from "@/features/preview/api"
 import { localPortUrl, type ListeningPort } from "@/features/preview/session-ports"
 
-/** Preview codes with their own text; everything else falls back to the server message. */
-const PREVIEW_ERROR_CODES = new Set([
-  "port_not_listening", "port_not_local", "preview_limit", "preview_unavailable", "preview_disabled", "connector_offline",
-])
+/**
+ * Preview failures with no runtime-errors entry yet. Contract codes
+ * (`preview_limit_reached`, `preview_port_not_allowed`, …) use runtimeErrors.
+ */
+const PREVIEW_ONLY_ERROR_CODES = new Set(["preview_unavailable", "connector_offline"])
+/** The instance has no preview domain: hide the card instead of failing each click. */
+const PREVIEW_NOT_CONFIGURED = "preview_domain_not_configured"
 
 type PortState = { phase: "idle" } | { phase: "opening" } | { phase: "open"; view: PreviewView } | { phase: "error"; message: string }
 
@@ -41,6 +45,7 @@ export function PortPreviewCard({
   canPreview: boolean
 }) {
   const t = useTranslations("portPreview")
+  const runtimeErrorText = useRuntimeErrorText()
   const [states, setStates] = React.useState<ReadonlyMap<number, PortState>>(new Map())
   const [disabled, setDisabled] = React.useState(false)
   const [shown, setShown] = React.useState<number | null>(null)
@@ -55,9 +60,10 @@ export function PortPreviewCard({
   }, [])
 
   const errorText = React.useCallback((error: unknown) => {
-    if (isApiError(error) && error.code && PREVIEW_ERROR_CODES.has(error.code)) return t(`errors.${error.code}`)
-    return error instanceof Error && error.message ? error.message : t("errors.failed")
-  }, [t])
+    const failure = runtimeFailureOf(error)
+    if (failure.code && PREVIEW_ONLY_ERROR_CODES.has(failure.code)) return t(`errors.${failure.code}`)
+    return runtimeErrorText(failure, t("errors.failed")) ?? t("errors.failed")
+  }, [runtimeErrorText, t])
 
   const open = React.useCallback(async (port: number) => {
     setPort(port, { phase: "opening" })
@@ -66,7 +72,7 @@ export function PortPreviewCard({
       setPort(port, { phase: "open", view })
       setShown(port)
     } catch (error) {
-      if (isApiError(error) && (error.status === 404 || error.code === "preview_disabled")) {
+      if (isApiError(error) && (error.status === 404 || error.code === PREVIEW_NOT_CONFIGURED)) {
         if (mounted.current) setDisabled(true)
         return
       }
