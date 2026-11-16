@@ -6,7 +6,7 @@
 //   · blocked、写锁确实被持有且 Codex App 在运行：打开 `codex://threads/<id>` 让 App 接手，再判定；
 //   · Windows 上仍是「只因写锁 unknown 而 blocked」：这一次改用不带 `codexIpc` 的普通加载，由 Codex 自己裁决写锁；
 //   · 打开仍失败时，错误里带上判定结果，会话引擎据此决定是否走「退出 App」流程；
-// - 退出 App：quit-app.ts 的两步流程，作为本类的伴随层 API（端口里没有承载用户确认的地方）；
+// - 退出 App：quit-app.ts 的两步流程，经端口的 `ownerRelease` 提供；确认在触发它的 AA 会话里进行（会话层）；
 // - 未加载线程的权限：rollout-settings.ts。
 // 伴随层从不自行结束进程，也不在用户没打开会话时操作 App 界面（deeplink 只在打开已有线程时用）。
 
@@ -21,6 +21,9 @@ import type {
   NativeSessionRef,
   OpenOptions,
   OpenTarget,
+  OwnerReleaseOutcome,
+  OwnerReleasePort,
+  OwnerReleasePrepareResult,
   RuntimeCapabilities,
   RuntimeHandle,
   RuntimeSession,
@@ -128,15 +131,41 @@ export class CodexRuntimeHandle implements RuntimeHandle {
   }
 
   capabilities(): RuntimeCapabilities {
-    return this.inner.capabilities()
+    const inner = this.inner.capabilities()
+    return { ...inner, items: [...inner.items.filter(c => c.id !== 'runtime.owner_release'), { id: 'runtime.owner_release', supported: this.quitter.supported }] }
+  }
+
+  /** 端口的「释放外部持有者」：退出占着线程的 Codex App（两步，会话层确认）。 */
+  readonly ownerRelease: OwnerReleasePort = {
+    prepare: async (ref, context) => codexReleasePrepare(await this.quitter.prepare([ref.nativeSessionId]), ref.nativeSessionId, context.sessionId),
+    execute: async (planId, consent) => codexReleaseOutcome(await this.quitter.execute(planId, consent)),
+    discard: planId => this.quitter.discard(planId),
   }
 
   catalogs(): Promise<Catalogs> {
     return this.inner.catalogs()
   }
 
-  listNativeSessions(cursor?: string): Promise<NativeSessionPage> {
-    return this.inner.listNativeSessions(cursor)
+  /** 原生会话目录；还没打开的线程补上 rollout 里记录的权限（端口 `NativeSessionSummary.permission`）。 */
+  async listNativeSessions(cursor?: string): Promise<NativeSessionPage> {
+    const page = await this.inner.listNativeSessions(cursor)
+    const sessions = await mapLimited(page.sessions, PERMISSION_READS, async session => {
+      if (session.permission !== undefined || this.attached.has(session.nativeSessionId)) return session
+      const permission = await this.cachedPermission(session.nativeSessionId, session.updatedAt)
+      return permission !== undefined ? { ...session, permission } : session
+    })
+    return { ...page, sessions }
+  }
+
+  private readonly permissionCache = new Map<string, { readonly updatedAt: string | undefined; readonly permission: string | undefined }>()
+
+  /** 同一线程在 updatedAt 不变时不重复读 rollout。 */
+  private async cachedPermission(threadId: string, updatedAt: string | undefined): Promise<string | undefined> {
+    const cached = this.permissionCache.get(threadId)
+    if (cached !== undefined && updatedAt !== undefined && cached.updatedAt === updatedAt) return cached.permission
+    const permission = await this.nativePermissionSelection(threadId).catch(() => undefined)
+    this.permissionCache.set(threadId, { updatedAt, permission })
+    return permission
   }
 
   readNativeHistory(ref: NativeSessionRef, window: HistoryWindow): Promise<NativeHistoryPage> {
@@ -161,7 +190,7 @@ export class CodexRuntimeHandle implements RuntimeHandle {
           ownership: evidence.inspection.ownership,
           writerLock: evidence.inspection.writerLock?.state ?? null,
           handoff: evidence.handoff ?? null,
-          quitAppAvailable: this.quitter.supported,
+          ownerRelease: this.quitter.supported ? 'available' : 'unavailable',
         },
       })
     } finally {
@@ -277,4 +306,51 @@ export class CodexRuntimeHandle implements RuntimeHandle {
     }
     return session
   }
+}
+
+function codexReleasePrepare(result: QuitPrepareResult, nativeSessionId: string, sessionId: string): OwnerReleasePrepareResult {
+  switch (result.status) {
+    case 'plan': {
+      const { plan } = result
+      return {
+        status: 'plan',
+        plan: {
+          planId: plan.planId, sessionId, nativeSessionId, expiresAt: plan.expiresAt,
+          owner: { displayName: 'Codex App', processCount: plan.processes.length },
+          releasesOtherSessions: plan.releasesAllAppThreads,
+          gracePeriodMs: plan.gracePeriodMs,
+          details: JSON.parse(JSON.stringify({ processes: plan.processes, children: plan.children, threads: plan.threads, platform: plan.platform })),
+        },
+      }
+    }
+    case 'not_needed':
+      return { status: 'not_needed' }
+    case 'app_not_running':
+      return { status: 'unavailable', reason: 'owner_not_running' }
+    default:
+      return { status: 'unavailable', reason: result.status }
+  }
+}
+
+function codexReleaseOutcome(outcome: QuitOutcome): OwnerReleaseOutcome {
+  const status: OwnerReleaseOutcome['status'] = outcome.status === 'completed' ? 'released'
+    : outcome.status === 'unknown_plan' ? 'plan_expired'
+    : outcome.status === 'lock_still_held' ? 'still_held'
+    : outcome.status
+  return { status, details: JSON.parse(JSON.stringify(outcome)) }
+}
+
+/** 同时读几个 rollout：会话列表一页通常几十条，读文件末尾很快，但不要一次打开太多文件。 */
+const PERMISSION_READS = 4
+
+async function mapLimited<T, R>(items: readonly T[], limit: number, map: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let next = 0
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++
+      results[index] = await map(items[index]!)
+    }
+  }))
+  return results
 }

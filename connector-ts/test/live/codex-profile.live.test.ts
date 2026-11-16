@@ -10,7 +10,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import type { RuntimeEvent, RuntimeSession } from '../../src/application/ports/runtime-session.js'
 import { codexClientMessageItemId, codexPermissionSelectionId } from '../../src/domain/identity/index.js'
@@ -41,13 +41,21 @@ function collect(session: RuntimeSession): { events: RuntimeEvent[]; next: (type
   }
 }
 
+// 断言失败时也要停掉 codex-acp：它常驻，不停就会一直持有测试线程。
+const started: Array<{ stop(): Promise<void> }> = []
+
 async function start(prefix: string) {
   const workdir = mkdtempSync(join(tmpdir(), prefix))
   const handle = await codexProvider({ dataDir: workdir }).start({ instanceId: 'live', sessionNamespace: 'live', settings: { cliPath: adapter, codexPath } })
+  started.push(handle)
   return { workdir, handle }
 }
 
 describe.skipIf(!live)('Codex profile against codex-acp', () => {
+  afterEach(async () => {
+    for (const handle of started.splice(0)) await handle.stop().catch(() => undefined)
+  })
+
   it('runs a turn with v2 ids that match the native history', async () => {
     const { workdir, handle } = await start('aa-v3-codex-')
     const session = await handle.open(
