@@ -82,16 +82,24 @@ class SessionDisplayTest {
     }
 
     @Test
-    fun plainEnvelopesKeepTheServerFieldsFirst() {
+    fun plainEnvelopesComeFirstAndServerFieldsFillTheGaps() {
         val device = plain(JSONObject().put("title", "Native").put("cwd", "/device/path"))
+        // The device's envelope wins over the Server's `title`; a rename shows because the Server also writes a
+        // plain displayUser when renaming (follow-up of #759).
         val normal = map(wire(title = "Renamed", cwd = "/server/path", displayDevice = device))
-        assertEquals("Renamed", normal.title)
-        assertEquals("/server/path", normal.cwd)
+        assertEquals("Native", normal.title)
+        assertEquals("/device/path", normal.cwd)
         assertFalse(normal.encryptedDisplay)
-        // They only fill what the Server left empty.
-        val filled = map(wire(displayDevice = device, displayUser = plain(JSONObject().put("title", "Mine"))))
-        assertEquals("Mine", filled.title)
-        assertEquals("/device/path", filled.cwd)
+        assertEquals("Mine", map(wire(title = "Renamed", displayDevice = device, displayUser = plain(JSONObject().put("title", "Mine")))).title)
+        // The Server's plaintext only fills what the envelopes leave empty.
+        val gaps = map(wire(title = "Server title", cwd = "/server/path", displayDevice = plain(JSONObject().put("preview", "p"))))
+        assertEquals("Server title", gaps.title)
+        assertEquals("/server/path", gaps.cwd)
+        // An unknown mode counts as no envelope.
+        val unknown = map(wire(title = "Server title", cwd = "/server/path", displayDevice = JSONObject().put("mode", "future").put("payload", "x")))
+        assertEquals("Server title", unknown.title)
+        assertEquals("/server/path", unknown.cwd)
+        assertFalse(unknown.encryptedDisplay || unknown.titleLocked)
     }
 
     @Test

@@ -14,7 +14,10 @@ import com.agentsanywhere.app.feature.e2ee.SessionDisplayDecryptor
  *   明文 `title` / `cwd` 都来自 Server，一律忽略。
  * - 标题 = `displayUser.title ?? displayDevice.title`；`displayUser` 打不开时不拿设备原生标题顶替。
  *   标题因此缺失、且有信封打不开时 [titleLocked]，显示「加密中」占位；`displayDevice` 打不开时 [cwdLocked]，工作目录为空。
- * - 没有密封信封（普通模式）时，照旧以 Server 的 `title` / `cwd` 为准，`plain` 信封只补空缺；没有信封时与之前完全一样。
+ * - 没有密封信封（普通模式）时：标题 = `displayUser.title ?? displayDevice.title ?? Server 的 title`，
+ *   工作目录 = `displayDevice.cwd ?? Server 的 cwd`，即 `plain` 信封优先、Server 明文只补空缺（契约 #720）。
+ *   不认识的 `mode` 当作没有这个信封；完全没有信封时与之前一样。
+ *   普通模式改名后显示正确的标题，依赖 Server 改名时同时写 `plain` 的 displayUser（随 #759 跟进）。
  */
 internal data class ResolvedSessionDisplay(
     val title: String?,
@@ -41,8 +44,8 @@ internal fun RemoteSession.resolveDisplay(decryptor: SessionDisplayDecryptor): R
         val deviceFields = displayDevice?.plainFields()
         val userFields = displayUser?.plainFields()
         return ResolvedSessionDisplay(
-            title = title?.takeIf { it.isNotBlank() } ?: userFields?.title ?: deviceFields?.title,
-            cwd = cwd?.takeIf { it.isNotBlank() } ?: deviceFields?.cwd,
+            title = userFields?.title ?: deviceFields?.title ?: title?.takeIf { it.isNotBlank() },
+            cwd = deviceFields?.cwd ?: cwd?.takeIf { it.isNotBlank() },
         )
     }
     val device = deviceSealed?.let { decryptor.open(connectorId, id, DisplaySlot.Device, it) }
