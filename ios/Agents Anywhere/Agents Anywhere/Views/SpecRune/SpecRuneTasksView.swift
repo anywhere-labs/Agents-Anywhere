@@ -30,6 +30,12 @@ struct SpecRuneTasksView: View {
     @State private var model: SpecRuneBoardModel?
     /// 导航栈路径（元素是任务 ref）。单栏 push 详情。
     @State private var taskPath: [String] = []
+    /// 归档段默认折叠（与面板一致：进来先看活跃任务）。
+    @State private var archiveExpanded = false
+    /// 已展开的归档月份组。
+    @State private var expandedMonths: Set<String> = []
+    /// 排序方向：默认从晚到早。
+    @State private var sortDescending = true
 
     private var detailAnimation: Animation? {
         reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 1.0)
@@ -49,10 +55,25 @@ struct SpecRuneTasksView: View {
             let board = SpecRuneBoardModel(client: SpecRuneClient(transport: transport), projects: projects)
             model = board
             await board.probeProjects()
-            if let first = board.deviceProjects.first(where: { board.specRuneRepos[$0.workspacePath] == true }) {
-                await board.select(repo: first.workspacePath)
+            await selectFirstProjectIfNeeded(board)
+        }
+        // dashboard 后到：项目列表变了要推给 Model，否则看板永远停在空列表。
+        .onChange(of: projects) { _, newValue in
+            guard let model else { return }
+            model.updateProjects(newValue)
+            Task {
+                await model.probeProjects()
+                await selectFirstProjectIfNeeded(model)
             }
         }
+    }
+
+    /// 还没有选中项目时，自动选第一个确认是 SpecRune 的项目。
+    private func selectFirstProjectIfNeeded(_ model: SpecRuneBoardModel) async {
+        guard model.selectedRepo == nil else { return }
+        guard let first = model.deviceProjects.first(where: { model.specRuneRepos[$0.workspacePath] == true })
+        else { return }
+        await model.select(repo: first.workspacePath)
     }
 
     // MARK: - 三栏
@@ -90,14 +111,14 @@ struct SpecRuneTasksView: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Text(verbatim: model.selectedRepo.flatMap { repo in
-                    model.deviceProjects.first { $0.workspacePath == repo }?.name
-                } ?? "选择项目")
+                // 直接显示当前项目的目录名：不依赖 deviceProjects 反查，
+                // 后者与 selectedRepo 不同步时会退化成「选择项目」。
+                Text(verbatim: model.selectedRepo.map { ($0 as NSString).lastPathComponent } ?? "选择项目")
                     .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
                 AppSymbol("chevron.down", size: 11)
             }
         }
-        .disabled(model.deviceProjects.isEmpty)
     }
 
     // MARK: - 任务列
@@ -127,6 +148,9 @@ struct SpecRuneTasksView: View {
             title: "SpecRune",
             onMenu: onMenu,
             railTrailing: chatRail.map { chatRailButtons($0) } ?? [],
+            // 项目切换放页面尾部（右上角）。试过塞进 railTrailing，但
+            // ChatRailButton 用 AnyView 包住，@Observable 追踪断掉，
+            // 菜单会一直显示旧状态（实测停在「选择项目」）。
             pageTrailing: [AnyView(projectMenu(model))]
         ))
     }
@@ -136,24 +160,67 @@ struct SpecRuneTasksView: View {
     }
 
     private func taskList(_ model: SpecRuneBoardModel, repo: String, list: SpecRuneTaskList) -> some View {
-        List {
-            let active = list.tasks.sorted(by: Self.newestFirst)
-            let archived = list.archive.sorted(by: Self.newestFirst)
-            if active.isEmpty && archived.isEmpty {
+        let activeRows = Self.treeRows(list.tasks, descending: sortDescending)
+        let groups = Self.archiveGroups(list.archive, descending: sortDescending)
+        return List {
+            if list.tasks.isEmpty && list.archive.isEmpty {
                 ContentUnavailableView("暂无任务", appSymbol: "checkmark.circle",
                                        description: Text("这个项目还没有 SpecRune 任务"))
             }
-            if !active.isEmpty {
-                Section("进行中 · \(active.count)") {
-                    ForEach(active) { task in
-                        NavigationLink(value: task.dir) { SpecRuneTaskRow(task: task) }
+            if !list.tasks.isEmpty {
+                Section {
+                    ForEach(activeRows) { row in
+                        NavigationLink(value: row.task.dir) {
+                            SpecRuneTaskRow(task: row.task, depth: row.depth)
+                        }
+                    }
+                } header: {
+                    HStack(spacing: 8) {
+                        Text("工作流 · \(list.tasks.count)")
+                        Spacer()
+                        Button {
+                            sortDescending.toggle()
+                        } label: {
+                            HStack(spacing: 2) {
+                                Text(sortDescending ? "从晚到早" : "从早到晚")
+                                AppSymbol(sortDescending ? "chevron.down" : "chevron.up", size: 9)
+                            }
+                            .font(.caption)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
-            if !archived.isEmpty {
-                Section("已归档 · \(archived.count)") {
-                    ForEach(archived) { task in
-                        NavigationLink(value: task.dir) { SpecRuneTaskRow(task: task) }
+            if !groups.isEmpty {
+                Section {
+                    DisclosureGroup(isExpanded: $archiveExpanded) {
+                        ForEach(groups) { group in
+                            DisclosureGroup(isExpanded: monthBinding(group.month)) {
+                                ForEach(Self.treeRows(group.tasks, descending: sortDescending)) { row in
+                                    NavigationLink(value: row.task.dir) {
+                                        SpecRuneTaskRow(task: row.task, depth: row.depth, isArchived: true)
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Text(verbatim: group.month)
+                                    Spacer(minLength: 4)
+                                    Text("\(group.tasks.count)")
+                                        .font(.caption)
+                                        .foregroundStyle(AppTheme.secondaryText(colorScheme))
+                                }
+                                .font(.subheadline)
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text("归档")
+                            Spacer(minLength: 4)
+                            Text("\(list.archive.count)")
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.secondaryText(colorScheme))
+                        }
+                        .font(.subheadline.weight(.medium))
                     }
                 }
             }
@@ -161,11 +228,67 @@ struct SpecRuneTasksView: View {
         .listStyle(.insetGrouped)
     }
 
-    /// 新任务在前：有 createdAt 按日期倒序，否则保持 CLI 顺序。
-    /// `nonisolated`：排序是纯函数，不该继承 View 的 MainActor 隔离，
-    /// 否则在 `List` 的排序闭包里调用会触发 #ActorIsolatedCall 警告。
-    private nonisolated static func newestFirst(_ lhs: SpecRuneTaskSummary, _ rhs: SpecRuneTaskSummary) -> Bool {
-        (lhs.createdAt ?? "") > (rhs.createdAt ?? "")
+    private func monthBinding(_ month: String) -> Binding<Bool> {
+        Binding(
+            get: { expandedMonths.contains(month) },
+            set: { open in
+                if open { expandedMonths.insert(month) } else { expandedMonths.remove(month) }
+            }
+        )
+    }
+
+    // MARK: - 树与分组（对齐面板：子任务缩进、归档按月分组）
+
+    /// 一行树：任务 + 缩进层级。
+    struct TaskTreeRow: Identifiable {
+        let task: SpecRuneTaskSummary
+        let depth: Int
+        var id: String { task.dir }
+    }
+
+    /// 归档月组。
+    struct ArchiveGroup: Identifiable {
+        let month: String
+        let tasks: [SpecRuneTaskSummary]
+        var id: String { month }
+    }
+
+    /// 按 `parent` 在**同一集合内**收树：父不在集合里就当顶层（跨月归档即如此）。
+    nonisolated static func treeRows(_ tasks: [SpecRuneTaskSummary], descending: Bool) -> [TaskTreeRow] {
+        let present = Set(tasks.map(\.dir))
+        var childrenByParent: [String: [SpecRuneTaskSummary]] = [:]
+        for task in tasks {
+            guard let parent = task.parent, present.contains(parent) else { continue }
+            childrenByParent[parent, default: []].append(task)
+        }
+        let byDate: (SpecRuneTaskSummary, SpecRuneTaskSummary) -> Bool = { lhs, rhs in
+            let l = lhs.createdAt ?? ""
+            let r = rhs.createdAt ?? ""
+            return descending ? l > r : l < r
+        }
+        let roots = tasks
+            .filter { task in
+                guard let parent = task.parent else { return true }
+                return !present.contains(parent)
+            }
+            .sorted(by: byDate)
+
+        var rows: [TaskTreeRow] = []
+        func append(_ task: SpecRuneTaskSummary, depth: Int) {
+            rows.append(TaskTreeRow(task: task, depth: depth))
+            for child in (childrenByParent[task.dir] ?? []).sorted(by: byDate) {
+                append(child, depth: depth + 1)
+            }
+        }
+        for root in roots { append(root, depth: 0) }
+        return rows
+    }
+
+    /// 归档按月分组，月组自身按月份倒序/正序。
+    nonisolated static func archiveGroups(_ archive: [SpecRuneTaskSummary], descending: Bool) -> [ArchiveGroup] {
+        let grouped = Dictionary(grouping: archive) { $0.archiveMonth ?? "未知" }
+        let months = grouped.keys.sorted { descending ? $0 > $1 : $0 < $1 }
+        return months.map { ArchiveGroup(month: $0, tasks: grouped[$0] ?? []) }
     }
 
     // MARK: - 详情列
@@ -197,6 +320,9 @@ struct SpecRuneTasksView: View {
 
 private struct SpecRuneTaskRow: View {
     let task: SpecRuneTaskSummary
+    /// 子任务缩进层级（面板：每层 16pt）。
+    var depth: Int = 0
+    var isArchived: Bool = false
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -241,6 +367,7 @@ private struct SpecRuneTaskRow: View {
             }
         }
         .padding(.vertical, 3)
+        .padding(.leading, CGFloat(depth) * 16)
     }
 }
 
@@ -355,8 +482,74 @@ private struct SpecRuneTaskDetailView: View {
         }
     }
 
+    /// 概览：与 DSH 面板同颗粒度——进度 / 检查清单 / 上下文 / 关联。
     private var overview: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 20) {
+            header
+
+            if let progress = SpecRunePresentation.progress(summary) {
+                sectionBlock(title: "进度 · \(progress.label)", trailing: "\(progress.done) / \(progress.total)") {
+                    ProgressView(value: Double(progress.done), total: Double(progress.total))
+                }
+            }
+
+            // 检查清单：恒显示，空态如实说明（面板同款）。
+            let checks = SpecRunePresentation.checklist(from: detail)
+            sectionBlock(
+                title: "检查清单",
+                trailing: checks.isEmpty ? "无" : "\(checks.filter(\.checked).count)/\(checks.count)"
+            ) {
+                if checks.isEmpty {
+                    emptyNote("无检查清单（implement.md 无勾选项）")
+                } else {
+                    VStack(alignment: .leading, spacing: 7) {
+                        ForEach(Array(checks.enumerated()), id: \.offset) { _, item in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                AppSymbol(item.checked ? "checkmark.square.fill" : "square", size: 14)
+                                    .foregroundStyle(item.checked
+                                        ? AppTheme.secondaryText(colorScheme)
+                                        : AppTheme.secondaryText(colorScheme))
+                                Text(verbatim: item.text)
+                                    .font(.subheadline)
+                                    .foregroundStyle(item.checked ? AppTheme.secondaryText(colorScheme) : .primary)
+                                    .strikethrough(item.checked, color: AppTheme.secondaryText(colorScheme))
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 上下文：文件名 chips，理由放 accessibility（面板用 tooltip）。
+            sectionBlock(title: "上下文", trailing: "\(detail.context.count)") {
+                if detail.context.isEmpty {
+                    emptyNote("无上下文记录")
+                } else {
+                    FlowChips(items: detail.context)
+                }
+            }
+
+            // 关联：规范引用 + 共享规范的任务。
+            sectionBlock(title: "关联", trailing: nil) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("规范引用")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AppTheme.secondaryText(colorScheme))
+                    if let refs = summary.specRefs, !refs.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(refs, id: \.self) { path in
+                                specRow(path)
+                            }
+                        }
+                    } else {
+                        emptyNote("没有规范引用")
+                    }
+                }
+            }
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 Text(SpecRunePresentation.statusLabel(summary.status))
                     .font(.caption.weight(.semibold))
@@ -365,39 +558,53 @@ private struct SpecRuneTaskDetailView: View {
                 if let priority = summary.priority {
                     SpecRunePriorityChip(priority: priority)
                 }
-                Spacer()
-                Text(verbatim: summary.dir)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(AppTheme.secondaryText(colorScheme))
-            }
-            if let progress = SpecRunePresentation.progress(summary) {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text(progress.label).font(.subheadline.weight(.medium))
-                        Spacer()
-                        Text("\(progress.done) / \(progress.total)")
-                            .font(.subheadline.monospacedDigit())
-                            .foregroundStyle(AppTheme.secondaryText(colorScheme))
-                    }
-                    ProgressView(value: Double(progress.done), total: Double(progress.total))
+                if summary.active == true {
+                    Text("当前会话任务")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(Color.accentColor.opacity(0.14), in: .capsule)
                 }
+                Spacer()
             }
-            HStack(spacing: 16) {
+            HStack(spacing: 14) {
                 if let assignee = summary.assignee, !assignee.isEmpty {
                     Label(assignee, appSymbol: "person.crop.circle")
                 }
                 if let created = summary.createdAt {
                     Label(created, appSymbol: "clock")
                 }
+                Text(verbatim: summary.dir)
+                    .font(.caption.monospaced())
             }
             .font(.footnote)
             .foregroundStyle(AppTheme.secondaryText(colorScheme))
-
-            if let refs = summary.specRefs, !refs.isEmpty {
-                Divider()
-                specSection(refs)
-            }
         }
+    }
+
+    /// 一个概览小节：标题 + 右侧计数 + 内容。
+    private func sectionBlock<Content: View>(
+        title: String,
+        trailing: String?,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 6) {
+                Text(verbatim: title).font(.subheadline.weight(.semibold))
+                Spacer(minLength: 4)
+                if let trailing {
+                    Text(verbatim: trailing)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(AppTheme.secondaryText(colorScheme))
+                }
+            }
+            content()
+        }
+    }
+
+    private func emptyNote(_ text: String) -> some View {
+        Text(verbatim: text)
+            .font(.caption)
+            .foregroundStyle(AppTheme.secondaryText(colorScheme))
     }
 
     // MARK: - 规范引用
@@ -482,6 +689,31 @@ private enum SpecRunePresentation {
         }
     }
 
+    /// 从 implement.md 解析 `- [ ]` 勾选项（与面板 parseChecklist 同规则）。
+    static func checklist(from detail: SpecRuneTaskDetail) -> [SpecRuneChecklistItem] {
+        guard let markdown = detail.docs[.implement]?.content else { return [] }
+        var items: [SpecRuneChecklistItem] = []
+        var inFence = false
+        for line in markdown.replacingOccurrences(of: "\r", with: "").split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") {
+                inFence.toggle()
+                continue
+            }
+            if trimmed.hasPrefix("- [") || trimmed.hasPrefix("* [") || trimmed.hasPrefix("+ [") {
+                guard trimmed.count > 5 else { continue }
+                let markIndex = trimmed.index(trimmed.startIndex, offsetBy: 3)
+                let checked = trimmed[markIndex] == "x" || trimmed[markIndex] == "X"
+                let text = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+                items.append(SpecRuneChecklistItem(checked: checked, text: text))
+            } else if !inFence, !items.isEmpty, line.hasPrefix("  "), !trimmed.isEmpty {
+                let last = items.removeLast()
+                items.append(SpecRuneChecklistItem(checked: last.checked, text: last.text + " " + trimmed))
+            }
+        }
+        return items
+    }
+
     /// 进度：有子任务用子任务，否则用 implement 清单（与面板同口径）。
     static func progress(_ task: SpecRuneTaskSummary) -> (done: Int, total: Int, label: String)? {
         let childTotal = task.children?.count ?? 0
@@ -493,6 +725,34 @@ private enum SpecRunePresentation {
             return (task.implDone ?? 0, implTotal, "实施清单")
         }
         return nil
+    }
+}
+
+struct SpecRuneChecklistItem {
+    let checked: Bool
+    let text: String
+}
+
+/// 上下文 chips：横向换行铺开（面板同款的文件名 chip）。
+private struct FlowChips: View {
+    let items: [SpecRuneContextRow]
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        // 用自适应网格代替手写换行：宽度变了自动重排。
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 6, alignment: .leading)],
+                  alignment: .leading, spacing: 6) {
+            ForEach(items) { row in
+                Text(verbatim: row.example ? "（示例）" : (row.file as NSString).lastPathComponent)
+                    .font(.caption.monospaced())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(AppTheme.groupedFill(colorScheme), in: .rect(cornerRadius: 6))
+                    .accessibilityLabel(Text(verbatim: row.reason.isEmpty ? row.file : "\(row.file)：\(row.reason)"))
+            }
+        }
     }
 }
 

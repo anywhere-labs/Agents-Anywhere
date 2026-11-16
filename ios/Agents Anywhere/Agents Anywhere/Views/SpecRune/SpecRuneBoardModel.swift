@@ -34,7 +34,9 @@ final class SpecRuneBoardModel {
 
     private let client: SpecRuneClient
     /// 该设备上的项目（来自 Server 的 project 列表）。
-    let projects: [V2Project]
+    /// 必须可变：Model 在 `.task` 里只建一次，而父视图的项目列表会随
+    /// dashboard 加载完成而更新，用 `let` 会永远停在最初的空数组。
+    private(set) var projects: [V2Project]
 
     /// 选中项目的 workspace 路径。
     var selectedRepo: String?
@@ -52,6 +54,18 @@ final class SpecRuneBoardModel {
     init(client: SpecRuneClient, projects: [V2Project]) {
         self.client = client
         self.projects = projects
+    }
+
+    /// 父视图传入新项目列表时同步（并清掉已消失项目的缓存状态）。
+    func updateProjects(_ newValue: [V2Project]) {
+        guard projects != newValue else { return }
+        projects = newValue
+        let paths = Set(newValue.map(\.workspacePath))
+        specRuneRepos = specRuneRepos.filter { paths.contains($0.key) }
+        probeFailures = probeFailures.filter { paths.contains($0.key) }
+        if let repo = selectedRepo, !paths.contains(repo) {
+            selectedRepo = nil
+        }
     }
 
     /// 只保留本设备上的项目，并按名称排序。

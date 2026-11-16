@@ -71,14 +71,38 @@ public nonisolated struct SpecRuneDoc: Hashable, Sendable {
     }
 }
 
-/// 任务详情：CLI 摘要 + 文档正文。
+/// 上下文清单的一行（`implement.jsonl` / `check.jsonl`）。
+///
+/// `example` 为 true 表示模板占位行（行内含 `_example`），界面显示成「示例」。
+public nonisolated struct SpecRuneContextRow: Hashable, Sendable, Identifiable {
+    public let file: String
+    public let reason: String
+    public let example: Bool
+
+    public var id: String { "\(file)|\(reason)|\(example)" }
+
+    public init(file: String, reason: String, example: Bool) {
+        self.file = file
+        self.reason = reason
+        self.example = example
+    }
+}
+
+/// 任务详情：CLI 摘要 + 文档正文 + 上下文清单。
 public nonisolated struct SpecRuneTaskDetail: Hashable, Sendable {
     public let summary: SpecRuneTaskSummary
     public let docs: [SpecRuneDocKind: SpecRuneDoc]
+    /// implement.jsonl + check.jsonl 合并（与面板概览「上下文」同源）。
+    public let context: [SpecRuneContextRow]
 
-    public init(summary: SpecRuneTaskSummary, docs: [SpecRuneDocKind: SpecRuneDoc]) {
+    public init(
+        summary: SpecRuneTaskSummary,
+        docs: [SpecRuneDocKind: SpecRuneDoc],
+        context: [SpecRuneContextRow] = []
+    ) {
         self.summary = summary
         self.docs = docs
+        self.context = context
     }
 }
 

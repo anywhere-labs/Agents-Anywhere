@@ -127,7 +127,14 @@ public nonisolated struct SpecRuneClient: Sendable {
                 docs[kind] = SpecRuneDoc(content: file.content, truncated: file.truncated)
             }
         }
-        return SpecRuneTaskDetail(summary: summary, docs: docs)
+        // 上下文清单：两份 jsonl 合并，与面板概览「上下文」同源。
+        var context: [SpecRuneContextRow] = []
+        for name in ["implement.jsonl", "check.jsonl"] {
+            if let file = try? await readText(repo: repo, path: "\(taskDir)/\(name)") {
+                context.append(contentsOf: Self.parseContextRows(file.content))
+            }
+        }
+        return SpecRuneTaskDetail(summary: summary, docs: docs, context: context)
     }
 
     // MARK: - 规范
@@ -216,6 +223,29 @@ public nonisolated struct SpecRuneClient: Sendable {
     /// 读仓库内文本文件；不存在返回 nil，连接错误抛出。
     private func readText(repo: String, path: String) async throws -> SpecRuneTextFile? {
         try await transport.readText(repo: repo, path: path)
+    }
+
+    /// 解析 jsonl 上下文清单：坏行跳过，`_example` 标记成示例行。
+    private static func parseContextRows(_ text: String) -> [SpecRuneContextRow] {
+        var rows: [SpecRuneContextRow] = []
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty,
+                  let data = trimmed.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { continue }
+            if object["_example"] != nil {
+                rows.append(SpecRuneContextRow(file: "", reason: "", example: true))
+                continue
+            }
+            let file = ((object["file"] as? String) ?? (object["path"] as? String) ?? "")
+                .trimmingCharacters(in: .whitespaces)
+            guard !file.isEmpty else { continue }
+            let reason = ((object["reason"] as? String) ?? (object["description"] as? String) ?? "")
+                .trimmingCharacters(in: .whitespaces)
+            rows.append(SpecRuneContextRow(file: file, reason: reason, example: false))
+        }
+        return rows
     }
 
     /// 把 CLI 给的绝对任务目录换成相对 repo 的路径。
