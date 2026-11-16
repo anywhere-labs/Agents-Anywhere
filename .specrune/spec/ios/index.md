@@ -8,6 +8,7 @@
 | File | Topic |
 |------|-------|
 | [duo-layout.md](./duo-layout.md) | 折叠屏（iPhone Duo）机型判断与宽屏布局契约 |
+| [markdown-rendering.md](./markdown-rendering.md) | ChatMarkdownView 的三个非默认行为（非流式全文必读） |
 | [textual-vendor.md](./textual-vendor.md) | Textual 库 vendor 状态与上游对照 |
 | [upstream-sync.md](./upstream-sync.md) | 同步上游 main 的冲突处置与合并校验 |
 
@@ -31,6 +32,15 @@
   arrangement Swift 化名、真机部署命令）。
 - 图标一律用 `AppSymbol`（资产映射）：本项目环境 `Image(systemName:)`
   完全不渲染（2026-10-26 两轮实测空白，全仓无先例）。
+- 用 `ChatMarkdownView` 渲染**非流式全文**（文档正文）必须传
+  `blockSpacing: 0, reservesStreamingHeight: false`，否则空白或间距随宽度变。
+  详见 markdown-rendering.md。
+- 经 Connector `shell.exec` 拿数据时记住 stdout 上限 **64 000 字符**：任务多时
+  `task list --json --all` 会超（239 条 ≈ 222 KB），截断后 JSON 非法、整批丢弃。
+  大列表改走 `fs.readDir` 逐目录读文件；小结果才用 CLI。
+- **iOS UI 改动必须在模拟器/真机实跑一次才算验证**：2026-11-16 的 SpecRune 看板
+  有 6 个运行时 bug（空白、rail 消失、解码崩、列表不全）通过了编译和三轮独立
+  代码评审，全部靠实跑才发现。编译通过 ≠ 能看。
 - 改输入行（加/挪按钮）先读 duo-layout.md 的"ComposerLayout 多按钮
   排布契约"——声明顺序即视觉顺序，宽度公式自动适配。
 - 给 struct 加属性后调用点报 "argument 'X' must precede argument 'Y'"：

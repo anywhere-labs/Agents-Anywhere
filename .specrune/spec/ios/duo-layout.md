@@ -143,6 +143,11 @@ glass 容器。往里放自定义控件受两个正交维度约束（2026-10-27 
    size(pt) 显示——裁剪/缩放必须在像素层完成（居中裁方+圆蒙版，
    `UIGraphicsImageRenderer` format.scale=3 防"像素数当 pt"渲染
    巨大），渲染经 onChange 驱动 @State 缓存。
+3. **toolbar 项是 per-page 的**（2026-11-16 实测）：`ChatPageToolbar` 挂在
+   `NavigationStack` **外层**时，`navigationDestination` push 出来的页面不会
+   继承那份 toolbar——右缘 rail 整个消失，只剩返回按钮。每个 destination
+   页面都要自己再挂一次同一个 `ChatPageToolbar`（把修饰器抽成计算属性复用，
+   不要复制签名）。
 
 键盘弹出（detail 高度骤减）时系统把竖排折叠成**点不动的溢出
 "…"**——用 detail 高度阈值（>450）在键盘态主动撤注入，侧栏底栏
