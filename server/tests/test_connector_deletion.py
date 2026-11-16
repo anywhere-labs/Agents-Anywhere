@@ -25,7 +25,6 @@ DEVICE_CHILD_TABLES = (
     db.connector_protocol_capabilities,
     db.connector_terminal_roots,
     db.fs_preview_tokens,
-    db.pairing_codes,
 )
 SESSION_CHILD_TABLES = (db.timeline_items, db.session_active_runs, db.session_shares)
 
@@ -184,18 +183,6 @@ async def add_related_data(store, device, session):
                 connector_id=device,
                 root="/work",
                 path="notes.md",
-                expires_at=now,
-                created_at=now,
-            ),
-        ),
-        (
-            db.pairing_codes,
-            dict(
-                id=device,
-                code=device,
-                status="claimed",
-                connector_id=device,
-                connector_token="pairing-credential",
                 expires_at=now,
                 created_at=now,
             ),

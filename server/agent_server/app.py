@@ -49,6 +49,7 @@ from agent_server.api import (
     tunnel,
 )
 from agent_server.core.api_namespace import API_V2_PREFIX
+from agent_server.core.auth import require_server_secret
 from agent_server.core.process_settings import ProcessSettings
 from agent_server.core.setup_token import SetupToken
 from agent_server.core.utc import utc_now
@@ -67,6 +68,7 @@ from agent_server.infra.model_gateway_probe import (
     GatewayProber,
     private_gateways_allowed,
 )
+from agent_server.infra.pairing_store import PairingStore
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.session_watch import SessionWatchHub
@@ -429,6 +431,7 @@ def create_app(
         retention_days=int(os.environ.get("AGENT_SERVER_USAGE_RETENTION_DAYS", "400")),
     )
     app.state.ws_tickets = ClientWsTicketManager(app.state.redis)
+    app.state.pairing = PairingStore(app.state.redis)
     app.state.setup_token = SetupToken()
     app.state.started_at_iso = utc_now()
     app.state.started_at_monotonic = time.monotonic()
@@ -597,6 +600,7 @@ def create_app(
 
 
 def main() -> None:
+    require_server_secret()
     settings = ProcessSettings.from_environment()
     settings.validate_shared_state(
         redis_configured=bool(os.environ.get("AGENT_SERVER_REDIS_URL"))

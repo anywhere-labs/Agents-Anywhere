@@ -121,11 +121,11 @@ Session content, timelines and uploaded attachments may pass through or be store
 
 ### Deploy with Docker
 
-After cloning the repository, run from its root. Replace the example password and secret first:
+After cloning the repository, run from its root. Replace the example password first. `AGENT_SERVER_SECRET` must be a random value of at least 32 characters or the Server refuses to start; generate it once, keep it, and reuse it on every start, because changing it signs everyone out:
 
 ```bash
 POSTGRES_PASSWORD=replace-with-a-strong-password \
-AGENT_SERVER_SECRET=replace-with-a-long-random-secret \
+AGENT_SERVER_SECRET="$(openssl rand -hex 32)" \
 docker compose -f docker/docker-compose.postgres.yml up --build
 ```
 

@@ -121,11 +121,11 @@ flowchart LR
 
 ### 使用 Docker 部署
 
-克隆仓库后，在根目录运行以下命令，先替换示例密码和密钥：
+克隆仓库后，在根目录运行以下命令，先替换示例密码。`AGENT_SERVER_SECRET` 必须是至少 32 个字符的随机值，否则 Server 拒绝启动；第一次生成后要保存好，之后每次启动都用同一个值，更换会让所有登录失效：
 
 ```bash
 POSTGRES_PASSWORD=replace-with-a-strong-password \
-AGENT_SERVER_SECRET=replace-with-a-long-random-secret \
+AGENT_SERVER_SECRET="$(openssl rand -hex 32)" \
 docker compose -f docker/docker-compose.postgres.yml up --build
 ```
 

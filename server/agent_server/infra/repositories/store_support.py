@@ -41,7 +41,6 @@ from agent_server.infra.db import (
     oauth_accounts as oauth_accounts_t,
     oauth_authorization_codes as oauth_authorization_codes_t,
     oauth_clients as oauth_clients_t,
-    pairing_codes as pairing_codes_t,
     projects as projects_t,
     session_inventory_scans as session_inventory_scans_t,
     sessions as sessions_t,

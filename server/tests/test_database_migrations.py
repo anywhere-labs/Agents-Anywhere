@@ -284,6 +284,7 @@ def test_v2_0_database_upgrades_through_current_revision(fresh_database_url) -> 
         ("v2_54", "v2_55"),
         ("v2_55", "v2_56"),
         ("v2_56", "v2_57"),
+        ("v2_57", "v2_58"),
     ],
 )
 def test_every_adjacent_schema_upgrade(tmp_path,
@@ -1024,9 +1025,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_57() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_57"
-    assert CURRENT_SCHEMA_VERSION == "2.57"
+def test_current_schema_version_is_v2_58() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_58"
+    assert CURRENT_SCHEMA_VERSION == "2.58"
 
 
 def test_v2_57_starts_the_seq_ceiling_above_v2_sequences(fresh_database_url) -> None:

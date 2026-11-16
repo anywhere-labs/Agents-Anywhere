@@ -5,6 +5,12 @@ from agent_server import app
 from agent_server.core.process_settings import ProcessSettings
 
 
+@pytest.fixture(autouse=True)
+def _server_secret(monkeypatch):
+    # ``main()`` refuses to start without a real secret.
+    monkeypatch.setenv("AGENT_SERVER_SECRET", "w" * 40)
+
+
 def test_multi_worker_launcher_and_unique_rpc_identity(monkeypatch):
     monkeypatch.setenv("AGENT_SERVER_WORKERS", "4")
     monkeypatch.setenv("AGENT_SERVER_EVENT_WORKERS", "2")

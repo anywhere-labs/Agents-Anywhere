@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import secrets
-import urllib.parse
 from typing import Any
 
 from fastapi import (
@@ -18,9 +17,7 @@ from agent_server.api.connector_common import (
     require_owned_connector,
     require_owned_online_connector,
 )
-from agent_server.core.auth import (
-    verify_user_access_token,
-)
+from agent_server.api.ws_auth import websocket_user_id
 from agent_server.core.models import (
     RpcResponsePayload,
     TerminalCreateRequest,
@@ -508,14 +505,8 @@ async def connector_terminal_stream_v2(
     terminal_id: str,
     fromSeq: int = Query(default=0, ge=0),
 ) -> None:
-    token = websocket.query_params.get("token")
-    auth_header = websocket.headers.get("authorization")
-    if not token and auth_header and auth_header.startswith("Bearer "):
-        token = auth_header[len("Bearer ") :]
-    if not token:
-        await websocket.close(code=4401)
-        return
-    user_id = verify_user_access_token(urllib.parse.unquote(token))
+    # The user's one-time dashboard ticket (``?ticket=``); the access token in the URL is deprecated.
+    user_id = await websocket_user_id(websocket, ticket_scope="dashboard")
     if user_id is None:
         await websocket.close(code=4401)
         return
@@ -634,14 +625,8 @@ async def connector_terminal_stream(
     terminal_id: str,
     fromSeq: int = Query(default=0, ge=0),
 ) -> None:
-    token = websocket.query_params.get("token")
-    auth_header = websocket.headers.get("authorization")
-    if not token and auth_header and auth_header.startswith("Bearer "):
-        token = auth_header[len("Bearer ") :]
-    if not token:
-        await websocket.close(code=4401)
-        return
-    user_id = verify_user_access_token(urllib.parse.unquote(token))
+    # The user's one-time dashboard ticket (``?ticket=``); the access token in the URL is deprecated.
+    user_id = await websocket_user_id(websocket, ticket_scope="dashboard")
     if user_id is None:
         await websocket.close(code=4401)
         return

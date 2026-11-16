@@ -32,7 +32,7 @@ PostgreSQL-backed compose:
 
 ```bash
 POSTGRES_PASSWORD=change-me \
-AGENT_SERVER_SECRET=change-me-too \
+AGENT_SERVER_SECRET="$(openssl rand -hex 32)" \
 docker compose -f docker/docker-compose.postgres.yml up --build
 ```
 
@@ -75,7 +75,7 @@ docker run -d \
   --name agents-anywhere-server \
   -p 5174:8000 \
   -v agents-anywhere-data:/data \
-  -e AGENT_SERVER_SECRET=change-me-before-production \
+  -e AGENT_SERVER_SECRET="$(openssl rand -hex 32)" \
   -e AGENT_SERVER_DB_URL=postgresql+asyncpg://agents:password@host.docker.internal:5432/agents_anywhere \
   -e AGENT_SERVER_REDIS_URL=redis://host.docker.internal:6379/0 \
   agents-anywhere-server:latest
@@ -106,7 +106,7 @@ statically exported Web console.
 
 ```bash
 POSTGRES_PASSWORD=change-me \
-AGENT_SERVER_SECRET=change-me-too \
+AGENT_SERVER_SECRET="$(openssl rand -hex 32)" \
 docker compose -f docker/docker-compose.postgres.yml up --build
 ```
 
@@ -172,7 +172,7 @@ Publish the Web console on a different host port:
 ```bash
 AGENTS_ANYWHERE_WEB_PORT=18000 \
 POSTGRES_PASSWORD=change-me \
-AGENT_SERVER_SECRET=change-me-too \
+AGENT_SERVER_SECRET="$(openssl rand -hex 32)" \
 docker compose -f docker/docker-compose.postgres.yml up --build
 ```
 
@@ -204,8 +204,13 @@ Per-worker RPC identities remain unique even if an instance-name prefix is set.
 The profile's measured scaling and its single-connection limit are documented
 in [the session performance report](../docs/performance/session-pipeline.md).
 
-Use a non-default `AGENT_SERVER_SECRET` and database password outside local
-development. Put HTTPS in front of the Web service for production.
+`AGENT_SERVER_SECRET` is required: the server refuses to start when it is
+unset, shorter than 32 characters, or one of the example values from older
+docs (`change-me-before-production`, `change-me-too`, `agent-server-dev-secret`).
+Generate it once and keep it; changing it signs everyone out and makes saved
+model keys unreadable. Only `AGENT_SERVER_DEV_MODE=1` allows the development
+default, and never outside local development. Use a non-default database
+password too, and put HTTPS in front of the Web service for production.
 
 PostgreSQL remains the durable source of truth after Timeline writes flush. Redis
 also carries accepted-but-unflushed Timeline upserts and the live sequence head,
