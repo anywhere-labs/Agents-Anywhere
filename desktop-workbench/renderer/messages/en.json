@@ -2769,7 +2769,7 @@
     "preview_domain_not_configured": "Port preview is unavailable because this server has no preview domain configured.",
     "preview_limit_reached": "This device has reached the limit of open previews. Close some first.",
     "preview_port_not_allowed": "Only confirmed ports on this computer (127.0.0.1) can be previewed.",
-    "preview_unavailable": "The preview channel on the device is unavailable. Try again later.",
+    "preview_unavailable": "The device's preview tunnel is unavailable. Try again later.",
     "project_workspace_mismatch": "The project does not belong to the selected device.",
     "recovery_required": "The session needs to be recovered before it can continue.",
     "response_input_conflict": "The answer identity was already used for other content.",

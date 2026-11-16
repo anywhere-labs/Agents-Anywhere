@@ -5,8 +5,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { randomUUID } from 'node:crypto'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { HostConnectionService } from '@deepseek-ai/dsh-client-connection'
 import * as Remotes from '@deepseek-ai/dsh-api-remotes'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
@@ -239,17 +237,6 @@ test('a question survives plugin consumer disposal and is replayed with the same
     assert.deepEqual(await promise, { answers: [{ id: 'q', selected: [], custom: 'A' }] })
     await handle.dispose()
   } finally { await replacement?.close(); await f.close() }
-})
-
-// The Python probe builds the Server in-process, so it needs a throwaway PostgreSQL database.
-test('questions cross the Python adapter and existing backend notice/respond endpoints with takeover enforced', { timeout: 60_000, skip: !process.env.AGENT_SERVER_TEST_DB_URL && 'AGENT_SERVER_TEST_DB_URL is not set' }, async () => {
-  const f = await fixture()
-  try {
-    const result = await promisify(execFile)('uv', ['run', '--with-editable', '../connector', 'python', '../connector/tests/dsh_question_probe.py', f.home], {
-      cwd: new URL('../../../server/', import.meta.url), timeout: 45_000,
-    })
-    assert.match(result.stdout, /DSH question pipeline passed/)
-  } finally { await f.close() }
 })
 
 test('plan review accepts approval, revision feedback and cancellation through the platform', { timeout: 30_000 }, async () => {

@@ -25369,7 +25369,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The preview channel on the device is unavailable. Try again later."
+            "value": "The device's preview tunnel is unavailable. Try again later."
           }
         },
         "zh-Hans": {
