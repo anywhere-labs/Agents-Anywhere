@@ -260,3 +260,37 @@ def test_scrub_for_e2ee_drops_results_and_error_text() -> None:
     )
     assert scrubbed["r"] is None and scrubbed["e"] == {"code": "x", "message": "", "retryable": False}
     assert dl.scrub_for_e2ee("usage.report", {"counters": []}) == {"counters": []}
+
+
+def test_e2ee_subscriptions_name_their_target() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from agent_server.core import e2ee
+
+    assert e2ee.TunnelSubscribe(id="s1", sessionId="sess").stream == "session"
+    assert e2ee.TunnelSubscribe(id="s2", stream="terminal", terminalId="t1").terminalId == "t1"
+    with pytest.raises(ValidationError):
+        e2ee.TunnelSubscribe(id="s3", stream="terminal", sessionId="sess")
+    with pytest.raises(ValidationError):
+        e2ee.TunnelSubscribe(id="s4")
+
+
+def test_e2ee_attachment_keys_and_file_chunks() -> None:
+    import hashlib
+
+    import pytest
+    from pydantic import ValidationError
+
+    from agent_server.core import e2ee
+
+    digest = hashlib.sha256(b"hello").hexdigest()
+    key = e2ee.SealedAttachmentKey(fileId="f1", key=e2ee.b64url(b"\x01" * 32), size=5, sha256=digest)
+    # Segments are bound to the plaintext digest (the fileId does not exist yet when they are sealed).
+    assert e2ee.sealed_segment_ad("attachment", key.sha256, 0, True).startswith(b"aa-e2ee/1.0\0attachment\0" + digest.encode())
+    with pytest.raises(ValidationError):
+        e2ee.SealedAttachmentKey(fileId="f1", key=key.key, size=5, sha256=digest.upper())
+    chunk = e2ee.TunnelFileChunk(data="aGVsbG8=", offset=0, size=5, eof=True)
+    assert chunk.encoding == "base64"
+    assert e2ee.FILE_CHUNK_MAX_BYTES == 8 * 1024 * 1024
+    assert e2ee.SEALED_UPLOAD_HEADER == "x-aa-sealed"

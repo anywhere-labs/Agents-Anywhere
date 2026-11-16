@@ -133,7 +133,7 @@
       "model": "TunnelSubscribe",
       "path": "schemas/tunnel-subscribe.schema.json",
       "pydanticMode": "validation",
-      "sha256": "cf860564cc2ae1b2bdc43870b2414729c9ff3d13eaeda5cf4651fd687068aa40",
+      "sha256": "8f5a76d6bace8b1864332e3942570c3ca347c6c2c36984d81ed4df03f2f759f1",
       "slug": "tunnel-subscribe"
     },
     {
@@ -157,8 +157,16 @@
       "model": "SealedAttachmentKey",
       "path": "schemas/sealed-attachment-key.schema.json",
       "pydanticMode": "validation",
-      "sha256": "72810a9c78228cfa3bbf9b4260078f084ddfd5a2e1f1510c36cc830ce4baf4f6",
+      "sha256": "50161730c1ffaa09ffdab4d61ba586970f635404649f4a9e926591acca918da6",
       "slug": "sealed-attachment-key"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "TunnelFileChunk",
+      "path": "schemas/tunnel-file-chunk.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "aabe237fe8debec593192d0e04e233031eaa551c168c5845d0edaece40da5f4e",
+      "slug": "tunnel-file-chunk"
     },
     {
       "direction": "ingress",

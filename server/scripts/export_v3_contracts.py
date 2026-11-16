@@ -125,6 +125,7 @@ E2EE = Contract(
         _a("tunnel-unsubscribe", e2ee.TunnelUnsubscribe),
         _a("tunnel-event", e2ee.TunnelEvent),
         _a("sealed-attachment-key", e2ee.SealedAttachmentKey),
+        _a("tunnel-file-chunk", e2ee.TunnelFileChunk),
         _a("command-registration", e2ee.CommandRegistration, "ingress"),
     ),
 )
