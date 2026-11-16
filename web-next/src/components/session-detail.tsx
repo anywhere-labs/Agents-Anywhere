@@ -1,6 +1,6 @@
 "use client"
 
-import { useRuntimeErrorText } from "@/lib/runtime-error-text"
+import { runtimeFailureOf, useRuntimeErrorText } from "@/lib/runtime-error-text"
 import { useSessionGoal } from "@/features/goals/use-session-goal"
 import { GoalPanel } from "@/components/session/goal-panel"
 import { useSessionPlanning } from "@/features/planning/use-session-planning"
@@ -299,6 +299,11 @@ function SessionDetailVisit({
   const [switchTrace] = React.useState(() => traceSessionSwitch(sessionId, Boolean(cached || state && remote.initialLoadComplete)))
   const planning = useSessionPlanning(token, sessionId)
   const runtimeErrorText = useRuntimeErrorText()
+  // Known codes (device offline, outcome unknown, encryption required…) read in the UI language.
+  const failureText = React.useCallback(
+    (error: unknown, fallback: string) => runtimeErrorText(runtimeFailureOf(error), fallback) ?? fallback,
+    [runtimeErrorText],
+  )
   const planReader = usePlanReader(sessionId)
   const [sending, setSending] = React.useState(false)
   const [interrupting, setInterrupting] = React.useState(false)
@@ -520,7 +525,7 @@ function SessionDetailVisit({
         )
       }
       if (selectionChanges.revision === selectionUpdateSeq) {
-        toast.error(err instanceof Error ? err.message : tSession("updateSelectionsFailed"))
+        toast.error(failureText(err, tSession("updateSelectionsFailed")))
       }
       return selectionChanges.revision !== selectionUpdateSeq
     }
@@ -708,12 +713,12 @@ function SessionDetailVisit({
       })
     } catch (err) {
       if (!activeVisitRef.current) return
-      if (!controller.invalidateAccess(err)) toast.error(err instanceof Error ? err.message : tSession("loadFailed"))
+      if (!controller.invalidateAccess(err)) toast.error(failureText(err, tSession("loadFailed")))
     } finally {
       loadingOlderRef.current = false
       if (activeVisitRef.current) setLoadingOlder(false)
     }
-  }, [controller, loadingOlder, sessionId, setState, state?.hasMore, state?.items, state?.timelineResetVersion, tSession, token])
+  }, [controller, loadingOlder, sessionId, setState, state?.hasMore, state?.items, state?.timelineResetVersion, tSession, token, failureText])
 
   const handleTimelineScroll = React.useCallback(() => {
     const viewport = timelineRef.current
@@ -757,7 +762,7 @@ function SessionDetailVisit({
         // Selections are written when changed; only wait for a pending write.
         await selectionChanges.writes.get(session.id)
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : tSession("updateSelectionsFailed")); return false
+        toast.error(failureText(error, tSession("updateSelectionsFailed"))); return false
       }
       if (planIntent.command === "submit_task") timelineFollowRef.current?.resume()
       return planning.execute({ ...planIntent, attachments: uploaded })
@@ -784,7 +789,7 @@ function SessionDetailVisit({
         else timelineFollowRef.current?.resume()
         return true
       } catch (err) {
-        toast.error(err instanceof Error && err.message ? err.message : tSession("sendFailed"))
+        toast.error(failureText(err, tSession("sendFailed")))
         return false
       } finally {
         setSending(false)
@@ -843,9 +848,10 @@ function SessionDetailVisit({
       const nextSourceErrorCode = sessionSourceErrorCode(err)
       const message = nextSourceErrorCode
         ? sourceErrorMessage(nextSourceErrorCode, tSession, runtimeLabel(sessionRuntimeType(session)))
-        : err instanceof Error
-          ? err.message
-          : tSession("sendFailed")
+        : failureText(err, tSession("sendFailed"))
+      // The message may have arrived after all: read the gap once so a delivered
+      // message replaces its failed placeholder; never resend automatically.
+      if (isApiError(err) && err.code === "command_outcome_unknown") controller.catchUp()
       markOptimisticMessageFailed(clientMessageId, message)
       setState((current) => {
         if (!current) return current
@@ -875,7 +881,7 @@ function SessionDetailVisit({
         onSessionUpdated?.(nextSession)
         setSourceErrorCode(nextSourceErrorCode)
       } else {
-        toast.error(err instanceof Error ? err.message : tSession("sendFailed"))
+        toast.error(failureText(err, tSession("sendFailed")))
       }
       return false
     } finally {
@@ -907,7 +913,7 @@ function SessionDetailVisit({
         interactionTakeover.resolve(result.session.takeover)
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : tSession("updateTakeoverFailed"))
+      toast.error(failureText(err, tSession("updateTakeoverFailed")))
     } finally {
       setTakeoverBusy(false)
     }
@@ -919,7 +925,7 @@ function SessionDetailVisit({
     try {
       await dashboardApi.interruptSession(token, session.id)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : tSession("interruptFailed"))
+      toast.error(failureText(err, tSession("interruptFailed")))
     } finally {
       setInterrupting(false)
     }
@@ -987,12 +993,12 @@ function SessionDetailVisit({
       }
       toast.error(response.error?.message || tSession("resolveInteractionFailed"))
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : tSession("resolveInteractionFailed"))
+      toast.error(failureText(err, tSession("resolveInteractionFailed")))
     } finally {
       setResolvingNoticeId(null)
       setResolvingActionId(null)
     }
-  }, [removeNoticeFromState, resolvingNoticeId, session, tSession, token])
+  }, [removeNoticeFromState, resolvingNoticeId, session, tSession, token, failureText])
 
   React.useLayoutEffect(() => {
     const pendingPrependScrollRestore = pendingPrependScrollRestoreRef.current

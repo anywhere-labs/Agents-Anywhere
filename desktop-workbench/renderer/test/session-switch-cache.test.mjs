@@ -22,7 +22,7 @@ const sourceHooks = registerSource()
 const passthrough = names => `import * as React from 'react'; ${names.map(name => `export const ${name}=({children})=>React.createElement('div',null,children);`).join("\n")}`
 const stubs = {
   "components/workspace-context.tsx": "export const useWorkspace=()=>globalThis.qaWorkspace",
-  "lib/runtime-error-text.ts": "export const useRuntimeErrorText=()=>()=>''",
+  "lib/runtime-error-text.ts": "export const runtimeFailureOf=(e)=>({message:e?.message}); const text=(f,fallback)=>f?.message||fallback; export const useRuntimeErrorText=()=>text",
   "features/planning/use-session-planning.ts": "export const useSessionPlanning=()=>globalThis.qaPlanning",
   "features/goals/use-session-goal.ts": "export const useSessionGoal=()=>globalThis.qaGoals",
   "components/session/planning-panel.tsx": "export const usePlanReader=()=>({document:null,open(){}}); export const getPlanReviewTarget=()=>null; export const PlanningPanel=()=>null; export const PlanningReviewPanel=()=>null; export const PlanningReader=()=>null; export const PlanTimelineEntry=()=>null",

@@ -606,6 +606,10 @@ export function createSessionController(options: SessionControllerOptions) {
       }
     },
     updateState,
+    /** Read the gap from this session's cursor, e.g. after a command whose outcome is unknown. */
+    catchUp() {
+      requestCatchup()
+    },
     invalidateAccess(error: unknown): boolean {
       if (!isApiError(error) || (error.status !== 403 && error.status !== 404)) return false
       recordError("access", error)
