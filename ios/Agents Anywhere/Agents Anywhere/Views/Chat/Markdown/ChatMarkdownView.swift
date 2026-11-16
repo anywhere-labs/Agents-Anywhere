@@ -49,8 +49,11 @@ struct ChatMarkdownView: View {
             }
             // 不要因取消就丢弃结果：视图身份稳定时 .task 只跑一次，那一次
             // 若被取消（布局重建、页面切换），blocks 会永远是空数组，表现为
-            // 整块正文空白且再也不恢复。过期结果由下面的 blocks != next 兜住。
+            // 整块正文空白且再也不恢复。
             guard case .success(let parsed) = result else { return }
+            // 代价是取消的任务也可能晚于新任务完成。此时旧结果不能覆盖新结果：
+            // 同一段文本的块数只会增长，块数更少说明是更早的旧快照。
+            guard parsed.blocks.count >= blocks.count else { return }
             parseState = parsed.state
             let next = parsed.blocks
             guard blocks != next else { return }

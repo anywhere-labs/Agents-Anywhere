@@ -20,6 +20,11 @@ let package = Package(
         .target(
             name: "SpecRuneKit",
             swiftSettings: [.defaultIsolation(MainActor.self)]
+        ),
+        .testTarget(
+            name: "SpecRuneKitTests",
+            dependencies: ["SpecRuneKit"],
+            swiftSettings: [.defaultIsolation(MainActor.self)]
         )
     ],
     swiftLanguageModes: [.v5]

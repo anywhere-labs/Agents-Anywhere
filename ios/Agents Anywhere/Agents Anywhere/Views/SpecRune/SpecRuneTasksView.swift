@@ -179,8 +179,8 @@ struct SpecRuneTasksView: View {
     }
 
     private func taskList(_ model: SpecRuneBoardModel, repo: String, list: SpecRuneTaskList) -> some View {
-        let activeRows = Self.treeRows(list.tasks, descending: sortDescending)
-        let groups = Self.archiveGroups(list.archive, descending: sortDescending)
+        let activeRows = SpecRuneTaskTree.rows(list.tasks, descending: sortDescending)
+        let groups = SpecRuneTaskTree.archiveMonths(list.archive, descending: sortDescending)
         return List {
             if list.tasks.isEmpty && list.archive.isEmpty {
                 ContentUnavailableView("暂无任务", appSymbol: "checkmark.circle",
@@ -215,7 +215,7 @@ struct SpecRuneTasksView: View {
                     DisclosureGroup(isExpanded: $archiveExpanded) {
                         ForEach(groups) { group in
                             DisclosureGroup(isExpanded: monthBinding(group.month)) {
-                                ForEach(Self.treeRows(group.tasks, descending: sortDescending)) { row in
+                                ForEach(SpecRuneTaskTree.rows(group.tasks, descending: sortDescending)) { row in
                                     NavigationLink(value: row.task.dir) {
                                         SpecRuneTaskRow(task: row.task, depth: row.depth, isArchived: true)
                                     }
@@ -271,60 +271,6 @@ struct SpecRuneTasksView: View {
                 if open { expandedMonths.insert(month) } else { expandedMonths.remove(month) }
             }
         )
-    }
-
-    // MARK: - 树与分组（对齐面板：子任务缩进、归档按月分组）
-
-    /// 一行树：任务 + 缩进层级。
-    struct TaskTreeRow: Identifiable {
-        let task: SpecRuneTaskSummary
-        let depth: Int
-        var id: String { task.dir }
-    }
-
-    /// 归档月组。
-    struct ArchiveGroup: Identifiable {
-        let month: String
-        let tasks: [SpecRuneTaskSummary]
-        var id: String { month }
-    }
-
-    /// 按 `parent` 在**同一集合内**收树：父不在集合里就当顶层（跨月归档即如此）。
-    nonisolated static func treeRows(_ tasks: [SpecRuneTaskSummary], descending: Bool) -> [TaskTreeRow] {
-        let present = Set(tasks.map(\.dir))
-        var childrenByParent: [String: [SpecRuneTaskSummary]] = [:]
-        for task in tasks {
-            guard let parent = task.parent, present.contains(parent) else { continue }
-            childrenByParent[parent, default: []].append(task)
-        }
-        let byDate: (SpecRuneTaskSummary, SpecRuneTaskSummary) -> Bool = { lhs, rhs in
-            let l = lhs.createdAt ?? ""
-            let r = rhs.createdAt ?? ""
-            return descending ? l > r : l < r
-        }
-        let roots = tasks
-            .filter { task in
-                guard let parent = task.parent else { return true }
-                return !present.contains(parent)
-            }
-            .sorted(by: byDate)
-
-        var rows: [TaskTreeRow] = []
-        func append(_ task: SpecRuneTaskSummary, depth: Int) {
-            rows.append(TaskTreeRow(task: task, depth: depth))
-            for child in (childrenByParent[task.dir] ?? []).sorted(by: byDate) {
-                append(child, depth: depth + 1)
-            }
-        }
-        for root in roots { append(root, depth: 0) }
-        return rows
-    }
-
-    /// 归档按月分组，月组自身按月份倒序/正序。
-    nonisolated static func archiveGroups(_ archive: [SpecRuneTaskSummary], descending: Bool) -> [ArchiveGroup] {
-        let grouped = Dictionary(grouping: archive) { $0.archiveMonth ?? "未知" }
-        let months = grouped.keys.sorted { descending ? $0 > $1 : $0 < $1 }
-        return months.map { ArchiveGroup(month: $0, tasks: grouped[$0] ?? []) }
     }
 
     // MARK: - 详情列

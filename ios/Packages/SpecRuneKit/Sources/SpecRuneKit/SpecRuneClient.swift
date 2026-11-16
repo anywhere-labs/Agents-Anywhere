@@ -301,7 +301,7 @@ public nonisolated struct SpecRuneClient: Sendable {
     }
 
     /// 解析 jsonl 上下文清单：坏行跳过，`_example` 标记成示例行。
-    private static func parseContextRows(_ text: String) -> [SpecRuneContextRow] {
+    static func parseContextRows(_ text: String) -> [SpecRuneContextRow] {
         var rows: [SpecRuneContextRow] = []
         for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
