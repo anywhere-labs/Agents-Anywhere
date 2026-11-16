@@ -1435,6 +1435,7 @@
       "submit": "Sign in",
       "titlePrefix": "Sign in to",
       "invalidEmail": "Enter an email address.",
+      "keepOffDevice": "Don't keep session content on this device (shared computer)",
       "userPlaceholder": "name@example.com",
       "signingIn": "Signing in...",
       "submitWithEnter": "Sign in ↵",

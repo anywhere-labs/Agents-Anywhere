@@ -78,7 +78,7 @@ import { stripInjectedAttachmentMentions } from "@/features/dashboard/attachment
 import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
 import { useWorkspace } from "@/components/workspace-context"
 import { INITIAL_TIMELINE_LIMIT, loadInitialSessionState, effectiveRuntimeStatus, sessionHistoryUnavailable } from "@/components/session/session-remote-state"
-import type { SessionRemoteState, SessionStateCache } from "@/components/session/session-state-cache"
+import type { CachedSessionState, SessionRemoteState, SessionStateCache } from "@/components/session/session-state-cache"
 
 type SessionDetailProps = {
   token: string
@@ -233,13 +233,35 @@ function writeComposerDraft(sessionId: string, value: string) {
   }
 }
 
+const SESSION_DISK_SAVE_INTERVAL_MS = 8000
+
 export function SessionDetail(props: SessionDetailProps) {
-  const { sessionStateCache } = useWorkspace()
+  const { sessionStateCache, sessionControllers } = useWorkspace()
+  const visitKey = JSON.stringify([sessionStateCache.scope, props.sessionId])
+  // A session cached on disk is read before the visit starts, so it renders
+  // at once and recovers from its own cursor instead of a fresh snapshot.
+  const [loadedKey, setLoadedKey] = React.useState<string | null>(null)
+  const ready = loadedKey === visitKey || !sessionStateCache.persistent ||
+    sessionStateCache.has(props.sessionId) || sessionControllers.has(props.sessionId)
+  React.useEffect(() => {
+    if (ready) return
+    let current = true
+    void sessionStateCache.load(props.sessionId).finally(() => { if (current) setLoadedKey(visitKey) })
+    return () => { current = false }
+  }, [ready, sessionStateCache, props.sessionId, visitKey])
+  if (!ready) return <SessionSkeleton />
   return <SessionDetailVisit
-    key={JSON.stringify([sessionStateCache.scope, props.sessionId])}
+    key={visitKey}
     {...props}
     cache={sessionStateCache}
   />
+}
+
+/** A cached visit with the list's newer view of the session (status, presence, title). */
+function withFreshSession(cached: CachedSessionState | null, session: SessionView | null): CachedSessionState | null {
+  if (!cached || !session || session.id !== cached.state.session.id ||
+      session.updatedSeq <= cached.state.session.updatedSeq) return cached
+  return { ...cached, state: { ...cached.state, session } }
 }
 
 function SessionDetailVisit({
@@ -275,7 +297,7 @@ function SessionDetailVisit({
     sessionControllers,
   } = useWorkspace()
   const initialOptimisticState = getOptimisticSessionState(sessionId)
-  const [cached] = React.useState(() => cache.get(sessionId))
+  const [cached] = React.useState(() => withFreshSession(cache.get(sessionId), fallbackSession))
   const previousControllerRef = React.useRef<SessionController | null>(null)
   const controller = React.useMemo(() => sessionControllers.get(sessionId, () => {
     const previous = previousControllerRef.current?.getSnapshot()
@@ -359,6 +381,37 @@ function SessionDetailVisit({
       scrollTop: viewport?.scrollTop ?? 0,
       following: timelineFollowRef.current?.isFollowing() ?? true,
     })
+  }, [cache, controller, sessionId])
+  // Disk copies follow a long visit too, so a reload or crash keeps recent
+  // content. Writes are throttled; leaving the page writes immediately.
+  React.useEffect(() => {
+    if (!cache.persistent) return
+    let timer: number | null = null
+    const save = () => {
+      if (timer !== null) window.clearTimeout(timer)
+      timer = null
+      const retained = controller.getSnapshot()
+      if (!retained.state || retained.invalidated || !retained.hasSnapshot) return
+      void cache.save(sessionId, {
+        ...latestCacheStateRef.current,
+        state: retained.state,
+        hasSnapshot: retained.hasSnapshot,
+        scrollTop: timelineRef.current?.scrollTop ?? 0,
+        following: timelineFollowRef.current?.isFollowing() ?? true,
+      })
+    }
+    const unsubscribe = controller.subscribe(() => {
+      if (timer === null) timer = window.setTimeout(save, SESSION_DISK_SAVE_INTERVAL_MS)
+    })
+    const saveWhenHidden = () => { if (document.visibilityState === "hidden") save() }
+    window.addEventListener("pagehide", save)
+    document.addEventListener("visibilitychange", saveWhenHidden)
+    return () => {
+      unsubscribe()
+      if (timer !== null) window.clearTimeout(timer)
+      window.removeEventListener("pagehide", save)
+      document.removeEventListener("visibilitychange", saveWhenHidden)
+    }
   }, [cache, controller, sessionId])
 
   const session = state?.session ?? fallbackSession

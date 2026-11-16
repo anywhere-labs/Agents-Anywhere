@@ -11,6 +11,8 @@ import {
 import type { AuthMe, OAuthFinalizePayload, StoredSession } from "@/features/auth/types"
 import { useTranslations } from "next-intl"
 import { authFlowHash, clearAuthFlow, rememberAuthFlow, takeAuthFlow } from "@/features/auth/continuation"
+import { forgetSessionDiskCache } from "@/components/session/session-disk-store"
+import { sessionCacheScope } from "@/components/session/session-state-cache"
 
 export type AuthScreen =
   | "bootstrap"
@@ -400,7 +402,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return currentUser
   }, [session?.accessToken])
 
+  const signOutUserRef = React.useRef<string | null>(null)
+  signOutUserRef.current = session?.userId ?? null
   const signOut = React.useCallback(() => {
+    // Signing out forgets this account's cached session content on this device.
+    if (signOutUserRef.current)
+      void forgetSessionDiskCache(sessionCacheScope(process.env.NEXT_PUBLIC_AGENTS_ANYWHERE_API ?? "", signOutUserRef.current))
     clearAuthFlow(window.sessionStorage)
     clearStoredSession()
     setSession(null)

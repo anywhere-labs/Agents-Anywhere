@@ -10,6 +10,7 @@ import { AuthShell } from "./auth-shell"
 import { useAuth } from "./auth-context"
 import { PrivacyNotice } from "./privacy-notice"
 import { useTranslations } from "next-intl"
+import { forgetSessionDiskCache, sessionDiskCacheAllowed, setSessionDiskCacheAllowed } from "@/components/session/session-disk-store"
 
 export function LoginScreen() {
   const { navigate, login, loading, error, oauthEnabled, oauthProviderLabel, registrationOpen, passwordResetEnabled, startOAuth } = useAuth()
@@ -18,6 +19,13 @@ export function LoginScreen() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const emailInvalid = Boolean(email && !isValidEmail(email))
+  // Shared computers: keep session content in memory only.
+  const [keepOffDevice, setKeepOffDevice] = useState(() => typeof window !== "undefined" && !sessionDiskCacheAllowed())
+  const changeKeepOffDevice = (value: boolean) => {
+    setKeepOffDevice(value)
+    setSessionDiskCacheAllowed(!value)
+    if (value) void forgetSessionDiskCache(null)
+  }
 
   const submit = async () => {
     if (loading || !isValidEmail(email) || !password) return
@@ -83,6 +91,19 @@ export function LoginScreen() {
                 </InputGroupButton>
               </InputGroupAddon>
             </InputGroup>
+          </Field>
+
+          <Field orientation="horizontal">
+            <input
+              id="login-keep-off-device"
+              type="checkbox"
+              className="size-4 shrink-0 accent-primary"
+              checked={keepOffDevice}
+              onChange={(event) => changeKeepOffDevice(event.currentTarget.checked)}
+            />
+            <Label htmlFor="login-keep-off-device" className="font-normal text-muted-foreground">
+              {t("login.keepOffDevice")}
+            </Label>
           </Field>
 
           <Button

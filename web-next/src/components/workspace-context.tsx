@@ -11,7 +11,8 @@ import {
   type SessionView as DemoSessionView,
 } from "@/lib/demo-api"
 import { useAuth } from "@/components/auth/auth-context"
-import { createSessionStateCache, type SessionStateCache } from "@/components/session/session-state-cache"
+import { createSessionStateCache, sessionCacheScope, type SessionStateCache } from "@/components/session/session-state-cache"
+import { browserSessionStore } from "@/components/session/session-disk-store"
 import { createSessionControllerStore, type SessionControllerStore } from "@/components/session/session-controller-store"
 import { markSessionNavigation } from "@/components/session/session-switch-performance"
 import {
@@ -459,8 +460,17 @@ export function useOptionalWorkspace(): WorkspaceState | null {
 
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const { session: authSession } = useAuth()
-  const cacheScope = JSON.stringify([process.env.NEXT_PUBLIC_AGENTS_ANYWHERE_API ?? "", authSession?.userId ?? null])
-  const sessionStateCache = React.useMemo(() => createSessionStateCache(cacheScope), [cacheScope])
+  const cacheUserId = authSession?.userId ?? null
+  const cacheScope = sessionCacheScope(process.env.NEXT_PUBLIC_AGENTS_ANYWHERE_API ?? "", cacheUserId)
+  // Signed-in sessions persist to disk unless this browser opted out ("不在此设备保存").
+  const sessionStateCache = React.useMemo(
+    () => createSessionStateCache(cacheScope, { persistent: cacheUserId ? browserSessionStore() : null }),
+    [cacheScope, cacheUserId],
+  )
+  React.useEffect(() => {
+    // Switching accounts forgets what the previous account cached here.
+    if (cacheUserId) void browserSessionStore()?.retainOnly(cacheScope)
+  }, [cacheScope, cacheUserId])
   const sessionControllers = React.useMemo(() => createSessionControllerStore(sessionStateCache), [sessionStateCache])
   React.useEffect(() => {
     sessionControllers.activate()

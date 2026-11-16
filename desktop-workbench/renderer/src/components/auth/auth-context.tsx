@@ -12,6 +12,8 @@ import { normalizeAuthMe, normalizeDesktopOAuthMe } from "@/features/auth/normal
 import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
 import { getDesktopServerConnection, setDesktopServerConnection } from "@/features/desktop/server-connection"
 import { useTranslations } from "next-intl"
+import { forgetSessionDiskCache } from "@/components/session/session-disk-store"
+import { sessionCacheScope } from "@/components/session/session-state-cache"
 
 export type AuthScreen = "login" | "signed-out" | "preview" | "onboarding" | "app"
 
@@ -268,7 +270,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return currentUser
   }, [session])
 
+  const signOutSessionRef = React.useRef<StoredSession | null>(null)
+  signOutSessionRef.current = session
   const signOut = React.useCallback(() => {
+    // Signing out forgets this account's cached session content on this computer.
+    const signedIn = signOutSessionRef.current
+    if (signedIn?.userId) void forgetSessionDiskCache(sessionCacheScope(signedIn.serverUrl ?? "", signedIn.userId))
     clearStoredSession()
     setSession(null)
     setMe(null)

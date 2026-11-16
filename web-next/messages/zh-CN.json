@@ -1435,6 +1435,7 @@
       "submit": "登录",
       "titlePrefix": "登录",
       "invalidEmail": "请输入邮箱",
+      "keepOffDevice": "不在此设备保存会话内容（共享电脑）",
       "userPlaceholder": "name@example.com",
       "signingIn": "正在登录...",
       "submitWithEnter": "登录 ↵",

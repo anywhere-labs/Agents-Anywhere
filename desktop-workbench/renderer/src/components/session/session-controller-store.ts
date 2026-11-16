@@ -35,6 +35,9 @@ export function createSessionControllerStore(cache: SessionStateCache) {
   }
 
   return {
+    has(id: string): boolean {
+      return entries.has(id)
+    },
     get(id: string, create: () => SessionController, token?: string): SessionController {
       const existing = entries.get(id)
       if (existing && existing.token === token && !existing.controller.getSnapshot().invalidated) return existing.controller
