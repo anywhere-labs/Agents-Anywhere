@@ -181,8 +181,7 @@ describe('encrypted mode on the device: the client API inside the channel', () =
     expect(created.status).toBe(200)
     const session = (created.body as { session: { id: string; connectorId: string; runtime: string } }).session
     expect(session).toMatchObject({ connectorId: DEVICE, runtime: 'codex' })
-    await settle()
-    expect(sessions[0]!.calls[0]).toMatchObject({ method: 'prompt', input: { text: 'hello' } })
+    await expect.poll(() => sessions[0]?.calls[0]).toMatchObject({ method: 'prompt', input: { text: 'hello' } })
     sessions[0]!.emit({ type: 'turn.started', turnId: 't1', origin: 'user', clientMessageId: 'cm_create' })
     sessions[0]!.emit({ type: 'turn.ended', turnId: 't1', reason: 'end_turn' })
     await new Promise(resolve => setTimeout(resolve, 150))
@@ -206,8 +205,10 @@ describe('encrypted mode on the device: the client API inside the channel', () =
       sealedAttachmentKeys: [{ fileId: 'file_1', key: b64url(key), size: plaintext.length, sha256, name: 'photo.png', mimeType: 'image/png' }],
     })
     expect(sent.status).toBe(200)
-    await settle()
-    const prompt = sessions[0]!.calls.find(call => call.method === 'prompt' && (call as { input: { text: string } }).input.text === 'see attached') as unknown as { input: { attachments: { kind: string; path: string; mimeType: string; name: string }[] } }
+    // Downloading and opening the upload takes real I/O: wait for the prompt rather than a fixed number of ticks.
+    const findPrompt = () => sessions[0]!.calls.find(call => call.method === 'prompt' && (call as { input: { text: string } }).input.text === 'see attached')
+    await expect.poll(findPrompt).toBeTruthy()
+    const prompt = findPrompt() as unknown as { input: { attachments: { kind: string; path: string; mimeType: string; name: string }[] } }
     expect(prompt.input.attachments[0]).toMatchObject({ kind: 'file', mimeType: 'image/png', name: 'photo.png' })
     expect(readFileSync(prompt.input.attachments[0]!.path).equals(plaintext)).toBe(true)
 
@@ -221,7 +222,7 @@ describe('encrypted mode on the device: the client API inside the channel', () =
     })
     // Accepted like any message (the hand-off is asynchronous), then rejected before the Runtime: never a prompt.
     expect(bad.status).toBe(200)
-    await settle()
+    await expect.poll(async () => (await store.deliveries.get(session.id, 'cm_3'))?.state).toBe('rejected')
     expect(await store.deliveries.get(session.id, 'cm_3')).toMatchObject({ state: 'rejected', errorCode: 'attachment_corrupt' })
     expect(sessions[0]!.calls.some(call => call.method === 'prompt' && (call as { input: { text: string } }).input.text === 'tampered')).toBe(false)
   }, 20_000)
@@ -275,8 +276,7 @@ describe('encrypted mode on the device: the client API inside the channel', () =
     await settle()
     const events: Record<string, unknown>[] = []
     await channel.subscribe(sessionId, 'seq:0', event => events.push(event))
-    await settle()
-    expect(events.some(event => event.type === 'timeline.item_created')).toBe(true)
+    await expect.poll(() => events.some(event => event.type === 'timeline.item_created')).toBe(true)
     const snapshot = await channel.request('GET', `/api/v2/sessions/${sessionId}/snapshot`)
     expect(snapshot.body).toMatchObject({ session: { id: sessionId, connectorId: DEVICE }, historySource: 'live' })
     const timeline = await channel.request('GET', `/api/v2/sessions/${sessionId}/timeline?mode=latest&limit=10`)
