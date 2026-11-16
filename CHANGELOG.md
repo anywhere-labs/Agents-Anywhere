@@ -6,7 +6,7 @@
 
 ### 升级须知
 
-- Server 必须设置至少 32 个字符的随机 `AGENT_SERVER_SECRET`：未设置、过短或仍是文档里的示例值时拒绝启动（只有设了 `AGENT_SERVER_DEV_MODE=1` 的开发环境例外），Compose 也不再提供默认值；同时需要执行 `v2_58` 数据库迁移删除旧的配对码表，升级时正在进行的设备配对要重新开始。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
+- Server 必须设置至少 32 个字符的随机 `AGENT_SERVER_SECRET`：未设置、过短或仍是文档里的示例值时拒绝启动（只有设了 `AGENT_SERVER_DEV_MODE=1` 的开发环境例外），Compose 也不再提供默认值；同时需要执行 `v2_58` 数据库迁移删除旧的配对码表，升级时正在进行的设备配对要重新开始。（[#723](https://github.com/anywhere-labs/Agents-Anywhere/pull/723)）
 - Server 需要执行 `v2_57` 数据库迁移：只新增 v3 设备连接用到的会话目录字段和命令回执表，不改写已有数据。（[#685](https://github.com/anywhere-labs/Agents-Anywhere/pull/685)）
 - 自托管 Compose 新增 MeshCall Router 和前置网关（Caddy）：对外端口改由网关提供，v3 设备经 `/api/v3/device/mesh` 连接 Router；Router 账号密码默认自动生成并保存在数据卷里，也可以用 `AGENT_SERVER_MESH_PASSWORD` 指定。（[#675](https://github.com/anywhere-labs/Agents-Anywhere/pull/675)）
 - 运行中排队消息需要 Server 执行 `v2_56` 数据库迁移（只新增两张表，不改写已有数据）；排队在 Web、Desktop、Android 和 iOS 上可用，旧版客户端的行为不变。（[#658](https://github.com/anywhere-labs/Agents-Anywhere/pull/658)、[#659](https://github.com/anywhere-labs/Agents-Anywhere/pull/659)）
@@ -25,7 +25,7 @@
 
 ### 本机连接
 
-- 设备配对码和配对时下发的连接凭据不再写入数据库，只在 Redis 里以哈希和加密形式保存到配对过期，凭据被领取一次后立即删除。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
+- 设备配对码和配对时下发的连接凭据不再写入数据库，只在 Redis 里以哈希和加密形式保存到配对过期，凭据被领取一次后立即删除。（[#723](https://github.com/anywhere-labs/Agents-Anywhere/pull/723)）
 - 连接 v3 Connector 的设备上，会话内容改为打开时从设备读取、有人在看时由设备实时推送，Server 不再保存；设备离线时仍能看到会话标题和状态，并提示设备离线、历史暂不可用，设备没有及时响应时提示超时而不是离线；设备重新连上后，打开着的会话会自动补齐断线期间的内容；发出的附件被设备取走后由设备保存，之后查看时从设备读取；分享改由设备导出，设备离线时提示「设备上线后才能创建分享」。（[#696](https://github.com/anywhere-labs/Agents-Anywhere/pull/696)、[#702](https://github.com/anywhere-labs/Agents-Anywhere/pull/702)、[#707](https://github.com/anywhere-labs/Agents-Anywhere/pull/707)）
 - 准备 Pi 时会复用本机 Node 22.19 及以上版本（包括 Node 24），不再强制下载；需要下载时，官方源连不上会自动改用 npmmirror，Python 安装源选了镜像的设备会优先使用 npmmirror；Windows 上多个进程同时准备不再报 `Resource deadlock avoided`，而是排队等待；数据目录通过 Junction 挂到其他盘时，不再误报「Node 安装包路径无效」；Node 下载失败时会提示检查网络。（[#657](https://github.com/anywhere-labs/Agents-Anywhere/pull/657)）
 
