@@ -16,7 +16,8 @@
     "contracts:check": "node scripts/generate-contract-types.mjs --check"
   },
   "dependencies": {
-    "meshcall": "file:../vendor/meshcall/meshcall-0.4.0-dev.9334405.tgz"
+    "meshcall": "file:../vendor/meshcall/meshcall-0.4.0-dev.9334405.tgz",
+    "node-pty": "^1.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
