@@ -818,3 +818,26 @@ user_token_families = Table(
     Column("revoked_reason", Text),
     Index("idx_user_token_families_user", "user_id"),
 )
+
+# Port previews (``contracts/preview/1.0``): one row per device port, reopened in place so
+# the slug (the preview's DNS label) stays the same for bookmarks. No content: the page
+# itself travels through frps and the gateway, never through the database.
+previews = Table(
+    "previews",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("slug", Text, nullable=False, unique=True),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("device_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
+    Column("session_id", Text, ForeignKey("sessions.id", ondelete="SET NULL")),
+    Column("port", Integer, nullable=False),
+    Column("visibility", Text, nullable=False, server_default="private"),
+    Column("state", Text, nullable=False, server_default="opening"),
+    Column("close_reason", Text),
+    Column("expires_at", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    UniqueConstraint("device_id", "port", name="uq_previews_device_port"),
+    Index("idx_previews_user", "user_id"),
+    Index("idx_previews_state_expires", "state", "expires_at"),
+)

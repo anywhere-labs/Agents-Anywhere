@@ -283,6 +283,7 @@ def test_v2_0_database_upgrades_through_current_revision(fresh_database_url) -> 
         ("v2_57", "v2_58"),
         ("v2_58", "v2_59"),
         ("v2_59", "v2_60"),
+        ("v2_60", "v2_61"),
     ],
 )
 def test_every_adjacent_schema_upgrade(tmp_path,
@@ -1023,9 +1024,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_60() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_60"
-    assert CURRENT_SCHEMA_VERSION == "2.60"
+def test_current_schema_version_is_v2_61() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_61"
+    assert CURRENT_SCHEMA_VERSION == "2.61"
 
 
 def test_v2_57_starts_the_seq_ceiling_above_v2_sequences(fresh_database_url) -> None:
@@ -2728,7 +2729,7 @@ def test_v2_60_drops_session_content_and_leaves_read_sentinels(fresh_database_ur
     finally:
         engine.dispose()
 
-    upgrade_database(db_url=url)
+    upgrade_database(db_url=url, revision="v2_60")
 
     engine = create_engine(_sync_url(url))
     try:
@@ -2757,3 +2758,24 @@ def test_v2_60_drops_session_content_and_leaves_read_sentinels(fresh_database_ur
     command.stamp(_alembic_config(url), "v2_60")
     with pytest.raises(RuntimeError, match="cannot be downgraded"):
         command.downgrade(_alembic_config(url), "v2_59")
+
+
+def test_v2_61_adds_port_previews(fresh_database_url) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_61")
+    engine = create_engine(_sync_url(url))
+    try:
+        assert inspect(engine).has_table("previews")
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE alembic_version"))
+    finally:
+        engine.dispose()
+    assert asyncio.run(classify_database(url)) == UnversionedDatabase("v2", "v2_61")
+
+    command.stamp(_alembic_config(url), "v2_61")
+    command.downgrade(_alembic_config(url), "v2_60")
+    engine = create_engine(_sync_url(url))
+    try:
+        assert not inspect(engine).has_table("previews")
+    finally:
+        engine.dispose()

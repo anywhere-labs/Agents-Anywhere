@@ -490,6 +490,10 @@
       "zh-CN": "工作区准备已失效，请重新准备。",
       "en": "The workspace preparation is no longer valid. Prepare again."
     },
+    "preview_disabled": {
+      "zh-CN": "这个服务器关闭了端口预览。",
+      "en": "Port preview is turned off on this server."
+    },
     "preview_domain_not_configured": {
       "zh-CN": "这个服务器没有配置预览域名，无法使用端口预览。",
       "en": "Port preview is unavailable because this server has no preview domain configured."
@@ -501,6 +505,10 @@
     "preview_port_not_allowed": {
       "zh-CN": "只能预览本机（127.0.0.1）上已确认的端口。",
       "en": "Only confirmed ports on this computer (127.0.0.1) can be previewed."
+    },
+    "preview_unavailable": {
+      "zh-CN": "设备上的预览通道暂时不可用，请稍后重试。",
+      "en": "The preview channel on the device is unavailable. Try again later."
     },
     "project_workspace_mismatch": {
       "zh-CN": "项目不属于所选设备。",

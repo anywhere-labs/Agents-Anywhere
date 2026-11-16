@@ -91,8 +91,9 @@ class DeviceLinkService:
         self._local_records: dict[str, dict[str, Any]] = {}
         # Lossy runtime/port state per device, for clients that ask later (no content).
         self.runtime_status: dict[str, dict[str, Any]] = {}
-        self.listening_ports: dict[str, dict[int, dict[str, Any]]] = {}
         self.event_listeners: list[Any] = []
+        # ``(device_id, online)`` callbacks (port previews close after a grace period offline).
+        self.presence_listeners: list[Any] = []
         # ``SessionWatchHub``: opens/stops ``Sessions/watch`` streams as the link comes and goes.
         self.session_watch: Any | None = None
         # ``DeviceCommandService``: settles ``unknown`` receipts after ``ready``.
@@ -321,13 +322,8 @@ class DeviceLinkService:
             runtime_id = payload.get("runtimeId")
             if isinstance(runtime_id, str):
                 self.runtime_status.setdefault(device_id, {})[runtime_id] = payload
-        elif method == "port.listening":
-            ports = self.listening_ports.setdefault(device_id, {})
-            for port in payload.get("ports") or []:
-                if isinstance(port, dict) and isinstance(port.get("port"), int):
-                    ports[port["port"]] = port
-        elif method == "port.closed" and isinstance(payload.get("port"), int):
-            self.listening_ports.get(device_id, {}).pop(payload["port"], None)
+        # ``port.listening`` / ``port.closed`` are the preview service's (an event listener):
+        # it keeps the device's ports where every worker can read them.
         await self._forward_session_event(method, payload)
         for listener in list(self.event_listeners):
             try:
@@ -372,7 +368,11 @@ class DeviceLinkService:
                 )
         else:
             self.runtime_status.pop(device_id, None)
-            self.listening_ports.pop(device_id, None)
+        for listener in list(self.presence_listeners):
+            try:
+                await listener(device_id, online)
+            except Exception:  # noqa: BLE001 - listeners never break the link
+                logger.exception("device presence listener failed device_id={}", device_id)
         if self.session_watch is not None:
             try:
                 await self.session_watch.on_presence(device_id, online)

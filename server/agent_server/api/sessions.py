@@ -36,6 +36,7 @@ from agent_server.core.capabilities import (
     capability_is_usable,
 )
 from agent_server.core.events import (
+    PORT_EVENT_TYPES,
     EventCursorError,
     event_cursor,
     parse_event_cursor,
@@ -137,6 +138,8 @@ _SESSION_WS_LIVE_PROJECTION_EVENT_TYPES = {
     "runtime.queue.updated",
     "runtime.state.updated",
     "session.meta.updated",
+    "port.listening",
+    "port.closed",
 }
 
 
@@ -995,6 +998,19 @@ async def session_ws(
                 },
             ).model_dump(mode="json")
         )
+        if device_session:
+            # Clients keep no port list: tell a new subscriber what is listening now.
+            previews = getattr(websocket.app.state, "previews", None)
+            ports = await previews.session_ports(session.connectorId, session_id) if previews else []
+            if ports:
+                listening = protocol_event(
+                    session_id,
+                    sequence=0,
+                    event_type="port.listening",
+                    payload={"deviceId": session.connectorId, "ports": ports},
+                )
+                await websocket.send_json(listening.model_dump(mode="json"))
+                last_live_projection_event_ids["port"] = listening.eventId
         while True:
             try:
                 message = await asyncio.wait_for(queue.get(), timeout=15.0)
@@ -1027,6 +1043,9 @@ async def session_ws(
                     continue
                 if event.event_type in _SESSION_WS_LIVE_PROJECTION_EVENT_TYPES:
                     projection_key = event.event_type
+                    if event.event_type in PORT_EVENT_TYPES:
+                        # One projection: listening, closed, listening again are all real.
+                        projection_key = "port"
                     if event.event_type == "runtime.catalog.updated":
                         projection_key = (
                             f"{event.event_type}:{event.catalog_type}"

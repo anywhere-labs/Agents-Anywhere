@@ -151,8 +151,10 @@ class DeviceCommandService:
             if exc.outcome_unknown:
                 settled = await self._settle(receipt, "unknown", None, only_from=("pending",))
                 raise DeviceCommandOutcomeUnknown(settled or receipt, exc.message or "command outcome unknown") from exc
-            settled = await self._settle(receipt, "rejected", {"e": {"code": exc.code, "message": exc.message}})
-            raise DeviceCommandRejected(exc.code, exc.message or exc.code, settled) from exc
+            # The device's own AA code (``details.aaCode``) is what clients understand.
+            code = str(exc.details.get("aaCode") or exc.code)
+            settled = await self._settle(receipt, "rejected", {"e": {"code": code, "message": exc.message}})
+            raise DeviceCommandRejected(code, exc.message or code, settled) from exc
         return self._finish(receipt, await self._settle_ack(receipt, ack.outcome, ack.r, ack.e), replayed=False)
 
     async def _replay(self, receipt: dict[str, Any], *, kind: str, device_id: str, digest: str) -> CommandOutcome:
