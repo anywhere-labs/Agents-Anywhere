@@ -72,6 +72,8 @@ export interface AcpAgentDefinition {
   environment?(env: NodeJS.ProcessEnv, instance: RuntimeInstanceConfig): NodeJS.ProcessEnv
   /** 会话方言；每个运行实例一份。 */
   dialect(context: DialectContext): AcpDialect
+  /** 没有会话时进程空闲多久回收；0 表示常驻（Codex：codex-acp 要一直跟随 Codex App 的会话）。缺省用进程池的默认值。 */
+  readonly idleMs?: number
   /** 方言之外的运行时级能力上限（附件等）。 */
   readonly extraCapabilities?: readonly Capability[]
 }

@@ -91,7 +91,7 @@ export class AcpAgentProvider implements RuntimeProvider {
           onStderr ? { onStderr: line => onStderr(instance.instanceId, line) } : {},
         )()
       },
-      ...(this.options.idleMs !== undefined ? { idleMs: this.options.idleMs } : {}),
+      ...((this.options.idleMs ?? definition.idleMs) !== undefined ? { idleMs: (this.options.idleMs ?? definition.idleMs)! } : {}),
       ...(definition.permissionOptions ? { permissionOptions: definition.permissionOptions } : {}),
       ...(definition.permissionCatalog ? { permissionCatalog: definition.permissionCatalog } : {}),
       ...(definition.nativeInventory === false ? { nativeInventory: false } : {}),

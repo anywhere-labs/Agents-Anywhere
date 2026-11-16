@@ -32,7 +32,7 @@ import type { GoalState } from '../../generated/protocol/v1_2/goal-state.js'
 import { AcpProjectionIdentity, acpFingerprint, type JsonValue } from '../../domain/identity/index.js'
 import { asRecord, describeAcpError, isMethodNotFound, type AcpClient, type AgentInfo, type JsonRecord } from './client.js'
 import { choiceError, findOption, normalizeConfig, replaceConfig, withCurrent, type ConfigApply, type NormalizedConfig } from './config.js'
-import type { AcpDialect, ItemIdentity, SessionContext } from './dialect.js'
+import type { AcpDialect, DialectSessionHooks, ItemIdentity, SessionContext } from './dialect.js'
 import { ConnectionClosedError, JsonRpcError, RequestTimeoutError, type RequestContext } from './jsonrpc.js'
 import { isAcceptanceEvidence, isContentUpdate, translateUpdate } from './mapping.js'
 import { RuntimeFailure } from './errors.js'
@@ -430,8 +430,30 @@ export class AcpRuntimeSession implements RuntimeSession {
     })
   }
 
+  private replaying = false
+
+  private hooks(): DialectSessionHooks {
+    return {
+      emit: event => this.events.push(event),
+      beginReplay: () => {
+        this.replaying = true
+        this.identity.reset?.()
+      },
+      endReplay: () => { this.replaying = false },
+    }
+  }
+
+  /** 方言声明的会话级通知（handle 按 sessionId 路由过来）。 */
+  dialectNotification(method: string, params: JsonRecord): void {
+    if (!this.closed) this.dialect.onNotification?.(method, params, this.hooks())
+  }
+
   private onUpdate(update: JsonRecord): void {
     if (this.closed) return
+    if (this.replaying) {
+      for (const event of this.translate(update, true)) this.events.push(event)
+      return
+    }
     // 回合外出现内容：Agent 自己开了一轮（定时唤醒、后台任务结束、外部写者）。
     if (this.turn === undefined && isContentUpdate(update)) {
       const turnId = `turn_${randomUUID()}`
@@ -465,7 +487,7 @@ export class AcpRuntimeSession implements RuntimeSession {
   }
 
   private async onRequest(method: string, params: JsonRecord, context: RequestContext): Promise<unknown> {
-    const handled = this.dialect.handleRequest?.(method, params, { emit: event => this.events.push(event) })
+    const handled = this.dialect.handleRequest?.(method, params, this.hooks())
     if (handled !== undefined) return handled
     if (method !== 'session/request_permission' && method !== 'elicitation/create') throw JsonRpcError.methodNotFound(method)
     if (this.turn && !this.turn.accepted) this.accept(this.turn)
