@@ -31,7 +31,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
@@ -275,7 +275,9 @@ private fun SessionDetailVisit(
     val keyboard = LocalSoftwareKeyboardController.current
     val haptic = LocalHapticFeedback.current
     val snackbarHostState = remember { SnackbarHostState() }
-    val pagerState = rememberPagerState(pageCount = { 2 })
+    // Opening a session always shows the conversation. Not saveable: the workspace keeps
+    // saveable state per session, which would reopen the Files page left on an earlier visit.
+    val pagerState = remember { PagerState(currentPage = 0) { 2 } }
     val composerDraftSessionId = sessionId ?: preparedSession?.localSessionId
     val restoredComposerDraft = remember(composerDraftSessionId) {
         composerDraftStore.restore(
