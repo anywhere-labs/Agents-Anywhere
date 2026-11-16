@@ -978,6 +978,24 @@ class SessionDetailController(
         )
     }
 
+    /**
+     * Deletes a send that failed on this device. Messages the Server has accepted
+     * stay; if the Server did receive this one after all, its echo still appears.
+     */
+    fun discardFailedMessage(
+        sessionId: String,
+        state: SessionDetailState,
+        messageId: String,
+    ): SessionDetailState {
+        if (state.messages.none { it.id == messageId && it.isFailedLocalSend }) return state
+        optimisticStore.discard(sessionId, messageId)
+        return state.copy(
+            timeline = state.timeline.copy(
+                messages = state.messages.filterNot { it.id == messageId && it.isFailedLocalSend },
+            ),
+        )
+    }
+
     fun hasServerEcho(state: SessionDetailState, clientMessageId: String): Boolean {
         return state.messages.any { message ->
             !message.optimistic && message.matchesClientMessage(clientMessageId)
@@ -1016,7 +1034,8 @@ class SessionDetailController(
     ): List<TimelineMessage> {
         val merged = mergeOptimisticTimelineMessages(
             realMessages = realMessages,
-            currentMessages = currentMessages,
+            // A read that began before a failed send was deleted still lists it.
+            currentMessages = currentMessages.filterNot { it.optimistic && optimisticStore.isDiscarded(sessionId, it.id) },
             storedMessages = optimisticStore.read(sessionId),
             orderingItems = orderingItems,
         )

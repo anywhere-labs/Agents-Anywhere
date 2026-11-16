@@ -449,6 +449,10 @@
     <string name="session_welcome_15">选定目标，开始执行。</string>
     <string name="session_welcome_16">今天要改什么？</string>
     <string name="session_status_failed">失败</string>
+    <string name="session_failed_send_status">发送失败</string>
+    <string name="session_failed_send_action">查看发送失败的原因</string>
+    <string name="session_failed_send_title">消息未发送</string>
+    <string name="session_failed_send_body">%1$s\n\n删除只会移除这条未发送的消息，输入框里的内容不受影响。</string>
     <string name="session_show_less">收起</string>
     <string name="session_read_more">展开</string>
     <string name="session_copy_reply">复制回复</string>

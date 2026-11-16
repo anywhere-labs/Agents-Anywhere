@@ -4,7 +4,7 @@
 
 ## 开始之前
 
-准备一台用于运行 Agent 的工作设备，并配置所用 Agent 的运行环境和账号。当前支持 Codex、Claude Code 和 DeepSeek Harness（DSH）。远程操作时，工作设备需要保持开机、联网。
+准备一台用于运行 Agent 的工作设备，并配置所用 Agent 的运行环境和账号。可使用 Codex、Claude Code、DeepSeek Harness（DSH），也可连接[已安装的 ACP Agent](#使用已安装的-acp-agent)。远程操作时，工作设备需要保持开机、联网。
 
 桌面客户端（Desktop）包含 Connector，用于将本机连接到服务。Linux 和无图形界面的服务器可单独运行 Connector，通过其他客户端操作。Runtime 是运行或连接具体 Agent 的组件，其状态和支持的能力决定哪些操作可用。
 
@@ -44,6 +44,21 @@
 4. 发送任务，在会话时间线中查看 Agent 的回复和运行进度。
 
 看到设备在线、Runtime 可用，并收到会话回复后，即可在其他设备登录同一服务和账号，访问该设备的会话、工作区和终端。不同 Runtime 支持的模型、审批和终端等能力可能不同，以客户端显示为准。
+
+### 使用已安装的 ACP Agent
+
+在 Connector 所在的工作设备安装并配置对应的官方 CLI。打开 AA 的设备详情，添加对应 Agent。如果 Connector 的 PATH 找不到命令，在实例配置中填入可执行文件的绝对路径。随后在新建会话时选择该设备和 Agent。
+
+| Agent | Connector 启动的入口 |
+| --- | --- |
+| Command Code | `cmdc acp`，Windows 也使用 `cmdc` |
+| OpenCode | `opencode acp` |
+| Google Antigravity | `agy acp`，建议 CLI 1.5.4 或更新版本 |
+| MiniMax Code | `mcode acp` |
+| CodeBuddy Code | `codebuddy --acp` |
+| MiMo Code | `mimo acp` |
+
+模型和认证沿用工作设备上的 CLI 配置。审批、模型选择、附件及恢复入口取决于 Agent 实际返回的能力。上述 Agent 的会话列表同步由 AA 创建的会话，原来在 CLI 或桌面应用里创建的会话保留在其原客户端。
 
 ## 保持工作设备在线
 
@@ -85,7 +100,7 @@ curl -i https://web.agents-anywhere.com/api/v2/health
 
 ### 设备在线，但某个操作不可用
 
-设备在线表示 Connector 已连接。继续检查所选 Runtime 的状态和错误信息，确认它已配置并可用，再查看当前会话是否支持该操作。需要进一步定位时，查看 Connector 日志。旧版 ACP provider 不在当前默认支持范围内。
+设备在线表示 Connector 已连接。继续检查所选 Runtime 的状态和错误信息，确认它已配置并可用，再查看当前会话是否支持该操作。需要进一步定位时，查看 Connector 日志。
 
 ### 更新提示无法下载
 
