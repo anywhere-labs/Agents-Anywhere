@@ -32,6 +32,7 @@ from agent_server.api.device_session_reads import (
 from agent_server.api.server_push_websocket import (
     run_server_push_until_disconnect,
 )
+from agent_server.api.v2_compat import V3_SESSION_ONLY, require_v3_owned_connector
 from agent_server.core.capabilities import (
     SESSION_COMMANDS,
     SESSION_INTERACTION_APPROVAL,
@@ -399,6 +400,7 @@ async def create_session(
 async def create_and_start_session(
     payload: SessionCreateAndStartRequest,
     user_id: str = Depends(current_user_id),
+    reads: DeviceReadService = Depends(get_device_reads),
     run_service: SessionRunService = Depends(get_session_run_service),
     manager: ConnectorRpcManager = Depends(get_rpc),
     db: Store = Depends(get_store),
@@ -407,6 +409,9 @@ async def create_and_start_session(
         get_session_runtime_state_cache
     ),
 ) -> dict[str, Any]:
+    # Starting a conversation on a v2 Connector would keep it on the Server (D4, D8). Adding a
+    # directory entry for an existing session (``POST /sessions``) stays allowed.
+    await require_v3_owned_connector(db, reads, payload.connectorId, user_id)
     try:
         result = await run_service.create_and_start_session(payload, user_id=user_id)
     except SessionRunError as exc:
@@ -811,7 +816,7 @@ async def session_runtime_permission_catalog(
     )
 
 
-@router.patch("/{session_id}/runtime/selections", response_model=SessionSelectionPatchResponse)
+@router.patch("/{session_id}/runtime/selections", response_model=SessionSelectionPatchResponse, dependencies=V3_SESSION_ONLY)
 async def patch_session_selections(
     session_id: str,
     payload: SessionSelectionPatchRequest,
@@ -849,7 +854,7 @@ async def patch_session_selections(
     )
 
 
-@router.get("/{session_id}/timeline", response_model=ProtocolTimelineResponseV12)
+@router.get("/{session_id}/timeline", response_model=ProtocolTimelineResponseV12, dependencies=V3_SESSION_ONLY)
 async def session_timeline(
     session_id: str,
     after_seq: int = Query(0, alias="afterSeq", ge=0),
@@ -959,7 +964,7 @@ async def _device_session_snapshot(
     )
 
 
-@router.get("/{session_id}/snapshot", response_model=ProtocolSessionSnapshotResponseV12)
+@router.get("/{session_id}/snapshot", response_model=ProtocolSessionSnapshotResponseV12, dependencies=V3_SESSION_ONLY)
 async def session_snapshot(
     session_id: str,
     background_tasks: BackgroundTasks,
@@ -1108,7 +1113,7 @@ async def session_snapshot(
 # - new: WS /dashboard/ws
 
 
-@router.get("/{session_id}/events", response_model=ProtocolEventRecoveryResponseV12)
+@router.get("/{session_id}/events", response_model=ProtocolEventRecoveryResponseV12, dependencies=V3_SESSION_ONLY)
 async def session_events(
     session_id: str,
     after: str = Query("seq:0"),
@@ -1367,7 +1372,7 @@ async def _require_session_action_capability(
         )
 
 
-@router.get("/{session_id}/runtime/commands", response_model=SessionCommandListResponse)
+@router.get("/{session_id}/runtime/commands", response_model=SessionCommandListResponse, dependencies=V3_SESSION_ONLY)
 async def list_session_runtime_commands(
     session_id: str,
     query: str | None = Query(default=None, max_length=4096),
@@ -1423,7 +1428,7 @@ async def list_session_runtime_commands(
     return SessionCommandListResponse(commands=commands, serverTime=utc_now())
 
 
-@router.post("/{session_id}/runtime/commands", response_model=SessionCommandResponse)
+@router.post("/{session_id}/runtime/commands", response_model=SessionCommandResponse, dependencies=V3_SESSION_ONLY)
 async def execute_session_command(
     session_id: str,
     payload: SessionCommandRequest,
@@ -1520,7 +1525,7 @@ def _unknown_command_result(command: str) -> SessionCommandResponse:
     )
 
 
-@router.post("/{session_id}/runtime/messages", response_model=RpcResponsePayload)
+@router.post("/{session_id}/runtime/messages", response_model=RpcResponsePayload, dependencies=V3_SESSION_ONLY)
 async def send_message(
     session_id: str,
     payload: MessageCreateRequest,
@@ -1555,7 +1560,7 @@ async def send_message(
         _raise_session_run_error(exc)
 
 
-@router.post("/{session_id}/runtime/interrupt", response_model=RpcResponsePayload)
+@router.post("/{session_id}/runtime/interrupt", response_model=RpcResponsePayload, dependencies=V3_SESSION_ONLY)
 async def interrupt_session(
     session_id: str,
     user_id: str = Depends(current_user_id),
@@ -1589,7 +1594,7 @@ async def interrupt_session(
         _raise_session_run_error(exc)
 
 
-@router.post("/{session_id}/runtime/steer", response_model=RpcResponsePayload)
+@router.post("/{session_id}/runtime/steer", response_model=RpcResponsePayload, dependencies=V3_SESSION_ONLY)
 async def steer_session(
     session_id: str,
     payload: SessionSteerRequest,
@@ -1628,7 +1633,7 @@ async def steer_session(
         _raise_session_run_error(exc)
 
 
-@router.get("/{session_id}/runtime/notices", response_model=RuntimeNoticeListResponse)
+@router.get("/{session_id}/runtime/notices", response_model=RuntimeNoticeListResponse, dependencies=V3_SESSION_ONLY)
 async def list_session_runtime_notices(
     session_id: str,
     user_id: str = Depends(current_user_id),
@@ -1646,7 +1651,7 @@ async def list_session_runtime_notices(
     )
 
 
-@router.post("/{session_id}/runtime/notices/{notice_id}/respond", response_model=RpcResponsePayload)
+@router.post("/{session_id}/runtime/notices/{notice_id}/respond", response_model=RpcResponsePayload, dependencies=V3_SESSION_ONLY)
 async def respond_interaction(
     session_id: str,
     notice_id: str,
@@ -1731,7 +1736,7 @@ async def respond_interaction(
     return RpcResponsePayload(ok=True, result=result)
 
 
-@router.post("/{session_id}/sync", response_model=RpcResponsePayload)
+@router.post("/{session_id}/sync", response_model=RpcResponsePayload, dependencies=V3_SESSION_ONLY)
 async def sync_session(
     session_id: str,
     user_id: str = Depends(current_user_id),

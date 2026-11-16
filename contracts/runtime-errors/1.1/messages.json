@@ -134,6 +134,10 @@
       "zh-CN": "设备响应较慢，请稍后重试。",
       "en": "The device is responding slowly. Try again shortly."
     },
+    "device_upgrade_required": {
+      "zh-CN": "这台设备上的 Agents Anywhere 版本过旧，Server 已不再保存会话内容。请在设备上升级 Agents Anywhere 后再打开会话。",
+      "en": "Agents Anywhere on this device is out of date, and the server no longer stores session content. Upgrade Agents Anywhere on the device to open this session."
+    },
     "e2ee_not_paired": {
       "zh-CN": "这台设备还没有授权当前客户端，请先配对。",
       "en": "This device has not authorised this client yet. Pair with it first."

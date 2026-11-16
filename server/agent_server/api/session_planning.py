@@ -8,6 +8,7 @@ from starlette.requests import HTTPConnection
 
 from agent_server.api.device_session_reads import device_read_http_error
 from agent_server.api.sessions import _require_session_action_capability
+from agent_server.api.v2_compat import V3_SESSION_ONLY
 from agent_server.core.capabilities import (
     RUNTIME_ATTACHMENT,
     SESSION_PLAN_REVIEW,
@@ -77,7 +78,7 @@ async def owned(db, session_id, user_id):
         raise HTTPException(404, "session not found") from None
 
 
-@router.get("/{session_id}/planning", response_model=PlanningState)
+@router.get("/{session_id}/planning", response_model=PlanningState, dependencies=V3_SESSION_ONLY)
 async def get_planning(
     session_id: str,
     user_id: Annotated[str, Depends(current_user_id)],
@@ -91,7 +92,7 @@ async def get_planning(
     return await PlanningService(db, rpc).read(session)
 
 
-@router.post("/{session_id}/planning", response_model=PlanningResponse)
+@router.post("/{session_id}/planning", response_model=PlanningResponse, dependencies=V3_SESSION_ONLY)
 async def execute_planning(
     session_id: str,
     payload: PlanningRequest,
@@ -129,7 +130,8 @@ async def execute_planning(
 
 
 @router.get(
-    "/{session_id}/planning/operations/{operation_id}", response_model=PlanningResponse
+    "/{session_id}/planning/operations/{operation_id}", response_model=PlanningResponse,
+    dependencies=V3_SESSION_ONLY,
 )
 async def read_operation(
     session_id: str,
@@ -151,7 +153,7 @@ async def read_operation(
     return result
 
 
-@router.get("/{session_id}/plans", response_model=list[PlanDocument])
+@router.get("/{session_id}/plans", response_model=list[PlanDocument], dependencies=V3_SESSION_ONLY)
 async def list_plans(
     session_id: str,
     user_id: Annotated[str, Depends(current_user_id)],
@@ -164,7 +166,7 @@ async def list_plans(
     return await db.list_plan_documents(session_id)
 
 
-@router.get("/{session_id}/plans/{plan_id}/{revision}", response_model=PlanDocument)
+@router.get("/{session_id}/plans/{plan_id}/{revision}", response_model=PlanDocument, dependencies=V3_SESSION_ONLY)
 async def read_plan(
     session_id: str,
     plan_id: str,
@@ -182,7 +184,7 @@ async def read_plan(
         raise HTTPException(404, "plan not found") from None
 
 
-@router.get("/{session_id}/plans/{plan_id}/{revision}/markdown")
+@router.get("/{session_id}/plans/{plan_id}/{revision}/markdown", dependencies=V3_SESSION_ONLY)
 async def download_plan(
     session_id: str,
     plan_id: str,

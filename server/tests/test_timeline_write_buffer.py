@@ -18,10 +18,7 @@ from agent_server.infra.db import sessions as sessions_t
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
-from agent_server.services.connector_ingest import ConnectorIngestService
-from agent_server.services.connector_notifications import ConnectorNotificationService
 from agent_server.services.session_revision_allocator import SessionRevisionAllocator
-from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
 
@@ -192,91 +189,6 @@ async def test_timeline_item_only_publish_does_not_read_connector_presence(
 
         assert presence.calls == 0
     finally:
-        await buffer.close()
-        await store.close()
-
-
-@pytest.mark.anyio
-async def test_notification_returns_live_item_before_projection_flush(tmp_path) -> None:
-    store, _broker, buffer, connector, session = await create_buffer(tmp_path)
-
-    class NoopRealtime:
-        async def apply(self, **_values) -> bool:
-            return False
-
-    notifications = ConnectorNotificationService(
-        store,
-        NoopRealtime(),  # type: ignore[arg-type]
-        buffer,
-    )
-    try:
-        effect = await notifications.apply(
-            connector_id=connector.id,
-            method="timeline.itemUpsert",
-            params={
-                "sessionId": session.id,
-                "item": timeline_input(
-                    session.id,
-                    text="live",
-                    content_hash="sha256:live",
-                    revision=1,
-                ).model_dump(mode="json"),
-            },
-        )
-
-        assert effect.timeline_pending is True
-        assert effect.item is not None
-        assert effect.item["content"]["text"] == "live"
-        assert effect.item["updatedSeq"] == await store.get_session_seq(session.id)
-        assert await store.timeline.read(session.id) == []
-    finally:
-        await buffer.close()
-        await store.close()
-
-
-@pytest.mark.anyio
-async def test_ingest_publishes_before_timeline_row_is_durable(tmp_path) -> None:
-    store, broker, buffer, connector, session = await create_buffer(tmp_path)
-
-    class NoopRealtime:
-        async def apply(self, **_values) -> bool:
-            return False
-
-    notifications = ConnectorNotificationService(
-        store,
-        NoopRealtime(),  # type: ignore[arg-type]
-        buffer,
-    )
-    ingest = ConnectorIngestService(
-        store,
-        notifications,
-        broker,
-        cast(Any, None),
-        cast(Any, None),
-        SessionRuntimeStateCache(),
-    )
-    queue = await broker.register(session.id)
-    try:
-        await ingest.handle_notification_message(
-            connector_id=connector.id,
-            method="timeline.itemUpsert",
-            params={
-                "sessionId": session.id,
-                "item": timeline_input(
-                    session.id,
-                    text="realtime",
-                    content_hash="sha256:realtime",
-                    revision=1,
-                ).model_dump(mode="json"),
-            },
-        )
-
-        envelope = json.loads(await asyncio.wait_for(queue.get(), timeout=1))
-        assert envelope["items"][0]["content"]["text"] == "realtime"
-        assert envelope["items"][0]["updatedSeq"] == envelope["nextSeq"]
-        assert await store.timeline.read(session.id) == []
-    finally:
-        await broker.unregister(session.id, queue)
         await buffer.close()
         await store.close()
 

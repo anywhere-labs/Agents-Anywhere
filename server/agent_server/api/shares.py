@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 
 from agent_server.api.device_session_reads import device_read_http_error
 from agent_server.api.device_transfers import get_device_blobs
+from agent_server.api.v2_compat import V3_SESSION_ONLY
 from agent_server.core.models import (
     PublicSessionShareResponse,
     PublicSharedSession,
@@ -42,6 +43,7 @@ router = APIRouter(tags=["session-shares"])
     "/sessions/{session_id}/shares",
     response_model=SessionShareCreateResponse,
     status_code=201,
+    dependencies=V3_SESSION_ONLY,
 )
 async def create_session_share(
     session_id: str,

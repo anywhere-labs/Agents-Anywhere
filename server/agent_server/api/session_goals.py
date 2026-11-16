@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from agent_server.api.session_planning import DevicePlanning
 from agent_server.api.sessions import _require_session_action_capability
+from agent_server.api.v2_compat import V3_SESSION_ONLY
 from agent_server.core.goal.models import GoalRequest, GoalResponse, GoalState
 from agent_server.deps import current_user_id, get_rpc, get_store
 from agent_server.infra.connector_rpc import ConnectorRpcManager
@@ -20,7 +21,7 @@ async def owned(db, sid, uid):
         raise HTTPException(404, "session not found") from None
 
 
-@router.get("/{session_id}/goal", response_model=GoalState)
+@router.get("/{session_id}/goal", response_model=GoalState, dependencies=V3_SESSION_ONLY)
 async def read_goal(
     session_id: str,
     user_id: Annotated[str, Depends(current_user_id)],
@@ -34,7 +35,7 @@ async def read_goal(
     return await GoalService(db, rpc).read(session)
 
 
-@router.post("/{session_id}/goal", response_model=GoalResponse)
+@router.post("/{session_id}/goal", response_model=GoalResponse, dependencies=V3_SESSION_ONLY)
 async def execute_goal(
     session_id: str,
     payload: GoalRequest,
@@ -76,7 +77,7 @@ async def execute_goal(
         raise HTTPException(409, str(e)) from e
 
 
-@router.get("/{session_id}/goal/operations/{operation_id}", response_model=GoalResponse)
+@router.get("/{session_id}/goal/operations/{operation_id}", response_model=GoalResponse, dependencies=V3_SESSION_ONLY)
 async def goal_operation(
     session_id: str,
     operation_id: str,
