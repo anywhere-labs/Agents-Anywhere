@@ -523,13 +523,23 @@ async def patch_session_meta(
             envelope = DisplayEnvelope.model_validate(payload.displayUser)
         except ValueError:
             envelope = None
-        if envelope is None or envelope.mode != "sealed" or not isinstance(envelope.payload, str):
+        if envelope is not None and envelope.mode == "sealed" and isinstance(envelope.payload, str):
+            await db.set_session_display_user(session_id, envelope)
+            session = await db.get_session(session_id, user_id=user_id)
+        elif e2ee.required or envelope is None or envelope.mode != "plain":
             raise HTTPException(
                 status_code=422,
                 detail={"code": "display_envelope_not_sealed", "message": "displayUser must be a sealed envelope"},
             )
-        await db.set_session_display_user(session_id, envelope)
-        session = await db.get_session(session_id, user_id=user_id)
+        else:
+            # Normal mode: a plain ``{title}`` is a rename (title column and plain displayUser).
+            title = envelope.payload.get("title") if isinstance(envelope.payload, dict) else None
+            if not isinstance(title, str) or not title.strip() or len(title) > 255:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": "invalid_display_user", "message": "a plain displayUser needs a title"},
+                )
+            session = await db.rename_session(session_id, title, user_id=user_id)
     if payload.projectId is not None:
         try:
             session = await db.set_session_project(session_id, payload.projectId, user_id=user_id)

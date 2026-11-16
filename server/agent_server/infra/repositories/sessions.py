@@ -1671,7 +1671,16 @@ class SessionRepositoryMixin:
             await conn.execute(
                 update(sessions_t)
                 .where(sessions_t.c.id == session_id)
-                .values(title=cleaned, title_source=TITLE_SOURCE_USER, updated_at=now)
+                .values(
+                    title=cleaned,
+                    title_source=TITLE_SOURCE_USER,
+                    # The user's title as a plain display envelope: clients read ``displayUser``
+                    # before ``displayDevice``, so the device's title no longer covers it.
+                    display_user=json.dumps(
+                        {"mode": "plain", "payload": {"title": cleaned}}, separators=(",", ":")
+                    ),
+                    updated_at=now,
+                )
             )
         return await self.get_session(session_id, user_id=user_id)
 

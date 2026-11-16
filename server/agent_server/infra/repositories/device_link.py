@@ -46,6 +46,20 @@ def _receipt_view(row: Any) -> dict[str, Any]:
     }
 
 
+def _plain_title(raw: str | None) -> str | None:
+    """The title of a stored plain display envelope, if any."""
+
+    try:
+        envelope = json.loads(raw) if raw else None
+    except ValueError:
+        return None
+    if not isinstance(envelope, dict) or envelope.get("mode") != "plain":
+        return None
+    payload = envelope.get("payload")
+    title = payload.get("title") if isinstance(payload, dict) else None
+    return title if isinstance(title, str) and title else None
+
+
 class DeviceLinkRepositoryMixin:
     # -- devices ----------------------------------------------------------------
 
@@ -155,19 +169,6 @@ class DeviceLinkRepositoryMixin:
                 (sessions.c.read_seq == UNREAD, max(summary.latestTurnEndSeq - 1, 0)),
                 else_=sessions.c.read_seq,
             )
-        # Plain envelopes keep the v2 title/cwd columns current for clients that do not read
-        # envelopes yet; sealed ones clear them (the Server must not hold plaintext).
-        if not accept_display:
-            values["title"] = None
-            values["cwd"] = None
-        elif display.mode == "plain" and isinstance(display.payload, dict):
-            if isinstance(display.payload.get("title"), str):
-                values["title"] = display.payload["title"]
-            if isinstance(display.payload.get("cwd"), str):
-                values["cwd"] = display.payload["cwd"]
-        elif display.mode == "sealed":
-            values["title"] = None
-            values["cwd"] = None
         async with self._engine.begin() as conn:
             before = (
                 await conn.execute(
@@ -178,6 +179,7 @@ class DeviceLinkRepositoryMixin:
                         sessions.c.goal_state,
                         sessions.c.latest_turn_end_seq,
                         sessions.c.display_device,
+                        sessions.c.display_user,
                         sessions.c.sort_at,
                     )
                     .where(sessions.c.id == session_id)
@@ -186,6 +188,24 @@ class DeviceLinkRepositoryMixin:
             ).first()
             if before is None or int(before.head_seq) > summary.headSeq:
                 return False
+            # The v2 title/cwd columns, for clients that do not read envelopes yet, follow the
+            # order clients display: ``displayUser``, then ``displayDevice``. Only plain envelopes
+            # give plaintext; required mode and sealed envelopes leave none on the Server.
+            if not accept_display:
+                values["title"] = None
+                values["cwd"] = None
+            else:
+                user_title = _plain_title(before.display_user)
+                if display.mode == "plain" and isinstance(display.payload, dict):
+                    device_title = display.payload.get("title")
+                    title = user_title or (device_title if isinstance(device_title, str) else None)
+                    if title is not None:
+                        values["title"] = title
+                    if isinstance(display.payload.get("cwd"), str):
+                        values["cwd"] = display.payload["cwd"]
+                else:
+                    values["title"] = user_title
+                    values["cwd"] = None
             await conn.execute(update(sessions).where(sessions.c.id == session_id).values(**values))
         return (
             before.status != values["status"]

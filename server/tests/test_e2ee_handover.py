@@ -183,3 +183,33 @@ def test_required_mode_places_sessions_by_project_id_or_leaves_them_for_the_clie
                 await device.stop()
 
     asyncio.run(scenario())
+
+
+def test_normal_mode_user_title_wins_over_the_device_title(mesh_router: RouterProcess, monkeypatch) -> None:
+    monkeypatch.delenv("AGENT_SERVER_E2EE", raising=False)
+
+    async def scenario() -> None:
+        async with server(mesh_router, monkeypatch) as (app, client):
+            headers, device_id, token = await user_and_device(app, client)
+            store = app.state.store
+            device, _welcome, _access = await connect_device(client, connector_id=device_id, connector_token=token)
+            try:
+                first = device.state.push_outbox("session.summary", summary("sess_t1", 1, title="device one"))
+                await eventually(lambda: acked(device, first.oid))
+                assert (await store.get_session("sess_t1")).title == "device one"
+
+                renamed = await client.patch("/api/v2/sessions/sess_t1/meta", headers=headers, json={"title": "mine"})
+                assert renamed.status_code == 200, renamed.text
+                assert renamed.json()["session"]["displayUser"] == {"mode": "plain", "payload": {"title": "mine"}}
+
+                # The device keeps reporting its own title: displayDevice follows it, the title stays the user's.
+                later = device.state.push_outbox("session.summary", summary("sess_t1", 2, title="device two"))
+                await eventually(lambda: acked(device, later.oid))
+                session = await store.get_session("sess_t1")
+                assert session.title == "mine"
+                assert session.displayDevice["payload"]["title"] == "device two"
+                assert session.cwd == "/repo"
+            finally:
+                await device.stop()
+
+    asyncio.run(scenario())

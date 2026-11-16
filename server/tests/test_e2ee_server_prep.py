@@ -55,7 +55,7 @@ def test_required_mode_drops_v2_plaintext_titles_and_working_directories(tmp_pat
     assert asyncio.run(store.get_session(session_id)).title == "plain"
 
 
-def test_session_meta_accepts_only_a_sealed_user_display(tmp_path) -> None:
+def test_session_meta_user_display_by_mode(tmp_path) -> None:
     client = make_client(tmp_path)
     _connector_id, _token, session_id, headers = create_connector_and_session(client)
     store = client.app.state.store
@@ -66,14 +66,31 @@ def test_session_meta_accepts_only_a_sealed_user_display(tmp_path) -> None:
     assert asyncio.run(store.session_directory_fields(session_id))["displayUser"] == sealed
 
     for rejected in (
-        {"mode": "plain", "payload": {"title": "visible"}},
         {"mode": "sealed", "payload": {"title": "not ciphertext"}},
         {"payload": "c2VhbGVk"},
     ):
         refused = client.patch(f"/sessions/{session_id}/meta", headers=headers, json={"displayUser": rejected})
         assert refused.status_code == 422, refused.text
         assert refused.json()["detail"]["code"] == "display_envelope_not_sealed"
-    assert asyncio.run(store.session_directory_fields(session_id))["displayUser"] == sealed
+    empty = client.patch(
+        f"/sessions/{session_id}/meta", headers=headers, json={"displayUser": {"mode": "plain", "payload": {}}}
+    )
+    assert empty.status_code == 422 and empty.json()["detail"]["code"] == "invalid_display_user"
+
+    # Normal mode: a plain {title} renames (title column and plain displayUser), like ``title``.
+    plain = {"mode": "plain", "payload": {"title": "Renamed"}}
+    renamed = client.patch(f"/sessions/{session_id}/meta", headers=headers, json={"displayUser": plain})
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["session"]["title"] == "Renamed"
+    assert renamed.json()["session"]["displayUser"] == plain
+    by_title = client.patch(f"/sessions/{session_id}/meta", headers=headers, json={"title": "Again"})
+    assert by_title.json()["session"]["displayUser"] == {"mode": "plain", "payload": {"title": "Again"}}
+
+    # Required mode: only sealed.
+    client.app.state.e2ee_settings = E2eeSettings(mode="required")
+    refused = client.patch(f"/sessions/{session_id}/meta", headers=headers, json={"displayUser": plain})
+    assert refused.status_code == 422 and refused.json()["detail"]["code"] == "display_envelope_not_sealed"
+
 
 
 def test_fake_device_registers_only_e2ee_services_in_required_mode(mesh_router: RouterProcess, monkeypatch) -> None:
