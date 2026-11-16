@@ -1,0 +1,44 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:pairing-client-hello",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Payload of XXpsk0 message 3 (client -> device).",
+  "properties": {
+    "appVersion": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Appversion"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "platform": {
+      "enum": [
+        "web",
+        "desktop",
+        "android",
+        "ios",
+        "cli"
+      ],
+      "title": "Platform",
+      "type": "string"
+    }
+  },
+  "required": [
+    "label",
+    "platform"
+  ],
+  "title": "PairingClientHello",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

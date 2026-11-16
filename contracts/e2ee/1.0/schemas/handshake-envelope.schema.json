@@ -1,7 +1,7 @@
 {
   "$id": "urn:agents-anywhere:e2ee:1.0:handshake-envelope",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Handshake messages ride in ``tun`` frames on a dedicated channel id.",
+  "description": "A Noise handshake message. While a channel handshakes, ``ct`` of its frames is\n``base64url(utf8(json(HandshakeEnvelope)))`` and ``n`` is ``step``; afterwards ``ct`` is a\nNoise transport message and ``n`` its nonce.",
   "properties": {
     "message": {
       "description": "base64url without padding",

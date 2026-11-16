@@ -31,6 +31,30 @@ v3 中 Server 与 Connector 之间的契约，取代 v2 的 `/api/v2/connector/w
 
 业务方法到路由的映射见源文件的 `REQUEST_METHODS`、`command_route()`、`LINK_ROUTES`；事件与出站箱的方法名见 `EVENT_METHODS`、`OUTBOX_METHODS`。
 
+## 加密模式（`e2eeMode: "required"`）
+
+`e2ee-registration.json` 列出每种模式下设备注册的服务与方法，来源是 `registered_services()`：
+
+- `required` 时只注册：
+  - `Link/*`；
+  - `Secure/channel`；
+  - Server 自己发起、不含会话内容的方法：`Commands/status`、`runtimeApply`、`deviceSettingsApply`、`channelSwitch`、`previewOpen`、`previewClose`。
+- 用户发起的读、订阅、其他命令（包括 `sessionSync`）以及 `Runtime/catalogs` 不注册，一律走 `Secure/channel`。Server 就算想发明文请求，也没有目标。
+- Server 签发的 Mesh token 的 scopes 也按同一张表收窄。
+- `Link/attach` 上只发 `runtime.status`、`port.listening`、`port.closed`。`runtime.notice.updated`、`runtime.queue.updated` 带有审批和排队消息的正文，只推给订阅了该会话的加密通道；列表需要的「待审批」状态由 `SessionSummary.status` 提供。
+- 出站箱与命令回执不带正文：`r` 为 null，`e` 只带 `code`；展示信封必须是 `sealed`；`attachment.consumed.sha256` 用密文的摘要。Server 在存储和写日志之前，还会用 `scrub_for_e2ee()` 再清理一遍（纵深防御）。
+
+## 持有者更换
+
+持有 `Link/attach` 的 worker 死掉时，设备只需重新调用 `ready`，不需要重新 hello：
+
+1. worker 的 Mesh 连接一断，Router 就向设备发送 `call.cancel`（`reason: client_disconnected`），`attach` 和 `outbox` 的 handler 随之结束。
+2. 设备的 Router 连接还在时，就带同一个 `connectionId` 重调 `POST /api/v3/device/ready`，退避从 0–1 秒随机开始，上限 `READY_RETRY_MAX_SECONDS`（30 秒）。返回 401 或 409（代次过期）时才重新 hello。
+3. 接到 `ready` 的 worker 成为新的持有者。在线租约 `connector:presence:{deviceId}` 记录 `connectionId` 和 `holderId`（worker id 加 attach 调用 id）。持有者清理时**按 `holderId` 比较后删除**：同一个 `connectionId` 会先后被两个 worker 持有，只按代次删除会把新的租约一起删掉。
+4. 每个 `connectionId` 下，设备最多保留一条 `attach` 和一条 `outbox`。新的一条打开时，设备结束旧的那条。
+5. 持有者卡住但连接没断时，设备的心跳会因为没有 credit 而写不出去。超过 `ATTACH_STALL_SECONDS`（40 秒）就结束这两条流，然后重调 `ready`。
+6. 旧持有者打开的 `Sessions/watch` 随之失效，新持有者按 `session-subs` 重新打开；客户端按自己的游标补齐（`session.catchup_required`）。加密通道跟着客户端隧道 WS 走：worker 死了 WS 也会断，客户端用新的 `ch` 重新握手。
+
 ## 错误
 
 `classify_mesh_error()` 和 `mesh-errors.json` 把 MeshCall 的错误分成三类：

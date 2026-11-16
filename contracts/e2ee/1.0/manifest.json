@@ -5,7 +5,7 @@
       "model": "PairingPayload",
       "path": "schemas/pairing-payload.schema.json",
       "pydanticMode": "validation",
-      "sha256": "1a21a1999f1e75248333f7e7129239357a66581cbebe382f9f641ad7a0d521ea",
+      "sha256": "b44e2b251ed96e0fc067c14b7583eebc706bd675c2a3f6acc6a0a47389624921",
       "slug": "pairing-payload"
     },
     {
@@ -13,23 +13,63 @@
       "model": "HandshakeEnvelope",
       "path": "schemas/handshake-envelope.schema.json",
       "pydanticMode": "validation",
-      "sha256": "17ea5184404032ab0f1f92c023c31f0efb24115487ad41654e043ea0fd2f22d4",
+      "sha256": "d05f2341c03a5d8c1aed42e7237eecc7290606da3939c2ec0da440807ca5a324",
       "slug": "handshake-envelope"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "PairingDeviceHello",
+      "path": "schemas/pairing-device-hello.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "74869a6b8518fb85b70aa5eca8c97560546d95ddce17b989360a0cd60b209ecb",
+      "slug": "pairing-device-hello"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "PairingClientHello",
+      "path": "schemas/pairing-client-hello.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "9c2fe4124e3415af2957b7a3cc02f0e4b0181c78c773a78c38d5b57f0c59bd08",
+      "slug": "pairing-client-hello"
     },
     {
       "direction": "bidirectional",
       "model": "DirectoryKeyGrant",
       "path": "schemas/directory-key-grant.schema.json",
       "pydanticMode": "validation",
-      "sha256": "3033d38de972deec92eef70d4387dfdedf59cb7243c2d8a1a98adcdbf806b6ae",
+      "sha256": "1c96a9765f9fa7c213805d4c43168faa6217cb24f3779d6d0ac9151aa8df7b81",
       "slug": "directory-key-grant"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "PairCommitted",
+      "path": "schemas/pair-committed.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "a1c2a80c73f9b3a94a3c476ee3da85f8134215c828e43543fe3748bdbd08b9cd",
+      "slug": "pair-committed"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ChannelReady",
+      "path": "schemas/channel-ready.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "1bd4b8adf348b4a9bc721c0003a0d35f705f44b7574dbfad278c53ef1de601bd",
+      "slug": "channel-ready"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ChannelClose",
+      "path": "schemas/channel-close.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "999dbf22e9f7014675b1b49349d50c2f2833283772fef1aa9ef3c21cf2ca0bcd",
+      "slug": "channel-close"
     },
     {
       "direction": "bidirectional",
       "model": "ClientGrantView",
       "path": "schemas/client-grant-view.schema.json",
       "pydanticMode": "validation",
-      "sha256": "b5bb22e816ab3a563eaa032e65d41210fcc80dfc133fc0612ff6689315f16f75",
+      "sha256": "be4175eca5e6f74727109c8b113a0ac08afcdeaf63c1479abb0905da13e4295f",
       "slug": "client-grant-view"
     },
     {
@@ -37,7 +77,7 @@
       "model": "ApproveClientRequest",
       "path": "schemas/approve-client-request.schema.json",
       "pydanticMode": "validation",
-      "sha256": "f81204857fbaacc8c7e64ed1e489fda9436aed2c99f293f95a8d20a91498a17b",
+      "sha256": "455f86b531b4c17c91ffedaa4d1e17ea7a6247be54da9d5c9be450e7abc10ccf",
       "slug": "approve-client-request"
     },
     {
@@ -45,7 +85,7 @@
       "model": "RevokeClientRequest",
       "path": "schemas/revoke-client-request.schema.json",
       "pydanticMode": "validation",
-      "sha256": "8f1eec30943e3cce0cf604d56655830718b8b7f8a5483a39ff88ddc75f2d3f43",
+      "sha256": "7541d26f6ce47f7b15e00d1f197c8be408a88d81748f030e351c9499ac52ffdd",
       "slug": "revoke-client-request"
     },
     {
@@ -53,7 +93,7 @@
       "model": "TrustListResponse",
       "path": "schemas/trust-list-response.schema.json",
       "pydanticMode": "validation",
-      "sha256": "e6bcdb7f27bfbc656adc0da7f36ac88d2e8a137ed70df5b455e8a3d5fdfca407",
+      "sha256": "589b4d76e0621630e3b282242567264f2035fd7ca5418925df2e7c78d4119e9d",
       "slug": "trust-list-response"
     },
     {
@@ -61,7 +101,7 @@
       "model": "ClientTunnelFrame",
       "path": "schemas/client-tunnel-frame.schema.json",
       "pydanticMode": "validation",
-      "sha256": "7d8aa961464d70d39ef02e5ea1c4aad4b122d74fa9944ae7e8219cda2e21f608",
+      "sha256": "cfc19a3ac23d2715ce037ed882ff338b0fd261d5dda078883955ac2dd4d638cb",
       "slug": "client-tunnel-frame"
     },
     {
@@ -69,7 +109,7 @@
       "model": "TunnelRequest",
       "path": "schemas/tunnel-request.schema.json",
       "pydanticMode": "validation",
-      "sha256": "2ccc46e1c6eeaaf4aee8e49cd763aecfa471e41bd2c4f3942b50ab70f0d0e71b",
+      "sha256": "e986bac38c2bba26d7911249a9f5914691b2f71c1f3057fba51b087dc7f0eba4",
       "slug": "tunnel-request"
     },
     {
@@ -82,18 +122,42 @@
     },
     {
       "direction": "bidirectional",
+      "model": "TunnelSubscribe",
+      "path": "schemas/tunnel-subscribe.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "cf860564cc2ae1b2bdc43870b2414729c9ff3d13eaeda5cf4651fd687068aa40",
+      "slug": "tunnel-subscribe"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "TunnelUnsubscribe",
+      "path": "schemas/tunnel-unsubscribe.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "914d2fbfd8cb7c7897835d8cd8e5d980a4c83e38b2de874184d35288e1b3f36f",
+      "slug": "tunnel-unsubscribe"
+    },
+    {
+      "direction": "bidirectional",
       "model": "TunnelEvent",
       "path": "schemas/tunnel-event.schema.json",
       "pydanticMode": "validation",
-      "sha256": "015c93f5131394515d52a1daea30a47eddc7d3fe62a170a72732df3751a8fd09",
+      "sha256": "1a5f5c6f5440a850812d283afef095069e9349e3da58323286e2508731bba3ca",
       "slug": "tunnel-event"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SealedAttachmentKey",
+      "path": "schemas/sealed-attachment-key.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "72810a9c78228cfa3bbf9b4260078f084ddfd5a2e1f1510c36cc830ce4baf4f6",
+      "slug": "sealed-attachment-key"
     },
     {
       "direction": "ingress",
       "model": "CommandRegistration",
       "path": "schemas/command-registration.schema.json",
       "pydanticMode": "validation",
-      "sha256": "92235277a7d7bade8f1f8960a390c9ca3581a91fda7ca57adbca4039af0a1730",
+      "sha256": "9a513871a6f36d0e0eb99144be9021930d3b1ecc22a63b084321d0819de26678",
       "slug": "command-registration"
     }
   ],
