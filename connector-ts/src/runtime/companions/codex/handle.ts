@@ -146,8 +146,26 @@ export class CodexRuntimeHandle implements RuntimeHandle {
     return this.inner.catalogs()
   }
 
-  listNativeSessions(cursor?: string): Promise<NativeSessionPage> {
-    return this.inner.listNativeSessions(cursor)
+  /** 原生会话目录；还没打开的线程补上 rollout 里记录的权限（端口 `NativeSessionSummary.permission`）。 */
+  async listNativeSessions(cursor?: string): Promise<NativeSessionPage> {
+    const page = await this.inner.listNativeSessions(cursor)
+    const sessions = await mapLimited(page.sessions, PERMISSION_READS, async session => {
+      if (session.permission !== undefined || this.attached.has(session.nativeSessionId)) return session
+      const permission = await this.cachedPermission(session.nativeSessionId, session.updatedAt)
+      return permission !== undefined ? { ...session, permission } : session
+    })
+    return { ...page, sessions }
+  }
+
+  private readonly permissionCache = new Map<string, { readonly updatedAt: string | undefined; readonly permission: string | undefined }>()
+
+  /** 同一线程在 updatedAt 不变时不重复读 rollout。 */
+  private async cachedPermission(threadId: string, updatedAt: string | undefined): Promise<string | undefined> {
+    const cached = this.permissionCache.get(threadId)
+    if (cached !== undefined && updatedAt !== undefined && cached.updatedAt === updatedAt) return cached.permission
+    const permission = await this.nativePermissionSelection(threadId).catch(() => undefined)
+    this.permissionCache.set(threadId, { updatedAt, permission })
+    return permission
   }
 
   readNativeHistory(ref: NativeSessionRef, window: HistoryWindow): Promise<NativeHistoryPage> {
@@ -320,4 +338,19 @@ function codexReleaseOutcome(outcome: QuitOutcome): OwnerReleaseOutcome {
     : outcome.status === 'lock_still_held' ? 'still_held'
     : outcome.status
   return { status, details: JSON.parse(JSON.stringify(outcome)) }
+}
+
+/** 同时读几个 rollout：会话列表一页通常几十条，读文件末尾很快，但不要一次打开太多文件。 */
+const PERMISSION_READS = 4
+
+async function mapLimited<T, R>(items: readonly T[], limit: number, map: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let next = 0
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++
+      results[index] = await map(items[index]!)
+    }
+  }))
+  return results
 }

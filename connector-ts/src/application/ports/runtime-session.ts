@@ -239,6 +239,12 @@ export interface NativeSessionSummary extends NativeSessionRef {
   readonly writer?: WriterState
   /** AA 自己（含 v2）创建或用过的会话。 */
   readonly ownedByAgentsAnywhere?: boolean
+  /**
+   * 还没打开的会话当前的权限：权限 selection ID，取值与 v2 一致（同权限目录 `ProtocolPermissionItem.selectionId`）。
+   * 由 Runtime（Codex 伴随层读 rollout 末尾的设置记录）填写；读不到或不适用时不填，不代入默认值。
+   * 已打开的会话以会话配置为准。
+   */
+  readonly permission?: string
 }
 
 export interface NativeSessionPage {
