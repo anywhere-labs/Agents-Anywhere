@@ -8,6 +8,7 @@
 
 - 端口预览需要 Server 执行 `v2_61` 数据库迁移（只新增预览表），并配置单独注册的预览域名 `AGENT_SERVER_PREVIEW_DOMAIN`（不能是 AA 站点的子域名）和至少 32 个字符的随机 `AGENT_SERVER_PREVIEW_INTERNAL_TOKEN`；预览域名要有通配符 DNS 记录和通配符证书（需要 DNS-01 验证，在网关前终止 TLS）。自托管 Compose 默认带上 frps 和 preview-auth，网关同时承载预览域名，填好这两项即开启；没有配置时端口预览在各端隐藏，其他功能不受影响。加密模式下预览流量不在端到端加密范围内，可用 `AGENT_SERVER_E2EE_PREVIEW=deny` 关闭。（[#734](https://github.com/anywhere-labs/Agents-Anywhere/pull/734)、[#735](https://github.com/anywhere-labs/Agents-Anywhere/pull/735)）
 - Server 需要执行 `v2_60` 数据库迁移，迁移会删除 Server 上保存的会话内容（对话记录、计划、目标和排队消息）且不能降级，升级前请备份数据库：会话列表、标题、归档、置顶和分享都会保留，v3 设备连上后会从电脑上的原始记录重新生成内容；以前上传的附件在 Server 启动后于后台删除，分享里用到的文件保留；升级前已读的会话保持已读，未读的保持未读，直到设备升级到 v3 后随新的回合更新。（[#733](https://github.com/anywhere-labs/Agents-Anywhere/pull/733)）
+- Server 不再使用 `AGENT_SERVER_TIMELINE_SINGLE_INSTANCE`，可以从部署配置里删除；保留也不会影响启动。（[#741](https://github.com/anywhere-labs/Agents-Anywhere/pull/741)）
 - 升级 Server 后，还在用旧版 Agents Anywhere（2.x 的 Connector、Desktop 或 DSH 插件）的设备只显示会话列表和实时状态：打开会话、发消息、规划、目标、排队、上传附件和创建分享都会提示「请在设备上升级 Agents Anywhere」，这些设备推送的会话内容不再保存；改名、置顶、归档和终端不受影响。（[#731](https://github.com/anywhere-labs/Agents-Anywhere/pull/731)）
 - Server 需要执行 `v2_59` 数据库迁移，新增登录记录表：此后退出登录、修改密码或停用账号，对应的登录令牌几秒内在所有 Server 实例上失效（修改密码只保留当前这次登录）；升级前签发的令牌在到期前继续可用，账号停用后立即失效。（[#728](https://github.com/anywhere-labs/Agents-Anywhere/pull/728)）
 - Server 必须设置至少 32 个字符的随机 `AGENT_SERVER_SECRET`：未设置、过短或仍是文档里的示例值时拒绝启动（只有设了 `AGENT_SERVER_DEV_MODE=1` 的开发环境例外），Compose 也不再提供默认值；同时需要执行 `v2_58` 数据库迁移删除旧的配对码表，升级时正在进行的设备配对要重新开始。（[#723](https://github.com/anywhere-labs/Agents-Anywhere/pull/723)）
