@@ -11,6 +11,10 @@ struct ChatMarkdownView: View {
     let text: String
     var isStreaming = false
     var resolvesFileReferences = false
+    /// 块与块之间的额外间距。Textual 自己已经给每个块加了 blockSpacing，
+    /// 这里再叠一层就会在标题与正文之间堆出大片空白。文档类内容（PRD /
+    /// 实施 / 审查等非流式全文）传 0，让 Textual 的间距独占；聊天消息保持默认。
+    var blockSpacing: CGFloat = 12
     @State private var blocks: [MarkdownBlockSnapshot] = []
     /// When each block's newest glyphs finish revealing. A block's drawing
     /// clock runs only until then, so a stalled or finished block stops redrawing.
@@ -19,7 +23,7 @@ struct ChatMarkdownView: View {
     @State private var parseState = MarkdownParseState()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: blockSpacing) {
             ForEach(blocks) { block in
                 MarkdownBlockView(block: block, isStreaming: isStreaming, isTail: block.id == blocks.last?.id,
                                   revealDeadline: revealDeadlines[block.id] ?? .distantPast)
