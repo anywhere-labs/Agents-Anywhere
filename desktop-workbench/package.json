@@ -119,7 +119,10 @@
     },
     "mac": {
       "extraResources": [
-        { "from": "dist/connector-guard", "to": "connector-guard" }
+        {
+          "from": "dist/connector-guard",
+          "to": "connector-guard"
+        }
       ],
       "icon": "build/icon.icns",
       "hardenedRuntime": true,

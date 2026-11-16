@@ -19,6 +19,7 @@ import type {
   FsReadTextResult,
   FsWriteResult,
   MessageSendOptions,
+  SessionQueueState,
   Notice,
   PairingClaimResponse,
   PairingPollResponse,
@@ -61,6 +62,10 @@ import type {
   UsageReportResponse,
   WsTicketResponse,
 } from "@/features/dashboard/types";
+
+function queuePath(sessionId: string): string {
+  return `/sessions/${encodeURIComponent(sessionId)}/runtime/queue`;
+}
 
 export type SessionStateQuery = {
   afterSeq?: number;
@@ -773,9 +778,29 @@ export class DashboardApi {
     content: string,
     options: MessageSendOptions = {},
   ): Promise<RpcResponse<unknown>> {
-    const { attachments, clientMessageId } = options;
+    const { attachments, clientMessageId, queue } = options;
     return this.client.post<RpcResponse<unknown>>(
       `/sessions/${encodeURIComponent(sessionId)}/runtime/messages`,
+      {
+        content,
+        ...(attachments && attachments.length > 0 ? { attachments } : {}),
+        ...(clientMessageId ? { clientMessageId } : {}),
+        ...(queue ? { queue } : {}),
+      },
+      { token },
+    );
+  }
+
+  /** Inject a message into the running turn (``session.steer``). */
+  steerSession(
+    token: string,
+    sessionId: string,
+    content: string,
+    options: Omit<MessageSendOptions, "queue"> = {},
+  ): Promise<RpcResponse<unknown>> {
+    const { attachments, clientMessageId } = options;
+    return this.client.post<RpcResponse<unknown>>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/steer`,
       {
         content,
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
@@ -783,6 +808,34 @@ export class DashboardApi {
       },
       { token },
     );
+  }
+
+  getSessionQueue(token: string, sessionId: string): Promise<SessionQueueState> {
+    return this.client.get<SessionQueueState>(`${queuePath(sessionId)}`, { token });
+  }
+
+  updateSessionQueueItem(token: string, sessionId: string, messageId: string, content: string): Promise<SessionQueueState> {
+    return this.client.patch<SessionQueueState>(`${queuePath(sessionId)}/${encodeURIComponent(messageId)}`, { content }, { token });
+  }
+
+  deleteSessionQueueItem(token: string, sessionId: string, messageId: string): Promise<SessionQueueState> {
+    return this.client.delete<SessionQueueState>(`${queuePath(sessionId)}/${encodeURIComponent(messageId)}`, { token });
+  }
+
+  retrySessionQueueItem(token: string, sessionId: string, messageId: string): Promise<SessionQueueState> {
+    return this.client.post<SessionQueueState>(`${queuePath(sessionId)}/${encodeURIComponent(messageId)}/retry`, {}, { token });
+  }
+
+  sendSessionQueueItemNow(token: string, sessionId: string, messageId: string): Promise<SessionQueueState> {
+    return this.client.post<SessionQueueState>(`${queuePath(sessionId)}/${encodeURIComponent(messageId)}/send-now`, {}, { token });
+  }
+
+  resumeSessionQueue(token: string, sessionId: string): Promise<SessionQueueState> {
+    return this.client.post<SessionQueueState>(`${queuePath(sessionId)}/resume`, {}, { token });
+  }
+
+  clearSessionQueue(token: string, sessionId: string): Promise<SessionQueueState> {
+    return this.client.delete<SessionQueueState>(queuePath(sessionId), { token });
   }
 
   getSessionRuntimeNotices(token: string, sessionId: string): Promise<{ notices: Notice[]; serverTime: string }> {

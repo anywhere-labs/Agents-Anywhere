@@ -223,6 +223,7 @@ class ProtocolTimelineResponse(ProtocolWireModel):
 
 
 from agent_server.core.goal.models import GoalState, GoalRequest, GoalResponse
+from agent_server.core.message_queue import SessionQueueState
 
 
 class ProtocolSessionSnapshotResponse(ProtocolWireModel):
@@ -235,6 +236,8 @@ class ProtocolSessionSnapshotResponse(ProtocolWireModel):
     effectiveCapabilities: ProtocolCapabilitySet
     runtimeCapabilities: ProtocolCapabilitySet
     catalogs: dict[str, Any] = Field(default_factory=dict)
+    # Messages waiting for the session to become idle (``session.queue``).
+    queue: SessionQueueState | None = None
     eventCursor: str = Field(pattern=r"^seq:(0|[1-9][0-9]*)$")
     serverTime: str
 

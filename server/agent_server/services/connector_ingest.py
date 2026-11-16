@@ -115,8 +115,12 @@ class ConnectorIngestService:
         runtime_state_cache: SessionRuntimeStateCache,
         capability_refresh: ConnectorCapabilityRefresh | None = None,
         runtime_event: Callable[[str, str], Awaitable[None]] | None = None,
+        session_idle: Callable[[str], None] | None = None,
     ) -> None:
         self._runtime_event = runtime_event
+        # Schedules dispatch of messages that waited for the session; must not
+        # block, since it runs while this connector's notifications are applied.
+        self._session_idle = session_idle
         self._store = store
         self._notifications = notifications
         self._timeline_broker = timeline_broker
@@ -132,6 +136,14 @@ class ConnectorIngestService:
             await self._runtime_event(session.connectorId, session.runtimeId or session.runtime)
         except Exception:  # noqa: BLE001 - a missed wake-up is retried by the next event
             logger.exception("model channel wake-up failed session_id={}", session.id)
+
+    def _notify_session_idle(self, session_id: str) -> None:
+        if self._session_idle is None:
+            return
+        try:
+            self._session_idle(session_id)
+        except Exception:  # noqa: BLE001 - the queue sweep retries a missed wake-up
+            logger.exception("message queue wake-up failed session_id={}", session_id)
 
     async def _refresh_session_capabilities(self, connector_id: str) -> None:
         if self._capability_refresh is not None:
@@ -437,6 +449,7 @@ class ConnectorIngestService:
                     if status_changed and persisted_session.status not in BUSY_SESSION_STATUSES:
                         # A task ended: a model channel switch waiting for it may go on.
                         await self._notify_runtime_event(persisted_session)
+                        self._notify_session_idle(persisted_session.id)
                     next_seq = max(
                         await self._store.get_session_seq(session_id),
                         persisted_session.updatedSeq,

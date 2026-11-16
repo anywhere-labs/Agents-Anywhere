@@ -848,3 +848,7 @@ from agent_server.infra.db.goal_schema import define_goal_tables
 session_goals, session_goal_state, goal_operations, goal_event_outbox = (
     define_goal_tables(metadata)
 )
+
+from agent_server.infra.db.message_queue_schema import define_message_queue_tables
+
+session_queued_messages, session_queue_state = define_message_queue_tables(metadata)

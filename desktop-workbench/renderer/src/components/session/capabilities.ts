@@ -9,6 +9,7 @@ export const CAPABILITY = {
   planReview: "session.plan_review",
   interrupt: "session.interrupt",
   steer: "session.steer",
+  queue: "session.queue",
   approveInteraction: "session.interaction.approval",
   attachment: "runtime.attachment",
   runtimeConfig: "runtime.config",

@@ -1196,6 +1196,11 @@ class MessageCreateRequest(BaseModel):
     # the connector tags the resulting timeline item so the frontend can
     # dedupe its optimistic placeholder against the real server item.
     clientMessageId: str | None = None
+    # While the session is busy: ``auto`` queues the message, ``interrupt``
+    # queues it first and stops the current turn, ``never`` (or omitted)
+    # rejects it. Only sent by clients that saw the ``session.queue``
+    # capability.
+    queue: Literal["auto", "interrupt", "never"] | None = None
 
 
 class SessionCommandRequest(BaseModel):
