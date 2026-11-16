@@ -18,3 +18,4 @@ export { agentsAnywhereHome, dataDir, ensurePrivateDir, runtimeRecordPath, syste
 export { commandDigest, identityMatches, isV2ConnectorCommand, legacyIdentity, parseLstart, systemProbe, ticksToEpoch, type ProcessProbe } from './processes.js'
 export { RuntimeRecordError, readRuntimeState, runtimeTransaction, type RuntimeOwnerRecord, type RuntimeState } from './runtime-record.js'
 export { machineStateLockRecordPath, ownerAlive as lockOwnerAlive, withMachineStateLock, type MachineStateLockOptions, type MachineStateLockRecord } from './state-lock.js'
+export { BRIDGE_PROTOCOL, DshBridgeListener, checkHello, type DshBridgeListenerOptions, type DshHello, type DshHostConnection, type RejectCode, type Rendezvous } from './dsh-socket.js'
