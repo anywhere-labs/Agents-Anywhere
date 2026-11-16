@@ -310,26 +310,20 @@ def test_required_mode_keeps_every_canary_off_the_server_side(canary_env, monkey
             device_id = created.json()["connector"]["id"]
             seen["device_id"] = device_id
             token = created.json()["connectorToken"]
-            (await client.post(
+            project = await client.post(
                 "/api/v2/projects",
                 headers=headers,
                 json={"connectorId": device_id, "name": "repo", "workspacePath": "/repo"},
-            )).raise_for_status()
+            )
+            project.raise_for_status()
+            project_id = project.json()["project"]["id"]
 
             device, welcome, _access = await connect_device(client, connector_id=device_id, connector_token=token)
             assert welcome["e2eeMode"] == "required"
             try:
-                # The directory row. (A sealed summary cannot place a new session yet: see the xfail below.)
-                await store.upsert_connector_session(
-                    connector_id=device_id,
-                    session_id="sess_e1",
-                    runtime="codex",
-                    runtime_id="codex",
-                    external_session_id="thr_sess_e1",
-                    cwd="/repo",
-                )
-                # A correct device: the directory entry is sealed.
+                # A correct device: the directory entry is sealed; the session is placed by projectId.
                 head = summary("sess_e1", 3)
+                head["summary"]["projectId"] = project_id
                 head["summary"]["displayDevice"] = {
                     "mode": "sealed",
                     "keyId": "dk1",
@@ -441,16 +435,22 @@ def test_required_mode_keeps_every_canary_off_the_server_side(canary_env, monkey
         assert asyncio.run(scan_redis(redis_url, [seen["device_id"]])), "Redis scan saw nothing"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="C/A: in required mode the Server cannot place a session by cwd (sealed). Agreed fix "
-    "(contracts/e2ee/1.0): SessionSummary.projectId places a new row once; without it the row has no project "
-    "and a client assigns one through PATCH meta",
-)
-def test_required_mode_places_a_session_from_a_sealed_summary(canary_env, monkeypatch) -> None:
+def test_required_mode_places_sessions_without_reading_cwd(canary_env, monkeypatch) -> None:
+    """contracts/e2ee/1.0 (会话归属项目): the cwd is sealed, so ``SessionSummary.projectId`` places a new session
+    once; a session the device found on its own starts without a project and a client assigns it."""
+
     router, proxy, _files_root, _redis_url = canary_env
     monkeypatch.setattr(router, "port", proxy.port)
     sealer = Sealer()
+
+    def head(session_id: str, project_id: str | None) -> dict[str, Any]:
+        out = summary(session_id, 1)
+        out["summary"]["displayDevice"] = {
+            "mode": "sealed", "keyId": "dk1", "payload": sealer.seal({"title": "t", "cwd": "/repo"})
+        }
+        if project_id is not None:
+            out["summary"]["projectId"] = project_id
+        return out
 
     async def scenario() -> None:
         async with server(router, monkeypatch) as (app, client):
@@ -459,22 +459,35 @@ def test_required_mode_places_a_session_from_a_sealed_summary(canary_env, monkey
             headers = {"Authorization": f"Bearer {create_user_access_token(user.userId)}"}
             created = await client.post("/api/v2/connectors", headers=headers, json={"name": "laptop"})
             device_id = created.json()["connector"]["id"]
-            (await client.post(
+            project = await client.post(
                 "/api/v2/projects",
                 headers=headers,
                 json={"connectorId": device_id, "name": "repo", "workspacePath": "/repo"},
-            )).raise_for_status()
+            )
+            project.raise_for_status()
+            project_id = project.json()["project"]["id"]
             device, _welcome, _access = await connect_device(
                 client, connector_id=device_id, connector_token=created.json()["connectorToken"]
             )
             try:
-                head = summary("sess_e1c", 1)
-                head["summary"]["displayDevice"] = {
-                    "mode": "sealed", "keyId": "dk1", "payload": sealer.seal({"title": "t", "cwd": "/repo"})
-                }
-                item = device.state.push_outbox("session.summary", head)
-                await eventually(lambda: _acked(device, item.oid))
-                await store.get_session("sess_e1c")
+                placed = device.state.push_outbox("session.summary", head("sess_e1c", project_id))
+                found = device.state.push_outbox("session.summary", head("sess_e1d", None))
+                await eventually(lambda: _acked(device, found.oid))
+                assert placed.oid < found.oid
+                assert (await store.get_session("sess_e1c")).projectId == project_id
+                unplaced = await store.get_session("sess_e1d")
+                assert unplaced.projectId is None and unplaced.cwd is None
+
+                # A client that decrypted the cwd assigns the project.
+                patched = await client.patch(
+                    "/api/v2/sessions/sess_e1d/meta", headers=headers, json={"projectId": project_id}
+                )
+                assert patched.status_code == 200, patched.text
+                assert (await store.get_session("sess_e1d")).projectId == project_id
+                # A later summary never moves a session to another project.
+                again = device.state.push_outbox("session.summary", head("sess_e1d", "proj_other"))
+                await eventually(lambda: _acked(device, again.oid))
+                assert (await store.get_session("sess_e1d")).projectId == project_id
             finally:
                 await device.stop()
 
