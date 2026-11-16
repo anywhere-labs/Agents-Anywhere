@@ -154,6 +154,18 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
                 payload={"state": goal},
             )
         )
+    queue = payload.get("queueState")
+    if isinstance(queue, dict):
+        # A current-state projection: it carries its own revision and does not
+        # take a session sequence of its own.
+        events.append(
+            protocol_event(
+                session_id,
+                sequence=max(next_sequence, 0),
+                event_type="runtime.queue.updated",
+                payload={"queue": queue},
+            )
+        )
     planning = payload.get("planningState")
     if isinstance(planning, dict):
         events.append(protocol_event(session_id, sequence=max(next_sequence, 0), event_type="planning.state.updated", payload={"state": planning}))

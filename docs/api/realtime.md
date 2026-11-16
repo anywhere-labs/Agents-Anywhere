@@ -72,6 +72,7 @@ runtime.notice.snapshot
 runtime.notice.updated
 runtime.capability.updated
 runtime.catalog.updated
+runtime.queue.updated
 runtime.refetch_required
 session.refetch_required
 ```
@@ -83,6 +84,11 @@ Removed compatibility event types:
 - `notice.updated`
 - `notice.snapshot`
 - embedded `effectiveCapabilities` aliases in session realtime events
+
+`runtime.queue.updated` carries the whole server-owned message queue
+(`{queue: SessionQueueState}`); clients keep the highest `queue.revision`. It is
+a live projection without its own sequence, and `/events` recovery resends the
+current queue. See [运行中排队消息](session-message-queue.md).
 
 Use `runtime.state.updated`, `runtime.capability.updated`,
 `runtime.notice.updated`, and `runtime.notice.snapshot` for live Runtime facts.
