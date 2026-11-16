@@ -1,7 +1,8 @@
 // ACP Agent 定义：Connector 自带的、类型化的启动方式与差异，从不接受用户提供的命令。
 // ported from Agents-Anywhere v2 connector/connector/runtimes/acp/domain/agents.py（v3 按 D10 从 v2 迁移 profile 定义）。
 
-import type { Capability, JsonObject, RuntimeType } from '../../application/ports/runtime-session.js'
+import type { Capability, ConfigOption, JsonObject, RuntimeInstanceConfig, RuntimeType } from '../../application/ports/runtime-session.js'
+import type { ProtocolPermissionItem } from '../../generated/protocol/v1_2/permission-catalog-response.js'
 import type { AcpDialect } from '../acp/dialect.js'
 
 /**
@@ -46,8 +47,10 @@ export interface AcpAgentDefinition {
   readonly arguments: readonly string[]
   /** 启动前确认 ACP 入口可用的命令参数（非 0 退出即不可用）。 */
   readonly check?: readonly string[]
-  /** 读版本的命令参数（取输出的最后一行）。 */
+  /** 读被驱动 Agent 版本的命令参数（取输出的最后一行）。 */
   readonly version?: readonly string[]
+  /** 读适配器版本的命令参数（可执行文件是适配器、Agent 在它里面时，例如 claude-agent-acp）。 */
+  readonly adapterVersion?: readonly string[]
   /** 进程在会话工作目录里启动（每个工作目录一个进程）；否则在实例数据目录。 */
   readonly launchInWorkspace?: boolean
   /** 列出 Agent 的原生会话（`session/list`）；缺省 true（v2 `native_inventory`）。 */
@@ -57,9 +60,16 @@ export interface AcpAgentDefinition {
   readonly configSchema?: ConfigSchema
   /** 建会话前就能列出的权限选项：[值, 名称]。 */
   readonly permissionOptions?: ReadonlyArray<readonly [string, string]>
+  /** 完整的权限目录（带 v2 元数据），可按当前会话配置过滤；优先于 permissionOptions。 */
+  permissionCatalog?(config: readonly ConfigOption[]): readonly ProtocolPermissionItem[]
   /** 设备详情里展示的额外事实（v2 `metadata`）。 */
   readonly metadata?: JsonObject
   readonly maturity?: string
+  /**
+   * 在通用环境边界（supervisor/environment.ts）之后调整 Agent 进程的环境变量：剔除宿主带来的变量、
+   * 注入模型网关。设置项映射出的变量在它之后合并，不会被它剔除。
+   */
+  environment?(env: NodeJS.ProcessEnv, instance: RuntimeInstanceConfig): NodeJS.ProcessEnv
   /** 会话方言；每个运行实例一份。 */
   dialect(context: DialectContext): AcpDialect
   /** 方言之外的运行时级能力上限（附件等）。 */
