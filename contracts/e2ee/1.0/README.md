@@ -6,6 +6,7 @@
 - 首次配对：`Noise_XXpsk0`，psk 来自二维码 `aa-pair://<base64url(PairingPayload)>`，10 分钟有效，只能用一次。
 - 重连：`Noise_KK`。每 1 小时或 2^20 帧重新协商密钥。具体套件（ChaChaPoly/BLAKE2s 或 AESGCM/SHA256）由 S8 选定后写进本文，三端共用 `vectors/` 下的测试向量（S8 产出）。
 - 通道内是与普通模式相同的客户端 API：`TunnelRequest` / `TunnelResponse` / `TunnelEvent`。
+- 认证：`WS /api/v3/tunnel?ticket=...`，ticket 是 `POST /api/v2/ws-ticket` 以 `{"scope": {"dashboard": true}}` 申请的一次性 dashboard 票据（与 `/api/v2/dashboard/ws` 同一种）。不另设 tunnel scope：ws-ticket 请求模型也导出到已冻结的 protocol 1.0/1.1 schema。
 - Server 能看到的只有：路由头、帧大小与时间、`CommandRegistration`（命令 ID、设备、客户端计算的输入摘要）。
 
 ## 不变量

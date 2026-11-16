@@ -966,6 +966,10 @@ class SessionPatchRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     pinned: bool | None = None
     archived: bool | None = None
+    # A title the client sealed with the directory key (E2EE mode; ``DisplayUserUpdateRequest``,
+    # validated as ``device_meshcall.DisplayEnvelope``). Only ``mode: "sealed"`` is accepted; the
+    # Server stores it without reading it.
+    displayUser: dict[str, Any] | None = None
 
 
 class BulkArchiveRequest(BaseModel):

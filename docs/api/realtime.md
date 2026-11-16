@@ -388,6 +388,20 @@ The connector application layer bridges `RuntimeHostClient` calls to these
 server-facing notification payloads. Runtime adapters should never call
 connector HTTP/WS transports directly.
 
+## E2EE tunnel
+
+When the deployment sets `AGENT_SERVER_E2EE=required`, clients reach devices through
+one channel (`contracts/e2ee/1.0`):
+
+```text
+WS /api/v3/tunnel?ticket=...
+```
+
+The ticket is the same one-time dashboard ticket as `/api/v2/dashboard/ws`:
+`POST /api/v2/ws-ticket` with `{"scope": {"dashboard": true}}`. There is no separate
+tunnel scope. The Server forwards `ClientTunnelFrame`s to the device's
+`aa.device.v1.Secure/channel` and reads only the route header and frame counter.
+
 ## Terminal realtime
 
 Current terminal channels include:
