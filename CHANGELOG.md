@@ -47,7 +47,7 @@
   - 加密模式下会话列表和会话页照常显示标题与工作目录，暂时解不开时显示「加密中，设备上线后显示」；设备自己发现、还没归属项目的会话会按工作目录自动归到同一设备上对应的项目。
   - 加密模式下暂时不能重命名会话、打开附件或预览文件。
 
-  [#717](https://github.com/anywhere-labs/Agents-Anywhere/pull/717)、[#724](https://github.com/anywhere-labs/Agents-Anywhere/pull/724)
+  [#717](https://github.com/anywhere-labs/Agents-Anywhere/pull/717)、[#724](https://github.com/anywhere-labs/Agents-Anywhere/pull/724)、[#766](https://github.com/anywhere-labs/Agents-Anywhere/pull/766)
 
 ## 2.2.0（2026-11-14）
 
