@@ -99,25 +99,27 @@ struct SpecRuneTasksView: View {
 
     @ViewBuilder
     private func taskColumn(_ model: SpecRuneBoardModel) -> some View {
-        if let repo = model.selectedRepo {
-            switch model.listStates[repo] ?? .idle {
-            case .idle, .loading:
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .navigationTitle(projectName(model, repo: repo))
-            case let .failed(message):
-                ContentUnavailableView("无法读取任务", appSymbol: "exclamationmark.triangle",
-                                       description: Text(verbatim: message))
-                    .navigationTitle(projectName(model, repo: repo))
-            case let .loaded(list):
-                taskList(model, repo: repo, list: list)
-                    .navigationTitle(projectName(model, repo: repo))
-                    .toolbar { ToolbarItem(placement: .principal) { projectMenu(model) } }
+        Group {
+            if let repo = model.selectedRepo {
+                switch model.listStates[repo] ?? .idle {
+                case .idle, .loading:
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .navigationTitle(projectName(model, repo: repo))
+                case let .failed(message):
+                    ContentUnavailableView("无法读取任务", appSymbol: "exclamationmark.triangle",
+                                           description: Text(verbatim: message))
+                        .navigationTitle(projectName(model, repo: repo))
+                case let .loaded(list):
+                    taskList(model, repo: repo, list: list)
+                        .navigationTitle(projectName(model, repo: repo))
+                }
+            } else {
+                ContentUnavailableView("未选择项目", appSymbol: "sidebar.left",
+                                       description: Text("用上方菜单选择一个 SpecRune 项目"))
             }
-        } else {
-            ContentUnavailableView("未选择项目", appSymbol: "sidebar.left",
-                                   description: Text("用上方菜单选择一个 SpecRune 项目"))
-                .toolbar { ToolbarItem(placement: .principal) { projectMenu(model) } }
         }
+        // 菜单挂在最外层：读取失败时也要能换项目，否则用户被困在错误页。
+        .toolbar { ToolbarItem(placement: .principal) { projectMenu(model) } }
     }
 
     private func projectName(_ model: SpecRuneBoardModel, repo: String) -> String {
@@ -241,9 +243,15 @@ private struct SpecRuneTaskDetailView: View {
     let model: SpecRuneBoardModel
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var tab: SpecRuneDocKind?
+    @State private var tab: DetailTab = .overview
     /// 当前展开的规范路径（同一时刻只展开一条）。
     @State private var expandedSpec: String?
+
+    /// 详情维度：概览 + 每种存在的产物文档，与 Mac 面板的标签条一致。
+    enum DetailTab: Hashable {
+        case overview
+        case doc(SpecRuneDocKind)
+    }
 
     private var summary: SpecRuneTaskSummary { detail.summary }
 
@@ -251,30 +259,91 @@ private struct SpecRuneTaskDetailView: View {
         SpecRuneDocKind.allCases.filter { detail.docs[$0] != nil }
     }
 
+    private var tabs: [DetailTab] {
+        [.overview] + availableDocs.map(DetailTab.doc)
+    }
+
+    private func tabLabel(_ value: DetailTab) -> String {
+        switch value {
+        case .overview: "概览"
+        case let .doc(kind): kind.label
+        }
+    }
+
     private var expandAnimation: Animation? {
         reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 1.0)
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                overview
-                if availableDocs.isEmpty {
-                    Divider()
-                    Text("该任务还没有产物文档")
-                        .font(.footnote)
-                        .foregroundStyle(AppTheme.secondaryText(colorScheme))
-                } else {
-                    Divider()
-                    docTabs
+        VStack(spacing: 0) {
+            tabBar
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    switch tab {
+                    case .overview:
+                        overview
+                        if availableDocs.isEmpty {
+                            Text("该任务还没有产物文档")
+                                .font(.footnote)
+                                .foregroundStyle(AppTheme.secondaryText(colorScheme))
+                        }
+                    case let .doc(kind):
+                        docBody(kind)
+                    }
                 }
+                .padding(20)
+                // 宽屏不拉伸正文，多余宽度留给外层结构。
+                .frame(maxWidth: 700, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
-            .padding(20)
-            // Duo 宽屏：不拉伸正文，多余宽度留给三栏结构。
-            .frame(maxWidth: 700, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .center)
         }
         .navigationTitle(summary.title)
+    }
+
+    /// 标签条：横向滚动，选中的一项加底色（对应 Mac 面板的维度标签）。
+    private var tabBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(tabs, id: \.self) { value in
+                    let isSelected = tab == value
+                    Button {
+                        withAnimation(expandAnimation) { tab = value }
+                    } label: {
+                        Text(tabLabel(value))
+                            .font(.subheadline.weight(isSelected ? .semibold : .regular))
+                            .foregroundStyle(isSelected ? Color.primary : AppTheme.secondaryText(colorScheme))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(
+                                isSelected ? AppTheme.groupedFill(colorScheme) : Color.clear,
+                                in: .capsule
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+        }
+    }
+
+    /// 单个文档维度：正文 + 截断提示。
+    @ViewBuilder
+    private func docBody(_ kind: SpecRuneDocKind) -> some View {
+        if let doc = detail.docs[kind] {
+            // 渲染 markdown（勾选项、标题、代码块），而不是显示源码。
+            ChatMarkdownView(text: doc.content)
+            if doc.truncated {
+                Text("已截断：原文超过 1 MiB")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText(colorScheme))
+            }
+        } else {
+            Text("该任务没有这份文档")
+                .font(.footnote)
+                .foregroundStyle(AppTheme.secondaryText(colorScheme))
+        }
     }
 
     private var overview: some View {
@@ -315,10 +384,6 @@ private struct SpecRuneTaskDetailView: View {
             .font(.footnote)
             .foregroundStyle(AppTheme.secondaryText(colorScheme))
 
-            if let checklist = SpecRunePresentation.checklist(from: detail) {
-                Divider()
-                checklistSection(checklist)
-            }
             if let refs = summary.specRefs, !refs.isEmpty {
                 Divider()
                 specSection(refs)
@@ -369,10 +434,7 @@ private struct SpecRuneTaskDetailView: View {
                         .font(.caption)
                         .foregroundStyle(.red)
                 case let .loaded(file):
-                    Text(verbatim: file.content)
-                        .font(.callout.monospaced())
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    ChatMarkdownView(text: file.content)
                     if file.truncated {
                         Text("已截断：原文超过 1 MiB")
                             .font(.caption)
@@ -384,50 +446,6 @@ private struct SpecRuneTaskDetailView: View {
         .padding(.leading, 4)
     }
 
-    private func checklistSection(_ items: [SpecRuneChecklistItem]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("验收清单").font(.headline)
-                Spacer()
-                Text("\(items.filter(\.checked).count)/\(items.count)")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(AppTheme.secondaryText(colorScheme))
-            }
-            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                Label(item.text, appSymbol: item.checked ? "checkmark.square.fill" : "square")
-                    .font(.subheadline)
-                    .foregroundStyle(item.checked ? AppTheme.secondaryText(colorScheme) : .primary)
-            }
-        }
-    }
-
-    private var docTabs: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Picker("文档", selection: Binding(
-                get: { tab ?? availableDocs.first },
-                set: { newValue in
-                    withAnimation(expandAnimation) { tab = newValue }
-                }
-            )) {
-                ForEach(availableDocs, id: \.self) { kind in
-                    Text(kind.label).tag(Optional(kind))
-                }
-            }
-            .pickerStyle(.segmented)
-
-            if let current = tab ?? availableDocs.first, let doc = detail.docs[current] {
-                Text(verbatim: doc.content)
-                    .font(.callout.monospaced())
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if doc.truncated {
-                    Text("已截断：原文超过 1 MiB")
-                        .font(.caption)
-                        .foregroundStyle(AppTheme.secondaryText(colorScheme))
-                }
-            }
-        }
-    }
 }
 
 // MARK: - 展示派生（UI 语义，不进 SpecRuneKit）
@@ -439,6 +457,7 @@ private enum SpecRunePresentation {
         case "in_progress": "进行中"
         case "completed": "已完成"
         case "blocked": "受阻"
+        case "canceled": "已取消"
         default: status
         }
     }
@@ -449,6 +468,7 @@ private enum SpecRunePresentation {
         case "in_progress": .blue
         case "completed": .green
         case "blocked": .orange
+        case "canceled": .secondary
         default: .secondary
         }
     }
@@ -465,37 +485,6 @@ private enum SpecRunePresentation {
         }
         return nil
     }
-
-    /// 从 implement.md 解析 `- [ ]` 勾选项（与面板 parseChecklist 同规则）。
-    static func checklist(from detail: SpecRuneTaskDetail) -> [SpecRuneChecklistItem]? {
-        guard let markdown = detail.docs[.implement]?.content else { return nil }
-        var items: [SpecRuneChecklistItem] = []
-        var inFence = false
-        for line in markdown.replacingOccurrences(of: "\r", with: "").split(separator: "\n", omittingEmptySubsequences: false) {
-            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
-                inFence.toggle()
-                continue
-            }
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("- [") || trimmed.hasPrefix("* [") || trimmed.hasPrefix("+ [") {
-                guard trimmed.count > 5 else { continue }
-                let checkedChar = trimmed[trimmed.index(trimmed.startIndex, offsetBy: 3)]
-                let checked = checkedChar == "x" || checkedChar == "X"
-                let text = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-                items.append(SpecRuneChecklistItem(checked: checked, text: text))
-            } else if !inFence, !items.isEmpty, line.hasPrefix("  "), !trimmed.isEmpty {
-                // 续行并入上一条，与面板行为一致。
-                let last = items.removeLast()
-                items.append(SpecRuneChecklistItem(checked: last.checked, text: last.text + " " + trimmed))
-            }
-        }
-        return items.isEmpty ? nil : items
-    }
-}
-
-struct SpecRuneChecklistItem {
-    let checked: Bool
-    let text: String
 }
 
 private struct SpecRunePriorityChip: View {

@@ -32,9 +32,30 @@ public nonisolated struct SpecRuneClient: Sendable {
 
     // MARK: - 任务
 
+    /// 已知的任务状态。分批拉取时按它遍历。
+    private static let knownStatuses = ["planning", "in_progress", "completed", "blocked", "canceled"]
+
     /// 任务列表（活跃 + 归档）。
+    ///
+    /// 一次 `task list --json --all` 能拿全，但 `shell.exec` 的 stdout 上限
+    /// 是 64 000 字符——任务多的项目会被截断成非法 JSON。所以截断时退化为
+    /// 「按状态分批」，每批各自独立、互不影响，合并后去重。
     public func listTasks(repo: String) async throws -> SpecRuneTaskList {
-        let output = try await runCLI(repo: repo, arguments: ["task", "list", "--json", "--all"])
+        do {
+            return try await fetchTaskList(repo: repo, arguments: ["task", "list", "--json", "--all"])
+        } catch SpecRuneError.truncated {
+            let merged = await fetchTaskListByStatus(repo: repo)
+            // 分批也一条都没拿到才报错；只要拿到部分就先展示。
+            if merged.tasks.isEmpty && merged.archive.isEmpty {
+                throw SpecRuneError.truncated
+            }
+            return merged
+        }
+    }
+
+    /// 执行一次 `task list` 并解码。
+    private func fetchTaskList(repo: String, arguments: [String]) async throws -> SpecRuneTaskList {
+        let output = try await runCLI(repo: repo, arguments: arguments)
         guard let data = output.data(using: .utf8) else {
             throw SpecRuneError.badOutput("输出不是 UTF-8")
         }
@@ -43,6 +64,31 @@ public nonisolated struct SpecRuneClient: Sendable {
         } catch {
             throw SpecRuneError.badOutput(String(describing: error).prefix(200).description)
         }
+    }
+
+    /// 按状态分批拉取并合并（截断时的回退路径）。
+    ///
+    /// 单批失败/截断只丢这一批，不让整张列表失败——这是「任务过多」时
+    /// 至少还能看到大部分任务的关键。
+    private func fetchTaskListByStatus(repo: String) async -> SpecRuneTaskList {
+        var tasks: [SpecRuneTaskSummary] = []
+        var archive: [SpecRuneTaskSummary] = []
+        var seenActive = Set<String>()
+        var seenArchived = Set<String>()
+
+        for status in Self.knownStatuses {
+            guard let part = try? await fetchTaskList(
+                repo: repo,
+                arguments: ["task", "list", "--json", "--all", "--status", status]
+            ) else { continue }
+            for task in part.tasks where seenActive.insert(task.dir).inserted {
+                tasks.append(task)
+            }
+            for task in part.archive where seenArchived.insert(task.dir).inserted {
+                archive.append(task)
+            }
+        }
+        return SpecRuneTaskList(tasks: tasks, archive: archive)
     }
 
     /// 任务详情：CLI 摘要 + 各产物文档正文（只取存在的）。
