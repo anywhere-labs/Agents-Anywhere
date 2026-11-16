@@ -49,6 +49,8 @@ export interface ConversationDeps {
   readonly coalesceMs?: number
   /** Resolves a Server file id to a local path once the attachment is downloaded (workspace). */
   readonly attachments?: (sessionId: string, ref: AttachmentRef) => Promise<PromptAttachment>
+  /** Projects the latest page of an existing native session before it is opened (04-connector.md §6.6). */
+  readonly history?: { ensureLatest(sessionId: string): Promise<void> }
 }
 
 export interface AttachmentRef {
@@ -57,6 +59,8 @@ export interface AttachmentRef {
   mediaType: string
   size: number
   sha256?: string | null
+  /** E2EE: the key of a sealed upload (contracts/e2ee/1.0 `SealedAttachmentKey`); the bytes on the Server are ciphertext. */
+  sealedKey?: string | null
 }
 
 export interface SendMessageCommand {
@@ -295,6 +299,16 @@ export class ConversationService {
     return this.errors
   }
 
+  /**
+   * A session fact on `Link/attach` as `runtime.status` (device-meshcall 1.0 requires `runtimeId`):
+   * `{runtimeId, sessionId, status: {event: <v2 event name>, ...}}`. Lossy, so a failed lookup drops it.
+   */
+  private emitSessionStatus(sessionId: string, status: Record<string, unknown>): void {
+    void this.deps.store.sessions.get(sessionId).then(session => {
+      if (session !== null) this.deps.live.emit('runtime.status', { runtimeId: session.runtimeId, sessionId, status })
+    }, () => undefined)
+  }
+
   public reportError(sessionId: string, error: unknown): void {
     this.errors.push({ sessionId, error })
     if (this.errors.length > 100) this.errors.shift()
@@ -337,7 +351,7 @@ export class ConversationService {
         reset: commit.reset,
       })
     }
-    if (commit.summary !== null) this.deps.live.emit('runtime.status', { sessionId: commit.session.sessionId, event: 'session.status', status: commit.session.status })
+    if (commit.summary !== null) this.deps.live.emit('runtime.status', { runtimeId: commit.session.runtimeId, sessionId: commit.session.sessionId, status: { event: 'session.status', status: commit.session.status } })
   }
 
   private async requireSession(sessionId: string): Promise<Session> {
@@ -367,6 +381,10 @@ export class ConversationService {
     const session = await this.requireSession(sessionId)
     const handle = await this.deps.runtimes.handle(session.runtimeId)
     if (handle === null) throw new UseCaseError('runtime_unavailable', `runtime ${session.runtimeId} is not available on this device`)
+    // History first: live items then count up from the newest projected one.
+    if (session.externalSessionId !== null && this.deps.history !== undefined) {
+      await this.deps.history.ensureLatest(sessionId).catch(error => this.reportError(sessionId, error))
+    }
     const runtimeSession = session.externalSessionId !== null
       ? await handle.open({ kind: 'existing', ref: { nativeSessionId: session.externalSessionId } }, { sessionId, replay: 'none' })
       : await handle.open({
@@ -446,7 +464,14 @@ export class ConversationService {
         throw new UseCaseError('session_busy', admission.legacy ? `session is ${admission.status}` : 'The session is busy.', { legacy: admission.legacy, status: admission.status })
       }
       const at = this.deps.clock.nowIso()
-      const attachments: QueueAttachment[] = (command.attachments ?? []).map(ref => ({ fileId: ref.fileId, name: ref.name, mediaType: ref.mediaType, size: ref.size }))
+      const attachments: QueueAttachment[] = (command.attachments ?? []).map(ref => ({
+        fileId: ref.fileId,
+        name: ref.name,
+        mediaType: ref.mediaType,
+        size: ref.size,
+        ...(ref.sha256 != null ? { sha256: ref.sha256 } : {}),
+        ...(ref.sealedKey != null ? { sealedKey: ref.sealedKey } : {}),
+      }))
       const received = await this.deps.store.deliveries.receive({
         sessionId: command.sessionId,
         clientMessageId: command.clientMessageId,
@@ -482,9 +507,19 @@ export class ConversationService {
   /** Hands an accepted delivery to the Runtime. Never retried on an unknown outcome. */
   private async deliver(sessionId: string, clientMessageId: string, content: string, refs: AttachmentRef[]): Promise<'started' | 'rejected' | 'unknown'> {
     const binding = await this.binding(sessionId)
+    // Attachments first: one that cannot be fetched or opened (a sealed upload with a wrong key) is a rejection
+    // the Runtime never saw, not an unknown outcome.
+    let attachments: PromptAttachment[]
+    try {
+      attachments = this.deps.attachments === undefined ? [] : await Promise.all(refs.map(ref => this.deps.attachments!(sessionId, ref)))
+    } catch (error) {
+      const code = typeof (error as { code?: unknown })?.code === 'string' ? String((error as { code: string }).code) : 'attachment_unavailable'
+      await this.deps.store.deliveries.transition(sessionId, clientMessageId, 'rejected', { at: this.deps.clock.nowIso(), errorCode: code })
+      await this.writeFailedUserMessage(sessionId, clientMessageId, content, code, (error as Error)?.message ?? code)
+      return 'rejected'
+    }
     const at = this.deps.clock.nowIso()
     await this.deps.store.deliveries.transition(sessionId, clientMessageId, 'sending', { at })
-    const attachments = this.deps.attachments === undefined ? [] : await Promise.all(refs.map(ref => this.deps.attachments!(sessionId, ref)))
     let acceptance
     try {
       acceptance = await binding.session.prompt({ text: content, ...(attachments.length > 0 ? { attachments } : {}) }, { deliveryId: clientMessageId, clientMessageId })
@@ -603,7 +638,7 @@ export class ConversationService {
       await this.requireSession(sessionId)
       const binding = await this.binding(sessionId)
       const result = await binding.session.configure(change)
-      this.deps.live.emit('runtime.status', { sessionId, event: 'config.updated', options: result.options as unknown as Record<string, unknown>[] })
+      this.emitSessionStatus(sessionId, { event: 'config.updated', options: result.options as unknown as Record<string, unknown>[] })
       return { appliesFrom: result.appliesFrom }
     })
   }
@@ -682,7 +717,20 @@ export class ConversationService {
 
   private async deliverQueued(sessionId: string, clientMessageId: string, content: string, attachments: readonly QueueAttachment[]): Promise<'started' | 'rejected' | 'unknown'> {
     const binding = await this.binding(sessionId)
-    const refs = this.deps.attachments === undefined ? [] : await Promise.all(attachments.map(a => this.deps.attachments!(sessionId, { fileId: a.fileId, name: a.name ?? a.fileId, mediaType: a.mediaType ?? 'application/octet-stream', size: a.size ?? 0 })))
+    let refs: PromptAttachment[]
+    try {
+      refs = this.deps.attachments === undefined ? [] : await Promise.all(attachments.map(a => this.deps.attachments!(sessionId, {
+        fileId: a.fileId,
+        name: a.name ?? a.fileId,
+        mediaType: a.mediaType ?? 'application/octet-stream',
+        size: a.size ?? 0,
+        ...(a.sha256 != null ? { sha256: a.sha256 } : {}),
+        ...(a.sealedKey != null ? { sealedKey: a.sealedKey } : {}),
+      })))
+    } catch (error) {
+      this.reportError(sessionId, error)
+      return 'rejected'
+    }
     let acceptance
     try {
       acceptance = await binding.session.prompt({ text: content, ...(refs.length > 0 ? { attachments: refs } : {}) }, { deliveryId: clientMessageId, clientMessageId })
@@ -760,7 +808,7 @@ export class ConversationService {
     })
     if (!result.changed) return
     this.publish(await this.deps.store.planning.save(result.state, result.document))
-    this.deps.live.emit('runtime.status', { sessionId, event: 'planning.state.updated', revision: result.state.revision })
+    this.emitSessionStatus(sessionId, { event: 'planning.state.updated', revision: result.state.revision })
   }
 
   public async onPlanningMode(sessionId: string, mode: 'plan' | 'normal'): Promise<void> {
@@ -815,7 +863,7 @@ export class ConversationService {
     }, { newId: () => this.deps.ids.newId('goal_'), now: this.deps.clock.nowIso() })
     if (next.revision !== state.revision || JSON.stringify(next) !== JSON.stringify(state)) {
       this.publish(await this.deps.store.goals.save(next))
-      this.deps.live.emit('runtime.status', { sessionId, event: 'goal.state.updated', revision: next.revision })
+      this.emitSessionStatus(sessionId, { event: 'goal.state.updated', revision: next.revision })
     }
   }
 
@@ -878,7 +926,7 @@ export class ConversationService {
   }
 
   public onLiveFact(sessionId: string, event: RuntimeEvent): void {
-    this.deps.live.emit('runtime.status', { sessionId, event: event.type, fact: event as unknown as Record<string, unknown> })
+    this.emitSessionStatus(sessionId, { event: event.type, fact: event as unknown as Record<string, unknown> })
   }
 
   /** The Runtime session ended under us: the running turn fails with an unknown outcome; nothing is resent. */
@@ -943,7 +991,12 @@ export class ConversationService {
     this.bindings.clear()
   }
 
-  /** For tests and diagnostics. */
+  /** The open Runtime session of a Conversation, if any (snapshot capabilities come from it). */
+  public boundSession(sessionId: string): RuntimeSession | null {
+    return this.bindings.get(sessionId)?.session ?? null
+  }
+
+  /** Whether a Conversation has an open Runtime session (native history then comes from live events). */
   public isBound(sessionId: string): boolean {
     return this.bindings.has(sessionId)
   }

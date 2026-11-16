@@ -1,0 +1,75 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:tunnel-subscribe",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Same as opening a realtime WebSocket in normal mode.\n\n``stream: \"session\"``: the session WebSocket of ``sessionId`` (events after ``afterCursor`` are replayed\nfirst). ``stream: \"terminal\"``: the stream of device terminal ``terminalId``\n(``/api/v2/connectors/{deviceId}/terminals-v2/{terminalId}/stream`` in normal mode); every\n``TunnelEvent.event`` is one message of that WebSocket, and input, resize and close stay ``request``s to the\nsame paths as normal mode.",
+  "properties": {
+    "afterCursor": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "seq:N; events after it are replayed first",
+      "title": "Aftercursor"
+    },
+    "id": {
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+    },
+    "kind": {
+      "const": "subscribe",
+      "default": "subscribe",
+      "title": "Kind",
+      "type": "string"
+    },
+    "sessionId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "required when stream is session",
+      "title": "Sessionid"
+    },
+    "stream": {
+      "default": "session",
+      "enum": [
+        "session",
+        "terminal"
+      ],
+      "title": "Stream",
+      "type": "string"
+    },
+    "terminalId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "required when stream is terminal",
+      "title": "Terminalid"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "title": "TunnelSubscribe",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

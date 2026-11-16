@@ -13,6 +13,14 @@ export interface RuntimeFacts {
   catalogs(sessionId: string): Promise<Record<string, unknown> | null>
 }
 
+/** Native history projected on demand (application `NativeHistory`); absent for Runtimes without native records. */
+export interface HistoryBackfill {
+  ensureLatest(sessionId: string): Promise<void>
+  ensureBefore(sessionId: string, beforeOrderSeq: number | null, limit: number): Promise<boolean>
+  /** Whether the native record has items older than what is stored. */
+  hasOlder(sessionId: string): Promise<boolean>
+}
+
 const NO_FACTS: RuntimeFacts = {
   sessionCapabilities: async () => null,
   catalogs: async () => null,
@@ -35,6 +43,7 @@ export class DeviceReaders {
     private readonly store: ConversationStore,
     private readonly now: () => string,
     private readonly facts: RuntimeFacts = NO_FACTS,
+    private readonly history: HistoryBackfill | null = null,
   ) {}
 
   private async session(sessionId: string): Promise<Session> {
@@ -45,6 +54,8 @@ export class DeviceReaders {
 
   /** `client.snapshot`: the device part of the v1.2 snapshot body (the Server adds the directory fields). */
   public async snapshot(request: { sessionId: string; limit?: number; byteBudget?: number }): Promise<Record<string, unknown>> {
+    await this.session(request.sessionId)
+    await this.history?.ensureLatest(request.sessionId)
     const session = await this.session(request.sessionId)
     const page = await this.store.timeline.read(request.sessionId, 'latest', null, request.limit ?? SNAPSHOT_LIMIT, request.byteBudget ?? PAGE_BUDGET)
     const [interactions, queue, planning, goal, capabilities, catalogs] = await Promise.all([
@@ -59,7 +70,7 @@ export class DeviceReaders {
       historySource: 'live',
       deviceOffline: false,
       eventCursor: eventCursor(page.headSeq),
-      timeline: { items: page.items.map(toProtocolItem), hasMore: page.hasMore, nextSeq: page.headSeq, resetSeq: page.resetSeq },
+      timeline: { items: page.items.map(toProtocolItem), hasMore: page.hasMore || (this.history !== null && (await this.history.hasOlder(request.sessionId))), nextSeq: page.headSeq, resetSeq: page.resetSeq },
       notices: interactions.map(noticeOf),
       approvals: [],
       queue: queue.items.length > 0 || queue.revision > 0 ? queueRules.queueState(queue) : null,
@@ -71,15 +82,23 @@ export class DeviceReaders {
     }
   }
 
-  /** `store.read`: paged history by `orderSeq`. */
+  /** `store.read`: paged history by `orderSeq`; paging back past what is stored projects older native history. */
   public async read(request: { sessionId: string; mode: 'latest' | 'before' | 'after'; cursor?: number | null; limit?: number; byteBudget?: number }): Promise<StoreReadResponse> {
     await this.session(request.sessionId)
-    const page = await this.store.timeline.read(request.sessionId, request.mode, request.cursor ?? null, request.limit ?? SNAPSHOT_LIMIT, request.byteBudget ?? PAGE_BUDGET)
+    const limit = request.limit ?? SNAPSHOT_LIMIT
+    const cursor = request.cursor ?? null
+    const readPage = () => this.store.timeline.read(request.sessionId, request.mode, cursor, limit, request.byteBudget ?? PAGE_BUDGET)
+    if (request.mode === 'latest') await this.history?.ensureLatest(request.sessionId)
+    let page = await readPage()
+    if (request.mode !== 'after' && !page.hasMore && page.items.length < limit && this.history !== null) {
+      if (await this.history.ensureBefore(request.sessionId, request.mode === 'before' ? cursor : null, limit)) page = await readPage()
+    }
+    const hasMore = page.hasMore || (request.mode !== 'after' && this.history !== null && (await this.history.hasOlder(request.sessionId)))
     return {
       items: page.items.map(item => toProtocolItem(item) as unknown as Record<string, unknown>),
       headSeq: page.headSeq,
       resetSeq: page.resetSeq,
-      hasMore: page.hasMore,
+      hasMore,
       oldestOrderSeq: page.oldestOrderSeq,
     }
   }
