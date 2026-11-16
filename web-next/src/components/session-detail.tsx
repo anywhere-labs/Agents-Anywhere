@@ -77,7 +77,7 @@ import { isVisibleTimelineItem, messageText, runtimeLabel, textOf } from "@/comp
 import { stripInjectedAttachmentMentions } from "@/features/dashboard/attachments"
 import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
 import { useWorkspace } from "@/components/workspace-context"
-import { INITIAL_TIMELINE_LIMIT, loadInitialSessionState, effectiveRuntimeStatus } from "@/components/session/session-remote-state"
+import { INITIAL_TIMELINE_LIMIT, loadInitialSessionState, effectiveRuntimeStatus, sessionHistoryUnavailable } from "@/components/session/session-remote-state"
 import type { SessionRemoteState, SessionStateCache } from "@/components/session/session-state-cache"
 
 type SessionDetailProps = {
@@ -364,6 +364,8 @@ function SessionDetailVisit({
   const session = state?.session ?? fallbackSession
   const runtimeState = state?.state ?? null
   const runtimeStatus = effectiveRuntimeStatus(runtimeState, session)
+  // Protocol 1.2: the Server has no history while the device is offline (D1).
+  const historyUnavailable = sessionHistoryUnavailable(state)
   const turnInProgress = runtimeStatus === "waiting"
     || runtimeStatus === "pending"
     || runtimeStatus === "running"
@@ -666,7 +668,7 @@ function SessionDetailVisit({
   }, [])
 
   const loadOlderTimeline = React.useCallback(async () => {
-    if (loadingOlderRef.current || loadingOlder || !state?.hasMore) return
+    if (loadingOlderRef.current || loadingOlder || !state?.hasMore || sessionHistoryUnavailable(state)) return
     const oldestItem = state.items[0]
     if (!oldestItem) return
 
@@ -687,6 +689,8 @@ function SessionDetailVisit({
       if (!activeVisitRef.current) return
       setState((current) => {
         if (!current || current.session.id !== sessionId || current.timelineResetVersion !== resetVersion) return current
+        // An offline device's empty page is not the start of the history.
+        if (older.deviceOffline) return { ...current, deviceOffline: true, historySource: "unavailable", serverTime: older.serverTime }
         if (older.items.length === 0) return { ...current, hasMore: older.hasMore, serverTime: older.serverTime }
         const items = mergeTimelineItems(older.items, current.items)
         pendingPrependScrollRestoreRef.current = {
@@ -721,7 +725,7 @@ function SessionDetailVisit({
   // A first page that does not fill the viewport cannot be scrolled, so the
   // scroll handler above never fires. Pull older pages until it can scroll.
   React.useEffect(() => {
-    if (loading || loadingOlder || !state?.hasMore) return
+    if (loading || loadingOlder || !state?.hasMore || sessionHistoryUnavailable(state)) return
     if (!needsOlderTimelinePage(timelineRef.current, state.hasMore)) return
     void loadOlderTimeline()
   }, [loadOlderTimeline, loading, loadingOlder, state])
@@ -1272,6 +1276,13 @@ function SessionDetailVisit({
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       ) : null}
+      {historyUnavailable && state && state.items.length > 0 ? (
+        <Alert data-testid="session-history-offline" className="mx-auto mt-4 w-[calc(100%-2rem)] max-w-3xl">
+          <WifiOff />
+          <AlertTitle>{tSession("historyOfflineTitle")}</AlertTitle>
+          <AlertDescription>{tSession("historyOfflineCached")}</AlertDescription>
+        </Alert>
+      ) : null}
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <ScrollArea
@@ -1299,7 +1310,9 @@ function SessionDetailVisit({
             detachedInteractions.length === 0 &&
             detachedNotifications.length === 0 &&
             blockingInteractionList.length === 0 ? (
-              <p className="py-12 text-center text-sm text-muted-foreground">{tSession("noActivity")}</p>
+              <p className="py-12 text-center text-sm text-muted-foreground">
+                {tSession(historyUnavailable ? "historyOfflineEmpty" : "noActivity")}
+              </p>
             ) : null}
             {timelineGroups.map((group) => {
               const groupKey = timelineGroupKey(group)

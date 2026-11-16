@@ -17,12 +17,14 @@ import {
   cursorSequence,
   isTimelineItem,
   loadInitialSessionState,
+  mergeOfflineSnapshot,
   mergeRuntimeState,
   mergeSessionEvent,
   mergeSessionSnapshot,
   parseProtocolEvent,
   readPayloadValue,
   sessionEventCanUpdateState,
+  sessionHistoryUnavailable,
 } from "./session-remote-state"
 
 type StateUpdate = SessionRemoteState | null | ((current: SessionRemoteState | null) => SessionRemoteState | null)
@@ -37,6 +39,17 @@ function runtimeDomain(event: ProtocolEventEnvelope): RuntimeDomain | null {
       (event.payload.catalogType === "model" || event.payload.catalogType === "permission")) return event.payload.catalogType
   return null
 }
+
+/** Events whose sequence advances the recovery cursor of the session history. */
+function isTimelineEvent(event: ProtocolEventEnvelope): boolean {
+  return event.type === "timeline.item_created" || event.type === "timeline.item_updated" || event.type === "timeline.snapshot"
+}
+
+/**
+ * ``session.catchup_required`` (protocol 1.2): the device link was rebuilt and
+ * live changes resumed from its head, so each client recovers its own gap.
+ */
+const CATCHUP_REQUIRED = "session.catchup_required"
 
 export type SessionControllerSnapshot = {
   state: SessionRemoteState | null
@@ -94,6 +107,8 @@ export function createSessionController(options: SessionControllerOptions) {
   let recoveryStarting = false
   let recoveryRequired = true
   let refetchPromise: Promise<boolean> | null = null
+  // A catch-up request that arrived while a recovery was already reading.
+  let catchupPending = false
   let bufferedEvents: ProtocolEventEnvelope[] = []
   let processedIds = new Set<string>()
   const liveReads = new Map<RuntimeDomain, LiveRead>()
@@ -112,8 +127,11 @@ export function createSessionController(options: SessionControllerOptions) {
     publish({ state })
     if (!state || !started || !snapshotReady || !snapshot.subscribed || recoveryPromise || recoveryStarting) return
     if (state.session.connectorStatus !== previous?.session.connectorStatus) {
-      if (state.session.connectorStatus === "online") refreshRuntime(true)
-      else {
+      if (state.session.connectorStatus === "online") {
+        // The device is back: read the history it could not serve while offline.
+        if (sessionHistoryUnavailable(state) || !snapshot.hasSnapshot) void recoverEvents()
+        else refreshRuntime(true)
+      } else {
         releaseLiveReads()
         clearError("capabilities")
         clearError("notices")
@@ -189,6 +207,17 @@ export function createSessionController(options: SessionControllerOptions) {
       return
     }
     if (event.type === "keepalive") return
+    if (event.type === CATCHUP_REQUIRED) {
+      requestCatchup()
+      return
+    }
+    // While history is unavailable the cursor is not proven to cover the gap
+    // before a live item; recover first so the gap cannot be skipped.
+    if (isTimelineEvent(event) && sessionHistoryUnavailable(snapshot.state)) {
+      bufferedEvents.push(event)
+      requestCatchup()
+      return
+    }
     const domain = runtimeDomain(event)
     const read = domain && liveReads.get(domain)
     if (read) {
@@ -329,6 +358,10 @@ export function createSessionController(options: SessionControllerOptions) {
   }
 
   function replaceSnapshot(next: SessionRemoteState, reset: boolean) {
+    if (sessionHistoryUnavailable(next)) {
+      applyOfflineSnapshot(next)
+      return
+    }
     releaseLiveReads()
     renderBuffer.clear()
     const merged = callbacks.applyOptimisticItems(next)
@@ -349,6 +382,27 @@ export function createSessionController(options: SessionControllerOptions) {
     callbacks.onSessionUpdated?.(next.session)
   }
 
+  /**
+   * The Server keeps no history (D1): an offline snapshot carries metadata
+   * only. Retained content and its cursor survive; without any, the empty
+   * page is not an authoritative base, so the next visit reads again.
+   */
+  function applyOfflineSnapshot(next: SessionRemoteState) {
+    const current = snapshot.state
+    if (current && (snapshot.hasSnapshot || current.items.length > 0)) {
+      updateState((state) => (state ? mergeOfflineSnapshot(state, next) : state))
+    } else {
+      releaseLiveReads()
+      renderBuffer.clear()
+      cursor.replaceFromSnapshot(sessionId, 0)
+      processedIds.clear()
+      updateState({ ...callbacks.applyOptimisticItems(next), nextSeq: 0, eventCursor: "seq:0", hasMore: false })
+      publish({ hasSnapshot: false })
+    }
+    clearError("snapshot")
+    callbacks.onSessionUpdated?.(next.session)
+  }
+
   function refetch(reason: string, recoveringConnection: number) {
     if (refetchPromise) return refetchPromise
     refetchPromise = loadInitialSessionState(token, sessionId, { reason })
@@ -365,6 +419,25 @@ export function createSessionController(options: SessionControllerOptions) {
         refetchPromise = null
       })
     return refetchPromise
+  }
+
+  function requestCatchup() {
+    if (recoveryPromise || recoveryStarting) catchupPending = true
+    else void recoverEvents()
+  }
+
+  function markHistoryUnavailable() {
+    updateState((current) =>
+      current && !(current.deviceOffline && current.historySource === "unavailable")
+        ? { ...current, deviceOffline: true, historySource: "unavailable" }
+        : current,
+    )
+  }
+
+  function markHistoryLive() {
+    updateState((current) =>
+      current && sessionHistoryUnavailable(current) ? { ...current, deviceOffline: false, historySource: "live" } : current,
+    )
   }
 
   function recoverEvents(): Promise<void> {
@@ -399,9 +472,23 @@ export function createSessionController(options: SessionControllerOptions) {
       .then(() => dashboardApi.getSessionEvents(token, sessionId, after))
       .then(async (recovery) => {
         if (disposed || recoveringConnection !== connection || snapshot.invalidated || !snapshot.subscribed) return
-        if (recovery.snapshotRequired) {
-          recovered = await recoverSnapshot("websocket.recovery:snapshot-required")
+        if (recovery.deviceOffline) {
+          // Nothing is readable until the device returns. Keep the cursor and
+          // drop buffered history items: the next recovery reads them again.
+          previousConsumed = true
+          drainSessionEventBuffer(previous.filter((event) => !isTimelineEvent(event)), applyEvent)
+          markHistoryUnavailable()
+          renderBuffer.flush()
+          refreshRuntime()
+          recovered = true
+        } else if (recovery.snapshotRequired || !snapshot.hasSnapshot) {
+          // Without an authoritative base (an offline first load), read one now.
+          recovered = await recoverSnapshot(
+            recovery.snapshotRequired ? "websocket.recovery:snapshot-required" : "websocket.recovery:device-online",
+          )
         } else {
+          // The device answered: history is readable again before items apply.
+          markHistoryLive()
           // Sort together so newer buffered timeline items cannot hide older
           // recovered ones; at equal sequences the authoritative read wins.
           drainSessionEventBuffer([...previous, ...recovery.events], applyEvent)
@@ -425,6 +512,12 @@ export function createSessionController(options: SessionControllerOptions) {
         recoveryPromise = null
         if (disposed || snapshot.invalidated) return
         if (!previousConsumed) bufferedEvents = [...previous, ...bufferedEvents]
+        if (catchupPending && recoveringConnection === connection && snapshot.subscribed) {
+          // The request was answered before the device link was rebuilt.
+          catchupPending = false
+          void recoverEvents()
+          return
+        }
         if (recovered && recoveringConnection === connection && snapshot.subscribed) {
           recoveryRequired = false
           drainBufferedEvents()
@@ -471,7 +564,9 @@ export function createSessionController(options: SessionControllerOptions) {
           publish({ subscribed: true })
           if (snapshotReady) void recoverAfterSubscription(currentConnection)
         } else if (!snapshotReady || recoveryRequired || recoveryPromise) {
-          bufferedEvents.push(event)
+          if (event.type === CATCHUP_REQUIRED) {
+            if (snapshotReady) requestCatchup()
+          } else bufferedEvents.push(event)
           if (event.type === "session.refetch_required") void recoverEvents()
         } else applyEvent(event)
       }

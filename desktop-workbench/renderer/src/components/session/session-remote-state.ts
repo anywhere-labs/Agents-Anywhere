@@ -56,10 +56,35 @@ function sessionStateFromSnapshot(snapshot: SessionSnapshotResponse): SessionRem
     eventCursor: snapshot.eventCursor,
     effectiveCapabilities: snapshot.effectiveCapabilities,
     catalogs: snapshot.catalogs ?? {},
+    deviceOffline: Boolean(snapshot.deviceOffline),
+    historySource: snapshot.historySource ?? (snapshot.deviceOffline ? "unavailable" : "live"),
+  }
+}
+
+/** True when the Server could not read this session's history because its device is offline (protocol 1.2). */
+export function sessionHistoryUnavailable(state: Pick<SessionRemoteState, "deviceOffline" | "historySource"> | null | undefined) {
+  return Boolean(state?.deviceOffline || state?.historySource === "unavailable")
+}
+
+/**
+ * Applies an offline snapshot to retained content. The Server holds no
+ * history (D1): its empty page means "unreadable now", so cached items, the
+ * paging position and the recovery cursor stay as they were.
+ */
+export function mergeOfflineSnapshot(current: SessionRemoteState, incoming: SessionRemoteState): SessionRemoteState {
+  return {
+    ...current,
+    session: incoming.session,
+    state: incoming.state ?? current.state,
+    effectiveCapabilities: incoming.effectiveCapabilities ?? current.effectiveCapabilities,
+    serverTime: incoming.serverTime,
+    deviceOffline: true,
+    historySource: "unavailable",
   }
 }
 
 export function mergeSessionSnapshot(current: SessionRemoteState, incoming: SessionRemoteState): SessionRemoteState {
+  if (sessionHistoryUnavailable(incoming)) return mergeOfflineSnapshot(current, incoming)
   const timeline = mergeTimelineSnapshot(current.items, current.nextSeq, incoming.items, incoming.nextSeq)
   return {
     ...incoming,
@@ -329,13 +354,16 @@ function mergeNotices(current: Notice[], incoming: Notice[]): Notice[] {
   return Array.from(byId.values()).sort((a, b) => a.updatedSeq - b.updatedSeq || a.noticeId.localeCompare(b.noticeId))
 }
 
+// Event envelopes are unchanged across protocol versions; 1.2 only adds event types.
+const PROTOCOL_EVENT_VERSIONS: ReadonlySet<string> = new Set(["1.0", "1.1", "1.2"])
+
 export function parseProtocolEvent(data: string): ProtocolEventEnvelope | null {
   try {
     const event = JSON.parse(data) as Partial<ProtocolEventEnvelope>
     if (!event || typeof event.type !== "string") return null
     if (event.type === "keepalive") return null
     if (
-      event.protocolVersion !== "1.0" ||
+      !PROTOCOL_EVENT_VERSIONS.has(event.protocolVersion as string) ||
       typeof event.eventId !== "string" ||
       typeof event.emittedAt !== "string" ||
       typeof event.sessionId !== "string" ||
@@ -345,7 +373,7 @@ export function parseProtocolEvent(data: string): ProtocolEventEnvelope | null {
       return null
     }
     return {
-      protocolVersion: event.protocolVersion,
+      protocolVersion: event.protocolVersion as ProtocolEventEnvelope["protocolVersion"],
       eventId: event.eventId,
       sequence: event.sequence,
       cursor: event.cursor,

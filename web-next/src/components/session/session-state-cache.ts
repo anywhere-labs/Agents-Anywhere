@@ -1,4 +1,5 @@
 import type {
+  HistorySource,
   Notice,
   ProtocolCapabilitySet,
   ProtocolModelCatalog,
@@ -24,6 +25,12 @@ export type SessionRemoteState = {
     permission?: ProtocolPermissionCatalog
     [key: string]: unknown
   }
+  /**
+   * Protocol 1.2: the device holding this session's history is offline. The
+   * items are whatever this client loaded earlier, not a complete page.
+   */
+  deviceOffline?: boolean
+  historySource?: HistorySource
 }
 
 export type CachedSessionState = {
