@@ -99,8 +99,13 @@ export class AcpBridgeLink {
     private readonly pollMs = 1000, private readonly onStatus?: (status: LinkStatus) => void) {}
 
   get connectedAgent(): DshAcpAgent | undefined { return this.agent }
+  get hostInstance(): string { return this.facts.hostInstance }
+
+  private started = false
 
   start(): void {
+    if (this.started || this.closed) return
+    this.started = true
     try {
       this.watcher = watch(dirname(this.rendezvousPath), (_event, name) => {
         if (!name || name.toString() === basename(this.rendezvousPath)) this.check()

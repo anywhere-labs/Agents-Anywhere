@@ -11,6 +11,16 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ContentBlock as AcpContentBlock, SessionUpdate, StopReason, ToolCallContent } from '@agentclientprotocol/sdk'
 import type { DshTurnNotification, DshUpdateMeta } from '../../contracts/bridge-v3.js'
 import { record } from '../dsh-runtime/types.js'
+import { itemId } from '../dsh-runtime/identity.js'
+import type { Writer } from '../../contracts/bridge-v3.js'
+
+/**
+ * Item IDs (§6 `itemId`): the assistant text and reasoning of one step are one item each,
+ * whether they arrive as stream chunks, the committed message or a replay.
+ */
+export const stepItemId = (sessionId: string, role: 'message' | 'reasoning', turn: number, step: number) =>
+  itemId(sessionId, `acp.${role}`, `${turn}:${step}`)
+export const toolItemId = (sessionId: string, callId: string) => itemId(sessionId, 'acp.tool', callId)
 
 export type ProjectedUpdate = SessionUpdate & { _meta?: { dsh: DshUpdateMeta } }
 
@@ -63,7 +73,7 @@ export function userSource(event: SessionEvent): { kind: DshUpdateMeta['source']
  * Updates for one committed event. `attempt` is the live stream attempt of the
  * session's Agent, which a committed assistant message replaces.
  */
-export async function eventUpdates(ctx: Context, event: SessionEvent, turn: number | undefined, attempt?: string): Promise<ProjectedUpdate[]> {
+export async function eventUpdates(ctx: Context, sessionId: string, event: SessionEvent, turn: number | undefined, attempt?: string): Promise<ProjectedUpdate[]> {
   const seq = Number(event.seq)
   const base: DshUpdateMeta = { seq, ...(turn !== undefined ? { turn } : {}) }
   switch (event.type) {
@@ -81,25 +91,32 @@ export async function eventUpdates(ctx: Context, event: SessionEvent, turn: numb
     }
     case 'assistant/message': {
       const message = event.data.message
+      const data = record(event.data)
+      const step = Number(data.step ?? 0), turnNo = Number(data.turn ?? turn ?? 0)
       const committed = { messageId: message.id, ...(attempt ? { replacesAttempt: attempt } : {}) }
-      const updates: ProjectedUpdate[] = []
+      // One chunk per role: the committed text replaces the stream of the same item whole.
+      let reasoning = '', text = ''
       for (const block of message.content as readonly Block[]) {
-        if (block.type === 'reasoning') {
-          if (block.text) updates.push(withMeta({ sessionUpdate: 'agent_thought_chunk', messageId: message.id,
-            content: { type: 'text', text: block.text } }, { ...base, committed }))
-          continue
-        }
+        if (block.type === 'reasoning') reasoning += block.text ?? ''
+        else if (block.type === 'text') text += block.text ?? ''
+      }
+      const meta = (role: 'message' | 'reasoning'): DshUpdateMeta => ({ ...base, turn: turnNo, step, itemId: stepItemId(sessionId, role, turnNo, step), committed })
+      const updates: ProjectedUpdate[] = []
+      if (reasoning) updates.push(withMeta({ sessionUpdate: 'agent_thought_chunk', messageId: message.id,
+        content: { type: 'text', text: reasoning } }, meta('reasoning')))
+      // An assistant message with only tool calls still commits (and closes) its stream attempt.
+      if (text || (!reasoning && attempt)) updates.push(withMeta({ sessionUpdate: 'agent_message_chunk', messageId: message.id,
+        content: { type: 'text', text } }, meta('message')))
+      for (const block of message.content as readonly Block[]) {
+        if (block.type !== 'image') continue
         const content = await blockToAcp(ctx, block)
         if (content) updates.push(withMeta({ sessionUpdate: 'agent_message_chunk', messageId: message.id, content }, { ...base, committed }))
       }
-      // An assistant message with only tool calls still commits (and closes) its stream attempt.
-      if (!updates.length && attempt) updates.push(withMeta({ sessionUpdate: 'agent_message_chunk', messageId: message.id,
-        content: { type: 'text', text: '' } }, { ...base, committed }))
       return updates
     }
     case 'tool/call':
       return [withMeta({ sessionUpdate: 'tool_call', toolCallId: event.data.callId, title: event.data.name, kind: 'other',
-        status: 'in_progress', rawInput: parseToolArguments(event.data.arguments) }, base)]
+        status: 'in_progress', rawInput: parseToolArguments(event.data.arguments) }, { ...base, itemId: toolItemId(sessionId, event.data.callId) })]
     case 'tool/result': {
       const message = event.data.message
       const content: ToolCallContent[] = []
@@ -108,7 +125,7 @@ export async function eventUpdates(ctx: Context, event: SessionEvent, turn: numb
         if (converted) content.push({ type: 'content', content: converted })
       }
       return [withMeta({ sessionUpdate: 'tool_call_update', toolCallId: message.toolCallId,
-        status: message.isError === true ? 'failed' : 'completed', content }, base)]
+        status: message.isError === true ? 'failed' : 'completed', content }, { ...base, itemId: toolItemId(sessionId, message.toolCallId) })]
     }
     case 'session/title': {
       const title = record(event.data).title
@@ -120,15 +137,20 @@ export async function eventUpdates(ctx: Context, event: SessionEvent, turn: numb
 }
 
 /** A transient stream chunk (contracts §6 `transient`). */
-export function streamUpdate(chunk: { type: string, text?: string }, attemptId: string, throughSeq: number, turn: number): ProjectedUpdate | undefined {
-  const meta: DshUpdateMeta = { seq: Math.max(0, throughSeq), turn, transient: true, attemptId }
+export function streamUpdate(sessionId: string, chunk: { type: string, text?: string }, attemptId: string, throughSeq: number, turn: number, step: number): ProjectedUpdate | undefined {
+  const meta = (role: 'message' | 'reasoning'): DshUpdateMeta => ({ seq: Math.max(0, throughSeq), turn, step, itemId: stepItemId(sessionId, role, turn, step), transient: true, attemptId })
   if (chunk.type === 'text-delta' && chunk.text) {
-    return withMeta({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: chunk.text } }, meta)
+    return withMeta({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: chunk.text } }, meta('message'))
   }
   if (chunk.type === 'reasoning-delta' && chunk.text) {
-    return withMeta({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: chunk.text } }, meta)
+    return withMeta({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: chunk.text } }, meta('reasoning'))
   }
   return undefined
+}
+
+/** A writer change of an attached session, ordered with its updates (§9). */
+export function writerUpdate(writer: Writer): ProjectedUpdate {
+  return withMeta({ sessionUpdate: 'session_info_update' }, { writer })
 }
 
 /** A stream attempt that will never commit (retry, interruption). */

@@ -6,23 +6,35 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionPromptRequest } from '@deepseek-ai/dsh-api-session-controller'
+import type { PromptContentPart, SessionPromptRequest } from '@deepseek-ai/dsh-api-session-controller'
 import * as acp from '@agentclientprotocol/sdk'
-import { realpath, stat } from 'node:fs/promises'
-import { isAbsolute } from 'node:path'
+import { constants } from 'node:fs'
+import { open, realpath, stat } from 'node:fs/promises'
+import { isAbsolute, sep } from 'node:path'
+import type { ImageMediaType } from '@deepseek-ai/dsh-attachment'
+import { IMAGE_MIME_TYPES } from '../dsh-runtime/attachments.js'
 import { BRIDGE_PROTOCOL, DSH_METHODS, type DshAgentMeta, type DshFeatures, type DshLoadResultMeta, type DshPromptMeta,
   type DshSessionInfoMeta, type DshTurnNotification, type Writer } from '../../contracts/bridge-v3.js'
 import { admitted, type NativeChange, type NativeRuntime } from '../dsh-runtime/native.js'
 import { BridgeError } from '../dsh-runtime/errors.js'
 import { continuationRequestId, latestTurnOutcome } from '../dsh-runtime/turn-outcome.js'
 import { permissionSelectionId } from '../dsh-runtime/selections.js'
+import type { QuestionForm } from '../dsh-runtime/question-form.js'
 import { record } from '../dsh-runtime/types.js'
-import { abandonedUpdate, eventUpdates, stopReasonOf, streamUpdate, turnUpdate, userSource, type ProjectedUpdate } from './projection.js'
+import { abandonedUpdate, eventUpdates, stopReasonOf, streamUpdate, turnUpdate, userSource, writerUpdate, type ProjectedUpdate } from './projection.js'
 
 export interface HostFacts {
   hostInstance: string
   dshVersion: string
   pluginVersion: string
+  /** Files named by `_meta.dsh.upload` must lie under this directory (the Connector's data directory). */
+  uploadRoot?: string
+}
+
+interface PromptPlan {
+  text: string
+  images: { mediaType: ImageMediaType, data: string }[]
+  uploads: { path: string, name: string, size: number }[]
 }
 
 const LIST_PAGE = 100
@@ -56,7 +68,7 @@ interface Attached {
   /** Live changes queued while a replay is in flight. */
   buffer: NativeChange[] | undefined
   turn: TurnState | undefined
-  attempt: { attemptId: string, turn: number } | undefined
+  attempt: { attemptId: string, turn: number, step: number } | undefined
 }
 
 /** Model option values follow DSH's own automation ACP: JSON.stringify([provider, model]). */
@@ -68,9 +80,12 @@ export class DshAcpAgent implements acp.Agent {
   private readonly turns = new Map<string, TurnState>()
   private readonly pending = new Map<string, Pending[]>()
   private readonly approvals = new Map<string, { sessionId: string, abort: AbortController, answered: boolean }>()
+  private readonly questions = new Map<string, { sessionId: string, abort: AbortController, answered: boolean }>()
   /** Sessions this connection created; DSH hides them until their first user message. */
   private readonly created = new Set<string>()
   private listSubscribed = false
+  /** The Connector declared `clientCapabilities.elicitation`: questions go to it (§10). */
+  private elicitation = false
   private readonly listed = new Set<string>()
   private readonly listTimers = new Map<string, NodeJS.Timeout>()
   private readonly unwatch: () => void
@@ -91,9 +106,9 @@ export class DshAcpAgent implements acp.Agent {
       steer: Boolean(controller),
       continue: typeof controller?.projections === 'function',
       planning: Boolean(this.native.planning.service()),
-      // Questions need client elicitation; the prototype leaves them to the DSH UI.
-      questions: false,
-      attachments: false,
+      // Questions need client elicitation (§10); without it they stay in the DSH UI.
+      questions: this.elicitation && this.native.questions.available,
+      attachments: Boolean(this.ctx.get('attachments')),
       fileUploads: Boolean(this.ctx.get('fileUploads')),
       agentPresets: Boolean(this.ctx.get('agentPresets')),
       permissionPresets: this.native.configuration.canSelectPermission,
@@ -106,12 +121,13 @@ export class DshAcpAgent implements acp.Agent {
 
   async initialize(params: acp.InitializeRequest): Promise<acp.InitializeResponse> {
     if (params.protocolVersion < 1) throw invalid('ACP protocol version 1 is required.')
+    this.elicitation = record(params.clientCapabilities).elicitation !== undefined && record(params.clientCapabilities).elicitation !== null
     return {
       protocolVersion: 1,
       agentInfo: { name: 'agents-anywhere-dsh-bridge', version: this.facts.pluginVersion },
       agentCapabilities: {
         loadSession: true,
-        promptCapabilities: { image: false, audio: false, embeddedContext: false },
+        promptCapabilities: { image: Boolean(this.ctx.get('attachments')), audio: false, embeddedContext: false },
         sessionCapabilities: { list: {}, resume: {}, close: {} },
       },
       authMethods: [],
@@ -258,6 +274,8 @@ export class DshAcpAgent implements acp.Agent {
       const buffered = entry.buffer ?? []
       entry.buffer = undefined
       for (const change of buffered) await this.deliver(id, entry, change)
+      // Requests already waiting when the Connector attached are asked now.
+      void this.syncApprovals(id).then(() => this.syncQuestions(id)).catch(() => undefined)
       const truncated = from > 0 && from !== Number.MAX_SAFE_INTEGER && events.length > 0 && Number(events[0]!.seq) > from
       return { configOptions: await this.configOptions(id), _meta: { dsh: await this.loadMeta(id, truncated) } }
     } catch (error) {
@@ -286,6 +304,9 @@ export class DshAcpAgent implements acp.Agent {
     for (const [eventId, approval] of this.approvals) if (approval.sessionId === params.sessionId) {
       approval.abort.abort(); this.approvals.delete(eventId)
     }
+    for (const [eventId, question] of this.questions) if (question.sessionId === params.sessionId) {
+      question.abort.abort(); this.questions.delete(eventId)
+    }
     return {}
   }
 
@@ -300,6 +321,7 @@ export class DshAcpAgent implements acp.Agent {
       else this.scheduleListChange(change.id)
     }
     if (change.type === 'approval') await this.syncApprovals(change.id)
+    if (change.type === 'question') await this.syncQuestions(change.id)
     if ('id' in change) {
       const entry = this.attached.get(change.id)
       if (entry) {
@@ -336,8 +358,8 @@ export class DshAcpAgent implements acp.Agent {
     if (change.type === 'event') await this.sendEvent(id, entry, change.event, false)
     else if (change.type === 'stream') {
       const attemptId = change.attemptId ?? `${change.turn}:${change.step}`
-      if (entry.attempt?.attemptId !== attemptId) entry.attempt = { attemptId, turn: change.turn }
-      const update = streamUpdate(change.chunk, entry.attempt.attemptId, change.throughSeq, change.turn)
+      if (entry.attempt?.attemptId !== attemptId) entry.attempt = { attemptId, turn: change.turn, step: change.step }
+      const update = streamUpdate(id, change.chunk, entry.attempt.attemptId, change.throughSeq, change.turn, change.step)
       if (update) await this.update(id, update)
     } else if (change.type === 'refresh' && change.interrupted && entry.attempt) {
       await this.update(id, abandonedUpdate(entry.attempt.attemptId, entry.sentThrough, entry.attempt.turn))
@@ -353,7 +375,7 @@ export class DshAcpAgent implements acp.Agent {
     const turn = entry.turn?.turn ?? (event.type === 'turn/end' ? event.data.turn : undefined)
     const attempt = event.type === 'assistant/message' ? entry.attempt?.attemptId : undefined
     if (event.type === 'assistant/message') entry.attempt = undefined
-    for (const update of await eventUpdates(this.ctx, event, turn, attempt)) await this.update(id, update)
+    for (const update of await eventUpdates(this.ctx, id, event, turn, attempt)) await this.update(id, update)
     if (event.type === 'turn/start') {
       await this.notifyTurn({ sessionId: id, phase: 'started', turn: event.data.turn, seq })
     } else if (event.type === 'turn/end') {
@@ -402,15 +424,58 @@ export class DshAcpAgent implements acp.Agent {
     return { requestId, delivery, selections: record(meta.selections) as DshPromptMeta['selections'] & object }
   }
 
-  private promptContent(prompt: readonly acp.ContentBlock[]) {
+  /** Validates a prompt (§8) before anything is admitted; uploads happen only for a new admission. */
+  private promptPlan(prompt: readonly acp.ContentBlock[]): PromptPlan {
     let text = ''
+    const images: PromptPlan['images'] = []
+    const uploads: PromptPlan['uploads'] = []
     for (const block of prompt) {
       if (block.type === 'text') text += block.text
-      else if (block.type === 'resource_link') text += `\n[resource_link name=${JSON.stringify(block.name)} uri=${JSON.stringify(block.uri)}]\n`
-      else throw invalid(`Prompt content ${block.type} is not supported by this host.`)
+      else if (block.type === 'image') {
+        if (!this.ctx.get('attachments')) throw acpError(-32601, 'This DSH host cannot receive images.', { code: 'unsupported' })
+        if (!IMAGE_MIME_TYPES.includes(block.mimeType as ImageMediaType) || typeof block.data !== 'string' || !block.data) throw invalid(`Image type ${block.mimeType} is not supported.`)
+        images.push({ mediaType: block.mimeType as ImageMediaType, data: block.data })
+      } else if (block.type === 'resource_link') {
+        const upload = record(record(record((block as { _meta?: unknown })._meta).dsh).upload)
+        if (typeof upload.path === 'string') {
+          if (!this.ctx.get('fileUploads')) throw acpError(-32601, 'This DSH host cannot receive files.', { code: 'unsupported' })
+          const size = Number(upload.size)
+          if (!isAbsolute(upload.path) || !Number.isSafeInteger(size) || size < 0) throw invalid('_meta.dsh.upload needs an absolute path and a size.')
+          uploads.push({ path: upload.path, name: typeof upload.name === 'string' && upload.name ? upload.name : block.name, size })
+        } else text += `\n[resource_link name=${JSON.stringify(block.name)} uri=${JSON.stringify(block.uri)}]\n`
+      } else throw invalid(`Prompt content ${block.type} is not supported by this host.`)
     }
-    if (!text.trim()) throw invalid('empty prompt')
-    return [{ type: 'text' as const, text }]
+    if (!text.trim() && !images.length && !uploads.length) throw invalid('empty prompt')
+    if (images.length) {
+      const limits = this.ctx.get('attachments')!.imageLimits
+      const sizes = images.map(image => Buffer.byteLength(image.data, 'base64'))
+      if (images.length > limits.maxImagesPerMessage || sizes.some(size => size > limits.maxImageBytes)
+        || sizes.reduce((total, size) => total + size, 0) > limits.maxMessageImageBytes) throw invalid('Images exceed the DSH attachment size or count limits.')
+    }
+    return { text, images, uploads }
+  }
+
+  /** The DSH prompt parts of a plan; files under the Connector's data directory are uploaded to DSH first. */
+  private async promptParts(id: string, plan: PromptPlan, signal: AbortSignal): Promise<PromptContentPart[]> {
+    const parts: PromptContentPart[] = plan.text ? [{ type: 'text', text: plan.text }] : []
+    plan.images.forEach((image, index) => parts.push({ type: 'image', name: `image-${index + 1}`, mediaType: image.mediaType, data: image.data }))
+    for (const upload of plan.uploads) {
+      const root = this.facts.uploadRoot
+      if (!root) throw acpError(-32601, 'File uploads are not configured on this host.', { code: 'unsupported' })
+      let path: string
+      try { path = await realpath(upload.path) } catch { throw invalid('The uploaded file is gone.') }
+      const base = await realpath(root).catch(() => root)
+      if (!path.startsWith(`${base}${sep}`)) throw invalid('Uploads must come from the Connector data directory.')
+      const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+      try {
+        const info = await file.stat()
+        if (!info.isFile() || info.size !== upload.size) throw invalid('The uploaded file does not match its size.')
+        const result = await this.ctx.get('fileUploads')!.uploadStream({ sessionId: id as SessionId, name: upload.name,
+          data: file.createReadStream({ autoClose: false, highWaterMark: 64 * 1024 }) as AsyncIterable<Buffer>, signal })
+        parts.push({ type: 'file', receiptId: result.receiptId })
+      } finally { await file.close() }
+    }
+    return parts
   }
 
   private async agentFor(id: string) {
@@ -418,7 +483,8 @@ export class DshAcpAgent implements acp.Agent {
     const found = await controller.resolveAgent(id as SessionId)
     if ('error' in found) {
       if (record(found.error).code === 'session/writer-held') {
-        await this.conn.notify(DSH_METHODS.writer, { sessionId: id, writer: 'external' }).catch(() => undefined)
+        if (this.attached.has(id)) await this.update(id, writerUpdate('external')).catch(() => undefined)
+        else await this.conn.notify(DSH_METHODS.writer, { sessionId: id, writer: 'external' }).catch(() => undefined)
         throw writerHeld()
       }
       if (record(found.error).code === 'session/not-found') throw notFound()
@@ -427,7 +493,7 @@ export class DshAcpAgent implements acp.Agent {
     return found.agent
   }
 
-  private async admit(id: string, meta: DshPromptMeta, mode: 'queue' | 'steer', content: ReturnType<DshAcpAgent['promptContent']>,
+  private async admit(id: string, meta: DshPromptMeta, mode: 'queue' | 'steer', plan: PromptPlan,
     signal: AbortSignal): Promise<{ duplicate: boolean }> {
     await this.native.ensureKnown(id)
     if (!this.created.has(id) && !await this.native.visible(id)) throw notFound()
@@ -436,6 +502,7 @@ export class DshAcpAgent implements acp.Agent {
     if (admitted(events, meta.requestId)) return { duplicate: true }
     const agent = await this.agentFor(id)
     await this.applySelections(id, meta.selections ?? {}, signal)
+    const content = await this.promptParts(id, plan, signal)
     await this.native.configuration.controller().prompt({ sessionId: id as SessionId,
       requestId: meta.requestId as SessionPromptRequest['requestId'], mode, content }, signal)
     await this.ctx.sessions.flush(agent.session)
@@ -444,7 +511,7 @@ export class DshAcpAgent implements acp.Agent {
 
   async prompt(params: acp.PromptRequest): Promise<acp.PromptResponse> {
     const meta = this.promptMeta(params._meta)
-    const content = this.promptContent(params.prompt)
+    const content = this.promptPlan(params.prompt)
     const id = params.sessionId
     let settle: Promise<acp.PromptResponse> | undefined
     if (meta.delivery !== 'queue') {
@@ -601,6 +668,76 @@ export class DshAcpAgent implements acp.Agent {
     await this.native.approvals.answer(entry.eventId, outcome.optionId)
   }
 
+  // ---------------------------------------------------------------- questions and plan review (§10)
+
+  private async syncQuestions(id: string): Promise<void> {
+    const pending = new Set(this.native.questions.pendingEntries(id).map(entry => entry.eventId))
+    for (const [eventId, question] of this.questions) {
+      if (question.sessionId !== id || pending.has(eventId)) continue
+      this.questions.delete(eventId)
+      question.abort.abort()
+      if (!question.answered && this.attached.has(id)) {
+        const status = this.native.questions.entryStatus(eventId)
+        await this.conn.notify(DSH_METHODS.interactionResolved, { sessionId: id, interactionId: eventId,
+          by: status === 'expired' ? 'timeout' : status === 'closed' ? 'cancelled' : 'dsh' }).catch(() => undefined)
+      }
+    }
+    if (!this.attached.has(id)) return
+    for (const entry of this.native.questions.pendingEntries(id)) {
+      if (this.questions.has(entry.eventId)) continue
+      const review = entry.form.questions.length === 1 ? entry.form.questions.find(q => q.intent?.kind === 'plan-review') : undefined
+      // A plan review is a permission request the Connector shows as a review; other questions need elicitation.
+      if (!review && !this.elicitation) continue
+      const question = { sessionId: id, abort: new AbortController(), answered: false }
+      this.questions.set(entry.eventId, question)
+      void (review ? this.askPlanReview(entry, review, question) : this.askQuestion(entry, question))
+    }
+  }
+
+  private async askQuestion(entry: { eventId: string, agentId: string, form: QuestionForm },
+    question: { abort: AbortController, answered: boolean }): Promise<void> {
+    const input = entry.form.input()
+    let response: Record<string, unknown>
+    try {
+      response = record(await this.conn.request('elicitation/create', {
+        sessionId: entry.agentId,
+        message: entry.form.questions.map(q => q.header ?? q.question).join(' / '),
+        requestedSchema: input.schema,
+        _meta: { dsh: { interactionId: entry.eventId, uiSchema: input.uiSchema } },
+      }, { cancellationSignal: question.abort.signal }))
+    } catch { return }
+    if (question.abort.signal.aborted) return
+    question.answered = true
+    try {
+      await this.native.questions.answerEvent(entry.eventId, response.action === 'accept' ? { kind: 'submit', input: response.content } : { kind: 'cancel' })
+    } catch { question.answered = false }
+  }
+
+  private async askPlanReview(entry: { eventId: string, agentId: string, planCallId?: string },
+    review: QuestionForm['questions'][number], question: { abort: AbortController, answered: boolean }): Promise<void> {
+    const options = (review.options ?? []).map((option, index) => ({ optionId: `o_${index}`, name: option.label, label: option.label }))
+    const approve = review.intent?.kind === 'plan-review' ? review.intent.approve : undefined
+    const firstOther = options.find(option => option.label !== approve)
+    let response: acp.RequestPermissionResponse
+    try {
+      response = await this.conn.request('session/request_permission', {
+        sessionId: entry.agentId,
+        toolCall: { toolCallId: entry.planCallId ?? entry.eventId, title: review.header ?? '请审阅计划', status: 'pending', kind: 'think',
+          rawInput: { plan: review.detail ?? '' } },
+        options: options.map(option => ({ optionId: option.optionId, name: option.name,
+          kind: option.label === approve ? 'allow_once' : option === firstOther ? 'reject_once' : 'reject_always' })),
+        _meta: { dsh: { interactionId: entry.eventId, planningReview: { markdown: review.detail ?? '', questionId: review.id,
+          approveOptionId: options.find(option => option.label === approve)?.optionId ?? null } } },
+      }, { cancellationSignal: question.abort.signal })
+    } catch { return }
+    if (question.abort.signal.aborted) return
+    question.answered = true
+    const outcome = response.outcome
+    const answer = outcome.outcome === 'selected' && options.some(option => option.optionId === outcome.optionId)
+      ? { kind: 'submit' as const, input: { answers: { [review.id]: { optionIds: [outcome.optionId] } } } } : { kind: 'cancel' as const }
+    try { await this.native.questions.answerEvent(entry.eventId, answer) } catch { question.answered = false }
+  }
+
   // ---------------------------------------------------------------- extensions
 
   async extMethod(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -628,7 +765,7 @@ export class DshAcpAgent implements acp.Agent {
   private async steer(params: Record<string, unknown>): Promise<Record<string, unknown>> {
     const id = String(params.sessionId)
     const meta = this.promptMeta(params._meta)
-    const content = this.promptContent(Array.isArray(params.prompt) ? params.prompt as acp.ContentBlock[] : [])
+    const content = this.promptPlan(Array.isArray(params.prompt) ? params.prompt as acp.ContentBlock[] : [])
     if (this.native.status(id as SessionId) !== 'running') return { outcome: 'promptRequired' }
     try {
       await this.admit(id, meta, 'steer', content, this.conn.signal)
@@ -668,6 +805,7 @@ export class DshAcpAgent implements acp.Agent {
     this.unwatch()
     for (const timer of this.listTimers.values()) clearTimeout(timer)
     for (const approval of this.approvals.values()) approval.abort.abort()
+    for (const question of this.questions.values()) question.abort.abort()
     for (const list of this.pending.values()) for (const item of list) item.reject(new Error('Connector disconnected'))
     this.pending.clear()
     this.attached.clear()

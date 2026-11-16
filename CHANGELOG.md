@@ -14,6 +14,10 @@
 - 在工作设备安装并配置对应 CLI 后，可以在 Web、Desktop、Android 和 iOS 选择 Command Code、OpenCode、Google Antigravity、MiniMax Code、CodeBuddy Code 和 MiMo Code 新建会话，并按 Agent 支持的能力发送消息、处理审批、中断和恢复 AA 会话。（[#629](https://github.com/anywhere-labs/Agents-Anywhere/pull/629)）
 - Pi 会话现在支持 `/plan`，可以从首条任务开始规划、审阅和修改计划，并在同意后按原有工具权限继续执行。（[#631](https://github.com/anywhere-labs/Agents-Anywhere/pull/631)）
 
+### DSH 同步
+
+- DSH 插件可以直接连接新版 Connector：DSH 里打开的会话实时同步到 AA，在 AA 里可以发送图片和文件、回答 DSH 的提问、审阅计划，在 DSH 和 AA 之间切换时不会出现重复的消息；本机只有旧版 Connector 时，插件仍按原来的方式同步。（DSH-4 PR 待补）
+
 ### Desktop
 
 - Desktop 安装包自带 Pi 运行环境，第一次启动只需在本地复制，不再下载 Node 和 npm 依赖；准备失败时也不再停在启动页、点「重试」也进不去，Pi 会在第一次使用时再次准备并在会话里提示错误。（[#657](https://github.com/anywhere-labs/Agents-Anywhere/pull/657)）

@@ -15,7 +15,7 @@ import { setApprovalPolicy } from '@deepseek-ai/dsh-user-approval'
 import { createUserMessage, LlmError, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { nativeRuntime } from '../fixtures/native-runtime.js'
 import { mountAgents, TextAdapter } from '../fixtures/agent-runtime.js'
-import { AcpBridgeLink, acpStream, parseRendezvousV3 } from '../../src/host/acp/link.js'
+import { acpStream, parseRendezvousV3 } from '../../src/host/acp/link.js'
 import { DSH_METHODS, type BridgeHello, type DshTurnNotification } from '../../src/contracts/bridge-v3.js'
 
 async function until(check: () => boolean, label: string, ms = 5000) {
@@ -106,8 +106,8 @@ async function fixture() {
   await mkdir(dir, { recursive: true })
   const rendezvous = join(dir, 'connector-acp.json')
   const connector = new FakeConnector(join(home, 'acp.sock'))
-  const link = new AcpBridgeLink(rendezvous, native, { hostInstance: 'host-test-0001', hostKind: 'web', dshVersion: '0.2.2-rc.3',
-    pluginVersion: '3.0.0-test' }, 50)
+  // The plugin's own 3.0 link (DshRuntimeService) follows the rendezvous in the fixture home.
+  const link = fixture.ctx.agentsAnywhereRuntime.acp
   return { home, adapter, ctx: fixture.ctx, native, rendezvous, connector, link,
     async connect() {
       await connector.listen(rendezvous)
@@ -137,7 +137,7 @@ test('a wrong key is rejected and the plugin connects once the rendezvous carrie
     f.connector.key = `ak_${'0'.repeat(64)}`
     f.link.start()
     await until(() => f.connector.hellos.length >= 1 && f.link.status.state === 'retrying', 'rejected hello')
-    assert.equal(f.connector.hellos[0]!.hostInstance, 'host-test-0001')
+    assert.equal(f.connector.hellos[0]!.hostInstance, f.link.hostInstance)
     assert.equal(f.connector.hellos[0]!.bridgeProtocol, '3.0')
     f.connector.key = good
     await until(() => f.link.status.state === 'connected', 'connected after retry', 8000)
@@ -151,7 +151,7 @@ test('initialize, list, load replay, and AA-created sessions are real host sessi
     assert.equal(init.agentInfo?.name, 'agents-anywhere-dsh-bridge')
     assert.equal(init.agentCapabilities?.loadSession, true)
     const meta = (init._meta as { dsh: { hostInstance: string, features: Record<string, boolean> } }).dsh
-    assert.equal(meta.hostInstance, 'host-test-0001')
+    assert.equal(meta.hostInstance, f.link.hostInstance)
     assert.equal(meta.features.queue, true)
 
     const listed = await f.connector.conn!.listSessions({})

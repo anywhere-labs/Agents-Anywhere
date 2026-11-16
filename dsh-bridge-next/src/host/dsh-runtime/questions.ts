@@ -98,6 +98,33 @@ export class UserQuestions {
     }
   }
 
+  /** Open questions of one session, for clients that ask by event ID (dsh-bridge 3.0 elicitation). */
+  pendingEntries(agentId: string): { eventId: string, agentId: string, form: QuestionForm, planCallId?: string }[] {
+    return [...this.entries.values()].filter(e => e.agentId === agentId && e.status === 'open')
+      .map(e => ({ eventId: e.eventId, agentId: e.agentId, form: e.form, ...(e.planCallId ? { planCallId: e.planCallId } : {}) }))
+  }
+
+  entryStatus(eventId: string): Question['status'] | undefined { return this.entries.get(eventId)?.status }
+
+  /** Answers one open question by event ID; `'stale'` when it was settled elsewhere first. */
+  async answerEvent(eventId: string, answer: { kind: 'submit', input: unknown } | { kind: 'cancel' }): Promise<'resolved' | 'stale' | 'unavailable'> {
+    const entry = this.entries.get(eventId)
+    if (!entry || entry.status !== 'open' || !await this.visible(entry.agentId)) return 'stale'
+    const outcome: InteractionOutcome = answer.kind === 'submit' ? { kind: 'result', value: entry.form.answer(answer.input) }
+      : { kind: 'rejected', error: { name: 'UserQuestionError', code: 'ASK_CANCELLED', message: '用户取消了问答。' } }
+    if (entry.status !== 'open') return 'stale'
+    this.update(entry, 'responding')
+    try {
+      await this.stream.reply(entry.eventId, outcome)
+      if (entry.withdrawn) return 'stale'
+      this.update(entry, answer.kind === 'cancel' ? 'cancelled' : 'resolved')
+      return 'resolved'
+    } catch {
+      if (!entry.withdrawn) this.update(entry, 'open')
+      return 'unavailable'
+    }
+  }
+
   observe(id: SessionId, event: SessionEvent): void {
     if (event.type !== 'turn/end') return
     for (const entry of this.entries.values()) if (entry.agentId === id && entry.status === 'open') this.update(entry, 'expired')

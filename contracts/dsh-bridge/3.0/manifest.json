@@ -67,7 +67,7 @@
       "direction": "plugin -> connector",
       "model": "DshUpdateMeta",
       "path": "schemas/update-meta.schema.json",
-      "sha256": "5e0b8e4e91f838025c733828aac8a1537f19017b020c3820ec45dfe387cede17",
+      "sha256": "70cf9cb0fa95dc0ad65697cb239d8ec41266c673ab98b8961a8e7a8f5999092b",
       "slug": "update-meta"
     },
     {

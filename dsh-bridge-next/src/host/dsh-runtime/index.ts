@@ -12,6 +12,25 @@ import { RpcLogOutput } from './log-output.js'
 import { readBridgeLogs, readConnectorRuntimeLogs } from './log-reader.js'
 import type { ConnectorLogQuery, RuntimeLogPage, RuntimeLogQuery, StartupFailureDiagnostic } from '../../contracts/logs.js'
 import { RuntimeDiagnostics } from './diagnostics.js'
+import { randomBytes } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname } from 'node:path'
+import { AcpBridgeLink, parseRendezvousV3, type LinkStatus } from '../acp/link.js'
+import { BRIDGE_VERSION, RUNTIME_VERSION } from './bridge-service.js'
+
+const HOST_INSTANCE = Symbol.for('agents-anywhere.dsh-bridge.host-instance')
+
+/** One ID per DSH host process; a plugin hot reload keeps it, so the Connector replaces the old connection (3.0 §1). */
+function hostInstance(): string {
+  const shared = globalThis as { [HOST_INSTANCE]?: string }
+  return shared[HOST_INSTANCE] ??= `host_${randomBytes(12).toString('hex')}`
+}
+
+/** A v3 Connector publishes connector-acp.json; while one does, the 2.0 MeshCall link stays off (3.0 §1). */
+function acpPublished(path: string): boolean {
+  try { return parseRendezvousV3(readFileSync(path, 'utf8')) !== undefined } catch { return false }
+}
 
 declare module '@deepseek-ai/cordis' {
   interface Context { agentsAnywhereRuntime: DshRuntimeService }
@@ -22,6 +41,9 @@ export class DshRuntimeService extends Service {
   static inject = ['sessions', 'sessionQuery', 'workspaceRegistry']
   static Config = Config
   private server: BridgeConnection
+  /** dsh-bridge 3.0: ACP over the Connector's local socket. */
+  readonly acp: AcpBridgeLink
+  private legacyStopped = false
   private readonly makeServer: () => BridgeConnection
   private restartTask: Promise<BridgeStatus> | undefined
   private disposed = false
@@ -62,16 +84,37 @@ export class DshRuntimeService extends Service {
       status: id => this.native.status(id),
     }, this.diagnostics, 1000, this.logOutput)
     this.server = this.makeServer()
+    const acpPath = join(bridge, 'connector-acp.json')
+    this.acp = new AcpBridgeLink(acpPath, this.native, { hostInstance: hostInstance(), hostKind: 'unknown',
+      dshVersion: RUNTIME_VERSION, pluginVersion: BRIDGE_VERSION, dshHome: process.env.DSH_HOME || join(homedir(), '.dsh'),
+      uploadRoot: dirname(bridge) }, 1000, status => this.onAcpStatus(status))
+    this.acpPath = acpPath
     ctx.effect(() => async () => {
       this.disposed = true
       await this.restartTask
-      try { await this.native.close() }
+      try { await this.acp.close(); await this.native.close() }
       finally { await this.server.close(); await this.diagnostics.flush() }
     }, 'agentsAnywhereRuntime.close')
   }
 
+  private readonly acpPath: string
+
   async [Service.init](): Promise<void> {
     await this.restart()
+    this.acp.start()
+  }
+
+  /** Follow the 3.0 rendezvous: a v3 Connector takes over from the 2.0 link, and gives it back when it goes away. */
+  private onAcpStatus(status: LinkStatus): void {
+    if (this.disposed) return
+    if (status.state === 'connected' && !this.legacyStopped) {
+      this.legacyStopped = true
+      void this.server.close().catch(() => undefined)
+      this.currentStatus = { state: 'ready', message: '本机连接已就绪', hint: '', canRetry: false }
+    } else if (status.state === 'waiting' && this.legacyStopped) {
+      this.legacyStopped = false
+      void this.restart()
+    }
   }
 
   hasLogConnection(): boolean { return Boolean(this.server.connectorInstance) }
@@ -113,7 +156,8 @@ export class DshRuntimeService extends Service {
         if (this.disposed) return this.status()
         this.server = this.makeServer()
         await this.native.attachments.initialize()
-        await this.server.start()
+        if (acpPublished(this.acpPath)) this.legacyStopped = true
+        else await this.server.start()
         this.currentStatus = { state: 'ready', message: '本机连接已就绪', hint: '', canRetry: false }
         this.startupFailureSnapshot = null
       } catch (error) {

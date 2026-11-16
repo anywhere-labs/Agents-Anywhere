@@ -14,6 +14,16 @@
       "type": "integer",
       "minimum": 0
     },
+    "step": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "DSH step of the turn; with turn it names the assistant item a stream attempt and its committed message share."
+    },
+    "itemId": {
+      "type": "string",
+      "pattern": "^dsh_[0-9a-f]{64}$",
+      "description": "Stable timeline item of this update: the same for a stream attempt, its committed message and their replay (§6)."
+    },
     "transient": {
       "type": "boolean"
     },
@@ -168,6 +178,15 @@
           }
         }
       ]
+    },
+    "writer": {
+      "type": "string",
+      "enum": [
+        "host",
+        "external",
+        "none"
+      ],
+      "description": "On session_info_update: the session's writer changed (§9)."
     }
   }
 }

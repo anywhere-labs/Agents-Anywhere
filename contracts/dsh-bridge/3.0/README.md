@@ -76,6 +76,8 @@ Connector 发 `initialize`，`clientCapabilities` 照常声明（`fs`、`termina
 | --- | --- |
 | `seq` | 产生这条更新的原生事件 seq（已提交的更新必有；流式片段为当时已提交的最大 seq） |
 | `turn` | 原生回合号 |
+| `step` | 原生步骤号（助手消息、推理与它们的流式片段带） |
+| `itemId` | 这条更新落到的稳定条目 ID（`dsh_<sha256>`）。助手正文和推理按 `(turn, step)` 计算，所以流式片段、提交后的整条消息和之后的回放落在同一个条目上；工具按 `toolCallId`。Connector 按它定条目，不按 `attemptId` |
 | `transient` | `true` 表示流式片段（`agent/assistant-stream`），没有落盘，可能被同一 `attemptId` 的提交整条替换或作废 |
 | `attemptId` | 流式片段所属的生成尝试 |
 | `committed` | 已提交的整条 `assistant/message`：`{messageId, replacesAttempt?}`。Connector 收到后丢弃同一 `attemptId` 的流式内容，用提交内容整条替换 |
@@ -83,6 +85,7 @@ Connector 发 `initialize`，`clientCapabilities` 照常声明（`fs`、`termina
 | `source` | 用户消息的来源：`user`（DSH 界面或 AA）、`retry`（DSH 的空继续，Connector 不显示） |
 | `requestId` | 用户消息的 `rpcId`；AA 发出的消息与 `session/prompt` 的 `_meta.dsh.requestId` 相同，Connector 据此去重 |
 | `turnEvent` | 回合边界（§7），只出现在 `session_info_update` 上 |
+| `writer` | 写者变化（§9），只出现在 `session_info_update` 上 |
 
 更新类型映射（借用 DSH 官方 `dsh-acp` 的纯转换函数，MIT，文件头注明来源）：
 
@@ -90,7 +93,7 @@ Connector 发 `initialize`，`clientCapabilities` 照常声明（`fs`、`termina
 | --- | --- |
 | `user/message`（`source.kind` 为 `user`） | `user_message_chunk`（每个文本或图片块一条，`messageId` 为原生消息 ID） |
 | `agent/assistant-stream` 的文本 / 推理增量 | `agent_message_chunk` / `agent_thought_chunk`，`transient: true` |
-| `assistant/message` | 每个块一条 `agent_message_chunk` / `agent_thought_chunk`，带 `committed` |
+| `assistant/message` | 正文、推理各一条 `agent_message_chunk` / `agent_thought_chunk`（同类块按顺序拼接），带 `committed`，内容整条替换同一 `itemId` 的流式内容 |
 | `tool/call` | `tool_call`（`status: in_progress`，`rawInput` 为解析后的参数，`title` 为工具名） |
 | `tool/result` | `tool_call_update`（`completed` / `failed` + 内容） |
 | `session/title` | `session_info_update`（`title`） |
@@ -127,7 +130,7 @@ ACP v1 只在 `session/prompt` 返回时体现回合结束，而 DSH 界面发�
 ## 9. 配置与写锁
 
 - `configOptions`：`model`（category `model`，值为 `JSON.stringify([provider, model])`，与官方 `dsh-acp` 相同）、`reasoning_effort`（category `thought_level`）、`permission`（category `mode`，DSH 权限预设）、`agent_preset`（新建会话时可选，category `mode`）。`session/set_config_option` 只对附着的会话生效。
-- 写锁：`session/list` 条目与 `_dsh/session/writer` 通知（`schemas/writer-notification.schema.json`）报告 `writer`：
+- 写锁：`session/list` 条目、`session/load` 结果与附着会话上带 `_meta.dsh.writer` 的 `session_info_update` 报告 `writer`（和回合边界一样走有序的更新流；未附着的会话仍用 `_dsh/session/writer` 通知，`schemas/writer-notification.schema.json`）：
   - `"host"`：本 host 持有（会话在本 host 里有 Agent）。
   - `"external"`：另一个进程持有（`sessionController` 恢复时返回 `session/writer-held`）。Connector 据此执行 `docs/v3/04-connector.md` §5.6 的交接表；插件在 DSH 界面提示「Agents Anywhere 正在使用，回合结束后可编辑」。
   - `"none"`：没人持有。

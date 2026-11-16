@@ -7,6 +7,14 @@
 export interface DshUpdateMeta {
   seq?: number
   turn?: number
+  /**
+   * DSH step of the turn; with turn it names the assistant item a stream attempt and its committed message share.
+   */
+  step?: number
+  /**
+   * Stable timeline item of this update: the same for a stream attempt, its committed message and their replay (§6).
+   */
+  itemId?: string
   transient?: boolean
   attemptId?: string
   committed?: {
@@ -46,4 +54,8 @@ export interface DshUpdateMeta {
          */
         requestIds: string[]
       }
+  /**
+   * On session_info_update: the session's writer changed (§9).
+   */
+  writer?: "host" | "external" | "none"
 }

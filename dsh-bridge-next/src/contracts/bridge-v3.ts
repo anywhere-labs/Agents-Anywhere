@@ -73,6 +73,9 @@ export interface DshLoadResultMeta {
 export interface DshUpdateMeta {
   seq?: number
   turn?: number
+  step?: number
+  /** The timeline item this update lands on (§6): stable across stream, commit and replay. */
+  itemId?: string
   transient?: boolean
   attemptId?: string
   committed?: { messageId: string, replacesAttempt?: string }
@@ -80,6 +83,8 @@ export interface DshUpdateMeta {
   source?: 'user' | 'retry' | 'other'
   requestId?: string
   turnEvent?: DshTurnNotification
+  /** On session_info_update: the writer of an attached session changed (§9). */
+  writer?: Writer
 }
 
 export interface DshPromptMeta {
