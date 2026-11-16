@@ -1,5 +1,7 @@
 package com.agentsanywhere.app.api
 
+import com.agentsanywhere.app.api.e2ee.SessionDeviceDirectory
+
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
@@ -764,6 +766,7 @@ class SessionsApi(
             ?: optNullableString("displayName")
             ?: optNullableString("name")
             ?: runtimeId
+        SessionDeviceDirectory.remember(getString("id"), getString("connectorId"))
         return RemoteSession(
             id = getString("id"),
             connectorId = getString("connectorId"),

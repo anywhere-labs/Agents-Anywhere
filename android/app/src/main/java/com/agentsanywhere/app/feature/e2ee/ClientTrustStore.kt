@@ -72,6 +72,7 @@ class ClientTrustStore(
             storage.write(deviceKey(deviceId), record.toJson().toString())
             storage.write(directoryKeyKey(deviceId), E2eeFormats.b64url(sealer.seal(directoryKey.keyBytes)))
             storage.write(requireKey(deviceId), "1")
+            storage.write(ANY_DEVICE, "1")
         }
         return record
     }
@@ -99,7 +100,13 @@ class ClientTrustStore(
         storage.write(directoryKeyKey(deviceId), null)
     }
 
-    fun markEncryptionRequired(deviceId: String) = synchronized(lock) { storage.write(requireKey(deviceId), "1") }
+    fun markEncryptionRequired(deviceId: String) = synchronized(lock) {
+        storage.write(requireKey(deviceId), "1")
+        storage.write(ANY_DEVICE, "1")
+    }
+
+    /** Some device was ever paired or marked as requiring encryption here (cheap check before any lookup). */
+    fun anyDeviceRecord(): Boolean = synchronized(lock) { storage.read(ANY_DEVICE) == "1" }
 
     fun requiresEncryption(deviceId: String): Boolean = synchronized(lock) { storage.read(requireKey(deviceId)) == "1" }
 
@@ -128,6 +135,7 @@ class ClientTrustStore(
 
     companion object {
         private const val INSTANCE_REQUIRED = "instance.require"
+        private const val ANY_DEVICE = "any_device"
         private const val KEY_IDENTITY = "identity"
         const val PREFERENCES_NAME = "agents_anywhere_e2ee"
 

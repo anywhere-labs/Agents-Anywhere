@@ -225,6 +225,10 @@
     <string name="e2ee_error_unavailable">无法经服务器连到设备。请确认设备在线、服务器支持加密模式。</string>
     <string name="e2ee_error_timeout">设备没有及时响应，请重试。</string>
     <string name="e2ee_error_failed">配对失败，请重试。</string>
+    <string name="e2ee_error_attachments_unsupported">暂不支持加密附件，请去掉附件后再发送。</string>
+    <string name="e2ee_error_terminal_unsupported">端到端加密的设备暂时不能使用终端。</string>
+    <string name="e2ee_error_file_transfer_unsupported">暂不支持从端到端加密的设备下载文件，仍然可以浏览目录和查看文本文件。</string>
+    <string name="e2ee_error_channel_failed">与设备的加密连接出错，请重试。</string>
     <string name="device_settings_save_failed">无法保存设备设置。</string>
     <string name="device_setup_page_title">添加新设备</string>
     <string name="device_setup_name_title">命名设备</string>

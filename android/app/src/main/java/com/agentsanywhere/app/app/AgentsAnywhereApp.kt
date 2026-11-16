@@ -30,7 +30,12 @@ import com.agentsanywhere.app.api.FilesApi
 import com.agentsanywhere.app.api.RealtimeApi
 import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.api.TerminalApi
+import com.agentsanywhere.app.api.e2ee.E2eeContentGate
 import com.agentsanywhere.app.config.AppConfig
+import com.agentsanywhere.app.feature.e2ee.E2eeClient
+import com.agentsanywhere.app.feature.e2ee.E2eeContentRouter
+import com.agentsanywhere.app.ui.screens.devices.DeviceE2eePairingSheet
+import com.agentsanywhere.app.ui.screens.devices.e2eeErrorMessageRes
 import com.agentsanywhere.app.feature.auth.AuthController
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
 import com.agentsanywhere.app.feature.auth.MobileAuthSessionRefresher
@@ -132,6 +137,18 @@ fun AgentsAnywhereApp(
         )
     }
     val realtimeApi = remember(apiClient) { RealtimeApi(client = apiClient) }
+    // E2EE: session and device content goes through the device's secure channel (or is refused) for
+    // every ApiClient in the process; the tunnel's tickets use this client so tokens refresh as usual.
+    val e2eeClient = remember(context, apiClient) { E2eeClient.install(context, apiClient) }
+    val e2eeRouter = remember(context, e2eeClient, apiClient) {
+        E2eeContentRouter(
+            client = e2eeClient,
+            resolveSessionDevice = { serverUrl, token, sessionId ->
+                SessionsApi(apiClient).getSessionMeta(serverUrl, token.orEmpty(), sessionId).session.connectorId
+            },
+            messages = { code -> context.getString(e2eeErrorMessageRes(code)) },
+        ).also { E2eeContentGate.installed = it }
+    }
     val announcementsApi = remember(apiClient) { AnnouncementsApi(apiClient) }
     val realtimeClientId = remember(context) { RealtimeClientIdStore(context).readOrCreate() }
     val authController = remember(context, sessionStore, apiClient) {
@@ -193,11 +210,12 @@ fun AgentsAnywhereApp(
         DashboardRealtimeController(realtimeApi, sessionStore, realtimeClientId)
     }
     val sessionRealtimeController = remember(realtimeApi, sessionStore, realtimeClientId) {
-        SessionRealtimeController(realtimeApi, sessionStore, realtimeClientId)
+        SessionRealtimeController(realtimeApi, sessionStore, realtimeClientId, streamRouter = { e2eeRouter })
     }
     val currentDestination = AppDestination.valueOf(destinationName)
     val hasAuthSession = sessionStore.hasAuthSession()
     LaunchedEffect(hasAuthSession, sessionStore.readServerUrl(), sessionStore.readUserId()) { if (hasAuthSession) sessionsController.workflows.restore() else sessionsController.workflows.clear() }
+    LaunchedEffect(e2eeClient, hasAuthSession, sessionStore.readServerUrl()) { if (hasAuthSession) e2eeClient.refreshServerConfig() }
     val updateServerUrl = sessionStore.readServerUrl()
     val updatesAllowed = hasAuthSession && updateServerUrl.isNotBlank() && currentDestination !in setOf(
         AppDestination.LoginMethods, AppDestination.ServerSetup, AppDestination.QrLogin, AppDestination.QrWaiting,
@@ -940,6 +958,16 @@ fun AgentsAnywhereApp(
     }
     LaunchedEffect(updatesAllowed, appUpdateViewModel.state.installFile) {
         if (updatesAllowed) appUpdateViewModel.state.installFile?.let(onInstallUpdate)
+    }
+    // A content request was refused because its device requires encryption and is not paired here.
+    val pairingPromptDeviceId by e2eeClient.pairingPrompt.collectAsState()
+    pairingPromptDeviceId?.takeIf { hasAuthSession }?.let { deviceId ->
+        DeviceE2eePairingSheet(
+            deviceId = deviceId,
+            client = e2eeClient,
+            onDismiss = { e2eeClient.dismissPairingPrompt(deviceId) },
+            onPaired = { sessionRealtimeController.requestImmediateReconnect() },
+        )
     }
 }
 

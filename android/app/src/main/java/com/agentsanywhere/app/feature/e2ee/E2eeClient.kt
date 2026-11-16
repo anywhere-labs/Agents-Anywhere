@@ -1,6 +1,7 @@
 package com.agentsanywhere.app.feature.e2ee
 
 import android.content.Context
+import com.agentsanywhere.app.api.ApiClient
 import com.agentsanywhere.app.api.AuthApi
 import com.agentsanywhere.app.api.E2eeServerConfig
 import com.agentsanywhere.app.api.apiPath
@@ -19,9 +20,14 @@ import com.agentsanywhere.app.api.e2ee.WebSocketTunnelConnection
 import com.agentsanywhere.app.api.e2ee.requestJson
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
@@ -43,9 +49,35 @@ class E2eeClient(
     private val commands: CommandRegistrar,
     private val loadServerConfig: suspend () -> E2eeServerConfig,
     private val now: () -> Long = System::currentTimeMillis,
+    /** 每个经通道的请求（含按需重连）的统一超时；超时抛 [E2eeTimeoutException]。 */
+    private val requestTimeoutMillis: Long = DEFAULT_REQUEST_TIMEOUT_MS,
 ) {
     private val channels = ConcurrentHashMap<String, ClientSecureChannel>()
     private val connectLocks = ConcurrentHashMap<String, Mutex>()
+    private val dismissedPrompts = ConcurrentHashMap.newKeySet<String>()
+    private val pairingPromptState = MutableStateFlow<String?>(null)
+
+    /** 需要配对的设备（内容请求因为没有配对被拒绝时）；界面据此弹出配对面板。 */
+    val pairingPrompt: StateFlow<String?> = pairingPromptState.asStateFlow()
+
+    /** 请界面提示配对；用户关掉过的设备在本进程内不再自动弹出。 */
+    fun promptPairing(deviceId: String) {
+        if (deviceId !in dismissedPrompts) pairingPromptState.value = deviceId
+    }
+
+    fun dismissPairingPrompt(deviceId: String) {
+        dismissedPrompts += deviceId
+        pairingPromptState.compareAndSet(deviceId, null)
+    }
+
+    /**
+     * 本机与这个实例完全没有加密要求（没配对过、没记下过要求、Server 也没要求过）：
+     * 这时所有内容照常走明文，不需要先查会话属于哪台设备。
+     */
+    fun encryptionInPlay(): Boolean = requiresEncryptionForUnknownDevice() || trust.anyDeviceRecord()
+
+    /** 不知道会话属于哪台设备时：本实例要求过加密，就不能退回明文。 */
+    fun requiresEncryptionForUnknownDevice(): Boolean = serverConfig.required || trust.instanceRequired()
 
     @Volatile
     var serverConfig: E2eeServerConfig = E2eeServerConfig()
@@ -107,11 +139,25 @@ class E2eeClient(
 
     /** 经通道发一个内容请求（快照、时间线等）。 */
     suspend fun request(deviceId: String, method: String, path: String, body: JSONObject? = null): JSONObject =
-        channel(deviceId).requestJson(method, path, body)
+        timed { channel(deviceId).requestJson(method, path, body) }
 
-    /** 经通道订阅一个会话的事件流（相当于普通模式的会话 WS）；返回取消订阅的函数。 */
-    suspend fun subscribe(deviceId: String, sessionId: String, afterCursor: String?, onEvent: (JSONObject) -> Unit): () -> Unit {
-        val channel = channel(deviceId)
+    /** 同上，请求体原样（不重新序列化），返回设备的原始响应。 */
+    suspend fun requestRaw(deviceId: String, method: String, path: String, bodyJson: String?): TunnelResponse =
+        timed { channel(deviceId).request(method, apiPath(path), bodyJson) }
+
+    /**
+     * 经通道订阅一个会话的事件流（相当于普通模式的会话 WS）；返回取消订阅的函数。
+     * 通道关闭时调用 [onClosed]（之后不会再有事件，调用方重新订阅即可）。
+     */
+    suspend fun subscribe(
+        deviceId: String,
+        sessionId: String,
+        afterCursor: String?,
+        onEvent: (JSONObject) -> Unit,
+        onClosed: (ChannelClosedException) -> Unit = {},
+    ): () -> Unit {
+        val channel = timed { channel(deviceId) }
+        channel.onClose(onClosed)
         val id = channel.subscribe(sessionId, afterCursor, onEvent)
         return { channel.unsubscribe(id) }
     }
@@ -120,12 +166,18 @@ class E2eeClient(
      * 加密模式下发命令：先 `POST /api/v3/e2ee/commands`（输入摘要用当前列表密钥），
      * Server 说重复时返回 null、不再发；否则经通道发出 `bodyJson` 原文。
      */
-    suspend fun sendCommand(deviceId: String, commandId: String, method: String, path: String, bodyJson: String): TunnelResponse? {
+    suspend fun sendCommand(deviceId: String, commandId: String, method: String, path: String, bodyJson: String): TunnelResponse? = timed {
         val channel = channel(deviceId)
         val key = trust.directoryKey(deviceId) ?: throw ChannelClosedException(E2eeErrorCodes.NOT_PAIRED)
         val digest = E2eeFormats.inputDigest(key.keyBytes, bodyJson.toByteArray(Charsets.UTF_8))
-        if (commands.register(commandId, deviceId, digest)) return null
-        return channel.request(method, apiPath(path), bodyJson)
+        if (commands.register(commandId, deviceId, digest)) return@timed null
+        channel.request(method, apiPath(path), bodyJson)
+    }
+
+    private suspend fun <T> timed(block: suspend () -> T): T = try {
+        withTimeout(requestTimeoutMillis) { block() }
+    } catch (_: TimeoutCancellationException) {
+        throw E2eeTimeoutException()
     }
 
     fun closeAll() {
@@ -184,6 +236,8 @@ class E2eeClient(
         runCatching { Instant.parse(payload.expiresAt).toEpochMilli() <= now() }.getOrDefault(false)
 
     companion object {
+        const val DEFAULT_REQUEST_TIMEOUT_MS = 30_000L
+
         private val NOT_RECOVERABLE = setOf(
             E2eeErrorCodes.DEVICE_PIN_MISMATCH,
             E2eeErrorCodes.PAIRING_EXPIRED,
@@ -194,6 +248,16 @@ class E2eeClient(
         @Volatile
         private var instance: E2eeClient? = null
 
+        /** The app's [ApiClient] (with token refresh); tickets, command registration and config use it. */
+        @Volatile
+        private var appApiClient: ApiClient? = null
+
+        /** App 启动时调用：之后隧道票据、命令登记都用 App 的 ApiClient（会自动刷新 token）。 */
+        fun install(context: Context, apiClient: ApiClient): E2eeClient {
+            appApiClient = apiClient
+            return get(context)
+        }
+
         /** 进程内共用一个：同一身份、同一条隧道 WebSocket。 */
         fun get(context: Context): E2eeClient = instance ?: synchronized(this) {
             instance ?: create(context.applicationContext).also { instance = it }
@@ -201,17 +265,26 @@ class E2eeClient(
 
         private fun create(context: Context): E2eeClient {
             val session = AuthSessionStore(context)
-            val api = E2eeApi()
+            val apiClient = { appApiClient ?: DEFAULT_API_CLIENT }
             return E2eeClient(
                 trust = ClientTrustStore.create(context),
-                tunnel = WebSocketTunnelConnection(serverUrl = session::readServerUrl, accessToken = session::readAccessToken),
+                tunnel = WebSocketTunnelConnection(
+                    serverUrl = session::readServerUrl,
+                    accessToken = session::readAccessToken,
+                    client = apiClient,
+                ),
                 commands = { commandId, deviceId, digest ->
                     withContext(Dispatchers.IO) {
-                        api.registerCommand(session.readServerUrl(), session.readAccessToken(), commandId, deviceId, digest).duplicate
+                        E2eeApi(apiClient()).registerCommand(session.readServerUrl(), session.readAccessToken(), commandId, deviceId, digest).duplicate
                     }
                 },
-                loadServerConfig = { withContext(Dispatchers.IO) { AuthApi().authConfig(session.readServerUrl()).e2ee } },
+                loadServerConfig = { withContext(Dispatchers.IO) { AuthApi(apiClient()).authConfig(session.readServerUrl()).e2ee } },
             )
         }
+
+        private val DEFAULT_API_CLIENT by lazy { ApiClient() }
     }
 }
+
+/** 设备没有在统一超时内回答（错误码 `e2ee_timeout`）。 */
+class E2eeTimeoutException : Exception("The device did not answer in time.")

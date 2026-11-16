@@ -30,6 +30,8 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.agentsanywhere.app.BuildConfig
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.api.e2ee.E2eeClientErrorCodes
+import com.agentsanywhere.app.api.e2ee.E2eeErrorCodes
 import com.agentsanywhere.app.feature.e2ee.DeviceE2eeStatus
 import com.agentsanywhere.app.feature.e2ee.DeviceTransport
 import com.agentsanywhere.app.feature.e2ee.E2eePairingError
@@ -243,6 +245,19 @@ private fun E2eePairingError.messageRes(): Int = when (this) {
     E2eePairingError.Unavailable -> R.string.e2ee_error_unavailable
     E2eePairingError.Timeout -> R.string.e2ee_error_timeout
     E2eePairingError.Failed -> R.string.e2ee_error_failed
+}
+
+/** 加密模式下内容请求失败的错误码 → 文案。 */
+internal fun e2eeErrorMessageRes(code: String): Int = when (code) {
+    E2eeErrorCodes.E2EE_REQUIRED -> R.string.runtime_error_e2ee_required
+    E2eeErrorCodes.NOT_PAIRED -> R.string.e2ee_error_not_paired
+    E2eeErrorCodes.DEVICE_PIN_MISMATCH -> R.string.e2ee_error_pin_mismatch
+    E2eeClientErrorCodes.TIMEOUT -> R.string.e2ee_error_timeout
+    E2eeClientErrorCodes.ATTACHMENTS_UNSUPPORTED -> R.string.e2ee_error_attachments_unsupported
+    E2eeClientErrorCodes.TERMINAL_UNSUPPORTED -> R.string.e2ee_error_terminal_unsupported
+    E2eeClientErrorCodes.FILE_TRANSFER_UNSUPPORTED -> R.string.e2ee_error_file_transfer_unsupported
+    E2eeErrorCodes.CONNECTOR_OFFLINE, E2eeErrorCodes.TUNNEL_DISCONNECTED -> R.string.e2ee_error_unavailable
+    else -> R.string.e2ee_error_channel_failed
 }
 
 /** 设备的授权列表里显示的名字。 */

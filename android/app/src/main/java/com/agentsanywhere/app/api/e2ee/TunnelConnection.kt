@@ -82,7 +82,7 @@ class ChannelBinding : TunnelListener {
 class WebSocketTunnelConnection(
     private val serverUrl: () -> String,
     private val accessToken: () -> String,
-    private val client: ApiClient = ApiClient(),
+    private val client: () -> ApiClient = { ApiClient() },
     private val socketClient: OkHttpClient = DEFAULT_SOCKET_CLIENT,
 ) : TunnelConnection {
     private val connectMutex = Mutex()
@@ -121,7 +121,7 @@ class WebSocketTunnelConnection(
         socket?.takeIf { socketClientId == clientId }?.let { return@withLock it }
         socket?.close(1000, "identity changed")
         val ticket = withContext(Dispatchers.IO) {
-            client.postJson(
+            client().postJson(
                 serverUrl = serverUrl(),
                 path = "/ws-ticket",
                 body = JSONObject().put("clientId", clientId).put("scope", JSONObject().put("tunnel", true)),

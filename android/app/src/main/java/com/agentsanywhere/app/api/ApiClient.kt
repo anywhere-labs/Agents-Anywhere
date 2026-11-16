@@ -1,5 +1,8 @@
 package com.agentsanywhere.app.api
 
+import com.agentsanywhere.app.api.e2ee.ContentGate
+import com.agentsanywhere.app.api.e2ee.ContentRequest
+import com.agentsanywhere.app.api.e2ee.E2eeContentGate
 import org.json.JSONArray
 import org.json.JSONObject
 import okhttp3.MediaType.Companion.toMediaType
@@ -18,6 +21,8 @@ import org.json.JSONException
 class ApiClient(
     private val onUnauthorized: (accessToken: String) -> Unit = {},
     private val refreshAccessToken: (serverUrl: String, accessToken: String) -> String? = { _, _ -> null },
+    /** E2EE: session and device content goes through the device's secure channel or is refused. */
+    private val contentGate: () -> ContentGate? = { E2eeContentGate.installed },
 ) {
     fun requireHtmlDocument(
         serverUrl: String,
@@ -183,6 +188,7 @@ class ApiClient(
         files: List<UploadFilePart>,
         authorizationToken: String? = null,
     ): JSONObject {
+        contentGate()?.checkUpload(ContentRequest(serverUrl, "POST", path, null, authorizationToken))
         return withTokenRefresh(serverUrl, authorizationToken) { token ->
             postMultipartOnce(serverUrl, path, files, token)
         }
@@ -253,6 +259,9 @@ class ApiClient(
         requestBody: RequestBody? = null,
         headers: Map<String, String> = emptyMap(),
     ): JSONObject {
+        if (requestBody == null) {
+            contentGate()?.intercept(ContentRequest(serverUrl, method, path, bodyText, authorizationToken))?.let { return it }
+        }
         return withTokenRefresh(serverUrl, authorizationToken) { token ->
             requestJsonOnce(serverUrl, path, method, bodyText, token, readTimeoutSeconds, requestBody, headers)
         }

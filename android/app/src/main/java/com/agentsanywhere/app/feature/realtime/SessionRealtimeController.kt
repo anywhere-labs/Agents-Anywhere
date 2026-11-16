@@ -29,10 +29,13 @@ class SessionRealtimeController(
     private val sessionStore: AuthSessionReader,
     private val clientId: String,
     private val retryDelay: (Int) -> Long = ::reconnectDelayMillis,
+    /** E2EE: when it returns a stream, events come through the device's secure channel instead of the WS. */
+    private val streamRouter: () -> SessionStreamRouter? = { null },
 ) {
     private val retryNow = Channel<Unit>(Channel.CONFLATED)
     private val connectionLock = Any()
     private val activeSocket = AtomicReference<WebSocket?>()
+    private val activeSecureStream = AtomicReference<(() -> Unit)?>()
     private val activeJob = AtomicReference<Job?>()
     private val generationSequence = AtomicLong(0)
     private val activeConnectionGeneration = AtomicLong(0)
@@ -47,6 +50,7 @@ class SessionRealtimeController(
     fun requestImmediateReconnect() {
         synchronized(connectionLock) {
             activeSocket.getAndSet(null)?.cancel()
+            activeSecureStream.getAndSet(null)?.invoke()
         }
         retryNow.trySend(Unit)
     }
@@ -115,29 +119,60 @@ class SessionRealtimeController(
             var snapshotJob: Job? = null
             var runtimeRefreshJob: Job? = null
             var latestRuntimeRefreshGeneration = 0L
+            var secureStream: (() -> Unit)? = null
             try {
-                val ticket = transport.createSessionTicket(serverUrl, accessToken, clientId, sessionId)
-                if (!isCurrentConnection(connectionGeneration)) return@launch
-                socket = transport.openWebSocket(
-                    transport.sessionWebSocketUrl(serverUrl, sessionId, ticket.ticket),
-                    channelListener(incoming) {
-                        opened.set(true)
-                        openSignal.complete(true)
-                        if (isCurrentConnection(connectionGeneration)) {
-                            onConnectionChanged(true, hasConnected, 0, null)
-                        }
-                    }.also { listener -> listener.onTerminated = { openSignal.complete(false) } },
+                val secure = streamRouter()?.openSecureStream(
+                    serverUrl = serverUrl,
+                    token = accessToken,
+                    sessionId = sessionId,
+                    afterCursor = cursor(),
+                    onMessage = { message -> incoming.trySend(message) },
+                    onClosed = { incoming.close() },
                 )
-                val installed = synchronized(connectionLock) {
-                    if (!isCurrentConnection(connectionGeneration)) {
-                        false
-                    } else {
-                        activeSocket.getAndSet(socket)?.cancel()
-                        true
+                if (secure != null) {
+                    val close: () -> Unit = {
+                        secure()
+                        incoming.close()
                     }
+                    secureStream = close
+                    val installed = synchronized(connectionLock) {
+                        if (!isCurrentConnection(connectionGeneration)) {
+                            false
+                        } else {
+                            activeSecureStream.getAndSet(close)?.invoke()
+                            true
+                        }
+                    }
+                    if (!installed) {
+                        close()
+                        return@launch
+                    }
+                    opened.set(true)
+                    onConnectionChanged(true, hasConnected, 0, null)
+                } else {
+                    val ticket = transport.createSessionTicket(serverUrl, accessToken, clientId, sessionId)
+                    if (!isCurrentConnection(connectionGeneration)) return@launch
+                    socket = transport.openWebSocket(
+                        transport.sessionWebSocketUrl(serverUrl, sessionId, ticket.ticket),
+                        channelListener(incoming) {
+                            opened.set(true)
+                            openSignal.complete(true)
+                            if (isCurrentConnection(connectionGeneration)) {
+                                onConnectionChanged(true, hasConnected, 0, null)
+                            }
+                        }.also { listener -> listener.onTerminated = { openSignal.complete(false) } },
+                    )
+                    val installed = synchronized(connectionLock) {
+                        if (!isCurrentConnection(connectionGeneration)) {
+                            false
+                        } else {
+                            activeSocket.getAndSet(socket)?.cancel()
+                            true
+                        }
+                    }
+                    if (!installed) return@launch
+                    if (!openSignal.await()) throw IllegalStateException("Session WebSocket handshake failed.")
                 }
-                if (!installed) return@launch
-                if (!openSignal.await()) throw IllegalStateException("Session WebSocket handshake failed.")
 
                 fun refreshRuntime() {
                     runtimeRefreshJob?.cancel()
@@ -233,6 +268,10 @@ class SessionRealtimeController(
                     onConnectionChanged(true, true, 0, null)
                     recoverFrom(cursor())
                     refreshRuntime()
+                } else if (secureStream != null) {
+                    // The subscription replays events after the cursor itself; it may not send `session.subscribed`.
+                    refreshRuntime()
+                    hasConnected = true
                 }
                 for (firstMessage in incoming) {
                     // One fixed window from the first event; new messages never
@@ -313,6 +352,7 @@ class SessionRealtimeController(
                     val current = isCurrentConnection(connectionGeneration)
                     if (current) activeConnectionGeneration.set(0)
                     activeSocket.compareAndSet(socket, null)
+                    secureStream?.let { activeSecureStream.compareAndSet(it, null) }
                     current
                 }
                 activeRuntimeRefreshGeneration.compareAndSet(latestRuntimeRefreshGeneration, 0)
@@ -320,6 +360,7 @@ class SessionRealtimeController(
                 snapshotJob?.cancel()
                 runtimeRefreshJob?.cancel()
                 socket?.cancel()
+                secureStream?.invoke()
                 incoming.close()
                 if (wasActiveConnection) onConnectionChanged(false, false, attempt, null)
             }

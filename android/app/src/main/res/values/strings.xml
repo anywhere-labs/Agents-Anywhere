@@ -226,6 +226,10 @@
     <string name="e2ee_error_unavailable">Could not reach the device through the server. Check that the device is online and the server supports encryption.</string>
     <string name="e2ee_error_timeout">The device did not answer in time. Try again.</string>
     <string name="e2ee_error_failed">Pairing failed. Try again.</string>
+    <string name="e2ee_error_attachments_unsupported">Encrypted attachments are not supported yet. Send the message without attachments.</string>
+    <string name="e2ee_error_terminal_unsupported">The terminal is not available for end-to-end encrypted devices yet.</string>
+    <string name="e2ee_error_file_transfer_unsupported">Downloading files from end-to-end encrypted devices is not supported yet. You can still browse folders and read text files.</string>
+    <string name="e2ee_error_channel_failed">The encrypted connection to the device failed. Try again.</string>
     <string name="device_settings_save_failed">Could not save device settings.</string>
     <string name="device_setup_page_title">Add a new device</string>
     <string name="device_setup_name_title">Name your device</string>
