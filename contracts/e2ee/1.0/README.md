@@ -97,7 +97,7 @@ Noise 传输消息的明文格式为 `flag(1 字节) ‖ body`，`body` 最长 6
   - nonce 每次加密时随机生成。AD 绑定了信封所在的行，Server 没法把一个会话的标题挪到另一个会话。
   - 明文 JSON 的字段：`displayDevice` 是 `{title?, cwd?, preview?}`（原生标题、工作目录、最近一条的短摘要），`displayUser` 是 `{title}`（用户改的标题）。字段都可缺省，客户端忽略不认识的字段。普通模式的 `mode: "plain"` 用同样的字段。
   - 显示规则（加密模式，即至少一个信封是 `sealed`）：标题取 `displayUser.title`，没有再取 `displayDevice.title`；工作目录取 `displayDevice.cwd`。这时旁边的明文信封和 Server 的明文 `title` / `cwd` 都只可能来自 Server，一律忽略。
-  - 普通模式（没有 `sealed` 信封）：以 Server 的 `title`、`cwd` 为准（普通模式改名只更新 `title`，不写 `displayUser`）；`plain` 信封只补它们为空的字段和 `preview`。
+  - 普通模式（没有 `sealed` 信封）：标题先取 `displayUser.title`，没有再取 `displayDevice.title`，两者都没有才用 Server 的明文 `title`；工作目录先取 `displayDevice.cwd`，没有再用明文 `cwd`；`preview` 只来自 `displayDevice`。因此普通模式改名时，新标题必须进 `displayUser`（`plain`），只改明文 `title` 会被 `displayDevice.title` 盖住。
   - `mode` 既不是 `plain` 也不是 `sealed` 的信封一律忽略，当它不存在，再按上面两条处理。
   - 客户端按信封的 `keyId` 找对应纪元的列表密钥；找不到或解不开时显示「加密中」占位，不报错，也不回退到 Server 的明文 `title` / `cwd`（加密模式下它们为空）。客户端应保留最近几个纪元的密钥（Web/Desktop 保留 4 个），设备在轮换后会用新密钥重新密封 `displayDevice`。
 - **附件与分享**（分段密文）：
