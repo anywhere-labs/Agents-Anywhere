@@ -1,0 +1,24 @@
+{
+  "name": "@agents-anywhere/connector",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Agents Anywhere v3 Connector (TypeScript rewrite of connector/)",
+  "type": "module",
+  "packageManager": "yarn@4.6.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check:layers": "node scripts/check-layers.mjs",
+    "contracts:generate": "node scripts/generate-contract-types.mjs",
+    "contracts:check": "node scripts/generate-contract-types.mjs --check"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "json-schema-to-typescript": "^15.0.4",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
