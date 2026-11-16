@@ -36,6 +36,10 @@ public nonisolated struct SpecRuneTaskSummary: Decodable, Hashable, Sendable, Id
 }
 
 /// `specrune task list --json` 的顶层。
+///
+/// `tasks` / `archive` 在空项目上可能是 `null`（不是空数组）——真机实测
+/// `DecodingError.valueNotFound ... Path: tasks`。所以自定义解码把 null
+/// 与缺失都归一成空数组，别让一个空项目把整页打成错误态。
 public nonisolated struct SpecRuneTaskList: Decodable, Hashable, Sendable {
     public let tasks: [SpecRuneTaskSummary]
     public let archive: [SpecRuneTaskSummary]
@@ -43,6 +47,16 @@ public nonisolated struct SpecRuneTaskList: Decodable, Hashable, Sendable {
     public init(tasks: [SpecRuneTaskSummary], archive: [SpecRuneTaskSummary]) {
         self.tasks = tasks
         self.archive = archive
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case tasks, archive
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        tasks = try container.decodeIfPresent([SpecRuneTaskSummary].self, forKey: .tasks) ?? []
+        archive = try container.decodeIfPresent([SpecRuneTaskSummary].self, forKey: .archive) ?? []
     }
 }
 
