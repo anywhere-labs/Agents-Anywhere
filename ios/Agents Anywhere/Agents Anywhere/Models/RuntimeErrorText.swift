@@ -38,6 +38,7 @@ nonisolated enum RuntimeErrorText {
         case "configuration_mapping_unavailable": String(localized: "该旧选择没有唯一且无损的 Agent 配置映射。")
         case "device_pin_mismatch": String(localized: "设备身份发生了变化，需要重新配对。")
         case "device_read_timeout": String(localized: "设备响应较慢，请稍后重试。")
+        case "dsh_home_mismatch": String(localized: "这个 DSH 使用的是另一个数据目录，不服务此设备上的 DSH Runtime。")
         case "e2ee_not_paired": String(localized: "这台设备还没有授权当前客户端，请先配对。")
         case "e2ee_required": String(localized: "这个服务器启用了端到端加密，需要先和设备配对。")
         case "image_input_unsupported": String(localized: "当前模型声明不支持图片输入，请移除图片或切换支持图片的模型。")
@@ -143,6 +144,7 @@ nonisolated enum RuntimeErrorText {
         case "unsupported_operation": String(localized: "Agent 尚未提供此操作。")
         case "worker_capacity": String(localized: "Agent 执行进程已达到上限。")
         case "workflow_unsupported": String(localized: "该 Runtime 不支持工作区准备。")
+        case "writer_held": String(localized: "这个 DSH 会话正在 DSH Desktop 或 dsh web 中打开。关闭它，或在 DSH 中安装 Agents Anywhere 插件后即可在这里继续。")
         default: nil
         }
     }

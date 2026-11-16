@@ -34,6 +34,7 @@
     <string name="runtime_error_configuration_mapping_unavailable">This earlier selection has no exact agent configuration mapping.</string>
     <string name="runtime_error_device_pin_mismatch">The device identity has changed. Pair with it again.</string>
     <string name="runtime_error_device_read_timeout">The device is responding slowly. Try again shortly.</string>
+    <string name="runtime_error_dsh_home_mismatch">This DSH uses a different data directory and does not serve the DSH runtime on this device.</string>
     <string name="runtime_error_e2ee_not_paired">This device has not authorised this client yet. Pair with it first.</string>
     <string name="runtime_error_e2ee_required">This server requires end-to-end encryption. Pair with the device first.</string>
     <string name="runtime_error_image_input_unsupported">The current model does not declare image input. Remove the image or switch to a model that supports images.</string>
@@ -139,4 +140,5 @@
     <string name="runtime_error_unsupported_operation">The agent does not provide this operation yet.</string>
     <string name="runtime_error_worker_capacity">Too many agent processes are running.</string>
     <string name="runtime_error_workflow_unsupported">This runtime does not support workspace preparation.</string>
+    <string name="runtime_error_writer_held">This DSH session is open in DSH Desktop or dsh web. Close it there, or install the Agents Anywhere plugin in DSH to continue here.</string>
 </resources>

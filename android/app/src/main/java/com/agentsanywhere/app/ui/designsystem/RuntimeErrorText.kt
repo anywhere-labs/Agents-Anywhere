@@ -40,6 +40,7 @@ fun runtimeErrorRes(code: String?): Int? = when (code) {
     "configuration_mapping_unavailable" -> R.string.runtime_error_configuration_mapping_unavailable
     "device_pin_mismatch" -> R.string.runtime_error_device_pin_mismatch
     "device_read_timeout" -> R.string.runtime_error_device_read_timeout
+    "dsh_home_mismatch" -> R.string.runtime_error_dsh_home_mismatch
     "e2ee_not_paired" -> R.string.runtime_error_e2ee_not_paired
     "e2ee_required" -> R.string.runtime_error_e2ee_required
     "image_input_unsupported" -> R.string.runtime_error_image_input_unsupported
@@ -145,5 +146,6 @@ fun runtimeErrorRes(code: String?): Int? = when (code) {
     "unsupported_operation" -> R.string.runtime_error_unsupported_operation
     "worker_capacity" -> R.string.runtime_error_worker_capacity
     "workflow_unsupported" -> R.string.runtime_error_workflow_unsupported
+    "writer_held" -> R.string.runtime_error_writer_held
     else -> null
 }

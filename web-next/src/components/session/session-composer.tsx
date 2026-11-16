@@ -484,7 +484,8 @@ export function SessionComposer({
     hasInput &&
     attachmentsReady &&
     (attachments.length === 0 || canUseAttachments) && mode.kind === "message"
-  const concurrentWriter = runtimeState?.error?.code === "DSH_CONCURRENT_WRITER_DETECTED"
+  // v2 Connector: DSH_CONCURRENT_WRITER_DETECTED; v3: writer_held (DSH Desktop or dsh web has the session open).
+  const concurrentWriter = runtimeState?.error?.code === "DSH_CONCURRENT_WRITER_DETECTED" || runtimeState?.error?.code === "writer_held"
   const updateValue = React.useCallback((nextValue: string) => {
     valueRef.current = nextValue
     onValueChange(nextValue)
@@ -707,7 +708,7 @@ export function SessionComposer({
         ) : null}
         {concurrentWriter ? (
           <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-            {tSession("dshConcurrentWriter")}
+            {runtimeState?.error?.code === "writer_held" ? runtimeErrorText({ code: "writer_held" }, tSession("dshConcurrentWriter")) : tSession("dshConcurrentWriter")}
           </div>
         ) : null}
         <div

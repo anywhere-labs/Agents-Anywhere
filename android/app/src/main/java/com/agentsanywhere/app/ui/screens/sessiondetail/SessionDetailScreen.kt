@@ -1986,6 +1986,9 @@ private fun SessionDetailVisit(
         state.runtime.errorMessage != null -> state.runtime.errorMessage.orEmpty()
         state.runtime.error?.get("code") == "DSH_CONCURRENT_WRITER_DETECTED" ->
             stringResource(R.string.session_dsh_concurrent_writer)
+        // v3 Connector: DSH Desktop or dsh web has the session open.
+        state.runtime.error?.get("code") == "writer_held" ->
+            runtimeErrorText(context, "writer_held", null) ?: stringResource(R.string.session_dsh_concurrent_writer)
         runtimeStatus == SessionRuntimeStatus.Unknown -> stringResource(R.string.session_runtime_state_unknown)
         runtimeStatus in setOf(SessionRuntimeStatus.Waiting, SessionRuntimeStatus.Pending) ->
             stringResource(R.string.session_pending_placeholder)

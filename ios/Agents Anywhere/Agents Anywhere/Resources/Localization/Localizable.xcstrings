@@ -25226,6 +25226,40 @@
           }
         }
       }
+    },
+    "这个 DSH 使用的是另一个数据目录，不服务此设备上的 DSH Runtime。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This DSH uses a different data directory and does not serve the DSH runtime on this device."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这个 DSH 使用的是另一个数据目录，不服务此设备上的 DSH Runtime。"
+          }
+        }
+      }
+    },
+    "这个 DSH 会话正在 DSH Desktop 或 dsh web 中打开。关闭它，或在 DSH 中安装 Agents Anywhere 插件后即可在这里继续。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This DSH session is open in DSH Desktop or dsh web. Close it there, or install the Agents Anywhere plugin in DSH to continue here."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这个 DSH 会话正在 DSH Desktop 或 dsh web 中打开。关闭它，或在 DSH 中安装 Agents Anywhere 插件后即可在这里继续。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
