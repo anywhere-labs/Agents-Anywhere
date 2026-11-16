@@ -137,6 +137,11 @@ class DeviceLinkHub:
             return held.connection_id
         return None
 
+    def held_devices(self) -> list[str]:
+        """Devices whose link this worker holds."""
+
+        return list(self._links)
+
     async def _write_lease(self, held: HeldLink, *, first: bool) -> bool:
         if not self._coordinator.distributed:
             current = self._local_leases.get(held.device_id)

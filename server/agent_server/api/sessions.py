@@ -77,6 +77,7 @@ from agent_server.core.protocol import (
     ProtocolTimelineSnapshot,
 )
 from agent_server.core.protocol_v1_2 import (
+    CATCHUP_REQUIRED_EVENT,
     ProtocolEventRecoveryResponseV12,
     ProtocolSessionSnapshotResponseV12,
     ProtocolTimelineResponseV12,
@@ -97,6 +98,7 @@ from agent_server.deps import (
     get_rpc,
     get_session_run_service,
     get_session_runtime_state_cache,
+    get_session_watch,
     get_store,
     get_timeline_broker,
     get_timeline_write_buffer,
@@ -109,6 +111,7 @@ from agent_server.infra.connector_rpc import (
 )
 from agent_server.infra.event_preparation import EventPreparationCapacityError
 from agent_server.infra.repositories.facade import Store
+from agent_server.infra.session_watch import SessionWatchHub
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.ws_tickets import ClientWsTicketManager
 from agent_server.services.catalogs import CatalogService
@@ -1139,6 +1142,8 @@ async def session_ws(
         get_timeline_write_buffer
     ),
     tickets: ClientWsTicketManager = Depends(_get_ws_tickets),
+    reads: DeviceReadService = Depends(get_device_reads),
+    session_watch: SessionWatchHub = Depends(get_session_watch),
 ) -> None:
     ticket_value = websocket.query_params.get("ticket")
     if not isinstance(ticket_value, str) or not ticket_value:
@@ -1149,14 +1154,20 @@ async def session_ws(
         await websocket.close(code=1008, reason="invalid ticket")
         return
     try:
-        await db.get_session(session_id, user_id=ticket.user_id)
+        session = await db.get_session(session_id, user_id=ticket.user_id)
     except KeyError:
         await websocket.close(code=1008, reason="session not found")
         return
+    device_session = await reads.is_v3_device(session.connectorId)
+    # Clients that speak protocol 1.2 handle ``session.catchup_required``; older ones are
+    # disconnected instead and recover through their existing reconnect-and-replay path.
+    knows_catchup = _client_protocol_at_least(websocket.query_params.get("protocol"), (1, 2))
 
     await websocket.accept()
     queue = await broker.register(session_id)
     recovery_signal = broker.recovery_signal
+    if device_session:
+        await session_watch.add_subscriber(session_id, session.connectorId)
 
     async def send_session_updates() -> None:
         # Durable-writer and aggregate invalidations can overlap. Their
@@ -1166,8 +1177,12 @@ async def session_ws(
         sent_event_order: deque[str] = deque()
         last_live_projection_event_ids: dict[str, str] = {}
         last_capability_fingerprint: str | None = None
-        async with timeline_write_buffer.session_fence(session_id):
-            next_seq = await db.get_session_seq(session_id)
+        if device_session:
+            fields = await db.session_directory_fields(session_id) or {}
+            next_seq = int(fields.get("headSeq") or 0)
+        else:
+            async with timeline_write_buffer.session_fence(session_id):
+                next_seq = await db.get_session_seq(session_id)
         await websocket.send_json(
             protocol_event(
                 session_id,
@@ -1193,6 +1208,11 @@ async def session_ws(
                 await websocket.close(code=1013, reason="server busy; reconnect to recover")
                 return
             for event in prepared_events:
+                if event.event_type == CATCHUP_REQUIRED_EVENT and not knows_catchup:
+                    if '"device_reconnected"' in event.encoded_json:
+                        await websocket.close(code=1013, reason="device reconnected; reconnect to recover")
+                        return
+                    continue
                 capability_fingerprint = event.capability_fingerprint
                 if capability_fingerprint is not None:
                     if capability_fingerprint == last_capability_fingerprint:
@@ -1237,6 +1257,18 @@ async def session_ws(
         )
     finally:
         await broker.unregister(session_id, queue)
+        if device_session:
+            await session_watch.remove_subscriber(session_id)
+
+
+def _client_protocol_at_least(value: str | None, minimum: tuple[int, int]) -> bool:
+    if not value:
+        return False
+    try:
+        major, minor = (int(part) for part in value.split(".", 1))
+    except ValueError:
+        return False
+    return (major, minor) >= minimum
 
 
 @router.post("/{session_id}/takeover", response_model=TakeoverResponse)

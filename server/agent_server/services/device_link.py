@@ -92,6 +92,8 @@ class DeviceLinkService:
         self.runtime_status: dict[str, dict[str, Any]] = {}
         self.listening_ports: dict[str, dict[int, dict[str, Any]]] = {}
         self.event_listeners: list[Any] = []
+        # ``SessionWatchHub``: opens/stops ``Sessions/watch`` streams as the link comes and goes.
+        self.session_watch: Any | None = None
         hub.on_outbox = self.handle_outbox
         hub.on_event = self.handle_event
         hub.on_presence = self.handle_presence
@@ -335,6 +337,11 @@ class DeviceLinkService:
         else:
             self.runtime_status.pop(device_id, None)
             self.listening_ports.pop(device_id, None)
+        if self.session_watch is not None:
+            try:
+                await self.session_watch.on_presence(device_id, online)
+            except Exception:  # noqa: BLE001 - subscriptions recover on the next sweep
+                logger.exception("session watch presence update failed device_id={}", device_id)
         if self._capability_refresh is not None:
             self._capability_refresh.request(device_id)
         await publish_dashboard_changed(

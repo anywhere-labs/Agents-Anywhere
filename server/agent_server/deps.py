@@ -14,6 +14,7 @@ from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.device_mesh import DeviceMesh
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.repositories.facade import Store
+from agent_server.infra.session_watch import SessionWatchHub
 from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.attachments import AttachmentService
@@ -244,6 +245,10 @@ def get_device_mesh(conn: HTTPConnection) -> DeviceMesh:
 
 def get_device_reads(conn: HTTPConnection) -> DeviceReadService:
     return conn.app.state.device_reads
+
+
+def get_session_watch(conn: HTTPConnection) -> SessionWatchHub:
+    return conn.app.state.session_watch
 
 
 def get_terminal_broker(conn: HTTPConnection) -> TerminalBroker:

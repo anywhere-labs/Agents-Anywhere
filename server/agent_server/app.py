@@ -67,6 +67,7 @@ from agent_server.infra.model_gateway_probe import (
 )
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.repositories.facade import Store
+from agent_server.infra.session_watch import SessionWatchHub
 from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.terminal_stream_hub import TerminalStreamHub
 from agent_server.infra.timeline_broker import TimelineBroker
@@ -77,7 +78,7 @@ from agent_server.services.channel_reconciliation import ChannelReconciler
 from agent_server.services.connector_deletion import ConnectorDeletionRecovery
 from agent_server.services.connector_rpc import ConnectorServiceError
 from agent_server.services.dashboard_events import publish_dashboard_changed
-from agent_server.services.device_link import DeviceLinkService
+from agent_server.services.device_link import DeviceLinkService, e2ee_mode
 from agent_server.services.device_reads import DeviceReadService
 from agent_server.services.device_runtimes import DeviceRuntimeService
 from agent_server.services.effective_capabilities import (
@@ -162,6 +163,7 @@ def create_app(
             await app.state.rpc.start()
             # Never blocks startup: a Router that is down only shows in readiness (#441 review).
             await app.state.device_mesh.start()
+            await app.state.session_watch.start()
             await app.state.usage_recorder.start()
             presence_task = asyncio.create_task(_connector_presence_watchdog(app))
             deletion_task = asyncio.create_task(app.state.connector_deletion_recovery.run())
@@ -227,6 +229,7 @@ def create_app(
                 logger.exception("failed to flush usage events on shutdown")
             await app.state.capability_refresh.close()
             try:
+                await app.state.session_watch.close()
                 await app.state.device_link_hub.close()
                 await app.state.device_mesh.close()
             except Exception:  # noqa: BLE001 - shutdown must continue
@@ -387,6 +390,17 @@ def create_app(
     app.state.device_reads = DeviceReadService(
         app.state.store, app.state.device_mesh, app.state.device_link_hub
     )
+    app.state.session_watch = SessionWatchHub(
+        app.state.device_mesh,
+        app.state.device_link_hub,
+        app.state.redis,
+        app.state.store,
+        app.state.timeline_broker.publish,
+        worker_id=app.state.rpc.instance_id,
+        # Encrypted mode: content never passes through the Server, the device registers no Sessions.
+        enabled=lambda: e2ee_mode() != "required",
+    )
+    app.state.device_link.session_watch = app.state.session_watch
     app.state.usage_maintenance = UsageMaintenanceLoop(
         app.state.store,
         app.state.redis,

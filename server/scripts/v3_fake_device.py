@@ -70,7 +70,7 @@ class FakeSession:
         self.items: list[dict[str, Any]] = list(items or [])
         self.head_seq = len(self.items)
         self.reset_seq = 0
-        self.watchers: set[collections.deque[ChangesEvent]] = set()
+        self.watchers: dict[int, collections.deque[ChangesEvent]] = {}
 
     def append(self, item: dict[str, Any]) -> ChangesEvent:
         from_seq = self.head_seq
@@ -91,7 +91,7 @@ class FakeSession:
                 )
             ],
         )
-        for queue in tuple(self.watchers):
+        for queue in tuple(self.watchers.values()):
             queue.append(event)
         return event
 
@@ -224,7 +224,7 @@ def _make_services(state: FakeDeviceState) -> list[object]:
             state.calls.append("watch")
             session = state.session(sessionId)
             queue: collections.deque[ChangesEvent] = collections.deque()
-            session.watchers.add(queue)
+            session.watchers[id(queue)] = queue
             try:
                 while True:
                     if queue:
@@ -232,7 +232,7 @@ def _make_services(state: FakeDeviceState) -> list[object]:
                     else:
                         await asyncio.sleep(POLL_SECONDS)
             finally:
-                session.watchers.discard(queue)
+                session.watchers.pop(id(queue), None)
 
         @query
         async def notices(self, sessionId: str) -> Payload:

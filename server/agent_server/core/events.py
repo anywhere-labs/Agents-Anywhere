@@ -143,6 +143,16 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
         ]
     else:
         events = timeline_events_from_items(session_id, items)
+    # Already client-shaped events (v3 devices push them through ``Sessions/watch``).
+    raw_events = payload.get("events")
+    if isinstance(raw_events, list):
+        for raw in raw_events:
+            if not isinstance(raw, dict):
+                continue
+            try:
+                events.append(ProtocolEventEnvelope.model_validate(raw))
+            except ValueError:
+                continue
 
     goal = payload.get("goalState")
     if isinstance(goal, dict):
