@@ -43,6 +43,19 @@ from agent_server.services.usage_events import (
     turn_ended_event,
 )
 
+# Conversation content a v2 Connector pushes. A v3 Server stores none of it (D1, D8): the
+# notification is acknowledged and dropped, so the Connector does not retry it forever
+# (D4, ``06-protocols.md`` §7). Its sessions keep their list entry and live status.
+V2_CONTENT_NOTIFICATIONS = frozenset(
+    {
+        "timeline.sync",
+        "timeline.itemUpsert",
+        "notice.upsert",
+        "session.planning.updated",
+        "session.goal.updated",
+    }
+)
+
 TIMELINE_SYNC_PUSH_LIMIT = 100
 SESSION_INVENTORY_LIMIT = 10_000
 SESSION_SOURCE_STATES = {
@@ -126,6 +139,9 @@ class ConnectorNotificationService:
                 "unsupported_notification",
                 "runtime catalogs are live Connector RPC reads and are no longer ingested",
             )
+        if method in V2_CONTENT_NOTIFICATIONS:
+            logger.debug("v2 content notification dropped connector_id={} method={}", connector_id, method)
+            return IngestEffect()
         if await self._realtime.apply(
             connector_id=connector_id,
             method=method,

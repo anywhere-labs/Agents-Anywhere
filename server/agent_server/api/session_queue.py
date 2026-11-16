@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from starlette.requests import HTTPConnection
 
 from agent_server.api.device_session_reads import device_read_http_error
+from agent_server.api.v2_compat import V3_SESSION_ONLY
 from agent_server.core.message_queue import (
     MessageQueueError,
     QueueItemUpdateRequest,
@@ -91,7 +92,7 @@ class _DeviceQueueRoute:
 DeviceQueue = Annotated[_DeviceQueueRoute, Depends()]
 
 
-@router.get("/{session_id}/runtime/queue", response_model=SessionQueueStateV12)
+@router.get("/{session_id}/runtime/queue", response_model=SessionQueueStateV12, dependencies=V3_SESSION_ONLY)
 async def read_queue(
     session_id: str,
     user_id: Annotated[str, Depends(current_user_id)],
@@ -107,7 +108,7 @@ async def read_queue(
     return SessionQueueStateV12.model_validate(queue)
 
 
-@router.delete("/{session_id}/runtime/queue", response_model=SessionQueueState)
+@router.delete("/{session_id}/runtime/queue", response_model=SessionQueueState, dependencies=V3_SESSION_ONLY)
 async def clear_queue(
     session_id: str,
     user_id: Annotated[str, Depends(current_user_id)],
@@ -123,7 +124,7 @@ async def clear_queue(
     return SessionQueueState.model_validate(queue)
 
 
-@router.post("/{session_id}/runtime/queue/resume", response_model=SessionQueueState)
+@router.post("/{session_id}/runtime/queue/resume", response_model=SessionQueueState, dependencies=V3_SESSION_ONLY)
 async def resume_queue(
     session_id: str,
     user_id: Annotated[str, Depends(current_user_id)],
@@ -139,7 +140,7 @@ async def resume_queue(
     return SessionQueueState.model_validate(queue)
 
 
-@router.put("/{session_id}/runtime/queue/order", response_model=SessionQueueState)
+@router.put("/{session_id}/runtime/queue/order", response_model=SessionQueueState, dependencies=V3_SESSION_ONLY)
 async def reorder_queue(
     session_id: str,
     payload: QueueOrderRequest,
@@ -156,7 +157,7 @@ async def reorder_queue(
     return SessionQueueState.model_validate(queue)
 
 
-@router.delete("/{session_id}/runtime/queue/{message_id}", response_model=SessionQueueState)
+@router.delete("/{session_id}/runtime/queue/{message_id}", response_model=SessionQueueState, dependencies=V3_SESSION_ONLY)
 async def delete_queue_item(
     session_id: str,
     message_id: str,
@@ -173,7 +174,7 @@ async def delete_queue_item(
     return SessionQueueState.model_validate(queue)
 
 
-@router.post("/{session_id}/runtime/queue/{message_id}/retry", response_model=SessionQueueState)
+@router.post("/{session_id}/runtime/queue/{message_id}/retry", response_model=SessionQueueState, dependencies=V3_SESSION_ONLY)
 async def retry_queue_item(
     session_id: str,
     message_id: str,
@@ -190,7 +191,7 @@ async def retry_queue_item(
     return SessionQueueState.model_validate(queue)
 
 
-@router.post("/{session_id}/runtime/queue/{message_id}/send-now", response_model=SessionQueueState)
+@router.post("/{session_id}/runtime/queue/{message_id}/send-now", response_model=SessionQueueState, dependencies=V3_SESSION_ONLY)
 async def send_queue_item_now(
     session_id: str,
     message_id: str,
@@ -207,7 +208,7 @@ async def send_queue_item_now(
     return SessionQueueState.model_validate(queue)
 
 
-@router.patch("/{session_id}/runtime/queue/{message_id}", response_model=SessionQueueState)
+@router.patch("/{session_id}/runtime/queue/{message_id}", response_model=SessionQueueState, dependencies=V3_SESSION_ONLY)
 async def update_queue_item(
     session_id: str,
     message_id: str,

@@ -25,6 +25,7 @@ from fastapi.responses import (
 
 from agent_server.api.device_session_reads import device_read_http_error
 from agent_server.api.device_transfers import get_device_blobs
+from agent_server.api.v2_compat import V3_SESSION_ONLY
 from agent_server.core.auth import verify_signed_token
 from agent_server.core.models import (
     FsDownloadResponse,
@@ -239,7 +240,7 @@ async def local_file_raw(
     )
 
 
-@router.post("/{session_id}/attachments", response_model=UserUploadResponse)
+@router.post("/{session_id}/attachments", response_model=UserUploadResponse, dependencies=V3_SESSION_ONLY)
 async def create_attachments(
     session_id: str,
     files: list[UploadFile] = File(...),
