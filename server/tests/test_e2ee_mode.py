@@ -4,6 +4,7 @@ off -> required switch (docs/v3/11-e2ee-noise.md §10–§11, contracts/e2ee/1.0
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 from sqlalchemy import select
@@ -305,3 +306,68 @@ def test_switching_to_required_clears_plaintext_display_once(tmp_path, monkeypat
     assert asyncio.run(apply_e2ee_mode(store, E2eeSettings("required"))).purged_sessions == 0
     back = asyncio.run(apply_e2ee_mode(store, E2eeSettings("off")))
     assert back.previous == "required" and back.purged_sessions == 0
+
+
+# ---------------------------------------------------------------------------
+# E-1 on the Server: nothing a client sends in required mode reaches the database in plaintext
+# ---------------------------------------------------------------------------
+
+
+async def _database_text(store) -> str:
+    """Every row of every table, as text."""
+
+    from sqlalchemy import text as sql
+
+    from agent_server.infra.db.schema import metadata
+
+    chunks: list[str] = []
+    async with store.engine.connect() as conn:
+        for table in metadata.sorted_tables:
+            rows = (await conn.execute(sql(f'SELECT * FROM "{table.name}"'))).all()
+            chunks.extend(repr(tuple(row)) for row in rows)
+    return "\n".join(chunks)
+
+
+def test_required_mode_canary_never_reaches_the_database(tmp_path, monkeypatch):
+    import secrets as _secrets
+
+    client, device_id, _, session_id, headers = _setup(tmp_path, monkeypatch)
+    canary = f"canary-{_secrets.token_hex(12)}"
+
+    # Everything a client could try to send in plaintext.
+    attempts = [
+        ("POST", "/sessions", {"connectorId": device_id, "runtime": "codex", "content": canary, "title": canary}),
+        ("POST", "/sessions/create-and-start", {"connectorId": device_id, "runtime": "codex", "content": canary}),
+        ("POST", f"/sessions/{session_id}/runtime/messages", {"content": canary, "clientMessageId": canary}),
+        ("POST", f"/sessions/{session_id}/runtime/steer", {"content": canary}),
+        ("POST", f"/sessions/{session_id}/shares", {"scope": "session", "title": canary}),
+        ("POST", f"/connectors/{device_id}/fs/write", {"path": f"/tmp/{canary}", "content": canary}),
+        ("POST", f"/connectors/{device_id}/shell/exec", {"command": f"echo {canary}"}),
+        ("PATCH", f"/sessions/{session_id}/meta", {"title": canary}),
+    ]
+    for method, path, body in attempts:
+        response = client.request(method, path, headers=headers, json=body)
+        assert response.status_code == 409, (path, response.status_code, response.text)
+        assert response.json()["detail"]["code"] == "e2ee_required"
+    upload = client.post(
+        f"/sessions/{session_id}/attachments",
+        headers=headers,
+        files={"file": (f"{canary}.txt", canary.encode(), "text/plain")},
+    )
+    assert upload.status_code == 409
+
+    # What the client may send: the command registration, keyed digest only.
+    body = json.dumps({"content": canary, "clientMessageId": "m1"}).encode()
+    registered = client.post(
+        "/api/v3/e2ee/commands",
+        headers=headers,
+        json={"commandId": "m1", "deviceId": device_id, "inputDigest": input_digest(b"\x07" * 32, body)},
+    )
+    assert registered.status_code == 200
+    # Metadata changes stay allowed.
+    assert client.patch(f"/sessions/{session_id}/meta", headers=headers, json={"pinned": True}).status_code == 200
+
+    dump = asyncio.run(_database_text(client.app.state.store))
+    assert "e2ee_command_registrations" not in dump  # sanity: rows, not table names
+    assert "m1" in dump  # the registration is there
+    assert canary not in dump

@@ -38,6 +38,8 @@ WebSocket 在握手完成前以 `1008`（`e2ee_required`）关闭。拒绝发生
 
 唯一的例外是**已加密的附件上传**：`POST /api/v2/sessions/{id}/attachments` 带请求头 `x-aa-sealed: segments-v1` 时放行。上传内容是客户端用一次性密钥按 e2ee 1.0 分段加密后的密文，密钥只经安全通道交给设备。
 
+`PATCH /api/v2/sessions/{id}/meta` 仍可修改置顶、归档等状态，但请求体带明文 `title` 时同样返回 `409 e2ee_required`：加密模式下标题只能以客户端加密后的展示信封提交。
+
 会话目录（`GET /api/v2/sessions`、`…/meta`）、归档/已读/置顶、设备与设置、项目、用量、模型配置、Dashboard 推送、公开分享读取（密文）照常可用。Server 在加密模式下能看到的明文元数据见 `docs/v3/11-e2ee-noise.md` §10。
 
 ## 命令登记

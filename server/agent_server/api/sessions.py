@@ -81,12 +81,14 @@ from agent_server.core.runtime_identity import (
     SessionRuntimeBindingError,
     resolve_session_runtime_binding,
 )
+from agent_server.core.e2ee_settings import E2eeSettings, e2ee_required_error
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
     current_user_id,
     get_catalog_service,
     get_device_planning,
     get_device_reads,
+    get_e2ee_settings,
     get_device_runtime_service,
     get_model_channel_service,
     get_rpc,
@@ -505,7 +507,11 @@ async def patch_session_meta(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     broker: TimelineBroker = Depends(get_timeline_broker),
+    e2ee: E2eeSettings = Depends(get_e2ee_settings),
 ) -> SessionResponse:
+    # A title is content: in E2EE required mode it is only accepted sealed (display envelope), never in plaintext.
+    if e2ee.required and payload.title is not None:
+        raise HTTPException(status_code=409, detail=e2ee_required_error())
     try:
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
