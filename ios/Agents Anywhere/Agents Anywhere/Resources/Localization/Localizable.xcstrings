@@ -25243,6 +25243,40 @@
           }
         }
       }
+    },
+    "这个服务器关闭了端口预览。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Port preview is turned off on this server."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这个服务器关闭了端口预览。"
+          }
+        }
+      }
+    },
+    "设备上的预览通道暂时不可用，请稍后重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The device's preview tunnel is unavailable. Try again later."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备上的预览通道暂时不可用，请稍后重试。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

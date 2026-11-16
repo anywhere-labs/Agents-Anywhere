@@ -123,9 +123,11 @@
     <string name="runtime_error_preparation_consumed">The workspace preparation is already bound to another creation.</string>
     <string name="runtime_error_preparation_not_reserved">The workspace preparation has not been reserved for this creation.</string>
     <string name="runtime_error_preparation_stale">The workspace preparation is no longer valid. Prepare again.</string>
+    <string name="runtime_error_preview_disabled">Port preview is turned off on this server.</string>
     <string name="runtime_error_preview_domain_not_configured">Port preview is unavailable because this server has no preview domain configured.</string>
     <string name="runtime_error_preview_limit_reached">This device has reached the limit of open previews. Close some first.</string>
     <string name="runtime_error_preview_port_not_allowed">Only confirmed ports on this computer (127.0.0.1) can be previewed.</string>
+    <string name="runtime_error_preview_unavailable">The device\'s preview tunnel is unavailable. Try again later.</string>
     <string name="runtime_error_project_workspace_mismatch">The project does not belong to the selected device.</string>
     <string name="runtime_error_recovery_required">The session needs to be recovered before it can continue.</string>
     <string name="runtime_error_response_input_conflict">The answer identity was already used for other content.</string>

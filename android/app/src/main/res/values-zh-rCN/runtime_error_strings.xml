@@ -123,9 +123,11 @@
     <string name="runtime_error_preparation_consumed">工作区准备已绑定其他创建操作。</string>
     <string name="runtime_error_preparation_not_reserved">工作区准备尚未为当前创建操作预留。</string>
     <string name="runtime_error_preparation_stale">工作区准备已失效，请重新准备。</string>
+    <string name="runtime_error_preview_disabled">这个服务器关闭了端口预览。</string>
     <string name="runtime_error_preview_domain_not_configured">这个服务器没有配置预览域名，无法使用端口预览。</string>
     <string name="runtime_error_preview_limit_reached">这台设备打开的预览已达上限，请先关闭一些。</string>
     <string name="runtime_error_preview_port_not_allowed">只能预览本机（127.0.0.1）上已确认的端口。</string>
+    <string name="runtime_error_preview_unavailable">设备上的预览通道暂时不可用，请稍后重试。</string>
     <string name="runtime_error_project_workspace_mismatch">项目不属于所选设备。</string>
     <string name="runtime_error_recovery_required">会话需要恢复后才能继续。</string>
     <string name="runtime_error_response_input_conflict">回答身份已用于其他内容。</string>

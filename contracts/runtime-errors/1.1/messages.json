@@ -508,7 +508,7 @@
     },
     "preview_unavailable": {
       "zh-CN": "设备上的预览通道暂时不可用，请稍后重试。",
-      "en": "The preview channel on the device is unavailable. Try again later."
+      "en": "The device's preview tunnel is unavailable. Try again later."
     },
     "project_workspace_mismatch": {
       "zh-CN": "项目不属于所选设备。",
