@@ -420,6 +420,7 @@
       "agent": "Agent",
       "createFailed": "无法创建会话。",
       "encryptedAttachmentsUnsupported": "加密模式下首条消息暂不能带附件。请先移除附件，会话开始后再发送。",
+      "encryptedAttachmentsHint": "这台设备开启了端到端加密，新建会话时暂不能添加附件；会话开始后可以在对话里发送附件。",
       "encryptedWorkflowUnsupported": "加密模式下暂不能用这个执行者新建会话。",
       "selectModel": "请选择模型",
       "modelCatalogUnavailable": "模型目录尚未就绪",

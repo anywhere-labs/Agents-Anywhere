@@ -543,7 +543,10 @@ export function TaskComposer() {
       window.clearInterval(timer)
     }
   }, [authSession?.accessToken, canUsePermissionCatalog, permissionRefreshKey, selectedAgent, selectedConnectorId, selectedRuntime?.runtimeType])
-  const canUseAttachments = capabilityIsUsable(
+  // An encrypted device creates the session itself and its first message cannot carry attachments yet; they
+  // can be sent once the session has started. Disable the button up front instead of failing on send.
+  const encryptedCreation = Boolean(selectedConnectorId) && dashboardApi.sessionCreationIsEncrypted(selectedConnectorId)
+  const canUseAttachments = !encryptedCreation && capabilityIsUsable(
     runtimeCapabilities,
     CAPABILITY.attachment,
     selectedRuntimeScope,
@@ -1069,6 +1072,7 @@ export function TaskComposer() {
             {planningCreation && <Badge variant="outline">{tPlanning("creationIntent")}</Badge>}
             <AttachmentPreviewList attachments={attachments} onRemove={remove} />
             {attachmentError ? <p role="alert" className="text-xs text-destructive">{attachmentError}</p> : null}
+            {encryptedCreation && attachments.length > 0 ? <p role="alert" className="text-xs text-destructive">{t("encryptedAttachmentsUnsupported")}</p> : null}
             <Textarea
               value={prompt}
               onChange={(event) => setPrompt(event.currentTarget.value)}
@@ -1098,6 +1102,7 @@ export function TaskComposer() {
               isDragging={isDragging}
               allowedMimeTypes={allowedMimeTypes}
               disabled={!canUseAttachments}
+              disabledReason={encryptedCreation ? t("encryptedAttachmentsHint") : undefined}
             />
 
             {selectorsLoading ? (

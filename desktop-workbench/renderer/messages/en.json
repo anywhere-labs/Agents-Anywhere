@@ -476,6 +476,7 @@
       "agent": "Agent",
       "createFailed": "Failed to create session.",
       "encryptedAttachmentsUnsupported": "In end-to-end encrypted mode the first message can't carry attachments yet. Remove them, then send them after the session starts.",
+      "encryptedAttachmentsHint": "This device uses end-to-end encryption, so a new session cannot start with attachments yet; send them in the conversation once it has started.",
       "encryptedWorkflowUnsupported": "This agent can't start a new session in end-to-end encrypted mode yet.",
       "selectModel": "Choose a model",
       "modelCatalogUnavailable": "Model catalog not ready",
