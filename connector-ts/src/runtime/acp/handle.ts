@@ -270,7 +270,7 @@ export class AcpRuntimeHandle implements RuntimeHandle {
       this.sessions.get(connection)?.delete(session)
       await originalClose()
     }
-    const problem = dialect.verifySession?.(session.configOptions)
+    const problem = dialect.verifySession?.(session.configOptions, response, nativeSessionId)
     if (problem !== undefined) {
       await session.close().catch(() => undefined)
       throw new RuntimeFailure(problem)
