@@ -558,7 +558,7 @@ private struct SpecRuneTaskDetailView: View {
         if let doc = detail.docs[kind] {
             // 渲染 markdown；blockSpacing 传 0 —— Textual 自己已有块间距，
             // 再叠一层会在标题与正文间堆出大片空白。
-            ChatMarkdownView(text: doc.content, blockSpacing: 0)
+            ChatMarkdownView(text: doc.content, blockSpacing: 0, reservesStreamingHeight: false)
             if doc.truncated {
                 Text("已截断：原文超过 1 MiB")
                     .font(.caption)
@@ -739,7 +739,7 @@ private struct SpecRuneTaskDetailView: View {
                         .font(.caption)
                         .foregroundStyle(.red)
                 case let .loaded(file):
-                    ChatMarkdownView(text: file.content, blockSpacing: 0)
+                    ChatMarkdownView(text: file.content, blockSpacing: 0, reservesStreamingHeight: false)
                     if file.truncated {
                         Text("已截断：原文超过 1 MiB")
                             .font(.caption)

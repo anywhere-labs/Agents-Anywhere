@@ -9,15 +9,25 @@ struct MarkdownBlockSizing {
     }
     private var measurements: [Measurement] = []
 
-    mutating func size(proposedWidth: CGFloat?, naturalSize: CGSize, displayScale: CGFloat) -> CGSize {
+    /// - Parameter monotonic: 同一宽度下取历史最大高度。流式追加时防止块高
+    ///   回缩造成跳动；**非流式全文**（文档阅读）必须关掉，否则某个宽度下
+    ///   测出的偏大高度会被永久保留，换宽度时表现为随宽度变化的空白。
+    mutating func size(
+        proposedWidth: CGFloat?,
+        naturalSize: CGSize,
+        displayScale: CGFloat,
+        monotonic: Bool = true
+    ) -> CGSize {
         // SwiftUI may ask for minimum/ideal sizes before placing the block.
         // Those probes must not replace the reservation for its actual column.
         guard let width = proposedWidth, width.isFinite, width > 1 else { return naturalSize }
         let scale = displayScale.isFinite && displayScale > 0 ? displayScale : 1
         let naturalHeight = naturalSize.height.isFinite ? max(0, naturalSize.height) : 0
         var height = ceil(naturalHeight * scale) / scale
-        if let index = measurements.firstIndex(where: { $0.width == width }) {
+        if monotonic, let index = measurements.firstIndex(where: { $0.width == width }) {
             height = max(height, measurements.remove(at: index).height)
+        } else {
+            measurements.removeAll { $0.width == width }
         }
         measurements.append(Measurement(width: width, height: height))
         // Keep measurement probes separate without accumulating every width

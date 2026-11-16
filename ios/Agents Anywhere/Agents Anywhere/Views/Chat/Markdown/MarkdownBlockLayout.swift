@@ -6,6 +6,8 @@ struct MarkdownBlockLayout: Layout {
     let dynamicType: DynamicTypeSize
     let displayScale: CGFloat
     let direction: LayoutDirection
+    /// 见 MarkdownBlockSizing.size 的 monotonic。
+    var monotonicHeight = true
 
     struct Cache {
         var dynamicType: DynamicTypeSize
@@ -37,7 +39,12 @@ struct MarkdownBlockLayout: Layout {
         let natural = cache.measurements.size(proposedWidth: width) {
             content.sizeThatFits(.init(width: width, height: nil))
         }
-        return cache.sizing.size(proposedWidth: width, naturalSize: natural, displayScale: displayScale)
+        return cache.sizing.size(
+            proposedWidth: width,
+            naturalSize: natural,
+            displayScale: displayScale,
+            monotonic: monotonicHeight
+        )
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {

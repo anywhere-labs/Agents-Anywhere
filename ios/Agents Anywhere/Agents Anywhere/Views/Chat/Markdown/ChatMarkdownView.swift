@@ -15,6 +15,8 @@ struct ChatMarkdownView: View {
     /// 这里再叠一层就会在标题与正文之间堆出大片空白。文档类内容（PRD /
     /// 实施 / 审查等非流式全文）传 0，让 Textual 的间距独占；聊天消息保持默认。
     var blockSpacing: CGFloat = 12
+    /// 块高是否「只增不减」。流式消息需要（防跳动）；非流式全文要关掉。
+    var reservesStreamingHeight = true
     @State private var blocks: [MarkdownBlockSnapshot] = []
     /// When each block's newest glyphs finish revealing. A block's drawing
     /// clock runs only until then, so a stalled or finished block stops redrawing.
@@ -25,7 +27,9 @@ struct ChatMarkdownView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: blockSpacing) {
             ForEach(blocks) { block in
-                MarkdownBlockView(block: block, isStreaming: isStreaming, isTail: block.id == blocks.last?.id,
+                MarkdownBlockView(block: block, isStreaming: isStreaming,
+                                  monotonicHeight: reservesStreamingHeight,
+                                  isTail: block.id == blocks.last?.id,
                                   revealDeadline: revealDeadlines[block.id] ?? .distantPast)
                     .equatable()
             }
@@ -113,6 +117,8 @@ struct ChatMarkdownView: View {
 private struct MarkdownBlockView: View, Equatable {
     let block: MarkdownBlockSnapshot
     let isStreaming: Bool
+    /// 见 MarkdownBlockSizing.size 的 monotonic。
+    var monotonicHeight = true
     let isTail: Bool
     let revealDeadline: Date
     @State private var hasSettled = false
@@ -125,13 +131,18 @@ private struct MarkdownBlockView: View, Equatable {
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.block == rhs.block && lhs.isStreaming == rhs.isStreaming && lhs.isTail == rhs.isTail
-            && lhs.revealDeadline == rhs.revealDeadline
+            && lhs.revealDeadline == rhs.revealDeadline && lhs.monotonicHeight == rhs.monotonicHeight
     }
 
     var body: some View {
         // Only changed blocks reach Textual's parser. The complete document was
         // parsed above, so cross-block references and nested structures survive.
-        MarkdownBlockLayout(dynamicType: dynamicType, displayScale: displayScale, direction: direction) {
+        MarkdownBlockLayout(
+            dynamicType: dynamicType,
+            displayScale: displayScale,
+            direction: direction,
+            monotonicHeight: monotonicHeight
+        ) {
             StructuredText(String(block.digest), parser: ParsedMarkdownText(content: block.content))
                 .textual.structuredTextStyle(ChatMarkdownStyle(headingLedger: headingLedger))
                 .textual.imageAttachmentLoader(ChatImageLoader())
