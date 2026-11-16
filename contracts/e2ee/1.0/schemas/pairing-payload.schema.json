@@ -9,8 +9,8 @@
       "type": "string"
     },
     "deviceIdentityPub": {
-      "description": "base64url without padding",
-      "minLength": 1,
+      "description": "32 bytes, base64url without padding",
+      "pattern": "^[A-Za-z0-9_-]{43}$",
       "title": "Deviceidentitypub",
       "type": "string"
     },
@@ -33,7 +33,7 @@
     },
     "psk": {
       "description": "32 random bytes, single use, expires after 10 minutes",
-      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]{43}$",
       "title": "Psk",
       "type": "string"
     },

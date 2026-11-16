@@ -1,0 +1,229 @@
+{
+  "version": "1.0",
+  "generator": "contracts/e2ee/1.0/vectors/generate.py (hashlib, hmac, cryptography)",
+  "rules": {
+    "label": "UTF-8 of 'aa-e2ee/1.0' and the fields, joined with NUL",
+    "clientId": "'cli_' + lowercase base32(SHA-256(label('client-id') || 0x00 || identityPub))[:26]",
+    "fingerprint": "first 32 hex digits of SHA-256(identityPub), 8 groups of 4, space separated",
+    "displayEnvelope": "payload = base64url(nonce12 || AES-256-GCM(directoryKey, nonce, plaintextJson, ad=label('display', deviceId, sessionId, slot, keyId))); nonce is random per seal",
+    "sealedSegments": "64 KiB plaintext segments (an empty object is one empty segment); nonce = 4 zero bytes || index as 8-byte big endian; ad = label(purpose, objectId, index) || 0x00 || final(0x01/0x00)",
+    "inputDigest": "'hmac-sha256:' + base64url(HMAC-SHA256(HMAC-SHA256(directoryKey, label('input-digest')), exact body bytes))",
+    "framing": "transport plaintext = flag || body; bodies are at most 65518 bytes; 0x00 more follows, 0x01 last fragment, 0x02 rekey (empty body)",
+    "plaintextPattern": "byte i of a sealed-object plaintext is (i*31+7) & 0xff"
+  },
+  "identities": [
+    {
+      "identityPub": "5fb2f4397d91284aeac91ec26f090612a3ed52ff98380f8e33980d19a36d824e",
+      "identityPubB64": "X7L0OX2RKErqyR7CbwkGEqPtUv-YOA-OM5gNGaNtgk4",
+      "clientId": "cli_gazvumrcxzyh5u54kyp5zj4evo",
+      "fingerprint": "c93b b4cd 71bb b292 01b6 eac4 6fc3 c90f"
+    },
+    {
+      "identityPub": "94b38bc98d24d236691278549540f4ecb041f32e3386e39cbb38715c47f3384b",
+      "identityPubB64": "lLOLyY0k0jZpEnhUlUD07LBB8y4zhuOcuzhxXEfzOEs",
+      "clientId": "cli_fkskhhihxdp2gpfdgfplqmo332",
+      "fingerprint": "cdc2 5207 5ee3 fcd6 ae92 5603 dfaf a04b"
+    },
+    {
+      "identityPub": "b11ef71cea3dd211a7a16b17eed0fd5a7e275df484a3126808d009076cbe2749",
+      "identityPubB64": "sR73HOo90hGnoWsX7tD9Wn4nXfSEoxJoCNAJB2y-J0k",
+      "clientId": "cli_6qfh2id44ym57jywu3msoseqvc",
+      "fingerprint": "41f9 2e9b 2c6a 4afd 1792 0b07 8846 7251"
+    }
+  ],
+  "prologues": [
+    {
+      "kind": "pair",
+      "fields": [
+        "dev_vector",
+        "pair_vector",
+        "cli_gazvumrcxzyh5u54kyp5zj4evo",
+        "c_1"
+      ],
+      "bytes": "61612d653265652f312e300070616972006465765f766563746f7200706169725f766563746f7200636c695f67617a76756d7263787a7968357535346b7970357a6a3465766f00635f31"
+    },
+    {
+      "kind": "connect",
+      "fields": [
+        "dev_vector",
+        "cli_gazvumrcxzyh5u54kyp5zj4evo",
+        "c_1"
+      ],
+      "bytes": "61612d653265652f312e3000636f6e6e656374006465765f766563746f7200636c695f67617a76756d7263787a7968357535346b7970357a6a3465766f00635f31"
+    }
+  ],
+  "displayEnvelopes": [
+    {
+      "deviceId": "dev_vector",
+      "sessionId": "sess_vector",
+      "slot": "device",
+      "keyId": "dk_vector_3",
+      "directoryKey": "e1f30210835c9f49575bd335be43ac6458e3f117ce60660cb2d69473057f78c0",
+      "nonce": "58cc327abda1f0b8b2f526bf",
+      "plaintext": "{\"cwd\":\"/Users/me/app\",\"latest\":\"已完成 3 个文件的修改\",\"title\":\"修复登录页\"}",
+      "ad": "61612d653265652f312e3000646973706c6179006465765f766563746f7200736573735f766563746f720064657669636500646b5f766563746f725f33",
+      "payload": "WMwyer2h8Liy9Sa_SOArxiClhXKaYHwINfO0j5awTx6l1LJxtpQbk806h0fFPvrET-8dtQegrQxVbrf_Aew0WDrMz6dc3aIGTbdN2XN816h-pM9TuLGscLalkEdvWZfF3enQEM6KhLWVG53kBojjXmtMy1CGQ1k"
+    },
+    {
+      "deviceId": "dev_vector",
+      "sessionId": "sess_vector",
+      "slot": "user",
+      "keyId": "dk_vector_3",
+      "directoryKey": "e1f30210835c9f49575bd335be43ac6458e3f117ce60660cb2d69473057f78c0",
+      "nonce": "6ec72440521b807b1b7d3185",
+      "plaintext": "{\"title\":\"我的标题\"}",
+      "ad": "61612d653265652f312e3000646973706c6179006465765f766563746f7200736573735f766563746f72007573657200646b5f766563746f725f33",
+      "payload": "bsckQFIbgHsbfTGFaAPmSGDyzJ68lsxoR3RF05lciVncTAk6OvEoi3szdjH_OhD5JKf_Uw"
+    }
+  ],
+  "sealedObjects": [
+    {
+      "purpose": "attachment",
+      "objectId": "file_small",
+      "key": "59dea4b47a9638be40a473d7319b58f4920c2c700d2a715385d73978cfbdbf82",
+      "keyB64": "Wd6ktHqWOL5ApHPXMZtY9JIMLHANKnFThdc5eM-9v4I",
+      "plaintextLength": 21,
+      "segments": [
+        {
+          "index": 0,
+          "final": true,
+          "nonce": "000000000000000000000000",
+          "ad": "61612d653265652f312e30006174746163686d656e740066696c655f736d616c6c00300001",
+          "ciphertextLength": 37,
+          "ciphertextSha256": "fe04c295f6394a087f8559144425f546524f67064ff71b5bae364082ef33195d",
+          "ciphertext": "c5ef71f497b334de327661f74e852aeddbad86df99d3ede98aa5b1e38e532397cfc7b5090b"
+        }
+      ]
+    },
+    {
+      "purpose": "attachment",
+      "objectId": "file_empty",
+      "key": "f1d68ad34571c54a1710147a37ccd78789c5d7982e805a96262aacbd60d242a8",
+      "keyB64": "8daK00VxxUoXEBR6N8zXh4nF15gugFqWJiqsvWDSQqg",
+      "plaintextLength": 0,
+      "segments": [
+        {
+          "index": 0,
+          "final": true,
+          "nonce": "000000000000000000000000",
+          "ad": "61612d653265652f312e30006174746163686d656e740066696c655f656d70747900300001",
+          "ciphertextLength": 16,
+          "ciphertextSha256": "53f0eef24e5a17145795ec7269b8402fc79183f2f61ef7826cd174f9be6e1847",
+          "ciphertext": "e972e5a0a9807eeea4686397b1c1f229"
+        }
+      ]
+    },
+    {
+      "purpose": "share",
+      "objectId": "share_vector",
+      "key": "044183a3526836edcfe4c3a1d7f45f0f963bbc9787b0058acea5f8b567a07859",
+      "keyB64": "BEGDo1JoNu3P5MOh1_RfD5Y7vJeHsAWKzqX4tWegeFk",
+      "plaintextLength": 65636,
+      "segments": [
+        {
+          "index": 0,
+          "final": false,
+          "nonce": "000000000000000000000000",
+          "ad": "61612d653265652f312e300073686172650073686172655f766563746f7200300000",
+          "ciphertextLength": 65552,
+          "ciphertextSha256": "c3ef08e00b1db88f54c39e38981a3d99e981cefb018465445dae397c9bf5d4e8"
+        },
+        {
+          "index": 1,
+          "final": true,
+          "nonce": "000000000000000000000001",
+          "ad": "61612d653265652f312e300073686172650073686172655f766563746f7200310001",
+          "ciphertextLength": 116,
+          "ciphertextSha256": "a6a851ae9e7c906fb51195e3bf7c78635a559dc031361e668827a2e39f79347b"
+        }
+      ]
+    }
+  ],
+  "inputDigests": [
+    {
+      "directoryKey": "e1f30210835c9f49575bd335be43ac6458e3f117ce60660cb2d69473057f78c0",
+      "body": "{\"content\":\"hello\",\"clientMessageId\":\"m_1\"}",
+      "digestKey": "e4f8a3bc765d9132d13ed6f78835d6fb3c56d67cf716362b36f12206921dd743",
+      "inputDigest": "hmac-sha256:0OA5EZ7QZ-HuZtFQQhh7qH44tX2JphniAipCFzxmVqU"
+    },
+    {
+      "directoryKey": "e1f30210835c9f49575bd335be43ac6458e3f117ce60660cb2d69473057f78c0",
+      "body": "{\"decision\":\"approve\"}",
+      "digestKey": "e4f8a3bc765d9132d13ed6f78835d6fb3c56d67cf716362b36f12206921dd743",
+      "inputDigest": "hmac-sha256:2KW6YI6L9RewrbLrDZawh1r6DzYbhnnFke-sP1b9aj0"
+    }
+  ],
+  "framing": [
+    {
+      "messageLength": 0,
+      "frames": [
+        {
+          "flag": 1,
+          "bodyLength": 0
+        }
+      ]
+    },
+    {
+      "messageLength": 1,
+      "frames": [
+        {
+          "flag": 1,
+          "bodyLength": 1
+        }
+      ]
+    },
+    {
+      "messageLength": 65518,
+      "frames": [
+        {
+          "flag": 1,
+          "bodyLength": 65518
+        }
+      ]
+    },
+    {
+      "messageLength": 65519,
+      "frames": [
+        {
+          "flag": 0,
+          "bodyLength": 65518
+        },
+        {
+          "flag": 1,
+          "bodyLength": 1
+        }
+      ]
+    },
+    {
+      "messageLength": 150000,
+      "frames": [
+        {
+          "flag": 0,
+          "bodyLength": 65518
+        },
+        {
+          "flag": 0,
+          "bodyLength": 65518
+        },
+        {
+          "flag": 1,
+          "bodyLength": 18964
+        }
+      ]
+    }
+  ],
+  "pairingUri": {
+    "payload": {
+      "v": 1,
+      "deviceId": "dev_vector",
+      "deviceIdentityPub": "lLOLyY0k0jZpEnhUlUD07LBB8y4zhuOcuzhxXEfzOEs",
+      "pairingId": "pair_vector",
+      "psk": "rihgCoQLuzkwP0Jbm701s5DOJtxI4-KjLC-3wZ-FO7Q",
+      "serverUrl": "https://aa.example.com",
+      "e2eeMode": "required",
+      "expiresAt": "2026-11-16T00:10:00Z"
+    },
+    "uri": "aa-pair://eyJ2IjoxLCJkZXZpY2VJZCI6ImRldl92ZWN0b3IiLCJkZXZpY2VJZGVudGl0eVB1YiI6ImxMT0x5WTBrMGpacEVuaFVsVUQwN0xCQjh5NHpodU9jdXpoeFhFZnpPRXMiLCJwYWlyaW5nSWQiOiJwYWlyX3ZlY3RvciIsInBzayI6InJpaGdDb1FMdXprd1AwSmJtNzAxczVET0p0eEk0LUtqTEMtM3daLUZPN1EiLCJzZXJ2ZXJVcmwiOiJodHRwczovL2FhLmV4YW1wbGUuY29tIiwiZTJlZU1vZGUiOiJyZXF1aXJlZCIsImV4cGlyZXNBdCI6IjIwMjYtMTEtMTZUMDA6MTA6MDBaIn0",
+    "json": "{\"v\":1,\"deviceId\":\"dev_vector\",\"deviceIdentityPub\":\"lLOLyY0k0jZpEnhUlUD07LBB8y4zhuOcuzhxXEfzOEs\",\"pairingId\":\"pair_vector\",\"psk\":\"rihgCoQLuzkwP0Jbm701s5DOJtxI4-KjLC-3wZ-FO7Q\",\"serverUrl\":\"https://aa.example.com\",\"e2eeMode\":\"required\",\"expiresAt\":\"2026-11-16T00:10:00Z\"}"
+  }
+}

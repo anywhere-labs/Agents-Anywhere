@@ -1,0 +1,38 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:channel-close",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "kind": {
+      "const": "close",
+      "default": "close",
+      "title": "Kind",
+      "type": "string"
+    },
+    "message": {
+      "default": "",
+      "title": "Message",
+      "type": "string"
+    },
+    "reason": {
+      "enum": [
+        "revoked",
+        "not_paired",
+        "policy",
+        "shutdown",
+        "protocol_error",
+        "too_large"
+      ],
+      "title": "Reason",
+      "type": "string"
+    }
+  },
+  "required": [
+    "reason"
+  ],
+  "title": "ChannelClose",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}
