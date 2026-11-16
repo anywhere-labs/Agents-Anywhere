@@ -4,7 +4,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
+from starlette.requests import HTTPConnection
 
+from agent_server.api.device_session_reads import device_read_http_error
 from agent_server.api.sessions import _require_session_action_capability
 from agent_server.core.capabilities import (
     RUNTIME_ATTACHMENT,
@@ -17,12 +19,55 @@ from agent_server.core.planning.models import (
     PlanningResponse,
     PlanningState,
 )
-from agent_server.deps import current_user_id, get_rpc, get_store
+from agent_server.deps import current_user_id, get_device_reads, get_rpc, get_store
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.repositories.facade import Store
+from agent_server.services.device_planning import (
+    DevicePlanningService,
+    DevicePlanningUnavailable,
+    DevicePlanNotFound,
+)
+from agent_server.services.device_reads import (
+    DeviceReadError,
+    DeviceReadService,
+    DeviceReadTimeout,
+)
 from agent_server.services.planning.service import PlanningService
 
 router = APIRouter(prefix="/sessions", tags=["planning"])
+
+
+def get_device_planning(conn: HTTPConnection) -> DevicePlanningService:
+    return conn.app.state.device_planning
+
+
+class DevicePlanningRoute:
+    """Sessions on v3 devices: plans and goals are the device's (``services.device_planning``)."""
+
+    def __init__(
+        self,
+        reads: Annotated[DeviceReadService, Depends(get_device_reads)],
+        service: Annotated[DevicePlanningService, Depends(get_device_planning)],
+    ) -> None:
+        self.reads, self.service = reads, service
+
+    async def applies(self, session) -> bool:
+        return await self.reads.is_v3_device(session.connectorId)
+
+    async def call(self, work):
+        try:
+            return await work
+        except DevicePlanningUnavailable:
+            raise HTTPException(
+                409, {"code": "connector_offline", "message": "the device is offline"}
+            ) from None
+        except DevicePlanNotFound:
+            raise HTTPException(404, "plan not found") from None
+        except (DeviceReadTimeout, DeviceReadError) as exc:
+            raise device_read_http_error(exc) from exc
+
+
+DevicePlanning = Annotated[DevicePlanningRoute, Depends()]
 
 
 async def owned(db, session_id, user_id):
@@ -38,8 +83,11 @@ async def get_planning(
     user_id: Annotated[str, Depends(current_user_id)],
     db: Annotated[Store, Depends(get_store)],
     rpc: Annotated[ConnectorRpcManager, Depends(get_rpc)],
+    device: DevicePlanning,
 ):
     session = await owned(db, session_id, user_id)
+    if await device.applies(session):
+        return await device.call(device.service.planning_state(session))
     return await PlanningService(db, rpc).read(session)
 
 
@@ -50,6 +98,7 @@ async def execute_planning(
     user_id: Annotated[str, Depends(current_user_id)],
     db: Annotated[Store, Depends(get_store)],
     rpc: Annotated[ConnectorRpcManager, Depends(get_rpc)],
+    device: DevicePlanning,
 ):
     session = await owned(db, session_id, user_id)
     if session.archived:
@@ -64,6 +113,12 @@ async def execute_planning(
     if payload.attachments:
         await _require_session_action_capability(
             db, rpc, session, RUNTIME_ATTACHMENT, user_id=user_id
+        )
+    if await device.applies(session):
+        return await device.call(
+            device.service.execute(
+                session, "session.planning", payload.model_dump(mode="json", exclude_none=True), user_id=user_id
+            )
         )
     try:
         return await PlanningService(db, rpc).execute(session, payload, user_id=user_id)
@@ -82,9 +137,15 @@ async def read_operation(
     user_id: Annotated[str, Depends(current_user_id)],
     db: Annotated[Store, Depends(get_store)],
     rpc: Annotated[ConnectorRpcManager, Depends(get_rpc)],
+    device: DevicePlanning,
 ):
     session = await owned(db, session_id, user_id)
-    result = await PlanningService(db, rpc).operation(session, operation_id)
+    if await device.applies(session):
+        result = await device.call(
+            device.service.operation(session, "session.planning", operation_id, user_id=user_id)
+        )
+    else:
+        result = await PlanningService(db, rpc).operation(session, operation_id)
     if result is None:
         raise HTTPException(404, "planning operation not found")
     return result
@@ -95,8 +156,11 @@ async def list_plans(
     session_id: str,
     user_id: Annotated[str, Depends(current_user_id)],
     db: Annotated[Store, Depends(get_store)],
+    device: DevicePlanning,
 ):
-    await owned(db, session_id, user_id)
+    session = await owned(db, session_id, user_id)
+    if await device.applies(session):
+        return await device.call(device.service.plan_documents(session))
     return await db.list_plan_documents(session_id)
 
 
@@ -107,8 +171,11 @@ async def read_plan(
     revision: int,
     user_id: Annotated[str, Depends(current_user_id)],
     db: Annotated[Store, Depends(get_store)],
+    device: DevicePlanning,
 ):
-    await owned(db, session_id, user_id)
+    session = await owned(db, session_id, user_id)
+    if await device.applies(session):
+        return await device.call(device.service.plan_document(session, plan_id, revision))
     try:
         return await db.get_plan_document(session_id, plan_id, revision)
     except KeyError:
@@ -122,10 +189,11 @@ async def download_plan(
     revision: int,
     user_id: Annotated[str, Depends(current_user_id)],
     db: Annotated[Store, Depends(get_store)],
+    device: DevicePlanning,
 ):
-    plan = await read_plan(session_id, plan_id, revision, user_id, db)
+    plan = await read_plan(session_id, plan_id, revision, user_id, db, device)
     return Response(
-        plan["markdown"],
+        plan.markdown if isinstance(plan, PlanDocument) else plan["markdown"],
         media_type="text/markdown; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="PLAN.md"'},
     )

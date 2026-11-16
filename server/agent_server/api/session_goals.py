@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from agent_server.api.session_planning import DevicePlanning
 from agent_server.api.sessions import _require_session_action_capability
 from agent_server.core.goal.models import GoalRequest, GoalResponse, GoalState
 from agent_server.deps import current_user_id, get_rpc, get_store
@@ -25,8 +26,12 @@ async def read_goal(
     user_id: Annotated[str, Depends(current_user_id)],
     db: Annotated[Store, Depends(get_store)],
     rpc: Annotated[ConnectorRpcManager, Depends(get_rpc)],
+    device: DevicePlanning,
 ):
-    return await GoalService(db, rpc).read(await owned(db, session_id, user_id))
+    session = await owned(db, session_id, user_id)
+    if await device.applies(session):
+        return await device.call(device.service.goal_state(session))
+    return await GoalService(db, rpc).read(session)
 
 
 @router.post("/{session_id}/goal", response_model=GoalResponse)
@@ -36,10 +41,12 @@ async def execute_goal(
     user_id: Annotated[str, Depends(current_user_id)],
     db: Annotated[Store, Depends(get_store)],
     rpc: Annotated[ConnectorRpcManager, Depends(get_rpc)],
+    device: DevicePlanning,
 ):
     session = await owned(db, session_id, user_id)
+    v3 = await device.applies(session)
     try:
-        replay = await GoalService(db, rpc).replay(session, payload, user_id=user_id)
+        replay = None if v3 else await GoalService(db, rpc).replay(session, payload, user_id=user_id)
         if replay is not None:
             return replay
     except ValueError as error:
@@ -54,6 +61,12 @@ async def execute_goal(
     if payload.attachments:
         await _require_session_action_capability(
             db, rpc, session, "runtime.attachment", user_id=user_id
+        )
+    if v3:
+        return await device.call(
+            device.service.execute(
+                session, "session.goal", payload.model_dump(mode="json", exclude_none=True), user_id=user_id
+            )
         )
     try:
         return await GoalService(db, rpc).execute(session, payload, user_id=user_id)
@@ -70,10 +83,15 @@ async def goal_operation(
     user_id: Annotated[str, Depends(current_user_id)],
     db: Annotated[Store, Depends(get_store)],
     rpc: Annotated[ConnectorRpcManager, Depends(get_rpc)],
+    device: DevicePlanning,
 ):
-    result = await GoalService(db, rpc).operation(
-        await owned(db, session_id, user_id), operation_id
-    )
+    session = await owned(db, session_id, user_id)
+    if await device.applies(session):
+        result = await device.call(
+            device.service.operation(session, "session.goal", operation_id, user_id=user_id)
+        )
+    else:
+        result = await GoalService(db, rpc).operation(session, operation_id)
     if result is None:
         raise HTTPException(404, "goal operation not found")
     return result
