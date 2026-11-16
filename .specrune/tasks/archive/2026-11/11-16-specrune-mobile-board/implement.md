@@ -4,18 +4,18 @@
 
 ## 启动前检查
 
-- [ ] `specrune task current --json` 确认绑定本任务
-- [ ] 读 `contracts/specrune/1.0/README.md`（字段结构权威，端点层已被 shell/exec 取代）
-- [ ] `git status` 确认 `connector/`、`server/` 干净（这是验收项之一）
-- [ ] 确认工作设备上 `specrune` CLI 可用：`specrune --version`
+- [x] `specrune task current --json` 确认绑定本任务
+- [x] 读 `contracts/specrune/1.0/README.md`（字段结构权威，端点层已被 shell/exec 取代）
+- [x] `git status` 确认 `connector/`、`server/` 干净（这是验收项之一）
+- [x] 确认工作设备上 `specrune` CLI 可用：`specrune --version`
 
 ## 阶段 1 · iOS 取数层
 
-- [ ] `API/V2/V2ConnectorAPI.swift` 加 `shellExec(connectorId:root:request:)`
+- [x] `API/V2/V2ConnectorAPI.swift` 加 `shellExec(connectorId:root:request:)`
   - 对应 `POST /connectors/{id}/shell/exec?root=`，body `{command, cwd, timeoutMs}`
   - 返回 `{cwd, command, exitCode, timedOut, durationMs, stdout, stderr, stdoutTruncated, stderrTruncated}`
-- [ ] `ios/Packages/SpecRuneKit/Package.swift`（照 `Packages/Textual` 的 platforms 写法）
-- [ ] `Sources/SpecRuneKit/SpecRuneClient.swift`
+- [x] `ios/Packages/SpecRuneKit/Package.swift`（照 `Packages/Textual` 的 platforms 写法）
+- [x] `Sources/SpecRuneKit/SpecRuneClient.swift`
   - `listTasks(repo:)` → `specrune task list --json --all`，解析 stdout
   - `taskSummary(repo:ref:)` → `specrune task show <ref> --json`
   - `readDoc(repo:relPath:)` → `fs/readText`（带 maxBytes）
@@ -23,38 +23,38 @@
   - `sessionTask(repo:sessionId:)` → `readText .specrune/.runtime/sessions/dsh_<id>.json`
   - 命令里的 repo 路径需 shell 引号转义
   - CLI 回退：PATH 找不到时重试 `~/.dsh/specrune/bin/specrune`
-- [ ] `Sources/SpecRuneKit/Errors.swift`：错误分类枚举（cliMissing / cliFailed / badJSON / truncated / notSpecRuneProject / offline）
+- [x] `Sources/SpecRuneKit/Errors.swift`：错误分类枚举（cliMissing / cliFailed / badJSON / truncated / notSpecRuneProject / offline）
 
 **验证**：`swiftc -typecheck`（见下方命令）
 
 ## 阶段 2 · SpecRuneKit 模型与视图
 
-- [ ] `Sources/SpecRuneKit/DTO.swift`：契约 1.0 字段结构（`nonisolated`）
-- [ ] `Sources/SpecRuneKit/Models.swift`：DTO → UI 模型（`SpecRuneProject` / `SpecRuneTask`），保留原型的 `progress` 派生逻辑
-- [ ] 把 `Views/SpecRune/SpecRuneTasksView.swift` + `SpecRuneModels.swift` 迁入包内
+- [x] `Sources/SpecRuneKit/DTO.swift`：契约 1.0 字段结构（`nonisolated`）
+- [x] `Sources/SpecRuneKit/Models.swift`：DTO → UI 模型 —— **实际未单独建**：展示派生（状态文案/进度/清单）放在 View 的 `SpecRunePresentation`，因为它依赖 UI 语义；结构变换（树/归档分组）已抽到包内 `TaskTree.swift`
+- [x] 把 `Views/SpecRune/SpecRuneTasksView.swift` + `SpecRuneModels.swift` 迁入包内 —— **部分偏离**：`SpecRuneModels.swift` 已删（DTO 取代）；View 留在主 app，因为要复用 `AppTheme` / `AppSymbol`（不在 ClientCore target 内，跨包拿不到）
   - 数据源换成 `SpecRuneClient`
   - 加 loading / error / 空态 / 截断提示
   - 保留三栏自适应（`NavigationSplitView`）、弹簧动效、`accessibilityReduceMotion`
-- [ ] 删掉主 app 的 `Views/SpecRune/`（已迁走）
+- [x] 删掉主 app 的 `Views/SpecRune/`（已迁走）—— **实际保留**：View 仍在主 app（同上）
 
 **验证**：`swiftc -typecheck`
 
 ## 阶段 3 · 入口与会话关联
 
-- [ ] xcodeproj 加 `XCLocalSwiftPackageReference "../Packages/SpecRuneKit"`（照 Textual 的 pbxproj 条目）
-- [ ] `Models/Chat/ChatShellSelection.swift` 加 `case specRune(V2ConnectorID)`，旧存档解码兜底
-- [ ] 侧栏与 rail 加入口（compact 抽屉 + regular 侧栏均可达）
-- [ ] 会话页显示所属任务（`sessionTask` 有值才显示，无值隐藏）
+- [x] xcodeproj 加 `XCLocalSwiftPackageReference "../Packages/SpecRuneKit"`（照 Textual 的 pbxproj 条目）
+- [x] `Models/Chat/ChatShellSelection.swift` 加 `case specRune(V2ConnectorID)`，旧存档解码兜底
+- [x] 侧栏与 rail 加入口（compact 抽屉 + regular 侧栏均可达）
+- [x] 会话页显示所属任务（`sessionTask` 有值才显示，无值隐藏）
 
 **验证**：`swiftc -typecheck` + Xcode 编译（若可用）
 
 ## 阶段 4 · 收尾
 
-- [ ] `CHANGELOG.md` 加「未发布」条目（iOS 分类）
-- [ ] 契约 README 补一段：实现走 `shell/exec`，端点表已退役
-- [ ] `specrune specs --check`
-- [ ] `specrune session record`
-- [ ] `specrune task finish` → `specrune task archive`
+- [x] `CHANGELOG.md` 加「未发布」条目（iOS 分类）
+- [x] 契约 README 补一段：实现走 `shell/exec`，端点表已退役
+- [x] `specrune specs --check`
+- [x] `specrune session record`
+- [x] `specrune task finish` → `specrune task archive`
 
 ## 验证命令
 
