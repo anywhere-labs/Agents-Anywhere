@@ -682,6 +682,9 @@
         "secretRequired": "The address changed. Enter the API key again."
       },
       "runtimeConfigFields": {
+        "agentCliPath": {
+          "label": "Agent executable path (optional)"
+        },
         "claudeExecutablePath": {
           "label": "Claude executable path (optional)",
           "description": "Optional. Fill this only when Claude Code is not available on the default PATH."

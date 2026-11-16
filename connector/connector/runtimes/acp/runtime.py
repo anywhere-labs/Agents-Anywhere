@@ -438,6 +438,8 @@ class AcpRuntime(AgentRuntime):
         rows = [SessionMeta(session_id=row["session_id"], external_session_id=row["agent_session_id"],
                 runtime=self.config.runtime, cwd=row["workspace"]["registered_path"])
                 for row in self.app.store.values("binding")]
+        if not self.profile.native_inventory:
+            return tuple(rows[:limit])
         client = await self.app.inventory_client()
         if client.capabilities.get("sessionCapabilities", {}).get("list") is not None:
             page = await client.list_sessions(cursor=cursor)

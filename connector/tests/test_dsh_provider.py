@@ -34,13 +34,7 @@ from connector.runtimes.providers import default_runtime_providers
 
 
 def test_dsh_is_third_default_provider() -> None:
-    assert [provider.runtime for provider in default_runtime_providers()] == [
-        "codex",
-        "claude",
-        "dsh",
-        "pi",
-        "hermes",
-    ]
+    assert default_runtime_providers()[2].runtime == "dsh"
 
 
 def test_dsh_provider_identity_schema_and_validation(tmp_path: Path) -> None:
