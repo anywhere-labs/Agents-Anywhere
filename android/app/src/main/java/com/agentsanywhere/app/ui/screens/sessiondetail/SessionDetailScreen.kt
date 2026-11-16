@@ -130,6 +130,13 @@ import com.agentsanywhere.app.feature.sessiondetail.SESSION_MODEL_CATALOG_CAPABI
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_NOTICE_RESPONSE_CAPABILITY
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_PERMISSION_CATALOG_CAPABILITY
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_SEND_MESSAGE_CAPABILITY
+import com.agentsanywhere.app.feature.sessiondetail.SESSION_QUEUE_CAPABILITY
+import com.agentsanywhere.app.feature.sessiondetail.SESSION_STEER_CAPABILITY
+import com.agentsanywhere.app.feature.sessiondetail.MessageDelivery
+import com.agentsanywhere.app.feature.sessiondetail.QUEUEABLE_RUNTIME_STATUSES
+import com.agentsanywhere.app.feature.sessiondetail.SteerRejected
+import com.agentsanywhere.app.feature.sessiondetail.mergeQueueState
+import com.agentsanywhere.app.feature.sessiondetail.messageMustWait
 import com.agentsanywhere.app.feature.sessiondetail.selectionOptions
 import com.agentsanywhere.app.feature.sessiondetail.modelSelectionOptions
 import com.agentsanywhere.app.feature.sessiondetail.sessionComposerEnabled
@@ -260,6 +267,9 @@ private fun SessionDetailVisit(
     }
 
     var planningBusy by remember(sessionId) { mutableStateOf(false) }
+    // Queue actions and queued sends in flight; "*" marks a whole-queue action.
+    var queueBusyId by remember(sessionId) { mutableStateOf<String?>(null) }
+    var queueSubmitting by remember(sessionId) { mutableStateOf(false) }
     val planReader = remember(sessionId) { mutableStateOf<com.agentsanywhere.app.api.PlanDocument?>(null) }
     val planningSession by rememberUpdatedState(sessionId)
     val colors = LocalAAColors.current
@@ -849,7 +859,7 @@ private fun SessionDetailVisit(
         }
     }
 
-    fun sendText(text: String) {
+    fun sendText(text: String, delivery: MessageDelivery = MessageDelivery.Send) {
         val pending = preparedSession
         if (pending != null) {
             if (preparedSessionCreating) return
@@ -936,13 +946,56 @@ private fun SessionDetailVisit(
         val id = sessionId ?: return
         val runtimeId = state.session?.runtimeId ?: state.runtime.runtimeId
         val runtimeType = state.session?.runtimeType ?: state.runtime.runtimeType
-        if (!state.capabilities.isUsable(SESSION_SEND_MESSAGE_CAPABILITY, runtimeId, runtimeType)) {
+        val requiredCapability = when (delivery) {
+            MessageDelivery.Send -> SESSION_SEND_MESSAGE_CAPABILITY
+            MessageDelivery.Queue, MessageDelivery.Interrupt -> SESSION_QUEUE_CAPABILITY
+            MessageDelivery.Steer -> SESSION_STEER_CAPABILITY
+        }
+        if (!state.capabilities.isUsable(requiredCapability, runtimeId, runtimeType)) {
             showError(context.getString(R.string.session_send_unavailable))
             return
         }
         val clientMessageId = retryClientMessageId ?: "opt_${UUID.randomUUID()}"
         val pendingAttachments = attachments
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        if (delivery == MessageDelivery.Queue || delivery == MessageDelivery.Interrupt) {
+            // The Server keeps the message until the session can take it: the
+            // queue panel shows it, and the timeline gets it once it is sent.
+            if (queueSubmitting) return
+            scope.launch {
+                if (pendingAttachments.any { it.uploadState != AttachmentUploadState.Uploaded || it.remote == null }) {
+                    showError(context.getString(R.string.session_wait_uploads))
+                    return@launch
+                }
+                queueSubmitting = true
+                controller.sendMessage(
+                    id,
+                    text,
+                    clientMessageId,
+                    uploadedAttachments = pendingAttachments.mapNotNull { it.remote },
+                    delivery = delivery,
+                ).onSuccess { result ->
+                    if (!isVisitActive()) return@onSuccess
+                    clearComposerDraft()
+                    if (result.queued) {
+                        state = state.copy(queue = mergeQueueState(state.queue, result.queue))
+                    } else {
+                        // The session was idle after all; the message started a turn.
+                        forceLatestRequest += 1
+                    }
+                }.onFailure { error ->
+                    if (!isVisitActive()) return@onFailure
+                    retryClientMessageId = clientMessageId
+                    saveComposerDraft(text, pendingAttachments, clientMessageId)
+                    showError(
+                        error.message?.takeUnless(::isInternalRuntimeError)
+                            ?: context.getString(R.string.session_send_failed),
+                    )
+                }
+                queueSubmitting = false
+            }
+            return
+        }
         scope.launch {
             if (pendingAttachments.any { it.uploadState != AttachmentUploadState.Uploaded || it.remote == null }) {
                 showError(context.getString(R.string.session_wait_uploads))
@@ -964,7 +1017,7 @@ private fun SessionDetailVisit(
             unfocusComposer()
             forceLatestRequest += 1
             state.session?.let { onSessionChanged(it.copy(optimisticTopUntil = System.currentTimeMillis() + 1_000)) }
-            controller.sendMessage(id, text, clientMessageId, uploadedAttachments = uploadedAttachments)
+            controller.sendMessage(id, text, clientMessageId, uploadedAttachments = uploadedAttachments, delivery = delivery)
                 .onSuccess { result ->
                     clearComposerDraft()
                     state = controller.markOptimisticMessage(
@@ -979,7 +1032,9 @@ private fun SessionDetailVisit(
                     val rawMessage = error.message
                     val message = rawMessage
                         ?.takeUnless(::isInternalRuntimeError)
-                        ?: context.getString(R.string.session_send_failed)
+                        ?: context.getString(
+                            if (error is SteerRejected) R.string.session_steer_failed else R.string.session_send_failed,
+                        )
                     if (controller.hasServerEcho(state, clientMessageId)) {
                         clearComposerDraft()
                         return@onFailure
@@ -1443,7 +1498,16 @@ private fun SessionDetailVisit(
         val id = sessionId.orEmpty()
         openInteractions.filter { it.blocksSession(id) }
     }
-    val runtimeBlocksSubmission = runtimeStatus in setOf(
+    val queueUsable = !isPreparedSession &&
+        state.capabilities.isUsable(SESSION_QUEUE_CAPABILITY, runtimeId, runtimeType)
+    // While a turn runs, or earlier messages still wait, new messages go to
+    // the server-owned queue instead of being refused.
+    val queueMode = queueUsable && connectorOnline &&
+        runtimeStatus != SessionRuntimeStatus.Disconnected &&
+        messageMustWait(runtimeStatus, state.queue)
+    val canSteer = queueMode && runtimeStatus in QUEUEABLE_RUNTIME_STATUSES &&
+        state.capabilities.isUsable(SESSION_STEER_CAPABILITY, runtimeId, runtimeType)
+    val runtimeBlocksSubmission = !queueMode && runtimeStatus in setOf(
         SessionRuntimeStatus.Waiting,
         SessionRuntimeStatus.Pending,
         SessionRuntimeStatus.Running,
@@ -1458,7 +1522,7 @@ private fun SessionDetailVisit(
         sessionComposerEnabled(
             takeoverEnabled = takeoverEnabled,
             capabilityFactsFresh = capabilityFactsFresh,
-            canSendMessage = canUseSendMessage,
+            canSendMessage = canUseSendMessage || queueMode,
             canUseCommands = canUseCommands,
         )
     }
@@ -1472,15 +1536,17 @@ private fun SessionDetailVisit(
         exactCommand == null && state.commands.isLoading
     val commandMode = takeoverEnabled && inputEnabled && slashIntent != null && attachments.isEmpty()
     val messageSendable = !runtimeBlocksSubmission &&
-        blockingNotices.isEmpty() &&
+        // Queued messages wait behind an open approval instead of answering it.
+        (blockingNotices.isEmpty() || queueMode) &&
         attachmentsReady &&
         (attachments.isEmpty() || canUseAttachments) &&
-        (isPreparedSession || canUseSendMessage)
+        (isPreparedSession || canUseSendMessage || queueMode)
     val goalUsable = connectorOnline && (preparedSession?.goalsEnabled==true || state.capabilities.isUsable("session.goal", runtimeId, runtimeType))
     val goalInput = goalMode || goalUsable && Regex("^/goal(?:\\s|$)").containsMatchIn(draft.trimStart())
     val planInput = com.agentsanywhere.app.feature.sessiondetail.PlanningCommand.parse(draft) != null
     val canSend = (inputEnabled || (goalInput && takeoverEnabled && !goalState?.actions.isNullOrEmpty()) || (planInput && takeoverEnabled && !state.planning?.actions.isNullOrEmpty())) &&
         !state.sending &&
+        !queueSubmitting &&
         !preparedSessionCreating &&
         !state.commandExecuting &&
         (draft.isNotBlank() || attachments.isNotEmpty()) &&
@@ -1683,7 +1749,8 @@ private fun SessionDetailVisit(
             if(planningSession==id)goalBusy=false
         }
     }
-    fun sendDraft() {
+    fun sendDraft(delivery: MessageDelivery? = null) {
+        val messageDelivery = delivery ?: if (queueMode) MessageDelivery.Queue else MessageDelivery.Send
         val inputs = if (preparedSession != null) {
             preparedSession.preparedWorkspace?.inputModalities(preparedSelections.model)
         } else {
@@ -1728,7 +1795,7 @@ private fun SessionDetailVisit(
         val intent = if (isPreparedSession) null else SlashIntent.parse(raw)
             ?.takeIf { it.isCommandLike && it.command.isNotEmpty() }
         if (id == null || intent == null || !canUseCommands) {
-            sendText(if (isPreparedSession && (planningCreation || planning != null)) raw else text)
+            sendText(if (isPreparedSession && (planningCreation || planning != null)) raw else text, messageDelivery)
             return
         }
         state.commands.commands.exact(intent)?.let { command ->
@@ -1736,14 +1803,14 @@ private fun SessionDetailVisit(
             return
         }
         if (state.commands.isLoaded) {
-            sendText(text)
+            sendText(text, messageDelivery)
             return
         }
         // Read the catalog first so an intended command is never sent to the model.
         scope.launch {
             val command = controller.loadCommands(id).getOrNull()?.exact(intent)
             if (draft != raw) return@launch
-            if (command != null) runCommand(command, raw.trimEnd(), clearing = raw) else sendText(text)
+            if (command != null) runCommand(command, raw.trimEnd(), clearing = raw) else sendText(text, messageDelivery)
         }
     }
     LaunchedEffect(
@@ -1865,6 +1932,49 @@ private fun SessionDetailVisit(
             // A command allowed mid-turn (e.g. /stop) takes the primary button.
             exactCommand?.allowed(runtimeStatus) != true
     )
+    // With something typed, the primary button queues it; empty, it stops the turn.
+    val queueSubmitReady = queueMode && (draft.isNotBlank() || attachments.isNotEmpty()) &&
+        slashIntent == null && !goalInput && !planInput
+    val alternativeDeliveries = if (queueSubmitReady) {
+        listOfNotNull(
+            MessageDelivery.Interrupt.takeIf { connectorOnline && canUseInterrupt },
+            MessageDelivery.Steer.takeIf { canSteer },
+        )
+    } else {
+        emptyList()
+    }
+
+    fun runQueueAction(action: QueueAction) {
+        val id = sessionId ?: return
+        if (queueBusyId != null) return
+        queueBusyId = when (action) {
+            is QueueAction.Edit -> action.messageId
+            is QueueAction.Delete -> action.messageId
+            is QueueAction.Retry -> action.messageId
+            is QueueAction.SendNow -> action.messageId
+            QueueAction.Resume, QueueAction.Clear -> "*"
+        }
+        scope.launch {
+            val result = when (action) {
+                is QueueAction.Edit -> controller.editQueueItem(id, action.messageId, action.content)
+                is QueueAction.Delete -> controller.deleteQueueItem(id, action.messageId)
+                is QueueAction.Retry -> controller.retryQueueItem(id, action.messageId)
+                is QueueAction.SendNow -> controller.sendQueueItemNow(id, action.messageId)
+                QueueAction.Resume -> controller.resumeQueue(id)
+                QueueAction.Clear -> controller.clearQueue(id)
+            }
+            if (planningSession != id) return@launch
+            result.onSuccess { state = state.copy(queue = mergeQueueState(state.queue, it)) }
+                .onFailure { error ->
+                    showError(error.message?.takeIf(String::isNotBlank) ?: context.getString(R.string.session_queue_action_failed))
+                    controller.loadQueue(id).onSuccess {
+                        if (planningSession == id) state = state.copy(queue = mergeQueueState(state.queue, it))
+                    }
+                }
+            queueBusyId = null
+        }
+    }
+
     val replyTarget = state.session?.runtimeLabel?.takeIf { it.isNotBlank() }
         ?: stringResource(R.string.session_agent_fallback)
     val placeholder = when {
@@ -1872,6 +1982,7 @@ private fun SessionDetailVisit(
         !takeoverEnabled -> stringResource(R.string.session_read_only_placeholder)
         state.session != null && !connectorOnline -> stringResource(R.string.session_device_offline_placeholder)
         blockingNotices.isNotEmpty() -> stringResource(R.string.session_waiting_approval_placeholder)
+        queueMode && runtimeStatus in QUEUEABLE_RUNTIME_STATUSES -> stringResource(R.string.session_queue_placeholder)
         state.runtime.errorMessage != null -> state.runtime.errorMessage.orEmpty()
         state.runtime.error?.get("code") == "DSH_CONCURRENT_WRITER_DETECTED" ->
             stringResource(R.string.session_dsh_concurrent_writer)
@@ -2074,6 +2185,15 @@ private fun SessionDetailVisit(
                                 goalReplacement?.let { replacement ->
                                     androidx.compose.material3.AlertDialog(onDismissRequest={goalReplacement=null},title={androidx.compose.material3.Text(stringResource(R.string.goal_replace_title))},text={androidx.compose.material3.Text(replacement.first,maxLines=4)},confirmButton={androidx.compose.material3.TextButton(onClick={goalReplacement=null;goalAction("set",replacement.first,replacement.second,true)}){androidx.compose.material3.Text(stringResource(R.string.goal_replace))}},dismissButton={androidx.compose.material3.TextButton(onClick={goalReplacement=null}){androidx.compose.material3.Text(stringResource(R.string.goal_cancel))}})
                                 }
+                                if (planTarget == null) SessionMessageQueuePanel(
+                                    queue = state.queue,
+                                    runtimeStatus = runtimeStatus,
+                                    darkMode = darkMode,
+                                    canControl = queueUsable,
+                                    canInterrupt = canUseInterrupt,
+                                    busyId = queueBusyId,
+                                    onAction = ::runQueueAction,
+                                )
                                 if (planTarget == null) MessageComposer(
                                     darkMode = darkMode,
                                     draft = if (takeoverEnabled) draft else "",
@@ -2083,8 +2203,8 @@ private fun SessionDetailVisit(
                                     inputEnabled = inputEnabled,
                                     attachmentsEnabled = inputEnabled && canUseAttachments && !commandMode,
                                     canSend = canSend,
-                                    sending = state.sending,
-                                    showInterrupt = showInterrupt,
+                                    sending = state.sending || queueSubmitting,
+                                    showInterrupt = showInterrupt && !queueSubmitReady,
                                     interrupting = state.interrupting,
                                     placeholder = placeholder,
                                     attachments = if (takeoverEnabled) attachments else emptyList(),
@@ -2100,8 +2220,10 @@ private fun SessionDetailVisit(
                                     onRetryAttachment = ::retryPendingAttachment,
                                     onPreviewAttachment = { previewImage = AttachmentPreview.Local(it) },
                                     onReadOnlyClick = ::handleReadOnlyComposerClick,
-                                    onSend = ::sendDraft,
+                                    onSend = { sendDraft() },
                                     onInterrupt = ::interrupt,
+                                    alternativeDeliveries = alternativeDeliveries,
+                                    onSendWith = { sendDraft(it) },
                                 )
                             }
                         }

@@ -51,7 +51,7 @@ nonisolated struct V2SessionEvent: Decodable, Identifiable, Hashable {
     var id: String { eventId }
 
     var isLiveProjection: Bool {
-        ["session.meta.updated", "runtime.state.updated", "runtime.capability.updated", "runtime.catalog.updated"].contains(type)
+        ["session.meta.updated", "runtime.state.updated", "runtime.capability.updated", "runtime.catalog.updated", "runtime.queue.updated"].contains(type)
     }
 }
 

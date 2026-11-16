@@ -51,6 +51,7 @@ data class RemoteSessionEventPayload(
     val modelCatalog: RemoteRuntimeModelCatalog? = null,
     val permissionCatalog: RemoteRuntimePermissionCatalog? = null,
     val eventCursor: String? = null,
+    val queue: RemoteSessionQueueState? = null,
 )
 
 data class RemoteEventRecoveryResponse(

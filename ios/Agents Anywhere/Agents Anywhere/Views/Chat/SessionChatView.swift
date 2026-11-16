@@ -87,18 +87,23 @@ struct SessionChatView: View, Equatable {
                                 .id("\(target.state.epoch):\(target.id):\(target.state.review?.planId ?? ""):\(target.state.review?.planRevision ?? 0):\(target.state.review?.contentHash ?? "")")
                         }
                         SessionGoalPanel(chat:model)
+                        SessionMessageQueuePanel(chat: model)
                         ChatComposerDock(draft: session.composer, settings: model.settings,
                             maximumEditorHeight: min(160, max(72, geometry.size.height * 0.30)), controls: controls,
-                            canSend: session.canSend || ((model.goalMode || session.composer.text.hasPrefix("/goal")) && session.runtime.allows("session.goal")) || (V2PlanningCommand.parse(session.composer.text) != nil && session.runtime.allows("session.planning")), canAttach: model.canAttach,
+                            canSend: session.canSend || session.queueMode || ((model.goalMode || session.composer.text.hasPrefix("/goal")) && session.runtime.allows("session.goal")) || (V2PlanningCommand.parse(session.composer.text) != nil && session.runtime.allows("session.planning")), canAttach: model.canAttach,
                             canSelectModel: session.runtime.allows("catalog.model"),
                             canSelectPermission: session.runtime.allows("catalog.permission"),
                             isStreaming: model.isRunning, canStop: session.runtime.allows("session.interrupt"),
-                            isBusy: model.isWorking || !model.isOpeningReady, placeholder: requiresTakeover ? String(localized: "请先接管") : String(localized: "询问 Agents"),
+                            isBusy: model.isWorking || !model.isOpeningReady, placeholder: requiresTakeover ? String(localized: "请先接管")
+                                : session.queueMode && model.isRunning ? String(localized: "Agent 运行中，点发送排队，任务结束后自动发送")
+                                : String(localized: "询问 Agents"),
                             isLoadingSettings: model.isLoadingSettings,
                             settingsError: model.settingsError, sessionChat: model,
                             onSend: model.send, onStop: model.interrupt, onLoadSettings: model.loadSettings,
                             onApplySettings: model.applySettings, applyError: { model.settingsError },
-                            onDraftChange: { model.repository.draftDidChange(sessionID: model.session.id) })
+                            onDraftChange: { model.repository.draftDidChange(sessionID: model.session.id) },
+                            queueMode: session.queueMode, alternativeDeliveries: model.alternativeDeliveries,
+                            onSendWith: { await model.send($0, delivery: $1) })
                             .traceChatLayout("composer-dock")
                             .frame(height: model.planReviewTarget == nil ? nil : 0)
                             .clipped()

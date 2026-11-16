@@ -25,6 +25,8 @@ nonisolated struct V2SessionSnapshot: Decodable, Hashable {
     let catalogs: [String: JSONValue]
     let eventCursor: String
     let serverTime: String
+    /// Absent from Servers that predate the message queue.
+    var queue: V2SessionQueueState? = nil
 }
 
 nonisolated struct V2TimelineSnapshot: Decodable, Hashable {

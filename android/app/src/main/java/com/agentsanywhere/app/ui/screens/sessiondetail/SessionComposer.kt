@@ -30,6 +30,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -42,6 +44,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import com.agentsanywhere.app.feature.sessiondetail.MessageDelivery
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
@@ -110,6 +115,9 @@ internal fun MessageComposer(
     onSend: () -> Unit,
     onInterrupt: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Other ways to send, offered on long-press of the send button while the Agent runs. */
+    alternativeDeliveries: List<MessageDelivery> = emptyList(),
+    onSendWith: (MessageDelivery) -> Unit = {},
 ) {
     val colors = LocalAAColors.current
     val surface = if (darkMode) colors.raisedSurface else Color(0xF2FFFFFF)
@@ -206,6 +214,8 @@ internal fun MessageComposer(
                 onOpenAttachMenu = { if (attachmentsEnabled) showAttachMenu = true },
                 onSend = onSend,
                 onInterrupt = onInterrupt,
+                alternativeDeliveries = alternativeDeliveries,
+                onSendWith = onSendWith,
             )
         }
     }
@@ -484,7 +494,11 @@ private fun ComposerActions(
     onOpenAttachMenu: () -> Unit,
     onSend: () -> Unit,
     onInterrupt: () -> Unit,
+    alternativeDeliveries: List<MessageDelivery>,
+    onSendWith: (MessageDelivery) -> Unit,
 ) {
+    var showDeliveryMenu by remember { mutableStateOf(false) }
+    val offersAlternatives = !showInterrupt && canSend && alternativeDeliveries.isNotEmpty()
     val surface = if (darkMode) LocalAAColors.current.raisedSurface else Color.White
     val border = if (darkMode) Color(0xFF27272A) else Color.Transparent
     val icon = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF2D2E2B)
@@ -573,16 +587,40 @@ private fun ComposerActions(
                 .clip(CircleShape)
                 .background(primaryActionSurface)
                 .then(
-                    if (primaryActionEnabled) {
-                        Modifier.noRippleClickable(
+                    when {
+                        !primaryActionEnabled -> Modifier
+                        offersAlternatives -> Modifier.pointerInput(alternativeDeliveries, onSend) {
+                            detectTapGestures(
+                                onTap = { onSend() },
+                                onLongPress = { showDeliveryMenu = true },
+                            )
+                        }
+                        else -> Modifier.noRippleClickable(
                             onClick = if (showInterrupt) onInterrupt else onSend,
                         )
-                    } else {
-                        Modifier
                     },
                 ),
             contentAlignment = Alignment.Center,
         ) {
+            DropdownMenu(
+                expanded = showDeliveryMenu && offersAlternatives,
+                onDismissRequest = { showDeliveryMenu = false },
+            ) {
+                DeliveryMenuItem(R.string.session_delivery_queue, R.string.session_delivery_queue_hint) {
+                    showDeliveryMenu = false
+                    onSend()
+                }
+                alternativeDeliveries.forEach { delivery ->
+                    val steer = delivery == MessageDelivery.Steer
+                    DeliveryMenuItem(
+                        if (steer) R.string.session_delivery_steer else R.string.session_delivery_interrupt,
+                        if (steer) R.string.session_delivery_steer_hint else R.string.session_delivery_interrupt_hint,
+                    ) {
+                        showDeliveryMenu = false
+                        onSendWith(delivery)
+                    }
+                }
+            }
             when {
                 primaryActionBusy -> CircularProgressIndicator(
                     color = primaryActionIcon,
@@ -599,6 +637,19 @@ private fun ComposerActions(
             }
         }
     }
+}
+
+@Composable
+private fun DeliveryMenuItem(title: Int, hint: Int, onClick: () -> Unit) {
+    DropdownMenuItem(
+        text = {
+            Column {
+                Text(stringResource(title), fontSize = 14.sp)
+                Text(stringResource(hint), fontSize = 12.sp, color = Color(0xFF8A8984))
+            }
+        },
+        onClick = onClick,
+    )
 }
 
 @Composable

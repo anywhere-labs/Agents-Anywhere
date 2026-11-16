@@ -6,11 +6,11 @@
 
 ### 升级须知
 
-- 运行中排队消息需要 Server 执行 `v2_56` 数据库迁移（只新增两张表，不改写已有数据）；排队在 Web 和 Desktop 上可用，旧版客户端和 Android、iOS 的行为不变。（[#658](https://github.com/anywhere-labs/Agents-Anywhere/pull/658)）
+- 运行中排队消息需要 Server 执行 `v2_56` 数据库迁移（只新增两张表，不改写已有数据）；排队在 Web、Desktop、Android 和 iOS 上可用，旧版客户端的行为不变。（[#658](https://github.com/anywhere-labs/Agents-Anywhere/pull/658)、[#659](https://github.com/anywhere-labs/Agents-Anywhere/pull/659)）
 
 ### 会话创建与消息交付
 
-- Agent 运行中，Web 和 Desktop 可以继续发送消息：消息会排队，当前任务结束后按顺序自动发出，在所有设备上看到的是同一份队列；排队的消息可以编辑、删除、立即发送（打断当前任务），也可以选择「打断并发送」，Codex、Pi、Hermes 还能选择「引导当前任务」把消息直接交给正在运行的任务。上一个任务出错时队列会暂停，点「继续发送」后再发出。Android 和 iOS 暂未接入。（[#658](https://github.com/anywhere-labs/Agents-Anywhere/pull/658)）
+- Agent 运行中，Web、Desktop、Android 和 iOS 都可以继续发送消息：消息会排队，当前任务结束后按顺序自动发出，在所有设备上看到的是同一份队列；排队的消息可以编辑、删除、立即发送（打断当前任务），也可以选择「打断并发送」，Codex、Pi、Hermes 还能选择「引导当前任务」把消息直接交给正在运行的任务。上一个任务出错时队列会暂停，点「继续发送」后再发出。（[#658](https://github.com/anywhere-labs/Agents-Anywhere/pull/658)、[#659](https://github.com/anywhere-labs/Agents-Anywhere/pull/659)）
 - 在工作设备安装并配置对应 CLI 后，可以在 Web、Desktop、Android 和 iOS 选择 Command Code、OpenCode、Google Antigravity、MiniMax Code、CodeBuddy Code 和 MiMo Code 新建会话，并按 Agent 支持的能力发送消息、处理审批、中断和恢复 AA 会话。（[#629](https://github.com/anywhere-labs/Agents-Anywhere/pull/629)）
 
 ### Desktop
@@ -26,6 +26,11 @@
 - 没发出去的消息下方显示「发送失败」，点开可以查看原因并删除这条消息，不会再一直留在对话里。（[#660](https://github.com/anywhere-labs/Agents-Anywhere/pull/660)）
 - 打开过文件后再进入会话，会直接显示对话，不再先停在「文件」页。（[#661](https://github.com/anywhere-labs/Agents-Anywhere/pull/661)）
 - 在小米 15、小米 17 等已升级 HyperOS 4 的手机上，展开推理内容不再闪退；推理正文改用与其他文字相同的常规字重。（[#662](https://github.com/anywhere-labs/Agents-Anywhere/pull/662)）
+- Agent 运行中输入框不再禁用：输入内容后点发送即排队，长按发送键可选「打断并发送」或「引导当前任务」，输入框为空时发送键仍是停止；输入框上方显示排队消息，点一条可以立即发送、编辑、删除或重试。（[#659](https://github.com/anywhere-labs/Agents-Anywhere/pull/659)）
+
+### iOS
+
+- Agent 运行中输入框不再禁用：输入内容后点发送即排队，长按发送键可选「打断并发送」或「引导当前任务」，输入框为空时发送键仍是停止；输入框上方显示排队消息，可以立即发送、编辑、删除或重试。（[#659](https://github.com/anywhere-labs/Agents-Anywhere/pull/659)）
 
 ## 2.2.0（2026-11-14）
 
