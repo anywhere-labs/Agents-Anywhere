@@ -140,7 +140,10 @@ def test_off_mode_changes_nothing(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch, "off")
     _, _, session_id, headers = create_connector_and_session(client)
     assert client.get("/auth/config").json()["e2ee"] == {"mode": "off", "web": "allow", "preview": "allow"}
-    assert client.get(f"/sessions/{session_id}/timeline", headers=headers).status_code == 200
+    # The gate is off: a content route is answered by its own handler (a v2 session without a v3 device may
+    # get ``device_upgrade_required``), never refused with ``e2ee_required``.
+    response = client.get(f"/sessions/{session_id}/timeline", headers=headers)
+    assert "e2ee_required" not in response.text
 
 
 def test_required_mode_refuses_plaintext_content(tmp_path, monkeypatch):

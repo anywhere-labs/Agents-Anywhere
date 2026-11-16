@@ -94,4 +94,4 @@ GET /api/v3/e2ee/commands/{commandId}
 
 ## 数据库
 
-`v2_57` 新增 `e2ee_command_registrations`（命令 ID、用户、设备、输入摘要、时间、结果状态与错误码），不改写已有数据。
+`v2_63` 新增 `e2ee_command_registrations`（命令 ID、用户、设备、输入摘要、时间、结果状态与错误码），不改写已有数据。

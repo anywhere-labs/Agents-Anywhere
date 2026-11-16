@@ -35,6 +35,7 @@ from agent_server.core.capabilities import (
     SESSION_INTERACTION_APPROVAL,
     capability_is_usable,
 )
+from agent_server.core.e2ee_settings import E2eeSettings, e2ee_required_error
 from agent_server.core.events import (
     PORT_EVENT_TYPES,
     EventCursorError,
@@ -81,15 +82,14 @@ from agent_server.core.runtime_identity import (
     SessionRuntimeBindingError,
     resolve_session_runtime_binding,
 )
-from agent_server.core.e2ee_settings import E2eeSettings, e2ee_required_error
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
     current_user_id,
     get_catalog_service,
     get_device_planning,
     get_device_reads,
-    get_e2ee_settings,
     get_device_runtime_service,
+    get_e2ee_settings,
     get_model_channel_service,
     get_rpc,
     get_session_run_service,

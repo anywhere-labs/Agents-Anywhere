@@ -73,12 +73,12 @@ from agent_server.infra.model_gateway_probe import (
     private_gateways_allowed,
 )
 from agent_server.infra.pairing_store import PairingStore
-from agent_server.infra.terminal_roots import TerminalRootStore
 from agent_server.infra.preview_state import PreviewStateStore
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.session_watch import SessionWatchHub
 from agent_server.infra.terminal_broker import TerminalBroker
+from agent_server.infra.terminal_roots import TerminalRootStore
 from agent_server.infra.terminal_stream_hub import TerminalStreamHub
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.tokens_access_cache import TokensAccessCache
@@ -91,7 +91,6 @@ from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_blobs import DeviceBlobService
 from agent_server.services.device_commands import DeviceCommandService
 from agent_server.services.device_link import DeviceLinkService, e2ee_mode
-from agent_server.services.previews import PreviewService
 from agent_server.services.device_planning import DevicePlanningService
 from agent_server.services.device_queue import DeviceQueueService
 from agent_server.services.device_reads import DeviceReadService
@@ -100,6 +99,7 @@ from agent_server.services.e2ee_mode import apply_e2ee_mode
 from agent_server.services.effective_capabilities import (
     ConnectorCapabilityRefresh,
 )
+from agent_server.services.previews import PreviewService
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.setup_tokens import SetupTokenService
 from agent_server.services.shell_tasks import ShellTaskManager
