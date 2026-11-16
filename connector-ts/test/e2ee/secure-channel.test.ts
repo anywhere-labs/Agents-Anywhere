@@ -299,6 +299,8 @@ describe('E-4：撤销', () => {
     await tick()
     await tick()
     expect(bob.channel.closed?.code).toBe('e2ee_not_paired')
+    // Said by the device inside the channel: a client may act on it (a Server-relayed end never is).
+    expect(bob.channel.closed?.fromDevice).toBe(true)
     expect(dev.trust.state.directoryKey.epoch).toBe(before.epoch + 1)
     expect(aliceKeys.filter((event) => event['type'] === 'e2ee.directory_key')).toHaveLength(1)
     expect(bobKeys.filter((event) => event['type'] === 'e2ee.directory_key')).toHaveLength(0)

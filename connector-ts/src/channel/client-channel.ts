@@ -51,9 +51,22 @@ export class ChannelClosedError extends Error {
   constructor(
     readonly code: string,
     message = code,
+    /** True only for a `close` the device sent inside the authenticated channel. Codes relayed by the Server
+     * (`ClientTunnelEnd`) are false: the Server can forge them, so they must never change trust records. */
+    readonly fromDevice = false,
   ) {
     super(message)
   }
+}
+
+/** `ChannelClose.reason` -> the AA code clients act on. */
+const CLOSE_REASON_CODES: Readonly<Record<string, string>> = {
+  not_paired: 'e2ee_not_paired',
+  revoked: 'e2ee_not_paired',
+  protocol_error: 'e2ee_protocol_error',
+  too_large: 'too_large',
+  policy: 'e2ee_required',
+  shutdown: 'closed',
 }
 
 export function parsePairingUri(uri: string): PairingPayload {
@@ -318,8 +331,10 @@ export class ClientSecureChannel {
           else for (const listener of this.#channelEvents) listener(event)
           break
         }
-        case 'close':
-          throw new ChannelClosedError(String(message['message'] || message['reason']), String(message['reason']))
+        case 'close': {
+          const reason = String(message['reason'])
+          throw new ChannelClosedError(CLOSE_REASON_CODES[reason] ?? 'closed', String(message['message'] || reason), true)
+        }
         default:
           throw new ChannelClosedError('e2ee_protocol_error', `unexpected message ${String(message['kind'])}`)
       }
