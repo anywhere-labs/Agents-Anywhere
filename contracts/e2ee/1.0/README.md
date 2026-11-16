@@ -7,6 +7,7 @@
 - 重连：`Noise_KK`。每 1 小时或 2^20 帧重新协商密钥（Noise `REKEY`）。
 - 套件（S8 结论）：`Noise_XXpsk0_25519_AESGCM_SHA256`、`Noise_KK_25519_AESGCM_SHA256`，见下文「套件与实现」。三端共用 `vectors/` 下的测试向量。
 - 通道内是与普通模式相同的客户端 API：`TunnelRequest` / `TunnelResponse` / `TunnelEvent`。
+- 认证：`WS /api/v3/tunnel?ticket=...`，ticket 是 `POST /api/v2/ws-ticket` 以 `{"scope": {"dashboard": true}}` 申请的一次性 dashboard 票据（与 `/api/v2/dashboard/ws` 同一种）。不另设 tunnel scope：ws-ticket 请求模型也导出到已冻结的 protocol 1.0/1.1 schema。
 - Server 能看到的只有：路由头、帧大小与时间、`CommandRegistration`（命令 ID、设备、客户端计算的输入摘要）。
 
 ## 不变量

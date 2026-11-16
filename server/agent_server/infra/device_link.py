@@ -80,7 +80,8 @@ class DeviceLinkHub:
         self._lease_seconds = lease_seconds
         self._idle_seconds = idle_seconds
         self._links: dict[str, HeldLink] = {}
-        self._local_leases: dict[str, tuple[str, float]] = {}
+        # Without Redis: ``deviceId -> (connectionId, expires, lease value)``; compared by value like Redis.
+        self._local_leases: dict[str, tuple[str, float, str]] = {}
         self.on_outbox: OutboxHandler | None = None
         self.on_event: EventHandler | None = None
         self.on_presence: PresenceHandler | None = None
@@ -145,9 +146,13 @@ class DeviceLinkHub:
     async def _write_lease(self, held: HeldLink, *, first: bool) -> bool:
         if not self._coordinator.distributed:
             current = self._local_leases.get(held.device_id)
-            if not first and (current is None or current[0] != held.connection_id):
+            if not first and (current is None or current[2] != held.lease_value):
                 return False
-            self._local_leases[held.device_id] = (held.connection_id, time.monotonic() + self._lease_seconds)
+            self._local_leases[held.device_id] = (
+                held.connection_id,
+                time.monotonic() + self._lease_seconds,
+                held.lease_value,
+            )
             return True
         key = self.lease_key(held.device_id)
         ttl_ms = int(self._lease_seconds * 1000)
@@ -160,7 +165,7 @@ class DeviceLinkHub:
     async def _release_lease(self, held: HeldLink) -> bool:
         if not self._coordinator.distributed:
             current = self._local_leases.get(held.device_id)
-            if current is not None and current[0] == held.connection_id:
+            if current is not None and current[2] == held.lease_value:
                 del self._local_leases[held.device_id]
                 return True
             return False

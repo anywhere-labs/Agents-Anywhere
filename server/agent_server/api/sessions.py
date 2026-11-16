@@ -35,6 +35,7 @@ from agent_server.core.capabilities import (
     SESSION_INTERACTION_APPROVAL,
     capability_is_usable,
 )
+from agent_server.core.device_meshcall import DisplayEnvelope
 from agent_server.core.e2ee_settings import E2eeSettings, e2ee_required_error
 from agent_server.core.events import (
     PORT_EVENT_TYPES,
@@ -517,6 +518,17 @@ async def patch_session_meta(
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
 
+    if payload.displayUser is not None:
+        try:
+            envelope = DisplayEnvelope.model_validate(payload.displayUser)
+        except ValueError:
+            envelope = None
+        if envelope is None or envelope.mode != "sealed" or not isinstance(envelope.payload, str):
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "display_envelope_not_sealed", "message": "displayUser must be a sealed envelope"},
+            )
+        await db.set_session_display_user(session_id, envelope)
     if payload.title is not None:
         try:
             session = await db.rename_session(

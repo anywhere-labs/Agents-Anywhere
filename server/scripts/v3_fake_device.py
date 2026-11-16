@@ -159,7 +159,7 @@ class FakeDeviceState:
             )
 
 
-def _make_services(state: FakeDeviceState) -> list[object]:
+def _make_services(state: FakeDeviceState, *, e2ee_required: bool = False) -> list[object]:
     @service(f"{SERVICE_PREFIX}.Link", targeted=True)
     class Link:
         """Presence, lossy events and the durable outbox."""
@@ -474,16 +474,20 @@ def _make_services(state: FakeDeviceState) -> list[object]:
                     )
                 await wire.send(SecureChannelItem(n=item.n, ct=f"echo:{item.ct}"))
 
+    if e2ee_required:
+        # E2EE ``required``: a device registers no content services (``E2EE_DEVICE_SERVICES``).
+        return [Link(), commands(), Secure()]
     return [Link(), Sessions(), Store(), commands(), Secure()]
 
 
 class FakeDevice:
     """One device on one Router connection."""
 
-    def __init__(self, device_id: str, router_url: str, token: str) -> None:
+    def __init__(self, device_id: str, router_url: str, token: str, *, e2ee_mode: str = "off") -> None:
         self.state = FakeDeviceState(device_id)
         self.router_url = router_url
         self.token = token
+        self.e2ee_mode = e2ee_mode
         self.mesh: Mesh | None = None
         self._serve: Any = None
         self.server: Any = None
@@ -496,7 +500,10 @@ class FakeDevice:
             retry=RetryPolicy(enabled=False),
             max_frame_size=MESH_MAX_FRAME_BYTES,
         )
-        self.mesh.mount(*_make_services(self.state), instance_id=self.state.device_id)
+        self.mesh.mount(
+            *_make_services(self.state, e2ee_required=self.e2ee_mode == "required"),
+            instance_id=self.state.device_id,
+        )
         self._serve = self.mesh.serve(access_log=False, log_level="WARNING", drain_timeout=0.5)
         self.server = await self._serve.__aenter__()
 
@@ -522,7 +529,8 @@ async def connect_device(
     """Full v3 handshake against a Server: auth, hello, register on the Router, ready.
 
     ``client`` is an ``httpx.AsyncClient`` on the Server. Returns the device, the
-    ``LinkWelcome`` body and the access token.
+    ``LinkWelcome`` body and the access token. In E2EE ``required`` mode (the welcome's
+    ``e2eeMode``) the device mounts only Link, Commands and Secure, like a real one.
     """
 
     auth = await client.post(
@@ -545,7 +553,12 @@ async def connect_device(
     )
     hello.raise_for_status()
     welcome = hello.json()
-    device = FakeDevice(connector_id, welcome["mesh"]["routerUrl"], welcome["mesh"]["token"])
+    device = FakeDevice(
+        connector_id,
+        welcome["mesh"]["routerUrl"],
+        welcome["mesh"]["token"],
+        e2ee_mode=str(welcome.get("e2eeMode") or "off"),
+    )
     device.state.connection_id = welcome["connectionId"]
     await device.start()
     ready = await client.post("/api/v3/device/ready", headers=headers, json={"connectionId": welcome["connectionId"]})

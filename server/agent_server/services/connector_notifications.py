@@ -24,6 +24,7 @@ from agent_server.core.protocol import (
 from agent_server.core.runtime_identity import RuntimeIdentity, RuntimeIdentityError
 from agent_server.infra.repositories.projects import MissingWorkspaceError
 from agent_server.services.connector_realtime import ConnectorRealtimeService
+from agent_server.services.device_link import e2ee_mode
 from agent_server.services.ingest_effects import IngestEffect
 from agent_server.services.repository_ports import ConnectorNotificationRepository
 from agent_server.services.usage_events import (
@@ -127,6 +128,11 @@ class ConnectorNotificationService:
         if method in V2_CONTENT_NOTIFICATIONS:
             logger.debug("v2 content notification dropped connector_id={} method={}", connector_id, method)
             return IngestEffect()
+        if method in _SESSION_DISPLAY_NOTIFICATIONS and e2ee_mode() == "required":
+            # A v2 Connector cannot seal titles or working directories; in encrypted mode the
+            # Server must not store them (they would undo clearing the directory). Without a
+            # ``cwd`` a session the Server does not know yet is not created.
+            params = _without_plaintext_display(params)
         if await self._realtime.apply(
             connector_id=connector_id,
             method=method,
@@ -142,6 +148,14 @@ class ConnectorNotificationService:
             if effect is not None:
                 return effect
         return IngestEffect()
+
+
+_SESSION_DISPLAY_NOTIFICATIONS = frozenset({"session.meta.upsert", "session.updated"})
+_PLAINTEXT_DISPLAY_FIELDS = ("title", "cwd")
+
+
+def _without_plaintext_display(params: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in params.items() if key not in _PLAINTEXT_DISPLAY_FIELDS}
 
 
 class ConnectorProtocolNotificationHandler:
