@@ -274,6 +274,31 @@ class E2eeFilesTest {
     }
 
     @Test
+    fun renamingAnEncryptedSessionIsRefusedLocally() {
+        val sessions = SessionsApi(apiClient)
+        try {
+            sessions.patchSession(serverUrl, "token", "sess_paired", title = "secret title")
+            fail("expected a refusal")
+        } catch (error: ApiException) {
+            assertEquals(E2eeClientErrorCodes.RENAME_UNSUPPORTED, error.errorCode)
+        }
+        // The title never left the phone, not even through the channel.
+        assertTrue(serverRequests.isEmpty())
+        assertTrue(device.requests.none { it.getString("path").endsWith("/meta") })
+
+        // Pinning carries no content: it still goes to the Server.
+        runCatching { sessions.patchSession(serverUrl, "token", "sess_paired", pinned = true) }
+        val (pin, pinBody) = serverRequests.single()
+        assertEquals("/api/v2/sessions/sess_paired/meta", pin.path)
+        assertFalse(JSONObject(String(pinBody)).has("title"))
+
+        // A session on a device without encryption is renamed as usual.
+        SessionDeviceDirectory.remember("plain_1", "dev_plain")
+        runCatching { sessions.patchSession(serverUrl, "token", "plain_1", title = "visible") }
+        assertEquals("/api/v2/sessions/plain_1/meta", serverRequests.last().first.path)
+    }
+
+    @Test
     fun aRepeatedCreateLeavesTheOutcomeToBeReconciled() {
         val body = JSONObject().put("connectorId", "dev_paired").put("content", "again").put("clientMessageId", "m_dup")
         // The Server says this command was already sent: the device's answer is not known here.

@@ -35,9 +35,10 @@
   - 会话的快照、时间线、实时事件、发消息、审批、计划、目标和排队消息；
   - 文件浏览与下载、终端；
   - 附件先在手机上加密再上传，图片附件也经加密连接取回后显示；
-  - 新建会话时，标题、第一条消息以及 `/goal`、`/plan` 都经加密连接交给设备，由设备创建会话；新建时带附件或使用配置向导会提示原因，附件需要在会话建好后再发送。
+  - 新建会话时，标题、第一条消息以及 `/goal`、`/plan` 都经加密连接交给设备，由设备创建会话；新建时带附件或使用配置向导会提示原因，附件需要在会话建好后再发送；
+  - 加密设备上的会话暂不支持改名，会提示原因。
 
-  （[#719](https://github.com/anywhere-labs/Agents-Anywhere/pull/719)、PR_LINK）
+  （[#719](https://github.com/anywhere-labs/Agents-Anywhere/pull/719)、[#726](https://github.com/anywhere-labs/Agents-Anywhere/pull/726)）
 
 ### iOS
 

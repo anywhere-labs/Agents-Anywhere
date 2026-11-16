@@ -55,6 +55,13 @@ object E2eeContentPaths {
         }
     }
 
+    /** `/sessions/{id}/meta` 的会话 id；别的路径返回 null。 */
+    fun metaSessionId(path: String): String? {
+        val pathname = apiPath(path).substringBefore('?').substringBefore('#').removePrefix("/api/v2")
+        val segments = pathname.trim('/').split('/').filter { it.isNotEmpty() }.map(::decode)
+        return segments.takeIf { it.size == 3 && it[0] == "sessions" && it[2] == "meta" }?.get(1)
+    }
+
     private fun decode(segment: String): String = runCatching { URLDecoder.decode(segment, "UTF-8") }.getOrDefault(segment)
 }
 
@@ -168,4 +175,7 @@ object E2eeClientErrorCodes {
 
     /** 加密设备上带附件或用配置向导新建会话（附件要先上传到已有的会话；向导要经 Server 准备）。 */
     const val CREATE_UNSUPPORTED = "e2ee_create_unsupported"
+
+    /** 加密设备上的会话暂不支持改名（标题也是内容，不能明文发给 Server；设备端支持后改为经通道）。 */
+    const val RENAME_UNSUPPORTED = "e2ee_rename_unsupported"
 }

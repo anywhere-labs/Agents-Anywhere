@@ -87,6 +87,7 @@ class E2eeContentRouter(
 
     override fun intercept(request: ContentRequest): JSONObject? {
         if (request.method == "POST" && isCreateAndStart(request.path)) return createAndStart(request)
+        if (request.method == "PATCH") refuseEncryptedRename(request)
         val target = E2eeContentPaths.classify(request.path) ?: return null
         val route = route(target, request.serverUrl, request.authorizationToken) as? Route.Secure ?: return null
         // The normal-mode file transfer would pass the Server in plaintext; FilesApi reads in chunks instead.
@@ -221,6 +222,19 @@ class E2eeContentRouter(
         if (sessionId.isBlank()) throw ApiException("The device returned an invalid session.", 502)
         SessionDeviceDirectory.remember(sessionId, deviceId)
         return created
+    }
+
+    /**
+     * 改名会把标题明文交给 Server：加密设备上的会话暂时在本机拒绝（与 iOS 一致）。
+     * 只改置顶、归档的 `meta` 请求不含内容，照常发。设备端支持后，改为把同一请求经通道发出。
+     */
+    private fun refuseEncryptedRename(request: ContentRequest) {
+        val sessionId = E2eeContentPaths.metaSessionId(request.path) ?: return
+        val body = request.bodyText?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return
+        if (!body.has("title")) return
+        if (route(ContentTarget.Session(sessionId), request.serverUrl, request.authorizationToken) is Route.Secure) {
+            throw failure(E2eeClientErrorCodes.RENAME_UNSUPPORTED, 409)
+        }
     }
 
     /** 结果不确定（超时，或这条命令之前已经发过）：不带状态码、原因是 IO 错误，调用方按网络中断去核对。 */

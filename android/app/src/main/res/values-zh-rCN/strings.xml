@@ -227,6 +227,7 @@
     <string name="e2ee_error_failed">配对失败，请重试。</string>
     <string name="e2ee_error_attachments_unsupported">无法为这台设备加密附件，请重试。</string>
     <string name="e2ee_error_file_transfer_unsupported">无法经加密连接读取这个文件，请重试。</string>
+    <string name="e2ee_error_rename_unsupported">端到端加密设备上的会话暂不支持改名。</string>
     <string name="e2ee_error_create_unsupported">在端到端加密的设备上，新建会话时不能附带附件，也不能使用配置向导。请先新建会话，再在会话里发送附件。</string>
     <string name="e2ee_error_channel_failed">与设备的加密连接出错，请重试。</string>
     <string name="device_settings_save_failed">无法保存设备设置。</string>
