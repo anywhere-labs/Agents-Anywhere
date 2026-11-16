@@ -29,19 +29,16 @@ from agent_server.services.device_runtimes import (
     DeviceRuntimeError,
     DeviceRuntimeService,
 )
-from agent_server.services.event_recovery import EventRecoveryService
 from agent_server.services.model_channels import (
     ChannelDriver,
     ChannelWakeIndex,
     ModelChannelService,
 )
 from agent_server.services.model_config import ModelConfigError, ModelConfigService
-from agent_server.services.session_message_queue import MessageQueueService
 from agent_server.services.session_run import SessionRunConflictError, SessionRunService
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.terminal import TerminalService
 from agent_server.services.terminal_relay import TerminalRelayService
-from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 from agent_server.services.tokens_link import TokensLinkError, TokensLinkService
 from agent_server.services.usage_events import UsageRecorder
 
@@ -58,14 +55,6 @@ def get_catalog_service(conn: HTTPConnection) -> CatalogService:
     return CatalogService(conn.app.state.store)
 
 
-def get_event_recovery_service(conn: HTTPConnection) -> EventRecoveryService:
-    return EventRecoveryService(
-        conn.app.state.store,
-        conn.app.state.rpc,
-        conn.app.state.timeline_write_buffer,
-    )
-
-
 def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService:
     realtime = get_connector_realtime_service(conn)
     return ConnectorIngestService(
@@ -73,7 +62,6 @@ def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService
         ConnectorNotificationService(
             conn.app.state.store,
             realtime,
-            conn.app.state.timeline_write_buffer,
             usage_recorder=get_usage_recorder(conn),
         ),
         conn.app.state.timeline_broker,
@@ -82,17 +70,7 @@ def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService
         conn.app.state.session_runtime_state_cache,
         conn.app.state.capability_refresh,
         runtime_event=model_channel_service_for(conn.app.state).runtime_event,
-        session_idle=message_queue_wake_for(conn.app.state),
     )
-
-
-def message_queue_wake_for(state: Any):
-    dispatcher = getattr(state, "message_queue_dispatcher", None)
-    return dispatcher.wake if dispatcher is not None else None
-
-
-def get_message_queue_wake(conn: HTTPConnection):
-    return message_queue_wake_for(conn.app.state)
 
 
 def get_usage_recorder(conn: HTTPConnection) -> UsageRecorder:
@@ -150,17 +128,6 @@ def session_run_service_for(state: Any) -> SessionRunService:
         usage_recorder=state.usage_recorder,
         prepare_model_channel=prepare_channel,
         admit_runtime=admit,
-        message_queue=getattr(state, "message_queue_dispatcher", None),
-        queue_broker=getattr(state, "timeline_broker", None),
-    )
-
-
-def get_message_queue_service(conn: HTTPConnection) -> MessageQueueService:
-    state = conn.app.state
-    return MessageQueueService(
-        state.store,
-        getattr(state, "timeline_broker", None),
-        getattr(state, "message_queue_dispatcher", None),
     )
 
 
@@ -247,6 +214,12 @@ def get_device_reads(conn: HTTPConnection) -> DeviceReadService:
     return conn.app.state.device_reads
 
 
+def get_device_planning(conn: HTTPConnection) -> Any:
+    """``services.device_planning.DevicePlanningService``: plans and goals on the device."""
+
+    return conn.app.state.device_planning
+
+
 def get_session_watch(conn: HTTPConnection) -> SessionWatchHub:
     return conn.app.state.session_watch
 
@@ -263,8 +236,6 @@ def get_timeline_broker(conn: HTTPConnection) -> TimelineBroker:
     return conn.app.state.timeline_broker
 
 
-def get_timeline_write_buffer(conn: HTTPConnection) -> TimelineWriteBuffer:
-    return conn.app.state.timeline_write_buffer
 
 
 def get_session_runtime_state_cache(

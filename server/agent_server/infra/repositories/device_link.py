@@ -11,10 +11,11 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, delete, func, select, update
+from sqlalchemy import and_, case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from agent_server.core.device_meshcall import DisplayEnvelope, SessionSummary
+from agent_server.core.read_marks import READ_TO_LATEST, UNREAD
 from agent_server.core.utc import utc_now
 from agent_server.infra.db.engine import read_connection
 from agent_server.infra.db.schema import connectors, device_commands, sessions
@@ -141,6 +142,12 @@ class DeviceLinkRepositoryMixin:
         }
         if summary.latestTurnEndSeq is not None:
             values["latest_turn_end_seq"] = summary.latestTurnEndSeq
+            # The first report ends a read-mark sentinel left by v2_60 (``core.read_marks``).
+            values["read_seq"] = case(
+                (sessions.c.read_seq == READ_TO_LATEST, summary.latestTurnEndSeq),
+                (sessions.c.read_seq == UNREAD, max(summary.latestTurnEndSeq - 1, 0)),
+                else_=sessions.c.read_seq,
+            )
         # Plain envelopes keep the v2 title/cwd columns current for clients that do not read
         # envelopes yet; sealed ones clear them (the Server must not hold plaintext).
         if display.mode == "plain" and isinstance(display.payload, dict):

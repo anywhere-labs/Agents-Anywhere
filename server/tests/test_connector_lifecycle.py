@@ -112,7 +112,6 @@ def test_failed_delete_keeps_revoked_tombstone_and_can_finish_on_retry(tmp_path)
             "manager": state.rpc,
             "broker": state.timeline_broker,
             "terminals": state.terminal_broker,
-            "timeline_buffer": state.timeline_write_buffer,
             "runtime_state_cache": state.session_runtime_state_cache,
         }
         state.rpc.disconnect = fail
@@ -162,9 +161,7 @@ def test_runtime_deletion_cancels_old_queue_and_retires_legacy_identity(tmp_path
         )
         service = ConnectorIngestService(
             state.store,
-            ConnectorNotificationService(
-                state.store, realtime, state.timeline_write_buffer
-            ),
+            ConnectorNotificationService(state.store, realtime),
             state.timeline_broker,
             state.device_runtime_service,
             state.rpc,

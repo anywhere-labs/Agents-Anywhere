@@ -60,6 +60,13 @@ class LocalFileStorage(FileStorage):
     async def exists(self, session_id: str, file_id: str) -> bool:
         return await asyncio.to_thread(self._exists, session_id, file_id)
 
+    async def delete_session_except(self, session_id: str, keep: set[str]) -> None:
+        self._validate_session_id(session_id)
+        if not keep:
+            await self.delete_session(session_id)
+            return
+        await asyncio.to_thread(self._delete_session_except, session_id, keep)
+
     async def metadata(self, session_id: str, file_id: str) -> dict[str, Any]:
         return await asyncio.to_thread(self._metadata, session_id, file_id)
 
@@ -197,6 +204,23 @@ class LocalFileStorage(FileStorage):
         return (session_dir / f"{file_id}.bin").is_file() and (
             session_dir / f"{file_id}.json"
         ).is_file()
+
+    def _delete_session_except(self, session_id: str, keep: set[str]) -> None:
+        session_dir = self._root / session_id
+        if not session_dir.is_dir() or session_dir.is_symlink():
+            return
+        for entry in session_dir.iterdir():
+            # ``<fileId>.bin``, ``<fileId>.json``, ``<fileId>.thumb-*.webp``; a leading dot
+            # marks an interrupted write.
+            if entry.name.split(".", 1)[0] in keep:
+                continue
+            try:
+                if entry.is_dir() and not entry.is_symlink():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
+            except FileNotFoundError:
+                pass
 
     def _delete_session(self, session_id: str) -> None:
         session_dir = self._root / session_id

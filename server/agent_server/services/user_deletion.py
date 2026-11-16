@@ -13,7 +13,6 @@ if TYPE_CHECKING:
     from agent_server.services.session_runtime_state_cache import (
         SessionRuntimeStateCache,
     )
-    from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
 
 class UserDeletionPending(Exception):
@@ -25,7 +24,6 @@ async def delete_user_account(
     store: UserDeletionRepository,
     manager: ConnectorRpcManager,
     terminals: TerminalBroker,
-    timeline_buffer: TimelineWriteBuffer,
     runtime_state_cache: SessionRuntimeStateCache,
 ) -> None:
     """Remove every device (and its sessions/projects) first, then the user.
@@ -50,7 +48,6 @@ async def delete_user_account(
                 store,
                 manager,
                 terminals,
-                timeline_buffer,
                 runtime_state_cache,
             )
         except KeyError:

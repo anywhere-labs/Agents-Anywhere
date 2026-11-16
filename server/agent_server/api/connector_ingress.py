@@ -44,8 +44,6 @@ from agent_server.deps import (
     get_rpc,
     get_store,
     get_timeline_broker,
-    get_timeline_write_buffer,
-    message_queue_wake_for,
     model_channel_service_for,
 )
 from agent_server.infra.connector_rpc import (
@@ -79,7 +77,6 @@ from agent_server.services.runtime_ingress import (
     notification_runtime_id,
     runtime_notification_is_allowed,
 )
-from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 from agent_server.services.usage_events import connector_online_event
 
 router = APIRouter(tags=["connector-ingress"])
@@ -603,9 +600,6 @@ async def connector_ws(
     realtime: ConnectorRealtimeService = Depends(get_connector_realtime_service),
     broker: TerminalBroker = Depends(get_terminal_broker),
     timeline_broker: TimelineBroker = Depends(get_timeline_broker),
-    timeline_write_buffer: TimelineWriteBuffer = Depends(
-        get_timeline_write_buffer
-    ),
 ) -> None:
     auth_header = websocket.headers.get("authorization")
     runtime_service: DeviceRuntimeService = websocket.app.state.device_runtime_service
@@ -617,14 +611,13 @@ async def connector_ws(
             await db.set_channel_device_gate(connector_id, connection.connection_id)
             ingest_service = ConnectorIngestService(
                 db, ConnectorNotificationService(
-                    db, realtime, timeline_write_buffer,
+                    db, realtime,
                     usage_recorder=websocket.app.state.usage_recorder,
                 ),
                 timeline_broker, runtime_service, manager,
                 websocket.app.state.session_runtime_state_cache,
                 websocket.app.state.capability_refresh,
                 runtime_event=model_channel_service_for(websocket.app.state).runtime_event,
-                session_idle=message_queue_wake_for(websocket.app.state),
             )
             notification_pump = _ConnectorNotificationPump(
                 connector_id, ingest_service,
@@ -1098,16 +1091,10 @@ def _access_token_connector_id(authorization: str | None) -> str:
 
 
 def _connector_ready_handler(state: Any) -> Callable[[str], Awaitable[None]]:
-    """The device is ready again: resume model channel switches and queued messages."""
+    """The device is ready again: resume model channel switches."""
     channels = model_channel_service_for(state)
-    dispatcher = getattr(state, "message_queue_dispatcher", None)
 
     async def on_ready(connector_id: str) -> None:
         await channels.connector_event(connector_id)
-        if dispatcher is not None:
-            try:
-                await dispatcher.connector_ready(connector_id)
-            except Exception:  # noqa: BLE001 - the queue sweep retries
-                logger.exception("message queue resume failed connector_id={}", connector_id)
 
     return on_ready

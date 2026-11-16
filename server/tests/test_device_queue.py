@@ -73,8 +73,6 @@ def test_queue_reads_changes_and_messages_go_to_the_device(mesh_router: RouterPr
                 assert sent.json()["result"]["delivery"] == "queued"
                 method, payload = device.state.command_log[-1]
                 assert method == "session.sendMessage" and payload["queue"] == "auto"
-                # Nothing of the message is kept on the Server.
-                assert await app.state.store.session_queue_has_items("sess_q1") is False
 
                 read = await client.get("/api/v2/sessions/sess_q1/runtime/queue", headers=headers)
                 assert read.status_code == 200, read.text

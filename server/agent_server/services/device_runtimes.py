@@ -44,7 +44,6 @@ from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.repository_ports import DeviceRuntimeRepository
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
-from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
 # The Connector gives the model endpoint 30 seconds to answer.
 MODEL_PROBE_RPC_TIMEOUT_SECONDS = 45.0
@@ -161,7 +160,6 @@ class DeviceRuntimeService:
         timeline_broker: TimelineBroker | None = None,
         coordinator: RedisCoordinator | None = None,
         runtime_state_cache: SessionRuntimeStateCache | None = None,
-        timeline_write_buffer: TimelineWriteBuffer | None = None,
         terminal_broker: TerminalBroker | None = None,
     ) -> None:
         self._store = store
@@ -169,7 +167,6 @@ class DeviceRuntimeService:
         self._timeline_broker = timeline_broker
         self._coordinator = coordinator
         self._runtime_state_cache = runtime_state_cache
-        self._timeline_write_buffer = timeline_write_buffer
         self._terminal_broker = terminal_broker
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._locks_guard = asyncio.Lock()
@@ -705,8 +702,8 @@ class DeviceRuntimeService:
             await self._manager.set_runtime_ingress_enabled(connector_id, runtime_id, False)
             try:
                 session_ids = await self._store.runtime_session_ids(connector_id, runtime_id)
-                # A storage failure leaves the database, pending timeline,
-                # terminals and cache available for the same deletion retry.
+                # A storage failure leaves the database, terminals and cache
+                # available for the same deletion retry.
                 await self._store.delete_runtime_session_files(session_ids)
                 for session_id in session_ids:
                     if self._terminal_broker is not None:
@@ -714,13 +711,8 @@ class DeviceRuntimeService:
                             session_id
                         ):
                             await self._terminal_broker.remove(terminal.id)
-                    if self._timeline_write_buffer is not None:
-                        await self._timeline_write_buffer.flush_session(session_id)
-                        await self._timeline_write_buffer.discard_session(session_id)
                     if self._runtime_state_cache is not None:
                         await self._runtime_state_cache.discard(session_id)
-                lookup = getattr(self._store, "goal_session_ids", None)
-                goals = await lookup(session_ids) if callable(lookup) else []
                 await self._store.clear_device_runtime_config(
                     connector_id, runtime_id, cleanup_files=False, retire=True,
                 )
@@ -728,18 +720,6 @@ class DeviceRuntimeService:
                 remaining = await self._get_owned(connector_id, runtime_id, user_id=user_id)
                 await self._manager.set_runtime_ingress_enabled(connector_id, runtime_id, remaining.configured)
                 raise
-            if goals:
-                try:
-                    await self._manager.request(
-                        connector_id,
-                        "session.goal.forget",
-                        {"sessionIds": goals, "runtimeId": runtime_id},
-                        timeout=5,
-                    )
-                except Exception as error:  # noqa: BLE001 - committed deletion does not depend on an online Connector
-                    logger.debug(
-                        "local goal deletion notification unavailable: {}", error
-                    )
             # The row is gone; report its final state so clients drop it.
             runtime = runtime.model_copy(update={
                 "configured": False,

@@ -21,8 +21,8 @@ from sqlalchemy.pool import NullPool
 from agent_server.infra.db.engine import resolve_db_url
 
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_59"
-CURRENT_SCHEMA_VERSION = "2.59"
+CURRENT_SCHEMA_REVISION = "v2_60"
+CURRENT_SCHEMA_VERSION = "2.60"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -234,6 +234,13 @@ def _classify_sync(connection) -> UnversionedDatabase:
         return UnversionedDatabase("empty")
 
     session_columns = _column_names(inspector, "sessions")
+    # v2_60 drops the session content tables the older layouts below are recognised by.
+    if (
+        {"sessions", "connectors", "device_commands", "user_token_families"}.issubset(tables)
+        and "timeline_items" not in tables
+        and "read_seq" in session_columns
+    ):
+        return UnversionedDatabase("v2", "v2_60")
     connector_columns = _column_names(inspector, "connectors")
     active_run_columns = _column_names(inspector, "session_active_runs")
     timeline_columns = _column_names(inspector, "timeline_items")

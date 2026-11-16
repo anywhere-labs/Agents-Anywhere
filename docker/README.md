@@ -128,7 +128,6 @@ The compose file uses:
 - PostgreSQL migration serialization through a session advisory lock
 - Redis memory capped by `REDIS_MAXMEMORY` (default `256mb`) with `noeviction`
 - Redis AOF persistence with `appendfsync everysec`; RDB snapshots remain disabled
-- Timeline revision leases configurable through `AGENT_SERVER_TIMELINE_REVISION_LEASE_SIZE` (default `4096`)
 
 ### MeshCall Router (v3 devices)
 
