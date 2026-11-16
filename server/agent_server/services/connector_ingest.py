@@ -317,50 +317,14 @@ class ConnectorIngestService:
                 bucket = by_session.setdefault(
                     session_id,
                     {
-                        "items": [],
                         "runtime_state": None,
-                        "planning_state": None,
-                        "timeline_reset": False,
                         "session": False,
                         "capability_changed": False,
                         "notices": [],
                         "catalogs": {},
-                        "refetch": False,
-                        "deferred_timeline_only": True,
-                        "accepted_sequence": None,
                     },
                 )
-                if not effect.timeline_pending:
-                    bucket["deferred_timeline_only"] = False
                 if effect.session_id == session_id:
-                    if effect.accepted_sequence is not None:
-                        current_accepted_sequence = bucket["accepted_sequence"]
-                        bucket["accepted_sequence"] = max(
-                            effect.accepted_sequence,
-                            current_accepted_sequence or 0,
-                        )
-                    if effect.timeline_published:
-                        pass
-                    elif effect.timeline_reset and not effect.needs_refetch:
-                        bucket["items"] = list(effect.items or [])
-                        bucket["timeline_reset"] = True
-                        bucket["refetch"] = False
-                    elif effect.needs_refetch:
-                        bucket["items"] = []
-                        bucket["timeline_reset"] = False
-                        bucket["refetch"] = True
-                    elif effect.item is not None or effect.items:
-                        if bucket["timeline_reset"] or bucket["refetch"]:
-                            bucket["items"] = []
-                            bucket["timeline_reset"] = False
-                            bucket["refetch"] = True
-                        else:
-                            if effect.item is not None and not effect.timeline_published:
-                                bucket["items"].append(effect.item)
-                            if effect.items:
-                                bucket["items"].extend(effect.items)
-                    if effect.planning_state is not None:
-                        bucket["planning_state"] = effect.planning_state
                     if effect.runtime_state is not None:
                         bucket["runtime_state"] = effect.runtime_state
                     bucket["session"] = bucket["session"] or effect.session_changed
@@ -381,8 +345,6 @@ class ConnectorIngestService:
                 next_seq = await self._store.get_session_seq(session_id)
             except KeyError:
                 return False
-            if bucket["accepted_sequence"] is not None:
-                next_seq = max(next_seq, bucket["accepted_sequence"])
             envelope_sequence = (
                 max(next_seq, 1)
                 if bucket["notices"] or bucket["catalogs"]
@@ -392,15 +354,6 @@ class ConnectorIngestService:
                 "sessionId": session_id,
                 "nextSeq": envelope_sequence,
             }
-            if bucket["refetch"]:
-                envelope["refetch"] = True
-            elif bucket["timeline_reset"]:
-                envelope["timelineReset"] = True
-                envelope["items"] = bucket["items"]
-            elif bucket["items"]:
-                envelope["items"] = bucket["items"]
-            if bucket["planning_state"] is not None:
-                envelope["planningState"] = bucket["planning_state"]
             runtime_state: SessionRuntimeState | None = None
             if bucket["runtime_state"]:
                 bound_session = await self._store.get_session(session_id)
@@ -501,11 +454,7 @@ class ConnectorIngestService:
             if not any(
                 key in envelope
                 for key in (
-                    "refetch",
-                    "timelineReset",
-                    "items",
                     "runtimeState",
-                    "planningState",
                     "session",
                     "capabilitySet",
                     "notices",
@@ -518,28 +467,17 @@ class ConnectorIngestService:
 
         for session_id, bucket in by_session.items():
             if not (
-                bucket["items"]
-                or bucket["planning_state"] is not None
-                or bucket["runtime_state"] is not None
-                or bucket["timeline_reset"]
+                bucket["runtime_state"] is not None
                 or bucket["session"]
                 or bucket["capability_changed"]
                 or bucket["notices"]
                 or bucket["catalogs"]
-                or bucket["refetch"]
             ):
                 continue
-            if bucket["deferred_timeline_only"]:
-                dashboard_changed = (
-                    await publish_bucket(session_id, bucket)
-                    or dashboard_changed
-                )
-                continue
-            async with self._store.session_revision_fence(session_id):
-                dashboard_changed = (
-                    await publish_bucket(session_id, bucket)
-                    or dashboard_changed
-                )
+            dashboard_changed = (
+                await publish_bucket(session_id, bucket)
+                or dashboard_changed
+            )
         return dashboard_changed
 
     async def _apply_runtime_status(

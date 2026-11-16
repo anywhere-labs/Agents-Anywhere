@@ -173,8 +173,6 @@ async def _publish_session_protocol_update(
     runtime_state_cache: SessionRuntimeStateCache,
     session_id: str,
 ) -> None:
-    # DSH state reads synchronously ingest source observations back into AA.
-    # Keep runtime RPC outside the revision fence so that callback can acquire it.
     session = await db.get_session(session_id)
     runtime_state = await read_runtime_state_live(
         db,
@@ -189,26 +187,25 @@ async def _publish_session_protocol_update(
         session,
         None,
     )
-    async with db.session_revision_fence(session_id):
-        next_seq = await db.get_session_seq(session_id)
-        session = await db.get_session(session_id)
-        # An event may have arrived while the RPC was in flight. Publish the
-        # latest cached state together with the current session revision.
-        runtime_state = await runtime_state_cache.get(session_id) or runtime_state
-        session = session_with_runtime_state(session, runtime_state)
-        session = await with_effective_session_connector_status(manager, session)
-        effective_capabilities = derive_session_effective_capabilities(
-            session=session,
-            runtime_capabilities=runtime_capabilities,
-        )
-        envelope: dict[str, Any] = {
-            "sessionId": session_id,
-            "nextSeq": next_seq,
-            "session": session.model_dump(mode="json"),
-            "runtimeState": runtime_state.model_dump(mode="json"),
-            "capabilitySet": effective_capabilities.model_dump(mode="json"),
-        }
-        await broker.publish(session_id, envelope)
+    next_seq = await db.get_session_seq(session_id)
+    session = await db.get_session(session_id)
+    # An event may have arrived while the RPC was in flight. Publish the
+    # latest cached state together with the current session revision.
+    runtime_state = await runtime_state_cache.get(session_id) or runtime_state
+    session = session_with_runtime_state(session, runtime_state)
+    session = await with_effective_session_connector_status(manager, session)
+    effective_capabilities = derive_session_effective_capabilities(
+        session=session,
+        runtime_capabilities=runtime_capabilities,
+    )
+    envelope: dict[str, Any] = {
+        "sessionId": session_id,
+        "nextSeq": next_seq,
+        "session": session.model_dump(mode="json"),
+        "runtimeState": runtime_state.model_dump(mode="json"),
+        "capabilitySet": effective_capabilities.model_dump(mode="json"),
+    }
+    await broker.publish(session_id, envelope)
 
 
 async def _best_effort_publish_session_protocol_update(
@@ -265,23 +262,22 @@ async def _publish_session_runtime_state_update(
 ) -> None:
     """Publish one already-read runtime state to session subscribers."""
 
-    async with db.session_revision_fence(session_id):
-        next_seq = await db.get_session_seq(session_id)
-        session = await db.get_session(session_id)
-        # A live event may have arrived while the RPC was in flight. Publish the
-        # newest cached state together with the current session revision.
-        latest_state = await runtime_state_cache.get(session_id) or runtime_state
-        session = session_with_runtime_state(session, latest_state)
-        session = await with_effective_session_connector_status(manager, session)
-        await broker.publish(
-            session_id,
-            {
-                "sessionId": session_id,
-                "nextSeq": next_seq,
-                "session": session.model_dump(mode="json"),
-                "runtimeState": latest_state.model_dump(mode="json"),
-            },
-        )
+    next_seq = await db.get_session_seq(session_id)
+    session = await db.get_session(session_id)
+    # A live event may have arrived while the RPC was in flight. Publish the
+    # newest cached state together with the current session revision.
+    latest_state = await runtime_state_cache.get(session_id) or runtime_state
+    session = session_with_runtime_state(session, latest_state)
+    session = await with_effective_session_connector_status(manager, session)
+    await broker.publish(
+        session_id,
+        {
+            "sessionId": session_id,
+            "nextSeq": next_seq,
+            "session": session.model_dump(mode="json"),
+            "runtimeState": latest_state.model_dump(mode="json"),
+        },
+    )
 
 
 async def read_runtime_state_snapshot(

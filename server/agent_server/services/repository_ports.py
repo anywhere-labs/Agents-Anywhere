@@ -162,11 +162,6 @@ class TimelineReader(Protocol):
 class ConnectorIngestRepository(DashboardEventRepository, Protocol):
     async def get_unconfigured_runtime_ids(self, connector_id: str) -> set[str]: ...
 
-    def session_revision_fence(
-        self,
-        session_id: str,
-    ) -> AbstractAsyncContextManager[None]: ...
-
     async def record_connector_activity(self, connector_id: str) -> None: ...
 
     async def get_protocol_capabilities(
@@ -307,11 +302,6 @@ class DeviceRuntimeRepository(
     async def runtime_session_ids(self, connector_id: str, runtime_id: str) -> list[str]: ...
 
     async def delete_runtime_session_files(self, session_ids: list[str]) -> None: ...
-
-    def session_revision_fence(
-        self,
-        session_id: str,
-    ) -> AbstractAsyncContextManager[None]: ...
 
     async def clear_active_run(self, session_id: str) -> None: ...
 

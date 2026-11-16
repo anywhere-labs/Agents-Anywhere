@@ -425,7 +425,6 @@ class SessionRepositoryMixin:
             source_state=source_state,
         )
 
-    @session_revision_fenced
     async def _upsert_connector_session_canonical(
         self,
         *,
@@ -1093,55 +1092,47 @@ class SessionRepositoryMixin:
         entry: dict[str, Any],
         now: str,
     ) -> bool:
-        async with self.session_revision_fence(session_id):
-            async with closing_connection(self._engine, write=True) as conn:
-                row = (
-                    await conn.execute(
-                        select(
-                            sessions_t.c.source_state,
-                            sessions_t.c.source_changed_seq,
-                            sessions_t.c.archived,
-                            sessions_t.c.dsh_archive_legacy,
-                        )
-                        .where(sessions_t.c.id == session_id)
-                        .with_for_update()
-                    )
-                ).first()
-                if row is None or _source_changed_since(
-                    row.source_changed_seq, started_seq
-                ):
-                    return False
-                source_state = str(entry["source_state"])
-                values: dict[str, Any] = {
-                    "source_state": source_state,
-                    "source_state_at": entry.get("observed_at") or now,
-                    "source_state_reason": entry.get("reason"),
-                    "source_observation_origin": "inventory",
-                }
-                values.update(
-                    _source_archive_update(
-                        row.source_state,
-                        source_state,
-                        archived=row.archived,
-                        observed_at=entry.get("observed_at") or now,
-                    )
-                )
-                changed = row.source_state != source_state
-                if changed:
-                    await self._bump_session(conn, session_id)
+        async with closing_connection(self._engine, write=True) as conn:
+            row = (
                 await conn.execute(
-                    update(sessions_t)
+                    select(
+                        sessions_t.c.source_state,
+                        sessions_t.c.source_changed_seq,
+                        sessions_t.c.archived,
+                        sessions_t.c.dsh_archive_legacy,
+                    )
                     .where(sessions_t.c.id == session_id)
-                    .values(**values)
+                    .with_for_update()
                 )
+            ).first()
+            if row is None or _source_changed_since(
+                row.source_changed_seq, started_seq
+            ):
+                return False
+            source_state = str(entry["source_state"])
+            values: dict[str, Any] = {
+                "source_state": source_state,
+                "source_state_at": entry.get("observed_at") or now,
+                "source_state_reason": entry.get("reason"),
+                "source_observation_origin": "inventory",
+            }
+            values.update(
+                _source_archive_update(
+                    row.source_state,
+                    source_state,
+                    archived=row.archived,
+                    observed_at=entry.get("observed_at") or now,
+                )
+            )
+            changed = row.source_state != source_state
             if changed:
-                session = await self.get_session(session_id)
-                await self.publish_session_revision_result(
-                    session_id,
-                    operation="complete_session_inventory",
-                    result=session,
-                )
-            return changed
+                await self._bump_session(conn, session_id)
+            await conn.execute(
+                update(sessions_t)
+                .where(sessions_t.c.id == session_id)
+                .values(**values)
+            )
+        return changed
 
     async def _complete_session_inventory_missing(
         self,
@@ -1150,43 +1141,35 @@ class SessionRepositoryMixin:
         started_seq: int,
         now: str,
     ) -> bool:
-        async with self.session_revision_fence(session_id):
-            async with closing_connection(self._engine, write=True) as conn:
-                row = (
-                    await conn.execute(
-                        select(
-                            sessions_t.c.source_state,
-                            sessions_t.c.source_changed_seq,
-                        )
-                        .where(sessions_t.c.id == session_id)
-                        .with_for_update()
-                    )
-                ).first()
-                if row is None or _source_changed_since(
-                    row.source_changed_seq, started_seq
-                ):
-                    return False
-                changed = row.source_state != "missing"
-                if changed:
-                    await self._bump_session(conn, session_id)
+        async with closing_connection(self._engine, write=True) as conn:
+            row = (
                 await conn.execute(
-                    update(sessions_t)
-                    .where(sessions_t.c.id == session_id)
-                    .values(
-                        source_state="missing",
-                        source_state_at=now,
-                        source_state_reason=_SESSION_INVENTORY_MISSING_REASON,
-                        source_observation_origin="inventory",
+                    select(
+                        sessions_t.c.source_state,
+                        sessions_t.c.source_changed_seq,
                     )
+                    .where(sessions_t.c.id == session_id)
+                    .with_for_update()
                 )
+            ).first()
+            if row is None or _source_changed_since(
+                row.source_changed_seq, started_seq
+            ):
+                return False
+            changed = row.source_state != "missing"
             if changed:
-                session = await self.get_session(session_id)
-                await self.publish_session_revision_result(
-                    session_id,
-                    operation="complete_session_inventory",
-                    result=session,
+                await self._bump_session(conn, session_id)
+            await conn.execute(
+                update(sessions_t)
+                .where(sessions_t.c.id == session_id)
+                .values(
+                    source_state="missing",
+                    source_state_at=now,
+                    source_state_reason=_SESSION_INVENTORY_MISSING_REASON,
+                    source_observation_origin="inventory",
                 )
-            return changed
+            )
+        return changed
 
     async def refresh_unchanged_session_source(
         self, session_id: str, *, connector_id: str, runtime: str, runtime_id: str,
@@ -1195,9 +1178,9 @@ class SessionRepositoryMixin:
     ) -> bool:
         """Refresh observation bookkeeping only when semantic fields still match.
 
-        One conditional primary-key UPDATE avoids a SessionView and a revision
-        fence for the common unchanged observation. A mismatch takes the normal
-        fenced path, including archive transitions and publication.
+        One conditional primary-key UPDATE avoids a SessionView for the common
+        unchanged observation. A mismatch takes the normal write path, including
+        archive transitions.
         """
         observed = observed_at or utc_now()
         stale = sessions_t.c.source_state_at > observed
@@ -1219,7 +1202,6 @@ class SessionRepositoryMixin:
             ))
             return result.rowcount == 1
 
-    @session_revision_fenced
     async def update_session_source_state(
         self,
         session_id: str,
@@ -1437,7 +1419,6 @@ class SessionRepositoryMixin:
         return int(row.seq)
 
 
-    @session_revision_fenced
     async def set_takeover(self, session_id: str, takeover: bool) -> SessionView:
         async with closing_connection(self._engine, write=True) as conn:
             await self._bump_session(conn, session_id)
@@ -1730,43 +1711,32 @@ class SessionRepositoryMixin:
         expected_status: str | None = None,
         mark_read_on_change: bool = False,
     ) -> SessionView:
-        async with self.session_revision_fence(session_id):
-            changed = False
-            async with closing_connection(self._engine, write=True) as conn:
-                statement = select(sessions_t.c.status).where(
+        async with closing_connection(self._engine, write=True) as conn:
+            statement = select(sessions_t.c.status).where(
+                sessions_t.c.id == session_id
+            )
+            if expected_status is not None:
+                statement = statement.with_for_update()
+            row = (await conn.execute(statement)).first()
+            if row is None:
+                raise KeyError(session_id)
+            if expected_status is not None and row.status != expected_status:
+                raise ValueError("session status changed")
+            if row.status != status:
+                await self._bump_session(conn, session_id)
+                update_statement = update(sessions_t).where(
                     sessions_t.c.id == session_id
                 )
                 if expected_status is not None:
-                    statement = statement.with_for_update()
-                row = (await conn.execute(statement)).first()
-                if row is None:
-                    raise KeyError(session_id)
-                if expected_status is not None and row.status != expected_status:
-                    raise ValueError("session status changed")
-                if row.status != status:
-                    await self._bump_session(conn, session_id)
-                    update_statement = update(sessions_t).where(
-                        sessions_t.c.id == session_id
+                    update_statement = update_statement.where(
+                        sessions_t.c.status == expected_status
                     )
-                    if expected_status is not None:
-                        update_statement = update_statement.where(
-                            sessions_t.c.status == expected_status
-                        )
-                    result = await conn.execute(update_statement.values(status=status))
-                    if result.rowcount != 1:
-                        raise ValueError("session status changed")
-                    changed = True
-            session = await self.get_session(session_id)
-            if changed:
-                await self.publish_session_revision_result(
-                    session_id,
-                    operation="set_session_status",
-                    result=session,
-                )
-            return session
+                result = await conn.execute(update_statement.values(status=status))
+                if result.rowcount != 1:
+                    raise ValueError("session status changed")
+        return await self.get_session(session_id)
 
 
-    @session_revision_fenced
     async def update_session_snapshot(
         self,
         *,

@@ -10,7 +10,6 @@ from agent_server.core.events import (
     events_from_invalidation,
     parse_event_cursor,
     protocol_event,
-    revisions_are_complete,
 )
 
 
@@ -235,27 +234,5 @@ def test_notice_invalidation_adds_event_sequence_for_live_notice() -> None:
     assert events[0].type == "runtime.notice.updated"
     assert events[0].sequence == 8
     assert events[0].payload["notice"]["updatedSeq"] == 8
-
-
-def test_recovery_requires_every_durable_revision_to_be_projected() -> None:
-    events = [
-        protocol_event(
-            "session-1",
-            sequence=2,
-            event_type="timeline.item_updated",
-            payload={"item": {"id": "item-1"}},
-        )
-    ]
-
-    assert not revisions_are_complete(
-        after_sequence=0,
-        current_sequence=2,
-        events=events,
-    )
-    assert revisions_are_complete(
-        after_sequence=1,
-        current_sequence=2,
-        events=events,
-    )
 
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import AbstractAsyncContextManager
 from typing import Any, Protocol
 from weakref import WeakKeyDictionary
 
@@ -69,11 +68,6 @@ _INHERITED_RUNTIME_CAPABILITY_IDS = (
 
 
 class SessionCapabilityRepository(Protocol):
-    def session_revision_fence(
-        self,
-        session_id: str,
-    ) -> AbstractAsyncContextManager[None]: ...
-
     async def get_protocol_capabilities(
         self,
         connector_id: str,
@@ -183,39 +177,38 @@ async def publish_connector_session_capabilities(
         for listed in sessions:
             if active.get(connector_id) is not token:
                 return
-            async with store.session_revision_fence(listed.id):
-                # The list predates this fence. Takeover, runtime instance and
-                # ownership can change before the batch reaches a session, and
-                # projecting the listed row would push stale permissions.
-                try:
-                    session = await store.get_session(listed.id)
-                    next_seq = await store.get_session_seq(listed.id)
-                except KeyError:
-                    continue
-                if session.connectorId != connector_id:
-                    continue
-                session = await with_effective_session_connector_status(presence, session)
-                # Other server processes can publish newer facts while this
-                # batch waits for a session fence. Check only the small stamp;
-                # deserialize and index again only when the stored set changes.
-                current_stamp = await store.get_protocol_capabilities_stamp(connector_id)
-                if index is None or current_stamp != stamp:
-                    index = SessionCapabilityIndex(ProtocolCapabilitySet.model_validate(
-                        await store.get_protocol_capabilities(connector_id)
-                    ))
-                    stamp = current_stamp
-                effective_capabilities = index.project(session)
-                if active.get(connector_id) is not token:
-                    return
-                await publisher.publish(
-                    session.id,
-                    {
-                        "sessionId": session.id,
-                        "nextSeq": next_seq,
-                        "session": session.model_dump(mode="json"),
-                        "capabilitySet": effective_capabilities.model_dump(mode="json"),
-                    },
-                )
+            # The list predates this read. Takeover, runtime instance and
+            # ownership can change before the batch reaches a session, and
+            # projecting the listed row would push stale permissions.
+            try:
+                session = await store.get_session(listed.id)
+                next_seq = await store.get_session_seq(listed.id)
+            except KeyError:
+                continue
+            if session.connectorId != connector_id:
+                continue
+            session = await with_effective_session_connector_status(presence, session)
+            # Other server processes can publish newer facts while this
+            # batch walks its sessions. Check only the small stamp;
+            # deserialize and index again only when the stored set changes.
+            current_stamp = await store.get_protocol_capabilities_stamp(connector_id)
+            if index is None or current_stamp != stamp:
+                index = SessionCapabilityIndex(ProtocolCapabilitySet.model_validate(
+                    await store.get_protocol_capabilities(connector_id)
+                ))
+                stamp = current_stamp
+            effective_capabilities = index.project(session)
+            if active.get(connector_id) is not token:
+                return
+            await publisher.publish(
+                session.id,
+                {
+                    "sessionId": session.id,
+                    "nextSeq": next_seq,
+                    "session": session.model_dump(mode="json"),
+                    "capabilitySet": effective_capabilities.model_dump(mode="json"),
+                },
+            )
     finally:
         if active.get(connector_id) is token:
             active.pop(connector_id)
@@ -241,7 +234,7 @@ class ConnectorCapabilityRefresh:
             previous.cancel()
 
         async def refresh() -> None:
-            # Let cancellation release the old session fence before proceeding.
+            # Let the cancelled refresh finish before proceeding.
             if previous is not None:
                 await asyncio.gather(previous, return_exceptions=True)
             await publish_connector_session_capabilities(

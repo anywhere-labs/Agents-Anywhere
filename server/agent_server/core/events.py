@@ -302,17 +302,3 @@ def notice_with_event_sequence(
     }
 
 
-def revisions_are_complete(
-    *,
-    after_sequence: int,
-    current_sequence: int,
-    events: list[ProtocolEventEnvelope],
-) -> bool:
-    if after_sequence == current_sequence:
-        return True
-    revisions = {
-        event.sequence
-        for event in events
-        if after_sequence < event.sequence <= current_sequence
-    }
-    return len(revisions) == current_sequence - after_sequence

@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 
-from agent_server.core.events import events_from_invalidation, revisions_are_complete
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.terminal_broker import SCROLLBACK_MAX_BYTES, TerminalBroker
@@ -95,52 +94,6 @@ def test_timeline_and_dashboard_events_cross_instances() -> None:
         finally:
             await broker_1.close()
             await broker_2.close()
-
-    asyncio.run(exercise())
-
-
-def test_cross_instance_invalidation_gap_is_detected() -> None:
-    async def exercise() -> None:
-        fake_server = FakeServer()
-        publisher = TimelineBroker(_coordinator(fake_server))
-        subscriber = TimelineBroker(_coordinator(fake_server))
-        await publisher.start()
-        await subscriber.start()
-        try:
-            queue = await subscriber.register("session-gap")
-            for sequence in (1, 3):
-                await publisher.publish(
-                    "session-gap",
-                    {
-                        "sessionId": "session-gap",
-                        "nextSeq": sequence,
-                        "items": [
-                            {
-                                "id": f"item-{sequence}",
-                                "updatedSeq": sequence,
-                                "revision": 1,
-                            }
-                        ],
-                    },
-                )
-
-            invalidations = [
-                json.loads(await asyncio.wait_for(queue.get(), timeout=1))
-                for _ in range(2)
-            ]
-            events = [
-                event
-                for invalidation in invalidations
-                for event in events_from_invalidation(invalidation)
-            ]
-            assert not revisions_are_complete(
-                after_sequence=0,
-                current_sequence=3,
-                events=events,
-            )
-        finally:
-            await publisher.close()
-            await subscriber.close()
 
     asyncio.run(exercise())
 
@@ -288,11 +241,10 @@ def test_stale_lock_owner_cannot_mutate_or_publish_after_replacement() -> None:
                     first_acquired.set()
                     await attempt_publish.wait()
                     try:
-                        await coordinator_1.incrby_while_lock_owned(
-                            lock_name,
-                            coordinator_1.key("stale-counter"),
-                            1,
-                        )
+                        async with coordinator_1.pipeline_while_lock_owned(
+                            lock_name
+                        ) as pipeline:
+                            pipeline.incrby(coordinator_1.key("stale-counter"), 1)
                     except RuntimeError:
                         rejected_operations.append("increment")
                     try:
@@ -325,60 +277,6 @@ def test_stale_lock_owner_cannot_mutate_or_publish_after_replacement() -> None:
         assert (
             await coordinator_1.client.get(coordinator_1.key("stale-counter")) is None
         )
-
-    asyncio.run(exercise())
-
-
-def test_counter_range_seal_discards_values_from_an_old_server_epoch() -> None:
-    async def exercise() -> None:
-        fake_server = FakeServer()
-        coordinator = _coordinator(fake_server)
-        lock_name = "session-revision:session-seal"
-        head_key = coordinator.key("session-revision", "session-seal", "head")
-        end_key = coordinator.key("session-revision", "session-seal", "lease-end")
-        epoch_key = coordinator.key("session-revision", "session-seal", "lease-epoch")
-        await coordinator.client.mset(
-            {
-                head_key: 80,
-                end_key: 100,
-                epoch_key: "redis-run-old",
-            }
-        )
-
-        async with coordinator.lock(lock_name):
-            sealed = await coordinator.seal_counter_range_while_lock_owned(
-                lock_name,
-                head_key=head_key,
-                end_key=end_key,
-                epoch_key=epoch_key,
-                floor=12,
-                epoch="redis-run-new",
-            )
-            assert sealed == 12
-            assert await coordinator.client.mget(head_key, end_key, epoch_key) == [
-                "12",
-                "12",
-                "redis-run-new",
-            ]
-
-            await coordinator.client.mset(
-                {
-                    head_key: 14,
-                    end_key: 20,
-                    epoch_key: "redis-run-new",
-                }
-            )
-            sealed = await coordinator.seal_counter_range_while_lock_owned(
-                lock_name,
-                head_key=head_key,
-                end_key=end_key,
-                epoch_key=epoch_key,
-                floor=16,
-                epoch="redis-run-new",
-            )
-            assert sealed == 20
-
-        await coordinator.close()
 
     asyncio.run(exercise())
 
@@ -627,7 +525,7 @@ def test_lock_stats_record_acquisition_and_hold() -> None:
         async with coordinator.lock(
             "stats:lock", timeout_seconds=1, lease_seconds=30
         ):
-            await coordinator.incrby_while_lock_owned("stats:lock", "counter", 1)
+            await coordinator.publish_while_lock_owned("stats:lock", "channel", "{}")
 
         stats = coordinator.stats
         assert stats.acquisitions == 1
@@ -701,18 +599,6 @@ def test_fenced_scripts_reject_a_replaced_lock_owner() -> None:
                     coordinator.key("lock", "fence:lost"), "someone-else"
                 )
                 attempts = (
-                    coordinator.incrby_while_lock_owned("fence:lost", "counter", 1),
-                    coordinator.set_max_while_lock_owned("fence:lost", "counter", 1),
-                    coordinator.store_pending_while_lock_owned(
-                        "fence:lost",
-                        items_key="items",
-                        source_key="source",
-                        mark_read_key="mark",
-                        dirty_key="dirty",
-                        session_id="sess_lost",
-                        item_id="item_lost",
-                        raw_item='{"id":"item_lost"}',
-                    ),
                     coordinator.publish_while_lock_owned(
                         "fence:lost", "channel", "{}"
                     ),
@@ -730,53 +616,7 @@ def test_fenced_scripts_reject_a_replaced_lock_owner() -> None:
         except RuntimeError as exc:
             assert "no longer owned" in str(exc)
 
-        assert failures == 4
-
-    asyncio.run(exercise())
-
-
-def test_set_max_while_lock_owned_never_lowers_a_watermark() -> None:
-    async def exercise() -> None:
-        fake_server = FakeServer()
-        coordinator = _coordinator(fake_server)
-
-        async with coordinator.lock(
-            "fence:max", timeout_seconds=1, lease_seconds=30
-        ):
-            await coordinator.set_max_while_lock_owned("fence:max", "wm", 5)
-            await coordinator.set_max_while_lock_owned("fence:max", "wm", 3)
-
-        assert await coordinator.client.get("wm") == "5"
-
-    asyncio.run(exercise())
-
-
-def test_store_pending_script_stages_projection_and_dirty_marker() -> None:
-    async def exercise() -> None:
-        fake_server = FakeServer()
-        coordinator = _coordinator(fake_server)
-
-        async with coordinator.lock(
-            "fence:store", timeout_seconds=1, lease_seconds=30
-        ):
-            await coordinator.store_pending_while_lock_owned(
-                "fence:store",
-                items_key="items",
-                source_key="source",
-                mark_read_key="mark",
-                dirty_key="dirty",
-                session_id="sess_1",
-                source_observed_at="2026-09-09T00:00:00Z",
-                item_id="item_1",
-                raw_item='{"id":"item_1"}',
-                mark_read_on_change=True,
-            )
-
-        client = coordinator.client
-        assert await client.hget("items", "item_1") == '{"id":"item_1"}'
-        assert await client.get("source") == "2026-09-09T00:00:00Z"
-        assert await client.get("mark") == "1"
-        assert await client.smembers("dirty") == {"sess_1"}
+        assert failures == 1
 
     asyncio.run(exercise())
 

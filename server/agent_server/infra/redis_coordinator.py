@@ -49,19 +49,6 @@ if redis.call('GET', KEYS[1]) ~= ARGV[1] then
 end
 """
 
-_INCRBY_WHILE_LOCK_OWNED = _LOCK_TOKEN_GUARD + """
-return redis.call('INCRBY', KEYS[2], ARGV[2])
-"""
-
-_SET_MAX_WHILE_LOCK_OWNED = _LOCK_TOKEN_GUARD + """
-local current = redis.call('GET', KEYS[2])
-if current and tonumber(current) >= tonumber(ARGV[2]) then
-  return 0
-end
-redis.call('SET', KEYS[2], ARGV[2])
-return 1
-"""
-
 _COMPARE_AND_APPLY = """
 if redis.call('GET', KEYS[1]) ~= ARGV[1] then
   return 0
@@ -78,20 +65,6 @@ elseif action == 'set' then
 else
   redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[4]))
 end
-return 1
-"""
-
-_STORE_PENDING_WHILE_LOCK_OWNED = _LOCK_TOKEN_GUARD + """
-if ARGV[2] ~= '' then
-  redis.call('SET', KEYS[3], ARGV[2])
-end
-if ARGV[3] ~= '' then
-  redis.call('HSET', KEYS[2], ARGV[3], ARGV[4])
-end
-if ARGV[5] == '1' then
-  redis.call('SET', KEYS[4], '1')
-end
-redis.call('SADD', KEYS[5], ARGV[6])
 return 1
 """
 
@@ -225,14 +198,6 @@ class RedisCoordinator:
 
         return name in (self._held_lock_tokens.get() or {})
 
-    def lock_fence(self, name: str) -> tuple[str, str]:
-        """Return the Redis lock key and token owned by the current task."""
-
-        token = (self._held_lock_tokens.get() or {}).get(name)
-        if token is None:
-            raise RuntimeError(f"distributed lock is not held: {name}")
-        return self.key("lock", name), token
-
     @asynccontextmanager
     async def pipeline_while_lock_owned(
         self,
@@ -270,61 +235,6 @@ class RedisCoordinator:
                     f"distributed lock changed during transaction: {lock_key}"
                 ) from exc
 
-    async def set_max_while_lock_owned(
-        self,
-        name: str,
-        key: str,
-        value: int,
-    ) -> None:
-        """Atomically raise an integer watermark while the lock is still held."""
-
-        token = self._held_token(name)
-        result = await self._script(
-            "set_max", _SET_MAX_WHILE_LOCK_OWNED
-        )(
-            keys=[self.key("lock", name), key],
-            args=[token, value],
-        )
-        self._raise_if_lock_lost(name, result)
-
-    async def store_pending_while_lock_owned(
-        self,
-        name: str,
-        *,
-        items_key: str,
-        source_key: str,
-        mark_read_key: str,
-        dirty_key: str,
-        session_id: str,
-        source_observed_at: str | None = None,
-        item_id: str | None = None,
-        raw_item: str | None = None,
-        mark_read_on_change: bool = False,
-    ) -> None:
-        """Stage one pending timeline projection in a single fenced script."""
-
-        token = self._held_token(name)
-        result = await self._script(
-            "store_pending", _STORE_PENDING_WHILE_LOCK_OWNED
-        )(
-            keys=[
-                self.key("lock", name),
-                items_key,
-                source_key,
-                mark_read_key,
-                dirty_key,
-            ],
-            args=[
-                token,
-                source_observed_at or "",
-                item_id or "",
-                raw_item or "",
-                "1" if mark_read_on_change else "0",
-                session_id,
-            ],
-        )
-        self._raise_if_lock_lost(name, result)
-
     async def publish_while_lock_owned(
         self,
         name: str,
@@ -341,85 +251,6 @@ class RedisCoordinator:
             args=[token, message],
         )
         self._raise_if_lock_lost(name, result)
-
-    async def seal_counter_range_while_lock_owned(
-        self,
-        name: str,
-        *,
-        head_key: str,
-        end_key: str,
-        epoch_key: str,
-        floor: int,
-        epoch: str,
-    ) -> int:
-        """Atomically retire a counter range while fencing a stale owner."""
-
-        if self._client is None:
-            raise RuntimeError("Redis is not configured")
-        token = (self._held_lock_tokens.get() or {}).get(name)
-        if token is None:
-            raise RuntimeError(f"distributed lock is not held: {name}")
-        if floor < 0:
-            raise ValueError("counter range floor must not be negative")
-        lock_key = self.key("lock", name)
-        while True:
-            async with self.client.pipeline(transaction=True) as pipeline:
-                try:
-                    await pipeline.watch(lock_key, head_key, end_key, epoch_key)
-                    current_token = await pipeline.get(lock_key)
-                    if isinstance(current_token, bytes):
-                        current_token = current_token.decode("utf-8")
-                    if current_token != token:
-                        raise RuntimeError(
-                            f"distributed lock is no longer owned: {lock_key}"
-                        )
-                    raw_head, raw_end, raw_epoch = await pipeline.mget(
-                        head_key,
-                        end_key,
-                        epoch_key,
-                    )
-                    counters = [floor]
-                    stored_epoch = (
-                        raw_epoch.decode("utf-8")
-                        if isinstance(raw_epoch, bytes)
-                        else raw_epoch
-                    )
-                    if stored_epoch == epoch:
-                        for raw_value in (raw_head, raw_end):
-                            if raw_value is None:
-                                continue
-                            value = int(raw_value)
-                            if value < 0:
-                                raise RuntimeError("negative Redis counter range value")
-                            counters.append(value)
-                    sealed = max(counters)
-                    pipeline.multi()
-                    pipeline.set(head_key, sealed)
-                    pipeline.set(end_key, sealed)
-                    pipeline.set(epoch_key, epoch)
-                    await pipeline.execute()
-                    return sealed
-                except WatchError:
-                    self.stats.fence_conflicts += 1
-                    continue
-
-    async def incrby_while_lock_owned(
-        self,
-        name: str,
-        key: str,
-        amount: int,
-    ) -> int:
-        """Increment a counter only if the current task still owns the lock."""
-
-        token = self._held_token(name)
-        result = await self._script(
-            "incrby", _INCRBY_WHILE_LOCK_OWNED
-        )(
-            keys=[self.key("lock", name), key],
-            args=[token, amount],
-        )
-        self._raise_if_lock_lost(name, result)
-        return int(result)
 
     @asynccontextmanager
     async def lock(

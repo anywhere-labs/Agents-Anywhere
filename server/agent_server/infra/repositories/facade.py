@@ -78,12 +78,9 @@ class Store(
         self.active_runs = ActiveRunRepository(engine)
         self.attachments = AttachmentService(self, self.files)
 
-        self._timeline_locks: dict[str, asyncio.Lock] = {}
-        self._timeline_locks_guard = asyncio.Lock()
-        self._timeline_lock_used: dict[str, float] = {}
-        self._session_revision_fence_factory: Any | None = None
-        self._session_revision_publisher: Any | None = None
-        self._session_revision_range_sealer: Any | None = None
+        self._lifecycle_locks: dict[str, asyncio.Lock] = {}
+        self._lifecycle_locks_guard = asyncio.Lock()
+        self._lifecycle_lock_used: dict[str, float] = {}
         self._connector_lifecycle_factory: Any | None = None
 
     def bind_connector_lifecycle(self, factory: Any) -> None:
@@ -92,92 +89,48 @@ class Store(
     @asynccontextmanager
     async def connector_lifecycle(self, connector_id: str) -> AsyncIterator[None]:
         factory = self._connector_lifecycle_factory
-        guard = factory(connector_id) if factory else await self.timeline_lock(f"connector:{connector_id}")
+        guard = factory(connector_id) if factory else await self._local_lifecycle_lock(connector_id)
         async with guard:
-            yield
-
-    def bind_session_revision_fence(self, factory: Any) -> None:
-        """Bind the app-scoped coordinator used by revision-producing writes."""
-
-        self._session_revision_fence_factory = factory
-
-    def bind_session_revision_publisher(self, publisher: Any) -> None:
-        """Bind the ordered publisher paired with the revision fence."""
-
-        self._session_revision_publisher = publisher
-
-    def bind_session_revision_range_sealer(self, sealer: Any) -> None:
-        """Bind the Redis allocator hook that retires an active revision lease."""
-
-        self._session_revision_range_sealer = sealer
-
-    async def seal_session_revision_range(
-        self,
-        session_id: str,
-        allocated_high: int,
-    ) -> None:
-        sealer = self._session_revision_range_sealer
-        if sealer is not None:
-            await sealer(session_id, allocated_high)
-
-    async def publish_session_revision_result(
-        self,
-        session_id: str,
-        *,
-        operation: str,
-        result: Any,
-    ) -> None:
-        publisher = self._session_revision_publisher
-        if publisher is not None:
-            await publisher(session_id, operation=operation, result=result)
-
-    @asynccontextmanager
-    async def session_revision_fence(self, session_id: str) -> AsyncIterator[None]:
-        factory = self._session_revision_fence_factory
-        if factory is None:
-            yield
-            return
-        async with factory(session_id):
             yield
 
     @property
     def engine(self) -> AsyncEngine:
         return self._engine
 
-    async def timeline_lock(self, session_id: str) -> asyncio.Lock:
-        """Return this session's in-process writer lock, keeping the registry bounded.
+    async def _local_lifecycle_lock(self, connector_id: str) -> asyncio.Lock:
+        """Return this connector's in-process lifecycle lock, keeping the registry bounded.
 
-        Connector lifecycle guards use these locks; a long-lived process still
-        touches many sessions, so the registry evicts idle, unlocked entries
+        Used only when no app-scoped lifecycle guard is bound (tests and tools
+        that build a bare Store). The registry evicts idle, unlocked entries
         instead of growing without bound.
         """
 
-        async with self._timeline_locks_guard:
-            lock = self._timeline_locks.get(session_id)
+        async with self._lifecycle_locks_guard:
+            lock = self._lifecycle_locks.get(connector_id)
             if lock is None:
                 lock = asyncio.Lock()
-                self._timeline_locks[session_id] = lock
-            self._timeline_lock_used[session_id] = time.monotonic()
-            if len(self._timeline_locks) > _MAX_TRACKED_LOCKS:
-                self._evict_timeline_locks_locked()
+                self._lifecycle_locks[connector_id] = lock
+            self._lifecycle_lock_used[connector_id] = time.monotonic()
+            if len(self._lifecycle_locks) > _MAX_TRACKED_LOCKS:
+                self._evict_lifecycle_locks_locked()
             return lock
 
-    def _evict_timeline_locks_locked(self) -> None:
+    def _evict_lifecycle_locks_locked(self) -> None:
         cutoff = time.monotonic() - _TRACKED_LOCK_IDLE_SECONDS
         removable = [
-            session_id
-            for session_id, lock in self._timeline_locks.items()
-            if not lock.locked() and self._timeline_lock_used.get(session_id, 0.0) <= cutoff
+            connector_id
+            for connector_id, lock in self._lifecycle_locks.items()
+            if not lock.locked() and self._lifecycle_lock_used.get(connector_id, 0.0) <= cutoff
         ]
         if not removable:
             removable = [
-                session_id
-                for session_id, lock in self._timeline_locks.items()
+                connector_id
+                for connector_id, lock in self._lifecycle_locks.items()
                 if not lock.locked()
             ]
-        for session_id in removable:
-            self._timeline_locks.pop(session_id, None)
-            self._timeline_lock_used.pop(session_id, None)
+        for connector_id in removable:
+            self._lifecycle_locks.pop(connector_id, None)
+            self._lifecycle_lock_used.pop(connector_id, None)
 
     async def close(self) -> None:
         await self._engine.dispose()

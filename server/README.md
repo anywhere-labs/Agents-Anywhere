@@ -82,7 +82,7 @@ curl http://127.0.0.1:8000/api/v2/health/ready
 
 | Variable | Purpose |
 | --- | --- |
-| `AGENT_SERVER_WORKERS` | Number of Uvicorn workers when launched with `uv run python -m agent_server.main` or the server Docker image. Defaults to `1`. More than one requires Redis and disallows `AGENT_SERVER_TIMELINE_SINGLE_INSTANCE`. |
+| `AGENT_SERVER_WORKERS` | Number of Uvicorn workers when launched with `uv run python -m agent_server.main` or the server Docker image. Defaults to `1`. More than one requires Redis. |
 | `AGENT_SERVER_EVENT_WORKERS` | Compute subprocesses **per Uvicorn worker** for large outbound session events. Defaults to `2`; `0` disables offload. |
 | `AGENT_SERVER_EVENT_THRESHOLD_BYTES` | Minimum UTF-8 envelope size sent to a compute subprocess. Defaults to `262144` (256 KiB). Smaller events use shared inline preparation. |
 | `AGENT_SERVER_EVENT_QUEUE_ITEMS` | Maximum admitted large-event jobs per Uvicorn worker, including waiting and running jobs. Defaults to `32`. |
