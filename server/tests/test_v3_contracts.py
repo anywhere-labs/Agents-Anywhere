@@ -292,5 +292,7 @@ def test_e2ee_attachment_keys_and_file_chunks() -> None:
         e2ee.SealedAttachmentKey(fileId="f1", key=key.key, size=5, sha256=digest.upper())
     chunk = e2ee.TunnelFileChunk(data="aGVsbG8=", offset=0, size=5, eof=True)
     assert chunk.encoding == "base64"
+    named = e2ee.SealedAttachmentKey(fileId="f2", key=key.key, size=5, sha256=digest, name="报告.pdf", mimeType="application/pdf")
+    assert named.name == "报告.pdf" and key.name is None
     assert e2ee.FILE_CHUNK_MAX_BYTES == 8 * 1024 * 1024
     assert e2ee.SEALED_UPLOAD_HEADER == "x-aa-sealed"

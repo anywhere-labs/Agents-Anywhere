@@ -298,11 +298,14 @@ class SealedAttachmentKey(E2eeModel):
     key: Key32
     size: int = Field(ge=0, description="plaintext size")
     sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$", description="hex SHA-256 of the plaintext; also the segment AD objectId")]
+    name: str | None = Field(default=None, description="real file name; the upload itself is named attachment.bin")
+    mimeType: str | None = Field(default=None, description="real media type; the upload itself is application/octet-stream")
 
 
 class TunnelFileChunk(E2eeModel):
     """Response body of a file read through the channel:
-    ``GET /api/v2/connectors/{deviceId}/fs/read?path=…&offset=…&length=…`` (``length`` at most
+    ``GET /api/v2/connectors/{deviceId}/fs/read?root=…&path=…&offset=…&length=…`` (the normal-mode query plus
+    ``offset`` and ``length``; ``length`` at most
     ``FILE_CHUNK_MAX_BYTES``; the device may return less). Large files are read chunk by chunk; each chunk is a
     normal channel message, so it is encrypted and fragmented like any other."""
 

@@ -14,6 +14,32 @@
       "title": "Key",
       "type": "string"
     },
+    "mimeType": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "real media type; the upload itself is application/octet-stream",
+      "title": "Mimetype"
+    },
+    "name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "real file name; the upload itself is named attachment.bin",
+      "title": "Name"
+    },
     "sha256": {
       "description": "hex SHA-256 of the plaintext; also the segment AD objectId",
       "pattern": "^[0-9a-f]{64}$",

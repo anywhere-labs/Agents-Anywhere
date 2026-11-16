@@ -78,7 +78,7 @@ Noise 传输消息的明文格式为 `flag(1 字节) ‖ body`，`body` 最长 6
 | `event` | 设备 → 客户端 | `TunnelEvent`：`sub` 指明属于哪个订阅；通道级事件 `e2ee.directory_key`、`e2ee.trust_changed` 不带 `sub` |
 | `close` | 双向 | `ChannelClose` |
 
-文件下载：`GET /api/v2/connectors/{deviceId}/fs/read?path=…&offset=…&length=…`，`length` 最多 8 MiB（`FILE_CHUNK_MAX_BYTES`），响应体是 `TunnelFileChunk {encoding: "base64", data, offset, size, eof}`。大文件按块依次读取，每块都是一条普通的通道消息。浏览目录、读文本文件（`fs/list`、`fs/readText`）与普通模式相同，只是经通道发送。
+文件下载：`GET /api/v2/connectors/{deviceId}/fs/read?root=…&path=…&offset=…&length=…`（普通模式的查询参数再加 `offset`、`length`），`length` 最多 8 MiB（`FILE_CHUNK_MAX_BYTES`），响应体是 `TunnelFileChunk {encoding: "base64", data, offset, size, eof}`。大文件按块依次读取，每块都是一条普通的通道消息。浏览目录、读文本文件（`fs/list`、`fs/readText`）与普通模式相同，只是经通道发送。
 
 信任管理同样用 `request`，路径在 `/e2ee/v1/` 下（`TRUST_ROUTES`）：
 
@@ -99,8 +99,9 @@ Noise 传输消息的明文格式为 `flag(1 字节) ‖ body`，`body` 最长 6
   - 每个对象一把随机密钥，明文按 64 KiB 分段，空对象算一个空段；
   - 第 i 段的 nonce 为 4 字节 0 加上 i 的 8 字节大端编码，`AD = label(purpose, objectId, i) ‖ 0x00 ‖ final`，`final` 用来防截断；
   - 附件：
-    - 上传：`POST /api/v2/sessions/{id}/attachments`，请求头 `x-aa-sealed: segments-v1`；上传体是各段密文按顺序直接拼接，除最后一段外每段 64 KiB + 16 字节，Server 记录的 `sha256` 是整个上传体（密文）的摘要；
+    - 上传：`POST /api/v2/sessions/{id}/attachments`，请求头 `x-aa-sealed: segments-v1`；上传时文件名统一写 `attachment.bin`、类型统一写 `application/octet-stream`，真实的文件名和类型放进 `SealedAttachmentKey.name` / `mimeType`，经通道传输；上传体是各段密文按顺序直接拼接，除最后一段外每段 64 KiB + 16 字节，Server 记录的 `sha256` 是整个上传体（密文）的摘要；
     - 加密时 Server 还没分配 `fileId`，所以分段 AD 的 `objectId` 用明文的 SHA-256（十六进制小写），即 `label("attachment", sha256, i) ‖ 0x00 ‖ final`；
+    - 密钥只存在客户端内存里，不落盘；上传后如果客户端重启，就重新加密、重新上传；
     - 发消息的请求体照常在 `attachments` 里引用 `fileId`，并在同一请求体里加 `sealedAttachmentKeys: [SealedAttachmentKey]`。整个请求体经通道传输，密钥不经过 Server；
     - 设备从 Server 取回密文，按 64 KiB + 16 切段解密，核对 `size` 与 `sha256` 后再交给 Runtime；
   - 分享链接是 `/s/{shareId}#k=<base64url 密钥>`，`#` 后面的部分不会发给 Server。
