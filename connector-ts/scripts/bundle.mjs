@@ -4,13 +4,13 @@
 //   dist/desktop-main.js    Desktop's utility process (`utilityProcess.fork`)
 //   dist/worker-entry.js    the store worker thread both of them start (`new URL('./worker-entry.js', import.meta.url)`)
 //   dist/assets/, dist/dependencies.json   files Runtime profiles read next to their module
-//   dist/router/            the MeshCall Router, when scripts/fetch-router.mjs put it there
+//   dist/router/            the MeshCall Router for the package's platform, from router/<target>/ (scripts/fetch-router.mjs)
 //
 // Native modules stay external and ship beside the bundle in `node_modules/` (node-pty, and ws's optional
 // accelerators). SQLite is `node:sqlite`, nothing to ship. Not a Node SEA: the hosts bring their own Node.
 //
-// usage: node scripts/bundle.mjs [--outdir dist] [--smoke]
-import { cpSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+// usage: node scripts/bundle.mjs [--outdir dist] [--router-target darwin-arm64] [--smoke]
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os'
 import { build } from 'esbuild'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const { values } = parseArgs({ options: { outdir: { type: 'string', default: 'dist' }, smoke: { type: 'boolean', default: false } } })
+const { values } = parseArgs({ options: { outdir: { type: 'string', default: 'dist' }, 'router-target': { type: 'string' }, smoke: { type: 'boolean', default: false } } })
 const outdir = resolve(root, values.outdir ?? 'dist')
 
 /** Native or optional at run time: resolved from `node_modules/` next to the bundle, never inlined. */
@@ -64,13 +64,12 @@ for (const [from, to] of RUNTIME_FILES) {
   cpSync(join(root, from), join(outdir, to))
 }
 writeFileSync(join(outdir, 'package.json'), `${JSON.stringify({ type: 'module', private: true }, null, 2)}\n`)
-const routerDir = join(root, 'router')
-try {
-  cpSync(routerDir, join(outdir, 'router'), { recursive: true, filter: source => !source.endsWith('.sha256') })
-} catch (error) {
-  if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'ENOENT') throw error
-}
-console.log(`bundled into ${outdir}`)
+// One platform per package: the Router that scripts/fetch-router.mjs built and verified for it.
+const routerTarget = values['router-target'] ?? `${process.platform}-${process.arch}`
+const routerDir = join(root, 'router', routerTarget)
+if (existsSync(routerDir)) cpSync(routerDir, join(outdir, 'router'), { recursive: true, filter: source => !source.endsWith('.sha256') })
+else if (values['router-target'] !== undefined) throw new Error(`no Router for ${routerTarget}: run node scripts/fetch-router.mjs --target ${routerTarget}`)
+console.log(`bundled into ${outdir}${existsSync(routerDir) ? ` with the ${routerTarget} Router` : ' (no Router)'}`)
 
 if (values.smoke) {
   // The CLI starts and the store worker opens and migrates a store, from the bundle alone.
@@ -85,6 +84,8 @@ if (values.smoke) {
         message.type === 'ready' ? resolveReady(message) : reject(new Error(JSON.stringify(message)))
       })
     })
+    const shipped = join(outdir, 'router', process.platform === 'win32' ? 'meshcall-router.exe' : 'meshcall-router')
+    if (existsSync(shipped)) console.log(`smoke: ${execFileSync(shipped, ['--version'], { encoding: 'utf8' }).trim()}`)
     console.log(`smoke: anywhere-cli ${version}; store worker ready (epoch ${ready.storeEpoch}, ${Object.keys(ready.methods ?? {}).length} store methods)`)
   } finally {
     rmSync(dataDir, { recursive: true, force: true })

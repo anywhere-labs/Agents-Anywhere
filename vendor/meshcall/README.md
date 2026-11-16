@@ -41,3 +41,13 @@ shasum -a 256 meshcall-0.4.0-dev.9334405.tgz
 ```
 
 `npm pack --ignore-scripts` 跳过包里的 `prepack`（它调用全局 `yarn build`），构建由上一行的 `tsc` 完成，产物相同。
+
+## Router 二进制
+
+v3 Connector 安装包里带的 Router 由 `connector-ts/scripts/fetch-router.mjs` 从同一个提交的 `meshcall-router/` 构建，二进制不提交进仓库：
+
+- 构建是可复现的：`-trimpath`、不写 VCS 信息和 build id、关闭 CGO，并通过 `GOTOOLCHAIN` 固定 Go 工具链版本。六个平台（darwin、linux、win32 各有 arm64 和 x64）的 sha256 记录在 `connector-ts/scripts/meshcall-router.json`，构建或取用时逐个校验，不一致就删掉产物并报错。
+- CI（`.github/workflows/connector-ts.yml`）构建全部六个平台，作为 `meshcall-router` 构建产物上传；集成测试使用其中的 linux-x64 版本。
+- 本地开发构建本机平台：`cd connector-ts && node scripts/fetch-router.mjs`。
+- 使用已下载的 CI 产物：`node scripts/fetch-router.mjs --from <目录> --all`。
+- 换 meshcall 提交或 Go 版本时，先改清单里的 `commit` 和 `go`，再运行 `node scripts/fetch-router.mjs --record --all`，并在 PR 里审阅 sha256 的变化。

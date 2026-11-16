@@ -1,0 +1,91 @@
+name: Connector (TypeScript, v3)
+
+# The v3 Connector in connector-ts/: the MeshCall Router it ships, built from the pinned meshcall commit for every
+# platform and checked against the recorded SHA-256 (scripts/meshcall-router.json), then the headless checks with
+# that Router (so the Router integration tests run instead of being skipped) and the esbuild bundles.
+
+on:
+  pull_request:
+    paths:
+      - connector-ts/**
+      - contracts/**
+      - vendor/meshcall/**
+      - .github/actions/setup-yarn/**
+      - .github/workflows/connector-ts.yml
+  push:
+    branches:
+      - main
+      - feat/v3/integration
+    paths:
+      - connector-ts/**
+      - contracts/**
+      - vendor/meshcall/**
+      - .github/workflows/connector-ts.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: connector-ts-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  router:
+    name: MeshCall Router (6 platforms)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      # Any Go ≥ 1.21: the script pins the exact toolchain through GOTOOLCHAIN.
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: false
+      - name: Build and verify against the recorded checksums
+        working-directory: connector-ts
+        run: node scripts/fetch-router.mjs --all
+      - uses: actions/upload-artifact@v5
+        with:
+          name: meshcall-router
+          path: connector-ts/router/
+          if-no-files-found: error
+
+  checks:
+    name: Checks and bundle
+    needs: router
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          name: meshcall-router
+          path: ${{ runner.temp }}/meshcall-router
+      # Artifacts drop the executable bit; --from verifies the checksums again on the way in.
+      - uses: ./.github/actions/setup-yarn
+        with:
+          project: connector-ts
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install the Router
+        working-directory: connector-ts
+        run: node scripts/fetch-router.mjs --from "$RUNNER_TEMP/meshcall-router" --all
+      - name: Typecheck, test, layers, contracts
+        working-directory: connector-ts
+        env:
+          MESHCALL_ROUTER_BINARY: ${{ github.workspace }}/connector-ts/router/linux-x64/meshcall-router
+        run: |
+          corepack yarn typecheck
+          corepack yarn test
+          corepack yarn check:layers
+          corepack yarn contracts:check
+      - name: Bundle with the linux-x64 Router and smoke-test it
+        working-directory: connector-ts
+        run: node scripts/bundle.mjs --router-target linux-x64 --smoke
