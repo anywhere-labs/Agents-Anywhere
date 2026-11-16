@@ -142,8 +142,13 @@ class E2eeClient(
         timed { channel(deviceId).requestJson(method, path, body) }
 
     /** 同上，请求体原样（不重新序列化），返回设备的原始响应。 */
-    suspend fun requestRaw(deviceId: String, method: String, path: String, bodyJson: String?): TunnelResponse =
-        timed { channel(deviceId).request(method, apiPath(path), bodyJson) }
+    suspend fun requestRaw(
+        deviceId: String,
+        method: String,
+        path: String,
+        bodyJson: String?,
+        timeoutMillis: Long = requestTimeoutMillis,
+    ): TunnelResponse = timed(timeoutMillis) { channel(deviceId).request(method, apiPath(path), bodyJson) }
 
     /**
      * 经通道订阅一个会话的事件流（相当于普通模式的会话 WS）；返回取消订阅的函数。
@@ -180,7 +185,14 @@ class E2eeClient(
      * 加密模式下发命令：先 `POST /api/v3/e2ee/commands`（输入摘要用当前列表密钥），
      * Server 说重复时返回 null、不再发；否则经通道发出 `bodyJson` 原文。
      */
-    suspend fun sendCommand(deviceId: String, commandId: String, method: String, path: String, bodyJson: String): TunnelResponse? = timed {
+    suspend fun sendCommand(
+        deviceId: String,
+        commandId: String,
+        method: String,
+        path: String,
+        bodyJson: String,
+        timeoutMillis: Long = requestTimeoutMillis,
+    ): TunnelResponse? = timed(timeoutMillis) {
         val channel = channel(deviceId)
         val key = trust.directoryKey(deviceId) ?: throw ChannelClosedException(E2eeErrorCodes.NOT_PAIRED)
         val digest = E2eeFormats.inputDigest(key.keyBytes, bodyJson.toByteArray(Charsets.UTF_8))
@@ -188,8 +200,8 @@ class E2eeClient(
         channel.request(method, apiPath(path), bodyJson)
     }
 
-    private suspend fun <T> timed(block: suspend () -> T): T = try {
-        withTimeout(requestTimeoutMillis) { block() }
+    private suspend fun <T> timed(timeoutMillis: Long = requestTimeoutMillis, block: suspend () -> T): T = try {
+        withTimeout(timeoutMillis) { block() }
     } catch (_: TimeoutCancellationException) {
         throw E2eeTimeoutException()
     }

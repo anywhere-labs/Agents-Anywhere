@@ -179,7 +179,7 @@ class SessionsController(
             try {
                 val prepared = draft.preparedWorkspace
                 if (prepared != null && sessionsApi.isEncryptedDevice(serverUrl, accessToken, draft.connectorId)) {
-                    // A configured creation sends its first message through the Server: never in plaintext.
+                    // A configured creation is prepared and run by the Server: never send its content in plaintext.
                     throw sessionsApi.e2eeRefusal(com.agentsanywhere.app.api.e2ee.E2eeClientErrorCodes.CREATE_UNSUPPORTED)
                 }
                 if (prepared != null) {

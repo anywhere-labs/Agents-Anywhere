@@ -227,8 +227,7 @@
     <string name="e2ee_error_failed">配对失败，请重试。</string>
     <string name="e2ee_error_attachments_unsupported">无法为这台设备加密附件，请重试。</string>
     <string name="e2ee_error_file_transfer_unsupported">无法经加密连接读取这个文件，请重试。</string>
-    <string name="e2ee_error_create_unsupported">在端到端加密的设备上新建会话时，第一条消息请只写文字；/goal、/plan 和附件请在会话开始后再发送。</string>
-    <string name="e2ee_error_first_message_failed">会话已创建，但第一条消息没有送到设备。请打开会话重新发送。</string>
+    <string name="e2ee_error_create_unsupported">在端到端加密的设备上，新建会话时不能附带附件，也不能使用配置向导。请先新建会话，再在会话里发送附件。</string>
     <string name="e2ee_error_channel_failed">与设备的加密连接出错，请重试。</string>
     <string name="device_settings_save_failed">无法保存设备设置。</string>
     <string name="device_setup_page_title">添加新设备</string>

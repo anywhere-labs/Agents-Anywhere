@@ -166,9 +166,6 @@ object E2eeClientErrorCodes {
     const val ATTACHMENTS_UNSUPPORTED = "e2ee_attachments_unsupported"
     const val FILE_TRANSFER_UNSUPPORTED = "e2ee_file_transfer_unsupported"
 
-    /** 加密设备上用 `/goal`、`/plan`、附件或配置向导新建会话（第一条消息无法先经通道发出）。 */
+    /** 加密设备上带附件或用配置向导新建会话（附件要先上传到已有的会话；向导要经 Server 准备）。 */
     const val CREATE_UNSUPPORTED = "e2ee_create_unsupported"
-
-    /** 会话已经建好，但第一条消息经通道没有发出去。 */
-    const val FIRST_MESSAGE_FAILED = "e2ee_first_message_failed"
 }

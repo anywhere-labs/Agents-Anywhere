@@ -255,7 +255,6 @@ internal fun e2eeErrorMessageRes(code: String): Int = when (code) {
     E2eeClientErrorCodes.TIMEOUT -> R.string.e2ee_error_timeout
     E2eeClientErrorCodes.ATTACHMENTS_UNSUPPORTED -> R.string.e2ee_error_attachments_unsupported
     E2eeClientErrorCodes.CREATE_UNSUPPORTED -> R.string.e2ee_error_create_unsupported
-    E2eeClientErrorCodes.FIRST_MESSAGE_FAILED -> R.string.e2ee_error_first_message_failed
     E2eeClientErrorCodes.FILE_TRANSFER_UNSUPPORTED -> R.string.e2ee_error_file_transfer_unsupported
     E2eeErrorCodes.CONNECTOR_OFFLINE, E2eeErrorCodes.TUNNEL_DISCONNECTED -> R.string.e2ee_error_unavailable
     else -> R.string.e2ee_error_channel_failed

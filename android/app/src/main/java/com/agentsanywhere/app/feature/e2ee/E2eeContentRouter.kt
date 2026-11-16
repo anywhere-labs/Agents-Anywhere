@@ -29,17 +29,11 @@ import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
-import java.util.UUID
 
 /** Server 收下的一个附件（上传响应里的一项）。 */
 fun interface SealedUploader {
     /** `POST /sessions/{id}/attachments`，带 `x-aa-sealed: segments-v1`；`files` 的内容已经是分段密文。 */
     fun upload(serverUrl: String, token: String?, path: String, files: List<UploadFilePart>, headers: Map<String, String>): JSONObject
-}
-
-/** 明文 `POST`（新建会话时用；请求体已经不含任何内容）。 */
-fun interface PlainPoster {
-    fun post(serverUrl: String, token: String?, path: String, body: JSONObject): JSONObject
 }
 
 /**
@@ -59,7 +53,6 @@ class E2eeContentRouter(
     /** 错误码 → 给用户看的文案（ui 层注入本地化）。 */
     private val messages: (code: String) -> String = { it },
     private val sealedUploader: SealedUploader? = null,
-    private val plainPoster: PlainPoster? = null,
     /** 加密附件的密钥，只在内存里。 */
     val sealedKeys: SealedAttachmentKeys = SealedAttachmentKeys(),
 ) : ContentGate, SessionStreamRouter {
@@ -207,47 +200,65 @@ class E2eeContentRouter(
     }
 
     /**
-     * 加密设备上新建会话：先用不含内容的请求建会话，再经通道发第一条消息（登记为命令）。
-     * `/goal`、`/plan` 和内联附件没法拆成两步，直接拒绝，绝不明文发出。
+     * 加密设备上新建会话：整个 `create-and-start` 请求（路径、请求体与普通模式相同，含标题、第一条消息、
+     * `/goal`、`/plan`）经通道发给 `connectorId` 选中的设备，由设备建会话、运行并把元数据同步给 Server。
+     * 第一条消息和其他消息一样登记为命令。附件要先上传到已有的会话，新建时还没有会话，所以拒绝。
      */
     private fun createAndStart(request: ContentRequest): JSONObject? {
         val body = request.bodyText?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return null
-        val content = body.optString("content")
-        val attachments = body.optJSONArray("attachments")
-        val carriesContent = content.isNotBlank() || (attachments?.length() ?: 0) > 0 || body.has("goalIntent") || body.has("planningIntent")
-        if (!carriesContent) return null
         val deviceId = body.optString("connectorId").takeIf { it.isNotBlank() } ?: return null
         val route = route(ContentTarget.Device(deviceId, DeviceContent.Files), request.serverUrl, request.authorizationToken)
         if (route !is Route.Secure) return null
-        if ((attachments?.length() ?: 0) > 0 || body.has("goalIntent") || body.has("planningIntent")) {
-            throw failure(E2eeClientErrorCodes.CREATE_UNSUPPORTED, 409)
-        }
-        val poster = plainPoster ?: throw failure(E2eeClientErrorCodes.CREATE_UNSUPPORTED, 409)
-        val commandId = body.optString("clientMessageId").ifBlank { "m_${UUID.randomUUID()}" }
-        val empty = JSONObject(body.toString()).put("content", "").apply { remove("clientMessageId") }
-        val created = poster.post(request.serverUrl, request.authorizationToken, request.path, empty)
-        val sessionId = created.optJSONObject("session")?.optString("id").orEmpty()
-        if (sessionId.isBlank()) throw ApiException("The server returned an invalid session.", 502)
-        SessionDeviceDirectory.remember(sessionId, deviceId)
-        val message = JSONObject().put("content", content).put("clientMessageId", commandId).toString()
-        try {
-            sendThroughChannel(deviceId, "POST", "/sessions/${sessionId.urlEncode()}/runtime/messages", message)
+        if ((body.optJSONArray("attachments")?.length() ?: 0) > 0) throw failure(E2eeClientErrorCodes.CREATE_UNSUPPORTED, 409)
+        val created = try {
+            sendThroughChannel(deviceId, "POST", request.path, request.bodyText, CREATE_TIMEOUT_MS, duplicateResult = null)
         } catch (error: ApiException) {
-            throw ApiException(messages(E2eeClientErrorCodes.FIRST_MESSAGE_FAILED), 502, error, E2eeClientErrorCodes.FIRST_MESSAGE_FAILED)
-        }
+            // The device may have created the session before the answer was lost: let the caller reconcile.
+            if (error.errorCode == E2eeClientErrorCodes.TIMEOUT) throw unknownCreateOutcome(error)
+            throw error
+        } ?: throw unknownCreateOutcome(null)
+        val sessionId = created.optJSONObject("session")?.optString("id").orEmpty()
+        if (sessionId.isBlank()) throw ApiException("The device returned an invalid session.", 502)
+        SessionDeviceDirectory.remember(sessionId, deviceId)
         return created
     }
 
-    private fun sendThroughChannel(deviceId: String, method: String, path: String, bodyText: String?): JSONObject = runChannel(deviceId) {
+    /** 结果不确定（超时，或这条命令之前已经发过）：不带状态码、原因是 IO 错误，调用方按网络中断去核对。 */
+    private fun unknownCreateOutcome(cause: Throwable?) = ApiException(
+        message = messages(E2eeClientErrorCodes.TIMEOUT),
+        cause = java.io.IOException("The create request went to the device, but its result is unknown.", cause),
+        errorCode = E2eeClientErrorCodes.TIMEOUT,
+    )
+
+    private fun sendThroughChannel(deviceId: String, method: String, path: String, bodyText: String?): JSONObject =
+        // The Server already has this command: it was sent before, do not send it again.
+        sendThroughChannel(deviceId, method, path, bodyText, null, JSONObject().put("ok", true).put("duplicate", true))!!
+
+    /** [duplicateResult]：Server 说这条命令已经发过时的返回值（不再重发）。 */
+    private fun sendThroughChannel(
+        deviceId: String,
+        method: String,
+        path: String,
+        bodyText: String?,
+        timeoutMillis: Long?,
+        duplicateResult: JSONObject?,
+    ): JSONObject? = runChannel(deviceId) {
         val body = bodyText?.let { withSealedKeys(it, deviceId) }
         val commandId = commandId(method, body)
         if (commandId != null) {
-            client.sendCommand(deviceId, commandId, method, path, body!!)
-                ?.toJsonObjectOrThrow()
-                // The Server already has this command: it was sent before, do not send it again.
-                ?: JSONObject().put("ok", true).put("duplicate", true)
+            val response = if (timeoutMillis != null) {
+                client.sendCommand(deviceId, commandId, method, path, body!!, timeoutMillis)
+            } else {
+                client.sendCommand(deviceId, commandId, method, path, body!!)
+            }
+            response?.toJsonObjectOrThrow() ?: duplicateResult
         } else {
-            client.requestRaw(deviceId, method, path, body).toJsonObjectOrThrow()
+            val response = if (timeoutMillis != null) {
+                client.requestRaw(deviceId, method, path, body, timeoutMillis)
+            } else {
+                client.requestRaw(deviceId, method, path, body)
+            }
+            response.toJsonObjectOrThrow()
         }
     }
 
@@ -292,6 +303,11 @@ class E2eeContentRouter(
 
     private fun isCreateAndStart(path: String): Boolean =
         apiPath(path).substringBefore('?').removePrefix("/api/v2") == "/sessions/create-and-start"
+
+    private companion object {
+        /** 与普通模式 create-and-start 的读超时相同：设备要建会话并启动 Runtime。 */
+        const val CREATE_TIMEOUT_MS = 75_000L
+    }
 }
 
 /** 一个加密好的上传文件。 */

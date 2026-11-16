@@ -70,10 +70,11 @@ class E2eeFilesTest {
     private val device = TestDevice(deviceId = "dev_paired")
     private val trust = ClientTrustStore(InMemoryTrustStorage(), Sealer())
     private val registered = CopyOnWriteArrayList<String>()
+    @Volatile private var duplicateCommands = false
     private val serverRequests = CopyOnWriteArrayList<Pair<RecordedRequest, ByteArray>>()
 
     private val e2ee by lazy {
-        E2eeClient(trust, device, { commandId, _, _ -> registered += commandId; false }, { com.agentsanywhere.app.api.E2eeServerConfig() }, { 0L })
+        E2eeClient(trust, device, { commandId, _, _ -> registered += commandId; duplicateCommands }, { com.agentsanywhere.app.api.E2eeServerConfig() }, { 0L })
     }
     private lateinit var router: E2eeContentRouter
     private val apiClient by lazy { ApiClient(contentGate = { router }) }
@@ -99,7 +100,6 @@ class E2eeFilesTest {
             client = e2ee,
             resolveSessionDevice = { _, _, id -> if (id.startsWith("sess_")) "dev_paired" else null },
             sealedUploader = { url, token, path, files, headers -> apiClient.postMultipart(url, path, files, token, headers) },
-            plainPoster = { url, token, path, body -> apiClient.postJson(url, path, body, token) },
         )
         runBlocking { e2ee.pair(device.pairingPayload(), label = "Pixel") }
     }
@@ -236,31 +236,57 @@ class E2eeFilesTest {
     }
 
     @Test
-    fun theFirstMessageOfANewSessionGoesThroughTheChannel() {
+    fun newSessionsAreCreatedByTheDeviceThroughTheChannel() {
         val body = JSONObject().put("connectorId", "dev_paired").put("projectId", "p1").put("runtime", "codex")
-            .put("content", "top secret task").put("clientMessageId", "m_first")
+            .put("title", "secret title").put("content", "top secret task").put("goalIntent", true)
+            .put("clientMessageId", "m_first")
         val created = apiClient.postJson(serverUrl, "/sessions/create-and-start", body, "token")
-        assertEquals("sess_new", created.getJSONObject("session").getString("id"))
-        val (request, sentToServer) = serverRequests.single()
-        assertEquals("/api/v2/sessions/create-and-start", request.path)
-        val createBody = JSONObject(String(sentToServer))
-        assertEquals("", createBody.getString("content"))
-        assertFalse(createBody.has("clientMessageId"))
-        assertFalse(String(sentToServer).contains("top secret"))
-        val first = device.requests.last()
-        assertEquals("/api/v2/sessions/sess_new/runtime/messages", first.getString("path"))
-        assertEquals("top secret task", first.getJSONObject("body").getString("content"))
+        assertEquals("sess_created", created.getJSONObject("session").getString("id"))
+        // Nothing reaches the Server: the title counts as content too.
+        assertTrue(serverRequests.isEmpty())
+        val sent = device.requests.last()
+        assertEquals("POST", sent.getString("method"))
+        assertEquals("/api/v2/sessions/create-and-start", sent.getString("path"))
+        // Same body as in normal mode, /goal included.
+        assertTrue(com.agentsanywhere.app.api.e2ee.jsonSimilar(body, sent.getJSONObject("body")))
+        // The first message is registered as a command, like any other message.
         assertEquals(listOf("m_first"), registered)
-        assertEquals("dev_paired", SessionDeviceDirectory.deviceFor("sess_new"))
+        assertEquals("dev_paired", SessionDeviceDirectory.deviceFor("sess_created"))
 
-        // /goal cannot be split into two steps: refused, nothing sent.
+        // Attachments need an existing session to be uploaded to: refused, nothing sent.
+        val requestsBefore = device.requests.size
         try {
-            apiClient.postJson(serverUrl, "/sessions/create-and-start", JSONObject(body.toString()).put("goalIntent", JSONObject().put("mode", "goal")), "token")
+            apiClient.postJson(
+                serverUrl, "/sessions/create-and-start",
+                JSONObject(body.toString()).put("clientMessageId", "m_att").put("attachments", JSONArray().put(JSONObject().put("fileId", "f"))),
+                "token",
+            )
             fail("expected a refusal")
         } catch (error: ApiException) {
             assertEquals(E2eeClientErrorCodes.CREATE_UNSUPPORTED, error.errorCode)
         }
-        assertEquals(1, serverRequests.size)
+        assertTrue(serverRequests.isEmpty())
+        assertEquals(requestsBefore, device.requests.size)
+
+        // A device without encryption keeps the normal Server request.
+        apiClient.postJson(serverUrl, "/sessions/create-and-start", JSONObject(body.toString()).put("connectorId", "dev_plain"), "token")
+        assertEquals("/api/v2/sessions/create-and-start", serverRequests.single().first.path)
+    }
+
+    @Test
+    fun aRepeatedCreateLeavesTheOutcomeToBeReconciled() {
+        val body = JSONObject().put("connectorId", "dev_paired").put("content", "again").put("clientMessageId", "m_dup")
+        // The Server says this command was already sent: the device's answer is not known here.
+        duplicateCommands = true
+        try {
+            apiClient.postJson(serverUrl, "/sessions/create-and-start", body, "token")
+            fail("expected an unknown outcome")
+        } catch (error: ApiException) {
+            // No status code and an IO cause: the caller looks for the session instead of reporting a failure.
+            assertNull(error.statusCode)
+            assertTrue(error.cause is java.io.IOException)
+        }
+        assertTrue(serverRequests.isEmpty())
     }
 
     @Test

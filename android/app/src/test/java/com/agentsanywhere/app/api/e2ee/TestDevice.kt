@@ -184,6 +184,9 @@ class TestDevice(
                         path == "/e2ee/v1/directory-key" -> JSONObject().put("deviceId", deviceId).put("keyId", directoryKey.keyId)
                             .put("epoch", directoryKey.epoch).put("key", directoryKey.key)
                         path.startsWith("/api/v2/connectors/$deviceId/fs/read?") && message.getString("method") == "GET" -> fileChunk(path)
+                        // The device creates and runs the session itself, then syncs the metadata to the Server.
+                        path == "/api/v2/sessions/create-and-start" && message.getString("method") == "POST" ->
+                            JSONObject().put("session", JSONObject().put("id", "sess_created").put("connectorId", deviceId))
                         message.getString("method") == "GET" && path.substringAfterLast('/') in attachments &&
                             path.contains("/attachments/") -> attachment(path.substringAfterLast('/'))
                         else -> JSONObject().put("method", message.getString("method")).put("path", path).put("echo", message.opt("body"))

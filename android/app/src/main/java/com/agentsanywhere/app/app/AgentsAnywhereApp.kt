@@ -150,9 +150,6 @@ fun AgentsAnywhereApp(
             sealedUploader = { serverUrl, token, path, files, headers ->
                 apiClient.postMultipart(serverUrl, path, files, token, headers)
             },
-            plainPoster = { serverUrl, token, path, body ->
-                apiClient.postJson(serverUrl, path, body, token, readTimeoutSeconds = 75L)
-            },
         ).also { E2eeContentGate.installed = it }
     }
     val announcementsApi = remember(apiClient) { AnnouncementsApi(apiClient) }
