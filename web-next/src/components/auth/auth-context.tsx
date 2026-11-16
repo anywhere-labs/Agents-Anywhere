@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { authApi } from "@/features/auth/api"
+import { webDeniedByE2ee } from "@/features/auth/e2ee"
 import {
   authResponseToSession,
   clearStoredSession,
@@ -51,6 +52,8 @@ type AuthState = {
   oauthPending: OAuthPending | null
   emailVerificationRequired: boolean
   passwordResetEnabled: boolean
+  /** End-to-end encryption is required and the Web client is turned off on this server. */
+  webDeniedByE2ee: boolean
   refreshConfig: () => Promise<void>
   registrationOpen: boolean
   navigate: (screen: AuthScreen) => void
@@ -180,8 +183,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [oauthPending, setOauthPending] = React.useState<OAuthPending | null>(null)
   const [emailVerificationRequired, setEmailVerificationRequired] = React.useState(false)
   const [passwordResetEnabled, setPasswordResetEnabled] = React.useState(false)
+  const [webDenied, setWebDenied] = React.useState(false)
   const refreshConfig = React.useCallback(async () => {
     const config = await authApi.config()
+    setWebDenied(webDeniedByE2ee(config))
     setEmailVerificationRequired(config.emailVerificationRequired)
     setPasswordResetEnabled(config.passwordResetEnabled === true)
     setRegistrationOpen(config.registrationOpen)
@@ -211,6 +216,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setRegistrationOpen(config.registrationOpen)
           setEmailVerificationRequired(config.emailVerificationRequired)
           setPasswordResetEnabled(config.passwordResetEnabled === true)
+          setWebDenied(webDeniedByE2ee(config))
         }
         if (config.needsBootstrap && !cancelled) {
           setScreenState("bootstrap")
@@ -440,6 +446,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         registrationOpen,
         emailVerificationRequired,
         passwordResetEnabled,
+        webDeniedByE2ee: webDenied,
         refreshConfig,
         navigate,
 
