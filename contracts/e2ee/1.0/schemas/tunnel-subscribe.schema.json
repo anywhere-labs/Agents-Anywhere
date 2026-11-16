@@ -1,0 +1,52 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:tunnel-subscribe",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Same as opening the session WebSocket in normal mode, for one session.",
+  "properties": {
+    "afterCursor": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "seq:N; events after it are replayed first",
+      "title": "Aftercursor"
+    },
+    "id": {
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+    },
+    "kind": {
+      "const": "subscribe",
+      "default": "subscribe",
+      "title": "Kind",
+      "type": "string"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    },
+    "stream": {
+      "const": "session",
+      "default": "session",
+      "title": "Stream",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "sessionId"
+  ],
+  "title": "TunnelSubscribe",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

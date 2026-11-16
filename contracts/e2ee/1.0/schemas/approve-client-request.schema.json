@@ -1,17 +1,36 @@
 {
   "$id": "urn:agents-anywhere:e2ee:1.0:approve-client-request",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "An authorised client asks the device to trust another client's key.",
+  "description": "``POST /e2ee/v1/trust/approve``: an authorised client asks the device to trust another\nclient's key (§7.2). The device confirms locally unless its policy allows otherwise.",
   "properties": {
     "clientIdentityPub": {
-      "description": "base64url without padding",
-      "minLength": 1,
+      "description": "32 bytes, base64url without padding",
+      "pattern": "^[A-Za-z0-9_-]{43}$",
       "title": "Clientidentitypub",
       "type": "string"
     },
     "label": {
       "title": "Label",
       "type": "string"
+    },
+    "platform": {
+      "anyOf": [
+        {
+          "enum": [
+            "web",
+            "desktop",
+            "android",
+            "ios",
+            "cli"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Platform"
     }
   },
   "required": [
