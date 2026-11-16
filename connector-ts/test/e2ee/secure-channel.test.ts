@@ -166,6 +166,24 @@ describe('扫码配对（XXpsk0）与重连（KK）', () => {
     expect(events).toEqual([{ type: 'timeline.item_created', seq: 1 }])
   })
 
+  it('rekey 只发生在消息之间：大消息正好跨过 rekey 时间点也不会断开', async () => {
+    const dev = await device()
+    const invitation = await dev.trust.startPairing('https://aa.example.com', 'required')
+    const link = relay(dev, generateX25519(), 'c_rekey_edge')
+    // Every clock read is 31 minutes later: a time-based rekey falls due in the middle of any multi-frame message.
+    let clientNow = now
+    const { channel } = await ClientSecureChannel.pair(parsePairingUri(invitation.uri), {
+      ...link.options,
+      now: () => (clientNow += 31 * 60 * 1000),
+      label: 'edge',
+      platform: 'ios',
+    })
+    const big = 'z'.repeat(300_000)
+    expect((await channel.request('POST', '/api/v2/big', { big })).body).toMatchObject({ echo: { big } })
+    expect((await channel.request('POST', '/api/v2/big', { big })).status).toBe(200)
+    expect(channel.closed).toBeNull()
+  })
+
   it('大消息分片，双向 rekey 后照常收发', async () => {
     const dev = await device()
     const { channel } = await pairClient(dev)
