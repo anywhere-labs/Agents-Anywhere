@@ -53,8 +53,9 @@ export class TransportSession {
   sendMessage(message: unknown): Promise<void> {
     const bytes = utf8(JSON.stringify(message))
     const run = this.#sendQueue.then(async () => {
+      // Rekey only between messages: a rekey frame inside a message is a protocol error for the receiver.
+      if (this.#framesSinceRekey >= REKEY_INTERVAL_FRAMES || this.#now() - this.#lastRekeyMs >= REKEY_INTERVAL_MS) await this.#rekey()
       for (const frame of fragment(bytes)) {
-        if (this.#framesSinceRekey >= REKEY_INTERVAL_FRAMES || this.#now() - this.#lastRekeyMs >= REKEY_INTERVAL_MS) await this.#rekey()
         await this.#writeFrame(frame)
         this.#framesSinceRekey += 1
       }

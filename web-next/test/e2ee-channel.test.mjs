@@ -172,6 +172,27 @@ test("pairing pins the device, then content flows through the channel", async ()
   assert.match(identity.clientId, formats.CLIENT_ID_PATTERN)
 })
 
+test("rekeys only between messages, so a large message crossing the rekey time stays intact", async () => {
+  const { TransportSession: Session } = await import("../src/lib/e2ee/transport.ts")
+  // Two transport halves from an XX handshake between two fresh keys.
+  const ki = await webNoiseCrypto.generateKeyPair()
+  const kr = await webNoiseCrypto.generateKeyPair()
+  const init = await HandshakeState.create({ crypto: webNoiseCrypto, protocolName: "Noise_XX_25519_AESGCM_SHA256", initiator: true, prologue: new Uint8Array(0), s: ki })
+  const resp = await HandshakeState.create({ crypto: webNoiseCrypto, protocolName: "Noise_XX_25519_AESGCM_SHA256", initiator: false, prologue: new Uint8Array(0), s: kr })
+  await resp.readMessage(await init.writeMessage())
+  await init.readMessage(await resp.writeMessage())
+  await resp.readMessage(await init.writeMessage())
+  const received = []
+  const receiver = new Session(resp.takeTransport(), { send() {}, end() {} })
+  let clock = 0
+  const sender = new Session(init.takeTransport(), { send: async (item) => received.push(...(await receiver.receive(item))), end() {} }, () => (clock += 31 * 60 * 1000))
+  const big = "z".repeat(300_000)
+  await sender.sendMessage({ big })
+  await sender.sendMessage({ big })
+  assert.equal(received.length, 2)
+  assert.equal(received[1].big.length, big.length)
+})
+
 test("the session stream is a channel subscription with normal-mode events", async () => {
   const { device, pool } = await setup()
   await pool.pair(device.pairing())
