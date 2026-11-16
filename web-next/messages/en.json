@@ -1210,7 +1210,10 @@
       "waitingApproval": "Waiting approval",
       "error": "Error",
       "unread": "Unread",
-      "blocked": "Blocked"
+      "blocked": "Blocked",
+      "planReview": "Plan review",
+      "goalActive": "Goal active",
+      "goalPaused": "Goal paused"
     },
     "signOut": {
       "confirm": "Sign out",
