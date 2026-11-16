@@ -27,7 +27,7 @@
 ### 本机连接
 
 - 设备配对码和配对时下发的连接凭据不再写入数据库，只在 Redis 里以哈希和加密形式保存到配对过期，凭据被领取一次后立即删除。（[#723](https://github.com/anywhere-labs/Agents-Anywhere/pull/723)）
-- 连接 v3 Connector 的设备上，会话内容改为打开时从设备读取、有人在看时由设备实时推送，Server 不再保存；设备离线时仍能看到会话标题和状态，并提示设备离线、历史暂不可用，设备没有及时响应时提示超时而不是离线；设备重新连上后，打开着的会话会自动补齐断线期间的内容；发出的附件被设备取走后由设备保存，之后查看时从设备读取；分享改由设备导出，设备离线时提示「设备上线后才能创建分享」；计划和目标同样由设备保存和修改，设备离线时只显示是否在规划、目标是否进行中，不能查看或修改。（[#696](https://github.com/anywhere-labs/Agents-Anywhere/pull/696)、[#702](https://github.com/anywhere-labs/Agents-Anywhere/pull/702)、[#707](https://github.com/anywhere-labs/Agents-Anywhere/pull/707)、[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
+- 连接 v3 Connector 的设备上，会话内容改为打开时从设备读取、有人在看时由设备实时推送，Server 不再保存；设备离线时仍能看到会话标题和状态，并提示设备离线、历史暂不可用，设备没有及时响应时提示超时而不是离线；设备重新连上后，打开着的会话会自动补齐断线期间的内容；发出的附件被设备取走后由设备保存，之后查看时从设备读取；分享改由设备导出，设备离线时提示「设备上线后才能创建分享」；计划和目标同样由设备保存和修改，设备离线时只显示是否在规划、目标是否进行中，不能查看或修改。（[#696](https://github.com/anywhere-labs/Agents-Anywhere/pull/696)、[#702](https://github.com/anywhere-labs/Agents-Anywhere/pull/702)、[#707](https://github.com/anywhere-labs/Agents-Anywhere/pull/707)、[#730](https://github.com/anywhere-labs/Agents-Anywhere/pull/730)）
 - 准备 Pi 时会复用本机 Node 22.19 及以上版本（包括 Node 24），不再强制下载；需要下载时，官方源连不上会自动改用 npmmirror，Python 安装源选了镜像的设备会优先使用 npmmirror；Windows 上多个进程同时准备不再报 `Resource deadlock avoided`，而是排队等待；数据目录通过 Junction 挂到其他盘时，不再误报「Node 安装包路径无效」；Node 下载失败时会提示检查网络。（[#657](https://github.com/anywhere-labs/Agents-Anywhere/pull/657)）
 
 ### Android
