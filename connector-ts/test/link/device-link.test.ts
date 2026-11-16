@@ -176,7 +176,8 @@ describe.skipIf(binary === null)('DeviceLink against a real Router', () => {
     service = new ConversationService({ store, feed, live: { emit: () => undefined }, runtimes, clock, ids: { newId: (prefix: string) => `${prefix}${Math.random().toString(36).slice(2)}` } })
     const inbox = new CommandInbox(store, clock, service)
     const outboxSignal = new OutboxSignal()
-    const handshake = new ControlPlane({ serverUrl: server.url, credential: () => server.deviceCredential, egress: () => egressValue, connectorVersion: '3.0.0-test', os: 'darwin' })
+    const stored = server.deviceCredential
+    const handshake = new ControlPlane({ serverUrl: server.url, credential: () => stored, egress: () => egressValue, connectorVersion: '3.0.0-test', os: 'darwin' })
     link = new DeviceLink({
       deviceId: server.deviceId,
       host: 'cli',
