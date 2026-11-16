@@ -10,8 +10,8 @@ import { Readable, Writable } from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { startMockMessagesLlm, type MockMessagesLlm } from '../../fixtures/mock-messages-llm.js'
-import { DshDirectProvider } from '../../../src/runtime/profiles/dsh/provider.js'
-import type { RuntimeEvent } from '../../../src/runtime/profiles/dsh/port.js'
+import { DshProvider } from '../../../src/runtime/profiles/dsh/provider.js'
+import type { RuntimeEvent } from '../../../src/application/ports/runtime-session.js'
 
 const DSH_VERSION = '0.2.2-rc.3'
 const bin = process.env.AA_DSH_ACP_BIN
@@ -114,32 +114,34 @@ describe.skipIf(!enabled)('S7 direct route: dsh --profile acp', () => {
     await a.conn.resumeSession({ sessionId, cwd: workspace, mcpServers: [] })
   })
 
-  test('the DSH-1 provider runs queued inputs in order and releases the lock on close', { timeout: 180_000 }, async () => {
-    const provider = new DshDirectProvider({ env: { ...process.env, DSH_HOME: home } })
+  test('the provider runs DSH on B\'s ACP engine: one turn at a time, and the lock is released on close', { timeout: 180_000 }, async () => {
+    const provider = new DshProvider({ env: { ...process.env, DSH_HOME: home }, cwd: workspace })
     const settings = bin ? { command: process.execPath, args: [bin], model: { apiKey: 'sk-test', baseUrl: llm.url } }
       : { model: { apiKey: 'sk-test', baseUrl: llm.url } }
     const facts = await provider.discover(settings)
     expect(facts.installed).toBe(true)
-    const route = await provider.start({ runtimeId: 'dsh', settings })
+    const runtime = await provider.start({ runtimeId: 'dsh', settings })
     try {
-      const session = await route.open({ cwd: workspace })
+      const session = await runtime.open({ kind: 'new', spec: { cwd: workspace } }, { sessionId: 'sess_e2e', replay: 'none' })
+      expect(session.routeKind).toBe('direct')
       const events: RuntimeEvent[] = []
       void (async () => { for await (const event of session.events) events.push(event) })()
       const release = llm.hold()
-      expect(await session.prompt({ text: 'one' }, { clientMessageId: 'c1', nativeRequestId: 'n1' })).toEqual({ status: 'accepted' })
-      expect(await session.prompt({ text: 'two' }, { clientMessageId: 'c2', nativeRequestId: 'n2' })).toEqual({ status: 'queued', position: 1 })
+      // DSH confirms a prompt only by working on it: acceptance waits for the held model.
+      const first = session.prompt({ text: 'one' }, { deliveryId: 'd1', clientMessageId: 'c1' })
+      for (let n = 0; n < 100 && !events.some(event => event.type === 'turn.started'); n++) await new Promise(resolve => setTimeout(resolve, 20))
+      expect(await session.prompt({ text: 'two' }, { deliveryId: 'd2', clientMessageId: 'c2' })).toMatchObject({ outcome: 'rejected', error: { code: 'session_busy' } })
       release()
-      for (let n = 0; n < 600 && events.filter(event => event.type === 'turn.ended').length < 2; n++) await new Promise(resolve => setTimeout(resolve, 50))
-      const ended = events.filter(event => event.type === 'turn.ended')
-      expect(ended.map(event => event.type === 'turn.ended' && event.deliveries)).toEqual([['n1'], ['n2']])
-      expect(events.filter(event => event.type === 'message.committed').map(event => event.type === 'message.committed' && event.text))
-        .toEqual(['pong from mock', 'pong from mock'])
-      const id = session.externalSessionId
+      expect((await first).outcome).toBe('accepted')
+      for (let n = 0; n < 600 && !events.some(event => event.type === 'turn.ended'); n++) await new Promise(resolve => setTimeout(resolve, 50))
+      expect(events.filter(event => event.type === 'message.completed' && event.role === 'assistant').map(event => event.type === 'message.completed' && event.text))
+        .toEqual(['pong from mock'])
+      const id = session.nativeSessionId
       await session.close()
       // Another process can take the session once the direct route closed it.
       const other = start()
       await other.conn.initialize({ protocolVersion: 1, clientCapabilities: {} })
       await other.conn.resumeSession({ sessionId: id, cwd: workspace, mcpServers: [] })
-    } finally { await route.stop() }
+    } finally { await runtime.stop() }
   })
 })

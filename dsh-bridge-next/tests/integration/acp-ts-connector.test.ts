@@ -22,6 +22,9 @@ const skip = existsSync(new URL('node_modules/@agentclientprotocol/sdk/package.j
 type Socket = typeof import('../../../connector-ts/src/host/dsh-socket.js')
 type Route = typeof import('../../../connector-ts/src/runtime/profiles/dsh/plugin/route.js')
 type Port = import('../../../connector-ts/src/application/ports/runtime-session.js').RuntimeEvent
+type Runtime = typeof import('../../../connector-ts/src/runtime/profiles/dsh/runtime.js')
+type Direct = typeof import('../../../connector-ts/src/runtime/profiles/dsh/direct/dialect.js')
+type Fakes = typeof import('../../../connector-ts/test/fixtures/fake-dsh-acp.js')
 
 async function until(check: () => boolean, label: string, ms = 8000) {
   for (let n = 0; n < ms / 10; n++) { if (check()) return; await delay(10) }
@@ -34,7 +37,7 @@ function collect(events: AsyncIterable<Port>): Port[] {
   return seen
 }
 
-async function fixture(options: { questions?: boolean, adapter?: TextAdapter } = {}) {
+async function fixture(options: { questions?: boolean, adapter?: TextAdapter, onRoute?: (route: ReturnType<Route['dshPluginRoute']>) => void } = {}) {
   const { DshBridgeListener } = await import(new URL('src/host/dsh-socket.ts', connectorTs).href) as Socket
   const { dshPluginRoute } = await import(new URL('src/runtime/profiles/dsh/plugin/route.ts', connectorTs).href) as Route
   // A short home: the socket lives under it and Unix socket paths are limited to ~104 bytes.
@@ -49,7 +52,11 @@ async function fixture(options: { questions?: boolean, adapter?: TextAdapter } =
   await mkdir(dir, { recursive: true })
   const routes: ReturnType<Route['dshPluginRoute']>[] = []
   const listener = new DshBridgeListener({ dir, instanceId: 'c1', connectorVersion: '3.0.0-test',
-    onConnection: connection => routes.push(dshPluginRoute(connection, 'rti_dsh')) })
+    onConnection: connection => {
+      const route = dshPluginRoute(connection, 'rti_dsh')
+      routes.push(route)
+      options.onRoute?.(route)
+    } })
   try {
     await listener.start()
     await until(() => routes.length === 1, 'the plugin dials the published socket')
@@ -240,4 +247,50 @@ test('the plugin route: images and staged files from AA reach the DSH model; fil
     assert.equal(refused.outcome === 'rejected' && refused.error.code, 'invalid_argument')
     await session.close()
   } finally { await f.close() }
+})
+
+test('DSH-5 on the real plugin: a direct session moves to the host when it connects, and back when it leaves', { timeout: 60_000, skip }, async () => {
+  const { DshRuntime } = await import(new URL('src/runtime/profiles/dsh/runtime.ts', connectorTs).href) as Runtime
+  const { dshDirectDialect } = await import(new URL('src/runtime/profiles/dsh/direct/dialect.ts', connectorTs).href) as Direct
+  const { fakeDirect } = await import(new URL('test/fixtures/fake-dsh-acp.ts', connectorTs).href) as Fakes
+  // The plugin host connects first; it is handed to the runtime once the direct session is open.
+  const pending: ReturnType<Route['dshPluginRoute']>[] = []
+  let attach: ((route: ReturnType<Route['dshPluginRoute']>) => void) | undefined
+  const f = await fixture({ onRoute: route => { if (attach) attach(route); else pending.push(route) } })
+  // The direct route is a stand-in for `dsh --profile acp` that knows the same native session.
+  const agentHandle = await f.ctx.agents.create({ sessionId: SessionId('move-ts'), agentOptions: { provider: 'test', model: 'text' }, meta: { cwd: f.home } })
+  // DSH lists (and the plugin serves) sessions that have content.
+  agentHandle.agent.session.append('turn/start', { turn: 1 })
+  agentHandle.agent.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: '开始' }] }), { surfaceOp: 'append' })
+  await f.ctx.sessions.flush(agentHandle.agent.session)
+  const direct = fakeDirect(dshDirectDialect())
+  direct.disk.persisted.push({ sessionId: 'move-ts', cwd: f.home })
+  const runtime = new DshRuntime({ instanceId: 'rti_dsh', direct: direct.connect })
+  try {
+    const session = await runtime.open({ kind: 'existing', ref: { nativeSessionId: 'move-ts', locator: f.home } }, { sessionId: 'sess_move', replay: 'none' })
+    assert.equal(session.routeKind, 'direct')
+    const events = collect(session.events)
+    attach = route => { runtime.attachHost(route) }
+    for (const route of pending.splice(0)) attach(route)
+    await until(() => session.routeKind === 'plugin' || events.some(event => event.type === 'session.lost'), 'moved to the plugin host')
+    assert.equal(session.routeKind, 'plugin', JSON.stringify(events.filter(event => event.type === 'session.lost')))
+    assert.deepEqual(direct.fake.closed, ['move-ts'], 'the direct route released the lock first')
+    assert.equal(session.hostInstance, f.ctx.agentsAnywhereRuntime.acp.hostInstance)
+    const caps = new Map(session.capabilities.items.map(item => [item.id, item.supported]))
+    assert.equal(caps.get('session.steer'), true)
+    const accepted = await session.prompt({ text: '你好' }, { deliveryId: 'd1', clientMessageId: 'cm-move' })
+    assert.equal(accepted.outcome, 'accepted', JSON.stringify(accepted))
+    await until(() => events.some(event => event.type === 'message.delta' && event.text === '你'), 'the host streams')
+    f.adapter.release?.()
+    await until(() => events.some(event => event.type === 'turn.ended'), 'turn ended on the host')
+
+    // The Connector's socket goes away (the host is gone for this Connector): back to the direct route.
+    await f.listener.stop()
+    await until(() => session.routeKind === 'direct', 'fell back to the direct route')
+    assert.equal(events.some(event => event.type === 'session.lost'), false)
+  } finally {
+    await runtime.stop()
+    await agentHandle.dispose()
+    await f.close().catch(() => undefined)
+  }
 })

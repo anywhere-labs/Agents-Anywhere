@@ -23,6 +23,7 @@ import { contentText, translateUpdate as genericTranslate } from '../../../acp/m
 import { defaultIdentity } from '../../../acp/session.js'
 import { acpFingerprint } from '../../../../domain/identity/index.js'
 import { GENERIC_CLIENT_CAPABILITIES } from '../../generic/dialect.js'
+import { DSH_SELECTIONS } from '../selections.js'
 
 export const DSH_BRIDGE_PROTOCOL = '3.0'
 
@@ -103,6 +104,10 @@ export function dshPluginDialect(): AcpDialect {
         ...extra]
     },
     identity,
+    selections: DSH_SELECTIONS,
+    // An external (DSH UI) turn ends with the plugin's turnEvent, not after a quiet period (§7).
+    endsAutonomousTurn: update => update.sessionUpdate === 'session_info_update'
+      && asRecord(dshMeta(update).turnEvent).phase === 'ended',
     newSessionParams: (spec: NewSessionSpec) => {
       if (!spec.preferredNativeSessionId) throw new JsonRpcError(-32602, 'The DSH plugin route needs the native session ID AA assigns (contracts/dsh-bridge/3.0 §3).')
       return { _meta: { dsh: { sessionId: spec.preferredNativeSessionId } } }
@@ -155,7 +160,9 @@ export function dshPluginDialect(): AcpDialect {
     },
     // Read-only history with the same item IDs as live delivery: load attaches without taking the
     // writer lock, close only detaches (invariant I1).
-    async readNativeHistory(client, ref, sessionId) {
+    async readNativeHistory(ref, window, connection) {
+      const { client } = await connection()
+      const sessionId = `history:${ref.nativeSessionId}`
       const { updates } = await client.capture(ref.nativeSessionId, () => client.request('session/load', {
         sessionId: ref.nativeSessionId, cwd: ref.locator ?? process.cwd(), mcpServers: [] }, { timeoutMs: 120_000 }))
       await client.request('session/close', { sessionId: ref.nativeSessionId }, { timeoutMs: 15_000 }).catch(() => undefined)
@@ -164,7 +171,7 @@ export function dshPluginDialect(): AcpDialect {
       const ids = identity(context)
       const items: HistoryItem[] = []
       for (const update of updates) {
-        const events = dialect.translateUpdate!(update, context)
+        const events = dialect.translateUpdate!(update, context, {})
           ?? genericTranslate(update, { identity: ids, replay: true, suppressUserEcho: false, config: [] })
         for (const event of events) {
           if (event.type === 'message.delta' || event.type === 'message.completed' || event.type === 'tool.started'
@@ -172,10 +179,18 @@ export function dshPluginDialect(): AcpDialect {
         }
       }
       attempts.delete(`${context.epoch}\u0000${context.nativeSessionId}`)
-      return { items }
+      return { items: window.limit > 0 && items.length > window.limit ? items.slice(-window.limit) : items }
     },
   }
   return dialect
+}
+
+/** What the plugin would refuse in this input, checked before it is sent (B opens the turn first). */
+export function pluginPromptProblem(input: PromptInput): RuntimeError | undefined {
+  if (input.attachments?.some(item => item.kind === 'inline' && !item.mimeType.startsWith('image/'))) {
+    return { code: 'invalid_attachment', message: 'DSH takes inline images only; send other files as files.' }
+  }
+  return undefined
 }
 
 /** Text, inline images, image files read inline, other files as `resource_link` + `_meta.dsh.upload` (§8). */

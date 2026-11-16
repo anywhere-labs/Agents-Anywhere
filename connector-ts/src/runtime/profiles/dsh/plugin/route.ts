@@ -4,7 +4,6 @@
  * it with the plugin as the Agent and this Connector as the Client (B's generic ACP engine).
  */
 import type { Duplex } from 'node:stream'
-import type { RuntimeHandle } from '../../../../application/ports/runtime-session.js'
 import { AcpRuntimeHandle, peerConnection } from '../../../acp/handle.js'
 import { JsonRpcPeer, ndjsonTransport } from '../../../acp/jsonrpc.js'
 import { dshPluginDialect } from './dialect.js'
@@ -20,7 +19,7 @@ export interface DshHostHello {
 
 export interface DshPluginRoute {
   readonly hello: DshHostHello
-  readonly handle: RuntimeHandle
+  readonly handle: AcpRuntimeHandle
   /** Resolves when the host disconnects (plugin unloaded, DSH quit, replaced by a newer connection). */
   readonly closed: Promise<string>
 }

@@ -1,10 +1,19 @@
 /**
- * DSH runtime provider. DSH-1 ships the direct route only; the plugin route and the
- * switch between them (DSH-4/5) plug in behind the same provider.
+ * DSH runtime provider: one `DshRuntime` per instance, serving the direct route (DSH's automation
+ * ACP, started on demand) and every plugin host the Connector's local socket hands it
+ * (`DshRuntime.attachHost`).
  */
-import { DshDirectRoute } from './direct/route.js'
-import { dshEnvironment, resolveDshLaunch, systemProbe, type LaunchProbe } from './launcher.js'
-import type { ProviderFacts, RuntimeInstanceConfig, RuntimeProvider } from './port.js'
+import { processConnection } from '../../acp/handle.js'
+import { dshDirectDialect } from './direct/dialect.js'
+import { dshEnvironment, resolveDshLaunch, systemProbe, type DshLaunchPlan, type LaunchProbe } from './launcher.js'
+import { DshRuntime } from './runtime.js'
+import { dshHomeOf, type DshSessionIds } from './session-ids.js'
+
+export interface DshProviderFacts {
+  installed: boolean
+  version?: string
+  detail: Record<string, unknown>
+}
 
 export interface DshInstanceSettings {
   /** Full override of the launch command (advanced). */
@@ -37,9 +46,11 @@ export interface DshProviderDeps {
   env?: NodeJS.ProcessEnv
   /** `dsh` executables bundled with DSH Desktop, as the host knows them. */
   desktopExecutables?: readonly string[]
+  /** Working directory of the direct-route process. */
+  cwd?: string
 }
 
-export class DshDirectProvider implements RuntimeProvider {
+export class DshProvider {
   readonly type = 'dsh' as const
   constructor(private readonly deps: DshProviderDeps = {}) {}
 
@@ -52,7 +63,8 @@ export class DshDirectProvider implements RuntimeProvider {
     }
   }
 
-  async discover(settings: Record<string, unknown> = {}): Promise<ProviderFacts> {
+  /** Whether the direct route can start (a plugin host can serve without it). */
+  async discover(settings: Record<string, unknown> = {}): Promise<DshProviderFacts> {
     try {
       const plan = await resolveDshLaunch(this.launchOptions(parseDshSettings(settings)), this.deps.probe ?? systemProbe(this.deps.env))
       return { installed: true, ...(plan.version ? { version: plan.version } : {}), detail: { route: 'direct', source: plan.source } }
@@ -61,10 +73,15 @@ export class DshDirectProvider implements RuntimeProvider {
     }
   }
 
-  async start(instance: RuntimeInstanceConfig): Promise<DshDirectRoute> {
+  /** The instance's runtime. Without a launchable `dsh` it serves plugin hosts only. */
+  async start(instance: { runtimeId: string, settings: Record<string, unknown>, ids?: DshSessionIds }): Promise<DshRuntime> {
     const settings = parseDshSettings(instance.settings)
-    const plan = await resolveDshLaunch(this.launchOptions(settings), this.deps.probe ?? systemProbe(this.deps.env))
-    return DshDirectRoute.start({ plan, env: dshEnvironment(this.deps.env ?? process.env,
-      { ...(settings.dshHome ? { dshHome: settings.dshHome } : {}), ...(settings.model ? { model: settings.model } : {}) }) })
+    let plan: DshLaunchPlan | undefined
+    try { plan = await resolveDshLaunch(this.launchOptions(settings), this.deps.probe ?? systemProbe(this.deps.env)) } catch { plan = undefined }
+    const env = dshEnvironment(this.deps.env ?? process.env, { ...(settings.dshHome ? { dshHome: settings.dshHome } : {}), ...(settings.model ? { model: settings.model } : {}) })
+    const direct = plan ? processConnection({ command: plan.command, args: plan.args, cwd: this.deps.cwd ?? process.cwd(), env }, dshDirectDialect(),
+      { initializeTimeoutMs: plan.source === 'npx' ? 180_000 : 30_000 }) : undefined
+    return new DshRuntime({ instanceId: instance.runtimeId, ...(direct ? { direct } : {}), ...(instance.ids ? { ids: instance.ids } : {}),
+      dshHome: dshHomeOf(settings, this.deps.env ?? process.env) })
   }
 }

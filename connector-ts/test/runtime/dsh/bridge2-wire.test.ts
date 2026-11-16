@@ -169,14 +169,15 @@ describe.skipIf(binary === null)('dsh-bridge 2.0 over a real MeshCall Router (DS
   test('commands map onto the 2.0 Bridge methods; refusals and plugin errors surface with their codes', async () => {
     const { bridge, runtime } = await setup()
     const session = await runtime.open({ platformSessionId: 'sess_1', cwd: '/w' })
-    expect(session.capabilities['session.send_message']?.supported).toBe(true)
-    expect(session.capabilities['runtime.attachment']?.supported).toBe(false)
-    await expect(session.prompt({ text: 'x', images: [{ mimeType: 'image/png', data: '' }] }, { clientMessageId: 'm0', nativeRequestId: 'm0' }))
-      .rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' })
-    expect(await session.prompt({ text: 'hello' }, { clientMessageId: 'm1', nativeRequestId: 'm1' })).toEqual({ status: 'accepted' })
-    expect(session.externalSessionId).toBe('aa_native_1')
-    expect(await session.prompt({ text: 'again' }, { clientMessageId: 'm2', nativeRequestId: 'm2' })).toEqual({ status: 'accepted' })
-    await expect(session.prompt({ text: 'refuse' }, { clientMessageId: 'm3', nativeRequestId: 'm3' })).rejects.toMatchObject({ code: 'session_unavailable' })
+    const caps = new Map(session.capabilities.items.map(item => [item.id, item.supported]))
+    expect(caps.get('session.send_message')).toBe(true)
+    expect(caps.get('runtime.attachment')).toBe(false)
+    expect(await session.prompt({ text: 'x', attachments: [{ kind: 'inline', mimeType: 'image/png', data: '' }] }, { deliveryId: 'd0', clientMessageId: 'm0' }))
+      .toMatchObject({ outcome: 'rejected', error: { code: 'attachments_unsupported' } })
+    expect(await session.prompt({ text: 'hello' }, { deliveryId: 'd1', clientMessageId: 'm1' })).toEqual({ outcome: 'accepted' })
+    expect(session.nativeSessionId).toBe('aa_native_1')
+    expect(await session.prompt({ text: 'again' }, { deliveryId: 'd2', clientMessageId: 'm2' })).toEqual({ outcome: 'accepted' })
+    expect(await session.prompt({ text: 'refuse' }, { deliveryId: 'd3', clientMessageId: 'm3' })).toMatchObject({ outcome: 'rejected', error: { code: 'session_unavailable' } })
     await expect(session.cancel()).rejects.toMatchObject({ code: 'SESSION_NOT_FOUND' })
     const sent = bridge.calls.filter(call => ['createAndStartSession', 'startTurn'].includes(call.method))
     expect(sent[0]).toMatchObject({ method: 'createAndStartSession', request: { sessionId: 'sess_1', content: 'hello', clientMessageId: 'm1', cwd: '/w' } })
@@ -184,7 +185,7 @@ describe.skipIf(binary === null)('dsh-bridge 2.0 over a real MeshCall Router (DS
     expect(sent.every(call => call.namespace === 'ns_1')).toBe(true)
   })
 
-  test('the plugin going away closes open sessions with runtime.closed', async () => {
+  test('the plugin going away closes open sessions with session.lost', async () => {
     const { runtime, plugin, bridge } = await setup()
     const session = await runtime.open({ platformSessionId: 'sess_1', cwd: '/w' })
     bridge.stop()
@@ -192,7 +193,7 @@ describe.skipIf(binary === null)('dsh-bridge 2.0 over a real MeshCall Router (DS
     await expect(runtime.request('ping')).rejects.toThrow()
     const events = []
     for await (const event of session.events) events.push(event)
-    expect(events).toEqual([expect.objectContaining({ type: 'runtime.closed' })])
+    expect(events).toEqual([expect.objectContaining({ type: 'session.lost' })])
   })
 })
 

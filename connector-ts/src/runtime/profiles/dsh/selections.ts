@@ -5,7 +5,10 @@
  * v2 IDs (`dsh:model:…`, contracts/identity-vectors `selection.dshModelSelectionId`).
  */
 import { dshModelSelectionId, dshPermissionSelectionId } from '../../../domain/identity/selection.js'
-import type { ConfigChange } from './port.js'
+import type { SelectionCodec } from '../../acp/dialect.js'
+import { acpSelectionId } from '../../../domain/identity/selection.js'
+
+export interface ConfigChange { configId: string, value: string }
 
 export function modelValue(provider: string, model: string): string {
   return JSON.stringify([provider, model])
@@ -49,4 +52,10 @@ export function configChangesFor(selectionId: string): ConfigChange[] | undefine
   const preset = decode(selectionId, 'dsh:permission:')
   if (preset !== undefined && preset && dshPermissionSelectionId(preset) === selectionId) return [{ configId: 'permission', value: preset }]
   return undefined
+}
+
+/** Both routes' selection IDs (B's engine decodes by matching the current config values). */
+export const DSH_SELECTIONS: SelectionCodec = {
+  modelSelectionId: (model, effort) => modelSelectionIdOf(model, effort) ?? acpSelectionId(model, effort),
+  permissionSelectionId: value => dshPermissionSelectionId(value),
 }

@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
-import { createDirectSession } from '../../../src/runtime/profiles/dsh/direct/create.js'
+import { dshDirectDialect } from '../../../src/runtime/profiles/dsh/direct/dialect.js'
+import { DshRuntime } from '../../../src/runtime/profiles/dsh/runtime.js'
 import { canonicalPath, DshSessionIds, dshHomeOf, MemoryAliasStore } from '../../../src/runtime/profiles/dsh/session-ids.js'
 import { dshPluginSessionId } from '../../../src/domain/identity/dsh.js'
-import { startFake } from '../../fixtures/fake-dsh-acp.js'
+import { fakeDirect } from '../../fixtures/fake-dsh-acp.js'
 
 interface Vector { input: { connectorId: string, runtimeId: string, dshHome: string, platform: 'darwin' | 'linux' | 'win32', externalSessionId: string },
   output: { namespace: string, sessionId: string } }
@@ -50,46 +51,47 @@ describe('DSH session identity (DSH-2)', () => {
 })
 
 describe('direct-route creation never makes two sessions (DSH-2)', () => {
-  test('a normal creation records the alias and clears the intent', async () => {
-    const { route } = await startFake()
+  function setup() {
+    const direct = fakeDirect(dshDirectDialect())
     const store = new MemoryAliasStore()
     const ids = new DshSessionIds('conn_1', store)
-    const { session, adopted } = await createDirectSession(route, ids, { platformSessionId: 'sess_a', cwd: '/w' })
-    expect(adopted).toBe(false)
-    expect(await ids.dshId('sess_a')).toBe(session.externalSessionId)
+    const runtime = new DshRuntime({ instanceId: 'rti_dsh', direct: direct.connect, ids })
+    const create = (platformSessionId: string) => runtime.open({ kind: 'new', spec: { cwd: '/w' } }, { sessionId: platformSessionId, replay: 'none' })
+    return { direct, store, ids, runtime, create }
+  }
+
+  test('a normal creation records the alias and clears the intent', async () => {
+    const { store, ids, create } = setup()
+    const session = await create('sess_a')
+    expect(await ids.dshId('sess_a')).toBe(session.nativeSessionId)
     expect(store.intents.size).toBe(0)
     // Retrying the same AA session resumes the aliased DSH session.
     await session.close()
-    const again = await createDirectSession(route, ids, { platformSessionId: 'sess_a', cwd: '/w' })
-    expect(again.adopted).toBe(true)
-    expect(again.session.externalSessionId).toBe(session.externalSessionId)
+    const again = await create('sess_a')
+    expect(again.nativeSessionId).toBe(session.nativeSessionId)
   })
 
   test('a lost session/new answer is reconciled by adopting the one new session in that cwd', async () => {
-    const { fake, route } = await startFake()
-    const store = new MemoryAliasStore()
-    const ids = new DshSessionIds('conn_1', store)
-    fake.dropNextNewSession = true
-    await expect(createDirectSession(route, ids, { platformSessionId: 'sess_b', cwd: '/w' })).rejects.toThrow()
+    const { direct, store, runtime, create } = setup()
+    await runtime.listNativeSessions()
+    direct.fake.dropNextNewSession = true
+    await expect(create('sess_b')).rejects.toThrow()
     expect(store.intents.has('sess_b')).toBe(true)
-    const lost = fake.persisted[0]!.sessionId
-    const retry = await createDirectSession(route, ids, { platformSessionId: 'sess_b', cwd: '/w' })
-    expect(retry.adopted).toBe(true)
-    expect(retry.session.externalSessionId).toBe(lost)
-    expect(fake.persisted.filter(item => item.cwd === '/w').length).toBe(2) // cold-1 plus the adopted one, no third
+    const lost = direct.disk.persisted[0]!.sessionId
+    const retry = await create('sess_b')
+    expect(retry.nativeSessionId).toBe(lost)
+    expect(direct.disk.persisted.filter(item => item.cwd === '/w').length).toBe(2) // cold-1 plus the adopted one, no third
     expect(store.intents.size).toBe(0)
   })
 
   test('an ambiguous cwd is not guessed: the retry creates a fresh session', async () => {
-    const { fake, route } = await startFake()
-    const store = new MemoryAliasStore()
-    const ids = new DshSessionIds('conn_1', store)
-    fake.dropNextNewSession = true
-    await expect(createDirectSession(route, ids, { platformSessionId: 'sess_c', cwd: '/w' })).rejects.toThrow()
+    const { direct, runtime, create } = setup()
+    await runtime.listNativeSessions()
+    direct.fake.dropNextNewSession = true
+    await expect(create('sess_c')).rejects.toThrow()
     // Someone else created a session in the same cwd meanwhile.
-    fake.persisted.unshift({ sessionId: 'someone-else', cwd: '/w' })
-    const retry = await createDirectSession(route, ids, { platformSessionId: 'sess_c', cwd: '/w' })
-    expect(retry.adopted).toBe(false)
-    expect(['someone-else', fake.persisted[2]!.sessionId]).not.toContain(retry.session.externalSessionId)
+    direct.disk.persisted.unshift({ sessionId: 'someone-else', cwd: '/w' })
+    const retry = await create('sess_c')
+    expect(['someone-else', direct.disk.persisted[2]!.sessionId]).not.toContain(retry.nativeSessionId)
   })
 })
