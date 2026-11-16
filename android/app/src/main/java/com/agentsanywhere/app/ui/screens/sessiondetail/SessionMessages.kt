@@ -12,7 +12,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -80,6 +82,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.Font
@@ -100,6 +103,7 @@ import com.agentsanywhere.app.feature.sessiondetail.TimelineAttachment
 import com.agentsanywhere.app.feature.sessiondetail.TimelineAgentCallAction
 import com.agentsanywhere.app.feature.sessiondetail.TimelineMessage
 import com.agentsanywhere.app.feature.sessiondetail.TimelineMessageKind
+import com.agentsanywhere.app.feature.sessiondetail.isFailedLocalSend
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.valentinilk.shimmer.shimmer
@@ -287,6 +291,7 @@ internal fun MessageList(
     onCopyMessage: (String) -> Unit,
     onShareReply: (List<String>) -> Unit,
     onOpenFile: (String) -> Unit,
+    onFailedMessage: (TimelineMessage) -> Unit = {},
     onRespondNotice: (RuntimeNotice, RuntimeNoticeAction, Map<String, Any?>?) -> Unit = { _, _, _ -> },
 ) {
     val listState = rememberLazyListState(
@@ -541,6 +546,7 @@ internal fun MessageList(
                                             onOpenAttachment = onOpenAttachment,
                                             onCopyMessage = onCopyMessage,
                                             onOpenFile = onOpenFile,
+                                            onFailedMessage = onFailedMessage,
                                             interaction = interactionByTarget[item.message.sourceItemId],
                                             canRespondToNotices = canRespondToNotices,
                                             respondingNoticeIds = respondingNoticeIds,
@@ -1229,6 +1235,7 @@ private fun TimelineMessageRow(
     onOpenAttachment: (TimelineAttachment) -> Unit,
     onCopyMessage: (String) -> Unit,
     onOpenFile: (String) -> Unit,
+    onFailedMessage: (TimelineMessage) -> Unit = {},
     interaction: RuntimeNotice? = null,
     canRespondToNotices: Boolean = false,
     respondingNoticeIds: Set<String> = emptySet(),
@@ -1293,6 +1300,7 @@ private fun TimelineMessageRow(
                 onPreviewAttachment,
                 onOpenAttachment,
                 onCopyMessage,
+                onFailedMessage,
             )
             MessageAuthor.Agent -> AgentMessageContent(
                 message = message,
@@ -1374,6 +1382,7 @@ private fun UserBubble(
     onPreviewAttachment: (TimelineAttachment) -> Unit,
     onOpenAttachment: (TimelineAttachment) -> Unit,
     onCopyMessage: (String) -> Unit,
+    onFailedMessage: (TimelineMessage) -> Unit = {},
 ) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val maxBubbleWidth = maxWidth * 0.78f
@@ -1458,7 +1467,11 @@ private fun UserBubble(
                         }
                     }
                 }
-                if (meta.isNotBlank()) {
+                if (message.isFailedLocalSend) {
+                    DisableSelection {
+                        FailedSendMarker(onClick = { onFailedMessage(message) })
+                    }
+                } else if (meta.isNotBlank()) {
                     DisableSelection {
                         Text(
                             text = meta,
@@ -1474,6 +1487,39 @@ private fun UserBubble(
                 }
             }
         }
+    }
+}
+
+/** Marks a send that failed on this device; tapping it shows why and offers deletion. */
+@Composable
+private fun FailedSendMarker(onClick: () -> Unit) {
+    val color = LocalAAColors.current.errorIcon
+    Row(
+        modifier = Modifier
+            .heightIn(min = 32.dp)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClickLabel = stringResource(R.string.session_failed_send_action),
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .padding(horizontal = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Lucide.CircleAlert,
+            contentDescription = null,
+            tint = color,
+            modifier = Modifier.size(13.dp),
+        )
+        Text(
+            text = stringResource(R.string.session_failed_send_status),
+            color = color,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 

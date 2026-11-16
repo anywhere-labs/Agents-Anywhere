@@ -1571,7 +1571,9 @@ private fun markdownStyles(darkMode: Boolean, compact: Boolean): MarkdownStyles 
             color = body,
             fontSize = if (compact) 14.sp else 17.sp,
             lineHeight = if (compact) 21.sp else 27.sp,
-            fontWeight = if (compact) FontWeight.Light else FontWeight.Normal,
+            // Not Light: expanded reasoning was the app's only weight-300 text, and expanding it
+            // crashed on Xiaomi HyperOS 4 devices, whose system font layer resolves weights itself.
+            fontWeight = FontWeight.Normal,
         ),
         compact = compact,
     )

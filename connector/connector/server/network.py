@@ -100,12 +100,19 @@ class NetworkEgress:
         return egress
 
 
+# Pool timeouts in a row, with no response in between, after which a pool is wedged.
+POOL_TIMEOUTS_BEFORE_RETIRE = 3
+
+
 class _Route:
     """One connection pool, on one route to the Server."""
 
     def __init__(self, egress: Egress) -> None:
         self.egress = egress
         self.active = 0
+        # Belongs to this pool: a late result from a retired pool never counts
+        # against the pool that replaced it.
+        self.pool_timeouts = 0
         self.transport = httpx.AsyncHTTPTransport(verify=tls_context(), trust_env=False, proxy=_httpx_proxy(egress.proxy))
 
 
@@ -164,9 +171,16 @@ class _EgressTransport(httpx.AsyncBaseTransport):
 
         try:
             response = await route.transport.handle_async_request(request)
+        except httpx.PoolTimeout:
+            await release()
+            await self._note_pool_timeout(route)
+            raise
         except BaseException:
             await release()
             raise
+        # Any response, a 401 or a 5xx included, means the pool handed out a
+        # working connection; only that proves the pool healthy again.
+        route.pool_timeouts = 0
         response.stream = _RouteStream(response.stream, release)
         return response
 
@@ -176,14 +190,56 @@ class _EgressTransport(httpx.AsyncBaseTransport):
         self._route = None
         await asyncio.gather(*(route.transport.aclose() for route in routes), return_exceptions=True)
 
+    async def _note_pool_timeout(self, route: _Route) -> None:
+        """Retire the pool once it has timed out waiting for a connection too often.
+
+        httpcore can leave a connection unusable without returning it to the pool;
+        a shared client then waits out the pool timeout on every request and never
+        recovers, even while the WebSocket stays up (issue #381). Only pool
+        timeouts count: refused connections, 401s, 429s and 5xx are not the pool's
+        fault and a new pool would not help. Whether to send again stays with the
+        caller, so a request with side effects is never replayed here.
+        """
+
+        route.pool_timeouts += 1
+        if route is not self._route or route.pool_timeouts < POOL_TIMEOUTS_BEFORE_RETIRE:
+            return
+        logger.warning(
+            "retiring the HTTP connection pool after {} pool timeouts in a row route={}",
+            route.pool_timeouts,
+            route.egress,
+        )
+        await self.retire_route()
+
+    async def retire_route(self) -> None:
+        """Stop handing out the current pool; close it once its requests finish.
+
+        The pool is retired, not aborted: closing it outright would abort the
+        requests still running on it, and ``ClosedResourceError`` would escape to
+        the control loop and stop the Connector.
+        """
+
+        route, self._route = self._route, None
+        if route is not None:
+            self._retired.add(route)
+            await self._close_if_idle(route)
+
     async def _current_route(self) -> _Route:
-        egress = self._egress.current
-        if self._route is None or self._route.egress != egress:
-            previous, self._route = self._route, _Route(egress)
-            if previous is not None:
-                self._retired.add(previous)
-                await self._close_if_idle(previous)
-        return self._route
+        while True:
+            egress = self._egress.current
+            route = self._route
+            if route is not None and route.egress == egress:
+                return route
+            # Building a route can await while the previous one closes, and a
+            # concurrent ``retire_route`` may drop the new one in that window.
+            # Only return a route that is still the current one.
+            fresh = _Route(egress)
+            self._route = fresh
+            if route is not None:
+                self._retired.add(route)
+                await self._close_if_idle(route)
+            if self._route is fresh:
+                return fresh
 
     async def _close_if_idle(self, route: _Route) -> None:
         if route in self._retired and route.active == 0:

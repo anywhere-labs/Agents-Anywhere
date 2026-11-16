@@ -17,7 +17,7 @@ Web / Desktop / Android / iOS
   → Pi SDK
 ```
 
-默认 Provider 为 Codex、Claude、DSH、Pi、Hermes。Pi 使用 `runtimeType=pi`、`implementationType=acp-stdio`，ACP 是内部对接协议。通用 `AcpRuntime` 通过注入 `AgentProfile`、启动配置、准备策略复用协调逻辑，其他 Agent 可以有自己的 Provider 身份；默认列表没有单独名为 ACP 的入口。
+默认 Provider 包括 Codex、Claude、DSH，以及 Pi、Hermes、Command Code、OpenCode、Google Antigravity、MiniMax Code、CodeBuddy Code 和 MiMo Code。各 ACP Agent 保留自己的 Runtime 身份，使用 `implementationType=acp-stdio`，由 `AcpRuntime` 复用协调逻辑。
 
 Pi 的 `PiProvider` 直接实现 `RuntimeProvider` 的配置、发现和启动流程，优先复用本机 npm 安装的 Pi SDK，第三方 `@openma/pi-acp` 提供 ACP 入口并在自己的进程内调用该 SDK。
 
@@ -71,7 +71,7 @@ CLI 和 AA 对同一会话按顺序切换。浏览直接读取默认目录及额
 | `@earendil-works/pi-ai` | `1.4.0` |
 | `@earendil-works/pi-agent-core` | `1.4.0` |
 
-安装器优先复用本机带 npm 的 Node `>=22.19 <23`；否则下载 Node `22.23.2` 并检查官方 SHA-256。下载目标覆盖 macOS、Windows、Linux 的 x64/arm64，Linux 要求 glibc。这里描述代码中的平台选择逻辑，不表示各目标已有运行验证结果。
+Pi 的 npm 依赖列表在 `profiles/pi/dependencies.json`，Desktop 打包时用同一份列表预装到安装包的 `pi-runtime`。Connector 发现预装目录（`AA_PI_BUNDLED_RUNTIME`）的依赖列表与自己一致时，直接复制到 npm 缓存，不联网。运行 Pi 用的 Node 依次取：本机带 npm 的 Node `>=22.19`（与 Pi 各包声明的 engines 一致）、Desktop 自己的 Electron（`AA_ELECTRON_NODE`，以 `ELECTRON_RUN_AS_NODE=1` 启动，并用 `--import` 在 Pi 启动前清掉这个变量，避免传给 Agent 执行的命令）、下载的 Node `22.23.2`。需要下载时，Node 依次尝试 `AA_NODE_MIRROR`、nodejs.org、npmmirror，每个来源都用其自带的 `SHASUMS256.txt` 校验；npm 包依次尝试 `AA_NPM_REGISTRY`、registry.npmjs.org、npmmirror。Desktop 在 Python 安装源选用镜像时把两者都设为 npmmirror。Node 全部来源都失败时报 `node_download_failed`。多个进程同时准备时按安装锁排队，最多等待 10 分钟，超时报 `agent_install_busy`。Desktop 启动时的 Pi 预检失败不阻止 Connector 环境就绪，Pi 会在首次使用时再次准备并在会话中报告错误。下载目标覆盖 macOS、Windows、Linux 的 x64/arm64，Linux 要求 glibc。这里描述代码中的平台选择逻辑，不表示各目标已有运行验证结果。
 
 依赖按固定依赖表的摘要缓存到 `npm-runtimes/`，安装过程使用文件锁、临时目录和原子重命名。npm 使用 `--omit=dev --ignore-scripts --package-lock=false`，安装发布包，不在工作设备编译应用源码。除适配器外的直接依赖版本固定，但没有锁定完整传递依赖树，不能把缓存身份当作可重现制品摘要。
 
@@ -148,6 +148,8 @@ TUI 协作、最终模型请求守卫、持久接纳回执和原生位置选择�
 | 公共引擎 | `infrastructure/acp/client.py`、`application/sessions.py`、`runtime.py` | 进程与连接、握手、新建与恢复、发送与中断、接纳判定、用户消息写入、能力推导、命令、交互、历史重放和同步 |
 
 `provider.py` 的 `AcpAgentProvider` 把定义装配成 RuntimeProvider；Pi 和 Hermes 的 Provider 只是它的薄封装。
+
+Command Code、OpenCode、Google Antigravity、MiniMax Code、CodeBuddy Code 和 MiMo Code 由 Connector 启动已安装的官方 CLI，沿用本机认证与模型配置。Windows 上，已知 npm 启动器通过 Node 执行对应包入口。通用层按握手恢复已有 AA 绑定；这些 profile 关闭原生会话清单，避免将外部会话同步成无法读取的时间线。Command Code 的原生会话模式映射为 AA 权限选择，MiniMax Code 的权限配置项映射到同一目录。
 
 **接纳**：接纳表示 Agent 已在处理这条输入，不代表执行成功。发出 prompt 后，本轮第一个助手、思考、工具调用事件，Agent 在本轮发起的审批或表单，`session/prompt` 正常返回，以及方言声明的额外证据，都算接纳证据；子进程启动、请求写入 stdin、恢复时重放的历史都不算。确认接纳时，引擎写入带 `clientMessageId` 的用户消息；方言声明 Agent 会自行回显用户消息时，引擎不再写入。
 

@@ -33,6 +33,7 @@ from agent_server.services.model_channels import (
     ModelChannelService,
 )
 from agent_server.services.model_config import ModelConfigError, ModelConfigService
+from agent_server.services.session_message_queue import MessageQueueService
 from agent_server.services.session_run import SessionRunConflictError, SessionRunService
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.terminal import TerminalService
@@ -78,7 +79,17 @@ def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService
         conn.app.state.session_runtime_state_cache,
         conn.app.state.capability_refresh,
         runtime_event=model_channel_service_for(conn.app.state).runtime_event,
+        session_idle=message_queue_wake_for(conn.app.state),
     )
+
+
+def message_queue_wake_for(state: Any):
+    dispatcher = getattr(state, "message_queue_dispatcher", None)
+    return dispatcher.wake if dispatcher is not None else None
+
+
+def get_message_queue_wake(conn: HTTPConnection):
+    return message_queue_wake_for(conn.app.state)
 
 
 def get_usage_recorder(conn: HTTPConnection) -> UsageRecorder:
@@ -108,7 +119,12 @@ def get_connector_file_service(conn: HTTPConnection) -> ConnectorFileService:
 
 
 def get_session_run_service(conn: HTTPConnection) -> SessionRunService:
-    channels = model_channel_service_for(conn.app.state)
+    return session_run_service_for(conn.app.state)
+
+
+def session_run_service_for(state: Any) -> SessionRunService:
+    """Build the run service from app state (requests and background dispatch)."""
+    channels = model_channel_service_for(state)
 
     async def prepare_channel(connector_id: str, runtime_id: str, *, user_id: str) -> str:
         try:
@@ -125,12 +141,23 @@ def get_session_run_service(conn: HTTPConnection) -> SessionRunService:
             raise SessionRunConflictError(exc.detail) from exc
 
     return SessionRunService(
-        conn.app.state.store,
-        conn.app.state.rpc,
-        conn.app.state.device_runtime_service,
-        usage_recorder=get_usage_recorder(conn),
+        state.store,
+        state.rpc,
+        state.device_runtime_service,
+        usage_recorder=state.usage_recorder,
         prepare_model_channel=prepare_channel,
         admit_runtime=admit,
+        message_queue=getattr(state, "message_queue_dispatcher", None),
+        queue_broker=getattr(state, "timeline_broker", None),
+    )
+
+
+def get_message_queue_service(conn: HTTPConnection) -> MessageQueueService:
+    state = conn.app.state
+    return MessageQueueService(
+        state.store,
+        getattr(state, "timeline_broker", None),
+        getattr(state, "message_queue_dispatcher", None),
     )
 
 

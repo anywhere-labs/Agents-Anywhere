@@ -14,6 +14,7 @@ fun runtimeErrorRes(code: String?): Int? = when (code) {
     "agent_cli_unsupported" -> R.string.runtime_error_agent_cli_unsupported
     "agent_configuration_failed" -> R.string.runtime_error_agent_configuration_failed
     "agent_guarantees_missing" -> R.string.runtime_error_agent_guarantees_missing
+    "agent_install_busy" -> R.string.runtime_error_agent_install_busy
     "agent_install_failed" -> R.string.runtime_error_agent_install_failed
     "agent_open_failed" -> R.string.runtime_error_agent_open_failed
     "agent_projection_failed" -> R.string.runtime_error_agent_projection_failed
@@ -64,6 +65,7 @@ fun runtimeErrorRes(code: String?): Int? = when (code) {
     "node_archive_too_large" -> R.string.runtime_error_node_archive_too_large
     "node_checksum_mismatch" -> R.string.runtime_error_node_checksum_mismatch
     "node_checksum_missing" -> R.string.runtime_error_node_checksum_missing
+    "node_download_failed" -> R.string.runtime_error_node_download_failed
     "node_install_invalid" -> R.string.runtime_error_node_install_invalid
     "node_platform_unsupported" -> R.string.runtime_error_node_platform_unsupported
     "not_pending" -> R.string.runtime_error_not_pending

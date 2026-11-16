@@ -6,7 +6,11 @@ import type {
 } from "@/generated/protocol/v1_1/capabilities-response";
 import type { ProtocolModelCatalog } from "@/generated/protocol/v1_1/model-catalog-response";
 import type { ProtocolPermissionCatalog } from "@/generated/protocol/v1_1/permission-catalog-response";
-import type { ProtocolSessionSnapshotResponse } from "@/generated/protocol/v1_1/session-snapshot-response";
+import type {
+  ProtocolSessionSnapshotResponse,
+  SessionQueueItem,
+  SessionQueueState,
+} from "@/generated/protocol/v1_1/session-snapshot-response";
 import type { ProtocolWsTicketResponse } from "@/generated/protocol/v1_1/ws-ticket-response";
 
 export type {
@@ -816,6 +820,8 @@ export type FsWriteResult = {
   sha256: string;
 };
 
+export type { SessionQueueItem, SessionQueueState };
+
 export type RpcResponse<T> = {
   ok: boolean;
   result: T;
@@ -895,6 +901,8 @@ export type InlineAttachmentRef = AttachmentRef & {
 export type MessageSendOptions = {
   attachments?: AttachmentRef[];
   clientMessageId?: string;
+  /** Only sent when ``session.queue`` is usable and the message must wait. */
+  queue?: "auto" | "interrupt";
 };
 
 export type SessionRuntimeState = {

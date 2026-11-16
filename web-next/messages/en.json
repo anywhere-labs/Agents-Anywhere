@@ -682,6 +682,9 @@
         "secretRequired": "The address changed. Enter the API key again."
       },
       "runtimeConfigFields": {
+        "agentCliPath": {
+          "label": "Agent executable path (optional)"
+        },
         "claudeExecutablePath": {
           "label": "Claude executable path (optional)",
           "description": "Optional. Fill this only when Claude Code is not available on the default PATH."
@@ -1169,7 +1172,34 @@
       "modelRetryDelay": "Waiting {seconds} seconds before this retry.",
       "modelRetryCompleted": "Retry finished. The model responded.",
       "modelRetryInterrupted": "Model request retry cancelled.",
-      "modelRetryFailed": "The model request failed after retrying."
+      "modelRetryFailed": "The model request failed after retrying.",
+      "queuePlaceholder": "Agent is running. Press Enter to queue; it sends when the task ends",
+      "queueMoreOptions": "More ways to send",
+      "deliveryQueue": "Queue",
+      "deliveryQueueHint": "Send when the current task ends",
+      "deliveryInterrupt": "Interrupt and send",
+      "deliveryInterruptHint": "Stop the current task and send this as a new one",
+      "deliverySteer": "Steer current task",
+      "deliverySteerHint": "Hand this message to the running task (⌘/Ctrl+Enter)",
+      "steerFailed": "Couldn't steer the current task. It may have already ended.",
+      "queueActionFailed": "Couldn't update the queued messages.",
+      "queueTitle": "{count, plural, one {# message queued} other {# messages queued}}",
+      "queuePausedError": "The last task failed, so queued messages are paused",
+      "queuePausedFailed": "The first message failed to send; later messages won't go out",
+      "queueResume": "Continue sending",
+      "queueClear": "Clear all",
+      "queueCollapse": "Collapse",
+      "queueShowAll": "Show all {count}",
+      "queueEdit": "Edit",
+      "queueSave": "Save",
+      "queueCancelEdit": "Cancel",
+      "queueSending": "Sending",
+      "queueFailed": "Failed",
+      "queueInterrupting": "Interrupting",
+      "queueWaiting": "Queued",
+      "queueRetry": "Retry",
+      "queueSendNow": "Send now (interrupts the current task)",
+      "queueDelete": "Delete"
     },
     "sessionStatus": {
       "idle": "Idle",
@@ -2415,6 +2445,7 @@
     "agent_cli_unsupported": "The agent's batch-file launcher cannot be started directly. Set the path of the actual executable in the instance configuration.",
     "agent_configuration_failed": "Configuration or submission has not finished. Check the original operation first.",
     "agent_guarantees_missing": "The current agent cannot meet this session's recovery guarantees.",
+    "agent_install_busy": "Another process is preparing the agent runtime. Try again shortly.",
     "agent_install_failed": "Installing the agent runtime failed. Check the network and try again.",
     "agent_open_failed": "Agent initialization has not finished. Check the original operation first.",
     "agent_projection_failed": "An agent update could not be saved reliably. The session needs to be recovered.",
@@ -2465,6 +2496,7 @@
     "node_archive_too_large": "The Node download exceeds the size limit.",
     "node_checksum_mismatch": "The Node download failed verification. Try again.",
     "node_checksum_missing": "The Node release has no checksum record.",
+    "node_download_failed": "Downloading Node failed. Check the network and try again.",
     "node_install_invalid": "The Node runtime failed verification.",
     "node_platform_unsupported": "Automatic Node setup is not supported on this device platform.",
     "not_pending": "This creation was rejected and has no pending request.",

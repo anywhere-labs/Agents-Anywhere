@@ -83,7 +83,9 @@ export function WindowsTitleBar({
 }
 
 function NativeWindowMaterial() {
-  const { resolvedTheme } = useTheme()
+  // Sync the user's choice, not resolvedTheme: pinning the native theme to the resolved
+  // light/dark value stops prefers-color-scheme from following the OS in "system" mode.
+  const { theme } = useTheme()
   React.useLayoutEffect(() => {
     const bridge = getDesktopWorkbenchBridge()
     if (!bridge) return
@@ -96,8 +98,8 @@ function NativeWindowMaterial() {
     }
   }, [])
   React.useEffect(() => {
-    if (resolvedTheme !== "light" && resolvedTheme !== "dark") return
-    void getDesktopWorkbenchBridge()?.window?.setTheme?.(resolvedTheme).catch(console.error)
-  }, [resolvedTheme])
+    if (theme !== "light" && theme !== "dark" && theme !== "system") return
+    void getDesktopWorkbenchBridge()?.window?.setTheme?.(theme).catch(console.error)
+  }, [theme])
   return null
 }

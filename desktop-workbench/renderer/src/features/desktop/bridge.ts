@@ -170,7 +170,7 @@ export type DesktopWorkbenchBridge = {
     onState: (listener: (state: LocalOwnershipState) => void) => () => void
   }
   window?: {
-    setTheme?: (theme: "light" | "dark") => Promise<void>
+    setTheme?: (theme: "light" | "dark" | "system") => Promise<void>
     setTitleBarColors: (colors: { color: string; symbolColor: string }) => Promise<void>
   }
   versions: {

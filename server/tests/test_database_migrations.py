@@ -282,6 +282,7 @@ def test_v2_0_database_upgrades_through_current_revision(fresh_database_url) -> 
         ("v2_52", "v2_53"),
         ("v2_53", "v2_54"),
         ("v2_54", "v2_55"),
+        ("v2_55", "v2_56"),
     ],
 )
 def test_every_adjacent_schema_upgrade(tmp_path,
@@ -1022,9 +1023,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_55() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_55"
-    assert CURRENT_SCHEMA_VERSION == "2.55"
+def test_current_schema_version_is_v2_56() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_56"
+    assert CURRENT_SCHEMA_VERSION == "2.56"
 
 
 def test_v2_49_tracks_inventory_scans_without_rewriting_sessions(
@@ -2645,5 +2646,32 @@ def test_v2_55_adds_connector_device_settings(fresh_database_url) -> None:
     try:
         columns = {column["name"] for column in inspect(engine).get_columns("connectors")}
         assert "device_settings" not in columns
+    finally:
+        engine.dispose()
+
+
+def test_v2_56_adds_session_message_queue(fresh_database_url) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_56")
+    engine = create_engine(_sync_url(url))
+    try:
+        inspector = inspect(engine)
+        assert inspector.has_table("session_queued_messages")
+        assert inspector.has_table("session_queue_state")
+        # The retired v2_21 queue table stays absent: its name marks v2_21.
+        assert not inspector.has_table("session_message_queue")
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE alembic_version"))
+    finally:
+        engine.dispose()
+    assert asyncio.run(classify_database(url)) == UnversionedDatabase("v2", "v2_56")
+
+    command.stamp(_alembic_config(url), "v2_56")
+    command.downgrade(_alembic_config(url), "v2_55")
+    engine = create_engine(_sync_url(url))
+    try:
+        inspector = inspect(engine)
+        assert not inspector.has_table("session_queued_messages")
+        assert not inspector.has_table("session_queue_state")
     finally:
         engine.dispose()

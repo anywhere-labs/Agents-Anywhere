@@ -31,10 +31,14 @@ from connector.runtimes.runtime_model import (
 
 from ...domain.agents import AcpAgentDefinition, ConfigSchema
 from ...domain.definitions import AcpError, LaunchDefinition
-from ...infrastructure.npm import install_npm_runtime
+from ...infrastructure.npm import (
+    install_npm_runtime,
+    node_environment,
+    node_launch_arguments,
+)
 from .adapter import prepare_adapter
 from .dialect import GUARD, PiDialect
-from .environment import DEPENDENCIES, npm_root
+from .environment import DEPENDENCIES, bundled_runtime, npm_root
 from .installation import (
     PiInstallation,
     agent_directory,
@@ -202,6 +206,7 @@ def prepare_launch(context):
             npm_root(host.runtime_kv.path.parent / "npm-runtimes"),
             DEPENDENCIES,
             "@openma/pi-acp/dist/bin.js",
+            bundle=bundled_runtime(),
         )
         if managed:
             await asyncio.to_thread(prepare_settings, settings_root, dict(config.values))
@@ -248,11 +253,17 @@ def prepare_launch(context):
             ("AA_PI_PLANNING_DIR", str(paths.permission_file.with_suffix(".planning"))),
             ("AA_PI_GUARD_DIGEST", "sha256:" + identity["guardSha256"]),
             ("AA_PI_GUARD", str(GUARD)),
-            ("PATH", str(installation.node.parent) + os.pathsep + os.environ.get("PATH", "")),
         ]
+        electron = node_environment(installation.node)
+        if electron:
+            # Desktop's Electron runs as Node only for this process; its
+            # directory holds no `node` for the agent's own commands.
+            env.extend(electron.items())
+        else:
+            env.append(("PATH", str(installation.node.parent) + os.pathsep + os.environ.get("PATH", "")))
         if managed:
             env.append(("AA_PI_GATEWAY_KEY", config.values["modelGateway"]["apiKey"]))
-        args = [str(patched), "--agent-dir", str(agent_dir), "--quiet-startup", "--no-delegation"]
+        args = [*node_launch_arguments(installation.node), str(patched), "--agent-dir", str(agent_dir), "--quiet-startup", "--no-delegation"]
         if managed:
             args.extend(["--session-dir", str(root / "sessions")])
         return LaunchDefinition(

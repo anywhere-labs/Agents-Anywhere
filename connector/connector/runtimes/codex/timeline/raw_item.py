@@ -35,7 +35,7 @@ def timeline_item_type_from_raw_type(value: str) -> str:
         "unknown",
     }:
         return "system"
-    if value == "contextCompaction":
+    if value in {"contextCompaction", "automaticApprovalReview"}:
         return "marker"
     if value in {
         "commandExecution",
@@ -110,6 +110,7 @@ def timeline_item_role_from_values(raw_type: str, role: str | None) -> str | Non
         "turnEnd",
         "error",
         "contextCompaction",
+        "automaticApprovalReview",
     }:
         return "system"
     if raw_type in {"userMessage", "steeringUserMessage"}:

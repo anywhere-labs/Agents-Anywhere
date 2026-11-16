@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -22,8 +24,15 @@ class PlanningStore:
             """)
         path.chmod(0o600)
 
-    def connect(self):
-        return sqlite3.connect(self.path, timeout=30)
+    @contextmanager
+    def connect(self) -> Iterator[sqlite3.Connection]:
+        """Commit on success, roll back on error, and always release the file."""
+        conn = sqlite3.connect(self.path, timeout=30)
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def load(self, session_id: str) -> dict | None:
         with self.connect() as conn:

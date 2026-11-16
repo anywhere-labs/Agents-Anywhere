@@ -8,6 +8,7 @@
     <string name="runtime_error_agent_cli_unsupported">无法直接启动该 Agent 的批处理入口，请在实例配置中填写实际可执行文件的路径。</string>
     <string name="runtime_error_agent_configuration_failed">配置或提交尚未完成，请先查询原操作。</string>
     <string name="runtime_error_agent_guarantees_missing">当前 Agent 不能满足该会话的恢复保证。</string>
+    <string name="runtime_error_agent_install_busy">另一个进程正在准备 Agent 运行环境，请稍后重试。</string>
     <string name="runtime_error_agent_install_failed">Agent 运行环境安装失败，请检查网络后重试。</string>
     <string name="runtime_error_agent_open_failed">Agent 初始化未完成，请先查询原操作。</string>
     <string name="runtime_error_agent_projection_failed">Agent 更新未能可靠保存，需要恢复校准。</string>
@@ -58,6 +59,7 @@
     <string name="runtime_error_node_archive_too_large">Node 下载超过大小上限。</string>
     <string name="runtime_error_node_checksum_mismatch">Node 下载校验失败，请重试。</string>
     <string name="runtime_error_node_checksum_missing">Node 发布包缺少校验记录。</string>
+    <string name="runtime_error_node_download_failed">Node 下载失败，请检查网络后重试。</string>
     <string name="runtime_error_node_install_invalid">Node 运行环境校验失败。</string>
     <string name="runtime_error_node_platform_unsupported">此设备平台暂不支持自动准备 Node。</string>
     <string name="runtime_error_not_pending">该创建已明确拒绝，没有待回答请求。</string>

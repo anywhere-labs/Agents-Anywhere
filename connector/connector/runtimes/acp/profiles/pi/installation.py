@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...domain.definitions import AcpError, fingerprint
+from ...infrastructure.npm import node_environment
 
 PACKAGE = "@earendil-works/pi-coding-agent"
 # Verified with the native handoff script; 1.1.0 installs cannot import their SDK.
@@ -233,6 +234,7 @@ def probe_sdk(installation: PiInstallation) -> None:
             encoding="utf-8",
             timeout=60,
             stderr=subprocess.DEVNULL,
+            env={**os.environ, **node_environment(installation.node)},
         )
         report = json.loads(output.strip().splitlines()[-1])
     except (OSError, ValueError, IndexError, subprocess.SubprocessError) as error:
@@ -301,6 +303,7 @@ console.log(JSON.stringify([...seen.values()]));
                 encoding="utf-8",
                 timeout=30,
                 stderr=subprocess.DEVNULL,
+                env={**os.environ, **node_environment(installation.node)},
             )
         )
     except (OSError, ValueError, subprocess.SubprocessError) as error:

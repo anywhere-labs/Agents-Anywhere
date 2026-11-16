@@ -3,7 +3,7 @@
 import * as React from "react"
 import { runtimeFailureOf, useRuntimeErrorText } from "@/lib/runtime-error-text"
 import { parsePlanningCommand } from "@/features/planning/commands"
-import { ArrowUp, Check, ChevronDown, Loader2, Square, X } from "lucide-react"
+import { ArrowUp, Check, ChevronDown, ListPlus, Loader2, Square, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -58,6 +58,7 @@ import {
 import { SelectionSettingsDrawer } from "@/components/session/selection-settings-drawer"
 import { CAPABILITY, capabilityIsUsable, findCapability, attachmentMimeTypes, attachmentImagesAllowed } from "@/components/session/capabilities"
 import { useElementWidth } from "@/hooks/use-element-width"
+import type { MessageDelivery } from "@/features/message-queue/queue-model"
 import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
 
 import {
@@ -74,6 +75,7 @@ import {
 } from "@/components/session/runtime-command-model"
 
 export type { AttachedFile }
+export type { MessageDelivery }
 
 export function SessionComposer({
   token,
@@ -84,6 +86,7 @@ export function SessionComposer({
   sending,
   interrupting,
   takeoverBusy,
+  queueWaiting = false,
   value,
   effectiveCapabilities,
   modelCatalog,
@@ -117,10 +120,13 @@ export function SessionComposer({
   onCommandQueryChange: (query: string | null) => void
   onValueChange: (value: string) => void
   onSelectionChange: (selections: { model?: string; permission?: string }) => Promise<boolean>
+  /** Earlier messages still wait in the session queue. */
+  queueWaiting?: boolean
   onSend: (
     content: string,
     attachments: AttachedFile[],
     selections: { model?: string; permission?: string },
+    delivery?: MessageDelivery,
   ) => Promise<boolean>
   onInterrupt: () => void
   onCommand: (command: string, options: { args: string[]; raw: string }) => Promise<CommandOutcome>
@@ -188,16 +194,22 @@ export function SessionComposer({
   const isDisconnected = runtimeStatus === "disconnected"
   const sourceUnavailable = session.archived
   const connectorOnline = session.connectorStatus === "online"
+  const sessionBusy = isWaiting || isRunning || isStopping || isWaitingApproval || isBlocked
+  const canUseQueue = capabilityIsUsable(effectiveCapabilities, CAPABILITY.queue, runtimeScope)
+  // While a turn runs (or earlier messages wait), new messages go to the
+  // server-owned queue instead of being refused.
+  const queueMode =
+    canUseQueue && connectorOnline && !sourceUnavailable && !isDisconnected && !creatingSession &&
+    (sessionBusy || queueWaiting)
+  const canSteer = sessionBusy && capabilityIsUsable(effectiveCapabilities, CAPABILITY.steer, runtimeScope)
   const acceptsUserInput =
-    connectorOnline &&
-    !sourceUnavailable &&
-    !isDisconnected &&
-    !isWaiting &&
-    !isRunning &&
-    !isStopping &&
-    !isWaitingApproval &&
-    !isBlocked
-  const canUseSendMessage = capabilityIsUsable(effectiveCapabilities, CAPABILITY.sendMessage, runtimeScope)
+    queueMode ||
+    (connectorOnline &&
+      !sourceUnavailable &&
+      !isDisconnected &&
+      !sessionBusy)
+  const canUseSendMessage =
+    queueMode || capabilityIsUsable(effectiveCapabilities, CAPABILITY.sendMessage, runtimeScope)
   const canUseCommands = capabilityIsUsable(effectiveCapabilities, CAPABILITY.commands, runtimeScope)
   const canUseInterrupt = capabilityIsUsable(effectiveCapabilities, CAPABILITY.interrupt, runtimeScope)
   const interruptCapability = findCapability(effectiveCapabilities, CAPABILITY.interrupt, runtimeScope)
@@ -384,9 +396,9 @@ export function SessionComposer({
       : pendingInteractionCount > 0
         ? tSession("waitingApprovalPlaceholder")
         : isWaiting
-          ? tSession("pendingPlaceholder")
+          ? tSession(queueMode ? "queuePlaceholder" : "pendingPlaceholder")
           : isStopping || isRunning
-            ? tSession("busyPlaceholder")
+            ? tSession(queueMode ? "queuePlaceholder" : "busyPlaceholder")
             : isWaitingApproval || isBlocked
               ? tSession("waitingApprovalPlaceholder")
               : isError
@@ -440,7 +452,13 @@ export function SessionComposer({
     ? commandSuggestions[Math.min(activeCommandIndex, commandSuggestions.length - 1)]
     : null
   React.useEffect(() => { setActiveCommandIndex(0) }, [commandQuery])
-  const showInterruptAction = showInterrupt && (mode.kind === "message" || goalIntent || goalMode) && !showCommandMenu
+  // With something typed, the primary button queues it; empty, it stops the turn.
+  const queueSubmitReady = queueMode && hasInput && mode.kind === "message" && !goalIntent && !goalMode && !planningIntent
+  const showInterruptAction =
+    showInterrupt && (mode.kind === "message" || goalIntent || goalMode) && !showCommandMenu && !queueSubmitReady
+  const alternativeDeliveries: MessageDelivery[] = queueSubmitReady
+    ? [...(showInterrupt ? (["interrupt"] as const) : []), ...(canSteer ? (["steer"] as const) : [])]
+    : []
   React.useEffect(() => {
     onCommandQueryChange(commandQuery)
   }, [commandQuery, onCommandQueryChange])
@@ -547,7 +565,7 @@ export function SessionComposer({
     }
   }
 
-  const submit = async () => {
+  const submit = async (delivery?: MessageDelivery) => {
     if(goalIntent && !value.trimStart().slice(5).trim() && goalUsable){setGoalMode(true);updateValue("");return}
     if((goalMode || goalIntent) && goalUsable && !sending && !interrupting && attachmentsReady && session.takeover){
       const text=value,files=attachments,currentVisit=sessionVisitRef.current
@@ -587,7 +605,7 @@ export function SessionComposer({
     const sent = await onSend(text, files, {
       ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
       ...(selectedPermissionSelection ? { permission: selectedPermissionSelection } : {}),
-    })
+    }, delivery ?? (queueMode ? "queue" : "send"))
     if (!sent && valueRef.current === "") {
       updateValue(text)
     }
@@ -613,7 +631,7 @@ export function SessionComposer({
         >
           <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
           <span className="min-w-0 flex-1">
-            <span className="block truncate">{modelItem.label}</span>
+            <span className="block truncate" title={modelItem.label}>{modelItem.label}</span>
             {!modelItem.enabled && modelItem.disabledReason ? (
               <span className="block truncate text-xs text-muted-foreground">
                 {modelItem.disabledReason}
@@ -630,7 +648,10 @@ export function SessionComposer({
           disabled={effortSelectorDisabled || !modelItem.enabled}
         >
           <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
-          <span className="max-w-40 truncate" title={modelItem.disabledReason ?? undefined}>
+          <span
+            className="min-w-0 flex-1 truncate"
+            title={modelItem.disabledReason ? `${modelItem.label}\n${modelItem.disabledReason}` : modelItem.label}
+          >
             {modelItem.label}
           </span>
         </DropdownMenuSubTrigger>
@@ -798,7 +819,9 @@ export function SessionComposer({
                 }
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault()
-                  if (!showInterruptAction) void submit()
+                  // Cmd/Ctrl+Enter steers the running turn where the Agent supports it.
+                  if (queueSubmitReady && (event.metaKey || event.ctrlKey) && canSteer) void submit("steer")
+                  else if (!showInterruptAction) void submit()
                 }
               }}
               placeholder={placeholder}
@@ -894,17 +917,18 @@ export function SessionComposer({
                         type="button"
                         variant="ghost"
                         size="sm"
-                        className="h-8 min-w-0 shrink gap-1.5 rounded-xl px-2.5 text-muted-foreground"
+                        className="h-8 min-w-0 max-w-80 shrink gap-1.5 rounded-xl px-2.5 text-muted-foreground"
                         disabled={modelSelectorDisabled}
+                        title={modelLabel}
                       >
-                        {effortItems.length > 0 ? <span className="text-foreground">{effortLabel}</span> : null}
-                        {effortItems.length > 0 ? <span className="text-muted-foreground/50">·</span> : null}
-                        <span className="min-w-0 max-w-40 truncate text-foreground">{modelLabel}</span>
+                        {effortItems.length > 0 ? <span className="shrink-0 text-foreground">{effortLabel}</span> : null}
+                        {effortItems.length > 0 ? <span className="shrink-0 text-muted-foreground/50">·</span> : null}
+                        <span className="min-w-0 truncate text-foreground">{modelLabel}</span>
                         {modelPending ? <Badge variant="secondary">{tNew("nextTurn")}</Badge> : null}
-                        <ChevronDown className="size-3.5 opacity-60" />
+                        <ChevronDown className="size-3.5 shrink-0 opacity-60" />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-56">
+                    <DropdownMenuContent align="start" className="w-auto min-w-56 max-w-[min(28rem,calc(100vw-1rem))]">
                       {groupModelOptions(modelItems).map((section, index) => (
                         <React.Fragment key={section.id === null ? "ungrouped" : `group:${section.id}`}>
                           {index > 0 ? <DropdownMenuSeparator /> : null}
@@ -959,10 +983,44 @@ export function SessionComposer({
               {tSession("takeover")}
             </div>
             <span className="mx-1 h-5 w-px shrink-0 bg-border" />
+            {alternativeDeliveries.length > 0 ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="size-8 rounded-full"
+                    aria-label={tSession("queueMoreOptions")}
+                    disabled={!canSubmitMessage}
+                  >
+                    <ChevronDown className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-64">
+                  <DropdownMenuItem onSelect={() => void submit("queue")}>
+                    <span className="flex flex-col">
+                      <span>{tSession("deliveryQueue")}</span>
+                      <span className="text-xs text-muted-foreground">{tSession("deliveryQueueHint")}</span>
+                    </span>
+                  </DropdownMenuItem>
+                  {alternativeDeliveries.map((delivery) => (
+                    <DropdownMenuItem key={delivery} onSelect={() => void submit(delivery)}>
+                      <span className="flex flex-col">
+                        <span>{tSession(delivery === "steer" ? "deliverySteer" : "deliveryInterrupt")}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {tSession(delivery === "steer" ? "deliverySteerHint" : "deliveryInterruptHint")}
+                        </span>
+                      </span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
             <Button
               type="button"
               size="icon"
-              aria-label={showInterruptAction ? tSession("interrupt") : tSession("send")}
+              aria-label={showInterruptAction ? tSession("interrupt") : queueSubmitReady ? tSession("deliveryQueue") : tSession("send")}
               className={cn("size-8 rounded-full", showInterruptAction && "bg-destructive text-destructive-foreground hover:bg-destructive/90")}
               disabled={showInterruptAction ? interrupting : !(canSubmitCommand || canSubmitMessage)}
               onClick={primaryAction}
@@ -971,6 +1029,8 @@ export function SessionComposer({
                 <Loader2 className="size-4 animate-spin" />
               ) : showInterruptAction ? (
                 <Square className="size-4" />
+              ) : queueSubmitReady ? (
+                <ListPlus className="size-4" />
               ) : (
                 <ArrowUp className="size-4" />
               )}

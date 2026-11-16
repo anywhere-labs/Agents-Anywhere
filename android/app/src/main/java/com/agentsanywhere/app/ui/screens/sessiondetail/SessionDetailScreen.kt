@@ -31,7 +31,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
@@ -107,6 +107,7 @@ import com.agentsanywhere.app.feature.sessiondetail.failSnapshotLoad
 import com.agentsanywhere.app.feature.sessiondetail.isValidAttachmentMediaType
 import com.agentsanywhere.app.feature.sessiondetail.isInternalRuntimeError
 import com.agentsanywhere.app.feature.sessiondetail.hasPendingOptimisticSend
+import com.agentsanywhere.app.feature.sessiondetail.isFailedLocalSend
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeCommand
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeCommandBlock
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeCommandExecutionState
@@ -156,6 +157,7 @@ import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.runtimePermissionLocalizer
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.agentsanywhere.app.ui.screens.devices.DeviceConfirmDialog
 import com.agentsanywhere.app.ui.screens.files.RemoteFilePreviewDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -273,7 +275,9 @@ private fun SessionDetailVisit(
     val keyboard = LocalSoftwareKeyboardController.current
     val haptic = LocalHapticFeedback.current
     val snackbarHostState = remember { SnackbarHostState() }
-    val pagerState = rememberPagerState(pageCount = { 2 })
+    // Opening a session always shows the conversation. Not saveable: the workspace keeps
+    // saveable state per session, which would reopen the Files page left on an earlier visit.
+    val pagerState = remember { PagerState(currentPage = 0) { 2 } }
     val composerDraftSessionId = sessionId ?: preparedSession?.localSessionId
     val restoredComposerDraft = remember(composerDraftSessionId) {
         composerDraftStore.restore(
@@ -311,6 +315,7 @@ private fun SessionDetailVisit(
     var shareBusy by remember(sessionId) { mutableStateOf(false) }
     var pendingOpenFilePath by remember(sessionId) { mutableStateOf<String?>(null) }
     var filePreviewTarget by remember(sessionId) { mutableStateOf<FilePreviewTarget?>(null) }
+    var failedMessageId by remember(sessionId, preparedSession?.localSessionId) { mutableStateOf<String?>(null) }
     var terminalVerticalDragActive by remember(sessionId) { mutableStateOf(false) }
     var composerHeightPx by remember { mutableStateOf(0) }
     var readOnlyComposerTapCount by remember(sessionId) { mutableStateOf(0) }
@@ -806,7 +811,7 @@ private fun SessionDetailVisit(
         val beforeOrderSeq = state.timeline.orderingItems
             .minOfOrNull { it.orderSeq }
             ?: state.messages.filterNot { it.optimistic }.minOfOrNull { it.orderSeq }
-        if (beforeOrderSeq == null || beforeOrderSeq <= 1) {
+        if (beforeOrderSeq == null || beforeOrderSeq <= 0) {
             olderInFlight.set(false)
             state = state.copy(
                 timeline = state.timeline.copy(hasMore = false, loadingOlder = false),
@@ -1266,6 +1271,17 @@ private fun SessionDetailVisit(
             scope.launch { pagerState.animateScrollToPage(0) }
         } else {
             navigate(AppDestination.Sessions)
+        }
+    }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { }
+    LaunchedEffect(sessionId) {
+        // Android 13+ only shows notifications (including the terminal service's) after a runtime grant.
+        if (sessionId != null && shouldRequestNotificationPermission(context)) {
+            notificationPermissionRequested = true
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 
@@ -1988,6 +2004,7 @@ private fun SessionDetailVisit(
                                 onCopyMessage = ::copyMessageText,
                                 onShareReply = ::requestShare,
                                 onOpenFile = ::openReferencedFile,
+                                onFailedMessage = { failedMessageId = it.id },
                                 onRespondNotice = ::respondNotice,
                             )
                         }
@@ -2093,7 +2110,8 @@ private fun SessionDetailVisit(
                             modifier = Modifier.align(Alignment.TopCenter),
                         )
                         SessionDetailHeader(
-                            title = state.session?.title ?: stringResource(R.string.session_title_fallback),
+                            title = state.session?.title?.takeIf(String::isNotBlank)
+                                ?: stringResource(R.string.session_title_fallback),
                             darkMode = darkMode,
                             onLeftClick = ::openRuntimeSettings,
                             onRightClick = { scope.launch { pagerState.animateScrollToPage(1) } },
@@ -2220,6 +2238,28 @@ private fun SessionDetailVisit(
             onDismiss = { filePreviewTarget = null },
         )
     }
+    // Closes by itself when the message is resent or its Server echo arrives.
+    failedMessageId
+        ?.let { id -> state.messages.firstOrNull { it.id == id && it.isFailedLocalSend } }
+        ?.let { message ->
+            DeviceConfirmDialog(
+                title = stringResource(R.string.session_failed_send_title),
+                body = stringResource(
+                    R.string.session_failed_send_body,
+                    message.errorMessage?.takeIf(String::isNotBlank)
+                        ?: stringResource(R.string.session_send_failed),
+                ),
+                confirmLabel = stringResource(R.string.common_delete),
+                danger = true,
+                onDismiss = { failedMessageId = null },
+                onConfirm = {
+                    failedMessageId = null
+                    optimisticSessionId?.let { id ->
+                        state = controller.discardFailedMessage(id, state, message.id)
+                    }
+                },
+            )
+        }
     previewImage?.let { preview ->
         AttachmentPreviewDialog(
             preview = preview,
@@ -2716,3 +2756,12 @@ private fun uniqueGalleryFile(directory: File, displayName: String): File {
 
 private const val MAX_ATTACHMENT_FILES = 6
 private const val MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+
+/** Ask at most once per app process; the system stops prompting after the user declines twice. */
+private var notificationPermissionRequested = false
+
+private fun shouldRequestNotificationPermission(context: Context): Boolean =
+    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+        !notificationPermissionRequested &&
+        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+        PackageManager.PERMISSION_GRANTED

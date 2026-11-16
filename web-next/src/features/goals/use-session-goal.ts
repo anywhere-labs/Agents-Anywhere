@@ -11,6 +11,7 @@ export function useSessionGoal(
   token: string,
   sessionId: string,
   canControl = true,
+  enabled = true,
 ) {
   const t = useTranslations("goal");
   const visit = React.useRef<Visit>({ token, sessionId });
@@ -64,6 +65,8 @@ export function useSessionGoal(
       old?.resolve(false);
       return null;
     });
+    // A session still being created exists only on this client; the Server has no goal state for it yet.
+    if (!enabled) return;
     const tick = async () => {
       if (cancelled) return;
       try {
@@ -95,7 +98,7 @@ export function useSessionGoal(
       cancelled = true;
       clearInterval(timer);
     };
-  }, [path, token, refresh, ingest, t]);
+  }, [path, token, refresh, ingest, t, enabled]);
   const execute = async (
     action: GoalRequest["action"],
     objective?: string,

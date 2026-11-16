@@ -80,6 +80,7 @@ from agent_server.deps import (
     get_catalog_service,
     get_device_runtime_service,
     get_event_recovery_service,
+    get_message_queue_wake,
     get_model_channel_service,
     get_rpc,
     get_session_run_service,
@@ -127,6 +128,7 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 _SESSION_WS_EVENT_DEDUP_LIMIT = 1_024
 _SESSION_WS_LIVE_PROJECTION_EVENT_TYPES = {
     "runtime.catalog.updated",
+    "runtime.queue.updated",
     "runtime.state.updated",
     "session.meta.updated",
 }
@@ -1015,6 +1017,7 @@ async def session_snapshot(
             )
             if catalog is not None
         },
+        queue=await db.get_session_queue(session_id),
         eventCursor=event_cursor(next_seq),
         serverTime=utc_now(),
     )
@@ -1167,6 +1170,7 @@ async def enable_takeover(
     timeline_write_buffer: TimelineWriteBuffer = Depends(
         get_timeline_write_buffer
     ),
+    wake_queue=Depends(get_message_queue_wake),
 ) -> TakeoverResponse:
     try:
         await db.get_session(session_id, user_id=user_id)
@@ -1179,6 +1183,10 @@ async def enable_takeover(
             runtime_state_cache,
             session_id,
         )
+        # Messages that waited while the session was read-only may go now.
+        # (Direct calls without dependency injection leave the default unset.)
+        if callable(wake_queue):
+            wake_queue(session_id)
         return TakeoverResponse(
             session=await with_effective_session_connector_status(manager, session)
         )

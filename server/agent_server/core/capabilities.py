@@ -13,6 +13,8 @@ SESSION_RECOVER: Final = "session.recover"
 SESSION_SEND_MESSAGE: Final = "session.send_message"
 SESSION_INTERRUPT: Final = "session.interrupt"
 SESSION_STEER: Final = "session.steer"
+# Server-owned: messages sent while a turn runs wait in the session queue.
+SESSION_QUEUE: Final = "session.queue"
 SESSION_GOAL: Final = "session.goal"
 SESSION_PLANNING: Final = "session.planning"
 SESSION_PLAN_DOCUMENT: Final = "session.plan_document"
