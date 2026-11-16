@@ -71,7 +71,7 @@ CLI 和 AA 对同一会话按顺序切换。浏览直接读取默认目录及额
 | `@earendil-works/pi-ai` | `1.4.0` |
 | `@earendil-works/pi-agent-core` | `1.4.0` |
 
-安装器优先复用本机带 npm 的 Node `>=22.19`（与 Pi 各包声明的 engines 一致）；否则下载 Node `22.23.2` 并检查官方 SHA-256，下载失败报 `node_download_failed`。多个进程同时准备时按安装锁排队，最多等待 10 分钟，超时报 `agent_install_busy`。Desktop 启动时的 Pi 预检失败不阻止 Connector 环境就绪，Pi 会在首次使用时再次安装并在会话中报告错误。下载目标覆盖 macOS、Windows、Linux 的 x64/arm64，Linux 要求 glibc。这里描述代码中的平台选择逻辑，不表示各目标已有运行验证结果。
+Pi 的 npm 依赖列表在 `profiles/pi/dependencies.json`，Desktop 打包时用同一份列表预装到安装包的 `pi-runtime`。Connector 发现预装目录（`AA_PI_BUNDLED_RUNTIME`）的依赖列表与自己一致时，直接复制到 npm 缓存，不联网。运行 Pi 用的 Node 依次取：本机带 npm 的 Node `>=22.19`（与 Pi 各包声明的 engines 一致）、Desktop 自己的 Electron（`AA_ELECTRON_NODE`，以 `ELECTRON_RUN_AS_NODE=1` 启动，并用 `--import` 在 Pi 启动前清掉这个变量，避免传给 Agent 执行的命令）、下载的 Node `22.23.2`。需要下载时，Node 依次尝试 `AA_NODE_MIRROR`、nodejs.org、npmmirror，每个来源都用其自带的 `SHASUMS256.txt` 校验；npm 包依次尝试 `AA_NPM_REGISTRY`、registry.npmjs.org、npmmirror。Desktop 在 Python 安装源选用镜像时把两者都设为 npmmirror。Node 全部来源都失败时报 `node_download_failed`。多个进程同时准备时按安装锁排队，最多等待 10 分钟，超时报 `agent_install_busy`。Desktop 启动时的 Pi 预检失败不阻止 Connector 环境就绪，Pi 会在首次使用时再次准备并在会话中报告错误。下载目标覆盖 macOS、Windows、Linux 的 x64/arm64，Linux 要求 glibc。这里描述代码中的平台选择逻辑，不表示各目标已有运行验证结果。
 
 依赖按固定依赖表的摘要缓存到 `npm-runtimes/`，安装过程使用文件锁、临时目录和原子重命名。npm 使用 `--omit=dev --ignore-scripts --package-lock=false`，安装发布包，不在工作设备编译应用源码。除适配器外的直接依赖版本固定，但没有锁定完整传递依赖树，不能把缓存身份当作可重现制品摘要。
 
