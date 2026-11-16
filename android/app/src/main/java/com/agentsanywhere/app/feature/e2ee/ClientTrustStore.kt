@@ -103,6 +103,14 @@ class ClientTrustStore(
 
     fun requiresEncryption(deviceId: String): Boolean = synchronized(lock) { storage.read(requireKey(deviceId)) == "1" }
 
+    /** The Server declared `required` at some point: from then on no device goes back to plaintext on this
+     * client, whatever the Server says later (E-3). Only a local action may clear it. */
+    fun markInstanceRequired() = synchronized(lock) { storage.write(INSTANCE_REQUIRED, "1") }
+
+    fun instanceRequired(): Boolean = synchronized(lock) { storage.read(INSTANCE_REQUIRED) == "1" }
+
+    fun relaxInstanceLocally() = synchronized(lock) { storage.write(INSTANCE_REQUIRED, null) }
+
     private fun createIdentityLocked(): X25519KeyPair {
         val identity = generateKeyPair()
         val secret = identity.secretKey()
@@ -119,6 +127,7 @@ class ClientTrustStore(
     private fun requireKey(deviceId: String) = "require.$deviceId"
 
     companion object {
+        private const val INSTANCE_REQUIRED = "instance.require"
         private const val KEY_IDENTITY = "identity"
         const val PREFERENCES_NAME = "agents_anywhere_e2ee"
 

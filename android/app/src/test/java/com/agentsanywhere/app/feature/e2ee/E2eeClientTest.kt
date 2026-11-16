@@ -150,6 +150,22 @@ class E2eeClientTest {
     }
 
     @Test
+    fun aServerOnceRequiringEncryptionCannotRelaxUnpairedDevices() = runBlocking<Unit> {
+        val device = TestDevice()
+        val client = client(device)
+        server = E2eeServerConfig(mode = E2eeServerConfig.MODE_REQUIRED)
+        client.refreshServerConfig()
+        assertEquals(DeviceTransport.PairingRequired("never_paired"), client.transportFor("never_paired"))
+        // The Server (or someone in its place) now says "off": this client still refuses plaintext.
+        server = E2eeServerConfig(mode = E2eeServerConfig.MODE_OFF)
+        client.refreshServerConfig()
+        assertEquals(DeviceTransport.PairingRequired("never_paired"), client.transportFor("never_paired"))
+        // Only a local action relaxes it.
+        trust.relaxInstanceLocally()
+        assertEquals(DeviceTransport.Plain, client.transportFor("never_paired"))
+    }
+
+    @Test
     fun transportPolicy() {
         val required = E2eeServerConfig(mode = E2eeServerConfig.MODE_REQUIRED)
         val off = E2eeServerConfig()
@@ -164,10 +180,11 @@ class E2eeClientTest {
     fun authConfigWithoutE2eeIsOff() {
         assertFalse(null.toE2eeServerConfig().required)
         assertFalse(JSONObject().put("mode", "weird").toE2eeServerConfig().required)
-        val config = JSONObject().put("mode", "required").put("web", true).put("preview", true).toE2eeServerConfig()
+        val config = JSONObject().put("mode", "required").put("web", "deny").put("preview", "deny").toE2eeServerConfig()
         assertTrue(config.required)
-        assertTrue(config.web)
-        assertTrue(config.preview)
+        assertEquals(E2eeServerConfig.DENY, config.web)
+        assertFalse(config.previewAllowed)
+        assertTrue(JSONObject().put("mode", "required").toE2eeServerConfig().previewAllowed)
     }
 
     @Test

@@ -56,7 +56,10 @@ class E2eeClient(
 
     /** 读 `GET /auth/config` 的 `e2ee`；读不到时保留上次的值（不因为网络错误放松）。 */
     suspend fun refreshServerConfig(): E2eeServerConfig {
-        runCatching { loadServerConfig() }.onSuccess { serverConfig = it }
+        runCatching { loadServerConfig() }.onSuccess {
+            serverConfig = it
+            if (it.required) trust.markInstanceRequired()
+        }
         return serverConfig
     }
 
@@ -66,7 +69,7 @@ class E2eeClient(
         deviceId = deviceId,
         server = serverConfig,
         paired = trust.device(deviceId),
-        locallyRequired = trust.requiresEncryption(deviceId),
+        locallyRequired = trust.instanceRequired() || trust.requiresEncryption(deviceId),
     )
 
     /** 扫码配对（XXpsk0）；成功后保存授权、列表密钥，并记下「该设备要求加密」。 */
