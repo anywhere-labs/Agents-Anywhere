@@ -95,6 +95,9 @@ Noise 传输消息的明文格式为 `flag(1 字节) ‖ body`，`body` 最长 6
   - `payload = base64url(nonce12 ‖ AES-256-GCM(列表密钥, nonce, 明文 JSON, AD))`；
   - `AD = label("display", deviceId, sessionId, slot, keyId)`，`slot` 取 `device` 或 `user`；
   - nonce 每次加密时随机生成。AD 绑定了信封所在的行，Server 没法把一个会话的标题挪到另一个会话。
+  - 明文 JSON 的字段：`displayDevice` 是 `{title?, cwd?, preview?}`（原生标题、工作目录、最近一条的短摘要），`displayUser` 是 `{title}`（用户改的标题）。字段都可缺省，客户端忽略不认识的字段。普通模式的 `mode: "plain"` 用同样的字段。
+  - 显示规则：标题取 `displayUser.title`，没有再取 `displayDevice.title`；工作目录取 `displayDevice.cwd`。
+  - 客户端按信封的 `keyId` 找对应纪元的列表密钥；找不到或解不开时显示「加密中」占位，不报错，也不回退到 Server 的明文 `title` / `cwd`（加密模式下它们为空）。客户端应保留最近几个纪元的密钥（Web/Desktop 保留 4 个），设备在轮换后会用新密钥重新密封 `displayDevice`。
 - **附件与分享**（分段密文）：
   - 每个对象一把随机密钥，明文按 64 KiB 分段，空对象算一个空段；
   - 第 i 段的 nonce 为 4 字节 0 加上 i 的 8 字节大端编码，`AD = label(purpose, objectId, i) ‖ 0x00 ‖ final`，`final` 用来防截断；
@@ -108,6 +111,10 @@ Noise 传输消息的明文格式为 `flag(1 字节) ‖ body`，`body` 最长 6
 - **新建会话**：加密模式下 Server 拒绝 `POST /api/v2/sessions` 与 `/sessions/create-and-start`（首条消息、标题都是内容）。客户端把同一个请求（路径、请求体与普通模式相同）经通道发给所选设备，由设备创建并运行会话，再经出站箱把元数据同步给 Server；首条消息与其他消息一样先登记命令。首条消息暂不支持附件（上传前还没有会话）。
 - **附件以密钥为准**：消息请求体里 `attachments` 的名称、类型、大小可能是客户端改写后的真实值，也可能是 Server 记录的通用值；设备一律以 `sealedAttachmentKeys` 中同一 `fileId` 的 `name`、`mimeType`、`size`、`sha256` 为准，并在解密后核对 `sha256`。
 - **Runtime workflow**：准备工作区、新建向导、答复、会话树、Agent 操作（`/api/v2/runtime-workflows/…`）在加密模式下由 Server 整组拒绝；改走通道之前，客户端在加密设备上直接提示暂不支持。
+- **会话归属项目**：加密模式下工作目录（`cwd`）在密封的展示信封里，Server 不能再按它归属项目。规则：
+  - `SessionSummary` 增加可选的明文 `projectId`（Server 发的 ID，不是内容）。设备经通道收到的 `create-and-start` 请求体里本来就有 `projectId`，设备记下并在上报中带上；Server **只在首次建行时**用它归属，之后不覆盖（归属是用户字段，唯一写者是客户端）。
+  - 设备自己发现的会话（导入、扫描）没有 `projectId`：Server 照常建行，`projectId` 为空；能解密 `displayDevice` 的客户端按解出的 `cwd` 匹配项目，经 `PATCH /sessions/{id}/meta {projectId}` 指定（Server 只校验项目属于同一用户、同一设备）。
+  - 普通模式不变，仍按明文 `cwd` 归属。
 - **重命名**：标题是内容。加密模式下 Server 拒绝带明文 `title` 的 `PATCH /sessions/{id}/meta`。设备侧支持之前，客户端在加密设备上直接提示暂不支持；之后改为把同一请求经通道发给设备。
 - **命令登记**：
   - 客户端先发 `POST /api/v3/e2ee/commands`（`CommandRegistration`），再经通道发命令；
