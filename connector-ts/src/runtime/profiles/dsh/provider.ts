@@ -3,7 +3,7 @@
  * ACP, started on demand) and every plugin host the Connector's local socket hands it
  * (`DshRuntime.attachHost`).
  */
-import { processConnection } from '../../acp/handle.js'
+import { processConnection, type ConnectionFactory } from '../../acp/handle.js'
 import { dshDirectDialect } from './direct/dialect.js'
 import { dshEnvironment, resolveDshLaunch, systemProbe, type DshLaunchPlan, type LaunchProbe } from './launcher.js'
 import { DshRuntime } from './runtime.js'
@@ -48,6 +48,8 @@ export interface DshProviderDeps {
   desktopExecutables?: readonly string[]
   /** Working directory of the direct-route process. */
   cwd?: string
+  /** Test seam: how a launch plan becomes an ACP connection (default: start the process). */
+  connect?: (plan: DshLaunchPlan, env: NodeJS.ProcessEnv) => ConnectionFactory
 }
 
 export class DshProvider {
@@ -79,7 +81,7 @@ export class DshProvider {
     let plan: DshLaunchPlan | undefined
     try { plan = await resolveDshLaunch(this.launchOptions(settings), this.deps.probe ?? systemProbe(this.deps.env)) } catch { plan = undefined }
     const env = dshEnvironment(this.deps.env ?? process.env, { ...(settings.dshHome ? { dshHome: settings.dshHome } : {}), ...(settings.model ? { model: settings.model } : {}) })
-    const direct = plan ? processConnection({ command: plan.command, args: plan.args, cwd: this.deps.cwd ?? process.cwd(), env }, dshDirectDialect(),
+    const direct = plan && this.deps.connect ? this.deps.connect(plan, env) : plan ? processConnection({ command: plan.command, args: plan.args, cwd: this.deps.cwd ?? process.cwd(), env }, dshDirectDialect(),
       { initializeTimeoutMs: plan.source === 'npx' ? 180_000 : 30_000 }) : undefined
     return new DshRuntime({ instanceId: instance.runtimeId, ...(direct ? { direct } : {}), ...(instance.ids ? { ids: instance.ids } : {}),
       dshHome: dshHomeOf(settings, this.deps.env ?? process.env) })

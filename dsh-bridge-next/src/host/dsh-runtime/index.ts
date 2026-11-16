@@ -17,6 +17,7 @@ import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname } from 'node:path'
 import { AcpBridgeLink, parseRendezvousV3, type LinkStatus } from '../acp/link.js'
+import { detectHostKind } from '../acp/host-kind.js'
 import { BRIDGE_VERSION, RUNTIME_VERSION } from './bridge-service.js'
 
 const HOST_INSTANCE = Symbol.for('agents-anywhere.dsh-bridge.host-instance')
@@ -85,7 +86,7 @@ export class DshRuntimeService extends Service {
     }, this.diagnostics, 1000, this.logOutput)
     this.server = this.makeServer()
     const acpPath = join(bridge, 'connector-acp.json')
-    this.acp = new AcpBridgeLink(acpPath, this.native, { hostInstance: hostInstance(), hostKind: 'unknown',
+    this.acp = new AcpBridgeLink(acpPath, this.native, { hostInstance: hostInstance(), hostKind: detectHostKind(),
       dshVersion: RUNTIME_VERSION, pluginVersion: BRIDGE_VERSION, dshHome: process.env.DSH_HOME || join(homedir(), '.dsh'),
       uploadRoot: dirname(bridge) }, 1000, status => this.onAcpStatus(status))
     this.acpPath = acpPath
