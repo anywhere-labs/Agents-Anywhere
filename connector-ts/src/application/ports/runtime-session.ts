@@ -19,8 +19,12 @@ import type { PlanDocument } from '../../generated/protocol/v1_2/plan-document.j
 // 基础词汇
 // ---------------------------------------------------------------------------------------------
 
-/** Runtime 种类。通用 ACP Agent 用 `acp:<definitionId>`，例如 `acp:opencode`。 */
-export type RuntimeType = 'codex' | 'claude' | 'pi' | 'hermes' | 'dsh' | `acp:${string}`
+/**
+ * Runtime 种类，取值必须与 v2 的 runtime_type 完全一致（会话 ID、Timeline ID 都以它为输入）：
+ * `codex`、`claude`、`pi`、`hermes`、`dsh`，以及官方 ACP Agent 的 `opencode`、`antigravity`、`codebuddy`、
+ * `commandcode`、`mimo`、`minimax` 等。
+ */
+export type RuntimeType = 'codex' | 'claude' | 'pi' | 'hermes' | 'dsh' | (string & {})
 
 export type JsonObject = { readonly [key: string]: JsonValue }
 
