@@ -50,12 +50,12 @@ export function codexPlanReview(answer: { action: 'approve' | 'revise' | 'dismis
 }
 
 /**
- * codex-acp 是否把 `image/*` 的 `file://` resource_link 转成 Codex 原生 `localImage`（initialize 的
- * `_meta.codexIpc.localImageLinks`）。不支持时模型只看到路径文本，所以图片附件能力按不支持报告，
+ * codex-acp 是否把 `image/*` 的 `file://` resource_link 转成 Codex 原生 `localImage`（initialize 顶层
+ * `_meta.localImageLinks.supported`，anywhere-labs/codex-acp#9；三条路由都生效）。不支持时模型只看到路径文本，所以图片附件能力按不支持报告，
  * 客户端隐藏入口；AA 从不改发 data URL（会写进 rollout、撑大文件）。
  */
 export function codexLocalImageLinks(info: AgentInfo): boolean {
-  return asRecord(info.meta.codexIpc).localImageLinks === true
+  return asRecord(info.meta.localImageLinks).supported === true
 }
 
 const HISTORY_EVENTS = new Set<RuntimeEvent['type']>(['message.delta', 'message.completed', 'tool.started', 'tool.updated', 'notice'])

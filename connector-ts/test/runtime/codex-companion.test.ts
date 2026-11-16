@@ -507,11 +507,11 @@ describe('Codex profile wiring for companions', () => {
   })
 
   it('hides image attachments until codex-acp passes local image links to Codex', () => {
-    const info = (codexIpc: Json) => ({ protocolVersion: 1, agentCapabilities: { promptCapabilities: { image: true } }, agentInfo: {}, authMethods: [], meta: { codexIpc } }) as unknown as AgentInfo
-    const attachment = (codexIpc: Json) => codexDialect().capabilities(info(codexIpc)).find(c => c.id === 'runtime.attachment')
-    expect(attachment({})).toEqual({ id: 'runtime.attachment', supported: false })
-    expect(codexLocalImageLinks(info({ localImageLinks: true }))).toBe(true)
-    expect(attachment({ localImageLinks: true })).toMatchObject({ supported: true, parameters: { image: true } })
+    const info = (meta: Json) => ({ protocolVersion: 1, agentCapabilities: { promptCapabilities: { image: true } }, agentInfo: {}, authMethods: [], meta }) as unknown as AgentInfo
+    const attachment = (meta: Json) => codexDialect().capabilities(info(meta)).find(c => c.id === 'runtime.attachment')
+    expect(attachment({ codexIpc: {} })).toEqual({ id: 'runtime.attachment', supported: false })
+    expect(codexLocalImageLinks(info({ localImageLinks: { supported: true } }))).toBe(true)
+    expect(attachment({ localImageLinks: { supported: true } })).toMatchObject({ supported: true, parameters: { image: true } })
   })
 
   it('explains in the sidebar switch that new threads skip project groups', () => {
