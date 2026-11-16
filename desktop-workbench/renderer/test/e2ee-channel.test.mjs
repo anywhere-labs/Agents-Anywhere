@@ -351,6 +351,14 @@ function routeThrough(t, pool) {
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 10))
+/** Polls until `ready()` holds (the fake device answers asynchronously; fixed delays are flaky under load). */
+async function until(ready, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs
+  while (!ready()) {
+    if (Date.now() > deadline) throw new Error("timed out waiting for the device")
+    await settle()
+  }
+}
 
 test("attachments are sealed before upload; the device opens them with the keys sent through the channel", async () => {
   const { device, socket, pool, registered, uploads } = await setup()
@@ -489,7 +497,7 @@ test("a terminal is a channel subscription; input and resize are requests to the
   stream.send({ type: "input", data: btoa("a") })
   stream.send({ type: "input", data: btoa("b") })
   stream.send({ type: "resize", cols: 100, rows: 30 })
-  await settle()
+  await until(() => device.requests.length >= 3)
   assert.deepEqual(device.requests.map((request) => [request.method, request.path, request.body]), [
     ["POST", `${base}/write`, { dataBase64: btoa("a") }],
     ["POST", `${base}/write`, { dataBase64: btoa("b") }],
@@ -498,7 +506,7 @@ test("a terminal is a channel subscription; input and resize are requests to the
   let closed = false
   stream.onclose = () => (closed = true)
   stream.close()
-  await settle()
+  await until(() => device.unsubscribed.length > 0)
   assert.equal(closed, true)
   assert.equal(stream.isOpen, false)
   assert.deepEqual(device.unsubscribed, [subscription.id])
