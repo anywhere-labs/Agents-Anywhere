@@ -2,6 +2,16 @@
 
 按版本记录用户能感知到的变化，最新版本在最前，每项一句话。接口变化、各端最低配套版本、数据库迁移和安装包记录见各版本的[发布说明](docs/releases/)。
 
+## 未发布
+
+### Desktop
+
+- Desktop 安装包自带 Pi 运行环境，第一次启动只需在本地复制，不再下载 Node 和 npm 依赖；准备失败时也不再停在启动页、点「重试」也进不去，Pi 会在第一次使用时再次准备并在会话里提示错误。（[#657](https://github.com/anywhere-labs/Agents-Anywhere/pull/657)）
+
+### 本机连接
+
+- 准备 Pi 时会复用本机 Node 22.19 及以上版本（包括 Node 24），不再强制下载；需要下载时，官方源连不上会自动改用 npmmirror，Python 安装源选了镜像的设备会优先使用 npmmirror；Windows 上多个进程同时准备不再报 `Resource deadlock avoided`，而是排队等待；数据目录通过 Junction 挂到其他盘时，不再误报「Node 安装包路径无效」；Node 下载失败时会提示检查网络。（[#657](https://github.com/anywhere-labs/Agents-Anywhere/pull/657)）
+
 ## 2.2.0（2026-11-14）
 
 [发布说明](docs/releases/2.2.0.md) · [与 2.1.0 的差异](https://github.com/anywhere-labs/Agents-Anywhere/compare/v2.1.0...v2.2.0)

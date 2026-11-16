@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import type { DesktopBindingStore } from "./desktop-binding";
-import type { DesktopSettingsStore } from "./desktop-settings";
+import { NPMMIRROR_PYTHON_BUILDS, type DesktopSettingsStore } from "./desktop-settings";
 import { removeFile, writeJsonFile } from "./json-store";
 import type { ConnectorLogStore } from "./log-store";
 import type {
@@ -40,6 +40,8 @@ const HEALTH_CHECK_INTERVAL_MS = 30_000;
 const HEALTH_CHECK_TIMEOUT_MS = 10_000;
 const PYTHON_BUILDS_GITHUB = "https://github.com/astral-sh/python-build-standalone/releases/download";
 const PYPI_SIMPLE = "https://pypi.org/simple";
+const NPMMIRROR_NODE_DIST = "https://registry.npmmirror.com/-/binary/node";
+const NPMMIRROR_NPM_REGISTRY = "https://registry.npmmirror.com";
 const UV_HTTP_TIMEOUT_SECONDS = "60";
 /** `exit` can arrive before stderr delivers the lines that explain it. */
 const OUTPUT_DRAIN_MS = 250;
@@ -1077,6 +1079,24 @@ export class ConnectorSupervisor {
     // Without a bundled or saved interpreter uv downloads CPython itself; the default is GitHub.
     environment.UV_PYTHON_INSTALL_MIRROR = settings.uvPythonInstallMirror || PYTHON_BUILDS_GITHUB;
     environment.UV_HTTP_TIMEOUT ||= UV_HTTP_TIMEOUT_SECONDS;
+    // Pi runs on this Electron executable as Node and seeds its packages from
+    // the copy bundled with Desktop, so preparing it needs no download.
+    environment.AA_ELECTRON_NODE = process.execPath;
+    const piBundle = this.options.packaged
+      ? path.join(this.options.resourcesPath, "pi-runtime")
+      : path.resolve(__dirname, "..", "..", "build", "pi-runtime");
+    if (fs.existsSync(path.join(piBundle, "package.json"))) environment.AA_PI_BUNDLED_RUNTIME = piBundle;
+    else delete environment.AA_PI_BUNDLED_RUNTIME;
+    // Without the bundle the Connector downloads Node and npm packages. A
+    // device that already takes Python from a mirror tries npmmirror first;
+    // the official sources and npmmirror remain fallbacks either way.
+    if ((mirror && mirror !== PYPI_SIMPLE) || settings.uvPythonInstallMirror === NPMMIRROR_PYTHON_BUILDS) {
+      environment.AA_NODE_MIRROR = NPMMIRROR_NODE_DIST;
+      environment.AA_NPM_REGISTRY = NPMMIRROR_NPM_REGISTRY;
+    } else {
+      delete environment.AA_NODE_MIRROR;
+      delete environment.AA_NPM_REGISTRY;
+    }
     // The setting decides, so a value inherited from the shell cannot contradict the UI.
     if (settings.connectorProxy) environment.AA_CONNECTOR_PROXY = settings.connectorProxy;
     else delete environment.AA_CONNECTOR_PROXY;

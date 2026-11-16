@@ -8,6 +8,7 @@
     <string name="runtime_error_agent_cli_unsupported">The agent\'s batch-file launcher cannot be started directly. Set the path of the actual executable in the instance configuration.</string>
     <string name="runtime_error_agent_configuration_failed">Configuration or submission has not finished. Check the original operation first.</string>
     <string name="runtime_error_agent_guarantees_missing">The current agent cannot meet this session\'s recovery guarantees.</string>
+    <string name="runtime_error_agent_install_busy">Another process is preparing the agent runtime. Try again shortly.</string>
     <string name="runtime_error_agent_install_failed">Installing the agent runtime failed. Check the network and try again.</string>
     <string name="runtime_error_agent_open_failed">Agent initialization has not finished. Check the original operation first.</string>
     <string name="runtime_error_agent_projection_failed">An agent update could not be saved reliably. The session needs to be recovered.</string>
@@ -58,6 +59,7 @@
     <string name="runtime_error_node_archive_too_large">The Node download exceeds the size limit.</string>
     <string name="runtime_error_node_checksum_mismatch">The Node download failed verification. Try again.</string>
     <string name="runtime_error_node_checksum_missing">The Node release has no checksum record.</string>
+    <string name="runtime_error_node_download_failed">Downloading Node failed. Check the network and try again.</string>
     <string name="runtime_error_node_install_invalid">The Node runtime failed verification.</string>
     <string name="runtime_error_node_platform_unsupported">Automatic Node setup is not supported on this device platform.</string>
     <string name="runtime_error_not_pending">This creation was rejected and has no pending request.</string>
