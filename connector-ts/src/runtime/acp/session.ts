@@ -32,7 +32,7 @@ import type { GoalState } from '../../generated/protocol/v1_2/goal-state.js'
 import { AcpProjectionIdentity, acpFingerprint, type JsonValue } from '../../domain/identity/index.js'
 import { asRecord, describeAcpError, isMethodNotFound, type AcpClient, type AgentInfo, type JsonRecord } from './client.js'
 import { choiceError, findOption, normalizeConfig, replaceConfig, withCurrent, type ConfigApply, type NormalizedConfig } from './config.js'
-import type { AcpDialect, ItemIdentity, SessionContext } from './dialect.js'
+import type { AcpDialect, DialectSessionHooks, ItemIdentity, SessionContext } from './dialect.js'
 import { ConnectionClosedError, JsonRpcError, RequestTimeoutError, type RequestContext } from './jsonrpc.js'
 import { isAcceptanceEvidence, isContentUpdate, translateUpdate } from './mapping.js'
 import { RuntimeFailure } from './errors.js'
@@ -119,6 +119,7 @@ export class AcpRuntimeSession implements RuntimeSession {
   private config: NormalizedConfig
   private capabilityRevision = 1
   private turn: ActiveTurn | undefined
+  private readonly idleWaiters: Array<() => void> = []
   /** toolCallId → 已经落到 Timeline 的工具条目。审批只关联这些（Hermes 的审批卡 id 不是工具调用）。 */
   private readonly toolItems = new Map<string, string>()
   private readonly interactions = new Map<string, PendingInteraction>()
@@ -169,6 +170,8 @@ export class AcpRuntimeSession implements RuntimeSession {
   async prompt(input: PromptInput, delivery: DeliveryRef): Promise<PromptAcceptance> {
     if (this.closed) return { outcome: 'rejected', error: { code: 'session_closed', message: 'session is closed' } }
     if (this.turn !== undefined) return { outcome: 'rejected', error: { code: 'session_busy', message: 'a turn is already running' } }
+    // 正在交接写锁：明确拒绝（不会执行），上层换到新路由后重发。
+    if (this.releasing) return { outcome: 'rejected', error: { code: 'runtime_route_switching', message: 'the session is being handed over to another route', retryable: true } }
     const turnId = `turn_${randomUUID()}`
     let resolveAcceptance!: (acceptance: PromptAcceptance) => void
     const acceptance = new Promise<PromptAcceptance>(resolve => (resolveAcceptance = resolve))
@@ -276,11 +279,14 @@ export class AcpRuntimeSession implements RuntimeSession {
         if (!pending.options.some(o => o.optionId === answer.optionId)) throw new JsonRpcError(-32602, `option ${answer.optionId} was not offered`)
         pending.resolve({ outcome: { outcome: 'selected', optionId: answer.optionId } })
       } else if (answer.kind === 'plan_review') {
-        const decision = this.dialect.planReview?.(answer, pending.options) ?? genericPlanReview(answer, pending.options)
+        const decision = this.dialect.planReview?.(answer, pending.options, { ...(this.planModeBefore !== undefined ? { modeBeforePlan: this.planModeBefore } : {}) }) ?? genericPlanReview(answer, pending.options)
         pending.resolve(decision.optionId === undefined ? { outcome: { outcome: 'cancelled' } } : { outcome: { outcome: 'selected', optionId: decision.optionId } })
         const then = decision.then
         if (then?.action === 'steer') {
           after = () => void this.steer?.({ text: then.text }, { deliveryId: `plan-feedback-${interactionId}`, clientMessageId: `plan-feedback-${interactionId}` })
+        } else if (then?.action === 'prompt') {
+          // 现在就登记：当前回合结束（拒绝计划使它结束）后立刻发出。
+          void this.whenIdle().then(() => this.prompt({ text: then.text }, { deliveryId: `plan-feedback-${interactionId}`, clientMessageId: `plan-feedback-${interactionId}` }))
         } else if (then?.action === 'cancel') {
           after = () => void this.cancel(turnId)
         }
@@ -321,9 +327,9 @@ export class AcpRuntimeSession implements RuntimeSession {
     if (Array.isArray(returned)) {
       const normalized = normalizeConfig({ configOptions: returned })
       const next = replaceConfig(this.config, normalized)
-      this.config = { ...next, options: this.adapt(next.options) }
+      this.setConfig({ ...next, options: this.adapt(next.options) })
     } else {
-      this.config = { ...this.config, options: withCurrent(this.config.options, option.id, option.type === 'boolean' ? change.value === true || change.value === 'true' : change.value) }
+      this.setConfig({ ...this.config, options: withCurrent(this.config.options, option.id, option.type === 'boolean' ? change.value === true || change.value === 'true' : change.value) })
     }
     this.emitConfig()
     return { options: this.config.options, appliesFrom }
@@ -348,13 +354,27 @@ export class AcpRuntimeSession implements RuntimeSession {
     this.events.close()
   }
 
+  /**
+   * 在回合之间释放会话（04 §5.6「路由切换要交接写锁」）：没有回合时立即 `session/close`，有回合时等它结束再关。
+   * 等待期间不再接受新的 prompt，避免回合结束后又开一轮、一直拿着写锁。返回时会话已关闭。
+   */
+  async releaseBetweenTurns(): Promise<void> {
+    if (this.closed) return
+    this.releasing = true
+    await this.whenIdle()
+    await this.close()
+  }
+
+  private releasing = false
+
   /** 连接断了（进程退出）：结束当前回合，通知会话需要重新 open。 */
   lost(reason: string): void {
     if (this.closed) return
     const error: RuntimeError = { code: 'runtime_disconnected', message: reason, retryable: true }
     if (this.turn) {
       if (!this.turn.accepted) this.turn.resolveAcceptance?.({ outcome: 'unknown', error })
-      this.endTurn(this.turn, 'failed', error)
+      // 已接纳的回合中途断开：结果未知（可能已经执行了一部分），由上层合成失败卡片，不自动重发。
+      this.endTurn(this.turn, 'failed', this.turn.accepted ? { ...error, retryable: false, details: { outcome: 'unknown' } } : error)
     }
     for (const [id, pending] of this.interactions) {
       pending.resolve({ outcome: { outcome: 'cancelled' } })
@@ -403,11 +423,20 @@ export class AcpRuntimeSession implements RuntimeSession {
     }
     this.interactions.clear()
     this.events.push({ type: 'turn.ended', turnId: turn.turnId, reason, ...(error ? { error } : {}) })
+    const waiters = this.idleWaiters.splice(0)
+    for (const resolve of waiters) resolve()
+  }
+
+  /** 当前没有回合时立即返回，否则等它结束。 */
+  private whenIdle(): Promise<void> {
+    if (this.turn === undefined) return Promise.resolve()
+    return new Promise(resolve => this.idleWaiters.push(resolve))
   }
 
   private translate(update: JsonRecord, replay = false): RuntimeEvent[] {
     const turnId = this.turn?.turnId
-    return this.dialect.translateUpdate?.(update, this.context) ?? translateUpdate(update, {
+    const state = { ...(turnId !== undefined ? { turnId } : {}), ...(this.turn ? { origin: this.turn.origin } : {}) }
+    return this.dialect.translateUpdate?.(update, this.context, state) ?? translateUpdate(update, {
       identity: this.identity,
       ...(turnId !== undefined ? { turnId } : {}),
       replay,
@@ -417,8 +446,30 @@ export class AcpRuntimeSession implements RuntimeSession {
     })
   }
 
+  private replaying = false
+
+  private hooks(): DialectSessionHooks {
+    return {
+      emit: event => this.events.push(event),
+      beginReplay: () => {
+        this.replaying = true
+        this.identity.reset?.()
+      },
+      endReplay: () => { this.replaying = false },
+    }
+  }
+
+  /** 方言声明的会话级通知（handle 按 sessionId 路由过来）。 */
+  dialectNotification(method: string, params: JsonRecord): void {
+    if (!this.closed) this.dialect.onNotification?.(method, params, this.hooks())
+  }
+
   private onUpdate(update: JsonRecord): void {
     if (this.closed) return
+    if (this.replaying) {
+      for (const event of this.translate(update, true)) this.events.push(event)
+      return
+    }
     // 回合外出现内容：Agent 自己开了一轮（定时唤醒、后台任务结束、外部写者）。
     if (this.turn === undefined && isContentUpdate(update)) {
       const turnId = `turn_${randomUUID()}`
@@ -426,7 +477,7 @@ export class AcpRuntimeSession implements RuntimeSession {
       this.events.push({ type: 'turn.started', turnId, origin: 'autonomous' })
     }
     const turn = this.turn
-    if (turn && !turn.accepted && isAcceptanceEvidence(update)) this.accept(turn)
+    if (turn && !turn.accepted && (isAcceptanceEvidence(update) || this.dialect.acceptanceEvidence?.(update) === true)) this.accept(turn)
     const events = this.translate(update)
     for (const event of events) {
       if ((event.type === 'tool.started' || event.type === 'tool.updated') && typeof update.toolCallId === 'string') this.toolItems.set(update.toolCallId, event.itemId)
@@ -434,7 +485,7 @@ export class AcpRuntimeSession implements RuntimeSession {
         const apply: Record<string, ConfigApply> = {}
         for (const option of event.options) apply[option.id] = this.config.apply[option.id] ?? (option.type === 'boolean' ? 'boolean' : 'option')
         const next = replaceConfig(this.config, { options: [...event.options], apply, native: this.config.native })
-        this.config = { ...next, options: this.adapt(next.options) }
+        this.setConfig({ ...next, options: this.adapt(next.options) })
         this.emitConfig()
         continue
       }
@@ -442,13 +493,17 @@ export class AcpRuntimeSession implements RuntimeSession {
     }
     if (turn && turn.origin !== 'user') {
       if (turn.quietTimer) clearTimeout(turn.quietTimer)
+      if (this.dialect.endsAutonomousTurn?.(update) === true) {
+        this.endTurn(turn, 'end_turn')
+        return
+      }
       turn.quietTimer = setTimeout(() => this.endTurn(turn, 'end_turn'), this.autonomousQuietMs)
       turn.quietTimer.unref?.()
     }
   }
 
   private async onRequest(method: string, params: JsonRecord, context: RequestContext): Promise<unknown> {
-    const handled = this.dialect.handleRequest?.(method, params, { emit: event => this.events.push(event) })
+    const handled = this.dialect.handleRequest?.(method, params, this.hooks())
     if (handled !== undefined) return handled
     if (method !== 'session/request_permission' && method !== 'elicitation/create') throw JsonRpcError.methodNotFound(method)
     if (this.turn && !this.turn.accepted) this.accept(this.turn)
@@ -507,6 +562,17 @@ export class AcpRuntimeSession implements RuntimeSession {
         await call('clear')
       },
     }
+  }
+
+  /** 替换配置；计划模式从别的值切进来时记下原值（批准计划后回到它，v2 claude/planning.py）。 */
+  private setConfig(next: NormalizedConfig): void {
+    const spec = this.dialect.planMode?.(next.options)
+    if (spec) {
+      const before = findOption(this.config.options, spec.optionId)?.currentValue
+      const after = findOption(next.options, spec.optionId)?.currentValue
+      if (after === spec.planValue && before !== spec.planValue && typeof before === 'string') this.planModeBefore = before
+    }
+    this.config = next
   }
 
   private planningPort(): PlanningPort {
