@@ -229,9 +229,12 @@ push, PATCH answers, cache restore) and in the observations
 views and file browsing read them as before. Normal mode prefers plain envelopes
 and keeps the Server's fields they omit. Once any envelope is sealed, only sealed
 ones count: the AD uses the session's `connectorId` and the slot of its field,
-the key is the device's current-epoch directory key, and when any of them does
-not open the title is the locked placeholder and `cwd` is nil, never the
-Server's plaintext. Opened payloads are cached in memory per (session, slot,
+the key is the device's current-epoch directory key. The title is the opened
+`displayUser.title` (a `displayUser` that does not open never falls back to the
+device's title), else the opened `displayDevice.title`; `cwd` comes only from an
+opened `displayDevice`, never from the Server's plaintext. When any envelope
+does not open the session is locked and an unknown title shows the locked
+placeholder. Opened payloads are cached in memory per (session, slot,
 `keyId`, payload); `ClientTrustStore.observeDevices` (pairing, a new
 `e2ee.directory_key`, forgetting a device) makes both repositories resolve
 again. A session without a project whose sealed `displayDevice` opened is

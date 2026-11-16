@@ -12,8 +12,11 @@ import Synchronization
 /// - Encrypted mode (any sealed envelope): only the sealed envelopes count; plain envelopes
 ///   next to them and the Server's `title` / `cwd` are ignored. Each is opened with the
 ///   device's directory key (`connectorId`), AD = `(connectorId, sessionId, slot, keyId)`.
-///   When any of them does not open (no key for its `keyId`, wrong key, tampered payload),
-///   the title is the locked placeholder and `cwd` is nil.
+///   Title = the opened `displayUser.title`; when `displayUser` is there but does not open,
+///   the title stays unknown (never the device's title), otherwise the opened
+///   `displayDevice.title`. `cwd` comes only from an opened `displayDevice`. When any of
+///   them does not open (no key for its `keyId`, wrong key, tampered payload) the session is
+///   locked, and an unknown title shows the locked placeholder.
 /// - Sessions without envelopes are returned unchanged; unknown fields are ignored.
 ///
 /// Opened payloads are cached in memory by `(sessionId, slot, keyId, payload)`. Failures are
@@ -78,15 +81,12 @@ nonisolated final class V2SessionDisplayResolver: Sendable {
         }
         let deviceFields = device?.mode == .sealed ? open(device, session: session, slot: .device) : .absent
         let userFields = user?.mode == .sealed ? open(user, session: session, slot: .user) : .absent
-        if deviceFields == .locked || userFields == .locked {
-            result.title = Self.lockedTitle
-            result.cwd = nil
-            result.displayLocked = true
-        } else {
-            result.title = userFields.text("title") ?? deviceFields.text("title")
-            result.cwd = deviceFields.text("cwd")
-            result.displayLocked = nil
-        }
+        let locked = deviceFields == .locked || userFields == .locked
+        // A rename that cannot be opened yet must not be replaced by the device's original title.
+        let title = userFields.text("title") ?? (userFields == .locked ? nil : deviceFields.text("title"))
+        result.title = title ?? (locked ? Self.lockedTitle : nil)
+        result.cwd = deviceFields.text("cwd")
+        result.displayLocked = locked ? true : nil
         return result
     }
 

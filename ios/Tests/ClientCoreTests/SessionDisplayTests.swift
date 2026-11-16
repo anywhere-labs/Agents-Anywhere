@@ -109,17 +109,24 @@ import Testing
         let device = try sealed(["title": "Device", "cwd": "/work"], slot: .device)
         let user = try sealed(["title": "Renamed"], slot: .user)
         let renamed = try resolver().resolve(meta(try sessionObject(device: device, user: user)))
-        #expect(renamed.title == "Renamed" && renamed.cwd == "/work")
+        #expect(renamed.title == "Renamed" && renamed.cwd == "/work" && renamed.displayLocked == nil)
         let blank = try sealed(["title": "  "], slot: .user)
         #expect(try resolver().resolve(meta(try sessionObject(device: device, user: blank))).title == "Device")
-        // A rename sealed with an older key: never fall back to the device's original title.
+        // A rename sealed with an older key: never fall back to the device's original title,
+        // but the device's cwd still shows.
         let oldUser = try sealed(["title": "Renamed"], slot: .user, keyId: "dk_0", key: Self.otherKey)
         let lockedUser = try resolver().resolve(meta(try sessionObject(device: device, user: oldUser)))
-        #expect(lockedUser.title == V2SessionDisplayResolver.lockedTitle && lockedUser.cwd == nil && lockedUser.displayLocked == true)
-        // A device envelope that does not open locks the session even when the rename opens.
+        #expect(lockedUser.title == V2SessionDisplayResolver.lockedTitle && lockedUser.cwd == "/work" && lockedUser.displayLocked == true)
+        // Only the rename, and it does not open.
+        let onlyUser = try resolver().resolve(meta(try sessionObject(title: "Server", user: oldUser)))
+        #expect(onlyUser.title == V2SessionDisplayResolver.lockedTitle && onlyUser.cwd == nil && onlyUser.displayLocked == true)
+        // The device envelope does not open but the rename does: the user's title, no cwd, still locked.
         let lockedDevice = try sealed(["title": "Device", "cwd": "/work"], slot: .device, keyId: "dk_0", key: Self.otherKey)
         let lockedCwd = try resolver().resolve(meta(try sessionObject(device: lockedDevice, user: user)))
-        #expect(lockedCwd.title == V2SessionDisplayResolver.lockedTitle && lockedCwd.cwd == nil && lockedCwd.displayLocked == true)
+        #expect(lockedCwd.title == "Renamed" && lockedCwd.cwd == nil && lockedCwd.displayLocked == true)
+        // Neither opens.
+        let both = try resolver().resolve(meta(try sessionObject(device: lockedDevice, user: oldUser)))
+        #expect(both.title == V2SessionDisplayResolver.lockedTitle && both.cwd == nil && both.displayLocked == true)
     }
 
     @Test func failuresAreRetriedOnceAKeyArrives() throws {
@@ -304,6 +311,27 @@ import Testing
         store.upsert([try meta(try sessionObject(device: device, updatedSeq: 21))])
         try await Task.sleep(for: .milliseconds(20))
         #expect(patches(http).count == 1)
+    }
+
+    @Test func aLockedRenameStillAssignsByTheDevicesCwdButALockedDeviceDoesNot() async throws {
+        let http = TestHTTPTransport()
+        http.respond = { call in
+            if call.method == .patch { throw HTTPError.server(statusCode: 404, message: "project_not_found") }
+            return try http.defaultResponse(call)
+        }
+        let store = repository(http)
+        let oldKey = Self.otherKey
+        store.apply(try dashboard([
+            try sessionObject(id: "renamed", device: try sealed(["cwd": "/workspace"], session: "renamed", slot: .device),
+                              user: try sealed(["title": "R"], session: "renamed", slot: .user, keyId: "dk_0", key: oldKey)),
+            try sessionObject(id: "deviceLocked", device: try sealed(["cwd": "/workspace"], session: "deviceLocked", slot: .device, keyId: "dk_0", key: oldKey),
+                              user: try sealed(["title": "R"], session: "deviceLocked", slot: .user)),
+        ]))
+        #expect(store.sessions.first { $0.id == "renamed" }?.cwd == "/workspace")
+        #expect(store.sessions.first { $0.id == "deviceLocked" }?.title == "R")
+        try await eventually { patches(http).count == 1 }
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(patches(http).count == 1 && patches(http).first?.path.hasSuffix("/sessions/renamed/meta") == true)
     }
 
     @Test func aNewDirectoryKeyRedisplaysTheListAndThenAssigns() async throws {
