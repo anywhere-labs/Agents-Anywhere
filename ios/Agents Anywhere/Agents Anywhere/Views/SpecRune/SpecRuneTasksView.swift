@@ -88,7 +88,11 @@ struct SpecRuneTasksView: View {
         NavigationStack(path: $taskPath) {
             taskColumn(model)
                 .navigationDestination(for: String.self) { ref in
+                    // 详情页必须自己再挂一次工具栏：ChatPageToolbar 的
+                    // toolbar 项是 per-page 的，push 后外层那份不会跟过来，
+                    // 右缘 rail 会整个消失。
                     detailPage(model, ref: ref)
+                        .modifier(pageToolbar)
                 }
         }
     }
@@ -241,6 +245,23 @@ struct SpecRuneTasksView: View {
             }
         }
         .listStyle(.insetGrouped)
+    }
+
+    /// app 统一的页面工具栏：负责把 rail 按钮送进 Duo 右缘竖排，
+    /// 并处理抽屉形态下导航栏被卡片位移重画的问题。
+    private var pageToolbar: ChatPageToolbar {
+        ChatPageToolbar(
+            title: "SpecRune",
+            onMenu: onMenu,
+            // 项目切换进右缘竖排。按钮只翻转 @State，列表在 sheet 里渲染——
+            // ChatRailButton 的 AnyView 会打断 @Observable 追踪。
+            railTrailing: [ChatRailButton(id: "specrune-project", view: AnyView(
+                Button { showsProjectPicker = true } label: {
+                    Label("项目", image: AppSymbolAssets.names["folder"] ?? "aa-Folder")
+                }
+            ))] + (chatRail.map { chatRailButtons($0) } ?? []),
+            pageTrailing: []
+        )
     }
 
     private func monthBinding(_ month: String) -> Binding<Bool> {
@@ -494,8 +515,10 @@ private struct SpecRuneTaskDetailView: View {
                     }
                 }
                 .padding(20)
-                // 宽屏不拉伸正文，多余宽度留给外层结构。
-                .frame(maxWidth: 700, alignment: .leading)
+                // 先撑满可用宽度，再限制最大宽度并居中——顺序反了的话
+                // VStack 宽度会收缩到内容宽度，居中后左右各留一大片空白。
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: 740, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .center)
             }
         }
