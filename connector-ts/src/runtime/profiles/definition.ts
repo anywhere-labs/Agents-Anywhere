@@ -1,8 +1,9 @@
 // ACP Agent 定义：Connector 自带的、类型化的启动方式与差异，从不接受用户提供的命令。
 // ported from Agents-Anywhere v2 connector/connector/runtimes/acp/domain/agents.py（v3 按 D10 从 v2 迁移 profile 定义）。
 
-import type { Capability, JsonObject, RuntimeType } from '../../application/ports/runtime-session.js'
+import type { Capability, JsonObject, ModelGatewayConfig, RuntimeType } from '../../application/ports/runtime-session.js'
 import type { AcpDialect } from '../acp/dialect.js'
+import type { LocalLaunch, Platform } from './launch.js'
 
 /**
  * 实例配置可以从 Server 修改，所以绝不能携带启动指令；参数和环境变量只由定义决定。
@@ -36,6 +37,21 @@ export interface DialectContext {
   readonly settings: JsonObject
 }
 
+/** 启动准备钩子的输入（v2 `AgentContext`）。 */
+export interface LaunchContext {
+  readonly instanceId: string
+  readonly sessionNamespace: string
+  /** 校验过的实例配置。 */
+  readonly settings: JsonObject
+  /** 模型网关：由定义注入为环境变量或私有配置，从不经实例配置透传 env。 */
+  readonly modelGateway?: ModelGatewayConfig
+  /** 实例数据目录（进程工作目录、私有缓存）。 */
+  readonly dataDir: string
+  /** 按工作目录分进程时的工作目录。 */
+  readonly scope?: { readonly cwd: string }
+  readonly platform?: Platform
+}
+
 export interface AcpAgentDefinition {
   /** 与 v2 runtime_type 一致（会话 ID、Timeline ID 的输入）。 */
   readonly runtime: RuntimeType
@@ -62,6 +78,12 @@ export interface AcpAgentDefinition {
   readonly maturity?: string
   /** 会话方言；每个运行实例一份。 */
   dialect(context: DialectContext): AcpDialect
+  /**
+   * 启动准备（v2 `prepare_launch`）：Agent 不是一个现成的本机可执行文件时（例如要先装 npm 运行时、给适配器打补丁），
+   * 由它在每次拉起进程前给出命令、参数和环境变量；不给时按 `executable` 找本机命令（`localLaunch`）。
+   * 返回的命令与参数仍只由定义决定，实例配置不能携带它们。
+   */
+  prepareLaunch?(context: LaunchContext): Promise<LocalLaunch>
   /** 方言之外的运行时级能力上限（附件等）。 */
   readonly extraCapabilities?: readonly Capability[]
 }

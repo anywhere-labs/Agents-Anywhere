@@ -77,7 +77,14 @@ export class AcpAgentProvider implements RuntimeProvider {
       dialect,
       // 每次拉起进程前重新解析和检查（v2 `validated_launch`）：用户可能刚升级或卸载了 Agent。
       connect: async scope => {
-        const launch = await localLaunch(definition, settings, this.options.platform)
+        const launch = definition.prepareLaunch
+          ? await definition.prepareLaunch({
+            instanceId: instance.instanceId, sessionNamespace: instance.sessionNamespace, settings, dataDir: cwd,
+            ...(instance.modelGateway ? { modelGateway: instance.modelGateway } : {}),
+            ...(scope ? { scope } : {}),
+            ...(this.options.platform ? { platform: this.options.platform } : {}),
+          })
+          : await localLaunch(definition, settings, this.options.platform)
         return processConnection(
           { command: launch.command, args: launch.args, cwd: definition.launchInWorkspace && scope ? scope.cwd : cwd, env: agentEnvironment(launch.environment, this.options.platform ? { base: this.options.platform.env } : {}) },
           dialect,

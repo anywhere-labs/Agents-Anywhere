@@ -426,7 +426,7 @@ export class AcpRuntimeSession implements RuntimeSession {
       this.events.push({ type: 'turn.started', turnId, origin: 'autonomous' })
     }
     const turn = this.turn
-    if (turn && !turn.accepted && isAcceptanceEvidence(update)) this.accept(turn)
+    if (turn && !turn.accepted && (isAcceptanceEvidence(update) || this.dialect.acceptanceEvidence?.(update) === true)) this.accept(turn)
     const events = this.translate(update)
     for (const event of events) {
       if ((event.type === 'tool.started' || event.type === 'tool.updated') && typeof update.toolCallId === 'string') this.toolItems.set(update.toolCallId, event.itemId)

@@ -6,3 +6,4 @@
 | 文件 | Agent | 场景 | 来源 |
 | --- | --- | --- | --- |
 | `hermes-allow.jsonl` | Hermes（`git.42456cf`） | 允许一次写入审批，Agent 写文件后回复 | 复制自 v2 |
+| `pi-new-prompt.jsonl` | Pi 1.4.0 + `@openma/pi-acp` 0.1.8（AA 补丁后，本机模式） | 新建会话、一轮短 prompt、关闭 | `test/live/pi.live.test.ts` 录制；本机路径已换成 `/home/user`、`/workspace`，守卫路径为 `__AA_PI_GUARD__` |
