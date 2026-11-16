@@ -9,7 +9,7 @@ import { open, realpath } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import { statSync } from 'node:fs'
 
-import type { HistoryItem, HistoryWindow, NativeHistoryPage } from '../../../application/ports/runtime-session.js'
+import type { AttachmentInfo, HistoryItem, HistoryWindow, NativeHistoryPage } from '../../../application/ports/runtime-session.js'
 import { piHistoryItemId, type JsonValue } from '../../../domain/identity/index.js'
 import { fail } from '../../acp/errors.js'
 import { within } from './files.js'
@@ -225,9 +225,9 @@ export function piTimeline(history: PiHistory, sessionId: string, runtime = 'pi'
               text: (thinking ? block.thinking : block.text) ?? fallback,
             }
             if (message.aaClientMessageId) content.clientMessageId = message.aaClientMessageId
-            if (role === 'user' && index === 0 && message.aaAttachments) content.attachments = message.aaAttachments
-            add(index, 'message', role === 'user' ? 'user' : 'assistant', content,
-              message.stopReason === 'error' ? 'failed' : message.stopReason === 'aborted' ? 'cancelled' : 'done')
+            // v2 用 Python 的真值判断：空列表不算有附件。
+            if (role === 'user' && index === 0 && Array.isArray(message.aaAttachments) && message.aaAttachments.length > 0) content.attachments = message.aaAttachments
+            add(index, 'message', role === 'user' ? 'user' : 'assistant', content, messageStatus(message))
           } else if (block.type === 'toolCall') {
             const args = block.arguments ?? {}
             const bash = block.name === 'bash'
@@ -238,6 +238,10 @@ export function piTimeline(history: PiHistory, sessionId: string, runtime = 'pi'
             tools.set(String(block.id), add(index, 'tool', 'tool', content, 'pending'))
           }
         })
+        // 模型报错时 Pi 把原因记在 errorMessage 上（正文常常是空的）：单独给一条错误提示，免得失败的一轮在历史里
+        // 什么都看不到。v2 没有这一条；派生键 `error` 不会和内容块的下标撞上。
+        const failure = role === 'assistant' && message.stopReason === 'error' && typeof message.errorMessage === 'string' ? message.errorMessage.trim() : ''
+        if (failure) add('error', 'message', 'assistant', { kind: 'markdown', format: 'markdown', text: failure, nativeEntryType: 'error' }, 'failed')
       } else if (role === 'toolResult') {
         const item = tools.get(String(message.toolCallId)) ?? add('result', 'tool', 'tool', { kind: 'tool_call', title: message.toolName ?? 'tool' })
         item.content.output = textContent(blocks)
@@ -256,6 +260,29 @@ export function piTimeline(history: PiHistory, sessionId: string, runtime = 'pi'
   return result
 }
 
+/** v2：模型报错的消息算失败，被中断的算取消。 */
+function messageStatus(message: Entry): PiTimelineItem['status'] {
+  return message.stopReason === 'error' ? 'failed' : message.stopReason === 'aborted' ? 'cancelled' : 'done'
+}
+
+/** 原生记录里的 `aaAttachments`（v2 的 Timeline 附件形状）；不认识的条目跳过。 */
+export function attachmentInfos(value: JsonValue | undefined): AttachmentInfo[] {
+  if (!Array.isArray(value)) return []
+  const infos: AttachmentInfo[] = []
+  for (const raw of value) {
+    const entry = record(raw)
+    if (typeof entry.fileId !== 'string' || entry.fileId === '') continue
+    infos.push({
+      fileId: entry.fileId,
+      name: typeof entry.name === 'string' ? entry.name : entry.fileId,
+      mediaType: typeof entry.mediaType === 'string' ? entry.mediaType : 'application/octet-stream',
+      ...(typeof entry.size === 'number' ? { size: entry.size } : {}),
+      ...(typeof entry.sha256 === 'string' ? { sha256: entry.sha256 } : {}),
+    })
+  }
+  return infos
+}
+
 function jsonText(value: JsonValue | undefined): string {
   return typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value)
 }
@@ -270,9 +297,19 @@ export function piHistoryEvents(items: readonly PiTimelineItem[]): HistoryItem[]
         events.push({ type: 'notice', itemId: item.id, level: 'info', kind: 'compact', text: jsonText(content.text), replay: true })
         continue
       }
+      if (content.nativeEntryType === 'error') {
+        events.push({ type: 'notice', itemId: item.id, level: 'error', kind: 'error', text: jsonText(content.text), replay: true })
+        continue
+      }
       const role = item.role === 'user' ? 'user' : content.isThinking === true ? 'reasoning' : 'assistant'
       const clientMessageId = typeof content.clientMessageId === 'string' ? content.clientMessageId : undefined
-      events.push({ type: 'message.completed', itemId: item.id, role, text: jsonText(content.text), ...(clientMessageId ? { clientMessageId } : {}), replay: true })
+      const attachments = attachmentInfos(content.attachments)
+      events.push({
+        type: 'message.completed', itemId: item.id, role, text: jsonText(content.text), ...(clientMessageId ? { clientMessageId } : {}),
+        ...(attachments.length > 0 ? { timelineAttachments: attachments } : {}),
+        ...(item.status === 'failed' || item.status === 'cancelled' ? { status: item.status } : {}),
+        replay: true,
+      })
       continue
     }
     const command = content.kind === 'command'

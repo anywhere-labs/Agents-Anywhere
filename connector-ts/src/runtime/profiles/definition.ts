@@ -88,14 +88,14 @@ export interface AcpAgentDefinition {
   environment?(env: NodeJS.ProcessEnv, instance: RuntimeInstanceConfig): NodeJS.ProcessEnv
   /** 会话方言；每个运行实例一份。 */
   dialect(context: DialectContext): AcpDialect
-  /** 没有会话时进程空闲多久回收；0 表示常驻（Codex：codex-acp 要一直跟随 Codex App 的会话）。缺省用进程池的默认值。 */
-  readonly idleMs?: number
   /**
    * 启动准备（v2 `prepare_launch`）：Agent 不是一个现成的本机可执行文件时（例如要先装 npm 运行时、给适配器打补丁），
    * 由它在每次拉起进程前给出命令、参数和环境变量；不给时按 `executable` 找本机命令（`localLaunch`）。
    * 返回的命令与参数仍只由定义决定，实例配置不能携带它们。
    */
   prepareLaunch?(context: LaunchContext): Promise<LocalLaunch>
+  /** 没有会话时进程空闲多久回收；0 表示常驻（Codex：codex-acp 要一直跟随 Codex App 的会话）。缺省用进程池的默认值。 */
+  readonly idleMs?: number
   /** 方言之外的运行时级能力上限（附件等）。 */
   readonly extraCapabilities?: readonly Capability[]
 }

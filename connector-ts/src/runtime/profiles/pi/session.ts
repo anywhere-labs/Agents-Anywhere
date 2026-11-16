@@ -42,6 +42,7 @@ import { EventQueue } from '../../acp/queue.js'
 import { runtimeError, type AcpRuntimeSession } from '../../acp/session.js'
 import { piHistoryEvents, piTimeline, type PiHistory, type PiNativeIndex, type PiSource } from '../../companions/native-history/index.js'
 import { fileLock } from '../../supervisor/npm-runtime.js'
+import type { PiSessionAliases } from './aliases.js'
 import {
   GUARD_FAILED,
   PERMISSION_OPTION,
@@ -49,6 +50,7 @@ import {
   PLAN_OPTION,
   PLAN_REVIEW_PREFIX,
   piDialect,
+  piDialectState,
   TOOL_PERMISSION_PREFIX,
   type PiDialectState,
   type PiPermission,
@@ -99,6 +101,8 @@ export interface PiSessionHost {
   readonly instanceId: string
   readonly index: PiNativeIndex
   readonly permissions: PermissionStore
+  /** 原生会话 ID 别名：会话换了原生 ID 时记下，对外一直报告最初的 ID。 */
+  readonly aliases: PiSessionAliases
   /** 计划模式标记目录（守卫读同一个目录）。 */
   readonly planningDir: string
   /** 写入校验文件（SDK bridge 每次写原生文件后报告摘要）所在目录。 */
@@ -149,7 +153,10 @@ export interface PiOpenExisting {
 export class PiRuntimeSession implements RuntimeSession {
   readonly events = new EventQueue<RuntimeEvent>()
   readonly planning: PlanningPort
+  /** 当前 Pi 进程里的真实原生 ID（进程、锁、权限、计划标记、写入校验都按它）。 */
   private native = ''
+  /** 对外报告的原生 ID：最初的那个，之后换了原生会话也不变（aliases.ts）。 */
+  private external = ''
   private cwd = ''
   /** 已知的原生文件（新会话在 Pi 第一次写入后才有内容）。 */
   private file: string | undefined
@@ -200,7 +207,7 @@ export class PiRuntimeSession implements RuntimeSession {
   }
 
   get nativeSessionId(): string {
-    return this.native
+    return this.external
   }
 
   get capabilities(): SessionCapabilities {
@@ -228,7 +235,7 @@ export class PiRuntimeSession implements RuntimeSession {
     delete selections.mode
     if (permission !== undefined && permission !== null && !(PERMISSIONS as readonly string[]).includes(permission)) fail('invalid_configuration_value', '权限选项无效。')
     if (mode !== undefined && mode !== null && mode !== 'plan' && mode !== 'normal') fail('invalid_configuration_value', 'Pi 规划模式值无效。')
-    const dialectState: PiDialectState = { sessionFiles: new Map() }
+    const dialectState = piDialectState()
     const handle = this.host.spawn({}, piDialect(dialectState))
     let inner: AcpRuntimeSession
     try {
@@ -238,6 +245,7 @@ export class PiRuntimeSession implements RuntimeSession {
       throw classifyOpen(error)
     }
     this.native = inner.nativeSessionId
+    this.external = this.native
     this.cwd = spec.cwd
     this.file = dialectState.sessionFiles.get(this.native) ?? undefined
     this.attach({ handle, inner, dialect: dialectState, pump: Promise.resolve() })
@@ -250,6 +258,7 @@ export class PiRuntimeSession implements RuntimeSession {
   private async startExisting(source: PiSource, replay: 'none' | 'full'): Promise<void> {
     if (source.ambiguous) fail('pi_source_ambiguous', '多个历史文件具有相同会话身份，请先确认来源。')
     this.native = source.nativeSessionId
+    this.external = source.externalSessionId
     this.cwd = source.cwd
     this.file = source.path
     const history = await this.host.index.read(source.path)
@@ -271,7 +280,7 @@ export class PiRuntimeSession implements RuntimeSession {
     if (this.releaseLock === undefined) this.releaseLock = await this.lock(history.path)
     const stateFile = join(this.host.stateDir, `pi-writes-${acpFingerprint(this.sessionId)}.json`)
     await rm(stateFile, { force: true })
-    const dialectState: PiDialectState = { sessionFiles: new Map() }
+    const dialectState = piDialectState()
     const handle = this.host.spawn({
       AA_PI_SESSION_FILE: history.path,
       AA_PI_SESSION_ID: history.nativeId,
@@ -372,7 +381,7 @@ export class PiRuntimeSession implements RuntimeSession {
 
   /** 新会话还没写过原生文件就休眠了：没有可续的内容，开一个新的原生会话接上。 */
   private async restartEmpty(): Promise<Active> {
-    const dialectState: PiDialectState = { sessionFiles: new Map() }
+    const dialectState = piDialectState()
     const handle = this.host.spawn({}, piDialect(dialectState))
     let inner: AcpRuntimeSession
     try {
@@ -381,7 +390,17 @@ export class PiRuntimeSession implements RuntimeSession {
       await handle.stop().catch(() => undefined)
       throw classifyOpen(error)
     }
+    // 原生 ID 换了：记进别名表（写盘后才继续），对外仍是最初的 ID。
+    const previous = this.native
     this.native = inner.nativeSessionId
+    try {
+      await this.host.aliases.record(previous, this.native)
+    } catch (error) {
+      this.native = previous
+      await inner.close().catch(() => undefined)
+      await handle.stop().catch(() => undefined)
+      throw new RuntimeFailure({ code: 'pi_resume_failed', message: `无法记录 Pi 会话身份：${error instanceof Error ? error.message : String(error)}` })
+    }
     this.file = dialectState.sessionFiles.get(this.native) ?? undefined
     await this.host.permissions.set(this.native, this.permission)
     await this.setPlanMode(this.planMode)
@@ -477,7 +496,16 @@ export class PiRuntimeSession implements RuntimeSession {
           return { type: 'turn.ended', turnId: event.turnId, reason: 'cancelled' }
         }
         this.planDismissed = false
+        // 模型报错：把原因作为错误提示放进 Timeline（历史里同一种失败也有一条，见 pi-history.ts）。
+        if (event.reason === 'failed' && event.error?.details?.assistantError === true) {
+          this.events.push({
+            type: 'notice', turnId: event.turnId, itemId: acpFingerprint([this.sessionId, 'pi-turn-error', event.turnId]), level: 'error', kind: 'error',
+            text: event.error.message, data: { code: event.error.code, ...(event.error.details ?? {}) },
+          })
+        }
         return event
+      case 'message.completed':
+        return event.role === 'user' ? withTimelineAttachments(event) : event
       case 'session.lost':
         if (this.retiring) return undefined
         void this.lost()
@@ -770,6 +798,13 @@ export class PiRuntimeSession implements RuntimeSession {
     })
     return answer
   }
+}
+
+/** AA 发出的用户消息：带平台身份的附件同时以 Timeline 形状给出（与历史里读回来的一致）。 */
+function withTimelineAttachments(event: Extract<RuntimeEvent, { type: 'message.completed' }>): RuntimeEvent {
+  if (event.timelineAttachments !== undefined || event.attachments === undefined) return event
+  const infos = event.attachments.flatMap(attachment => (attachment.info !== undefined ? [attachment.info] : []))
+  return infos.length > 0 ? { ...event, timelineAttachments: infos } : event
 }
 
 /** `/bash <command>` 的命令部分；不是 /bash 时 undefined。 */
