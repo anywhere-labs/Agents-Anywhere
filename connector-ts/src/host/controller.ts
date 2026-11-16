@@ -329,7 +329,9 @@ export class ConnectorController {
     this.emitState()
     const timeout = Number(params.timeout ?? 600)
     const pollInterval = Number(params.pollInterval ?? 2)
-    void this.runPairing(serverUrl, Number.isFinite(timeout) ? timeout : 600, Number.isFinite(pollInterval) ? pollInterval : 2, generation, abort).finally(() => {
+    // `start: false` (the CLI's `pair --no-start`) saves the credentials without starting.
+    const startAfter = params.start !== false
+    void this.runPairing(serverUrl, Number.isFinite(timeout) ? timeout : 600, Number.isFinite(pollInterval) ? pollInterval : 2, generation, abort, startAfter).finally(() => {
       if (this.pairingAbort === abort) {
         this.pairingAbort = null
         this.emitState()
@@ -356,7 +358,7 @@ export class ConnectorController {
     return payload
   }
 
-  private async runPairing(serverUrl: string, timeoutSeconds: number, pollSeconds: number, generation: number, abort: AbortController): Promise<void> {
+  private async runPairing(serverUrl: string, timeoutSeconds: number, pollSeconds: number, generation: number, abort: AbortController, startAfter: boolean): Promise<void> {
     try {
       const started = await startPairing(this.options.fetchJson, serverUrl, timeoutSeconds, abort.signal)
       if (!this.pairingCurrent(generation)) return
@@ -373,7 +375,7 @@ export class ConnectorController {
           this.changing = true
           try {
             this.options.config.save(settings)
-            await this.startRuntime()
+            if (startAfter) await this.startRuntime()
           } finally {
             this.changing = false
           }
