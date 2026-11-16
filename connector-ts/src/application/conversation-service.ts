@@ -84,6 +84,8 @@ export interface CreateSessionCommand {
   runtimeId: string
   runtimeType: string
   cwd: string
+  /** The Server project, when a client creates the session through a secure channel. */
+  projectId?: string | null
   title?: string | null
   selections?: Record<string, string | null>
   clientMessageId: string
@@ -416,6 +418,7 @@ export class ConversationService {
         runtimeId: command.runtimeId,
         externalSessionId: null,
         cwd: command.cwd,
+        projectId: command.projectId ?? null,
         nativeTitle: command.title ?? null,
         status: 'pending',
         sourceAvailability: 'available',

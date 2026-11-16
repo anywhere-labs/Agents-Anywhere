@@ -18,6 +18,11 @@ export interface Session {
   /** The native session (Codex threadId, Claude JSONL id, DSH id); null until the Runtime created it. */
   readonly externalSessionId: string | null
   readonly cwd: string | null
+  /**
+   * The Server project a client asked to file this session under when it created it through a secure channel
+   * (encrypted mode, where the Server cannot see `cwd`). Null for sessions created through the Server or discovered.
+   */
+  readonly projectId?: string | null
   /** Title the Runtime reported (the user's override is a Server field). */
   readonly nativeTitle: string | null
   readonly status: SessionStatus
@@ -69,6 +74,8 @@ export interface SummaryFacts {
   resetSeq: number
   planState: PlanStateSummary
   goalState: GoalStateSummary
+  /** Only for sessions a client created through a channel (`Session.projectId`); plain, it is not display text. */
+  projectId?: string
   display: DisplayFields
 }
 
@@ -103,6 +110,7 @@ export function summarize(session: Session, latestItem: TimelineItem | null): Su
     resetSeq: session.clock.resetSeq,
     planState: session.planState,
     goalState: session.goalState,
+    ...(typeof session.projectId === 'string' ? { projectId: session.projectId } : {}),
     display: { title: session.nativeTitle, preview: previewOf(latestItem), cwd: session.cwd },
   }
 }

@@ -83,6 +83,7 @@ export class CommandInbox {
       runtimeId: text(p.runtimeId, 'runtimeId'),
       runtimeType: text(p.runtimeType, 'runtimeType'),
       cwd: text(p.cwd, 'cwd'),
+      ...(optionalString(p.projectId) !== null ? { projectId: optionalString(p.projectId) } : {}),
       title: optionalString(p.title),
       ...(p.selections !== null && typeof p.selections === 'object' ? { selections: p.selections as Record<string, string | null> } : {}),
       clientMessageId: text(p.clientMessageId, 'clientMessageId'),

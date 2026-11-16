@@ -171,6 +171,12 @@ CREATE TABLE runtime_kv (
 );
 `,
   },
+  {
+    // The project a client filed a session it created through a secure channel under (SessionSummary.projectId).
+    version: 2,
+    breaksPrevious: false,
+    sql: 'ALTER TABLE sessions ADD COLUMN project_id TEXT;',
+  },
 ]
 
 export const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0

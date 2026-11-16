@@ -185,6 +185,7 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
       runtimeId: String(row.runtime_id),
       externalSessionId: nullableString(row.external_session_id),
       cwd: nullableString(row.cwd),
+      projectId: nullableString(row.project_id),
       nativeTitle: nullableString(row.native_title),
       status: String(row.status) as Session['status'],
       sourceAvailability: String(row.source_availability) as Session['sourceAvailability'],
@@ -396,9 +397,9 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
         const existing = get('SELECT * FROM sessions WHERE session_id = ?', input.sessionId)
         if (existing !== undefined) return { session: sessionFromRow(existing), created: false }
         run(
-          `INSERT INTO sessions(session_id, runtime_type, runtime_id, external_session_id, cwd, native_title, status, source_availability,
-             head_seq, reset_seq, takeover, created_at, last_activity_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
-          input.sessionId, input.runtimeType, input.runtimeId, input.externalSessionId, input.cwd, input.nativeTitle, input.status,
+          `INSERT INTO sessions(session_id, runtime_type, runtime_id, external_session_id, cwd, project_id, native_title, status, source_availability,
+             head_seq, reset_seq, takeover, created_at, last_activity_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
+          input.sessionId, input.runtimeType, input.runtimeId, input.externalSessionId, input.cwd, input.projectId ?? null, input.nativeTitle, input.status,
           input.sourceAvailability, input.takeover ? 1 : 0, input.at, input.at,
         )
         const session = requireSession(input.sessionId)

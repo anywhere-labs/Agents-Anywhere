@@ -43,6 +43,8 @@ export interface NewSession {
   runtimeId: string
   externalSessionId: string | null
   cwd: string | null
+  /** See `Session.projectId`. */
+  projectId?: string | null
   nativeTitle: string | null
   status: SessionStatus
   sourceAvailability: SourceAvailability

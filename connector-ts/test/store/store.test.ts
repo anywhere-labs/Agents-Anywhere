@@ -233,6 +233,20 @@ describe('data upgrades', () => {
     await expect(createSession('sess_2')).rejects.toMatchObject({ code: 'store_read_only' })
   })
 
+  it('migrates a version 1 store: sessions keep their rows and gain an empty project', async () => {
+    await createSession()
+    await store.close()
+    const raw = new DatabaseSync(join(dir, 'store.sqlite'))
+    raw.exec("ALTER TABLE sessions DROP COLUMN project_id; UPDATE meta SET value = '1' WHERE key = 'schema_version'")
+    raw.close()
+    sync = openSqliteStore({ dataDir: dir, now })
+    store = inProcessStore(sync)
+    expect(store.readOnly).toBe(false)
+    expect(await store.sessions.get('sess_1')).toMatchObject({ sessionId: 'sess_1', projectId: null })
+    await store.sessions.create({ sessionId: 'sess_p', runtimeType: 'codex', runtimeId: 'codex', externalSessionId: null, cwd: '/w', projectId: 'prj_1', nativeTitle: null, status: 'pending', sourceAvailability: 'available', takeover: true, at: now() })
+    expect(await store.sessions.get('sess_p')).toMatchObject({ projectId: 'prj_1' })
+  })
+
   it('keeps the store epoch across reopen', async () => {
     const epoch = store.storeEpoch
     await store.close()

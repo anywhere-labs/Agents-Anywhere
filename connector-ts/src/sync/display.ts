@@ -26,6 +26,7 @@ export async function wireSummary(facts: SummaryFacts, sealer: DisplaySealer): P
     resetSeq: facts.resetSeq,
     planState: facts.planState,
     goalState: facts.goalState,
+    ...(facts.projectId !== undefined ? { projectId: facts.projectId } : {}),
     displayDevice: await sealer.seal(facts.display, facts.sessionId),
   }
 }
