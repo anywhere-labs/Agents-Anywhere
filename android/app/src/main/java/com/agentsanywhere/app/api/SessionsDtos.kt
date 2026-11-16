@@ -186,6 +186,9 @@ data class RemoteSessionTimelineSnapshot(
     val hasMore: Boolean,
 )
 
+/** Marks a timeline item that arrived without `orderSeq`; zero is a valid first position. */
+const val MISSING_ORDER_SEQ = -1
+
 data class RemoteTimelineItem(
     val id: String,
     val sessionId: String,

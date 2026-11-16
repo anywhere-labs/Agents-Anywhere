@@ -285,6 +285,21 @@ interpreters contain symlinks, so prepare them on macOS or Linux.
 adds roughly 40 MB per architecture before installer compression; the universal
 macOS app carries both architectures.
 
+`bundle:pi` pre-installs the Pi ACP adapter and SDK into `build/pi-runtime/`
+from the Connector's `connector/runtimes/acp/profiles/pi/dependencies.json`,
+with the same npm flags the Connector uses (no install scripts, no lockfile).
+It keeps only the prebuilt native modules of `PI_BUNDLE_TARGETS` (set by
+`dist` like the other bundles) and drops `.bin` shims; `PI_BUNDLE_NPM_REGISTRY`
+installs from a mirror such as `https://registry.npmmirror.com`. The
+`afterPack` hook (`scripts/after-pack.cjs`) copies it to `resources/pi-runtime`
+before signing, because electron-builder drops `node_modules` from
+`extraResources`. It adds about 160 MB on disk (about 28 MB compressed). At
+runtime the Connector copies it into its npm cache when the dependency list
+matches and runs Pi on the Desktop executable with `ELECTRON_RUN_AS_NODE=1`, so
+Pi needs neither a Node download nor npm. Without a matching bundle it falls
+back to a compatible system Node or a download, trying npmmirror first when the
+Python source is a mirror.
+
 ## Desktop updates
 
 After authentication finishes and the workbench opens, Main checks the saved

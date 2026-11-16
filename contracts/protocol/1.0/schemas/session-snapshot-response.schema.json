@@ -950,6 +950,188 @@
       "title": "ProtocolTimelineSnapshot",
       "type": "object"
     },
+    "SessionQueueAttachment": {
+      "properties": {
+        "fileId": {
+          "title": "Fileid",
+          "type": "string"
+        },
+        "mediaType": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mediatype"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size"
+        }
+      },
+      "required": [
+        "fileId",
+        "name",
+        "mediaType",
+        "size"
+      ],
+      "title": "SessionQueueAttachment",
+      "type": "object"
+    },
+    "SessionQueueError": {
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "SessionQueueError",
+      "type": "object"
+    },
+    "SessionQueueItem": {
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/SessionQueueAttachment"
+          },
+          "title": "Attachments",
+          "type": "array"
+        },
+        "clientMessageId": {
+          "title": "Clientmessageid",
+          "type": "string"
+        },
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "createdAt": {
+          "title": "Createdat",
+          "type": "string"
+        },
+        "createdBy": {
+          "title": "Createdby",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionQueueError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "interruptRequested": {
+          "default": false,
+          "title": "Interruptrequested",
+          "type": "boolean"
+        },
+        "messageId": {
+          "title": "Messageid",
+          "type": "string"
+        },
+        "position": {
+          "minimum": 1,
+          "title": "Position",
+          "type": "integer"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "sending",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "updatedAt": {
+          "title": "Updatedat",
+          "type": "string"
+        }
+      },
+      "required": [
+        "messageId",
+        "sessionId",
+        "clientMessageId",
+        "content",
+        "attachments",
+        "status",
+        "position",
+        "interruptRequested",
+        "createdBy",
+        "createdAt",
+        "updatedAt",
+        "error"
+      ],
+      "title": "SessionQueueItem",
+      "type": "object"
+    },
+    "SessionQueueState": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/SessionQueueItem"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "revision": {
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "revision",
+        "items"
+      ],
+      "title": "SessionQueueState",
+      "type": "object"
+    },
     "SessionRuntimeState": {
       "properties": {
         "createdAt": {
@@ -1623,6 +1805,17 @@
       "title": "Notices",
       "type": "array"
     },
+    "queue": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SessionQueueState"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "runtimeCapabilities": {
       "$ref": "#/$defs/ProtocolCapabilitySet"
     },
@@ -1658,6 +1851,7 @@
     "effectiveCapabilities",
     "runtimeCapabilities",
     "catalogs",
+    "queue",
     "eventCursor",
     "serverTime"
   ],

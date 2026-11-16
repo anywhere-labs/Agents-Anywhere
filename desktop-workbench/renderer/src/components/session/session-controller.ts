@@ -182,7 +182,7 @@ export function createSessionController(options: SessionControllerOptions) {
 
   function applyEvent(event: ProtocolEventEnvelope) {
     if (disposed || snapshot.invalidated || event.sessionId !== sessionId) return
-    if (event.type === "goal.state.updated" || event.type === "planning.state.updated") {
+    if (isDomainEvent(event)) {
       publish({ domainEvents: new Map(snapshot.domainEvents).set(event.type, event) })
       return
     }
@@ -387,7 +387,7 @@ export function createSessionController(options: SessionControllerOptions) {
       if (replaced) {
         previousConsumed = true
         for (const event of previous) {
-          if (event.type === "goal.state.updated" || event.type === "planning.state.updated") applyEvent(event)
+          if (isDomainEvent(event)) applyEvent(event)
         }
       }
       return replaced
@@ -545,3 +545,14 @@ export function createSessionController(options: SessionControllerOptions) {
 }
 
 export type SessionController = ReturnType<typeof createSessionController>
+
+/** Whole-state projections kept per type and handed to their feature hooks. */
+const DOMAIN_EVENT_TYPES: ReadonlySet<string> = new Set([
+  "goal.state.updated",
+  "planning.state.updated",
+  "runtime.queue.updated",
+])
+
+function isDomainEvent(event: ProtocolEventEnvelope): boolean {
+  return DOMAIN_EVENT_TYPES.has(event.type)
+}

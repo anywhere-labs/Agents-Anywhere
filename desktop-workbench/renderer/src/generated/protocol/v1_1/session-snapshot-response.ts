@@ -92,6 +92,26 @@ export type Status2 =
 export type Title1 = string
 export type Type = "notification" | "interaction"
 export type Notices = NoticeIn[]
+export type Fileid = string
+export type Mediatype = string | null
+export type Name = string | null
+export type Size = number | null
+export type Attachments = SessionQueueAttachment[]
+export type Clientmessageid = string
+export type Content = string
+export type Createdat3 = string
+export type Createdby = string
+export type Code = string
+export type Message1 = string
+export type Interruptrequested = boolean
+export type Messageid = string
+export type Position = number
+export type Sessionid5 = string
+export type Status3 = "queued" | "sending" | "failed"
+export type Updatedat1 = string
+export type Items = SessionQueueItem[]
+export type Revision3 = number
+export type Sessionid6 = string
 export type Servertime = string
 export type Archivesource = ("user" | "runtime" | "both") | null
 export type Archived = boolean
@@ -117,44 +137,44 @@ export type Sourceavailabilityreason = string | null
 export type Sourceavailabilityupdatedat = string | null
 export type Sourceobservationorigin = ("event" | "inventory" | "operation") | null
 export type Sourceobservedat = string | null
-export type Status3 = "idle" | "waiting" | "pending" | "running" | "stopping" | "waiting_approval" | "error" | "blocked"
+export type Status4 = "idle" | "waiting" | "pending" | "running" | "stopping" | "waiting_approval" | "error" | "blocked"
 export type Takeover = boolean
 export type Title2 = string | null
 export type Unread = boolean
 export type Updatedseq1 = number
 export type Userarchived = boolean
-export type Createdat3 = string
+export type Createdat4 = string
 export type Error = {
   [k: string]: unknown
 } | null
 export type Externalsessionid2 = string | null
 export type Runtime5 = string
-export type Sessionid5 = string
-export type Status4 = "idle" | "waiting" | "pending" | "running" | "stopping" | "waiting_approval" | "error" | "blocked"
+export type Sessionid7 = string
+export type Status5 = "idle" | "waiting" | "pending" | "running" | "stopping" | "waiting_approval" | "error" | "blocked"
 export type Statusreason = string | null
-export type Updatedat1 = string
+export type Updatedat2 = string
 export type Updatedseq2 = number
 export type Hasmore = boolean
 export type Completedat = string | null
 export type Contenthash = string
-export type Createdat4 = string
+export type Createdat5 = string
 export type Id3 = string
 export type Orderseq = number
-export type Revision3 = number
+export type Revision4 = number
 export type Role = ("user" | "assistant" | "system" | "tool") | null
-export type Sessionid6 = string
-export type Clientmessageid = string | null
+export type Sessionid8 = string
+export type Clientmessageid1 = string | null
 export type Derivedkey = string | null
 export type Event = string | null
 export type Itemid1 = string | null
 export type Itemtype = string | null
 export type Runtime6 = string | "platform"
-export type Sessionid7 = string | null
-export type Status5 = "pending" | "running" | "waiting_approval" | "done" | "failed" | "cancelled" | "interrupted"
+export type Sessionid9 = string | null
+export type Status6 = "pending" | "running" | "waiting_approval" | "done" | "failed" | "cancelled" | "interrupted"
 export type Type1 = "message" | "tool" | "artifact" | "marker" | "system"
-export type Updatedat2 = string
+export type Updatedat3 = string
 export type Updatedseq3 = number
-export type Items = TimelineItem[]
+export type Items1 = TimelineItem[]
 export type Nextseq = number
 
 export interface ProtocolSessionSnapshotResponse {
@@ -164,6 +184,7 @@ export interface ProtocolSessionSnapshotResponse {
   eventCursor: Eventcursor
   goalState: GoalState | null
   notices: Notices
+  queue: SessionQueueState | null
   runtimeCapabilities: ProtocolCapabilitySet
   serverTime: Servertime
   session: SessionView
@@ -310,6 +331,39 @@ export interface NoticeSource {
   timelineItemId?: Timelineitemid
   [k: string]: unknown
 }
+export interface SessionQueueState {
+  items: Items
+  revision: Revision3
+  sessionId: Sessionid6
+  [k: string]: unknown
+}
+export interface SessionQueueItem {
+  attachments: Attachments
+  clientMessageId: Clientmessageid
+  content: Content
+  createdAt: Createdat3
+  createdBy: Createdby
+  error: SessionQueueError | null
+  interruptRequested: Interruptrequested
+  messageId: Messageid
+  position: Position
+  sessionId: Sessionid5
+  status: Status3
+  updatedAt: Updatedat1
+  [k: string]: unknown
+}
+export interface SessionQueueAttachment {
+  fileId: Fileid
+  mediaType: Mediatype
+  name: Name
+  size: Size
+  [k: string]: unknown
+}
+export interface SessionQueueError {
+  code: Code
+  message: Message1
+  [k: string]: unknown
+}
 export interface SessionView {
   archiveSource?: Archivesource
   archived?: Archived
@@ -335,7 +389,7 @@ export interface SessionView {
   sourceAvailabilityUpdatedAt?: Sourceavailabilityupdatedat
   sourceObservationOrigin?: Sourceobservationorigin
   sourceObservedAt?: Sourceobservedat
-  status: Status3
+  status: Status4
   takeover: Takeover
   title?: Title2
   unread?: Unread
@@ -344,16 +398,16 @@ export interface SessionView {
   [k: string]: unknown
 }
 export interface SessionRuntimeState {
-  createdAt: Createdat3
+  createdAt: Createdat4
   error?: Error
   externalSessionId?: Externalsessionid2
   metadata?: Metadata1
   runtime: Runtime5
   selections?: Selections
-  sessionId: Sessionid5
-  status?: Status4
+  sessionId: Sessionid7
+  status?: Status5
   statusReason?: Statusreason
-  updatedAt: Updatedat1
+  updatedAt: Updatedat2
   updatedSeq: Updatedseq2
   [k: string]: unknown
 }
@@ -365,37 +419,37 @@ export interface Selections {
 }
 export interface ProtocolTimelineSnapshot {
   hasMore: Hasmore
-  items: Items
+  items: Items1
   nextSeq: Nextseq
   [k: string]: unknown
 }
 export interface TimelineItem {
   completedAt?: Completedat
-  content?: Content
+  content?: Content1
   contentHash: Contenthash
-  createdAt: Createdat4
+  createdAt: Createdat5
   id: Id3
   orderSeq: Orderseq
-  revision?: Revision3
+  revision?: Revision4
   role?: Role
-  sessionId: Sessionid6
+  sessionId: Sessionid8
   source: TimelineSource
-  status: Status5
+  status: Status6
   type: Type1
-  updatedAt: Updatedat2
+  updatedAt: Updatedat3
   updatedSeq: Updatedseq3
   [k: string]: unknown
 }
-export interface Content {
+export interface Content1 {
   [k: string]: unknown
 }
 export interface TimelineSource {
-  clientMessageId?: Clientmessageid
+  clientMessageId?: Clientmessageid1
   derivedKey?: Derivedkey
   event?: Event
   itemId?: Itemid1
   itemType?: Itemtype
   runtime: Runtime6
-  sessionId?: Sessionid7
+  sessionId?: Sessionid9
   [k: string]: unknown
 }

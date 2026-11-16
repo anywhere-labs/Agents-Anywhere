@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 
+from sqlalchemy import event
 from test_backend_mvp import (
     _create_extra_session,
     create_connector_and_session,
@@ -10,6 +14,31 @@ from test_backend_mvp import (
 )
 
 from agent_server.core.models import TimelineItemIn
+
+
+@contextmanager
+def _statements_from_this_thread(engine) -> Iterator[list[str]]:
+    """Record SQL issued by the test thread only.
+
+    The TestClient runs the app's background loops (channel reconciliation,
+    timeline flushes, presence sweeps) on its portal thread against the same
+    engine. Counting their statements made query budgets fail whenever one
+    happened to run inside the measured window.
+    """
+
+    thread_id = threading.get_ident()
+    statements: list[str] = []
+
+    def record(_conn, _cursor, statement, *_args) -> None:
+        if threading.get_ident() == thread_id:
+            statements.append(statement)
+
+    sync_engine = engine.sync_engine
+    event.listen(sync_engine, "before_cursor_execute", record)
+    try:
+        yield statements
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", record)
 
 
 def test_inventory_and_push_include_all_owned_active_and_archived_sessions(tmp_path):
@@ -198,8 +227,6 @@ def test_inventory_derives_untitled_session_titles_in_constant_queries(tmp_path)
     Sessions that never received a user message stay untitled, so a per-row
     derivation re-ran for them on every Dashboard snapshot.
     """
-    from sqlalchemy import event
-
     with make_client(tmp_path) as client:
         connector_id, _, first_id, headers = create_connector_and_session(client)
         store = client.app.state.store
@@ -233,21 +260,12 @@ def test_inventory_derives_untitled_session_titles_in_constant_queries(tmp_path)
 
         prompted, untitled = asyncio.run(seed())
         user_id = client.get("/auth/me", headers=headers).json()["userId"]
-        statements: list[str] = []
-
-        def record(_conn, _cursor, statement, *_args) -> None:
-            statements.append(statement)
-
-        sync_engine = store.engine.sync_engine
-        event.listen(sync_engine, "before_cursor_execute", record)
-        try:
+        with _statements_from_this_thread(store.engine) as statements:
             first = asyncio.run(store.list_session_inventory(user_id=user_id))
             first_count = len(statements)
             statements.clear()
             second = asyncio.run(store.list_session_inventory(user_id=user_id))
             second_count = len(statements)
-        finally:
-            event.remove(sync_engine, "before_cursor_execute", record)
 
         titles = {session.id: session.title for session in first}
         assert titles[prompted] == "Fix the flaky build"
@@ -360,8 +378,6 @@ def test_timeline_writes_keep_the_session_latest_item_summary_current(tmp_path):
 
 
 def test_session_lists_do_not_read_timeline_rows(tmp_path):
-    from sqlalchemy import event
-
     with make_client(tmp_path) as client:
         connector_id, _, first_id, headers = create_connector_and_session(client)
         second_id = _create_extra_session(client, headers, connector_id, "second", title="Second")
@@ -382,20 +398,11 @@ def test_session_lists_do_not_read_timeline_rows(tmp_path):
         asyncio.run(seed())
         user_id = client.get("/auth/me", headers=headers).json()["userId"]
         asyncio.run(store.list_session_inventory(user_id=user_id))
-        statements: list[str] = []
-
-        def record(_conn, _cursor, statement, *_args) -> None:
-            statements.append(statement)
-
-        sync_engine = store.engine.sync_engine
-        event.listen(sync_engine, "before_cursor_execute", record)
-        try:
+        with _statements_from_this_thread(store.engine) as statements:
             inventory = asyncio.run(store.list_session_inventory(user_id=user_id))
             page, _, _ = asyncio.run(
                 store.list_sessions_page(archived=False, user_id=user_id)
             )
-        finally:
-            event.remove(sync_engine, "before_cursor_execute", record)
 
         assert {session.id for session in inventory} == {first_id, second_id}
         assert {session.id for session in page} == {first_id, second_id}

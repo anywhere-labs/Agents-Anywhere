@@ -42,6 +42,7 @@ Examples:
 
 ```text
 session.send_message
+session.queue
 session.steer
 session.interrupt
 session.selection.update
@@ -50,6 +51,11 @@ session.interaction.approval.respond
 session.catalog.model
 session.catalog.permission
 ```
+
+`session.queue` is synthesized by the Server rather than reported by the
+Connector: it is supported whenever the runtime supports `session.send_message`,
+and stays available while a turn runs. See
+[运行中排队消息](session-message-queue.md).
 
 Session-scoped capability is RuntimeLive. It can change while a turn is running,
 while a command is executing, while the runtime is compacting context, or after

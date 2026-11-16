@@ -451,6 +451,10 @@
     <string name="session_welcome_15">Choose a target and run.</string>
     <string name="session_welcome_16">What are we changing today?</string>
     <string name="session_status_failed">Failed</string>
+    <string name="session_failed_send_status">Not sent</string>
+    <string name="session_failed_send_action">See why it was not sent</string>
+    <string name="session_failed_send_title">Message not sent</string>
+    <string name="session_failed_send_body">%1$s\n\nDeleting removes only this unsent message. Text in the message box stays as it is.</string>
     <string name="session_show_less">Show less</string>
     <string name="session_read_more">Read more</string>
     <string name="session_copy_reply">Copy reply</string>

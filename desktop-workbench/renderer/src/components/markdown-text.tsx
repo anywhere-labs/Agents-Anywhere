@@ -19,6 +19,7 @@ import {
 import { cn } from "@/lib/utils"
 import { SourceCodeBlock, SourceCodeContent } from "@/components/source-code-block"
 import { openNativeFilePreviewWindow } from "@/lib/file-preview-window"
+import { inlineCodeFilePath, isExternalMarkdownHref, markdownUrlTransform, sessionFileLinkPath } from "@/lib/session-file-link"
 import type { SessionView } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 
@@ -122,10 +123,11 @@ function MarkdownBody({
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath, remarkStandaloneDisplayMath, remarkGitDirectiveBadges]}
         rehypePlugins={[rehypeKatex]}
+        urlTransform={markdownUrlTransform}
         components={{
           pre: MarkdownPre,
           code({ className, children, node: _node, ...props }) {
-            const previewPath = typeof children === "string" ? parseInlineFileRef(children) : null
+            const previewPath = typeof children === "string" ? inlineCodeFilePath(children) : null
             if (previewPath && token && session) {
               return (
                 <span
@@ -157,17 +159,32 @@ function MarkdownBody({
             )
           },
           a({ href, children, node: _node, ...props }) {
-            const childText = textFromReactChildren(children)
-            const path = href && isMarkdownFilePath(href)
-              ? stripLineSuffix(href)
-              : parseInlineFileRef(childText)
-            if (!path || !token || !session) {
+            // Pure in-page anchors must scroll within the current page without
+            // touching location.hash, which would drive this hash-routed SPA to
+            // the login screen (e.g. `#section-1` is not an app route).
+            if (href?.startsWith("#")) {
+              return (
+                <a
+                  href={href}
+                  {...props}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    const id = href.slice(1)
+                    document.getElementById(id)?.scrollIntoView({ block: "start" })
+                  }}
+                >
+                  {children}
+                </a>
+              )
+            }
+            if (!href || isExternalMarkdownHref(href) || !token || !session) {
               return (
                 <a href={href} target="_blank" rel="noreferrer" {...props}>
                   {children}
                 </a>
               )
             }
+            const path = sessionFileLinkPath(href) ?? href
             return (
               <span
                 role="button"
@@ -574,37 +591,6 @@ function MarkdownCodeBlock({ code, language }: { code: string; language: string 
       {language.toLowerCase() === "mermaid" ? <MermaidPreview code={code}>{source}</MermaidPreview> : source}
     </SourceCodeBlock>
   )
-}
-
-function stripLineSuffix(path: string) {
-  return path.replace(/:\d+(?::\d+)?$/, "")
-}
-
-function parseInlineFileRef(text: string): string | null {
-  if (!text || text.includes(" ") || text.includes("://")) return null
-  if (!text.includes("/")) return null
-  if (!/\.[a-zA-Z0-9]+(?::\d+(?::\d+)?)?$/.test(text)) return null
-  return stripLineSuffix(text)
-}
-
-function textFromReactChildren(children: React.ReactNode): string {
-  if (typeof children === "string" || typeof children === "number") return String(children)
-  if (Array.isArray(children)) return children.map(textFromReactChildren).join("")
-  return ""
-}
-
-function isMarkdownFilePath(href: string): boolean {
-  if (!href) return false
-  if (
-    href.startsWith("http://") ||
-    href.startsWith("https://") ||
-    href.startsWith("mailto:") ||
-    href.startsWith("#") ||
-    href.startsWith("//")
-  ) {
-    return false
-  }
-  return true
 }
 
 export function openSessionFilePreview(

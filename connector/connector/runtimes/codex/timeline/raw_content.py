@@ -6,6 +6,10 @@ from collections.abc import Mapping
 from typing import Any
 
 from connector.runtimes.codex.domain.sessions import first_string_from_mapping
+from connector.runtimes.codex.timeline.auto_review import (
+    AUTOMATIC_APPROVAL_REVIEW,
+    auto_review_content,
+)
 
 
 def timeline_item_content(raw: dict[str, Any]) -> Mapping[str, Any]:
@@ -13,6 +17,8 @@ def timeline_item_content(raw: dict[str, Any]) -> Mapping[str, Any]:
     raw_type = raw.get("type")
     if raw_type == "reasoning":
         return reasoning_content(raw=raw, content=content)
+    if raw_type == AUTOMATIC_APPROVAL_REVIEW:
+        return auto_review_content(raw)
     if raw_type in {
         "systemMessage",
         "runtimeMessage",
