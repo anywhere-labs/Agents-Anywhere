@@ -181,8 +181,7 @@ describe('encrypted mode on the device: the client API inside the channel', () =
     expect(created.status).toBe(200)
     const session = (created.body as { session: { id: string; connectorId: string; runtime: string } }).session
     expect(session).toMatchObject({ connectorId: DEVICE, runtime: 'codex' })
-    await settle()
-    expect(sessions[0]!.calls[0]).toMatchObject({ method: 'prompt', input: { text: 'hello' } })
+    await expect.poll(() => sessions[0]?.calls[0]).toMatchObject({ method: 'prompt', input: { text: 'hello' } })
     sessions[0]!.emit({ type: 'turn.started', turnId: 't1', origin: 'user', clientMessageId: 'cm_create' })
     sessions[0]!.emit({ type: 'turn.ended', turnId: 't1', reason: 'end_turn' })
     await new Promise(resolve => setTimeout(resolve, 150))
@@ -283,8 +282,7 @@ describe('encrypted mode on the device: the client API inside the channel', () =
     for (const record of own) expect(((await outboxItem(record, plainSealer)).p as { summary: Record<string, unknown> }).summary).not.toHaveProperty('projectId')
     const events: Record<string, unknown>[] = []
     await channel.subscribe(sessionId, 'seq:0', event => events.push(event))
-    await settle()
-    expect(events.some(event => event.type === 'timeline.item_created')).toBe(true)
+    await expect.poll(() => events.some(event => event.type === 'timeline.item_created')).toBe(true)
     const snapshot = await channel.request('GET', `/api/v2/sessions/${sessionId}/snapshot`)
     expect(snapshot.body).toMatchObject({ session: { id: sessionId, connectorId: DEVICE }, historySource: 'live' })
     const timeline = await channel.request('GET', `/api/v2/sessions/${sessionId}/timeline?mode=latest&limit=10`)
