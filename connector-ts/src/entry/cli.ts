@@ -2,6 +2,7 @@ import { parseArgs } from 'node:util'
 
 import { ConnectorAlreadyRunning, type ConnectorState, type PairingStatus } from '../host/index.js'
 import { startHostProcess, CONNECTOR_VERSION, type HostProcess, type HostProcessOptions } from './host-process.js'
+import { terminalQr } from './qr.js'
 import { runRpc } from './rpc.js'
 
 /** F's client pairing (DeviceTrustService.startPairing), when this build has it. */
@@ -15,6 +16,8 @@ export interface CliIo {
 export interface CliOptions {
   readonly io?: CliIo
   readonly clientPairing?: ClientPairing
+  /** Colours for the pairing QR code (default: when writing to a terminal). */
+  readonly color?: boolean
   /** The OS user's home (tests). */
   readonly home?: string
   readonly routerBinary?: string
@@ -129,7 +132,8 @@ export async function runCli(argv: readonly string[], options: CliOptions = {}):
         return 1
       }
       const invitation = await options.clientPairing(settings.serverUrl)
-      io.out('Scan this pairing link with the Agents Anywhere app, or open it on the client:')
+      io.out('Scan this code with the Agents Anywhere app, or open the link on the client:')
+      for (const line of terminalQr(invitation.uri, { color: options.color ?? (options.io === undefined && process.stdout.isTTY === true) })) io.out(line)
       io.out(invitation.uri)
       io.out(`It expires at ${invitation.payload.expiresAt}.`)
       return 0
