@@ -255,6 +255,10 @@ class SessionRunService:
         runtime_id: str,
         project_id: str | None,
     ) -> dict[str, Any]:
+        if await self._store.connector_link_contract(payload.connectorId):
+            return await self._create_and_start_on_device(
+                payload, user_id=user_id, runtime_id=runtime_id, project_id=project_id
+            )
         await self._require_runtime_instance(
             payload.connectorId,
             payload.runtime,
@@ -1319,6 +1323,113 @@ class SessionRunService:
                 }
             )
         return payloads
+
+    async def _create_and_start_on_device(
+        self,
+        payload: SessionCreateAndStartRequest,
+        *,
+        user_id: str,
+        runtime_id: str,
+        project_id: str | None,
+    ) -> dict[str, Any]:
+        """v3: the device creates the session and runs its first turn (``session.creation.begin``).
+
+        The Server allocates the session id and directory row, keeps the inline
+        attachments in the staging area for the device to fetch, and records a command
+        receipt under ``clientMessageId``. A retry with the same id returns the first
+        attempt's session instead of creating another one; an unknown outcome keeps the
+        row (the device may have started it) and is never re-sent.
+        """
+
+        command_id = payload.clientMessageId or f"create_{uuid4().hex}"
+        previous = await self._store.get_device_command(user_id, command_id)
+        if previous is not None and previous["kind"] == "session.creation.begin" and previous.get("sessionId"):
+            existing = await self._store.get_session(previous["sessionId"], user_id=user_id)
+            if previous["state"] == "accepted":
+                result = (previous.get("result") or {}).get("r") or {}
+                return {"session": existing, "connectorResult": result, "attachments": []}
+            if previous["state"] == "rejected":
+                error = (previous.get("result") or {}).get("e") or {}
+                raise SessionRunConflictError({
+                    "code": error.get("code") or "runtime_operation_failed",
+                    "message": error.get("message") or "the device rejected session creation",
+                    "sessionId": existing.id,
+                })
+            raise SessionRunTimeoutError({
+                "code": "command_outcome_unknown",
+                "message": "the device has not confirmed this session yet",
+                "sessionId": existing.id,
+            })
+        session = await self._store.create_session(
+            connector_id=payload.connectorId,
+            project_id=project_id,
+            user_id=user_id,
+            runtime=payload.runtime,
+            runtime_id=runtime_id,
+            external_session_id=None,
+            title=payload.title,
+            cwd=payload.cwd,
+            selections=_selections_from_mapping(payload.selections),
+            takeover=True,
+        )
+        attachments = [
+            {
+                "fileId": item.file_id,
+                "name": item.name,
+                "mediaType": item.media_type,
+                "size": item.size,
+                "sha256": item.sha256,
+            }
+            for item in await self._persist_inline_attachments(
+                session_id=session.id, user_id=user_id, attachments=payload.attachments
+            )
+        ]
+        params: dict[str, Any] = {
+            "sessionId": session.id,
+            "runtimeId": runtime_id,
+            "runtimeType": payload.runtime,
+            "cwd": payload.cwd,
+            "clientMessageId": command_id,
+            "content": payload.content,
+            "takeover": True,
+        }
+        if payload.title is not None:
+            params["title"] = payload.title
+        if payload.selections:
+            params["selections"] = dict(payload.selections)
+        if attachments:
+            params["attachments"] = attachments
+        if payload.planningIntent is not None:
+            params["planningIntent"] = payload.planningIntent.model_dump(mode="json")
+        if payload.goalIntent is not None:
+            params["goalIntent"] = payload.goalIntent.model_dump(mode="json")
+        try:
+            result = await self._manager.request(payload.connectorId, "session.creation.begin", params, timeout=60)
+        except ConnectorOfflineError as exc:
+            await self._discard_device_session(session.id)
+            raise SessionRunConflictError({"code": "connector_offline", "message": "the device is offline"}) from exc
+        except ConnectorOutcomeUnknownError as exc:
+            raise SessionRunTimeoutError({
+                "code": "command_outcome_unknown",
+                "message": exc.message,
+                "sessionId": session.id,
+            }) from exc
+        except ConnectorRpcError as exc:
+            await self._discard_device_session(session.id)
+            raise SessionRunConflictError({"code": exc.code, "message": exc.message or exc.code}) from exc
+        await self._usage.record(session_created_event(session, user_id=user_id))
+        await self._usage.record(message_sent_event(session, user_id=user_id, client_message_id=command_id))
+        return {
+            "session": session,
+            "connectorResult": result if isinstance(result, dict) else {},
+            "attachments": attachments,
+        }
+
+    async def _discard_device_session(self, session_id: str) -> None:
+        """The device never took the creation: drop our row and staged files."""
+
+        if await self._store.discard_unstarted_session(session_id):
+            await self._store.delete_runtime_session_files([session_id])
 
     async def _persist_inline_attachments(
         self,
