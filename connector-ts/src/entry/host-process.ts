@@ -9,6 +9,7 @@ import {
   RuntimeLease,
   controlService,
   dataDir,
+  legacyDataDir,
   defaultConfigPath,
   handoverRequester,
   logsService,
@@ -86,7 +87,7 @@ export async function startHostProcess(options: HostProcessOptions): Promise<Hos
     config: new ConfigFile(options.configPath ?? (options.home !== undefined ? join(dir, 'connector.json') : defaultConfigPath())),
     lease,
     runtimePath: runtimeRecordPath(home),
-    runtime: connectorRuntime({ ...options.compose, dataDir: dir, host: COMPOSE_HOST[options.kind], connectorVersion: CONNECTOR_VERSION, log }, { store: value => (store = value) }),
+    runtime: connectorRuntime({ legacyDataDir: legacyDataDir(process.env, home), ...options.compose, dataDir: dir, host: COMPOSE_HOST[options.kind], connectorVersion: CONNECTOR_VERSION, log }, { store: value => (store = value) }),
     fetchJson: fetchJsonViaEgress,
     notify: (kind, payload) => events.publish(kind, payload),
     handover: {

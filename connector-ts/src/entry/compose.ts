@@ -4,11 +4,12 @@ import { join } from 'node:path'
 import { CommandInbox, type CommandHandler } from '../application/inbound/index.js'
 import { ConversationService, NativeHistory } from '../application/index.js'
 import type { LiveEvents, RuntimeHandle, RuntimeHandleEvent, RuntimeProvider } from '../application/ports/index.js'
-import type { ConnectorRuntime, ConnectorSettings, RuntimeFactory } from '../host/index.js'
+import { legacyDataDir, type ConnectorRuntime, type ConnectorSettings, type RuntimeFactory } from '../host/index.js'
 import { ControlPlane, DeviceLink, deviceAttachmentFetcher, readSystemProxySettings, resolveEgress, type Egress, type LinkLogger } from '../link/index.js'
 import { openStoreWorker, inProcessStore, openSqliteStore, type RemoteStore } from '../store/index.js'
 import { DeviceReaders, DeviceTunnelApi, MemoryChangeFeed, OutboxSignal, capabilitySet, plainSealer, type RuntimeFacts, type SessionFacts } from '../sync/index.js'
 import { AttachmentCache, FileOps, RootPolicy, ShellOps, Terminals, nodePtySpawner, rootsFromEnv, workspaceMethods } from '../workspace/index.js'
+import { importLegacyV2 } from './legacy-import.js'
 import { builtinProviders, nativeSessionId, RuntimeRegistry, type RuntimeInstanceSpec } from './runtimes.js'
 import { DeviceTrust, openSealedUpload, type DeviceTrustOptions } from './trust.js'
 
@@ -36,6 +37,8 @@ export interface ComposeOptions {
   readonly terminals?: boolean
   /** The store in a worker thread (production) or in this thread (tests, tools). */
   readonly storeMode?: 'worker' | 'in-process'
+  /** v2's data directory to import once (default `legacyDataDir()`); `false` skips the import. */
+  readonly legacyDataDir?: string | false
   /** Told when a link exists (the host wires port events and other live sources to `link.attach`). */
   readonly onLink?: (link: DeviceLink) => void
 }
@@ -151,6 +154,15 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
             const handle = session === null ? null : await runtimes.started(session.runtimeId)
             return handle === null || handle === undefined ? null : ((await handle.catalogs().catch(() => null)) as Record<string, unknown> | null)
           },
+        }
+        if (options.legacyDataDir !== false) {
+          await importLegacyV2(store, {
+            legacyRoot: options.legacyDataDir ?? legacyDataDir(),
+            connectorId: settings.connectorId,
+            runtimeTypeOf: runtimeId => (runtimes.spec(runtimeId) ?? legacySpec(runtimeId)).runtimeType,
+            log,
+            now: clock.nowIso,
+          }).catch(error => log('warn', `v2 import failed: ${message(error)}`))
         }
         await conversation.recover()
         const inbox = new CommandInbox(store, clock, conversation, options.commands ?? {})

@@ -14,7 +14,7 @@ export {
   type OwnerView,
   type RuntimeLeaseOptions,
 } from './lease.js'
-export { agentsAnywhereHome, dataDir, ensurePrivateDir, runtimeRecordPath, systemHome } from './paths.js'
+export { agentsAnywhereHome, dataDir, ensurePrivateDir, legacyDataDir, runtimeRecordPath, systemHome } from './paths.js'
 export { commandDigest, identityMatches, isV2ConnectorCommand, legacyIdentity, parseLstart, systemProbe, ticksToEpoch, type ProcessProbe } from './processes.js'
 export { RuntimeRecordError, readRuntimeState, runtimeTransaction, type RuntimeOwnerRecord, type RuntimeState } from './runtime-record.js'
 export { machineStateLockRecordPath, ownerAlive as lockOwnerAlive, withMachineStateLock, type MachineStateLockOptions, type MachineStateLockRecord } from './state-lock.js'
