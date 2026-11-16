@@ -12,13 +12,26 @@ private enum class ApiRouteStyle {
 
 private val apiRouteStyles = ConcurrentHashMap<String, ApiRouteStyle>()
 
-internal fun apiPath(path: String): String {
-    val normalized = if (path.startsWith("/")) path else "/$path"
+private val VERSIONED_API_PATH = Regex("^/api/v\\d+(/.*)?$")
+
+private fun pathnameOf(normalized: String): String {
     val pathEnd = normalized.indexOfFirst { it == '?' || it == '#' }
         .takeIf { it >= 0 }
         ?: normalized.length
-    val pathname = normalized.substring(0, pathEnd)
-    return if (pathname == API_NAMESPACE || pathname.startsWith("$API_NAMESPACE/")) {
+    return normalized.substring(0, pathEnd)
+}
+
+/**
+ * A path under another API namespace (for example `/api/v3/previews`, preview 1.0).
+ * It is used as written: no `/api/v2` prefix and no legacy fallback.
+ */
+private fun isOtherApiNamespace(pathname: String): Boolean =
+    VERSIONED_API_PATH.matches(pathname) && pathname != API_NAMESPACE && !pathname.startsWith("$API_NAMESPACE/")
+
+internal fun apiPath(path: String): String {
+    val normalized = if (path.startsWith("/")) path else "/$path"
+    val pathname = pathnameOf(normalized)
+    return if (VERSIONED_API_PATH.matches(pathname)) {
         normalized
     } else {
         "$API_NAMESPACE$normalized"
@@ -39,6 +52,8 @@ internal fun apiUrlCandidates(serverUrl: String, path: String): List<String> {
     val origin = requireNotNull(normalizeServerOrigin(serverUrl)) {
         "Server URL must be an HTTP(S) origin."
     }
+    val normalized = if (path.startsWith("/")) path else "/$path"
+    if (isOtherApiNamespace(pathnameOf(normalized))) return listOf("$origin$normalized")
     return when (apiRouteStyles[origin]) {
         ApiRouteStyle.Namespaced -> listOf("$origin${apiPath(path)}")
         ApiRouteStyle.Legacy -> listOf("$origin${legacyApiPath(path)}")
@@ -52,6 +67,8 @@ internal fun apiUrlCandidates(serverUrl: String, path: String): List<String> {
 internal fun rememberApiUrl(serverUrl: String, resolvedUrl: String) {
     val origin = normalizeServerOrigin(serverUrl) ?: return
     val resolvedPath = runCatching { URI(resolvedUrl).rawPath.orEmpty() }.getOrDefault("")
+    // Another namespace says nothing about where the v2 routes live.
+    if (isOtherApiNamespace(resolvedPath)) return
     apiRouteStyles[origin] = if (
         resolvedPath == API_NAMESPACE || resolvedPath.startsWith("$API_NAMESPACE/")
     ) {
@@ -108,6 +125,7 @@ internal fun normalizeServerOrigin(serverUrl: String): String? {
 private fun legacyApiPath(path: String): String {
     val normalized = if (path.startsWith("/")) path else "/$path"
     return when {
+        isOtherApiNamespace(pathnameOf(normalized)) -> normalized
         normalized == API_NAMESPACE -> "/"
         normalized.startsWith("$API_NAMESPACE/") -> normalized.removePrefix(API_NAMESPACE)
         else -> normalized

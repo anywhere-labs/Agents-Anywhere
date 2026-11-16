@@ -2249,6 +2249,20 @@ private fun SessionDetailVisit(
                                 if (state.historyUnavailable && state.messages.any { !it.optimistic }) {
                                     SessionHistoryOfflineNotice()
                                 }
+                                val previewSession = state.session
+                                if (planTarget == null && !isPreparedSession && previewSession != null &&
+                                    state.listeningPorts.isNotEmpty()
+                                ) {
+                                    SessionPortPreviewCard(
+                                        sessionId = previewSession.id,
+                                        deviceId = previewSession.connectorId,
+                                        ports = state.listeningPorts,
+                                        canPreview = connectorOnline,
+                                        controller = controller.previews,
+                                        onError = ::showError,
+                                        onMessage = ::showToast,
+                                    )
+                                }
                                 if (planTarget == null) SessionMessageQueuePanel(
                                     queue = state.queue,
                                     runtimeStatus = runtimeStatus,

@@ -4,6 +4,8 @@ import com.agentsanywhere.app.api.ACCEPTED_EVENT_PROTOCOL_VERSIONS
 import com.agentsanywhere.app.api.RemoteRuntimeNotice
 import com.agentsanywhere.app.api.RemoteSessionEventEnvelope
 import com.agentsanywhere.app.api.SESSION_CATCHUP_REQUIRED
+import com.agentsanywhere.app.api.isPortEventType
+import com.agentsanywhere.app.feature.preview.applySessionPortEvent
 import com.agentsanywhere.app.feature.sessions.toAgentSession
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
@@ -40,6 +42,13 @@ private fun reduceRealtimeEventUnfrozen(
     event: RemoteSessionEventEnvelope,
     devices: List<AgentDevice>,
 ): SessionDetailState {
+    if (isPortEventType(event.type)) {
+        // Port reports are live device facts (preview 1.0): they neither advance
+        // the recovery cursor nor deduplicate, and only this session's ports count.
+        val sessionId = current.session?.id ?: return current
+        val ports = applySessionPortEvent(current.listeningPorts, event.type, event.payload, sessionId)
+        return if (ports === current.listeningPorts) current else current.copy(listeningPorts = ports)
+    }
     if (event.protocolVersion !in ACCEPTED_EVENT_PROTOCOL_VERSIONS || event.sessionId != current.session?.id) return current
     // A request to recover from this client's own cursor; it is not a change and has no position.
     if (event.type == SESSION_CATCHUP_REQUIRED) return current
@@ -373,7 +382,9 @@ internal fun reduceSnapshotWithLiveState(
         selectionUpdating = live.selectionUpdating,
         commandExecuting = live.commandExecuting,
         respondingNoticeIds = live.respondingNoticeIds,
-    )
+        // Ports are never part of a snapshot: the live report stands unless the device went offline.
+        listeningPorts = live.listeningPorts,
+    ).forgettingPortsWhenOffline()
 }
 
 /**
@@ -493,7 +504,7 @@ internal fun SessionDetailState.applyMetaObservation(
             isLoading = false,
             errorMessage = null,
         ),
-    )
+    ).forgettingPortsWhenOffline()
 }
 
 internal fun SessionDetailState.applyRuntimeObservation(

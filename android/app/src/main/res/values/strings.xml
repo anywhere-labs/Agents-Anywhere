@@ -821,4 +821,18 @@
     <string name="goal_state_unavailable">The current goal state is unavailable. Refresh to check.</string>
     <string name="session_markdown_image">Image</string>
     <string name="session_markdown_image_failed">Could not load image.</string>
+    <string name="port_preview_detected">Detected %1$s</string>
+    <string name="port_preview_open">Preview</string>
+    <string name="port_preview_stop">Stop preview</string>
+    <string name="port_preview_copy">Copy link</string>
+    <string name="port_preview_copied">Preview link copied</string>
+    <string name="port_preview_offline">The device is offline. Preview is available once it\'s back.</string>
+    <string name="port_preview_plaintext_title">The preview is not end-to-end encrypted</string>
+    <string name="port_preview_plaintext_description">Session content is end-to-end encrypted, but preview traffic is relayed by the server, which can see the page.</string>
+    <string name="port_preview_plaintext_continue">Open preview</string>
+    <string name="port_preview_cancel">Cancel</string>
+    <string name="port_preview_no_browser">No browser can open the preview.</string>
+    <string name="port_preview_error_failed">Couldn\'t set up the preview. Try again later.</string>
+    <string name="port_preview_error_preview_unavailable">The device\'s preview tunnel is unavailable. Try again later.</string>
+    <string name="port_preview_error_connector_offline">The device is offline. Preview is available once it\'s back.</string>
 </resources>

@@ -705,12 +705,30 @@ class SessionsApi(
         val payload = value.optJSONObject("payload") ?: JSONObject()
         val catalogType = payload.optNullableString("catalogType")
         val catalog = payload.optJSONObject("catalog")
+        val type = value.getString("type")
+        if (isPortEventType(type)) {
+            // Live device facts with no position in the history: the envelope's
+            // sequence and cursor are not required, and never applied.
+            return RemoteSessionEventEnvelope(
+                protocolVersion = value.optString("protocolVersion", ""),
+                eventId = value.optString("eventId", ""),
+                sequence = value.optLong("sequence", 0L),
+                cursor = value.optString("cursor", ""),
+                type = type,
+                sessionId = value.optString("sessionId", ""),
+                emittedAt = value.optNullableString("emittedAt"),
+                payload = RemoteSessionEventPayload(
+                    ports = payload.optJSONArray("ports").toListeningPorts(),
+                    closedPort = payload.optPortNumber("port"),
+                ),
+            )
+        }
         return RemoteSessionEventEnvelope(
             protocolVersion = value.optString("protocolVersion", ""),
             eventId = value.getString("eventId"),
             sequence = value.getLong("sequence"),
             cursor = value.getString("cursor"),
-            type = value.getString("type"),
+            type = type,
             sessionId = value.getString("sessionId"),
             emittedAt = value.optNullableString("emittedAt"),
             payload = RemoteSessionEventPayload(

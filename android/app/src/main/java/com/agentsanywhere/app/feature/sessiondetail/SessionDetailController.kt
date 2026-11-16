@@ -34,7 +34,10 @@ class SessionDetailController(
     private val sessionsApi: SessionsApi,
     private val sessionStore: AuthSessionReader,
     private val diskStore: SessionDiskStore? = null,
+    previewsApi: com.agentsanywhere.app.api.PreviewsApi = com.agentsanywhere.app.api.PreviewsApi(),
 ) {
+    /** Port preview for the session's listening ports (preview 1.0). */
+    val previews = com.agentsanywhere.app.feature.preview.PortPreviewController(previewsApi, sessionStore)
 
 
     val sessionCache = SessionStateCache(disk = diskStore)

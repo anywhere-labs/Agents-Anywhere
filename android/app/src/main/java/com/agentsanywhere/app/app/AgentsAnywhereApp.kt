@@ -167,6 +167,7 @@ fun AgentsAnywhereApp(
             sessionsApi = SessionsApi(apiClient),
             sessionStore = sessionStore,
             diskStore = com.agentsanywhere.app.feature.sessiondetail.SessionDiskStore.shared(context),
+            previewsApi = com.agentsanywhere.app.api.PreviewsApi(apiClient),
         )
     }
     DisposableEffect(sessionDetailController) {

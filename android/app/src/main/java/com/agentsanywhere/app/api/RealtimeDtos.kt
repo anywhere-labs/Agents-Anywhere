@@ -52,6 +52,10 @@ data class RemoteSessionEventPayload(
     val permissionCatalog: RemoteRuntimePermissionCatalog? = null,
     val eventCursor: String? = null,
     val queue: RemoteSessionQueueState? = null,
+    /** `port.listening`: the device's complete list of listening ports. */
+    val ports: List<RemoteListeningPort> = emptyList(),
+    /** `port.closed`: the port that stopped listening. */
+    val closedPort: Int? = null,
 )
 
 data class RemoteEventRecoveryResponse(

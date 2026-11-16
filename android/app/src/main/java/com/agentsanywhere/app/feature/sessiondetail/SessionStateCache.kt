@@ -81,6 +81,8 @@ class SessionStateCache(
             selectionUpdating = false,
             commandExecuting = false,
             respondingNoticeIds = emptySet(),
+            // Live device facts; the next visit hears them from the device again.
+            listeningPorts = emptyMap(),
         )
         // Estimate retained strings once on departure, never during streaming.
         // Protocol items share their strings with the projected rows, so they
