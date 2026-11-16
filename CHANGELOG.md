@@ -6,7 +6,7 @@
 
 ### 升级须知
 
-- Desktop 改用内置的新版 Connector，不再需要 Python 和 uv：升级后第一次启动会删除旧 Connector 留下的 Python 环境和下载缓存，设备凭据和绑定保留，不用重新连接；「uv 路径」「Python 路径」和两个镜像设置不再使用。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
+- Desktop 改用内置的新版 Connector，不再需要 Python 和 uv：升级后第一次启动会删除旧 Connector 留下的 Python 环境和下载缓存，设备凭据和绑定保留，不用重新连接；「uv 路径」「Python 路径」和两个镜像设置不再使用。（[#748](https://github.com/anywhere-labs/Agents-Anywhere/pull/748)）
 - 运行中排队消息需要 Server 执行 `v2_56` 数据库迁移（只新增两张表，不改写已有数据）；排队在 Web、Desktop、Android 和 iOS 上可用，旧版客户端的行为不变。（[#658](https://github.com/anywhere-labs/Agents-Anywhere/pull/658)、[#659](https://github.com/anywhere-labs/Agents-Anywhere/pull/659)）
 
 ### 会话创建与消息交付
@@ -17,8 +17,8 @@
 
 ### Desktop
 
-- 第一次启动不再下载 Python 和依赖，也不会再停在「正在准备运行环境」；设置页的「运行环境」改为只设置「Connector 网络」。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
-- 这台电脑上已有更新版本的 Connector（命令行或 DSH 插件）在运行时，Desktop 会让它继续连接服务器并说明原因，不再报「已有其他 Connector 在运行」；更新版本的 Connector 启动时，Desktop 内置的 Connector 会自动交接给它。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
+- 第一次启动不再下载 Python 和依赖，也不会再停在「正在准备运行环境」；设置页的「运行环境」改为只设置「Connector 网络」。（[#748](https://github.com/anywhere-labs/Agents-Anywhere/pull/748)）
+- 这台电脑上已有更新版本的 Connector（命令行或 DSH 插件）在运行时，Desktop 会让它继续连接服务器并说明原因，不再报「已有其他 Connector 在运行」；更新版本的 Connector 启动时，Desktop 内置的 Connector 会自动交接给它。（[#748](https://github.com/anywhere-labs/Agents-Anywhere/pull/748)）
 - Desktop 安装包自带 Pi 运行环境，第一次启动只需在本地复制，不再下载 Node 和 npm 依赖；准备失败时也不再停在启动页、点「重试」也进不去，Pi 会在第一次使用时再次准备并在会话里提示错误。（[#657](https://github.com/anywhere-labs/Agents-Anywhere/pull/657)）
 
 ### 本机连接
