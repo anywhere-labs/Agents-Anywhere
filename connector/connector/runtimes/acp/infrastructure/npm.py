@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import zipfile
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -23,19 +24,39 @@ from ..domain.definitions import AcpError
 NODE_VERSION = "22.23.2"
 
 
+# Another Desktop launch, a Pi session or an orphaned preflight may still be
+# downloading; wait for it rather than failing, but never wait forever.
+LOCK_TIMEOUT_SECONDS = 600.0
+_LOCK_POLL_SECONDS = 0.5
+
+
 @contextmanager
-def installation_lock(path: Path):
+def installation_lock(path: Path, *, timeout: float | None = None):
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    deadline = time.monotonic() + (LOCK_TIMEOUT_SECONDS if timeout is None else timeout)
     with path.open("a+b") as handle:
         if sys.platform == "win32":
             import msvcrt
             handle.write(b"\0")
             handle.flush()
-            handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+
+            def acquire() -> None:
+                # LK_LOCK gives up after ten seconds with EDEADLK; poll instead.
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
         else:
             import fcntl
-            fcntl.flock(handle, fcntl.LOCK_EX)
+
+            def acquire() -> None:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        while True:
+            try:
+                acquire()
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise AcpError("agent_install_busy", "另一个进程正在准备 Agent 运行环境，请稍后重试。") from None
+                time.sleep(_LOCK_POLL_SECONDS)
         try:
             yield
         finally:
@@ -67,11 +88,24 @@ def _node_pair(executable: Path) -> tuple[Path, Path] | None:
     try:
         version = subprocess.check_output([str(executable), "--version"], timeout=10, text=True, encoding="utf-8")
         parts = tuple(int(value) for value in version.strip().lstrip("v").split("."))
-        if (22, 19, 0) <= parts < (23, 0, 0):
+        # The Pi packages declare engines ">=22.19.0"; newer majors are accepted.
+        if parts >= (22, 19, 0):
             return executable.resolve(), npm.resolve()
     except (OSError, ValueError, subprocess.SubprocessError):
         pass
     return None
+
+
+def extract_zip(archive: Path, destination: Path) -> None:
+    """Reject members escaping ``destination``, even when it sits behind a link."""
+    # Resolve the base too: a data directory behind a symlink or Windows
+    # junction must compare like for like with the resolved member paths.
+    base = destination.resolve()
+    with zipfile.ZipFile(archive) as package:
+        for member in package.namelist():
+            if not (base / member).resolve().is_relative_to(base):
+                raise AcpError("node_archive_invalid", "Node 安装包路径无效。")
+        package.extractall(destination)
 
 
 def node_runtime(root: Path, *, on_install: Callable[[], None] | None = None) -> tuple[Path, Path]:
@@ -97,31 +131,30 @@ def node_runtime(root: Path, *, on_install: Callable[[], None] | None = None) ->
     with tempfile.TemporaryDirectory(prefix=".node-", dir=root) as temporary:
         staging = Path(temporary)
         archive = staging / filename
-        with httpx.Client(timeout=120, follow_redirects=True) as client:
-            sums = client.get(base + "SHASUMS256.txt")
-            sums.raise_for_status()
-            expected = next((line.split()[0] for line in sums.text.splitlines() if line.split()[-1] == filename), None)
-            if not expected:
-                raise AcpError("node_checksum_missing", "Node 发布包缺少校验记录。")
-            digest = hashlib.sha256()
-            size = 0
-            with client.stream("GET", base + filename) as response:
-                response.raise_for_status()
-                with archive.open("xb") as output:
-                    for block in response.iter_bytes():
-                        size += len(block)
-                        if size > 128 * 1024 * 1024:
-                            raise AcpError("node_archive_too_large", "Node 下载超过大小上限。")
-                        digest.update(block)
-                        output.write(block)
+        try:
+            with httpx.Client(timeout=120, follow_redirects=True) as client:
+                sums = client.get(base + "SHASUMS256.txt")
+                sums.raise_for_status()
+                expected = next((line.split()[0] for line in sums.text.splitlines() if line.split()[-1] == filename), None)
+                if not expected:
+                    raise AcpError("node_checksum_missing", "Node 发布包缺少校验记录。")
+                digest = hashlib.sha256()
+                size = 0
+                with client.stream("GET", base + filename) as response:
+                    response.raise_for_status()
+                    with archive.open("xb") as output:
+                        for block in response.iter_bytes():
+                            size += len(block)
+                            if size > 128 * 1024 * 1024:
+                                raise AcpError("node_archive_too_large", "Node 下载超过大小上限。")
+                            digest.update(block)
+                            output.write(block)
+        except httpx.HTTPError as error:
+            raise AcpError("node_download_failed", "Node 下载失败，请检查网络后重试。") from error
         if digest.hexdigest() != expected:
             raise AcpError("node_checksum_mismatch", "Node 下载校验失败，请重试。")
         if target == "win":
-            with zipfile.ZipFile(archive) as package:
-                for member in package.namelist():
-                    if not (staging / member).resolve().is_relative_to(staging):
-                        raise AcpError("node_archive_invalid", "Node 安装包路径无效。")
-                package.extractall(staging)
+            extract_zip(archive, staging)
         else:
             with tarfile.open(archive) as package:
                 package.extractall(staging, filter="data")

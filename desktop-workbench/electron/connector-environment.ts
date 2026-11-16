@@ -75,6 +75,7 @@ export class ConnectorEnvironment {
   private async run(signal: AbortSignal): Promise<void> {
     this.publish({ status: "checking", phase: "checking", event: "environment.checking", message: "Checking Connector environment.",
       startedAt: this.timestamp(), progress: undefined, error: undefined, stderr: undefined, exitCode: undefined, stalled: false });
+    let piWarning: string | null = null;
     try {
       const initial = this.options.resolve();
       await this.acquire(initial.environment);
@@ -101,12 +102,21 @@ export class ConnectorEnvironment {
         const npmRoot = context.env.AA_PI_NPM_ROOT ?? path.join(this.options.dataPath, "pi-npm-runtimes");
         this.publish({ status: "checking", phase: "checking", event: "environment.checking",
           message: "Checking Pi ACP adapter and dependencies.", progress: undefined, stderr: undefined, exitCode: undefined });
-        await this.sync(context, signal, ["run", "--no-sync", "--project", context.project,
-          ...(context.python ? ["--python", context.python] : []),
-          "anywhere-cli", "prepare-pi", "--root", npmRoot], "pi");
+        try {
+          await this.sync(context, signal, ["run", "--no-sync", "--project", context.project,
+            ...(context.python ? ["--python", context.python] : []),
+            "anywhere-cli", "prepare-pi", "--root", npmRoot], "pi");
+        } catch (error) {
+          if (signal.aborted) throw error;
+          // Pi is optional: its runtime installs on first use and reports errors
+          // in that session. A failed warm-up must never keep Desktop from starting.
+          piWarning = `Pi ACP preparation failed; Pi will retry when it is used. ${error instanceof Error ? error.message : String(error)}`;
+          this.options.log(piWarning);
+        }
       }
       signal.throwIfAborted();
-      this.publish({ status: "ready", phase: "ready", event: "environment.ready", message: "Connector environment is ready.", stalled: false });
+      this.publish({ status: "ready", phase: "ready", event: "environment.ready",
+        message: piWarning ? "Connector environment is ready. Pi ACP will be prepared when it is used." : "Connector environment is ready.", stalled: false });
       // Retain the lease while this Desktop can run RPC from the environment.
     } catch (error) {
       if (this.child) await terminateConnectorProcess(this.child);
