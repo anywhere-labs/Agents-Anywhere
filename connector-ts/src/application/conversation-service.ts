@@ -297,6 +297,16 @@ export class ConversationService {
     return this.errors
   }
 
+  /**
+   * A session fact on `Link/attach` as `runtime.status` (device-meshcall 1.0 requires `runtimeId`):
+   * `{runtimeId, sessionId, status: {event: <v2 event name>, ...}}`. Lossy, so a failed lookup drops it.
+   */
+  private emitSessionStatus(sessionId: string, status: Record<string, unknown>): void {
+    void this.deps.store.sessions.get(sessionId).then(session => {
+      if (session !== null) this.deps.live.emit('runtime.status', { runtimeId: session.runtimeId, sessionId, status })
+    }, () => undefined)
+  }
+
   public reportError(sessionId: string, error: unknown): void {
     this.errors.push({ sessionId, error })
     if (this.errors.length > 100) this.errors.shift()
@@ -339,7 +349,7 @@ export class ConversationService {
         reset: commit.reset,
       })
     }
-    if (commit.summary !== null) this.deps.live.emit('runtime.status', { sessionId: commit.session.sessionId, event: 'session.status', status: commit.session.status })
+    if (commit.summary !== null) this.deps.live.emit('runtime.status', { runtimeId: commit.session.runtimeId, sessionId: commit.session.sessionId, status: { event: 'session.status', status: commit.session.status } })
   }
 
   private async requireSession(sessionId: string): Promise<Session> {
@@ -609,7 +619,7 @@ export class ConversationService {
       await this.requireSession(sessionId)
       const binding = await this.binding(sessionId)
       const result = await binding.session.configure(change)
-      this.deps.live.emit('runtime.status', { sessionId, event: 'config.updated', options: result.options as unknown as Record<string, unknown>[] })
+      this.emitSessionStatus(sessionId, { event: 'config.updated', options: result.options as unknown as Record<string, unknown>[] })
       return { appliesFrom: result.appliesFrom }
     })
   }
@@ -766,7 +776,7 @@ export class ConversationService {
     })
     if (!result.changed) return
     this.publish(await this.deps.store.planning.save(result.state, result.document))
-    this.deps.live.emit('runtime.status', { sessionId, event: 'planning.state.updated', revision: result.state.revision })
+    this.emitSessionStatus(sessionId, { event: 'planning.state.updated', revision: result.state.revision })
   }
 
   public async onPlanningMode(sessionId: string, mode: 'plan' | 'normal'): Promise<void> {
@@ -821,7 +831,7 @@ export class ConversationService {
     }, { newId: () => this.deps.ids.newId('goal_'), now: this.deps.clock.nowIso() })
     if (next.revision !== state.revision || JSON.stringify(next) !== JSON.stringify(state)) {
       this.publish(await this.deps.store.goals.save(next))
-      this.deps.live.emit('runtime.status', { sessionId, event: 'goal.state.updated', revision: next.revision })
+      this.emitSessionStatus(sessionId, { event: 'goal.state.updated', revision: next.revision })
     }
   }
 
@@ -884,7 +894,7 @@ export class ConversationService {
   }
 
   public onLiveFact(sessionId: string, event: RuntimeEvent): void {
-    this.deps.live.emit('runtime.status', { sessionId, event: event.type, fact: event as unknown as Record<string, unknown> })
+    this.emitSessionStatus(sessionId, { event: event.type, fact: event as unknown as Record<string, unknown> })
   }
 
   /** The Runtime session ended under us: the running turn fails with an unknown outcome; nothing is resent. */
@@ -949,7 +959,12 @@ export class ConversationService {
     this.bindings.clear()
   }
 
-  /** For tests and diagnostics. */
+  /** The open Runtime session of a Conversation, if any (snapshot capabilities come from it). */
+  public boundSession(sessionId: string): RuntimeSession | null {
+    return this.bindings.get(sessionId)?.session ?? null
+  }
+
+  /** Whether a Conversation has an open Runtime session (native history then comes from live events). */
   public isBound(sessionId: string): boolean {
     return this.bindings.has(sessionId)
   }

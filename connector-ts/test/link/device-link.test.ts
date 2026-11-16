@@ -245,8 +245,10 @@ describe.skipIf(binary === null)('DeviceLink against a real Router', () => {
     startLink()
     await until(() => link.state === 'online', 10_000, 'online')
     const hellos = server.hellos
+    const seen = states.length
     await server.drop()
-    await until(() => link.state === 'registered', 5000, 'attach cancelled')
+    // The re-ready can follow within milliseconds, so look for the transition, not the current state.
+    await until(() => states.slice(seen).includes('registered'), 5000, 'attach cancelled')
     const recovery = await until(() => link.state === 'online' && server.held !== null, 10_000, 'held again')
     expect(server.hellos).toBe(hellos)
     expect(recovery).toBeLessThan(5000)

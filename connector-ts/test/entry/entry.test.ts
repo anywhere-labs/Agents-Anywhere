@@ -6,7 +6,11 @@ import { PassThrough } from 'node:stream'
 import { Mesh, Router } from 'meshcall'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { runCli, runDesktopHost, runRpc, type DesktopHostMessage } from '../../src/entry/index.js'
+import type { RuntimeHandle, RuntimeProvider } from '../../src/application/ports/index.js'
+import { codexStableSessionId } from '../../src/domain/identity/index.js'
+import { runCli, runDesktopHost, runRpc, startHostProcess, type DesktopHostMessage } from '../../src/entry/index.js'
+import { joinChunks } from '../../src/sync/index.js'
+import { FakeRuntimeSession, PushQueue } from '../support/fake-runtime-session.js'
 import { FakeServer, RouterProcess, routerBinary } from '../support/mesh-harness.js'
 
 const binary = routerBinary()
@@ -43,7 +47,7 @@ describe.skipIf(binary === null)('entry: rpc, CLI and the composition root', () 
     const stdout = new PassThrough()
     const lines: string[] = []
     stdout.on('data', (chunk: Buffer) => lines.push(...chunk.toString('utf8').split('\n').filter(Boolean)))
-    const done = runRpc({ home, routerBinary: binary!, compose: { storeMode: 'in-process' } }, { stdin, stdout })
+    const done = runRpc({ home, routerBinary: binary!, compose: { storeMode: 'in-process', providers: [] } }, { stdin, stdout })
     await until(() => lines.length > 0, 15_000, 'ready line')
     const ready = JSON.parse(lines[0]!) as { kind: string; version: number; pid: number; endpoint: { unixPath: string }; key: string }
     expect(ready).toMatchObject({ kind: 'connector.ready', version: 1, pid: process.pid })
@@ -84,7 +88,7 @@ describe.skipIf(binary === null)('entry: rpc, CLI and the composition root', () 
 
     let stop!: () => void
     const stopped = new Promise<void>(resolve => (stop = resolve))
-    const running = runCli(['start'], { io, home, routerBinary: binary!, until: stopped, compose: { storeMode: 'in-process' } })
+    const running = runCli(['start'], { io, home, routerBinary: binary!, until: stopped, compose: { storeMode: 'in-process', providers: [] } })
     await until(() => server.held !== null, 20_000, 'online').catch(error => {
       throw new Error(`${(error as Error).message}\n${err.join('\n')}`)
     })
@@ -99,6 +103,50 @@ describe.skipIf(binary === null)('entry: rpc, CLI and the composition root', () 
     expect(await runCli(['--version'], { io })).toBe(0)
     expect(await runCli(['bogus'], { io })).toBe(64)
   }, 60_000)
+
+  it('composition root: Runtimes are announced, native sessions scanned into session.inventory and opened on demand', async () => {
+    const opened: string[] = []
+    const handle: RuntimeHandle = {
+      type: 'codex',
+      instanceId: 'codex',
+      capabilities: () => ({ revision: 3, items: [{ id: 'runtime.steer', supported: true }] }),
+      catalogs: async () => ({ selections: { model: null } }),
+      listNativeSessions: async () => ({ sessions: [{ nativeSessionId: 'thr_1', title: 'Fix the build', cwd: '/w', updatedAt: '2026-11-17T00:00:00.000Z' }] }),
+      readNativeHistory: async () => ({ items: [{ type: 'message.completed', itemId: 'm1', role: 'user', text: 'hello' }] as never }),
+      open: async (target, options) => {
+        opened.push(target.kind === 'existing' ? target.ref.nativeSessionId : 'new')
+        return new FakeRuntimeSession(options.sessionId, 'thr_1')
+      },
+      events: new PushQueue(),
+      stop: async () => undefined,
+    }
+    const provider: RuntimeProvider = {
+      type: 'codex',
+      discover: async () => ({ type: 'codex', displayName: 'Codex', installed: true, agentVersion: '0.166.0', problems: [], instancePolicy: 'multiple', processScope: 'shared' }),
+      start: async () => handle,
+    }
+    const host = await startHostProcess({ kind: 'cli', home, routerBinary: binary!, compose: { storeMode: 'in-process', providers: [provider] } })
+    try {
+      const credential = server.deviceCredential
+      await host.controller.start({ serverUrl: server.url, connectorId: credential.deviceId, connectorToken: credential.token })
+      await until(() => server.held?.events.some(event => event.m === 'runtime.status' && event.p.runtimeId === 'codex') === true, 15_000, 'runtime.status')
+      const status = server.held!.events.find(event => event.m === 'runtime.status' && event.p.runtimeId === 'codex')!
+      expect(status.p.status).toMatchObject({ runtimeType: 'codex', installed: true, agentVersion: '0.166.0', displayName: 'Codex' })
+      await until(() => server.outbox.some(item => item.m === 'session.inventory'), 15_000, 'session.inventory')
+      const inventory = server.outbox.find(item => item.m === 'session.inventory')!
+      const sessionId = codexStableSessionId(credential.deviceId, 'thr_1')
+      expect(inventory.p).toMatchObject({ runtimeId: 'codex', complete: true })
+      expect((inventory.p.sessions as { sessionId: string }[]).map(session => session.sessionId)).toEqual([sessionId])
+      // A client snapshot reads the projected history and the Runtime's facts.
+      const chunks = await server.stream<{ seq: number; chunk: string; end: boolean }>('aa.device.v1.Sessions', 'snapshot', { sessionId })
+      const snapshot = joinChunks(chunks) as { timeline: { items: { id: string }[] }; runtimeCapabilities: { revision: number; capabilities: { capabilityId: string }[] } }
+      expect(snapshot.timeline.items.map(item => item.id)).toEqual(['m1'])
+      expect(snapshot.runtimeCapabilities).toMatchObject({ revision: 3, capabilities: [{ capabilityId: 'runtime.steer', scope: 'runtime' }] })
+      expect(opened).toEqual([])
+    } finally {
+      await host.shutdown()
+    }
+  }, 40_000)
 
   it('desktop-host: ready over parentPort, Control reachable, shutdown message stops it', async () => {
     const posted: DesktopHostMessage[] = []

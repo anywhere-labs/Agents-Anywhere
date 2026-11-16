@@ -37,7 +37,10 @@ export interface AttachHubOptions {
 
 function eventKey(method: string, payload: Record<string, unknown>): string {
   const scope = payload.sessionId ?? payload.runtimeId ?? payload.port ?? ''
-  return `${method}\u0000${String(scope)}`
+  // Session facts of different kinds (planning, goal, status) share a session: one must not replace another.
+  const status = payload.status
+  const kind = status !== null && typeof status === 'object' && typeof (status as Record<string, unknown>).event === 'string' ? (status as Record<string, unknown>).event : ''
+  return `${method}\u0000${String(scope)}\u0000${String(kind)}`
 }
 
 /**
