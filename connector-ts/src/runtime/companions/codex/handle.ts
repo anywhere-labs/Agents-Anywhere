@@ -6,7 +6,7 @@
 //   · blocked、写锁确实被持有且 Codex App 在运行：打开 `codex://threads/<id>` 让 App 接手，再判定；
 //   · Windows 上仍是「只因写锁 unknown 而 blocked」：这一次改用不带 `codexIpc` 的普通加载，由 Codex 自己裁决写锁；
 //   · 打开仍失败时，错误里带上判定结果，会话引擎据此决定是否走「退出 App」流程；
-// - 退出 App：quit-app.ts 的两步流程，作为本类的伴随层 API（端口里没有承载用户确认的地方）；
+// - 退出 App：quit-app.ts 的两步流程，经端口的 `ownerRelease` 提供；确认在触发它的 AA 会话里进行（会话层）；
 // - 未加载线程的权限：rollout-settings.ts。
 // 伴随层从不自行结束进程，也不在用户没打开会话时操作 App 界面（deeplink 只在打开已有线程时用）。
 
@@ -21,6 +21,9 @@ import type {
   NativeSessionRef,
   OpenOptions,
   OpenTarget,
+  OwnerReleaseOutcome,
+  OwnerReleasePort,
+  OwnerReleasePrepareResult,
   RuntimeCapabilities,
   RuntimeHandle,
   RuntimeSession,
@@ -128,7 +131,15 @@ export class CodexRuntimeHandle implements RuntimeHandle {
   }
 
   capabilities(): RuntimeCapabilities {
-    return this.inner.capabilities()
+    const inner = this.inner.capabilities()
+    return { ...inner, items: [...inner.items.filter(c => c.id !== 'runtime.owner_release'), { id: 'runtime.owner_release', supported: this.quitter.supported }] }
+  }
+
+  /** 端口的「释放外部持有者」：退出占着线程的 Codex App（两步，会话层确认）。 */
+  readonly ownerRelease: OwnerReleasePort = {
+    prepare: async (ref, context) => codexReleasePrepare(await this.quitter.prepare([ref.nativeSessionId]), ref.nativeSessionId, context.sessionId),
+    execute: async (planId, consent) => codexReleaseOutcome(await this.quitter.execute(planId, consent)),
+    discard: planId => this.quitter.discard(planId),
   }
 
   catalogs(): Promise<Catalogs> {
@@ -161,7 +172,7 @@ export class CodexRuntimeHandle implements RuntimeHandle {
           ownership: evidence.inspection.ownership,
           writerLock: evidence.inspection.writerLock?.state ?? null,
           handoff: evidence.handoff ?? null,
-          quitAppAvailable: this.quitter.supported,
+          ownerRelease: this.quitter.supported ? 'available' : 'unavailable',
         },
       })
     } finally {
@@ -277,4 +288,36 @@ export class CodexRuntimeHandle implements RuntimeHandle {
     }
     return session
   }
+}
+
+function codexReleasePrepare(result: QuitPrepareResult, nativeSessionId: string, sessionId: string): OwnerReleasePrepareResult {
+  switch (result.status) {
+    case 'plan': {
+      const { plan } = result
+      return {
+        status: 'plan',
+        plan: {
+          planId: plan.planId, sessionId, nativeSessionId, expiresAt: plan.expiresAt,
+          owner: { displayName: 'Codex App', processCount: plan.processes.length },
+          releasesOtherSessions: plan.releasesAllAppThreads,
+          gracePeriodMs: plan.gracePeriodMs,
+          details: JSON.parse(JSON.stringify({ processes: plan.processes, children: plan.children, threads: plan.threads, platform: plan.platform })),
+        },
+      }
+    }
+    case 'not_needed':
+      return { status: 'not_needed' }
+    case 'app_not_running':
+      return { status: 'unavailable', reason: 'owner_not_running' }
+    default:
+      return { status: 'unavailable', reason: result.status }
+  }
+}
+
+function codexReleaseOutcome(outcome: QuitOutcome): OwnerReleaseOutcome {
+  const status: OwnerReleaseOutcome['status'] = outcome.status === 'completed' ? 'released'
+    : outcome.status === 'unknown_plan' ? 'plan_expired'
+    : outcome.status === 'lock_still_held' ? 'still_held'
+    : outcome.status
+  return { status, details: JSON.parse(JSON.stringify(outcome)) }
 }

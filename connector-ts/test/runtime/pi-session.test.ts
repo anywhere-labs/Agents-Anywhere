@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { RuntimeEvent } from '../../src/application/ports/runtime-session.js'
 import { acpFingerprint, piHistoryItemId, piNativeSessionId } from '../../src/domain/identity/index.js'
 import { JsonRpcError } from '../../src/runtime/acp/jsonrpc.js'
-import { PiRuntimeHandle, type PiRuntimeSession } from '../../src/runtime/profiles/pi/index.js'
+import { PiRuntimeHandle, PiSessionAliases, type PiRuntimeSession } from '../../src/runtime/profiles/pi/index.js'
 import { piLayout } from '../../src/runtime/profiles/pi/launch.js'
 import { normalizePiSettings } from '../../src/runtime/profiles/pi/settings.js'
 import { tick } from '../support/fake-acp-agent.js'
@@ -34,7 +34,11 @@ function setup(options: { idleMs?: number } = {}) {
     instanceId: 'pi', settings, layout, launch: () => Promise.reject(new Error('not used')), connect: world.connect,
     idleMs: options.idleMs ?? 0, lockDir: join(root, 'locks'),
   })
-  return { root, agentDir, sessionsDir, work, layout, world, handle }
+  const reopen = () => new PiRuntimeHandle({
+    instanceId: 'pi', settings, layout, launch: () => Promise.reject(new Error('not used')), connect: world.connect,
+    idleMs: options.idleMs ?? 0, lockDir: join(root, 'locks'),
+  })
+  return { root, agentDir, sessionsDir, work, layout, world, handle, reopen }
 }
 
 function collect(session: PiRuntimeSession): RuntimeEvent[] {
@@ -289,8 +293,199 @@ describe('Pi session', () => {
     expect(world.agents).toHaveLength(0)
     await handle.stop()
   })
+
+  it('keeps reporting the first native id after a dormant new session restarts under a new one', async () => {
+    const { handle, world, work, layout, reopen } = setup()
+    // 第一轮 Pi 没写原生文件（还没有助手消息落盘）；第二个进程里的会话会写。
+    world.configure = agent => {
+      agent.onPrompt = async params => {
+        if (world.agents.length > 1) {
+          agent.persist(String(params.sessionId), work, [{ type: 'message', id: 'u1', parentId: null, message: { role: 'user', content: 'two', aaClientMessageId: 'c2' } }])
+        }
+        return { stopReason: 'end_turn' }
+      }
+    }
+    const session = await handle.open({ kind: 'new', spec: { cwd: work, selections: { permission: 'readonly' } } }, { sessionId: 'aa_alias', replay: 'none' }) as PiRuntimeSession
+    const events = collect(session)
+    const first = session.nativeSessionId
+    await session.prompt({ text: 'one' }, { deliveryId: 'd1', clientMessageId: 'c1' })
+    await until(() => of(events, 'turn.ended').length === 1)
+    expect(await session.checkIdle(Date.now() + 3600_000)).toBe(true)
+    expect((await session.prompt({ text: 'two' }, { deliveryId: 'd2', clientMessageId: 'c2' })).outcome).toBe('accepted')
+    await until(() => of(events, 'turn.ended').length === 2)
+    // 第二个进程开了新的原生会话，对外仍是最初的 ID；权限跟着新的原生 ID 走。
+    const actual = world.agents[1]!.sessionFiles.keys().next().value!
+    expect(actual).not.toBe(first)
+    expect(session.nativeSessionId).toBe(first)
+    expect(JSON.parse(readFileSync(join(layout.root, 'pi-session-aliases.json'), 'utf8'))).toEqual({ version: 1, aliases: { [actual]: first } })
+    expect(JSON.parse(readFileSync(layout.permissionFile, 'utf8'))[actual]).toBe('readonly')
+    // 目录、只读历史、open(existing) 都用最初的 ID。
+    const ref = (await handle.listNativeSessions()).sessions.find(s => s.locator?.endsWith(`${actual}.jsonl`))!
+    expect(ref.nativeSessionId).toBe(first)
+    const page = await handle.readNativeHistory({ nativeSessionId: first }, { limit: 10 })
+    expect(page.items[0]).toMatchObject({ itemId: piHistoryItemId(piNativeSessionId('pi', ref.locator!, first), { id: 'u1' }, 0, 0) })
+    await session.close()
+    await handle.stop()
+    // Connector 重启：别名表从实例目录读回来。
+    const restarted = reopen()
+    expect((await restarted.listNativeSessions()).sessions.map(s => s.nativeSessionId)).toContain(first)
+    const resumed = await restarted.open({ kind: 'existing', ref: { nativeSessionId: first } }, { sessionId: 'aa_alias', replay: 'none' }) as PiRuntimeSession
+    expect(resumed.nativeSessionId).toBe(first)
+    expect(world.environments.at(-1)).toMatchObject({ AA_PI_SESSION_ID: actual })
+    await expect(restarted.open({ kind: 'existing', ref: { nativeSessionId: actual, locator: ref.locator! } }, { sessionId: 'aa_other', replay: 'none' }))
+      .rejects.toMatchObject({ error: { code: 'pi_source_busy' } })
+    await restarted.stop()
+  })
+
+  it('marks failed and interrupted assistant messages and shows the model error', async () => {
+    const { handle, world, work } = setup()
+    const end = (sessionId: string, agent: { update: (s: string, u: Record<string, unknown>) => void }, messageId: string, stopReason: string) =>
+      agent.update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '' }, messageId, _meta: { pi: { event: 'assistant_message', stopReason } } })
+    let round = 0
+    world.configure = agent => {
+      agent.onPrompt = async params => {
+        const sessionId = String(params.sessionId)
+        round += 1
+        agent.started(sessionId)
+        if (round === 1) {
+          agent.update(sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'think' }, messageId: 'm1' })
+          agent.text(sessionId, 'all ', 'm1')
+          agent.text(sessionId, 'good', 'm1')
+          end(sessionId, agent, 'm1', 'stop')
+          await tick()
+          return { stopReason: 'end_turn' }
+        }
+        if (round === 2) {
+          agent.text(sessionId, 'partial', 'm2')
+          end(sessionId, agent, 'm2', 'error')
+          await tick()
+          throw new JsonRpcError(-32603, '429 rate limit exceeded', { _meta: { pi: { assistantError: true, failure: 'rate_limited' } } })
+        }
+        agent.update(sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'hmm' }, messageId: 'm3' })
+        agent.text(sessionId, 'half', 'm3')
+        end(sessionId, agent, 'm3', 'aborted')
+        await tick()
+        return { stopReason: 'cancelled' }
+      }
+    }
+    const session = await handle.open({ kind: 'new', spec: { cwd: work } }, { sessionId: 'aa_fail', replay: 'none' }) as PiRuntimeSession
+    const events = collect(session)
+    for (const [index, id] of ['c1', 'c2', 'c3'].entries()) {
+      await session.prompt({ text: id }, { deliveryId: id, clientMessageId: id })
+      await until(() => of(events, 'turn.ended').length === index + 1)
+    }
+    const completed = of(events, 'message.completed').filter(e => e.role !== 'user')
+    const item = (messageId: string, kind = 'agent_message_chunk') => acpFingerprint(['aa_fail', kind, messageId])
+    expect(completed.map(e => [e.itemId, e.role, e.text, e.status])).toEqual([
+      [item('m1', 'agent_thought_chunk'), 'reasoning', 'think', undefined],
+      [item('m1'), 'assistant', 'all good', undefined],
+      [item('m2'), 'assistant', 'partial', 'failed'],
+      [item('m3', 'agent_thought_chunk'), 'reasoning', 'hmm', 'cancelled'],
+      [item('m3'), 'assistant', 'half', 'cancelled'],
+    ])
+    // 正文增量与整条消息是同一个条目
+    expect(new Set(of(events, 'message.delta').map(e => e.itemId))).toEqual(new Set([item('m1', 'agent_thought_chunk'), item('m1'), item('m2'), item('m3', 'agent_thought_chunk'), item('m3')]))
+    const ended = of(events, 'turn.ended')
+    expect(ended.map(e => e.reason)).toEqual(['end_turn', 'failed', 'cancelled'])
+    expect(ended[1]!.error).toMatchObject({ code: 'runtime_error', message: '429 rate limit exceeded', details: { assistantError: true, failure: 'rate_limited' } })
+    const notices = of(events, 'notice')
+    expect(notices).toEqual([expect.objectContaining({
+      itemId: acpFingerprint(['aa_fail', 'pi-turn-error', ended[1]!.turnId]), level: 'error', kind: 'error', text: '429 rate limit exceeded', turnId: ended[1]!.turnId,
+    })])
+    // 提示排在回合结束之前
+    expect(events.indexOf(notices[0]!)).toBeLessThan(events.indexOf(ended[1]!))
+    await handle.stop()
+  })
+
+  it('inlines image files, tags attachments with their platform identity and shows them on the user message', async () => {
+    const { handle, world, work, root } = setup()
+    const image = join(root, 'a.png')
+    const text = join(root, 'notes.txt')
+    writeFileSync(image, Buffer.from([1, 2, 3]))
+    writeFileSync(text, 'n')
+    const pngInfo = { fileId: 'file_png', name: 'a.png', mediaType: 'image/png', size: 3, sha256: 'aa' }
+    const txtInfo = { fileId: 'file_txt', name: 'notes.txt', mediaType: 'text/plain', size: 1 }
+    world.configure = agent => {
+      agent.onPrompt = async () => ({ stopReason: 'end_turn' })
+    }
+    const session = await handle.open({ kind: 'new', spec: { cwd: work } }, { sessionId: 'aa_att', replay: 'none' }) as PiRuntimeSession
+    const events = collect(session)
+    await session.prompt({
+      text: 'look',
+      attachments: [
+        { kind: 'file', path: image, mimeType: 'image/png', name: 'a.png', info: pngInfo },
+        { kind: 'file', path: text, mimeType: 'text/plain', name: 'notes.txt', info: txtInfo },
+        { kind: 'inline', data: 'eA==', mimeType: 'image/gif' },
+      ],
+    }, { deliveryId: 'd', clientMessageId: 'c' })
+    await until(() => of(events, 'turn.ended').length === 1)
+    const prompt = world.agents[0]!.received.find(r => r.method === 'session/prompt')!.params.prompt as Record<string, unknown>[]
+    expect(prompt).toEqual([
+      { type: 'text', text: 'look' },
+      { type: 'image', mimeType: 'image/png', data: Buffer.from([1, 2, 3]).toString('base64'), _meta: { aa: { attachment: pngInfo } } },
+      expect.objectContaining({ type: 'resource_link', name: 'notes.txt', mimeType: 'text/plain', _meta: { aa: { attachment: txtInfo } } }),
+      { type: 'image', mimeType: 'image/gif', data: 'eA==' },
+    ])
+    const user = of(events, 'message.completed').find(e => e.role === 'user')!
+    expect(user.timelineAttachments).toEqual([pngInfo, txtInfo])
+    await handle.stop()
+  })
+
+  it('restores attachments, failures and model errors from native history and replay', async () => {
+    const { handle, world, work, sessionsDir } = setup()
+    const info = { fileId: 'file_1', name: 'a.png', mediaType: 'image/png', size: 3, sha256: 'aa' }
+    const file = join(sessionsDir, 'f.jsonl')
+    writeHistory(file, 'hist-f', work, [
+      { type: 'message', id: 'u1', parentId: null, message: { role: 'user', content: [{ type: 'text', text: '/tmp/x.png look' }, { type: 'image', data: 'AQID', mimeType: 'image/png' }], aaClientMessageId: 'c1', aaDisplayText: 'look', aaAttachments: [info] } },
+      { type: 'message', id: 'a1', parentId: 'u1', message: { role: 'assistant', content: [{ type: 'text', text: 'partial' }], stopReason: 'error', errorMessage: ' 429 rate limit ' } },
+      { type: 'message', id: 'u2', parentId: 'a1', message: { role: 'user', content: 'again', aaClientMessageId: 'c2', aaDisplayText: 'again', aaAttachments: [] } },
+      { type: 'message', id: 'a2', parentId: 'u2', message: { role: 'assistant', content: [], stopReason: 'error', errorMessage: 'boom' } },
+      { type: 'message', id: 'a3', parentId: 'a2', message: { role: 'assistant', content: [{ type: 'text', text: 'half' }], stopReason: 'aborted' } },
+    ])
+    const ref = (await handle.listNativeSessions()).sessions.find(s => s.nativeSessionId === 'hist-f')!
+    const platform = piNativeSessionId('pi', ref.locator!, 'hist-f')
+    const page = await handle.readNativeHistory(ref, { limit: 50 })
+    expect(page.items.map(i => [i.type, i.itemId, (i as { status?: string }).status, (i as { text?: string }).text])).toEqual([
+      ['message.completed', piHistoryItemId(platform, { id: 'u1' }, 0, 0), undefined, 'look'],
+      ['message.completed', piHistoryItemId(platform, { id: 'a1' }, 1, 0), 'failed', 'partial'],
+      ['notice', piHistoryItemId(platform, { id: 'a1' }, 1, 'error'), undefined, '429 rate limit'],
+      ['message.completed', piHistoryItemId(platform, { id: 'u2' }, 2, 0), undefined, 'again'],
+      ['notice', piHistoryItemId(platform, { id: 'a2' }, 3, 'error'), undefined, 'boom'],
+      ['message.completed', piHistoryItemId(platform, { id: 'a3' }, 4, 0), 'cancelled', 'half'],
+    ])
+    expect(page.items[0]).toMatchObject({ role: 'user', clientMessageId: 'c1', timelineAttachments: [info] })
+    expect(page.items[2]).toMatchObject({ level: 'error', kind: 'error' })
+    expect(page.items[3]).not.toHaveProperty('timelineAttachments')
+    // 交接时的完整重放与只读历史同形（条目 ID 用 AA 会话 ID）
+    world.configure = agent => {
+      agent.onPrompt = async () => ({ stopReason: 'end_turn' })
+    }
+    const session = await handle.open({ kind: 'existing', ref }, { sessionId: 'aa_hist', replay: 'full' }) as PiRuntimeSession
+    const events = collect(session)
+    await tick()
+    expect(events.find(e => e.type === 'message.completed' && e.role === 'user')).toMatchObject({ itemId: piHistoryItemId('aa_hist', { id: 'u1' }, 0, 0), timelineAttachments: [info], replay: true })
+    expect(events.find(e => e.type === 'message.completed' && e.status === 'failed')).toMatchObject({ itemId: piHistoryItemId('aa_hist', { id: 'a1' }, 1, 0) })
+    expect(of(events, 'notice').map(e => e.text)).toEqual(['429 rate limit', 'boom'])
+    await handle.stop()
+  })
 })
 
 function sha(text: string): string {
   return createHash('sha256').update(text).digest('hex')
 }
+
+describe('Pi session aliases', () => {
+  it('follows chains back to the first id and survives a reload', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'aa-pi-alias-'))
+    dirs.push(root)
+    const file = join(root, 'pi-session-aliases.json')
+    const aliases = new PiSessionAliases(file)
+    expect(aliases.original('x')).toBe('x')
+    await aliases.record('x', 'y')
+    await aliases.record('y', 'z')
+    expect([aliases.original('z'), aliases.actual('x'), aliases.original('y')]).toEqual(['x', 'z', 'y'])
+    const reloaded = new PiSessionAliases(file)
+    expect([reloaded.original('z'), reloaded.actual('x')]).toEqual(['x', 'z'])
+    expect(new PiSessionAliases(join(root, 'missing.json')).actual('x')).toBe('x')
+  })
+})
