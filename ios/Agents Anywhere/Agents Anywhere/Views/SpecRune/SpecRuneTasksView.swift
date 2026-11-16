@@ -36,6 +36,9 @@ struct SpecRuneTasksView: View {
     @State private var expandedMonths: Set<String> = []
     /// 排序方向：默认从晚到早。
     @State private var sortDescending = true
+    /// 项目选择弹层（rail 按钮触发）。用 Bool 而不是把 model 塞进 AnyView：
+    /// ChatRailButton 用 AnyView 包装会打断 @Observable 追踪，菜单会停在旧状态。
+    @State private var showsProjectPicker = false
 
     private var detailAnimation: Animation? {
         reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 1.0)
@@ -144,14 +147,26 @@ struct SpecRuneTasksView: View {
         // 用 app 统一的页面工具栏：它负责把 rail 按钮送进 Duo 右缘竖排，
         // 并处理抽屉形态下导航栏被卡片位移重画的问题。
         // 标题固定「SpecRune」，当前项目在右侧菜单里显示——两者都写项目名会重复。
+        .sheet(isPresented: $showsProjectPicker) {
+            // 这里在 board(_ model:) 内部，model 已是非可选。
+            SpecRuneProjectPickerSheet(model: model) { repo in
+                taskPath.removeAll()
+                showsProjectPicker = false
+                Task { await model.select(repo: repo) }
+            }
+        }
         .modifier(ChatPageToolbar(
             title: "SpecRune",
             onMenu: onMenu,
-            railTrailing: chatRail.map { chatRailButtons($0) } ?? [],
-            // 项目切换放页面尾部（右上角）。试过塞进 railTrailing，但
-            // ChatRailButton 用 AnyView 包住，@Observable 追踪断掉，
-            // 菜单会一直显示旧状态（实测停在「选择项目」）。
-            pageTrailing: [AnyView(projectMenu(model))]
+            // 项目切换进右缘竖排（Duo 横屏右侧还有空间）。
+            // 按钮本身不读 model 状态——它只翻转一个 @State，具体列表在
+            // sheet 里渲染，这样 AnyView 打断追踪也不影响正确性。
+            railTrailing: [ChatRailButton(id: "specrune-project", view: AnyView(
+                Button { showsProjectPicker = true } label: {
+                    Label("项目", image: AppSymbolAssets.names["folder"] ?? "aa-Folder")
+                }
+            ))] + (chatRail.map { chatRailButtons($0) } ?? []),
+            pageTrailing: []
         ))
     }
 
@@ -312,6 +327,56 @@ struct SpecRuneTasksView: View {
         } else {
             ContentUnavailableView("未选择项目", appSymbol: "sidebar.left",
                                    description: Text("用上方菜单选择一个 SpecRune 项目"))
+        }
+    }
+}
+
+// MARK: - 项目选择弹层
+
+/// rail 按钮弹出的项目列表。读 model 的状态在 sheet 里是新鲜快照，
+/// 不受外层 AnyView 打断追踪的影响。
+private struct SpecRuneProjectPickerSheet: View {
+    let model: SpecRuneBoardModel
+    let onPick: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("SpecRune 项目") {
+                    ForEach(model.deviceProjects) { project in
+                        let enabled = model.specRuneRepos[project.workspacePath] == true
+                        Button {
+                            onPick(project.workspacePath)
+                        } label: {
+                            HStack(spacing: 8) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(verbatim: project.name)
+                                        .font(.body)
+                                        .foregroundStyle(.primary)
+                                    Text(enabled ? "SpecRune 项目" : (model.probeFailures[project.workspacePath] ?? "未启用 SpecRune"))
+                                        .font(.caption)
+                                        .foregroundStyle(AppTheme.secondaryText(colorScheme))
+                                }
+                                Spacer(minLength: 4)
+                                if model.selectedRepo == project.workspacePath {
+                                    AppSymbol("checkmark", size: 13)
+                                        .foregroundStyle(.tint)
+                                }
+                            }
+                        }
+                        .disabled(!enabled)
+                    }
+                }
+            }
+            .navigationTitle("选择项目")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+            }
         }
     }
 }
