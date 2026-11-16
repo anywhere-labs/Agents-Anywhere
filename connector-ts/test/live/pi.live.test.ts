@@ -130,6 +130,85 @@ describe.skipIf(!live)('Pi live (local mode)', () => {
   })
 })
 
+describe.skipIf(!live)('Pi live (aliases, attachments, interrupted messages)', () => {
+  it('keeps the first native id across a restart before any write, keeps attachments and marks an interrupted message', { timeout: 600_000 }, async () => {
+    const before = snapshot(agentDir)
+    const work = mkdtempSync(join(tmpdir(), 'aa-pi-live2-'))
+    const dataDir = mkdtempSync(join(tmpdir(), 'aa-pi-data-'))
+    const v2Cache = join(homedir(), 'Library/Application Support/Agents Anywhere/connector/pi-npm-runtimes/2a767d2905f93e2908db')
+    const bundle = process.env.AA_PI_BUNDLED_RUNTIME ?? (existsSync(v2Cache) ? v2Cache : undefined)
+    const env = { ...process.env, AA_PI_NPM_ROOT: join(dataDir, 'npm'), ...(bundle ? { AA_PI_BUNDLED_RUNTIME: bundle } : {}) }
+    const stderr: string[] = []
+    const provider = piProvider({ dataDir, env, lockDir: join(dataDir, 'locks'), onStderr: (_id, line) => stderr.push(line) })
+    let created: string | undefined
+    try {
+      const handle = await provider.start({ instanceId: 'pi', sessionNamespace: 'live2', settings: { executionMode: 'local' } })
+      const session = await handle.open({ kind: 'new', spec: { cwd: work } }, { sessionId: 'aa_pi_live2', replay: 'none' }) as PiRuntimeSession
+      const events: RuntimeEvent[] = []
+      void (async () => {
+        for await (const event of session.events) events.push(event)
+      })()
+      const first = session.nativeSessionId
+      // 还没写过原生文件就被回收：醒来只能开新的原生会话。
+      expect(await session.checkIdle(Date.now() + 24 * 3600_000)).toBe(true)
+      const notes = join(work, 'notes.txt')
+      writeFileSync(notes, 'The secret word is: avocado\n')
+      const info = { fileId: 'file_live_notes', name: 'notes.txt', mediaType: 'text/plain', size: 28 }
+      const accepted = await session.prompt(
+        { text: 'Read the attached file and reply with only the secret word.', attachments: [{ kind: 'file', path: notes, mimeType: 'text/plain', name: 'notes.txt', info }] },
+        { deliveryId: 'd1', clientMessageId: 'live2-c1' },
+      )
+      expect(accepted.outcome).toBe('accepted')
+      const ended = await untilTurnEnds(events, 0)
+      console.log('turn 1', ended.reason, JSON.stringify(assistantText(events, 0)))
+      expect(ended.reason).toBe('end_turn')
+      expect(session.nativeSessionId).toBe(first)
+      const aliases = JSON.parse(readFileSync(handle.aliases.file, 'utf8')) as { aliases: Record<string, string> }
+      console.log('aliases', JSON.stringify(aliases))
+      expect(Object.values(aliases.aliases)).toEqual([first])
+      const user = events.find((e): e is Extract<RuntimeEvent, { type: 'message.completed' }> => e.type === 'message.completed' && e.role === 'user')
+      expect(user?.timelineAttachments).toEqual([info])
+
+      // 中断一条正在输出的消息
+      const mark = events.length
+      await session.prompt({ text: 'Count from 1 to 300, one number per line, nothing else.' }, { deliveryId: 'd2', clientMessageId: 'live2-c2' })
+      const deadline = Date.now() + 120_000
+      while (!events.slice(mark).some(e => e.type === 'message.delta' && e.role === 'assistant') && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50))
+      await session.cancel()
+      const ended2 = await untilTurnEnds(events, mark)
+      const completed = events.slice(mark).filter((e): e is Extract<RuntimeEvent, { type: 'message.completed' }> => e.type === 'message.completed' && e.role === 'assistant')
+      console.log('turn 2', ended2.reason, completed.map(e => e.status))
+      expect(ended2.reason).toBe('cancelled')
+      expect(completed.at(-1)?.status).toBe('cancelled')
+
+      const mine = (await handle.listNativeSessions()).sessions.find(s => s.nativeSessionId === first)
+      expect(mine?.locator).toBeDefined()
+      expect(mine!.locator!.includes(first)).toBe(false)
+      created = mine?.locator
+      const history = await handle.readNativeHistory({ nativeSessionId: first }, { limit: 50 })
+      const items = history.items.filter((i): i is Extract<RuntimeEvent, { type: 'message.completed' }> => i.type === 'message.completed')
+      console.log('own history', items.map(i => `${i.role}:${i.status ?? 'done'}`).join(','))
+      expect(items.find(i => i.role === 'user' && i.clientMessageId === 'live2-c1')?.timelineAttachments).toEqual([info])
+      expect(items.filter(i => i.role === 'assistant').at(-1)?.status).toBe('cancelled')
+
+      await session.close()
+      await handle.stop()
+    } finally {
+      if (stderr.length) console.log('stderr tail', stderr.slice(-20).join('\n'))
+      if (created && created.startsWith(join(agentDir, 'sessions')) && readFileSync(created, 'utf8').split('\n')[0]!.includes(JSON.stringify(work).slice(1, -1))) {
+        rmSync(created)
+        const directory = dirname(created)
+        if (readdirSync(directory).length === 0) rmSync(directory, { recursive: true })
+      }
+      rmSync(work, { recursive: true, force: true })
+      rmSync(dataDir, { recursive: true, force: true })
+    }
+    const after = snapshot(agentDir)
+    const changed = [...new Set([...before.keys(), ...after.keys()])].filter(path => before.get(path) !== after.get(path))
+    expect(changed.filter(path => before.has(path) && (path.includes(`${join('agent', 'sessions')}`) || path.endsWith('settings.json')))).toEqual([])
+  })
+})
+
 // 录制一轮真实的 Pi 交互给回放测试用（test/recordings/pi-new-prompt.jsonl）。运行：
 //   AA_LIVE_PI=1 AA_PI_RECORD=test/recordings/pi-new-prompt.jsonl corepack yarn vitest run test/live/pi.live.test.ts -t records
 // 录制前把本机路径换成占位符：主目录 → /home/user，工作目录 → /workspace，守卫路径 → __AA_PI_GUARD__。

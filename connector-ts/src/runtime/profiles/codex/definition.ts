@@ -14,8 +14,12 @@ import { codexPermissionCatalog } from './permissions.js'
 export const CODEX_COMPANION_SETTINGS = {
   autoFollow: { title: '自动跟随 Codex App 正在使用的线程', default: true },
   deeplinkHandoff: { title: '打开被 Codex App 占用的线程时，让 App 接手（codex:// 链接）', default: true },
-  announceNewThreads: { title: '新建的线程立即出现在 Codex App 侧边栏（实验，需要 codex-acp 支持）', default: false },
-} as const
+  announceNewThreads: {
+    title: '新建的线程立即出现在 Codex App 侧边栏（实验，需要 codex-acp 支持）',
+    description: '这样出现的新线程不会进入 Codex App 的项目分组。',
+    default: false,
+  },
+} as const satisfies Record<string, { title: string; description?: string; default: boolean }>
 
 const BASE: AcpAgentDefinition = {
   runtime: 'codex',
@@ -46,7 +50,7 @@ function codexConfigSchema(): ConfigSchema {
   const properties = { ...(base.schema.properties as Record<string, unknown>) }
   const defaults: Record<string, boolean> = {}
   for (const [key, setting] of Object.entries(CODEX_COMPANION_SETTINGS)) {
-    properties[key] = { type: 'boolean', title: setting.title }
+    properties[key] = { type: 'boolean', title: setting.title, ...('description' in setting ? { description: setting.description } : {}) }
     defaults[key] = setting.default
   }
   return {
