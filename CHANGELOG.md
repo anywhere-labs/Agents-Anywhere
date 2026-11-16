@@ -24,7 +24,7 @@
 
 ### Web 与 Desktop 界面
 
-- 会话列表会标出「计划待审阅」「目标进行中」「目标已暂停」，设备离线时也能看到。（#PR）
+- 会话列表会标出「计划待审阅」「目标进行中」「目标已暂停」，设备离线时也能看到。（[#703](https://github.com/anywhere-labs/Agents-Anywhere/pull/703)）
 
 ### Android
 
