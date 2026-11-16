@@ -25,6 +25,7 @@
 ### Web 与 Desktop 界面
 
 - 会话所在的设备离线时，已经看过的消息仍然保留，输入框上方提示「设备离线」并说明显示的是本机缓存；从没打开过的会话显示「设备离线，上线后查看」；设备重新上线后自动补齐离线期间的新消息。（[#667](https://github.com/anywhere-labs/Agents-Anywhere/pull/667)）
+- 看过的会话会保存在本机，刷新页面或重新打开 Desktop 后能立即显示，设备离线时也能看；退出登录时清除本机保存的内容，切换账号时清除其他账号的内容。在共享电脑上可以在 Web 登录页勾选「不在此设备保存会话内容」。（[#677](https://github.com/anywhere-labs/Agents-Anywhere/pull/677)）
 
 ### Android
 
