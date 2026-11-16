@@ -6,7 +6,7 @@
   "type": "module",
   "packageManager": "yarn@4.6.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
