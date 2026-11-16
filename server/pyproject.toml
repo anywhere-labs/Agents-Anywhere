@@ -14,6 +14,7 @@ dependencies = [
     "httpx-s3-client",
     "jsonschema>=4.26.0",
     "loguru>=0.7.3",
+    "meshcall>=0.3.0",
     "pillow>=11.0.0",
     "python-multipart>=0.0.20",
     "redis>=6.0.0",
@@ -38,4 +39,6 @@ dev = [
 pythonpath = ["."]
 
 [tool.uv.sources]
+# MeshCall main 9334405 (tokens with instance_ids, renew/revoke close codes); no release carries it yet.
+meshcall = { git = "https://github.com/t4wefan/meshcall.git", rev = "93344059ada65735c6cc08fdf3247ea9fb808d6b", subdirectory = "meshcall-py" }
 httpx-s3-client = { git = "https://github.com/t4wefan/httpx-s3-client.git" }
