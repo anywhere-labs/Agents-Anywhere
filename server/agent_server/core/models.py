@@ -274,6 +274,12 @@ class AuthMeResponse(BaseModel):
     serverTime: str
 
 
+class E2eeConfigView(BaseModel):
+    mode: Literal["off", "required"] = "off"
+    web: Literal["allow", "deny"] = "allow"
+    preview: Literal["allow", "deny"] = "allow"
+
+
 class AuthConfigResponse(BaseModel):
     emailVerificationRequired: bool = False
     needsBootstrap: bool
@@ -288,6 +294,9 @@ class AuthConfigResponse(BaseModel):
     # page show a countdown / "expired, check log" hint without ever exposing
     # the token value itself.
     setupTokenExpiresAt: str | None = None
+    #: Deployment E2EE declaration (``AGENT_SERVER_E2EE*``). A client that already requires encryption for
+    #: a device never relaxes because this says ``off`` (docs/v3/11-e2ee-noise.md §3).
+    e2ee: E2eeConfigView = Field(default_factory=lambda: E2eeConfigView())
     serverTime: str
 
 

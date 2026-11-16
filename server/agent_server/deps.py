@@ -8,6 +8,7 @@ from fastapi import Depends, Header, HTTPException
 from starlette.requests import HTTPConnection
 
 from agent_server.core.auth import verify_user_access_claims
+from agent_server.core.e2ee_settings import E2eeSettings
 from agent_server.core.models import UserView
 from agent_server.infra.connector_gateway import ConnectorGateway
 from agent_server.infra.connector_rpc import ConnectorRpcManager
@@ -30,6 +31,7 @@ from agent_server.services.device_runtimes import (
     DeviceRuntimeError,
     DeviceRuntimeService,
 )
+from agent_server.services.e2ee_commands import E2eeCommandService
 from agent_server.services.model_channels import (
     ChannelDriver,
     ChannelWakeIndex,
@@ -130,6 +132,15 @@ def session_run_service_for(state: Any) -> SessionRunService:
         prepare_model_channel=prepare_channel,
         admit_runtime=admit,
     )
+
+
+def get_e2ee_settings(conn: HTTPConnection) -> E2eeSettings:
+    settings = getattr(conn.app.state, "e2ee_settings", None)
+    return settings if settings is not None else E2eeSettings()
+
+
+def get_e2ee_command_service(conn: HTTPConnection) -> E2eeCommandService:
+    return E2eeCommandService(conn.app.state.store)
 
 
 def get_device_runtime_service(conn: HTTPConnection) -> DeviceRuntimeService:

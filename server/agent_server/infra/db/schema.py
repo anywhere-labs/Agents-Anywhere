@@ -821,3 +821,19 @@ previews = Table(
     Index("idx_previews_user", "user_id"),
     Index("idx_previews_state_expires", "state", "expires_at"),
 )
+
+# E2EE required mode: the plaintext side channel of a command sent through a secure channel
+# (contracts/e2ee/1.0 CommandRegistration). Only ids, a keyed digest and the outcome; never content.
+e2ee_command_registrations = Table(
+    "e2ee_command_registrations",
+    metadata,
+    Column("command_id", Text, primary_key=True),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("device_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
+    Column("input_digest", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("outcome", Text),
+    Column("error_code", Text),
+    Column("finished_at", Text),
+    Index("idx_e2ee_command_registrations_device_created", "device_id", "created_at"),
+)

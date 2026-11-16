@@ -26,6 +26,7 @@ from agent_server.core.models import (
     AuthResponse,
     BindEmailRequest,
     ChangePasswordRequest,
+    E2eeConfigView,
     EmailCodeRequest,
     EmailCodeResponse,
     MobileLoginConfirmRequest,
@@ -48,6 +49,7 @@ from agent_server.deps import (
     current_user,
     current_user_claims,
     current_user_id,
+    get_e2ee_settings,
     get_store,
 )
 from agent_server.infra.repositories.email_accounts import (
@@ -119,6 +121,7 @@ async def auth_config(
         oauthProviderLabel=str(oauth_config.get("label") or "OAuth") if oauth_enabled(oauth_config) else None,
         passwordResetEnabled=email_enabled and await db.is_password_reset_enabled(),
         setupTokenExpiresAt=expires_at,
+        e2ee=E2eeConfigView.model_validate(get_e2ee_settings(request).view()),
         serverTime=utc_now(),
     )
 

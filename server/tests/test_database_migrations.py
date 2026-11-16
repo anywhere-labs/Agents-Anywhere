@@ -285,6 +285,7 @@ def test_v2_0_database_upgrades_through_current_revision(fresh_database_url) -> 
         ("v2_59", "v2_60"),
         ("v2_60", "v2_61"),
         ("v2_61", "v2_62"),
+        ("v2_62", "v2_63"),
     ],
 )
 def test_every_adjacent_schema_upgrade(tmp_path,
@@ -1025,9 +1026,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_62() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_62"
-    assert CURRENT_SCHEMA_VERSION == "2.62"
+def test_current_schema_version_is_v2_63() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_63"
+    assert CURRENT_SCHEMA_VERSION == "2.63"
 
 
 def test_v2_57_starts_the_seq_ceiling_above_v2_sequences(fresh_database_url) -> None:
@@ -2835,3 +2836,37 @@ def test_v2_60_layout_without_terminal_roots_is_not_guessed(fresh_database_url) 
     finally:
         engine.dispose()
     assert asyncio.run(classify_database(url)).kind == "unknown"
+
+
+def test_v2_63_adds_e2ee_command_registrations(fresh_database_url) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_63")
+    engine = create_engine(_sync_url(url))
+    try:
+        inspector = inspect(engine)
+        assert inspector.has_table("e2ee_command_registrations")
+        columns = {column["name"] for column in inspector.get_columns("e2ee_command_registrations")}
+        # Ids, a keyed digest and the outcome only: no column can hold command content.
+        assert columns == {
+            "command_id",
+            "user_id",
+            "device_id",
+            "input_digest",
+            "created_at",
+            "outcome",
+            "error_code",
+            "finished_at",
+        }
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE alembic_version"))
+    finally:
+        engine.dispose()
+    assert asyncio.run(classify_database(url)) == UnversionedDatabase("v2", "v2_63")
+
+    command.stamp(_alembic_config(url), "v2_63")
+    command.downgrade(_alembic_config(url), "v2_62")
+    engine = create_engine(_sync_url(url))
+    try:
+        assert not inspect(engine).has_table("e2ee_command_registrations")
+    finally:
+        engine.dispose()

@@ -16,6 +16,8 @@
 - 自托管 Compose 新增 MeshCall Router 和前置网关（Caddy）：对外端口改由网关提供，v3 设备经 `/api/v3/device/mesh` 连接 Router；Router 账号密码默认自动生成并保存在数据卷里，也可以用 `AGENT_SERVER_MESH_PASSWORD` 指定。（[#675](https://github.com/anywhere-labs/Agents-Anywhere/pull/675)）
 - 运行中排队消息需要 Server 执行 `v2_56` 数据库迁移（只新增两张表，不改写已有数据）；排队在 Web、Desktop、Android 和 iOS 上可用，旧版客户端的行为不变。（[#658](https://github.com/anywhere-labs/Agents-Anywhere/pull/658)、[#659](https://github.com/anywhere-labs/Agents-Anywhere/pull/659)）
 
+- 端到端加密模式需要 Server 执行 `v2_57` 数据库迁移（只新增一张表）。部署者设置 `AGENT_SERVER_E2EE=required` 后，Server 拒绝所有明文的会话内容、文件和终端请求，第一次以该模式启动时会清空已存的会话标题和工作目录，设备上线后重新以密文写入；`AGENT_SERVER_E2EE_WEB`、`AGENT_SERVER_E2EE_PREVIEW` 控制是否允许 Web 客户端和端口预览。默认 `off`，行为不变。（PR_LINK）
+
 ### 会话创建与消息交付
 
 - 连接 v3 Connector 的设备上可以新建会话并发出第一条消息，带附件也可以；网络不稳重试时不会建出重复的会话，设备拒绝或离线时不留下空会话。（[#732](https://github.com/anywhere-labs/Agents-Anywhere/pull/732)）

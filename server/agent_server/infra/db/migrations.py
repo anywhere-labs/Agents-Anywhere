@@ -21,8 +21,8 @@ from sqlalchemy.pool import NullPool
 from agent_server.infra.db.engine import resolve_db_url
 
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_62"
-CURRENT_SCHEMA_VERSION = "2.62"
+CURRENT_SCHEMA_REVISION = "v2_63"
+CURRENT_SCHEMA_VERSION = "2.63"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -240,14 +240,16 @@ def _classify_sync(connection) -> UnversionedDatabase:
         and "timeline_items" not in tables
         and "read_seq" in session_columns
     ):
-        # v2_61 adds port previews; v2_62 moves terminal roots to Redis.
+        # v2_61 adds port previews; v2_62 moves terminal roots to Redis; v2_63 registers
+        # commands sent through an E2EE secure channel.
+        e2ee_commands = "e2ee_command_registrations" in tables
         if "previews" not in tables:
-            if "connector_terminal_roots" not in tables:
+            if "connector_terminal_roots" not in tables or e2ee_commands:
                 return UnversionedDatabase("unknown")
             return UnversionedDatabase("v2", "v2_60")
-        return UnversionedDatabase(
-            "v2", "v2_61" if "connector_terminal_roots" in tables else "v2_62"
-        )
+        if "connector_terminal_roots" in tables:
+            return UnversionedDatabase("unknown") if e2ee_commands else UnversionedDatabase("v2", "v2_61")
+        return UnversionedDatabase("v2", "v2_63" if e2ee_commands else "v2_62")
     connector_columns = _column_names(inspector, "connectors")
     active_run_columns = _column_names(inspector, "session_active_runs")
     timeline_columns = _column_names(inspector, "timeline_items")

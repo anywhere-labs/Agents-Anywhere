@@ -14,6 +14,7 @@ from agent_server.infra.repositories.channel_reconciliation import (
 from agent_server.infra.repositories.connectors import ConnectorRepositoryMixin
 from agent_server.infra.repositories.device_link import DeviceLinkRepositoryMixin
 from agent_server.infra.repositories.device_runtimes import DeviceRuntimeRepositoryMixin
+from agent_server.infra.repositories.e2ee import E2eeRepositoryMixin
 from agent_server.infra.repositories.instance_settings_facade import (
     InstanceSettingsRepositoryMixin,
 )
@@ -47,6 +48,7 @@ class Store(
     TokenFamilyRepositoryMixin,
     PreviewRepositoryMixin,
     DeviceLinkRepositoryMixin,
+    E2eeRepositoryMixin,
     ChannelReconciliationRepositoryMixin,
     ModelChannelRepositoryMixin,
     ModelConfigRepositoryMixin,

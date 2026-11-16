@@ -9,6 +9,7 @@ All Server HTTP, SSE, and WebSocket API documentation should live under this dir
 ## Documents
 
 - [运行中排队消息](session-message-queue.md)：会话运行中继续发送、Server 排队与派发、打断并发送、队列管理接口。
+- [端到端加密模式](e2ee.md)：`AGENT_SERVER_E2EE*` 配置、加密模式下被拒绝的明文路由、命令登记 `/api/v3/e2ee/commands` 与模式切换。
 - [统一目标模式](goals.md)：Codex、Claude Code 的目标栏、操作回执、原生续跑和数据库恢复。
 
 - [统一原生 Plan](planning.md)：规划命令、流式卡片、不可变版本、审阅和回执 API；[完整设计](../runtime-protocol/unified-plan-implementation-plan.md)保留原生研究与分层依据。

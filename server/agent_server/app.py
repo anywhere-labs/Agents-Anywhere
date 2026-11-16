@@ -31,6 +31,7 @@ from agent_server.api import (
     dashboard_stream,
     device_link,
     device_transfers,
+    e2ee,
     error_handlers,
     model_config,
     oauth,
@@ -49,8 +50,10 @@ from agent_server.api import (
     tokens_link,
     tunnel,
 )
-from agent_server.core.api_namespace import API_V2_PREFIX
+from agent_server.api.e2ee_gate import E2eeGateMiddleware
+from agent_server.core.api_namespace import API_V2_PREFIX, API_V3_PREFIX
 from agent_server.core.auth import require_server_secret
+from agent_server.core.e2ee_settings import E2eeSettings
 from agent_server.core.process_settings import ProcessSettings
 from agent_server.core.setup_token import SetupToken
 from agent_server.core.utc import utc_now
@@ -93,6 +96,7 @@ from agent_server.services.device_planning import DevicePlanningService
 from agent_server.services.device_queue import DeviceQueueService
 from agent_server.services.device_reads import DeviceReadService
 from agent_server.services.device_runtimes import DeviceRuntimeService
+from agent_server.services.e2ee_mode import apply_e2ee_mode
 from agent_server.services.effective_capabilities import (
     ConnectorCapabilityRefresh,
 )
@@ -159,6 +163,7 @@ def create_app(
     default; the test suite migrates its own database once per session.
     """
     process_settings = ProcessSettings.from_environment()
+    e2ee_settings = E2eeSettings.from_environment()
     resolved_redis_url = redis_url
     if resolved_redis_url is None:
         resolved_redis_url = os.environ.get("AGENT_SERVER_REDIS_URL")
@@ -179,6 +184,7 @@ def create_app(
                 os.getpid(), process_settings.workers, process_settings.event_workers,
             )
             await require_current_database(app.state.store.engine)
+            await apply_e2ee_mode(app.state.store, app.state.e2ee_settings)
             app.state.database_schema_version = await database_schema_version(
                 app.state.store.engine
             )
@@ -282,6 +288,8 @@ def create_app(
         WorkspaceServiceError,
         error_handlers.workspace_service_error_handler,
     )
+    # Inside CORS, so a refused request still carries CORS headers and the browser can read e2ee_required.
+    app.add_middleware(E2eeGateMiddleware, settings=e2ee_settings)
     cors_origins = os.environ.get("AGENT_SERVER_CORS_ORIGINS")
     app.add_middleware(
         CORSMiddleware,
@@ -296,6 +304,7 @@ def create_app(
     if migrate_database:
         upgrade_database()
     app.state.store = Store()
+    app.state.e2ee_settings = e2ee_settings
     app.state.database_schema_version = "unknown"
     app.state.redis = RedisCoordinator(
         resolved_redis_url,
@@ -528,6 +537,7 @@ def create_app(
     app.include_router(session_goals.router, prefix=API_V2_PREFIX)
     app.include_router(sessions_fs.router, prefix=API_V2_PREFIX)
     app.include_router(sessions_terminal.router, prefix=API_V2_PREFIX)
+    app.include_router(e2ee.router, prefix=API_V3_PREFIX)
 
     static_dir = os.environ.get("AGENT_SERVER_STATIC_DIR")
     if static_dir:
