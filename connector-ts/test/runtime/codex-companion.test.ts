@@ -37,7 +37,8 @@ import {
   type ProcessSignaller,
   type ProcessTable,
 } from '../../src/runtime/companions/codex/index.js'
-import { CODEX, codexDialect } from '../../src/runtime/profiles/codex/index.js'
+import type { AgentInfo } from '../../src/runtime/acp/client.js'
+import { CODEX, codexDialect, codexLocalImageLinks } from '../../src/runtime/profiles/codex/index.js'
 import { checkDefinition, validateSettings } from '../../src/runtime/profiles/definition.js'
 import { FakeAcpAgent, tick, type Json } from '../support/fake-acp-agent.js'
 
@@ -383,7 +384,7 @@ describe('Codex companion handle', () => {
     return agent
   }
 
-  function companion(agent: FakeAcpAgent, options: { platform?: NodeJS.Platform; app?: boolean; locks?: FakeLocks } = {}) {
+  function companion(agent: FakeAcpAgent, options: { platform?: NodeJS.Platform; app?: boolean; locks?: FakeLocks; codexHome?: string } = {}) {
     const routes = new Map<string, CodexOpenRoute>()
     const dialect = codexDialect({ openRoute: ref => routes.get(ref.nativeSessionId) ?? 'auto' })
     const inner = new AcpRuntimeHandle({ type: 'codex', instanceId: 'i1', dialect, connect: peerConnection(agent.clientPeer, dialect) })
@@ -391,7 +392,7 @@ describe('Codex companion handle', () => {
     if (options.app !== false) processes.table = [APP]
     const opened: string[] = []
     const handle = new CodexRuntimeHandle(inner, routes, {
-      codexHome: '/nonexistent',
+      codexHome: options.codexHome ?? '/nonexistent',
       platform: options.platform ?? 'darwin',
       uid: 501,
       processes,
@@ -450,9 +451,47 @@ describe('Codex companion handle', () => {
     const { handle } = companion(agent)
     const error = await handle.open({ kind: 'existing', ref: { nativeSessionId: T1 } }, { sessionId: 'aa_1', replay: 'none' }).catch(e => e)
     expect(error).toBeInstanceOf(RuntimeFailure)
-    expect((error as RuntimeFailure).error.details).toMatchObject({ route: 'blocked', writerLock: 'held', handoff: 'still_blocked', quitAppAvailable: true })
+    expect((error as RuntimeFailure).error.details).toMatchObject({ route: 'blocked', writerLock: 'held', handoff: 'still_blocked', ownerRelease: 'available' })
     const plan = await handle.prepareQuitCodexApp([T1])
     expect(plan.status).toBe('plan')
+  })
+
+  it('offers the App quit through the port, tied to the AA session that asked for it', async () => {
+    const agent = codexAgent(() => blockedHeld)
+    const { handle, processes } = companion(agent)
+    expect(handle.capabilities().items.find(c => c.id === 'runtime.owner_release')?.supported).toBe(true)
+    const prepared = await handle.ownerRelease.prepare({ nativeSessionId: T1 }, { sessionId: 'aa_7' })
+    expect(prepared).toMatchObject({ status: 'plan', plan: { sessionId: 'aa_7', nativeSessionId: T1, owner: { displayName: 'Codex App', processCount: 1 }, releasesOtherSessions: true } })
+    if (prepared.status !== 'plan') throw new Error('expected a plan')
+    // 拟定计划不发信号；丢弃后计划不能再执行
+    expect(processes.signals).toEqual([])
+    handle.ownerRelease.discard(prepared.plan.planId)
+    expect((await handle.ownerRelease.execute(prepared.plan.planId, { force: false })).status).toBe('plan_expired')
+    expect(processes.signals).toEqual([])
+    const free = companion(codexAgent(() => follow))
+    expect(await free.handle.ownerRelease.prepare({ nativeSessionId: T1 }, { sessionId: 'aa_8' })).toEqual({ status: 'not_needed' })
+    const gone = companion(codexAgent(() => blockedHeld), { app: false })
+    expect(await gone.handle.ownerRelease.prepare({ nativeSessionId: T1 }, { sessionId: 'aa_9' })).toEqual({ status: 'unavailable', reason: 'owner_not_running' })
+  })
+
+  it('fills the permission of threads that are not open from their rollout', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'aa-codex-list-'))
+    const created = threadCreatedAt(T1)!
+    const day = join(home, 'sessions', String(created.getFullYear()), String(created.getMonth() + 1).padStart(2, '0'), String(created.getDate()).padStart(2, '0'))
+    mkdirSync(day, { recursive: true })
+    writeFileSync(join(day, `rollout-2026-11-16T23-44-56-${T1}.jsonl`), JSON.stringify({ type: 'turn_context', payload: { approval_policy: 'never', sandbox_policy: { type: 'danger-full-access' } } }))
+    const agent = codexAgent(() => resumable)
+    agent.peer.onRequest('session/list', () => ({ sessions: [{ sessionId: T1, cwd: '/w', updatedAt: '2026-11-16T15:00:00Z' }, { sessionId: T2, cwd: '/w' }, { sessionId: 'not-a-thread', cwd: '/w' }] }))
+    const { handle } = companion(agent, { codexHome: home })
+    const page = await handle.listNativeSessions()
+    expect(page.sessions.map(s => [s.nativeSessionId, s.permission])).toEqual([
+      [T1, codexPermissionSelectionId('full_access', { permission_mode: 'full_access' })],
+      [T2, undefined], // 找不到 rollout：不填，不代入默认值
+      ['not-a-thread', undefined],
+    ])
+    // 已打开的线程以会话配置为准，不再读 rollout
+    await handle.open({ kind: 'existing', ref: { nativeSessionId: T1 } }, { sessionId: 'aa_1', replay: 'none' })
+    expect((await handle.listNativeSessions()).sessions.find(s => s.nativeSessionId === T1)?.permission).toBeUndefined()
   })
 
   it('emits follow suggestions as runtime events, skipping threads AA has open', async () => {
@@ -485,6 +524,19 @@ describe('Codex profile wiring for companions', () => {
   it('asks codex-acp to announce new threads only when switched on', () => {
     expect(codexDialect().initializeMeta?.()).toEqual({ codexIpc: { approvals: true, settings: true, historyReplacement: true } })
     expect(codexDialect({ announceNewThreads: true }).initializeMeta?.()).toMatchObject({ codexIpc: { announceNewThreads: true } })
+  })
+
+  it('hides image attachments until codex-acp passes local image links to Codex', () => {
+    const info = (meta: Json) => ({ protocolVersion: 1, agentCapabilities: { promptCapabilities: { image: true } }, agentInfo: {}, authMethods: [], meta }) as unknown as AgentInfo
+    const attachment = (meta: Json) => codexDialect().capabilities(info(meta)).find(c => c.id === 'runtime.attachment')
+    expect(attachment({ codexIpc: {} })).toEqual({ id: 'runtime.attachment', supported: false })
+    expect(codexLocalImageLinks(info({ localImageLinks: { supported: true } }))).toBe(true)
+    expect(attachment({ localImageLinks: { supported: true } })).toMatchObject({ supported: true, parameters: { image: true } })
+  })
+
+  it('explains in the sidebar switch that new threads skip project groups', () => {
+    const property = (CODEX.configSchema!.schema.properties as Record<string, Record<string, unknown>>).announceNewThreads
+    expect(property?.description).toContain('项目分组')
   })
 
   it('passes local images by path, never as inline bytes', () => {

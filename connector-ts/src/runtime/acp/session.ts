@@ -170,6 +170,8 @@ export class AcpRuntimeSession implements RuntimeSession {
   async prompt(input: PromptInput, delivery: DeliveryRef): Promise<PromptAcceptance> {
     if (this.closed) return { outcome: 'rejected', error: { code: 'session_closed', message: 'session is closed' } }
     if (this.turn !== undefined) return { outcome: 'rejected', error: { code: 'session_busy', message: 'a turn is already running' } }
+    // 正在交接写锁：明确拒绝（不会执行），上层换到新路由后重发。
+    if (this.releasing) return { outcome: 'rejected', error: { code: 'runtime_route_switching', message: 'the session is being handed over to another route', retryable: true } }
     const turnId = `turn_${randomUUID()}`
     let resolveAcceptance!: (acceptance: PromptAcceptance) => void
     const acceptance = new Promise<PromptAcceptance>(resolve => (resolveAcceptance = resolve))
@@ -352,13 +354,27 @@ export class AcpRuntimeSession implements RuntimeSession {
     this.events.close()
   }
 
+  /**
+   * 在回合之间释放会话（04 §5.6「路由切换要交接写锁」）：没有回合时立即 `session/close`，有回合时等它结束再关。
+   * 等待期间不再接受新的 prompt，避免回合结束后又开一轮、一直拿着写锁。返回时会话已关闭。
+   */
+  async releaseBetweenTurns(): Promise<void> {
+    if (this.closed) return
+    this.releasing = true
+    await this.whenIdle()
+    await this.close()
+  }
+
+  private releasing = false
+
   /** 连接断了（进程退出）：结束当前回合，通知会话需要重新 open。 */
   lost(reason: string): void {
     if (this.closed) return
     const error: RuntimeError = { code: 'runtime_disconnected', message: reason, retryable: true }
     if (this.turn) {
       if (!this.turn.accepted) this.turn.resolveAcceptance?.({ outcome: 'unknown', error })
-      this.endTurn(this.turn, 'failed', error)
+      // 已接纳的回合中途断开：结果未知（可能已经执行了一部分），由上层合成失败卡片，不自动重发。
+      this.endTurn(this.turn, 'failed', this.turn.accepted ? { ...error, retryable: false, details: { outcome: 'unknown' } } : error)
     }
     for (const [id, pending] of this.interactions) {
       pending.resolve({ outcome: { outcome: 'cancelled' } })
