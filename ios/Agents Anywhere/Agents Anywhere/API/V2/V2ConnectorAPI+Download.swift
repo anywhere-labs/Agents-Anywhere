@@ -2,6 +2,11 @@ import Foundation
 
 extension V2ConnectorAPI {
     func downloadWorkspaceFile(connectorId: V2ConnectorID, root: String, path: String) async throws -> WorkspaceDownloadedFile {
+        // Encrypted devices stream the file through the secure channel in chunks instead of a Server transfer.
+        if let routing = transport as? E2EERoutingHTTPTransport,
+           let file = try await routing.readDeviceFile(connectorId: connectorId, root: root, path: path) {
+            return try WorkspaceDownloadedFile(moving: file, name: path)
+        }
         let response = try await transport.send(HTTPRequest<V2WorkspaceFileReadRequest, V2WorkspaceFileReadResponse>(
             method: .post, path: "/connectors/\(connectorId.v2URLPathComponentEncoded)/fs/read",
             queryItems: [URLQueryItem(name: "root", value: root)], body: V2WorkspaceFileReadRequest(path: path)))

@@ -125,6 +125,7 @@ nonisolated struct URLSessionHTTPTransport: HTTPTransport {
         urlRequest.httpMethod = HTTPMethod.post.rawValue
         urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
         urlRequest.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        for (name, value) in request.headers { urlRequest.setValue(value, forHTTPHeaderField: name) }
         if request.requiresAuth {
             guard let token = try await tokenProvider.accessToken(), !token.isEmpty else {
                 throw HTTPError.unauthorized

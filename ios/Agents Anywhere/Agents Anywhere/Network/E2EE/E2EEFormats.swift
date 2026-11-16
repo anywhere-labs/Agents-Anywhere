@@ -191,6 +191,41 @@ nonisolated enum E2EEFormats {
         return out
     }
 
+    // MARK: 加密附件
+
+    static let sealedUploadHeader = "x-aa-sealed"
+    static let sealedUploadValue = "segments-v1"
+    /// 经通道读设备文件时每块最多这么多明文字节（`TunnelFileChunk`）。
+    static let fileChunkMaxBytes = 8 * 1024 * 1024
+
+    /// 加密一个附件：随机密钥，objectId 用明文 SHA-256（小写十六进制，加密时 Server 还没分配 fileId），
+    /// 上传体是各段密文按顺序直接拼接。返回的密钥还没有 fileId，上传后再补上。
+    static func sealAttachment(_ plaintext: Data) throws -> (ciphertext: Data, key: E2EESealedAttachmentKey) {
+        let key = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+        let sha256 = NoiseCrypto.sha256(plaintext).map { String(format: "%02x", $0) }.joined()
+        let segments = try sealSegments(purpose: .attachment, objectId: sha256, key: key, plaintext: plaintext)
+        return (segments.reduce(into: Data()) { $0.append($1) },
+                E2EESealedAttachmentKey(fileId: "", key: base64url(key), size: plaintext.count, sha256: sha256))
+    }
+
+    /// `sealAttachment` 的逆操作（设备侧做的事；测试与诊断用）：按 64 KiB + 16 切段，解密后核对大小与摘要。
+    static func openAttachment(_ ciphertext: Data, key: E2EESealedAttachmentKey) throws -> Data {
+        let keyBytes = try fromBase64url(key.key)
+        let stride = sealedSegmentBytes + NoiseCrypto.tagLen
+        var segments: [Data] = []
+        var offset = ciphertext.startIndex
+        repeat {
+            let end = min(offset + stride, ciphertext.endIndex)
+            segments.append(Data(ciphertext[offset..<end]))
+            offset = end
+        } while offset < ciphertext.endIndex
+        let plaintext = try openSegments(purpose: .attachment, objectId: key.sha256, key: keyBytes, segments: segments)
+        guard plaintext.count == key.size,
+              NoiseCrypto.sha256(plaintext).map({ String(format: "%02x", $0) }).joined() == key.sha256
+        else { throw E2EEError(code: E2EEError.decryptFailed, message: "attachment size or digest mismatch") }
+        return plaintext
+    }
+
     // MARK: 输入摘要
 
     static func inputDigestKey(directoryKey: Data) throws -> Data {

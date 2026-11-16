@@ -12,6 +12,9 @@ struct SessionChatView: View, Equatable {
     private let fileService: V2WorkspaceFilesService
     private let detailService: V2SessionDetailService
     private let portPreviews: PortPreviewStore
+    private let e2ee: V2E2EEService
+    private let serverURL: URL
+    @State private var pairingDevice = false
     private enum SessionSheet: Identifiable {
         case notices, details, files, preview(SessionFileReference, root: String? = nil)
         var id: String { switch self { case .notices: "notices"; case .details: "details"; case .files: "files"; case .preview(let reference, let root): "file:\(root ?? ""):\(reference.id)" } }
@@ -42,6 +45,7 @@ struct SessionChatView: View, Equatable {
         self.deviceName = deviceName
         fileService = services.workspaceFiles; detailService = services.sessionDetail
         portPreviews = services.portPreviews
+        e2ee = services.e2ee; serverURL = services.scope.serverURL
         self.onMenu = onMenu
     }
     private var controls: ChatControlMetrics { .init(bodyLineHeight: bodyLineHeight) }
@@ -74,6 +78,10 @@ struct SessionChatView: View, Equatable {
                 .overlay { if !model.isOpeningReady { openingMask } }
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     VStack(spacing: 0) {
+                        if let failure = session.failure, let code = failure.code, E2EEError.pairingCodes.contains(code),
+                           session.metadata?.connectorId != nil {
+                            SessionEncryptionPairingCard(message: failure.message) { pairingDevice = true }
+                        }
                         SessionInteractionDock(chat: model,
                             onShowAll: { expandedNoticeID = $0; sheet = .notices })
                             .traceChatLayout("interaction-dock")
@@ -186,6 +194,13 @@ struct SessionChatView: View, Equatable {
             await model.prepareOpening()
             guard !Task.isCancelled else { return }
             await model.timeline.run(sessionID: session.id, repository: model.repository)
+        }
+        .sheet(isPresented: $pairingDevice) {
+            if let connectorId = session.metadata?.connectorId {
+                E2EEPairSheet(deviceId: connectorId, deviceName: deviceName, serverURL: serverURL, service: e2ee) {
+                    Task { await session.refresh() }
+                }
+            }
         }
         .sheet(item: $sheet) { destination in
             switch destination {

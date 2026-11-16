@@ -67,7 +67,7 @@ final class V2ClientServices {
         sessionDetail = V2SessionDetailService(
             sessionAPI: api.sessions,
             runtimeAPI: api.runtime,
-            realtimeAPI: api.realtime
+            realtimeAPI: api.sessionRealtime
         )
         sessionCreation = V2SessionCreationService(sessionAPI: api.sessions)
         attachments = V2AttachmentService(attachmentAPI: api.attachments)
@@ -90,6 +90,17 @@ final class V2ClientServices {
             api: e2eeAPI,
             clientLabel: Self.clientLabel
         )
+        // Session content follows its device: the dashboard knows most sessions' devices,
+        // otherwise the (always plaintext) directory entry is read once.
+        let sessionsAPI = api.sessions
+        let dashboard = dashboardRepository
+        api.routing.attach(service: e2ee) { sessionId in
+            if sessionId.hasPrefix("local:") { return nil }
+            if let known = await MainActor.run(body: { dashboard.sessions.first { $0.id == sessionId }?.connectorId }) {
+                return known
+            }
+            return try await sessionsAPI.sessionMeta(sessionId: sessionId).session.connectorId
+        }
         newSession = NewSessionModel(scope: scope, devices: deviceManagement,
             preparation: sessionPreparation, creation: sessionCreation, projectAPI: api.projects, workflowAPI: V2RuntimeWorkflowAPI(transport: api.sessions.transport))
         newSession.onProjectResolved = { [weak self] in self?.dashboardRepository.upsertProject($0) }
@@ -182,6 +193,7 @@ final class V2ClientServices {
         connectivity.stop()
         onConnectivityChange = nil
         sessionRepository.reset()
+        api.routing.detach()
         Task { [e2ee] in await e2ee.shutdown() }
         api.cancelOutstandingRequests()
     }

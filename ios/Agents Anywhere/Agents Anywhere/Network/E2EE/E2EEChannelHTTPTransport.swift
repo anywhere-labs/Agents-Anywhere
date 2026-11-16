@@ -6,7 +6,10 @@ nonisolated struct E2EEChannelHTTPTransport: HTTPTransport {
     let channel: ClientSecureChannel
     var encoder = JSONEncoder()
     var decoder = JSONDecoder()
-    var timeout: Duration = .seconds(60)
+    /// 经通道的每个请求最多等这么久，超时报 `e2ee_timeout`（请求可能已经被设备执行）。
+    var timeout: Duration = Self.defaultTimeout
+
+    static let defaultTimeout: Duration = .seconds(30)
 
     func send<Body: Encodable, Response: Decodable>(_ request: HTTPRequest<Body, Response>) async throws -> Response {
         let body = try request.body.map { try encoder.encode($0) }
@@ -33,7 +36,9 @@ nonisolated struct E2EEChannelHTTPTransport: HTTPTransport {
                 return nil
             }
             defer { group.cancelAll() }
-            guard let first = try await group.next(), let response = first else { throw URLError(.timedOut) }
+            guard let first = try await group.next(), let response = first else {
+                throw E2EEError(code: E2EEError.timeout, message: "no response through the secure channel within \(timeout)")
+            }
             return response
         }
         guard 200..<300 ~= response.status else {

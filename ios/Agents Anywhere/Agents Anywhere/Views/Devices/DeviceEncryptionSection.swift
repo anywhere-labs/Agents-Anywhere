@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// 设备详情里的「端到端加密」：是否已配对、设备指纹，以及配对入口。
-/// 是否显示由 `DeviceEncryptionModel.isVisible` 决定，由设备页负责加载。
+/// 设备页加载到状态后总是显示（与 Web 一致），Server 没开加密时也能先配对。
 struct DeviceEncryptionSection: View {
     let connector: V2Connector
     let status: E2EEDeviceEncryptionStatus

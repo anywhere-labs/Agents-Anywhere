@@ -25737,6 +25737,91 @@
         }
       }
     },
+    "e2ee.error.timeout": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The device did not answer through the encrypted channel in time. The request may still have been carried out."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备没有及时通过加密通道回应，请求可能已经执行。"
+          }
+        }
+      }
+    },
+    "e2ee.error.unsupported": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opening attachments and file previews is not available in encrypted mode yet."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加密模式下暂时不能打开附件或预览文件。"
+          }
+        }
+      }
+    },
+    "e2ee.error.renameUnavailable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Renaming is not available in encrypted mode yet."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加密模式下暂时不能重命名。"
+          }
+        }
+      }
+    },
+    "e2ee.error.commandDuplicate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This command was already sent. Waiting for its result to sync."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这条命令已经发送过，正在等待结果同步。"
+          }
+        }
+      }
+    },
+    "e2ee.session.pairTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pair with this device to continue"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "与这台设备配对后继续"
+          }
+        }
+      }
+    },
     "设备离线，上线后查看。": {
       "comment": "Mirrors Web session.historyOfflineEmpty: empty timeline while the device is offline (protocol 1.2).",
       "extractionState": "manual",

@@ -7,11 +7,8 @@ final class DeviceEncryptionModel {
     private(set) var status: E2EEDeviceEncryptionStatus?
     private(set) var loadError: String?
 
-    /// Server 没开加密、本机没记过要求加密、也没配对过时，这一节不显示。
-    var isVisible: Bool {
-        guard let status else { return false }
-        return status.requiresEncryption || status.record != nil
-    }
+    /// 与 Web 一致：读到状态后总是显示，Server 没开加密时也可以先配对。
+    var isVisible: Bool { status != nil }
 
     func load(service: V2E2EEService, deviceId: String) async {
         do {

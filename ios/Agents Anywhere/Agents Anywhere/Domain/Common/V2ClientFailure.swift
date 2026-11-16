@@ -17,8 +17,13 @@ nonisolated struct V2ClientFailure: Error, Hashable, LocalizedError {
         if let failure = error as? Self { self = failure; return }
         message = (error as? DecodingError)?.v2Description ?? error.localizedDescription
         code = (error as? HTTPError)?.serverCode ?? (error as? V2RuntimeError)?.code
-            ?? (error as? V2RuntimeWorkflowFailure)?.workflow.state.failure?.code
-        if error is CancellationError || (error as? URLError)?.code == .cancelled {
+            ?? (error as? V2RuntimeWorkflowFailure)?.workflow.state.failure?.code ?? (error as? E2EEError)?.code
+        if let error = error as? E2EEError {
+            // Pairing problems and local refusals need the user. Channel drops, timeouts and
+            // duplicate commands (already sent once) leave the outcome uncertain.
+            kind = E2EEError.definitelyNotSentCodes.contains(error.code) || error.code == E2EEError.pairingExpired
+                ? .rejected : .transient
+        } else if error is CancellationError || (error as? URLError)?.code == .cancelled {
             kind = .cancelled
         } else if let error = error as? URLError {
             kind = error.code == .notConnectedToInternet ? .offline : .transient
@@ -57,6 +62,7 @@ nonisolated struct V2ClientFailure: Error, Hashable, LocalizedError {
         if Self(error).isOutcomeUnknown { return false }
         if let failure = error as? V2RuntimeWorkflowFailure { return failure.definitelyNotAccepted }
         if error is V2BusinessError { return true }
+        if let error = error as? E2EEError { return E2EEError.definitelyNotSentCodes.contains(error.code) }
         if let failure = error as? Self { return [.offline, .rejected, .authentication, .unavailable].contains(failure.kind) }
         guard let error = error as? HTTPError else { return false }
         if case .unauthorized = error { return true }

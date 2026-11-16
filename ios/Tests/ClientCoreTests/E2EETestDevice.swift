@@ -10,6 +10,8 @@ nonisolated final class E2EETestDevice: @unchecked Sendable {
     var identity: X25519KeyPair
     var directoryKey: E2EEDirectoryKeyGrant
     var rekeyFrames = E2EEFormats.rekeyIntervalFrames
+    /// 设备上的客户端 API：返回 (status, body)；返回 nil 表示不回应（测试超时）。不设时回显请求。
+    var responder: ((_ method: String, _ path: String, _ body: Any) -> (status: Int, body: Any)?)?
     private(set) var grants: [String: Data] = [:]
     private(set) var requests: [(clientId: String, method: String, path: String, body: Any)] = []
     private(set) var subscriptions: [String: (route: E2EETunnelRoute, sub: String)] = [:]
@@ -166,6 +168,10 @@ nonisolated final class E2EETestDevice: @unchecked Sendable {
             case "request":
                 let path = message["path"] as! String
                 requests.append((route.clientId, message["method"] as! String, path, message["body"] ?? NSNull()))
+                if let responder, path != "/e2ee/v1/directory-key" {
+                    guard let (status, body) = responder(message["method"] as! String, path, message["body"] ?? NSNull()) else { return }
+                    return try send(side, transport, ["kind": "response", "id": message["id"]!, "status": status, "body": body])
+                }
                 let body: Any = path == "/e2ee/v1/directory-key"
                     ? ["deviceId": directoryKey.deviceId, "keyId": directoryKey.keyId, "epoch": directoryKey.epoch, "key": directoryKey.key]
                     : ["echo": message["body"] ?? NSNull(), "path": path]

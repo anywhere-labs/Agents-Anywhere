@@ -18,6 +18,17 @@ nonisolated struct E2EEError: LocalizedError, Equatable, Sendable {
     static let decryptFailed = "e2ee_decrypt_failed"
     static let invalidPairingCode = "e2ee_invalid_pairing_code"
     static let unsupported = "e2ee_unsupported"
+    /// 经通道的请求超时（统一 30 秒）。请求可能已被设备执行。
+    static let timeout = "e2ee_timeout"
+    /// 加密模式下改名要写密封的 `displayUser`，Server 还不支持。
+    static let renameUnavailable = "e2ee_rename_unavailable"
+    /// 命令登记时 Server 说这条命令已经发过。
+    static let commandDuplicate = "e2ee_command_duplicate"
+
+    /// 要先（重新）配对才能继续的错误：界面给出配对入口。
+    static let pairingCodes: Set<String> = [notPaired, pinMismatch, required, handshakeFailed, downgradeRefused]
+    /// 请求一定没有发到设备（本地拒绝）。
+    static let definitelyNotSentCodes: Set<String> = pairingCodes.union([unsupported, renameUnavailable, invalidPairingCode])
 
     let code: String
     let message: String
@@ -35,6 +46,10 @@ nonisolated struct E2EEError: LocalizedError, Equatable, Sendable {
         switch code {
         case Self.invalidPairingCode: String(localized: "e2ee.error.invalidPairingCode")
         case Self.decryptFailed: String(localized: "e2ee.error.decryptFailed")
+        case Self.timeout: String(localized: "e2ee.error.timeout")
+        case Self.unsupported: String(localized: "e2ee.error.unsupported")
+        case Self.renameUnavailable: String(localized: "e2ee.error.renameUnavailable")
+        case Self.commandDuplicate: String(localized: "e2ee.error.commandDuplicate")
         default: RuntimeErrorText.text(code: code, fallback: String(localized: "e2ee.error.generic"))
         }
     }
@@ -149,6 +164,34 @@ nonisolated struct E2EEHandshakeEnvelope: Codable, Hashable, Sendable {
 nonisolated struct E2EETunnelResponse: Sendable {
     let status: Int
     let body: Data
+}
+
+/// 加密附件的密钥：随发消息的请求体（`sealedAttachmentKeys`）经通道交给设备，Server 只有密文。
+nonisolated struct E2EESealedAttachmentKey: Codable, Hashable, Sendable {
+    let fileId: String
+    /// base64url，32 字节。
+    let key: String
+    /// 明文大小。
+    let size: Int
+    /// 明文 SHA-256（小写十六进制），也是分段 AD 的 objectId。
+    let sha256: String
+
+    func with(fileId: String) -> E2EESealedAttachmentKey {
+        E2EESealedAttachmentKey(fileId: fileId, key: key, size: size, sha256: sha256)
+    }
+
+    var json: [String: Any] { ["fileId": fileId, "key": key, "size": size, "sha256": sha256] }
+}
+
+/// 经通道读设备文件的一块：`GET /api/v2/connectors/{deviceId}/fs/read?path&offset&length` 的响应体。
+nonisolated struct E2EETunnelFileChunk: Decodable, Hashable, Sendable {
+    let encoding: String
+    /// 标准 base64。
+    let data: String
+    let offset: Int
+    /// 文件总大小。
+    let size: Int
+    let eof: Bool
 }
 
 /// `POST /api/v3/e2ee/commands`。

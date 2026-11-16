@@ -195,10 +195,29 @@ false`) and never changes trust records or policy.
 Server mode from `auth/config`, pairs, reconnects with KK and chooses each
 device's transport: `route(for:)`, `transport(for:plain:)` (an `HTTPTransport`
 that existing API resources accept), `sessionEvents(...)` and `sendCommand(...)`
-(which registers the input digest first). The session, dashboard and repository
-call sites still use plain HTTP; they need to ask `route(for:)` with the
-session's device before switching. Encrypted uploads, downloads and display
-envelopes in lists are not wired yet.
+(which registers the input digest first).
+
+Every API resource except account and E2EE bookkeeping shares one
+`E2EERoutingHTTPTransport`. It classifies each request like the Server's
+required-mode gate (`E2EEContentTarget`): metadata, including `/api/v3`
+resources such as port previews, goes out as plain HTTP;
+session content (everything under `/sessions/{id}/` except `meta`,
+`runtime/state` and `runtime/capabilities`), session creation and device files,
+shell and terminals ask `V2E2EEService.route(for:)` with the session's
+`connectorId` (dashboard first, else the plaintext `meta`). The answer is plain,
+the secure channel (30-second timeout, `e2ee_timeout`; writes register a
+command first) or an error such as `e2ee_not_paired`, which the session page
+turns into a pairing entry; plaintext is never sent then.
+`E2EERoutingRealtimeAPI` swaps the session WebSocket for the channel's
+`subscribe` and emits `session.subscribed` itself so the repository recovers as
+usual. In an encrypted route, attachment uploads are sealed per file (random
+key, sealed segments with the plaintext SHA-256 as object ID) and sent with
+`x-aa-sealed: segments-v1`; the keys stay in memory and travel inside the
+channel as `sealedAttachmentKeys` in the body of the message that references
+the files. Device files download chunk by chunk through the channel
+(`TunnelFileChunk`). Binary attachment downloads, file previews and renaming
+(`displayUser` sealed with the directory key) are refused in encrypted routes
+until the Server supports them.
 
 ## Migration boundary
 

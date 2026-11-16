@@ -3,9 +3,8 @@ import Foundation
 /// 加密模式（e2ee 1.0）的接入点：Server 的模式、本机信任记录、每台设备的安全通道，
 /// 以及「这台设备的内容请求走明文还是走通道」的选择。
 ///
-/// 已接入：配对、重连、按设备选择传输（`route(for:)` / `transport(for:)`）、事件订阅、命令登记。
-/// 还没接入：`V2SessionDetailService`、`V2SessionRepository`、`V2DashboardService` 等现有调用点仍然直接走
-/// 明文 HTTP；它们要在拿到设备 ID 后先问 `route(for:)`（见 ios/ARCHITECTURE.md 的 E2EE 一节）。
+/// 所有内容请求经 `E2EERoutingHTTPTransport` 在这里选路，会话事件经 `E2EERoutingRealtimeAPI`
+/// （见 ios/ARCHITECTURE.md 的 E2EE 一节）。
 actor V2E2EEService {
     enum ContentRoute {
         /// Server 没开加密、本机也没记过「要求加密」：照常走明文 HTTP。
@@ -58,7 +57,7 @@ actor V2E2EEService {
         return serverMode
     }
 
-    var mode: E2EEMode { serverMode }
+    var mode: E2EEMode { get async { await settledServerMode() } }
 
     /// 设备详情页显示用：不改任何记录。
     func encryptionStatus(for deviceId: String) async throws -> E2EEDeviceEncryptionStatus {
@@ -113,16 +112,17 @@ actor V2E2EEService {
 
     /// 加密命令：先 `POST /api/v3/e2ee/commands` 登记（输入摘要按请求体原始字节计算），
     /// 再经通道发出。Server 回 `duplicate: true` 时说明这条命令已经发过，不再重发，返回 nil。
-    func sendCommand(deviceId: String, commandId: String, method: HTTPMethod, path: String, body: Data) async throws
-        -> E2EETunnelResponse? {
+    /// 没有请求体时，摘要按空字节计算，通道里的 `body` 为 null。
+    func sendCommand(deviceId: String, commandId: String, method: HTTPMethod, path: String, body: Data?,
+                     timeout: Duration = E2EEChannelHTTPTransport.defaultTimeout) async throws -> E2EETunnelResponse? {
         let channel = try await channel(for: deviceId)
         guard let key = try trust.device(deviceId)?.directoryKeyBytes else {
             throw E2EEError(code: E2EEError.notPaired, message: "no directory key for \(deviceId)")
         }
-        let digest = try E2EEFormats.inputDigest(directoryKey: key, body: body)
+        let digest = try E2EEFormats.inputDigest(directoryKey: key, body: body ?? Data())
         let registration = try await api.registerCommand(.init(commandId: commandId, deviceId: deviceId, inputDigest: digest))
         guard !registration.duplicate else { return nil }
-        return try await E2EEChannelHTTPTransport(channel: channel).perform(method, path: v2APIPath(path), body: body)
+        return try await E2EEChannelHTTPTransport(channel: channel, timeout: timeout).perform(method, path: v2APIPath(path), body: body)
     }
 
     // MARK: 配对与通道
