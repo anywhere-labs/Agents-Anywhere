@@ -23,7 +23,7 @@ import hmac
 import re
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 E2EE_VERSION = "1.0"
 PAIRING_TTL_SECONDS = 600
@@ -56,6 +56,12 @@ TRUST_PATH_PREFIX = "/e2ee/v1/"
 # --- Sealed content --------------------------------------------------------------
 SEALED_SEGMENT_BYTES = 64 * 1024
 DIRECTORY_KEY_BYTES = 32
+#: Encrypted uploads: ``POST /api/v2/sessions/{id}/attachments`` with this header; the body is the segment
+#: ciphertexts concatenated in order (every segment but the last is SEALED_SEGMENT_BYTES + 16 bytes).
+SEALED_UPLOAD_HEADER = "x-aa-sealed"
+SEALED_UPLOAD_VALUE = "segments-v1"
+#: Largest plaintext slice of one file read through the channel (``TunnelFileChunk``).
+FILE_CHUNK_MAX_BYTES = 8 * 1024 * 1024
 
 NonEmpty = Annotated[str, Field(min_length=1)]
 Base64 = Annotated[str, Field(min_length=1, description="base64url without padding")]
@@ -184,13 +190,29 @@ class TunnelResponse(E2eeModel):
 
 
 class TunnelSubscribe(E2eeModel):
-    """Same as opening the session WebSocket in normal mode, for one session."""
+    """Same as opening a realtime WebSocket in normal mode.
+
+    ``stream: "session"``: the session WebSocket of ``sessionId`` (events after ``afterCursor`` are replayed
+    first). ``stream: "terminal"``: the stream of device terminal ``terminalId``
+    (``/api/v2/connectors/{deviceId}/terminals-v2/{terminalId}/stream`` in normal mode); every
+    ``TunnelEvent.event`` is one message of that WebSocket, and input, resize and close stay ``request``s to the
+    same paths as normal mode.
+    """
 
     kind: Literal["subscribe"] = "subscribe"
     id: NonEmpty
-    stream: Literal["session"] = "session"
-    sessionId: NonEmpty
+    stream: Literal["session", "terminal"] = "session"
+    sessionId: str | None = Field(default=None, description="required when stream is session")
+    terminalId: str | None = Field(default=None, description="required when stream is terminal")
     afterCursor: str | None = Field(default=None, description="seq:N; events after it are replayed first")
+
+    @model_validator(mode="after")
+    def _target(self) -> TunnelSubscribe:
+        if self.stream == "session" and not self.sessionId:
+            raise ValueError("sessionId is required for a session stream")
+        if self.stream == "terminal" and not self.terminalId:
+            raise ValueError("terminalId is required for a terminal stream")
+        return self
 
 
 class TunnelUnsubscribe(E2eeModel):
@@ -263,13 +285,35 @@ E2EE_EVENTS: dict[str, type[BaseModel]] = {
 
 
 class SealedAttachmentKey(E2eeModel):
-    """Travels inside the channel with the request that references an encrypted upload
-    (``AttachmentRef.encrypted = true``); the Server only ever holds the ciphertext."""
+    """Travels inside the channel with the request that references an encrypted upload: the request body
+    carries ``sealedAttachmentKeys: [SealedAttachmentKey]`` next to its usual ``attachments``. The Server only
+    ever holds the ciphertext.
+
+    The upload's segments are sealed before the Server assigns ``fileId``, so their AD uses
+    ``objectId = sha256`` (``sealed_segment_ad("attachment", sha256, i, final)``); the key is random per file,
+    so a swapped upload fails to open either way. The device checks ``size`` and ``sha256`` after opening.
+    """
 
     fileId: NonEmpty
     key: Key32
     size: int = Field(ge=0, description="plaintext size")
-    sha256: NonEmpty = Field(description="hex SHA-256 of the plaintext")
+    sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$", description="hex SHA-256 of the plaintext; also the segment AD objectId")]
+    name: str | None = Field(default=None, description="real file name; the upload itself is named attachment.bin")
+    mimeType: str | None = Field(default=None, description="real media type; the upload itself is application/octet-stream")
+
+
+class TunnelFileChunk(E2eeModel):
+    """Response body of a file read through the channel:
+    ``GET /api/v2/connectors/{deviceId}/fs/read?root=…&path=…&offset=…&length=…`` (the normal-mode query plus
+    ``offset`` and ``length``; ``length`` at most
+    ``FILE_CHUNK_MAX_BYTES``; the device may return less). Large files are read chunk by chunk; each chunk is a
+    normal channel message, so it is encrypted and fragmented like any other."""
+
+    encoding: Literal["base64"] = "base64"
+    data: str = Field(description="base64 (standard alphabet) of the bytes at [offset, offset + len)")
+    offset: int = Field(ge=0)
+    size: int = Field(ge=0, description="total file size")
+    eof: bool
 
 
 # ---------------------------------------------------------------------------
