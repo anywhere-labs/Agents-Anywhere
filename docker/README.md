@@ -166,6 +166,59 @@ Development (`local-up.sh` or a bare `uvicorn`): set
 `AGENT_SERVER_MESH_LOCAL_ROUTER=1` to let the Server start a local Router
 (`meshcall` SDK `LocalRouter`; `MESHCALL_ROUTER_BINARY` selects the binary).
 
+### Port preview
+
+Port preview lets a phone open a web page that is running on the user's computer
+(`http://127.0.0.1:5173`). It is off until you configure a preview domain; without
+one, every client hides the feature and nothing else changes.
+
+**Requirements**
+
+- A **separately registered domain** for previews, for example `example-preview.net`
+  when the site is `aa.example.com`. Never use a subdomain of the AA site (such as
+  `*.preview.example.com`): a preview page would then share a site with AA, and
+  SameSite protection and cookie scoping would no longer separate them.
+- DNS: a wildcard record `*.example-preview.net` pointing at the gateway (it also
+  covers `frp.example-preview.net`, where devices connect).
+- TLS: a wildcard certificate for `*.example-preview.net`. Wildcards need an ACME
+  DNS-01 challenge, so terminate TLS in front of the gateway (as for the main site)
+  with a proxy that can answer it, for example Caddy built with your DNS provider's
+  module, Traefik, or a cloud load balancer. Forward plain HTTP to the gateway port
+  with the original `Host` header and WebSocket upgrades.
+- Two settings, for the Server, preview-auth and frps alike:
+
+```bash
+AGENT_SERVER_PREVIEW_DOMAIN=example-preview.net \
+AGENT_SERVER_PREVIEW_INTERNAL_TOKEN="$(openssl rand -hex 32)" \
+docker compose -f docker/docker-compose.postgres.yml up -d
+```
+
+Keep the token as stable as `AGENT_SERVER_SECRET`: changing it signs devices' frp
+tokens and visitors' preview cookies anew, so open previews must be reopened.
+
+**How the pieces fit**
+
+| Service | Role |
+| --- | --- |
+| `gateway-next` | `https://<slug>.<preview domain>`: asks `preview-auth-next` about every request (`forward_auth`), then proxies to frps's vhost port; `/__aa/ticket` goes to preview-auth. `frp.<preview domain>/~!frp`: devices' frpc WebSocket to frps. Strips the preview cookie and `Authorization` before the page sees the request. `/api/v3/internal/*` is never routed from outside. |
+| `preview-auth-next` | Checks the preview cookie's signature and the slug's state in Redis (cached a few seconds); it never calls the Server per request. Redeems one-time tickets through the Server and sets the `__Host-aa_preview` cookie (8 hours at most). Runs from the Server image. |
+| `frps` | Data plane. Its HTTP plugin asks the Server about every frpc login and proxy (`/api/v3/internal/preview/frps/<token>`). Neither of its ports is published. |
+| `server-next` | Decides who may preview which device port, signs the frp tokens, issues tickets and closes previews (stopped, expired, port closed, device offline for 10 minutes). |
+
+Notes:
+
+- `AGENT_SERVER_PREVIEW_FRPS_ADDR` overrides where frpc connects (default
+  `wss://frp.<preview domain>`, which crosses corporate proxies on 443).
+- Preview traffic is decrypted at your TLS terminator and passes through the
+  gateway and frps in plaintext; it is not stored, and nothing logs request
+  contents. With `AGENT_SERVER_E2EE=required` clients warn about this before
+  opening a preview; `AGENT_SERVER_E2EE_PREVIEW=deny` turns preview off instead.
+- `FRPS_VERSION` selects the `fatedier/frps` image tag (default `v0.72.0`). Devices
+  bring their own frpc (bundled with Desktop).
+- Behind nginx, `auth_request` can take the place of Caddy's `forward_auth`: send
+  `/verify` to preview-auth with `X-Forwarded-Host`, without the WebSocket upgrade
+  headers, and replace the `Cookie` header with the `X-Aa-Cookie` it returns.
+
 Publish the Web console on a different host port:
 
 ```bash
