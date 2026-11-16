@@ -12,7 +12,10 @@ import { readPiHistory, type PiHistory } from './pi-history.js'
 export const PAGE_SIZE = 100
 
 export interface PiSource {
+  /** 文件头里的会话 ID（真实 ID）。 */
   readonly nativeSessionId: string
+  /** 对外报告的会话 ID：会话换过原生 ID 时是最初那个（profiles/pi/aliases.ts），否则同 nativeSessionId。 */
+  readonly externalSessionId: string
   /** 解析过符号链接的文件路径。 */
   readonly path: string
   readonly cwd: string
@@ -26,6 +29,14 @@ export interface PiSource {
   /** 多个文件声明同一个会话身份。 */
   ambiguous: boolean
 }
+
+/** 原生会话 ID 别名（Pi profile 维护）：对外 ID 与文件头里的真实 ID 互查。 */
+export interface PiAliasLookup {
+  original(actual: string): string
+  actual(original: string): string
+}
+
+const NO_ALIASES: PiAliasLookup = { original: id => id, actual: id => id }
 
 interface Cached {
   readonly signature: string
@@ -55,6 +66,7 @@ async function signature(path: string): Promise<{ id: string; signature: string 
 function sourceOf(history: PiHistory): PiSource {
   return {
     nativeSessionId: history.nativeId,
+    externalSessionId: history.nativeId,
     path: history.path,
     cwd: history.cwd,
     title: history.title,
@@ -74,7 +86,12 @@ export class PiNativeIndex {
   lastErrors: readonly WalkError[] = []
 
   /** `roots`：每次盘点时重新求值（settings.json 的 sessionDir 可能变了）。 */
-  constructor(private readonly roots: () => readonly string[]) {}
+  constructor(private readonly roots: () => readonly string[], private readonly aliases: PiAliasLookup = NO_ALIASES) {}
+
+  /** 加上对外 ID（别名在缓存之后才可能记下，所以每次取用时现算）。 */
+  private external(source: PiSource): PiSource {
+    return { ...source, externalSessionId: this.aliases.original(source.nativeSessionId) }
+  }
 
   /** 盘点一遍（同时来的调用共用一次）。来源暂时读不了不算删除：它下面已知的会话从结果里消失，但不报错。 */
   scan(): Promise<PiSource[]> {
@@ -121,14 +138,18 @@ export class PiNativeIndex {
     const offset = cursor !== undefined && /^\d+$/.test(cursor) ? Number(cursor) : 0
     const page = sources.slice(offset, offset + PAGE_SIZE)
     return {
-      sessions: page.map(summary),
+      sessions: page.map(source => summary(this.external(source))),
       ...(offset + PAGE_SIZE < sources.length ? { nextCursor: String(offset + PAGE_SIZE) } : {}),
     }
   }
 
-  /** 找到引用指向的文件：有位置时按位置（必须在来源内且身份一致），否则按会话 ID（多处同名时拒绝）。 */
+  /**
+   * 找到引用指向的文件：有位置时按位置（必须在来源内且身份一致），否则按会话 ID（多处同名时拒绝）。
+   * 引用里的 ID 是对外 ID，先按别名换成真实 ID 再比对。
+   */
   async find(ref: NativeSessionRef): Promise<PiSource> {
     const sources = await this.scan()
+    const actual = this.aliases.actual(ref.nativeSessionId)
     if (ref.locator !== undefined && ref.locator !== '') {
       let history: PiHistory
       try {
@@ -137,15 +158,15 @@ export class PiNativeIndex {
         if ((error as { error?: unknown }).error !== undefined) throw error
         fail('pi_source_missing', '原生历史来源暂时不可用。')
       }
-      if (history.nativeId !== ref.nativeSessionId) fail('pi_source_identity_changed', '原位置已是另一原生会话，不能继续原绑定。')
-      const source = sourceOf(history)
-      source.ambiguous = sources.filter(item => item.nativeSessionId === ref.nativeSessionId).length > 1
+      if (history.nativeId !== actual) fail('pi_source_identity_changed', '原位置已是另一原生会话，不能继续原绑定。')
+      const source = this.external(sourceOf(history))
+      source.ambiguous = sources.filter(item => item.nativeSessionId === actual).length > 1
       return source
     }
-    const matches = sources.filter(source => source.nativeSessionId === ref.nativeSessionId)
+    const matches = sources.filter(source => source.nativeSessionId === actual)
     if (matches.length > 1) fail('pi_source_ambiguous', '多个历史文件具有相同会话身份，请先确认来源。')
     if (matches.length === 0) fail('pi_source_missing', '找不到这个 Pi 原生会话。')
-    return matches[0]!
+    return this.external(matches[0]!)
   }
 
   read(path: string): Promise<PiHistory> {
@@ -155,7 +176,7 @@ export class PiNativeIndex {
 
 export function summary(source: PiSource): NativeSessionSummary {
   return {
-    nativeSessionId: source.nativeSessionId,
+    nativeSessionId: source.externalSessionId,
     locator: source.path,
     title: source.title,
     cwd: source.cwd,

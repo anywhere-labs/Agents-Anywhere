@@ -276,11 +276,27 @@ export interface PromptInput {
   readonly attachments?: readonly PromptAttachment[]
 }
 
-export type PromptAttachment =
+export type PromptAttachment = (
   /** 本机文件：Connector 已下载到本地；Codex 等支持本地路径的 Runtime 直接用路径，避免 data URL 撑大原生记录。 */
   | { readonly kind: 'file'; readonly path: string; readonly mimeType: string; readonly name?: string }
   | { readonly kind: 'inline'; readonly data: string; readonly mimeType: string; readonly name?: string }
   | { readonly kind: 'link'; readonly uri: string; readonly name?: string; readonly mimeType?: string }
+) & {
+  /**
+   * 这个附件在平台上的身份（来自客户端上传记录）。能把它写进原生记录的 Runtime（Pi 写进用户消息的
+   * `aaAttachments`）会写进去，之后读历史、重放时就能还原出 Timeline 上的附件。
+   */
+  readonly info?: AttachmentInfo
+}
+
+/** 平台附件：v2 Timeline 用户消息 `content.attachments[]` 的形状（不含本机路径）。 */
+export interface AttachmentInfo {
+  readonly fileId: string
+  readonly name: string
+  readonly mediaType: string
+  readonly size?: number
+  readonly sha256?: string
+}
 
 /** 投递记录：用于幂等、接纳判定和用户消息 Timeline ID。 */
 export interface DeliveryRef {
@@ -405,6 +421,16 @@ export type TimelineItemEvent =
       readonly text: string
       readonly clientMessageId?: string
       readonly attachments?: readonly PromptAttachment[]
+      /**
+       * 已是 Timeline 形状的附件（v2 `content.attachments`）。给出时 Conversation 用它填 content.attachments，
+       * 不用 attachments（后者可能带本机路径）。原生历史里的附件只有这一种形状。
+       */
+      readonly timelineAttachments?: readonly AttachmentInfo[]
+      /**
+       * 这条消息的结局（v2 Pi：模型报错为 failed、被中断为 cancelled）。缺省 done。
+       * 历史回放与实时一样带：同一条原生消息无论从哪条路径来都是同一个状态。
+       */
+      readonly status?: 'done' | 'failed' | 'cancelled'
     })
   | (EventBase & {
       readonly type: 'tool.started'
