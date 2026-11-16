@@ -376,6 +376,9 @@ class DeviceMesh:
         if isinstance(exc, MeshCallError):
             reason = exc.reason
             failure = classify_mesh_error(exc.code, reason, opened=opened)
+            if reason == "connection_replaced":
+                # The device refused a call for an older link generation before running it.
+                failure = "not_delivered"
             return DeviceCallError(failure, exc.code, exc.message, reason=reason, details=exc.details)
         if isinstance(exc, TimeoutError):
             return DeviceCallError(

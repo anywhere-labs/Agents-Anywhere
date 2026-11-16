@@ -283,6 +283,7 @@ def test_v2_0_database_upgrades_through_current_revision(fresh_database_url) -> 
         ("v2_53", "v2_54"),
         ("v2_54", "v2_55"),
         ("v2_55", "v2_56"),
+        ("v2_56", "v2_57"),
     ],
 )
 def test_every_adjacent_schema_upgrade(tmp_path,
@@ -1023,9 +1024,38 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_56() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_56"
-    assert CURRENT_SCHEMA_VERSION == "2.56"
+def test_current_schema_version_is_v2_57() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_57"
+    assert CURRENT_SCHEMA_VERSION == "2.57"
+
+
+def test_v2_57_starts_the_seq_ceiling_above_v2_sequences(fresh_database_url) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_56")
+    engine = create_engine(_sync_url(url))
+    try:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "INSERT INTO users (id, password_hash, role, created_at, updated_at) "
+                "VALUES ('u1', 'x', 'member', 'now', 'now')"
+            ))
+            connection.execute(text(
+                "INSERT INTO connectors (id, user_id, name, status, token_hash, token_prefix, created_at, updated_at) "
+                "VALUES ('c1', 'u1', 'dev', 'offline', 'h', 'p', 'now', 'now')"
+            ))
+            connection.execute(text(
+                "INSERT INTO sessions (id, connector_id, runtime, runtime_id, status, takeover, seq, "
+                "seq_allocated_high, updated_seq, created_at, updated_at) "
+                "VALUES ('s1', 'c1', 'codex', 'codex', 'idle', 0, 40, 4136, 40, 'now', 'now'), "
+                "('s2', 'c1', 'codex', 'codex', 'idle', 0, 7, 0, 7, 'now', 'now')"
+            ))
+        upgrade_database(db_url=url, revision="v2_57")
+        with engine.connect() as connection:
+            rows = dict(connection.execute(text("SELECT id, seq_ceiling FROM sessions")).all())
+            assert rows == {"s1": 4136, "s2": 7}
+            assert connection.execute(text("SELECT count(*) FROM device_commands")).scalar_one() == 0
+    finally:
+        engine.dispose()
 
 
 def test_v2_49_tracks_inventory_scans_without_rewriting_sessions(

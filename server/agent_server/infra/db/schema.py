@@ -56,6 +56,8 @@ connectors = Table(
     # JSON object of user-chosen device settings (see docs/api/device-settings.md).
     # Clients write it through the API; the server hands it to the connector.
     Column("device_settings", Text),
+    # ``device-meshcall/1.0`` once the device said hello over MeshCall; NULL for v2 Connectors.
+    Column("link_contract", Text),
     Index("idx_connectors_user_revoked", "user_id", "revoked"),
 )
 
@@ -465,6 +467,20 @@ sessions = Table(
     Column("updated_seq", BigInteger, nullable=False),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
+    # v3 directory (device-meshcall 1.0): reported by the device, never content.
+    Column("head_seq", BigInteger, nullable=False, server_default="0"),
+    Column("reset_seq", BigInteger, nullable=False, server_default="0"),
+    # Highest sequence forwarded to clients (written before forwarding, every 1024).
+    Column("seq_ceiling", BigInteger, nullable=False, server_default="0"),
+    Column("plan_state", Text, nullable=False, server_default="none"),
+    Column("goal_state", Text, nullable=False, server_default="none"),
+    # Display envelopes {mode, keyId?, payload}: stored, never read by the Server.
+    Column("display_device", Text),
+    Column("display_user", Text),
+    Column("reported_at", Text),
+    Column("latest_item_type", Text),
+    Column("latest_item_role", Text),
+    Column("latest_item_status", Text),
     Index(
         "idx_sessions_connector_runtime_source_state",
         "connector_id",
@@ -852,3 +868,27 @@ session_goals, session_goal_state, goal_operations, goal_event_outbox = (
 from agent_server.infra.db.message_queue_schema import define_message_queue_tables
 
 session_queued_messages, session_queue_state = define_message_queue_tables(metadata)
+
+# One durable receipt per state-changing device command (device-meshcall 1.0).
+device_commands = Table(
+    "device_commands",
+    metadata,
+    Column("user_id", Text, nullable=False),
+    Column("command_id", Text, nullable=False),
+    Column("kind", Text, nullable=False),
+    Column("input_digest", Text),
+    Column("device_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
+    Column("session_id", Text),
+    Column("state", Text, nullable=False),
+    Column("payload_json", Text),
+    Column("result_json", Text),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    Column("expires_at", Text, nullable=False),
+    PrimaryKeyConstraint("user_id", "command_id"),
+    CheckConstraint(
+        "state IN ('pending','accepted','rejected','unknown')",
+        name="ck_device_commands_state",
+    ),
+    Index("idx_device_commands_device_state", "device_id", "state"),
+)

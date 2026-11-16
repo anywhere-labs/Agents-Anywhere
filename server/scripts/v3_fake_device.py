@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import collections
 import contextlib
 import itertools
 import json
+import threading
+import time
 import zlib
 from collections.abc import AsyncIterator, Callable
 from typing import Any
@@ -49,6 +52,7 @@ from agent_server.core.device_meshcall import (
 )
 
 SERVICE_PREFIX = "aa.device.v1"
+POLL_SECONDS = 0.01
 
 
 class Payload(BaseModel):
@@ -65,7 +69,7 @@ class FakeSession:
         self.items: list[dict[str, Any]] = list(items or [])
         self.head_seq = len(self.items)
         self.reset_seq = 0
-        self.watchers: set[asyncio.Queue[ChangesEvent]] = set()
+        self.watchers: set[collections.deque[ChangesEvent]] = set()
 
     def append(self, item: dict[str, Any]) -> ChangesEvent:
         from_seq = self.head_seq
@@ -87,7 +91,7 @@ class FakeSession:
             ],
         )
         for queue in tuple(self.watchers):
-            queue.put_nowait(event)
+            queue.append(event)
         return event
 
 
@@ -98,18 +102,19 @@ class FakeDeviceState:
         self.device_id = device_id
         self.connection_id = ""
         self.sessions: dict[str, FakeSession] = {}
+        # meshcall-py runs handlers on its own worker loop thread: state shared with the test
+        # loop uses thread-safe containers and polling, never asyncio primitives.
         self.outbox: list[OutboxItem] = []
         self._oids = itertools.count(1)
-        self.outbox_changed = asyncio.Event()
         self.acked_oid = 0
-        self.events: asyncio.Queue[LinkAttachItem] = asyncio.Queue()
+        self.events: collections.deque[LinkAttachItem] = collections.deque()
         self.heartbeat_interval = 20.0
         self.receipts: dict[str, CommandAck] = {}
         self.command_log: list[tuple[str, dict[str, Any]]] = []
         self.command_handler: Callable[[str, dict[str, Any]], Any] | None = None
         self.command_delay = 0.0
-        self.attach_opened = asyncio.Event()
-        self.outbox_opened = asyncio.Event()
+        self.attach_opened = threading.Event()
+        self.outbox_opened = threading.Event()
         self.read_delay = 0.0
         self.calls: list[str] = []
 
@@ -121,11 +126,10 @@ class FakeDeviceState:
     def push_outbox(self, method: str, payload: dict[str, Any]) -> OutboxItem:
         item = OutboxItem(oid=next(self._oids), m=method, p=payload)
         self.outbox.append(item)
-        self.outbox_changed.set()
         return item
 
     def emit(self, method: str, payload: dict[str, Any]) -> None:
-        self.events.put_nowait(LinkAttachItem(kind="event", m=method, p=payload))
+        self.events.append(LinkAttachItem(kind="event", m=method, p=payload))
 
     def check_connection(self, ctx: RpcContext) -> None:
         got = ctx.metadata.get(CONNECTION_ID_METADATA)
@@ -148,12 +152,16 @@ def _make_services(state: FakeDeviceState) -> list[object]:
             state.check_connection(ctx)
             state.attach_opened.set()
             yield LinkAttachItem(kind="heartbeat")
+            last = time.monotonic()
             while True:
-                try:
-                    item = await asyncio.wait_for(state.events.get(), state.heartbeat_interval)
-                except TimeoutError:
-                    item = LinkAttachItem(kind="heartbeat")
-                yield item
+                if state.events:
+                    yield state.events.popleft()
+                    continue
+                if time.monotonic() - last >= state.heartbeat_interval:
+                    last = time.monotonic()
+                    yield LinkAttachItem(kind="heartbeat")
+                    continue
+                await asyncio.sleep(POLL_SECONDS)
 
         @stream
         async def outbox(self, connectionId: str, ctx: RpcContext) -> AsyncIterator[OutboxItem]:
@@ -162,12 +170,11 @@ def _make_services(state: FakeDeviceState) -> list[object]:
             state.outbox_opened.set()
             sent = 0
             while True:
-                pending = [item for item in state.outbox if item.oid > max(sent, state.acked_oid)]
+                pending = [item for item in list(state.outbox) if item.oid > max(sent, state.acked_oid)]
                 for item in pending:
                     sent = item.oid
                     yield item
-                state.outbox_changed.clear()
-                await state.outbox_changed.wait()
+                await asyncio.sleep(POLL_SECONDS)
 
         @mutates(idempotent=True)
         async def ackOutbox(self, oid: int, ctx: RpcContext) -> Empty:
@@ -215,11 +222,14 @@ def _make_services(state: FakeDeviceState) -> list[object]:
             """Opening subscribes, cancelling unsubscribes."""
             state.calls.append("watch")
             session = state.session(sessionId)
-            queue: asyncio.Queue[ChangesEvent] = asyncio.Queue()
+            queue: collections.deque[ChangesEvent] = collections.deque()
             session.watchers.add(queue)
             try:
                 while True:
-                    yield await queue.get()
+                    if queue:
+                        yield queue.popleft()
+                    else:
+                        await asyncio.sleep(POLL_SECONDS)
             finally:
                 session.watchers.discard(queue)
 
@@ -391,3 +401,45 @@ class FakeDevice:
             mesh, self.mesh = self.mesh, None
             with contextlib.suppress(Exception):
                 await mesh.close()
+
+
+async def connect_device(
+    client: Any,
+    *,
+    connector_id: str,
+    connector_token: str,
+    sessions_head: list[dict[str, Any]] | None = None,
+    host: str = "cli",
+) -> tuple[FakeDevice, dict[str, Any], str]:
+    """Full v3 handshake against a Server: auth, hello, register on the Router, ready.
+
+    ``client`` is an ``httpx.AsyncClient`` on the Server. Returns the device, the
+    ``LinkWelcome`` body and the access token.
+    """
+
+    auth = await client.post(
+        "/api/v3/device/auth", headers={"Authorization": f"Connector {connector_id}:{connector_token}"}
+    )
+    auth.raise_for_status()
+    access = auth.json()["accessToken"]
+    headers = {"Authorization": f"Bearer {access}", "X-Device-OS": "macos", "X-Connector-Version": "3.0.0"}
+    hello = await client.post(
+        "/api/v3/device/hello",
+        headers=headers,
+        json={
+            "deviceId": connector_id,
+            "connectorVersion": "3.0.0",
+            "contractVersions": ["1.0"],
+            "os": "macos",
+            "host": host,
+            "sessionsHead": sessions_head or [],
+        },
+    )
+    hello.raise_for_status()
+    welcome = hello.json()
+    device = FakeDevice(connector_id, welcome["mesh"]["routerUrl"], welcome["mesh"]["token"])
+    device.state.connection_id = welcome["connectionId"]
+    await device.start()
+    ready = await client.post("/api/v3/device/ready", headers=headers, json={"connectionId": welcome["connectionId"]})
+    ready.raise_for_status()
+    return device, welcome, access

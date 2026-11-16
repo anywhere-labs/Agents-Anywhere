@@ -29,6 +29,7 @@ from agent_server.api import (
     connector_terminal,
     connectors,
     dashboard_stream,
+    device_link,
     error_handlers,
     model_config,
     oauth,
@@ -56,6 +57,7 @@ from agent_server.infra.db.migrations import (
     require_current_database,
     upgrade_database,
 )
+from agent_server.infra.device_link import DeviceLinkHub, DeviceRpcBridge
 from agent_server.infra.device_mesh import DeviceMesh, MeshSettings
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.malloc_trim import run_malloc_trim_loop
@@ -71,6 +73,7 @@ from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.tokens_access_cache import TokensAccessCache
 from agent_server.infra.tokens_client import TokensClient
 from agent_server.infra.ws_tickets import ClientWsTicketManager
+from agent_server.services.device_link import DeviceLinkService
 from agent_server.services.channel_reconciliation import ChannelReconciler
 from agent_server.services.connector_deletion import ConnectorDeletionRecovery
 from agent_server.services.connector_rpc import ConnectorServiceError
@@ -223,6 +226,7 @@ def create_app(
                 logger.exception("failed to flush usage events on shutdown")
             await app.state.capability_refresh.close()
             try:
+                await app.state.device_link_hub.close()
                 await app.state.device_mesh.close()
             except Exception:  # noqa: BLE001 - shutdown must continue
                 logger.exception("failed to close the device mesh client")
@@ -287,6 +291,11 @@ def create_app(
     )
     app.state.store.bind_connector_lifecycle(app.state.rpc.lifecycle_guard)
     app.state.device_mesh = DeviceMesh(MeshSettings.from_environment())
+    app.state.device_link_hub = DeviceLinkHub(
+        app.state.device_mesh, app.state.redis, worker_id=app.state.rpc.instance_id
+    )
+    # v3 devices answer ConnectorRpcManager requests over MeshCall.
+    app.state.rpc.attach_mesh_link(DeviceRpcBridge(app.state.device_link_hub, app.state.device_mesh))
     app.state.fs_downloads = FsDownloadRelayManager(app.state.redis)
     app.state.shell_tasks = ShellTaskManager(app.state.redis)
     app.state.terminal_broker = TerminalBroker(
@@ -364,6 +373,15 @@ def create_app(
         coordinator=app.state.redis,
         # Read through app state so a replaced RPC manager is used.
         is_online=lambda connector_id: app.state.rpc.is_online(connector_id),
+    )
+    app.state.device_link = DeviceLinkService(
+        app.state.store,
+        app.state.device_mesh,
+        app.state.device_link_hub,
+        app.state.redis,
+        app.state.timeline_broker,
+        capability_refresh=app.state.capability_refresh,
+        usage_recorder=app.state.usage_recorder,
     )
     app.state.usage_maintenance = UsageMaintenanceLoop(
         app.state.store,
@@ -458,6 +476,7 @@ def create_app(
     app.include_router(connector_terminal.router, prefix=API_V2_PREFIX)
     app.include_router(client_ws.router, prefix=API_V2_PREFIX)
     app.include_router(connector_ingress.router, prefix=API_V2_PREFIX)
+    app.include_router(device_link.router)
     app.include_router(agents.router, prefix=API_V2_PREFIX)
     app.include_router(pairing.router, prefix=API_V2_PREFIX)
     app.include_router(projects.router, prefix=API_V2_PREFIX)

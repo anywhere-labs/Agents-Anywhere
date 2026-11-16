@@ -21,8 +21,8 @@ from sqlalchemy.pool import NullPool
 from agent_server.infra.db.engine import resolve_db_url
 
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_56"
-CURRENT_SCHEMA_VERSION = "2.56"
+CURRENT_SCHEMA_REVISION = "v2_57"
+CURRENT_SCHEMA_VERSION = "2.57"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -589,6 +589,11 @@ def _classify_sync(connection) -> UnversionedDatabase:
                 }.issubset(tables):
                     return UnversionedDatabase("unknown")
                 revision = "v2_56"
+            # v2_57 adds the v3 device link: reported directory fields and command receipts.
+            if "device_commands" in tables:
+                if revision != "v2_56" or "link_contract" not in connector_columns:
+                    return UnversionedDatabase("unknown")
+                revision = "v2_57"
             return UnversionedDatabase("v2", revision)
         if "approvals" in tables:
             if {"presence_instance_id", "presence_connection_id"}.issubset(

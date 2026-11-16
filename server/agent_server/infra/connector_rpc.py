@@ -6,7 +6,7 @@ import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from fastapi import WebSocket
 from loguru import logger
@@ -21,6 +21,27 @@ class ConnectorOfflineError(RuntimeError):
 
 class DuplicateConnectorConnectionError(RuntimeError):
     pass
+
+
+class ConnectorOutcomeUnknownError(TimeoutError):
+    """A v3 device call opened and then failed: it may have run. Never reported as offline."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+class MeshLinkPort(Protocol):
+    """The v3 device link (``infra.device_link``) as seen by the v2 RPC manager."""
+
+    def local_connection(self, device_id: str) -> str | None: ...
+
+    async def current_connection(self, device_id: str) -> str | None: ...
+
+    async def request(
+        self, device_id: str, connection_id: str, method: str, params: dict[str, Any], *, timeout: float
+    ) -> Any: ...
 
 
 class ConnectorRpcError(RuntimeError):
@@ -58,6 +79,7 @@ class ConnectorRpcManager:
     ) -> None:
         self._coordinator = coordinator or RedisCoordinator()
         self.instance_id = instance_id or f"srv_{secrets.token_urlsafe(12)}"
+        self._mesh_link: MeshLinkPort | None = None
         self._connections: dict[str, ConnectorConnection] = {}
         self._routed_pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._routing_tasks: set[asyncio.Task[None]] = set()
@@ -136,9 +158,24 @@ class ConnectorRpcManager:
             self._pubsub = None
         return released
 
+    def attach_mesh_link(self, link: MeshLinkPort) -> None:
+        """v3 devices: presence is their ``Link/attach`` lease, calls go over MeshCall."""
+
+        self._mesh_link = link
+
+    async def _mesh_connection(self, connector_id: str) -> str | None:
+        if self._mesh_link is None:
+            return None
+        local = self._mesh_link.local_connection(connector_id)
+        if local is not None or self._coordinator.distributed:
+            return local
+        return await self._mesh_link.current_connection(connector_id)
+
     async def is_online(self, connector_id: str) -> bool:
         connection = self._connections.get(connector_id)
         if connection is not None and self._is_local_online(connection):
+            return True
+        if await self._mesh_connection(connector_id) is not None:
             return True
         if not self._coordinator.distributed:
             return False
@@ -156,7 +193,7 @@ class ConnectorRpcManager:
             elif self._coordinator.distributed:
                 remote_ids.append(connector_id)
             else:
-                statuses[connector_id] = False
+                statuses[connector_id] = await self._mesh_connection(connector_id) is not None
         if remote_ids:
             values = await self._coordinator.client.mget(
                 [self._lease_key(connector_id) for connector_id in remote_ids]
@@ -378,11 +415,24 @@ class ConnectorRpcManager:
                 timeout=timeout,
             )
             return result, connection.connection_id
+        mesh_connection = await self._mesh_connection(connector_id)
+        if mesh_connection is not None and self._mesh_link is not None:
+            result = await self._mesh_link.request(
+                connector_id, mesh_connection, method, params, timeout=timeout
+            )
+            return result, mesh_connection
         if not self._coordinator.distributed:
             raise ConnectorOfflineError("connector is offline")
         lease = await self._get_lease(connector_id)
         if lease is None or not lease.ready:
             raise ConnectorOfflineError("connector is offline")
+        if lease.transport == "mesh":
+            if self._mesh_link is None:
+                raise ConnectorOfflineError("v3 device link is not available on this server")
+            result = await self._mesh_link.request(
+                connector_id, lease.connection_id, method, params, timeout=timeout
+            )
+            return result, lease.connection_id
         result = await self._route(
             lease,
             {
@@ -695,6 +745,7 @@ class ConnectorRpcManager:
             instance_id = payload["instanceId"]
             connection_id = payload["connectionId"]
             ready = payload.get("ready", True)
+            transport = payload.get("transport", "ws")
         except (KeyError, TypeError, json.JSONDecodeError):
             return None
         if (
@@ -707,6 +758,7 @@ class ConnectorRpcManager:
             instance_id=instance_id,
             connection_id=connection_id,
             ready=ready,
+            transport=transport if isinstance(transport, str) else "ws",
         )
 
     async def _release_lease(self, connection: ConnectorConnection) -> bool:
