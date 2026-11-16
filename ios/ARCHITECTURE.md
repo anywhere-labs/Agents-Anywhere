@@ -212,7 +212,9 @@ turns into a pairing entry; plaintext is never sent then.
 `subscribe` and emits `session.subscribed` itself so the repository recovers as
 usual. In an encrypted route, attachment uploads are sealed per file (random
 key, sealed segments with the plaintext SHA-256 as object ID) and sent with
-`x-aa-sealed: segments-v1`; the keys stay in memory and travel inside the
+`x-aa-sealed: segments-v1` as `attachment.bin` / `application/octet-stream`;
+the keys, real names and media types stay in memory (a restart means sealing
+and uploading again) and travel inside the
 channel as `sealedAttachmentKeys` in the body of the message that references
 the files. Device files download chunk by chunk through the channel
 (`TunnelFileChunk`). Binary attachment downloads, file previews and renaming

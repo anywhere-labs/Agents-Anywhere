@@ -46,7 +46,7 @@
   - 记下要求加密的设备，即使服务器之后关闭加密也不会改用明文。
   - 加密模式下暂时不能重命名会话、打开附件或预览文件。
 
-  [#717](https://github.com/anywhere-labs/Agents-Anywhere/pull/717)、PR_LINK
+  [#717](https://github.com/anywhere-labs/Agents-Anywhere/pull/717)、[#724](https://github.com/anywhere-labs/Agents-Anywhere/pull/724)
 
 ## 2.2.0（2026-11-14）
 

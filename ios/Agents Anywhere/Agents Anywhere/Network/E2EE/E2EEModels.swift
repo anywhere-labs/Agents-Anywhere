@@ -175,12 +175,20 @@ nonisolated struct E2EESealedAttachmentKey: Codable, Hashable, Sendable {
     let size: Int
     /// 明文 SHA-256（小写十六进制），也是分段 AD 的 objectId。
     let sha256: String
+    /// 真实文件名与类型：上传体统一叫 `attachment.bin`、类型 `application/octet-stream`，这两项只经通道交给设备。
+    var name: String? = nil
+    var mimeType: String? = nil
 
     func with(fileId: String) -> E2EESealedAttachmentKey {
-        E2EESealedAttachmentKey(fileId: fileId, key: key, size: size, sha256: sha256)
+        E2EESealedAttachmentKey(fileId: fileId, key: key, size: size, sha256: sha256, name: name, mimeType: mimeType)
     }
 
-    var json: [String: Any] { ["fileId": fileId, "key": key, "size": size, "sha256": sha256] }
+    var json: [String: Any] {
+        var object: [String: Any] = ["fileId": fileId, "key": key, "size": size, "sha256": sha256]
+        object["name"] = name
+        object["mimeType"] = mimeType
+        return object
+    }
 }
 
 /// 经通道读设备文件的一块：`GET /api/v2/connectors/{deviceId}/fs/read?path&offset&length` 的响应体。

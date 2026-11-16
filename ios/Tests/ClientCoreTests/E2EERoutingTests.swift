@@ -214,6 +214,8 @@ import Testing
         #expect(uploaded.attachments.map(\.fileId) == ["file_0", "file_1"])
         let request = try #require(recorder.uploads.first)
         #expect(request.headers["x-aa-sealed"] == "segments-v1")
+        // Server 看不到真实的文件名和类型。
+        #expect(request.files.allSatisfy { $0.fileName == "attachment.bin" && $0.mediaType == "application/octet-stream" })
         // Server 只看到密文：两段（64 KiB + 16）+（100 + 16）。
         #expect(request.files[0].data != small && request.files[0].data.count == small.count + 16)
         #expect(request.files[1].data.count == large.count + 32)
@@ -226,6 +228,8 @@ import Testing
                                             from: JSONSerialization.data(withJSONObject: body["sealedAttachmentKeys"] as Any))
         #expect(keys.map(\.fileId) == ["file_0", "file_1"])
         #expect(keys[1].size == large.count)
+        #expect(keys.map(\.name) == ["a.txt", "b.bin"])
+        #expect(keys.map(\.mimeType) == ["text/plain", "application/octet-stream"])
         // 设备拿到密钥后能还原明文；Server 上的密文换了密钥或被篡改都解不开。
         #expect(try E2EEFormats.openAttachment(request.files[0].data, key: keys[0]) == small)
         #expect(try E2EEFormats.openAttachment(request.files[1].data, key: keys[1]) == large)

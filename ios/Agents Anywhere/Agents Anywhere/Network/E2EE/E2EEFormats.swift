@@ -197,6 +197,9 @@ nonisolated enum E2EEFormats {
     static let sealedUploadValue = "segments-v1"
     /// 经通道读设备文件时每块最多这么多明文字节（`TunnelFileChunk`）。
     static let fileChunkMaxBytes = 8 * 1024 * 1024
+    /// 加密上传体对 Server 显示的文件名与类型。
+    static let sealedUploadFileName = "attachment.bin"
+    static let sealedUploadMediaType = "application/octet-stream"
 
     /// 加密一个附件：随机密钥，objectId 用明文 SHA-256（小写十六进制，加密时 Server 还没分配 fileId），
     /// 上传体是各段密文按顺序直接拼接。返回的密钥还没有 fileId，上传后再补上。

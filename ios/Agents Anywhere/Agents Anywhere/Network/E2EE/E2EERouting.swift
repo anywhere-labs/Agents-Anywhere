@@ -129,9 +129,13 @@ nonisolated final class E2EERoutingHTTPTransport: HTTPTransport, @unchecked Send
         var keys: [E2EESealedAttachmentKey] = []
         for file in request.files {
             let sealed = try E2EEFormats.sealAttachment(file.data)
-            sealedFiles.append(HTTPUploadFile(fieldName: file.fieldName, fileName: file.fileName,
-                                              mediaType: file.mediaType, data: sealed.ciphertext))
-            keys.append(sealed.key)
+            // Server 只看到通用的文件名和类型；真实的经通道随密钥交给设备。
+            sealedFiles.append(HTTPUploadFile(fieldName: file.fieldName, fileName: E2EEFormats.sealedUploadFileName,
+                                              mediaType: E2EEFormats.sealedUploadMediaType, data: sealed.ciphertext))
+            var key = sealed.key
+            key.name = file.fileName
+            key.mimeType = file.mediaType
+            keys.append(key)
         }
         var headers = request.headers
         headers[E2EEFormats.sealedUploadHeader] = E2EEFormats.sealedUploadValue
