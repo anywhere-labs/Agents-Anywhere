@@ -380,7 +380,16 @@ class SessionRepositoryMixin:
         permission_selection_id: str | None = None,
         origin: str = "connector_import",
         source_state: str | None = None,
+        project_id: str | None = None,
+        allow_unplaced: bool = False,
     ) -> SessionView:
+        """Create or update a session a device reports.
+
+        ``project_id`` and ``allow_unplaced`` are for E2EE required mode, where the working
+        directory is sealed (``contracts/e2ee/1.0`` "会话归属项目"): a new row takes
+        ``project_id`` when that project is on this device; without one it stays unplaced
+        (``project_id`` empty) until a client assigns it. Neither changes an existing row.
+        """
         identity = _runtime_identity(runtime, runtime_id)
         canonical_session_id = session_id
         async with read_connection(self._engine) as conn:
@@ -423,6 +432,8 @@ class SessionRepositoryMixin:
             permission_selection_id=permission_selection_id,
             origin=origin,
             source_state=source_state,
+            project_id=project_id,
+            allow_unplaced=allow_unplaced,
         )
 
     @session_revision_fenced
@@ -444,6 +455,8 @@ class SessionRepositoryMixin:
         permission_selection_id: str | None = None,
         origin: str = "connector_import",
         source_state: str | None = None,
+        project_id: str | None = None,
+        allow_unplaced: bool = False,
     ) -> SessionView:
         identity = _runtime_identity(runtime, runtime_id)
         runtime = str(identity.runtime_type)
@@ -470,12 +483,24 @@ class SessionRepositoryMixin:
                 )
             ).first()
             if existing is None:
-                project_id, normalized_cwd = await self._ensure_project_for_workspace(
-                    conn,
-                    connector_id=connector_id,
-                    workspace_path=cwd,
-                    now=now,
-                )
+                reported_project = (
+                    await conn.execute(
+                        select(projects_t.c.id).where(
+                            projects_t.c.id == project_id, projects_t.c.connector_id == connector_id
+                        )
+                    )
+                ).first() if project_id is not None else None
+                if reported_project is not None:
+                    normalized_cwd = cwd
+                elif cwd is None and allow_unplaced:
+                    project_id, normalized_cwd = None, None
+                else:
+                    project_id, normalized_cwd = await self._ensure_project_for_workspace(
+                        conn,
+                        connector_id=connector_id,
+                        workspace_path=cwd,
+                        now=now,
+                    )
                 await conn.execute(
                     insert(sessions_t).values(
                         id=session_id,
@@ -545,14 +570,14 @@ class SessionRepositoryMixin:
                 ):
                     values["title"] = title
                     values["title_source"] = TITLE_SOURCE_CONNECTOR
-                if cwd is not None or current.project_id is None:
-                    project_id, normalized_cwd = await self._ensure_project_for_workspace(
+                if cwd is not None or (current.project_id is None and not allow_unplaced):
+                    placed_project, normalized_cwd = await self._ensure_project_for_workspace(
                         conn,
                         connector_id=connector_id,
                         workspace_path=cwd or current.cwd,
                         now=now,
                     )
-                    values["project_id"] = project_id
+                    values["project_id"] = placed_project
                     values["cwd"] = normalized_cwd
                 if status is not None:
                     values["status"] = status
@@ -1471,6 +1496,30 @@ class SessionRepositoryMixin:
             )
         return await self.get_session(session_id, user_id=user_id)
 
+
+    async def set_session_project(self, session_id: str, project_id: str, *, user_id: str) -> SessionView:
+        """Assign the session to a project of the same user on the same device (E2EE required mode:
+        the client matches the sealed working directory; ``contracts/e2ee/1.0`` "会话归属项目")."""
+
+        session = await self.get_session(session_id, user_id=user_id)
+        async with closing_connection(self._engine, write=True) as conn:
+            project = (
+                await conn.execute(
+                    select(projects_t.c.connector_id).where(
+                        projects_t.c.id == project_id, projects_t.c.user_id == user_id
+                    )
+                )
+            ).first()
+            if project is None:
+                raise KeyError(project_id)
+            if project.connector_id != session.connectorId:
+                raise ValueError("the project is on another device")
+            await conn.execute(
+                update(sessions_t)
+                .where(sessions_t.c.id == session_id)
+                .values(project_id=project_id, updated_at=utc_now())
+            )
+        return await self.get_session(session_id, user_id=user_id)
 
     async def set_session_archived(
         self,

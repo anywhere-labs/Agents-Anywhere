@@ -529,6 +529,17 @@ async def patch_session_meta(
                 detail={"code": "display_envelope_not_sealed", "message": "displayUser must be a sealed envelope"},
             )
         await db.set_session_display_user(session_id, envelope)
+    if payload.projectId is not None:
+        try:
+            session = await db.set_session_project(session_id, payload.projectId, user_id=user_id)
+        except KeyError:
+            raise HTTPException(
+                status_code=404, detail={"code": "project_not_found", "message": "project not found"}
+            ) from None
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422, detail={"code": "project_workspace_mismatch", "message": str(exc)}
+            ) from exc
     if payload.title is not None:
         try:
             session = await db.rename_session(

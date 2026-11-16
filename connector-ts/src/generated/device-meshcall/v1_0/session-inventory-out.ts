@@ -22,6 +22,7 @@ export type Time = string | null
 export type Type = string
 export type Latestturnendseq = number | null
 export type Planstate = "none" | "planning" | "awaiting_review"
+export type Projectid = string | null
 export type Resetseq = number
 export type Runtimeid1 = string
 export type Runtimetype = string
@@ -51,6 +52,7 @@ export interface SessionSummary {
   latestItem?: LatestItemFacts | null
   latestTurnEndSeq?: Latestturnendseq
   planState?: Planstate
+  projectId?: Projectid
   resetSeq: Resetseq
   runtimeId: Runtimeid1
   runtimeType: Runtimetype

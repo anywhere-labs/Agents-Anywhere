@@ -99,3 +99,71 @@ def test_off_mode_token_does_not_register_secure(mesh_router: RouterProcess, mon
                 await device.stop()
 
     asyncio.run(scenario())
+
+
+def _sealed_summary(session_id: str, head: int, project_id: str | None = None) -> dict:
+    body = summary(session_id, head)
+    body["summary"]["displayDevice"] = {"mode": "sealed", "keyId": "dk1", "payload": "c2VhbGVk"}
+    if project_id is not None:
+        body["summary"]["projectId"] = project_id
+    return body
+
+
+def test_required_mode_places_sessions_by_project_id_or_leaves_them_for_the_client(
+    mesh_router: RouterProcess, monkeypatch
+) -> None:
+    monkeypatch.setenv("AGENT_SERVER_E2EE", "required")
+
+    async def scenario() -> None:
+        async with server(mesh_router, monkeypatch) as (app, client):
+            headers, device_id, token = await user_and_device(app, client)
+            store = app.state.store
+            projects = (await client.get("/api/v2/projects", headers=headers)).json()["projects"]
+            project_id = projects[0]["id"]
+            other = await client.post(
+                "/api/v2/projects", headers=headers,
+                json={"connectorId": device_id, "name": "other", "workspacePath": "/other"},
+            )
+            other_project = other.json()["project"]["id"]
+            second_device = (await client.post("/api/v2/connectors", headers=headers, json={"name": "desk"})).json()
+            elsewhere = await client.post(
+                "/api/v2/projects", headers=headers,
+                json={"connectorId": second_device["connector"]["id"], "name": "far", "workspacePath": "/far"},
+            )
+            elsewhere_project = elsewhere.json()["project"]["id"]
+            device, _welcome, _access = await connect_device(client, connector_id=device_id, connector_token=token)
+            try:
+                # Created through the channel: the device reports the project it was created in.
+                item = device.state.push_outbox("session.summary", _sealed_summary("sess_p1", 1, project_id))
+                await eventually(lambda: acked(device, item.oid))
+                assert (await store.get_session("sess_p1")).projectId == project_id
+                # Only the first report places it.
+                again = device.state.push_outbox("session.summary", _sealed_summary("sess_p1", 2, other_project))
+                await eventually(lambda: acked(device, again.oid))
+                assert (await store.get_session("sess_p1")).projectId == project_id
+
+                # Found by the device itself (or a project on another device): created unplaced.
+                for session_id, reported in (("sess_p2", None), ("sess_p3", elsewhere_project)):
+                    found = device.state.push_outbox("session.summary", _sealed_summary(session_id, 1, reported))
+                    await eventually(lambda found=found: acked(device, found.oid))
+                    assert (await store.get_session(session_id)).projectId is None
+                # Later summaries keep it unplaced instead of failing.
+                later = device.state.push_outbox("session.summary", _sealed_summary("sess_p2", 2))
+                await eventually(lambda: acked(device, later.oid))
+                assert (await store.session_directory_fields("sess_p2"))["headSeq"] == 2
+
+                # The client assigns it.
+                assigned = await client.patch("/api/v2/sessions/sess_p2/meta", headers=headers, json={"projectId": other_project})
+                assert assigned.status_code == 200, assigned.text
+                assert assigned.json()["session"]["projectId"] == other_project
+                far = await client.patch(
+                    "/api/v2/sessions/sess_p2/meta", headers=headers, json={"projectId": elsewhere_project}
+                )
+                assert far.status_code == 422 and far.json()["detail"]["code"] == "project_workspace_mismatch"
+                missing = await client.patch("/api/v2/sessions/sess_p2/meta", headers=headers, json={"projectId": "prj_x"})
+                assert missing.status_code == 404
+                assert (await store.get_session("sess_p2")).projectId == other_project
+            finally:
+                await device.stop()
+
+    asyncio.run(scenario())

@@ -37,7 +37,7 @@
       "model": "SessionSummary",
       "path": "schemas/session-summary.schema.json",
       "pydanticMode": "validation",
-      "sha256": "dc76e78cfc7ccee450e03dba9b13e17ef6dac4e1140290d20f61114ad6cc4a2d",
+      "sha256": "9a0b97c490a9a12f717f5fef4890584fa208967ac20a8babfd70ed55bef0a514",
       "slug": "session-summary"
     },
     {
@@ -149,7 +149,7 @@
       "model": "SessionSummaryOut",
       "path": "schemas/session-summary-out.schema.json",
       "pydanticMode": "validation",
-      "sha256": "d0ad1c6e7307124399c51aa54cb0ecf5b50a0313de47cd83d70c56b9f9f21c8d",
+      "sha256": "bac25eeb675e1e40652b42a7550d794bdca1a34b6b31ae1c4b0004702a261404",
       "slug": "session-summary-out"
     },
     {
@@ -157,7 +157,7 @@
       "model": "SessionInventoryOut",
       "path": "schemas/session-inventory-out.schema.json",
       "pydanticMode": "validation",
-      "sha256": "52c3f04a84b5cd9c868b14a7d97c0e362d69ecd3ed70c72a52dd800db8746cee",
+      "sha256": "e7f32f26167e9d38c9984af41d06cd348291e493f3685257575cfd7265e1d4dd",
       "slug": "session-inventory-out"
     },
     {

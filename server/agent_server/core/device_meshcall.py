@@ -136,6 +136,10 @@ class SessionSummary(DeviceModel):
     planState: PlanStateValue = "none"
     goalState: GoalStateValue = "none"
     displayDevice: DisplayEnvelope
+    #: E2EE required mode: the Server-issued project the session was created in (the device keeps it
+    #: from ``create-and-start``). Not content. Used only when the Server first creates the row;
+    #: sessions the device found itself omit it and a client assigns their project later.
+    projectId: str | None = None
 
 
 # ---------------------------------------------------------------------------

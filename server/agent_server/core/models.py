@@ -979,6 +979,9 @@ class SessionPatchRequest(BaseModel):
     # validated as ``device_meshcall.DisplayEnvelope``). Only ``mode: "sealed"`` is accepted; the
     # Server stores it without reading it.
     displayUser: dict[str, Any] | None = None
+    # The project the session belongs to; it must be the same user's, on the session's device. In E2EE
+    # required mode the client assigns it after matching the decrypted working directory.
+    projectId: str | None = Field(default=None, min_length=1)
 
 
 class BulkArchiveRequest(BaseModel):

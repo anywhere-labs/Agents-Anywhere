@@ -287,6 +287,7 @@ class DeviceLinkService:
     async def _apply_summary(self, device_id: str, summary: SessionSummary) -> None:
         # Required mode drops a plaintext envelope (the list shows "encrypting until the device is online"):
         # neither the envelope nor its title or working directory is stored.
+        required = self._e2ee_settings().required
         accepted = accept_display_envelope(
             self._e2ee_settings().mode, summary.displayDevice.model_dump(mode="json")
         ) is not None
@@ -302,6 +303,10 @@ class DeviceLinkService:
                 title=display.get("title") if isinstance(display.get("title"), str) else None,
                 cwd=display.get("cwd") if isinstance(display.get("cwd"), str) else None,
                 last_activity_at=summary.lastActivityAt,
+                # Required mode: the working directory is sealed, so a new session is placed by the
+                # reported ``projectId`` or stays unplaced until a client assigns it (contracts/e2ee/1.0).
+                project_id=summary.projectId if required else None,
+                allow_unplaced=required,
             )
         except Exception as exc:  # noqa: BLE001 - e.g. no project for this workspace yet
             logger.info(

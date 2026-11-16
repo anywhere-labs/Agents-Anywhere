@@ -182,6 +182,18 @@
           "title": "Planstate",
           "type": "string"
         },
+        "projectId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Projectid"
+        },
         "resetSeq": {
           "maximum": 9007199254740991,
           "minimum": 0,

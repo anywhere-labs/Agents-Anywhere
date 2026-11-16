@@ -12,6 +12,10 @@ export const REGISTERED_SERVICES = {
       "sessionRespondNotice",
       "sessionSelect",
       "sessionCreationBegin",
+      "sessionCreationRespond",
+      "sessionCreationCancel",
+      "workspacePreparationRespond",
+      "workspacePreparationCancel",
       "sessionPlanning",
       "sessionGoal",
       "sessionQueueUpdate",
@@ -42,7 +46,9 @@ export const REGISTERED_SERVICES = {
       "notices",
       "state",
       "capabilities",
-      "queue"
+      "queue",
+      "creationGet",
+      "workspacePreparationGet"
     ],
     "aa.device.v1.Store": [
       "read",
