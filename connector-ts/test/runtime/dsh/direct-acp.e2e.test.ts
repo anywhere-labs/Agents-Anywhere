@@ -10,6 +10,8 @@ import { Readable, Writable } from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { startMockMessagesLlm, type MockMessagesLlm } from '../../fixtures/mock-messages-llm.js'
+import { DshDirectProvider } from '../../../src/runtime/profiles/dsh/provider.js'
+import type { RuntimeEvent } from '../../../src/runtime/profiles/dsh/port.js'
 
 const DSH_VERSION = '0.2.2-rc.3'
 const bin = process.env.AA_DSH_ACP_BIN
@@ -110,5 +112,34 @@ describe.skipIf(!enabled)('S7 direct route: dsh --profile acp', () => {
     b.child.kill('SIGKILL')
     await new Promise(resolve => b.child.once('exit', resolve))
     await a.conn.resumeSession({ sessionId, cwd: workspace, mcpServers: [] })
+  })
+
+  test('the DSH-1 provider runs queued inputs in order and releases the lock on close', { timeout: 180_000 }, async () => {
+    const provider = new DshDirectProvider({ env: { ...process.env, DSH_HOME: home } })
+    const settings = bin ? { command: process.execPath, args: [bin], model: { apiKey: 'sk-test', baseUrl: llm.url } }
+      : { model: { apiKey: 'sk-test', baseUrl: llm.url } }
+    const facts = await provider.discover(settings)
+    expect(facts.installed).toBe(true)
+    const route = await provider.start({ runtimeId: 'dsh', settings })
+    try {
+      const session = await route.open({ cwd: workspace })
+      const events: RuntimeEvent[] = []
+      void (async () => { for await (const event of session.events) events.push(event) })()
+      const release = llm.hold()
+      expect(await session.prompt({ text: 'one' }, { clientMessageId: 'c1', nativeRequestId: 'n1' })).toEqual({ status: 'accepted' })
+      expect(await session.prompt({ text: 'two' }, { clientMessageId: 'c2', nativeRequestId: 'n2' })).toEqual({ status: 'queued', position: 1 })
+      release()
+      for (let n = 0; n < 600 && events.filter(event => event.type === 'turn.ended').length < 2; n++) await new Promise(resolve => setTimeout(resolve, 50))
+      const ended = events.filter(event => event.type === 'turn.ended')
+      expect(ended.map(event => event.type === 'turn.ended' && event.deliveries)).toEqual([['n1'], ['n2']])
+      expect(events.filter(event => event.type === 'message.committed').map(event => event.type === 'message.committed' && event.text))
+        .toEqual(['pong from mock', 'pong from mock'])
+      const id = session.externalSessionId
+      await session.close()
+      // Another process can take the session once the direct route closed it.
+      const other = start()
+      await other.conn.initialize({ protocolVersion: 1, clientCapabilities: {} })
+      await other.conn.resumeSession({ sessionId: id, cwd: workspace, mcpServers: [] })
+    } finally { await route.stop() }
   })
 })
