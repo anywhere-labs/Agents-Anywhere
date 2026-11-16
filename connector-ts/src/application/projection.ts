@@ -81,7 +81,7 @@ export class TimelineProjector {
           isThinking: event.role === 'reasoning',
           ...(clientMessageId !== undefined ? { clientMessageId } : {}),
           ...(event.type === 'message.completed' && event.attachments !== undefined && event.attachments.length > 0
-            ? { attachments: event.attachments.map(attachment => ({ ...attachment }) as JsonValue) }
+            ? { attachments: event.attachments.map(attachment => ({ ...attachment }) as unknown as JsonValue) }
             : previous?.content.attachments !== undefined ? { attachments: previous.content.attachments } : {}),
         }
         const status: TimelineItemStatus = event.type === 'message.completed' || event.role === 'user' ? 'done' : 'running'
