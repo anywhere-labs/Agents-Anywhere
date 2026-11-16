@@ -13,7 +13,7 @@ import { Bridge2Router, Bridge2Runtime, CONNECTOR_METADATA, NAMESPACE_METADATA, 
   type Bridge2Rendezvous } from '../../../src/runtime/dsh-bridge2/index.js'
 import { MemoryLedger } from '../../fixtures/bridge2-ledger.js'
 import { SyncServiceClient } from '../../fixtures/dsh-sync-client.js'
-import { routerBinary } from '../../fixtures/router-binary.js'
+import { routerBinary } from '../../support/mesh-harness.js'
 
 const binary = routerBinary()
 
