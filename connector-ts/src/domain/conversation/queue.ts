@@ -14,6 +14,12 @@ export interface QueueAttachment {
   readonly name: string | null
   readonly mediaType: string | null
   readonly size: number | null
+  readonly sha256?: string | null
+  /**
+   * E2EE: the upload's segment key (`SealedAttachmentKey.key`), kept on the device until the message is sent.
+   * Never part of the queue state clients or the Server read.
+   */
+  readonly sealedKey?: string | null
 }
 
 export interface QueueItem {
@@ -53,7 +59,7 @@ export function queueState(queue: SessionQueue): SessionQueueState {
   return {
     sessionId: queue.sessionId,
     revision: queue.revision,
-    items: queue.items.map((item, index) => ({ ...item, attachments: [...item.attachments], position: index + 1 })),
+    items: queue.items.map((item, index) => ({ ...item, attachments: item.attachments.map(({ sealedKey: _key, ...visible }) => visible), position: index + 1 })),
   }
 }
 

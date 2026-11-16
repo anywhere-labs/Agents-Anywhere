@@ -10,11 +10,10 @@
 // connections past the token's expiry and a new hello would replace the connection generation; the WebSocket goes
 // through `RouterBridge` so proxies and the system CAs apply.
 
-import { format } from 'node:util'
-
 import { Mesh, Router, type RpcLogger, type RunningServer } from 'meshcall'
 
 import { commandRoute, type CommandInbox } from '../application/inbound/index.js'
+import { rpcLogger } from '../mesh/index.js'
 import type { ConversationStore } from '../application/ports/index.js'
 import type { LinkWelcome } from '../generated/device-meshcall/v1_0/link-welcome.js'
 import type { OutboxSignal } from '../sync/index.js'
@@ -133,21 +132,8 @@ function needsHello(error: unknown): boolean {
   return error instanceof HttpError && error.code !== 'credential_rejected' && (error.status === 401 || (error.status === 409 && error.code === 'connection_replaced'))
 }
 
-function rpcLogger(log: LinkLogger): RpcLogger {
-  const logger: RpcLogger = {
-    bind: () => logger,
-    log: (level, message, ...args) => {
-      const text = format(message, ...args)
-      if (level === 'error') log.error(text)
-      else if (level === 'warning') log.warn(text)
-      else log.debug(text)
-    },
-    debug: (message, ...args) => logger.log('debug', message, ...args),
-    info: (message, ...args) => logger.log('info', message, ...args),
-    warning: (message, ...args) => logger.log('warning', message, ...args),
-    error: (message, ...args) => logger.log('error', message, ...args),
-  }
-  return logger
+function linkRpcLogger(log: LinkLogger): RpcLogger {
+  return rpcLogger((level, text) => log[level](text))
 }
 
 export class DeviceLink {
@@ -383,7 +369,7 @@ export class DeviceLink {
           }
         }
         const current = this.grant!
-        const built = this.services.build(registration[this.mode], current.services)
+        const built = this.services.build(registration[this.mode], current.services, this.mode)
         if (built.skipped.length > 0) this.log.warn(`not registering ${built.skipped.join(', ')} (not in the Router token, or no handler on this device)`)
         const target = this.routerTarget(current)
         let mesh: Mesh
@@ -394,9 +380,9 @@ export class DeviceLink {
             reconnect: { enabled: false },
             pingTimeoutMs: this.timing('pongTimeoutMs', 30_000),
             maxFrameSize: current.maxFrameBytes ?? MESH_MAX_FRAME_BYTES,
-            logger: rpcLogger(this.log),
+            logger: linkRpcLogger(this.log),
           })
-          mesh.mount(...built.services, { instanceId: current.instanceId, accessLog: false, logger: rpcLogger(this.log) })
+          mesh.mount(...built.services, { instanceId: current.instanceId, accessLog: false, logger: linkRpcLogger(this.log) })
         } catch (error) {
           problem(`cannot prepare the MeshCall link: ${(error as Error).message}`)
           await sleep(backoff.next(), signal)

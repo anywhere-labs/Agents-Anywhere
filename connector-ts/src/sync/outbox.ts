@@ -4,17 +4,35 @@ import type { OutboxItem } from '../generated/device-meshcall/v1_0/outbox-item.j
 import { wireSummary, type DisplaySealer } from './display.js'
 
 /**
+ * E2EE (`scrub_for_e2ee` on the Server, which only repeats this as defence in depth): a command's result body and
+ * error message are content; the Server keeps the outcome and the error code.
+ */
+export function scrubForE2ee(kind: string, payload: Record<string, unknown>): Record<string, unknown> {
+  if (kind !== 'command.result' && kind !== 'command.ack' && kind !== 'command.status') return payload
+  const error = payload.e
+  const { r: _result, e: _error, ...rest } = payload
+  return {
+    ...rest,
+    r: null,
+    ...(error !== null && typeof error === 'object'
+      ? { e: { code: String((error as { code?: unknown }).code ?? 'error'), message: '', retryable: (error as { retryable?: unknown }).retryable === true } }
+      : {}),
+  }
+}
+
+/**
  * Turns a stored outbox record into its wire item. Summaries are sealed at send time, so a directory key
  * rotation only needs a re-send, not a rewrite of the outbox.
  */
-export function outboxItem(record: OutboxRecord, sealer: DisplaySealer): OutboxItem {
+export async function outboxItem(record: OutboxRecord, sealer: DisplaySealer): Promise<OutboxItem> {
   if (record.kind === 'session.summary') {
-    return { oid: record.oid, m: record.kind, p: { summary: wireSummary(record.payload.summary as SummaryFacts, sealer) } }
+    return { oid: record.oid, m: record.kind, p: { summary: await wireSummary(record.payload.summary as SummaryFacts, sealer) } }
   }
   if (record.kind === 'session.inventory' && Array.isArray(record.payload.sessions)) {
-    return { oid: record.oid, m: record.kind, p: { ...record.payload, sessions: (record.payload.sessions as SummaryFacts[]).map(facts => wireSummary(facts, sealer)) } }
+    const sessions = await Promise.all((record.payload.sessions as SummaryFacts[]).map(facts => wireSummary(facts, sealer)))
+    return { oid: record.oid, m: record.kind, p: { ...record.payload, sessions } }
   }
-  return { oid: record.oid, m: record.kind, p: record.payload }
+  return { oid: record.oid, m: record.kind, p: sealer.encrypted === true ? scrubForE2ee(record.kind, record.payload) : record.payload }
 }
 
 /** Wakes outbox streams when something was appended (commits, command receipts). */
@@ -64,7 +82,7 @@ export async function* outboxStream(options: OutboxStreamOptions, abort: AbortSi
     }
     for (const record of records) {
       if (abort.aborted) return
-      yield outboxItem(record, options.sealer)
+      yield await outboxItem(record, options.sealer)
       sent = record.oid
     }
   }

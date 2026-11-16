@@ -1,0 +1,70 @@
+{
+  "$defs": {
+    "TunnelRoute": {
+      "properties": {
+        "ch": {
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "title": "Ch",
+          "type": "string"
+        },
+        "clientId": {
+          "description": "client_id_for(identity public key)",
+          "pattern": "^cli_[a-z2-7]{26}$",
+          "title": "Clientid",
+          "type": "string"
+        },
+        "deviceId": {
+          "minLength": 1,
+          "title": "Deviceid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "deviceId",
+        "clientId",
+        "ch"
+      ],
+      "title": "TunnelRoute",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:e2ee:1.0:client-tunnel-end",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Ends one channel on ``WS /api/v3/tunnel``.\n\nServer -> client: the device ended its ``Secure/channel`` call (``code`` is the call's error code) or the\ndevice went offline. Client -> Server: cancel the call. The Server cannot forge anything worse than a\ndisconnect with it: a client never relaxes encryption because of an ``end``.",
+  "properties": {
+    "code": {
+      "default": "closed",
+      "enum": [
+        "closed",
+        "e2ee_not_paired",
+        "pairing_expired",
+        "e2ee_handshake_failed",
+        "e2ee_protocol_error",
+        "too_large",
+        "connector_offline",
+        "e2ee_required"
+      ],
+      "title": "Code",
+      "type": "string"
+    },
+    "route": {
+      "$ref": "#/$defs/TunnelRoute"
+    },
+    "t": {
+      "const": "end",
+      "title": "T",
+      "type": "string"
+    }
+  },
+  "required": [
+    "t",
+    "route"
+  ],
+  "title": "ClientTunnelEnd",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

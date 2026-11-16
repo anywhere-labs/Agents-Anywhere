@@ -67,6 +67,18 @@ export interface TimelineItem extends TimelineDraft {
 export const ORDER_SUB_SLOTS = 1024
 
 /**
+ * The largest native index: Android parses `orderSeq` as a 32-bit Int, so `orderSeq` stays below 2^31.
+ */
+export const ORDER_INDEX_MAX = Math.floor((2 ** 31 - 1) / ORDER_SUB_SLOTS) - 1
+
+/**
+ * Where a Conversation's first item goes when the Runtime gives no native position: live items count up from
+ * here and history projected later counts down from here, so the tail can be projected first and older pages
+ * slot in below without renumbering. About a million items fit on each side.
+ */
+export const ORDER_ANCHOR_INDEX = 2 ** 20
+
+/**
  * Order is fixed by the native position, so projecting the tail first and the head later still sorts
  * correctly without renumbering.
  */

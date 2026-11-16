@@ -13,7 +13,9 @@ export type Pattern = "XXpsk0" | "KK"
 export type Step = number
 
 /**
- * Handshake messages ride in ``tun`` frames on a dedicated channel id.
+ * A Noise handshake message. While a channel handshakes, ``ct`` of its frames is
+ * ``base64url(utf8(json(HandshakeEnvelope)))`` and ``n`` is ``step``; afterwards ``ct`` is a
+ * Noise transport message and ``n`` its nonce.
  */
 export interface HandshakeEnvelope {
   message: Message

@@ -1,6 +1,6 @@
 import type { JsonValue } from '../domain/identity/index.js'
 import type { JsonObject, TimelineDraft, TimelineItem, TimelineItemStatus } from '../domain/conversation/index.js'
-import { ORDER_SUB_SLOTS } from '../domain/conversation/index.js'
+import { ORDER_ANCHOR_INDEX, ORDER_SUB_SLOTS } from '../domain/conversation/index.js'
 import type { ToolContent, ToolStatus, TimelineItemEvent } from './ports/index.js'
 
 /**
@@ -19,7 +19,7 @@ export class TimelineProjector {
     latest: TimelineItem | null,
     private readonly now: () => string,
   ) {
-    this.nextNativeIndex = latest === null ? 1 : Math.floor(latest.orderSeq / ORDER_SUB_SLOTS) + 1
+    this.nextNativeIndex = latest === null ? ORDER_ANCHOR_INDEX : Math.floor(latest.orderSeq / ORDER_SUB_SLOTS) + 1
   }
 
   /** Seeds the projector with a stored item (a delta for an item that is no longer in memory). */
