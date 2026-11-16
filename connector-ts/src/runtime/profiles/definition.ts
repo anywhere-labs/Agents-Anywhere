@@ -94,6 +94,8 @@ export interface AcpAgentDefinition {
    * 返回的命令与参数仍只由定义决定，实例配置不能携带它们。
    */
   prepareLaunch?(context: LaunchContext): Promise<LocalLaunch>
+  /** 没有会话时进程空闲多久回收；0 表示常驻（Codex：codex-acp 要一直跟随 Codex App 的会话）。缺省用进程池的默认值。 */
+  readonly idleMs?: number
   /** 方言之外的运行时级能力上限（附件等）。 */
   readonly extraCapabilities?: readonly Capability[]
 }

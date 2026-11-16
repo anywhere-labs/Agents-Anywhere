@@ -27,6 +27,8 @@ export interface ItemIdentity {
   itemFor(update: JsonRecord): string | null
   /** AA 发出的用户消息条目 ID。 */
   userItemId(clientMessageId: string): string
+  /** 历史整体替换前清空按位置计数的状态（Codex：替换后从头重放，位置要从头数）。 */
+  reset?(): void
 }
 
 export interface SessionContext {
@@ -128,6 +130,9 @@ export interface AcpDialect {
   goalMethod?(info: AgentInfo): string | undefined
   /** 方言自己处理的反向请求（`_codex/session/history_reset` 等）。返回 undefined 表示不认识。 */
   handleRequest?(method: string, params: JsonRecord, session: DialectSessionHooks): Promise<unknown> | undefined
+  /** 方言要接收的会话级通知方法（按 params.sessionId 路由到会话）。 */
+  readonly notificationMethods?: readonly string[]
+  onNotification?(method: string, params: JsonRecord, session: DialectSessionHooks): void
   /** 错误归类。 */
   classifyError?(error: unknown): RuntimeError | undefined
   /** 旧 session modes 作为哪个配置项出现（Command Code 的权限模式）；缺省见 config.ts `LegacyModesSpec`。 */
@@ -138,7 +143,10 @@ export interface AcpDialect {
   readNativeHistory?(ref: NativeSessionRef, window: HistoryWindow, connection: () => Promise<{ readonly client: AcpClient; readonly info: AgentInfo }>): Promise<NativeHistoryPage> | undefined
 }
 
-/** 方言在反向请求里可以用的会话能力。 */
+/** 方言在反向请求和通知里可以用的会话能力。 */
 export interface DialectSessionHooks {
   emit(event: RuntimeEvent): void
+  /** 之后的更新是历史重放（不开回合、按重放翻译），直到 endReplay。Codex 历史替换用。 */
+  beginReplay(): void
+  endReplay(): void
 }

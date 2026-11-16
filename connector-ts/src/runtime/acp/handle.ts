@@ -142,6 +142,13 @@ export class AcpRuntimeHandle implements RuntimeHandle {
         const connection = await options.connect(scope === '' ? undefined : { cwd: scope })
         this.info = connection.info
         this.sessions.set(connection, new Set())
+        for (const method of options.dialect.notificationMethods ?? []) {
+          connection.client.onNotification(method, params => {
+            for (const session of this.sessions.get(connection) ?? []) {
+              if (session.nativeSessionId === params.sessionId) session.dialectNotification(method, params)
+            }
+          })
+        }
         this.events.push({ type: 'status', status: 'ready' })
         return connection
       },

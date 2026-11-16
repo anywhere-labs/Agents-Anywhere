@@ -12,7 +12,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
-import type { HistoryItem, HistoryWindow, NativeHistoryPage, ToolKind } from '../../../application/ports/runtime-session.js'
+import type { HistoryItem, ToolKind } from '../../../application/ports/runtime-session.js'
 import {
   claudeHistoryTurnId,
   claudeMessageItemId,
@@ -183,8 +183,5 @@ function mergeToolResults(items: HistoryItem[]): HistoryItem[] {
 }
 
 /** 按窗口取一页：缺省最新 `limit` 条；`cursor` 是上一页开头的位置，向更早翻。 */
-export function historyPage(items: readonly HistoryItem[], window: HistoryWindow): NativeHistoryPage {
-  const end = window.cursor !== undefined && /^\d+$/.test(window.cursor) ? Math.min(Number(window.cursor), items.length) : items.length
-  const start = window.limit > 0 ? Math.max(0, end - window.limit) : 0
-  return { items: items.slice(start, end), ...(start > 0 ? { olderCursor: String(start) } : {}) }
-}
+
+export { historyPage } from './page.js'
