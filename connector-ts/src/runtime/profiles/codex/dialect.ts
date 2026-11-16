@@ -6,10 +6,14 @@
 // - 每条用户消息带 `codexIpc.clientMessageId`，Codex 记进 ThreadItem.clientId，实时和历史都能认回 AA 的消息。
 // - 条目 ID 沿用 v2 规则（identity.ts），依赖客户端声明 `_meta.codexItemContext`（codex-acp#6）。
 // - 不声明 AIR：codex-acp 对 AIR 客户端改用另一套工具调用上报形状。`_session/goal` 不依赖 AIR 声明。
+// - 附件：本机文件（含图片）一律以路径（resource_link + MIME）传，从不读出字节转 data URL：data URL 会写进
+//   rollout、撑大文件、影响 App 历史渲染。codex-acp 目前把 resource_link 变成文本链接，要让模型直接看到图片，
+//   需要 codex-acp 把 `image/*` 的 `file://` resource_link 转成原生 `localImage`（见 Codex 伴随层 PR）。
+// - 打开路线、侧边栏广播由 Codex 伴随层（runtime/companions/codex）通过 CodexDialectOptions 控制。
 // - 计划审阅：计划完成后 codex-acp 发 request_permission（`plan-review:<itemId>`，implement_plan / revise_plan）。
 //   拒绝会结束当前回合并留在计划模式，所以修改意见在回合结束后作为新消息发出。
 
-import type { ConfigOption, HistoryItem, RuntimeEvent } from '../../../application/ports/runtime-session.js'
+import type { ConfigOption, HistoryItem, NativeSessionRef, RuntimeEvent } from '../../../application/ports/runtime-session.js'
 import { codexModelSelectionId } from '../../../domain/identity/index.js'
 import { negotiatedCapabilities } from '../../acp/capabilities.js'
 import { asRecord, type JsonRecord } from '../../acp/client.js'
@@ -47,11 +51,24 @@ export function codexPlanReview(answer: { action: 'approve' | 'revise' | 'dismis
 
 const HISTORY_EVENTS = new Set<RuntimeEvent['type']>(['message.delta', 'message.completed', 'tool.started', 'tool.updated', 'notice'])
 
-export function codexDialect(): AcpDialect {
+export interface CodexDialectOptions {
+  /**
+   * 打开已有线程的路线：缺省 `auto`；`plain` 时不带 codexIpc（Windows 上写锁判定为 unknown 时，
+   * 由伴随层决定让 Codex 自己裁决写锁）。
+   */
+  readonly openRoute?: (ref: NativeSessionRef) => 'auto' | 'plain'
+  /**
+   * 请 codex-acp 把 AA 新建的线程广播给 Codex App，让它立即出现在侧边栏（`codexIpc.announceNewThreads`，
+   * 需要 codex-acp 支持；不认识的 codex-acp 会忽略）。缺省关闭：v2 实测这样出现的线程不进项目分组。
+   */
+  readonly announceNewThreads?: boolean
+}
+
+export function codexDialect(options: CodexDialectOptions = {}): AcpDialect {
   return {
     runtime: 'codex',
     clientCapabilities: () => ({ ...structuredClone(GENERIC_CLIENT_CAPABILITIES), _meta: { codexItemContext: true } }),
-    initializeMeta: () => ({ codexIpc: { approvals: true, settings: true, historyReplacement: true } }),
+    initializeMeta: () => ({ codexIpc: { approvals: true, settings: true, historyReplacement: true, ...(options.announceNewThreads === true ? { announceNewThreads: true } : {}) } }),
     capabilities: info => [
       ...negotiatedCapabilities(info, { steer: asRecord(info.meta.steering).supported === true, permissionCatalog: true }),
       { id: 'session.planning', supported: true },
@@ -61,7 +78,7 @@ export function codexDialect(): AcpDialect {
       { id: 'catalog.model', supported: true },
     ],
     identity: codexIdentity,
-    openParams: () => ({ _meta: { codexIpc: { mode: 'auto' } } }),
+    openParams: ref => (options.openRoute?.(ref) === 'plain' ? {} : { _meta: { codexIpc: { mode: 'auto' } } }),
     promptParams: delivery => ({ _meta: { codexIpc: { clientMessageId: delivery.clientMessageId } } }),
     steer: 'extension',
     selections: {
