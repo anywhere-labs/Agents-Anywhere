@@ -3,4 +3,7 @@
     <exclude
         domain="sharedpref"
         path="auth.xml" />
+    <exclude
+        domain="sharedpref"
+        path="agents_anywhere_e2ee.xml" />
 </full-backup-content>

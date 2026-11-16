@@ -34,7 +34,23 @@ data class AuthConfigResponse(
     val setupTokenExpiresAt: String?,
     val serverTime: String,
     val emailVerificationRequired: Boolean = false,
+    /** Absent on Servers without E2EE: treated as off. */
+    val e2ee: E2eeServerConfig = E2eeServerConfig(),
 )
+
+/** `GET /auth/config` 的 `e2ee` 字段：部署是否要求端到端加密。 */
+data class E2eeServerConfig(
+    val mode: String = MODE_OFF,
+    val web: Boolean = false,
+    val preview: Boolean = false,
+) {
+    val required: Boolean get() = mode == MODE_REQUIRED
+
+    companion object {
+        const val MODE_OFF = "off"
+        const val MODE_REQUIRED = "required"
+    }
+}
 
 data class OAuthTokenResponse(
     val accessToken: String,

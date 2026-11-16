@@ -45,6 +45,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.devices.DeviceDetailState
+import com.agentsanywhere.app.feature.e2ee.DeviceE2eeStatus
+import com.agentsanywhere.app.feature.e2ee.E2eeClient
+import com.agentsanywhere.app.feature.e2ee.status
 import com.agentsanywhere.app.feature.devices.DeviceAgentOperations
 import com.agentsanywhere.app.feature.devices.deviceDetailState
 import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
@@ -113,6 +116,15 @@ fun DeviceDetailScreen(
     var sessionBulkMessage by remember { mutableStateOf<String?>(null) }
     var pendingArchiveAll by remember { mutableStateOf<DeviceArchiveAllRequest?>(null) }
     val settingsDeviceId = detail.device?.takeIf { it.hasDeviceSettings }?.id
+    val e2eeClient = remember(context) { E2eeClient.get(context) }
+    var e2eeStatus by remember(selectedDeviceId) { mutableStateOf<DeviceE2eeStatus?>(null) }
+    var e2eeRefreshKey by remember { mutableLongStateOf(0L) }
+    var e2eePairingOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(selectedDeviceId, e2eeRefreshKey) {
+        val deviceId = selectedDeviceId ?: return@LaunchedEffect
+        e2eeClient.refreshServerConfig()
+        e2eeStatus = runCatching { e2eeClient.status(deviceId) }.getOrNull()
+    }
     var deviceSettingsState by remember(settingsDeviceId) { mutableStateOf(DeviceSettingsState()) }
 
     fun showToast(message: String, isError: Boolean = false) {
@@ -268,6 +280,11 @@ fun DeviceDetailScreen(
                             )
                         }
                     }
+                    e2eeStatus?.let { status ->
+                        item("e2ee") {
+                            DeviceE2eeSection(status = status, onPair = { e2eePairingOpen = true })
+                        }
+                    }
                     item("sessions") {
                         SessionsSection(
                             detail = detail,
@@ -365,6 +382,21 @@ fun DeviceDetailScreen(
                 }
             },
             onConfirm = { confirmCurrentAction() },
+        )
+    }
+
+    if (e2eePairingOpen && detail.device != null) {
+        DeviceE2eePairingSheet(
+            deviceId = detail.device.id,
+            client = e2eeClient,
+            onDismiss = {
+                e2eePairingOpen = false
+                e2eeRefreshKey++
+            },
+            onPaired = {
+                e2eeRefreshKey++
+                showToast(context.getString(R.string.e2ee_pair_done))
+            },
         )
     }
 
