@@ -26,6 +26,7 @@ from agent_server.core.device_meshcall import (
     ChangesSinceRequest,
     ChangesSinceResponse,
     ClientSnapshotRequest,
+    MethodPayload,
     StoreReadRequest,
     StoreReadResponse,
     StreamChunk,
@@ -200,3 +201,24 @@ class DeviceReadService:
             if failure is None:
                 return None
             raise failure from exc
+
+    async def read_method(self, device_id: str, method: str, params: dict[str, Any]) -> dict[str, Any] | None:
+        """A small read (``session.queue``, ``session.notices``...): the device's body, None when offline."""
+
+        connection_id = await self._connection(device_id)
+        if connection_id is None:
+            return None
+        try:
+            result = await self._mesh.unary(
+                device_id,
+                REQUEST_METHODS[method],
+                MethodPayload(**params),
+                MethodPayload,
+                connection_id=connection_id,
+            )
+        except DeviceCallError as exc:
+            failure = self._fail(exc)
+            if failure is None:
+                return None
+            raise failure from exc
+        return result.model_dump(mode="json")

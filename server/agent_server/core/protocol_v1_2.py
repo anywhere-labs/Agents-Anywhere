@@ -10,6 +10,7 @@ Only additions. Old clients ignore the new fields:
 * Snapshot ``historySource`` and ``deviceOffline``.
 * Timeline page ``deviceOffline``.
 * Event type ``session.catchup_required``.
+* Queue state ``deviceOffline``.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from agent_server.core.device_meshcall import (
     GoalStateValue,
     PlanStateValue,
 )
+from agent_server.core.message_queue import SessionQueueState
 from agent_server.core.protocol import (
     ProtocolEventRecoveryResponse,
     ProtocolSessionSnapshotResponse,
@@ -57,6 +59,12 @@ class ProtocolTimelineResponseV12(ProtocolTimelineResponse):
 
 
 class ProtocolEventRecoveryResponseV12(ProtocolEventRecoveryResponse):
+    deviceOffline: bool = False
+
+
+class SessionQueueStateV12(SessionQueueState):
+    """``GET /sessions/{id}/runtime/queue``: the device's queue; empty with ``deviceOffline`` when it is offline."""
+
     deviceOffline: bool = False
 
 

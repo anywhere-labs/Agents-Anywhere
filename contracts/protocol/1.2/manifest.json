@@ -177,6 +177,14 @@
       "slug": "session-catchup-required-payload"
     },
     {
+      "direction": "egress",
+      "model": "SessionQueueStateV12",
+      "path": "schemas/session-queue-state.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "23c00342f686f958693ef589226b4301224dde5efb4aee75ec51ea146d851ebb",
+      "slug": "session-queue-state"
+    },
+    {
       "direction": "ingress",
       "model": "DisplayUserUpdateRequest",
       "path": "schemas/display-user-update-request.schema.json",

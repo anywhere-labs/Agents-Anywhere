@@ -122,6 +122,8 @@ class FakeDeviceState:
         # Blobs the device holds (fileId -> bytes, name, media type) and how it uploads them:
         # ``blob_uploader(transfer, data)`` returns a concurrent future (the test's loop does the PUT).
         self.blobs: dict[str, tuple[bytes, str, str]] = {}
+        # sessionId -> SessionQueueState the device reports on Sessions/queue.
+        self.queues: dict[str, dict[str, Any]] = {}
         self.blob_uploader: Callable[[dict[str, Any], bytes], Any] | None = None
         self.attach_opened = threading.Event()
         self.outbox_opened = threading.Event()
@@ -261,7 +263,7 @@ def _make_services(state: FakeDeviceState) -> list[object]:
         @query
         async def queue(self, sessionId: str) -> Payload:
             """Queued messages."""
-            return Payload(items=[])
+            return Payload(**state.queues.get(sessionId, {"sessionId": sessionId, "revision": 0, "items": []}))
 
     @service(f"{SERVICE_PREFIX}.Store", targeted=True)
     class Store:

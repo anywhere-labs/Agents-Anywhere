@@ -47,6 +47,7 @@ from agent_server.core.runtime_identity import (
 from agent_server.core.utc import utc_now
 from agent_server.infra.connector_rpc import (
     ConnectorOfflineError,
+    ConnectorOutcomeUnknownError,
     ConnectorRpcError,
     ConnectorRpcManager,
 )
@@ -651,6 +652,8 @@ class SessionRunService:
         from_queue: bool = False,
     ) -> RpcResponsePayload:
         session_id = session.id
+        if not from_queue and await self._store.connector_link_contract(session.connectorId):
+            return await self._send_message_to_device(session, payload, user_id=user_id)
         await self._ensure_session_runtime_running(session, user_id=user_id)
         from agent_server.core.planning.commands import parse_plan_command
         # A queued message is delivered as an ordinary message.
@@ -757,6 +760,53 @@ class SessionRunService:
                 user_id=user_id,
                 client_message_id=payload.clientMessageId,
             )
+        )
+        return RpcResponsePayload(ok=True, result=result)
+
+    async def _send_message_to_device(
+        self,
+        session: SessionView,
+        payload: MessageCreateRequest,
+        *,
+        user_id: str,
+    ) -> RpcResponsePayload:
+        """v3: the device owns the conversation, its queue and the busy decision (D1).
+
+        Nothing about the message is stored here; the command receipt keeps only
+        its id, digest and outcome. ``queue: auto | interrupt`` lets the device
+        queue it while a turn runs (``delivery: queued``).
+        """
+
+        params: dict[str, Any] = {
+            "sessionId": session.id,
+            "clientMessageId": payload.clientMessageId or f"msg_{uuid4().hex}",
+            "content": payload.content,
+        }
+        if payload.queue is not None:
+            params["queue"] = payload.queue
+        if payload.attachments:
+            params["attachments"] = [
+                {key: item[key] for key in ("fileId", "name", "mediaType", "size", "sha256") if item.get(key) is not None}
+                for item in await self._attachment_payloads(
+                    session_id=session.id,
+                    user_id=user_id,
+                    file_ids=[a.fileId for a in payload.attachments],
+                )
+            ]
+        try:
+            result = await self._manager.request(session.connectorId, "session.send_message", params)
+        except ConnectorOfflineError as exc:
+            raise SessionRunConflictError(
+                {"code": "connector_offline", "message": "the device is offline"}
+            ) from exc
+        except ConnectorOutcomeUnknownError as exc:
+            # The device may have taken it: not offline, and never re-sent (a replay with the
+            # same clientMessageId returns the device's answer).
+            raise SessionRunTimeoutError({"code": "command_outcome_unknown", "message": exc.message}) from exc
+        except ConnectorRpcError as exc:
+            raise SessionRunConflictError({"code": exc.code, "message": exc.message or exc.code}) from exc
+        await self._usage.record(
+            message_sent_event(session, user_id=user_id, client_message_id=params["clientMessageId"])
         )
         return RpcResponsePayload(ok=True, result=result)
 

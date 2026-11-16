@@ -328,6 +328,7 @@ class DeviceLinkService:
                     ports[port["port"]] = port
         elif method == "port.closed" and isinstance(payload.get("port"), int):
             self.listening_ports.get(device_id, {}).pop(payload["port"], None)
+        await self._forward_session_event(method, payload)
         for listener in list(self.event_listeners):
             try:
                 result = listener(device_id, method, payload)
@@ -335,6 +336,28 @@ class DeviceLinkService:
                     await result
             except Exception:  # noqa: BLE001 - listeners never break the link
                 logger.exception("device event listener failed device_id={} m={}", device_id, method)
+
+    async def _forward_session_event(self, method: str, payload: dict[str, Any]) -> None:
+        """Session-level live state from the device goes to the session's subscribers (not stored)."""
+
+        session_id = payload.get("sessionId")
+        if not isinstance(session_id, str) or not session_id:
+            return
+        message: dict[str, Any] | None = None
+        if method == "runtime.queue.updated" and isinstance(payload.get("queue"), dict):
+            message = {"sessionId": session_id, "queueState": payload["queue"]}
+        elif method == "runtime.notice.updated" and isinstance(payload.get("notice"), dict):
+            notice = payload["notice"]
+            message = {"sessionId": session_id, "notices": [notice], "nextSeq": int(notice.get("updatedSeq") or 0)}
+        elif method == "runtime.status":
+            # A's #674: v2 planning/goal state events ride in runtime.status as {event: <v2 name>}.
+            event = payload.get("event")
+            if event == "planning.state.updated" and isinstance(payload.get("state"), dict):
+                message = {"sessionId": session_id, "planningState": payload["state"]}
+            elif event == "goal.state.updated" and isinstance(payload.get("state"), dict):
+                message = {"sessionId": session_id, "goalState": payload["state"]}
+        if message is not None:
+            await self._broker.publish(session_id, message)
 
     # -- presence ---------------------------------------------------------------
 

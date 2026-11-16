@@ -163,6 +163,7 @@ PROTOCOL_1_2 = Contract(
         _a("event-envelope", p11.ProtocolEventEnvelope, "egress"),
         _a("event-recovery-response", p12.ProtocolEventRecoveryResponseV12, "egress"),
         _a("session-catchup-required-payload", p12.SessionCatchupRequiredPayload, "egress"),
+        _a("session-queue-state", p12.SessionQueueStateV12, "egress"),
         _a("display-user-update-request", p12.DisplayUserUpdateRequest, "ingress"),
     ),
 )
