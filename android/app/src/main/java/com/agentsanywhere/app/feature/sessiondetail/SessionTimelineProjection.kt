@@ -819,3 +819,7 @@ internal fun TimelineMessage.matchesClientMessage(clientMessageId: String): Bool
 
 internal fun List<TimelineMessage>.hasPendingOptimisticSend(): Boolean =
     any { it.optimistic && it.status == "pending" }
+
+/** A send this device saw fail. It exists only on this device, so the user may delete it. */
+internal val TimelineMessage.isFailedLocalSend: Boolean
+    get() = optimistic && author == MessageAuthor.User && status == "failed"
