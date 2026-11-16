@@ -1,0 +1,77 @@
+{
+  "$defs": {
+    "UsageCounter": {
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "runtimeId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtimeid"
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sessionid"
+        },
+        "value": {
+          "minimum": 0,
+          "title": "Value",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "title": "UsageCounter",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:usage-report-out",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "counters": {
+      "items": {
+        "$ref": "#/$defs/UsageCounter"
+      },
+      "title": "Counters",
+      "type": "array"
+    },
+    "periodEnd": {
+      "title": "Periodend",
+      "type": "string"
+    },
+    "periodStart": {
+      "title": "Periodstart",
+      "type": "string"
+    }
+  },
+  "required": [
+    "periodStart",
+    "periodEnd"
+  ],
+  "title": "UsageReportOut",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

@@ -1,0 +1,20 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:revoke-client-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "clientId": {
+      "minLength": 1,
+      "title": "Clientid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "clientId"
+  ],
+  "title": "RevokeClientRequest",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

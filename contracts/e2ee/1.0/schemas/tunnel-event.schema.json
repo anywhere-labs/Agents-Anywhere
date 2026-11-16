@@ -1,0 +1,27 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:tunnel-event",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A realtime client event (same envelope as normal mode) pushed through the channel.",
+  "properties": {
+    "event": {
+      "additionalProperties": true,
+      "title": "Event",
+      "type": "object"
+    },
+    "kind": {
+      "const": "event",
+      "default": "event",
+      "title": "Kind",
+      "type": "string"
+    }
+  },
+  "required": [
+    "event"
+  ],
+  "title": "TunnelEvent",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

@@ -1,0 +1,41 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:link-attach-item",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Item on ``Link/attach``: a heartbeat every 20 s, or a lossy event (``EVENT_METHODS`` minus ``changes``).",
+  "properties": {
+    "kind": {
+      "enum": [
+        "heartbeat",
+        "event"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "m": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "M"
+    },
+    "p": {
+      "additionalProperties": true,
+      "title": "P",
+      "type": "object"
+    }
+  },
+  "required": [
+    "kind"
+  ],
+  "title": "LinkAttachItem",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

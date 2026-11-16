@@ -1,0 +1,50 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:tunnel-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Plaintext inside the channel: the same client API call as normal mode.",
+  "properties": {
+    "body": {
+      "default": null,
+      "title": "Body"
+    },
+    "id": {
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+    },
+    "kind": {
+      "const": "request",
+      "default": "request",
+      "title": "Kind",
+      "type": "string"
+    },
+    "method": {
+      "enum": [
+        "GET",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE"
+      ],
+      "title": "Method",
+      "type": "string"
+    },
+    "path": {
+      "description": "client API path, e.g. /api/v2/sessions/{id}/snapshot",
+      "minLength": 1,
+      "title": "Path",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "method",
+    "path"
+  ],
+  "title": "TunnelRequest",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

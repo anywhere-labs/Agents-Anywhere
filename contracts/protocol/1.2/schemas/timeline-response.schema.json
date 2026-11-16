@@ -1,0 +1,266 @@
+{
+  "$defs": {
+    "TimelineItem": {
+      "properties": {
+        "completedAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Completedat"
+        },
+        "content": {
+          "title": "Content"
+        },
+        "contentHash": {
+          "title": "Contenthash",
+          "type": "string"
+        },
+        "createdAt": {
+          "title": "Createdat",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "orderSeq": {
+          "title": "Orderseq",
+          "type": "integer"
+        },
+        "revision": {
+          "default": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "enum": [
+                "user",
+                "assistant",
+                "system",
+                "tool"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Role"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/TimelineSource"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "running",
+            "waiting_approval",
+            "done",
+            "failed",
+            "cancelled",
+            "interrupted"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "message",
+            "tool",
+            "artifact",
+            "marker",
+            "system"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "updatedAt": {
+          "title": "Updatedat",
+          "type": "string"
+        },
+        "updatedSeq": {
+          "title": "Updatedseq",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "sessionId",
+        "type",
+        "status",
+        "source",
+        "orderSeq",
+        "contentHash",
+        "createdAt",
+        "updatedAt",
+        "updatedSeq"
+      ],
+      "title": "TimelineItem",
+      "type": "object"
+    },
+    "TimelineSource": {
+      "properties": {
+        "clientMessageId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clientmessageid"
+        },
+        "derivedKey": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Derivedkey"
+        },
+        "event": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Event"
+        },
+        "itemId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Itemid"
+        },
+        "itemType": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Itemtype"
+        },
+        "runtime": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+              "type": "string"
+            },
+            {
+              "const": "platform",
+              "type": "string"
+            }
+          ],
+          "title": "Runtime"
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sessionid"
+        }
+      },
+      "required": [
+        "runtime"
+      ],
+      "title": "TimelineSource",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:protocol:1.2:timeline-response",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "deviceOffline": {
+      "default": false,
+      "title": "Deviceoffline",
+      "type": "boolean"
+    },
+    "hasMore": {
+      "default": false,
+      "title": "Hasmore",
+      "type": "boolean"
+    },
+    "historySource": {
+      "default": "live",
+      "enum": [
+        "live",
+        "unavailable"
+      ],
+      "title": "Historysource",
+      "type": "string"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/$defs/TimelineItem"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "nextSeq": {
+      "title": "Nextseq",
+      "type": "integer"
+    },
+    "serverTime": {
+      "title": "Servertime",
+      "type": "string"
+    },
+    "sessionId": {
+      "title": "Sessionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId",
+    "items",
+    "nextSeq",
+    "hasMore",
+    "serverTime",
+    "historySource",
+    "deviceOffline"
+  ],
+  "title": "ProtocolTimelineResponseV12",
+  "type": "object",
+  "x-contract": "protocol",
+  "x-direction": "egress",
+  "x-protocol-version": "1.2",
+  "x-pydantic-mode": "serialization"
+}

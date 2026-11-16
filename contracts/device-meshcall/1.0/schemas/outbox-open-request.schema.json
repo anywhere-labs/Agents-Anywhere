@@ -1,0 +1,20 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:outbox-open-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "connectionId": {
+      "minLength": 1,
+      "title": "Connectionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "connectionId"
+  ],
+  "title": "OutboxOpenRequest",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

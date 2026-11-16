@@ -1,0 +1,25 @@
+{
+  "$id": "urn:agents-anywhere:preview:1.0:preview-ticket-response",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "expiresAt": {
+      "title": "Expiresat",
+      "type": "string"
+    },
+    "ticketUrl": {
+      "minLength": 1,
+      "title": "Ticketurl",
+      "type": "string"
+    }
+  },
+  "required": [
+    "ticketUrl",
+    "expiresAt"
+  ],
+  "title": "PreviewTicketResponse",
+  "type": "object",
+  "x-contract": "preview",
+  "x-direction": "egress",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "serialization"
+}

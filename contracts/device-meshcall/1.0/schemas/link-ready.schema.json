@@ -1,0 +1,21 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:link-ready",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``POST /api/v3/device/ready`` once the services are registered; the Server then opens\n``Link/attach`` and ``Link/outbox``. Presence is the Server-held ``attach`` stream.",
+  "properties": {
+    "connectionId": {
+      "minLength": 1,
+      "title": "Connectionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "connectionId"
+  ],
+  "title": "LinkReady",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

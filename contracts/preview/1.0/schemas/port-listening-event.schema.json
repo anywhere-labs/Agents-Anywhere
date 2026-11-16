@@ -1,0 +1,93 @@
+{
+  "$defs": {
+    "ListeningPort": {
+      "properties": {
+        "pid": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pid"
+        },
+        "port": {
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Port",
+          "type": "integer"
+        },
+        "processName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Processname"
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sessionid"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        }
+      },
+      "required": [
+        "port"
+      ],
+      "title": "ListeningPort",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:preview:1.0:port-listening-event",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Device ``evt`` ``port.listening``.",
+  "properties": {
+    "deviceId": {
+      "minLength": 1,
+      "title": "Deviceid",
+      "type": "string"
+    },
+    "ports": {
+      "items": {
+        "$ref": "#/$defs/ListeningPort"
+      },
+      "title": "Ports",
+      "type": "array"
+    }
+  },
+  "required": [
+    "deviceId"
+  ],
+  "title": "PortListeningEvent",
+  "type": "object",
+  "x-contract": "preview",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

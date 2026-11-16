@@ -1,0 +1,193 @@
+{
+  "$defs": {
+    "DesiredState": {
+      "properties": {
+        "channelSwitches": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Channelswitches",
+          "type": "array"
+        },
+        "deviceSettings": {
+          "additionalProperties": true,
+          "title": "Devicesettings",
+          "type": "object"
+        },
+        "runtimes": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Runtimes",
+          "type": "array"
+        }
+      },
+      "title": "DesiredState",
+      "type": "object"
+    },
+    "MeshCredentials": {
+      "description": "Where and how the device registers its services; the token may register only ``instanceId``.",
+      "properties": {
+        "expiresAt": {
+          "title": "Expiresat",
+          "type": "string"
+        },
+        "instanceId": {
+          "description": "always the deviceId",
+          "minLength": 1,
+          "title": "Instanceid",
+          "type": "string"
+        },
+        "maxFrameBytes": {
+          "default": 4194304,
+          "title": "Maxframebytes",
+          "type": "integer"
+        },
+        "routerUrl": {
+          "minLength": 1,
+          "title": "Routerurl",
+          "type": "string"
+        },
+        "services": {
+          "description": "services the token grants",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Services",
+          "type": "array"
+        },
+        "token": {
+          "minLength": 1,
+          "title": "Token",
+          "type": "string"
+        },
+        "tokenId": {
+          "minLength": 1,
+          "title": "Tokenid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "routerUrl",
+        "token",
+        "tokenId",
+        "expiresAt",
+        "instanceId"
+      ],
+      "title": "MeshCredentials",
+      "type": "object"
+    },
+    "PendingCommand": {
+      "description": "A command the Server still waits on, replayed in ``LinkWelcome.pendingCommands``.",
+      "properties": {
+        "commandId": {
+          "description": "equals clientMessageId/operationId when the client supplied one",
+          "minLength": 1,
+          "title": "Commandid",
+          "type": "string"
+        },
+        "deadline": {
+          "title": "Deadline",
+          "type": "string"
+        },
+        "inputDigest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Client-computed digest of the plaintext input; the Server only compares it",
+          "title": "Inputdigest"
+        },
+        "m": {
+          "minLength": 1,
+          "title": "M",
+          "type": "string"
+        },
+        "p": {
+          "additionalProperties": true,
+          "title": "P",
+          "type": "object"
+        }
+      },
+      "required": [
+        "commandId",
+        "deadline",
+        "m"
+      ],
+      "title": "PendingCommand",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:link-welcome",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Response to ``/device/hello``. Issuing it revokes the device's previous Mesh token.",
+  "properties": {
+    "connectionId": {
+      "minLength": 1,
+      "title": "Connectionid",
+      "type": "string"
+    },
+    "contractVersion": {
+      "const": "1.0",
+      "title": "Contractversion",
+      "type": "string"
+    },
+    "desired": {
+      "$ref": "#/$defs/DesiredState"
+    },
+    "e2eeMode": {
+      "default": "off",
+      "enum": [
+        "off",
+        "required"
+      ],
+      "title": "E2Eemode",
+      "type": "string"
+    },
+    "mesh": {
+      "$ref": "#/$defs/MeshCredentials"
+    },
+    "pendingCommands": {
+      "items": {
+        "$ref": "#/$defs/PendingCommand"
+      },
+      "title": "Pendingcommands",
+      "type": "array"
+    },
+    "seqFloors": {
+      "additionalProperties": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "description": "sessionId -> max(head_seq, seq_ceiling); the device clock must restart above it",
+      "title": "Seqfloors",
+      "type": "object"
+    },
+    "serverVersion": {
+      "minLength": 1,
+      "title": "Serverversion",
+      "type": "string"
+    }
+  },
+  "required": [
+    "contractVersion",
+    "serverVersion",
+    "connectionId",
+    "mesh"
+  ],
+  "title": "LinkWelcome",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

@@ -1,0 +1,79 @@
+{
+  "$defs": {
+    "LinkError": {
+      "properties": {
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "default": "",
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "title": "LinkError",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:command-result-out",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "commandId": {
+      "minLength": 1,
+      "title": "Commandid",
+      "type": "string"
+    },
+    "e": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LinkError"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "outcome": {
+      "enum": [
+        "accepted",
+        "rejected"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "r": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "R"
+    }
+  },
+  "required": [
+    "commandId",
+    "outcome"
+  ],
+  "title": "CommandResultOut",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

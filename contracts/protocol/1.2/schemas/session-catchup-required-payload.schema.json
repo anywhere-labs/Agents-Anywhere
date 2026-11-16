@@ -1,0 +1,30 @@
+{
+  "$id": "urn:agents-anywhere:protocol:1.2:session-catchup-required-payload",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Payload of ``session.catchup_required``: refetch ``/events`` with your own cursor.",
+  "properties": {
+    "reason": {
+      "enum": [
+        "device_reconnected",
+        "subscription_restored"
+      ],
+      "title": "Reason",
+      "type": "string"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId",
+    "reason"
+  ],
+  "title": "SessionCatchupRequiredPayload",
+  "type": "object",
+  "x-contract": "protocol",
+  "x-direction": "egress",
+  "x-protocol-version": "1.2",
+  "x-pydantic-mode": "serialization"
+}

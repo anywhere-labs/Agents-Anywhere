@@ -1,0 +1,97 @@
+{
+  "$defs": {
+    "SessionHead": {
+      "properties": {
+        "headSeq": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Headseq",
+          "type": "integer"
+        },
+        "resetSeq": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Resetseq",
+          "type": "integer"
+        },
+        "sessionId": {
+          "minLength": 1,
+          "title": "Sessionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "headSeq",
+        "resetSeq"
+      ],
+      "title": "SessionHead",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:link-hello",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``POST /api/v3/device/hello`` (device credentials in the HTTP headers).",
+  "properties": {
+    "capabilities": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Capabilities",
+      "type": "array"
+    },
+    "connectorVersion": {
+      "minLength": 1,
+      "title": "Connectorversion",
+      "type": "string"
+    },
+    "contractVersions": {
+      "items": {
+        "const": "1.0",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Contractversions",
+      "type": "array"
+    },
+    "deviceId": {
+      "minLength": 1,
+      "title": "Deviceid",
+      "type": "string"
+    },
+    "host": {
+      "enum": [
+        "desktop",
+        "cli",
+        "dsh-plugin"
+      ],
+      "title": "Host",
+      "type": "string"
+    },
+    "os": {
+      "minLength": 1,
+      "title": "Os",
+      "type": "string"
+    },
+    "sessionsHead": {
+      "items": {
+        "$ref": "#/$defs/SessionHead"
+      },
+      "title": "Sessionshead",
+      "type": "array"
+    }
+  },
+  "required": [
+    "deviceId",
+    "connectorVersion",
+    "contractVersions",
+    "os",
+    "host"
+  ],
+  "title": "LinkHello",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

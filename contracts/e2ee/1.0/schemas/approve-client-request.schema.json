@@ -1,0 +1,27 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:approve-client-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "An authorised client asks the device to trust another client's key.",
+  "properties": {
+    "clientIdentityPub": {
+      "description": "base64url without padding",
+      "minLength": 1,
+      "title": "Clientidentitypub",
+      "type": "string"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    }
+  },
+  "required": [
+    "clientIdentityPub",
+    "label"
+  ],
+  "title": "ApproveClientRequest",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

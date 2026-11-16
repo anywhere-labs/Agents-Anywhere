@@ -1,0 +1,22 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:outbox-ack",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Cumulative: everything up to and including ``oid`` may be deleted.",
+  "properties": {
+    "oid": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Oid",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "oid"
+  ],
+  "title": "OutboxAck",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

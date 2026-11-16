@@ -1,0 +1,109 @@
+{
+  "$defs": {
+    "ProtocolEventEnvelope": {
+      "properties": {
+        "cursor": {
+          "pattern": "^seq:(0|[1-9][0-9]*)$",
+          "title": "Cursor",
+          "type": "string"
+        },
+        "emittedAt": {
+          "title": "Emittedat",
+          "type": "string"
+        },
+        "eventId": {
+          "minLength": 1,
+          "title": "Eventid",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "title": "Payload",
+          "type": "object"
+        },
+        "protocolVersion": {
+          "default": "1.0",
+          "enum": [
+            "1.0",
+            "1.1"
+          ],
+          "title": "Protocolversion",
+          "type": "string"
+        },
+        "sequence": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "sessionId": {
+          "minLength": 1,
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "type": {
+          "minLength": 1,
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "eventId",
+        "sequence",
+        "cursor",
+        "type",
+        "sessionId",
+        "emittedAt"
+      ],
+      "title": "ProtocolEventEnvelope",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:changes-event",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Item of ``Sessions/watch``: client-shaped events for a watched session.",
+  "properties": {
+    "events": {
+      "items": {
+        "$ref": "#/$defs/ProtocolEventEnvelope"
+      },
+      "title": "Events",
+      "type": "array"
+    },
+    "fromSeq": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Fromseq",
+      "type": "integer"
+    },
+    "resetSeq": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Resetseq",
+      "type": "integer"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    },
+    "toSeq": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Toseq",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "sessionId",
+    "fromSeq",
+    "toSeq",
+    "resetSeq"
+  ],
+  "title": "ChangesEvent",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

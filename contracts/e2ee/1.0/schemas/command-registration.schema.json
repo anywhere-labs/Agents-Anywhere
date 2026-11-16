@@ -1,0 +1,33 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:command-registration",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Plaintext side-channel so the Server can keep idempotency for encrypted commands.",
+  "properties": {
+    "commandId": {
+      "minLength": 1,
+      "title": "Commandid",
+      "type": "string"
+    },
+    "deviceId": {
+      "minLength": 1,
+      "title": "Deviceid",
+      "type": "string"
+    },
+    "inputDigest": {
+      "minLength": 1,
+      "title": "Inputdigest",
+      "type": "string"
+    }
+  },
+  "required": [
+    "commandId",
+    "deviceId",
+    "inputDigest"
+  ],
+  "title": "CommandRegistration",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "ingress",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

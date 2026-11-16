@@ -1,0 +1,57 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:store-read-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "byteBudget": {
+      "default": 1048576,
+      "minimum": 4096,
+      "title": "Bytebudget",
+      "type": "integer"
+    },
+    "cursor": {
+      "anyOf": [
+        {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cursor"
+    },
+    "limit": {
+      "default": 100,
+      "maximum": 500,
+      "minimum": 1,
+      "title": "Limit",
+      "type": "integer"
+    },
+    "mode": {
+      "enum": [
+        "latest",
+        "before",
+        "after"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId",
+    "mode"
+  ],
+  "title": "StoreReadRequest",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

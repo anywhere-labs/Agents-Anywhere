@@ -1,0 +1,93 @@
+{
+  "$defs": {
+    "ClientGrantView": {
+      "properties": {
+        "clientId": {
+          "minLength": 1,
+          "title": "Clientid",
+          "type": "string"
+        },
+        "grantedAt": {
+          "title": "Grantedat",
+          "type": "string"
+        },
+        "grantedBy": {
+          "enum": [
+            "qr",
+            "approval",
+            "local"
+          ],
+          "title": "Grantedby",
+          "type": "string"
+        },
+        "identityPubFingerprint": {
+          "minLength": 1,
+          "title": "Identitypubfingerprint",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "revokedAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Revokedat"
+        }
+      },
+      "required": [
+        "clientId",
+        "label",
+        "identityPubFingerprint",
+        "grantedAt",
+        "grantedBy"
+      ],
+      "title": "ClientGrantView",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:e2ee:1.0:trust-list-response",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "deviceId": {
+      "minLength": 1,
+      "title": "Deviceid",
+      "type": "string"
+    },
+    "directoryKeyEpoch": {
+      "minimum": 0,
+      "title": "Directorykeyepoch",
+      "type": "integer"
+    },
+    "directoryKeyId": {
+      "minLength": 1,
+      "title": "Directorykeyid",
+      "type": "string"
+    },
+    "grants": {
+      "items": {
+        "$ref": "#/$defs/ClientGrantView"
+      },
+      "title": "Grants",
+      "type": "array"
+    }
+  },
+  "required": [
+    "deviceId",
+    "directoryKeyId",
+    "directoryKeyEpoch"
+  ],
+  "title": "TrustListResponse",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

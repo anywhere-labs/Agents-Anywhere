@@ -1,0 +1,116 @@
+{
+  "$id": "urn:agents-anywhere:preview:1.0:preview-view",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "closeReason": {
+      "anyOf": [
+        {
+          "enum": [
+            "port_closed",
+            "user_closed",
+            "expired",
+            "device_offline",
+            "revoked"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Closereason"
+    },
+    "deviceId": {
+      "minLength": 1,
+      "title": "Deviceid",
+      "type": "string"
+    },
+    "expiresAt": {
+      "title": "Expiresat",
+      "type": "string"
+    },
+    "plaintextNotice": {
+      "default": false,
+      "description": "true in E2EE mode: preview traffic is not end-to-end encrypted",
+      "title": "Plaintextnotice",
+      "type": "boolean"
+    },
+    "port": {
+      "maximum": 65535,
+      "minimum": 1,
+      "title": "Port",
+      "type": "integer"
+    },
+    "previewId": {
+      "minLength": 1,
+      "title": "Previewid",
+      "type": "string"
+    },
+    "sessionId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sessionid"
+    },
+    "slug": {
+      "minLength": 1,
+      "title": "Slug",
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "opening",
+        "open",
+        "closed"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Url"
+    },
+    "visibility": {
+      "enum": [
+        "private",
+        "link"
+      ],
+      "title": "Visibility",
+      "type": "string"
+    }
+  },
+  "required": [
+    "previewId",
+    "slug",
+    "deviceId",
+    "sessionId",
+    "port",
+    "visibility",
+    "state",
+    "closeReason",
+    "url",
+    "expiresAt",
+    "plaintextNotice"
+  ],
+  "title": "PreviewView",
+  "type": "object",
+  "x-contract": "preview",
+  "x-direction": "egress",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "serialization"
+}

@@ -1,0 +1,28 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:session-watch-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``Sessions/watch``: opening the stream subscribes, cancelling it unsubscribes.",
+  "properties": {
+    "afterSeq": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Afterseq",
+      "type": "integer"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId",
+    "afterSeq"
+  ],
+  "title": "SessionWatchRequest",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}
