@@ -4,6 +4,8 @@ import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
 import com.agentsanywhere.app.api.ApiException
+import com.agentsanywhere.app.api.e2ee.DeferredStartSocket
+import com.agentsanywhere.app.api.e2ee.E2eeContentGate
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import com.termux.terminal.KeyHandler
@@ -369,54 +371,61 @@ class RemoteTerminalController(
 
     private fun openSocket(url: String) {
         diag("ws connecting terminal=$terminalId fromSeq=${url.substringAfter("fromSeq=", "0").substringBefore("&")}")
-        socket = http.newWebSocket(
-            Request.Builder().url(url).build(),
-            object : WebSocketListener() {
-                override fun onOpen(webSocket: WebSocket, response: Response) {
-                    if (socket !== webSocket || manuallyClosed) {
-                        webSocket.close(1000, "stale")
-                        return
-                    }
-                    diag("ws open terminal=$terminalId")
-                    sendRemoteResizeNow(lastCols, lastRows, force = true, reason = "ws-open")
-                    flushPendingInput()
-                    confirmOpenIfNoStreamFrame(webSocket)
+        val listener = object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (socket !== webSocket || manuallyClosed) {
+                    webSocket.close(1000, "stale")
+                    return
                 }
+                diag("ws open terminal=$terminalId")
+                sendRemoteResizeNow(lastCols, lastRows, force = true, reason = "ws-open")
+                flushPendingInput()
+                confirmOpenIfNoStreamFrame(webSocket)
+            }
 
-                override fun onMessage(webSocket: WebSocket, text: String) {
-                    if (socket !== webSocket || manuallyClosed) return
-                    handleFrame(text)
-                }
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (socket !== webSocket || manuallyClosed) return
+                handleFrame(text)
+            }
 
-                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                    diag("ws closed code=$code reason=$reason manual=$manuallyClosed terminal=$terminalId")
-                    if (socket !== webSocket) return
-                    socket = null
-                    if (isUnauthorizedTerminalConnection(closeCode = code)) {
-                        manuallyClosed = true
-                        streamAuthorizationToken?.let(terminalController::notifyUnauthorized)
-                        return
-                    }
-                    if (!manuallyClosed) {
-                        scheduleReconnect()
-                    }
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                diag("ws closed code=$code reason=$reason manual=$manuallyClosed terminal=$terminalId")
+                if (socket !== webSocket) return
+                socket = null
+                if (isUnauthorizedTerminalConnection(closeCode = code)) {
+                    manuallyClosed = true
+                    streamAuthorizationToken?.let(terminalController::notifyUnauthorized)
+                    return
                 }
+                if (!manuallyClosed) {
+                    scheduleReconnect()
+                }
+            }
 
-                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    diag("ws failure ${t::class.java.simpleName}: ${t.message} manual=$manuallyClosed terminal=$terminalId")
-                    if (socket !== webSocket) return
-                    socket = null
-                    if (isUnauthorizedTerminalConnection(httpStatusCode = response?.code)) {
-                        manuallyClosed = true
-                        streamAuthorizationToken?.let(terminalController::notifyUnauthorized)
-                        return
-                    }
-                    if (!manuallyClosed) {
-                        scheduleReconnect()
-                    }
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                diag("ws failure ${t::class.java.simpleName}: ${t.message} manual=$manuallyClosed terminal=$terminalId")
+                if (socket !== webSocket) return
+                socket = null
+                if (isUnauthorizedTerminalConnection(httpStatusCode = response?.code)) {
+                    manuallyClosed = true
+                    streamAuthorizationToken?.let(terminalController::notifyUnauthorized)
+                    return
                 }
-            },
-        )
+                if (!manuallyClosed) {
+                    scheduleReconnect()
+                }
+            }
+        }
+        // E2EE: an encrypted device's terminal stream goes through its secure channel (never the plaintext WS).
+        val secure = try {
+            E2eeContentGate.installed?.terminalSocket(url, listener)
+        } catch (error: ApiException) {
+            manuallyClosed = true
+            state.value = RemoteTerminalState(status = RemoteTerminalStatus.Error, message = error.message)
+            return
+        }
+        socket = secure ?: http.newWebSocket(Request.Builder().url(url).build(), listener)
+        (secure as? DeferredStartSocket)?.start()
     }
 
     private fun reconnectExistingIfNeeded(force: Boolean = false) {

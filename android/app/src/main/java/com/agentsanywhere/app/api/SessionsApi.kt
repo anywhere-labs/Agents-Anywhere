@@ -580,6 +580,17 @@ class SessionsApi(
         ).optJSONArray("attachments").toObjectList { toRemoteUploadedAttachment() }
     }
 
+    /** E2EE: this device's content goes through its secure channel; throws when it must be paired first. */
+    fun isEncryptedDevice(serverUrl: String, authorizationToken: String, deviceId: String): Boolean =
+        client.gate?.isEncryptedDevice(serverUrl, authorizationToken, deviceId) ?: false
+
+    /** E2EE: a localized refusal for [code]. */
+    fun e2eeRefusal(code: String): ApiException = client.gate?.refusal(code) ?: ApiException(code, 409, errorCode = code)
+
+    /** E2EE: this session's content goes through its device's channel (its attachments cannot be opened by URL). */
+    fun isEncryptedSession(serverUrl: String, authorizationToken: String, sessionId: String): Boolean =
+        client.gate?.isEncryptedSession(serverUrl, authorizationToken, sessionId) ?: false
+
     fun attachmentOpenUrl(
         serverUrl: String,
         sessionId: String,

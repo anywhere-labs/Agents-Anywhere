@@ -147,6 +147,12 @@ fun AgentsAnywhereApp(
                 SessionsApi(apiClient).getSessionMeta(serverUrl, token.orEmpty(), sessionId).session.connectorId
             },
             messages = { code -> context.getString(e2eeErrorMessageRes(code)) },
+            sealedUploader = { serverUrl, token, path, files, headers ->
+                apiClient.postMultipart(serverUrl, path, files, token, headers)
+            },
+            plainPoster = { serverUrl, token, path, body ->
+                apiClient.postJson(serverUrl, path, body, token, readTimeoutSeconds = 75L)
+            },
         ).also { E2eeContentGate.installed = it }
     }
     val announcementsApi = remember(apiClient) { AnnouncementsApi(apiClient) }
@@ -303,6 +309,8 @@ fun AgentsAnywhereApp(
                 com.agentsanywhere.app.feature.sessiondetail.SessionDiskStore.scopeFor(signedOutServer, signedOutUser),
             )
         }
+        // E2EE: forget which session belongs to which device and the attachment keys; close every channel.
+        e2eeRouter.resetForLogout()
         appUpdateViewModel.syncSession(false)
         remoteTerminalPool.disposeLocal()
         sessionsState = SessionsState()

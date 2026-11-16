@@ -197,17 +197,20 @@ class E2eeContentRoutingTest {
     }
 
     @Test
-    fun unsupportedContentIsRefusedForEncryptedDevices() {
+    fun encryptedDevicesNeverFallBackToPlaintextTransfers() {
         pairDevice()
+        // This router has no sealed uploader: the attachment is refused rather than uploaded in plaintext.
         expectRefused(E2eeClientErrorCodes.ATTACHMENTS_UNSUPPORTED) {
             SessionsApi(apiClient).uploadSessionAttachments(serverUrl, "token", "sess_paired", listOf(UploadFilePart("a.txt", "text/plain", ByteArray(3))))
         }
+        // The normal-mode transfer (`POST fs/read`) would pass the Server in plaintext.
         expectRefused(E2eeClientErrorCodes.FILE_TRANSFER_UNSUPPORTED) {
-            FilesApi(apiClient).prepareFile(serverUrl, "token", "dev_paired", root = "r", path = "a.bin")
+            apiClient.postJson(serverUrl, "/connectors/dev_paired/fs/read?root=r", JSONObject().put("path", "a.bin"), "token")
         }
-        expectRefused(E2eeClientErrorCodes.TERMINAL_UNSUPPORTED) {
-            TerminalApi(apiClient).listTerminals(serverUrl, "token", "dev_paired")
-        }
+        // Terminal management goes through the channel.
+        // (The test device echoes instead of listing; only the route matters here.)
+        runCatching { TerminalApi(apiClient).listTerminals(serverUrl, "token", "dev_paired") }
+        assertEquals("/api/v2/connectors/dev_paired/terminals-v2", device.requests.last().getString("path"))
         assertEquals(0, server.requestCount)
     }
 

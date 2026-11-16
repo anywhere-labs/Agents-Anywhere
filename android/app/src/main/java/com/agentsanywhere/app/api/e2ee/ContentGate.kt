@@ -1,6 +1,9 @@
 package com.agentsanywhere.app.api.e2ee
 
 import com.agentsanywhere.app.api.ApiException
+import com.agentsanywhere.app.api.UploadFilePart
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import com.agentsanywhere.app.api.apiPath
 import org.json.JSONObject
 import java.net.URLDecoder
@@ -16,10 +19,10 @@ enum class DeviceContent {
     /** `fs/list`、`fs/readText`：可以经通道。 */
     Files,
 
-    /** `fs/read`：要经 Server 中转明文文件，加密模式下还不支持。 */
+    /** `fs/read`：普通模式经 Server 中转明文文件；加密设备改用 [SecureFileReader] 分块读取。 */
     FileTransfer,
 
-    /** `terminals-v2`：终端流没有经通道的形式（`TunnelSubscribe.stream` 只有 session），加密模式下还不支持。 */
+    /** `terminals-v2`：创建、列表、写入、调整大小、关闭经通道；终端流用 `stream: "terminal"` 订阅。 */
     Terminal,
 }
 
@@ -71,8 +74,68 @@ data class ContentRequest(
 interface ContentGate {
     fun intercept(request: ContentRequest): JSONObject?
 
-    /** 附件上传：返回 false 照常上传；不能明文上传时抛 [ApiException]。 */
-    fun checkUpload(request: ContentRequest): Boolean
+    /**
+     * 附件上传：返回 null 照常明文上传；加密设备时加密后上传并返回 Server 的响应
+     * （`size`、`sha256` 换成明文的值）；不能明文上传时抛 [ApiException]。
+     */
+    fun upload(request: ContentRequest, files: List<UploadFilePart>): JSONObject?
+
+    /** 这台设备的内容是否经通道；需要配对（不能走明文）时抛 [ApiException]。 */
+    fun isEncryptedDevice(serverUrl: String, token: String?, deviceId: String): Boolean
+
+    /** 这个会话的内容是否经通道；需要配对时抛 [ApiException]。 */
+    fun isEncryptedSession(serverUrl: String, token: String?, sessionId: String): Boolean
+
+    /** 加密设备的分块文件读取；普通设备返回 null。 */
+    fun secureFiles(serverUrl: String, token: String?, deviceId: String): SecureFileReader?
+
+    /**
+     * 终端流：加密设备返回一个经通道的 [WebSocket]（订阅 `stream: "terminal"`），普通设备返回 null。
+     * `url` 是普通模式的 `…/terminals-v2/{id}/stream?fromSeq=…&token=…`。
+     */
+    fun terminalSocket(url: String, listener: WebSocketListener): WebSocket?
+
+    /** 一个加密模式错误码对应的、已本地化的拒绝。 */
+    fun refusal(code: String): ApiException
+}
+
+/** `GET /api/v2/connectors/{dev}/fs/read?path&offset&length` 经通道，一次一块。 */
+fun interface SecureFileReader {
+    fun read(root: String, path: String, offset: Long, length: Int): TunnelFileChunk
+}
+
+/** `TunnelFileChunk {encoding: "base64", data, offset, size, eof}`；`data` 是标准 base64。 */
+data class TunnelFileChunk(val data: ByteArray, val offset: Long, val size: Long, val eof: Boolean) {
+    companion object {
+        /** 一块最多 8 MiB（`FILE_CHUNK_MAX_BYTES`）。 */
+        const val MAX_BYTES = 8 * 1024 * 1024
+
+        fun parse(json: JSONObject): TunnelFileChunk {
+            if (json.optString("encoding", "base64") != "base64") throw ApiException("Unsupported file chunk encoding.")
+            val data = try {
+                java.util.Base64.getDecoder().decode(json.optString("data"))
+            } catch (error: IllegalArgumentException) {
+                throw ApiException("The device returned an unreadable file chunk.", cause = error)
+            }
+            val offset = json.optLong("offset", -1)
+            val size = json.optLong("size", -1)
+            if (offset < 0 || size < 0 || !json.has("eof") || data.size > MAX_BYTES) {
+                throw ApiException("The device returned an unreadable file chunk.")
+            }
+            return TunnelFileChunk(data, offset, size, json.getBoolean("eof"))
+        }
+    }
+}
+
+/** 返回后由调用方在保存好引用之后再启动的 socket（避免回调早于调用方记下它）。 */
+interface DeferredStartSocket {
+    fun start()
+}
+
+/** 加密上传的请求头（`x-aa-sealed: segments-v1`）。 */
+object SealedUpload {
+    const val HEADER = "x-aa-sealed"
+    const val VALUE = "segments-v1"
 }
 
 /** 进程内安装的闸门；App 启动时装上。没装时一切照常（未登录、测试）。 */
@@ -101,6 +164,11 @@ object SessionDeviceDirectory {
 object E2eeClientErrorCodes {
     const val TIMEOUT = "e2ee_timeout"
     const val ATTACHMENTS_UNSUPPORTED = "e2ee_attachments_unsupported"
-    const val TERMINAL_UNSUPPORTED = "e2ee_terminal_unsupported"
     const val FILE_TRANSFER_UNSUPPORTED = "e2ee_file_transfer_unsupported"
+
+    /** 加密设备上用 `/goal`、`/plan`、附件或配置向导新建会话（第一条消息无法先经通道发出）。 */
+    const val CREATE_UNSUPPORTED = "e2ee_create_unsupported"
+
+    /** 会话已经建好，但第一条消息经通道没有发出去。 */
+    const val FIRST_MESSAGE_FAILED = "e2ee_first_message_failed"
 }

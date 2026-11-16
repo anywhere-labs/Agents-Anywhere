@@ -30,6 +30,13 @@ class TestDevice(
     var tamperToClient: (ChannelItem) -> ChannelItem? = { it }
 
     val endsFromClient = mutableListOf<String>()
+
+    /** 设备上的文件（`fs/read` 读的内容）。 */
+    val files = mutableMapOf<String, ByteArray>()
+    var fileChunkLimit = TunnelFileChunk.MAX_BYTES
+    val fileReads = mutableListOf<Map<String, String>>()
+    val subscriptions = mutableListOf<JSONObject>()
+    var terminalOutput: ByteArray = "hello".toByteArray()
     val channels = ConcurrentHashMap<String, DeviceSide>()
 
     fun pairingPayload(devicePub: ByteArray = identity.publicKey, expiresAt: String = "2999-01-01T00:00:00Z") = PairingPayload(
@@ -173,22 +180,79 @@ class TestDevice(
                 "request" -> {
                     requests += message
                     val path = message.getString("path")
-                    val body: Any = when (path) {
-                        "/e2ee/v1/directory-key" -> JSONObject().put("deviceId", deviceId).put("keyId", directoryKey.keyId)
+                    val body: Any = when {
+                        path == "/e2ee/v1/directory-key" -> JSONObject().put("deviceId", deviceId).put("keyId", directoryKey.keyId)
                             .put("epoch", directoryKey.epoch).put("key", directoryKey.key)
+                        path.startsWith("/api/v2/connectors/$deviceId/fs/read?") && message.getString("method") == "GET" -> fileChunk(path)
+                        message.getString("method") == "GET" && path.substringAfterLast('/') in attachments &&
+                            path.contains("/attachments/") -> attachment(path.substringAfterLast('/'))
                         else -> JSONObject().put("method", message.getString("method")).put("path", path).put("echo", message.opt("body"))
                     }
                     val status = if (path == "/api/v2/missing") 404 else 200
                     transport!!.sendMessage(JSONObject().put("kind", "response").put("id", message.getString("id")).put("status", status).put("body", body))
                 }
-                "subscribe" -> transport!!.sendMessage(
-                    JSONObject().put("kind", "event").put("sub", message.getString("id"))
-                        .put("event", JSONObject().put("type", "session.event").put("sessionId", message.getString("sessionId"))),
-                )
+                "subscribe" -> {
+                    subscriptions += message
+                    val event = if (message.optString("stream") == "terminal") {
+                        // One message of the normal-mode terminals-v2 stream WebSocket.
+                        JSONObject().put("type", "output").put("seq", 1)
+                            .put("data", java.util.Base64.getEncoder().encodeToString(terminalOutput))
+                    } else {
+                        JSONObject().put("type", "session.event").put("sessionId", message.getString("sessionId"))
+                    }
+                    transport!!.sendMessage(JSONObject().put("kind", "event").put("sub", message.getString("id")).put("event", event))
+                }
                 "unsubscribe" -> Unit
                 "close" -> closed = true
             }
         }
+    }
+
+    /** 会话附件（`GET /sessions/{id}/attachments/{fileId}` 的回答，与普通模式同一形状）。 */
+    val attachments = mutableMapOf<String, ByteArray>()
+
+    private fun attachment(fileId: String): JSONObject {
+        val bytes = attachments.getValue(fileId)
+        return JSONObject()
+            .put("fileId", fileId)
+            .put("name", "$fileId.png")
+            .put("size", bytes.size)
+            .put("sha256", E2eeFormats.hex(com.agentsanywhere.app.api.e2ee.noise.NoiseCrypto.sha256(bytes)))
+            .put("contentBase64", java.util.Base64.getEncoder().encodeToString(bytes))
+    }
+
+    /** `fs/read?path&offset&length` → `TunnelFileChunk`；每块最多 [fileChunkLimit] 字节。 */
+    private fun fileChunk(path: String): JSONObject {
+        val query = path.substringAfter('?').split('&').associate {
+            it.substringBefore('=') to java.net.URLDecoder.decode(it.substringAfter('='), "UTF-8")
+        }
+        val bytes = files.getValue(query.getValue("path"))
+        val offset = query.getValue("offset").toInt()
+        val length = minOf(query.getValue("length").toInt(), fileChunkLimit, TunnelFileChunk.MAX_BYTES)
+        val end = minOf(bytes.size, offset + length)
+        fileReads += query
+        return JSONObject()
+            .put("encoding", "base64")
+            .put("data", java.util.Base64.getEncoder().encodeToString(bytes.copyOfRange(offset, end)))
+            .put("offset", offset)
+            .put("size", bytes.size)
+            .put("eof", end >= bytes.size)
+    }
+
+    /**
+     * 设备这边取回加密附件：按 64 KiB + 16 切段，用请求体里的 `sealedAttachmentKeys` 解密，
+     * 核对 `size` 与 `sha256`（也是分段 AD 的 objectId）。
+     */
+    fun openSealedAttachment(ciphertext: ByteArray, sealedKey: JSONObject): ByteArray {
+        val step = E2eeFormats.SEALED_SEGMENT_BYTES + 16
+        val segments = (0 until maxOf(1, (ciphertext.size + step - 1) / step)).map { index ->
+            ciphertext.copyOfRange(index * step, minOf(ciphertext.size, (index + 1) * step))
+        }
+        val sha256 = sealedKey.getString("sha256")
+        val plaintext = E2eeFormats.openSegments(SealedPurpose.Attachment, sha256, E2eeFormats.fromB64url(sealedKey.getString("key")), segments)
+        check(plaintext.size.toLong() == sealedKey.getLong("size")) { "size mismatch" }
+        check(E2eeFormats.hex(com.agentsanywhere.app.api.e2ee.noise.NoiseCrypto.sha256(plaintext)) == sha256) { "sha256 mismatch" }
+        return plaintext
     }
 
     private class NotPaired : Exception()

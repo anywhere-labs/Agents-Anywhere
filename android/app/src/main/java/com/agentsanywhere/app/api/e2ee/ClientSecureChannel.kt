@@ -167,17 +167,22 @@ class ClientSecureChannel private constructor(
     }
 
     /** 相当于普通模式下打开会话 WS；返回订阅 id，用于 [unsubscribe]。 */
-    fun subscribe(sessionId: String, afterCursor: String?, onEvent: (JSONObject) -> Unit): String {
+    fun subscribe(sessionId: String, afterCursor: String?, onEvent: (JSONObject) -> Unit): String =
+        subscribeStream(JSONObject().put("stream", "session").put("sessionId", sessionId), afterCursor, onEvent)
+
+    /** 相当于普通模式下打开 `terminals-v2/{terminalId}/stream`：每个事件就是那条 WS 的一条消息。 */
+    fun subscribeTerminal(terminalId: String, afterCursor: String?, onEvent: (JSONObject) -> Unit): String =
+        subscribeStream(JSONObject().put("stream", "terminal").put("terminalId", terminalId), afterCursor, onEvent)
+
+    private fun subscribeStream(target: JSONObject, afterCursor: String?, onEvent: (JSONObject) -> Unit): String {
         val current = requireOpen()
         val id = "s${nextId.getAndIncrement()}"
         subscriptions[id] = onEvent
         try {
             current.sendMessage(
-                JSONObject()
+                target
                     .put("kind", "subscribe")
                     .put("id", id)
-                    .put("stream", "session")
-                    .put("sessionId", sessionId)
                     .put("afterCursor", afterCursor ?: JSONObject.NULL),
             )
         } catch (error: Throwable) {

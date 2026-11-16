@@ -27,6 +27,8 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -500,8 +502,8 @@ private fun rememberAttachmentImageRequest(
     attachment: TimelineAttachment,
 ): ImageRequest? {
     val context = LocalContext.current
-    val image = remember(sessionId, attachment.fileId) {
-        controller.attachmentImageRequest(sessionId, attachment).getOrNull()
+    val image by produceState<AttachmentImageRequest?>(null, sessionId, attachment.fileId) {
+        value = controller.loadAttachmentImageRequest(sessionId, attachment, context.cacheDir).getOrNull()
     }
     return remember(context, image) {
         image?.toCoilRequest(context)
@@ -510,7 +512,7 @@ private fun rememberAttachmentImageRequest(
 
 private fun AttachmentImageRequest.toCoilRequest(context: Context): ImageRequest {
     val headers = NetworkHeaders.Builder()
-        .set("Authorization", "Bearer $authorizationToken")
+        .apply { if (authorizationToken.isNotBlank()) set("Authorization", "Bearer $authorizationToken") }
         .build()
     return ImageRequest.Builder(context)
         .data(url)

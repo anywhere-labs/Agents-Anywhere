@@ -792,6 +792,20 @@ class SessionDetailController(
         }
     }
 
+    /** Like [attachmentImageRequest], but an encrypted session's image is first fetched through the channel. */
+    suspend fun loadAttachmentImageRequest(
+        sessionId: String,
+        attachment: TimelineAttachment,
+        cacheDir: java.io.File,
+    ): Result<AttachmentImageRequest> {
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val auth = authSession()
+                attachmentTransfer.imageRequestLoading(auth.serverUrl, auth.accessToken, sessionId, attachment, cacheDir)
+            }
+        }
+    }
+
     suspend fun downloadAttachment(
         sessionId: String,
         attachment: TimelineAttachment,

@@ -33,6 +33,28 @@ internal class SessionAttachmentTransfer(
         cacheKey = "attachment:$sessionId:${attachment.fileId}",
     )
 
+    /**
+     * Image source for an attachment. An encrypted session's attachment is fetched through the device's
+     * channel and saved in the app's private cache first; its Server URL would only serve ciphertext.
+     */
+    fun imageRequestLoading(
+        serverUrl: String,
+        accessToken: String,
+        sessionId: String,
+        attachment: TimelineAttachment,
+        cacheDir: File,
+    ): AttachmentImageRequest {
+        if (!sessionsApi.isEncryptedSession(serverUrl, accessToken, sessionId)) {
+            return imageRequest(serverUrl, accessToken, sessionId, attachment)
+        }
+        val file = cacheDownloadedAttachment(cacheDir, download(serverUrl, accessToken, sessionId, attachment))
+        return AttachmentImageRequest(
+            url = file.toURI().toString(),
+            authorizationToken = "",
+            cacheKey = "attachment:$sessionId:${attachment.fileId}",
+        )
+    }
+
     fun download(
         serverUrl: String,
         accessToken: String,

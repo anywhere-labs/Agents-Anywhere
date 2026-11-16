@@ -162,6 +162,20 @@ class E2eeClient(
         return { channel.unsubscribe(id) }
     }
 
+    /** 经通道订阅设备终端的输出流（`stream: "terminal"`）；返回取消订阅的函数。 */
+    suspend fun subscribeTerminal(
+        deviceId: String,
+        terminalId: String,
+        afterCursor: String?,
+        onEvent: (JSONObject) -> Unit,
+        onClosed: (ChannelClosedException) -> Unit = {},
+    ): () -> Unit {
+        val channel = timed { channel(deviceId) }
+        channel.onClose(onClosed)
+        val id = channel.subscribeTerminal(terminalId, afterCursor, onEvent)
+        return { channel.unsubscribe(id) }
+    }
+
     /**
      * 加密模式下发命令：先 `POST /api/v3/e2ee/commands`（输入摘要用当前列表密钥），
      * Server 说重复时返回 null、不再发；否则经通道发出 `bodyJson` 原文。
