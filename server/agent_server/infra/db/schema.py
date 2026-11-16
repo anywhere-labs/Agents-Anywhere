@@ -876,3 +876,21 @@ device_commands = Table(
     ),
     Index("idx_device_commands_device_state", "device_id", "state"),
 )
+
+# One login (a device or browser) per row: the refresh token chain and whether it was revoked.
+# Access tokens carry the family id; ``current_user_id`` rejects tokens of revoked families.
+user_token_families = Table(
+    "user_token_families",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("client", Text, nullable=False, server_default=""),
+    Column("refresh_hash", Text),
+    Column("previous_refresh_hash", Text),
+    Column("refresh_expires_at", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("last_used_at", Text, nullable=False),
+    Column("revoked_at", Text),
+    Column("revoked_reason", Text),
+    Index("idx_user_token_families_user", "user_id"),
+)

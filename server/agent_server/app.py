@@ -97,6 +97,7 @@ from agent_server.services.shell_tasks import ShellTaskManager
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 from agent_server.services.usage_events import UsageRecorder
 from agent_server.services.usage_maintenance import UsageMaintenanceLoop
+from agent_server.services.user_tokens import UserTokenService
 from agent_server.services.workspace import WorkspaceServiceError
 
 CONNECTOR_PRESENCE_SWEEP_SECONDS = 5
@@ -432,6 +433,7 @@ def create_app(
     )
     app.state.ws_tickets = ClientWsTicketManager(app.state.redis)
     app.state.pairing = PairingStore(app.state.redis)
+    app.state.user_tokens = UserTokenService(app.state.store)
     app.state.setup_token = SetupToken()
     app.state.started_at_iso = utc_now()
     app.state.started_at_monotonic = time.monotonic()

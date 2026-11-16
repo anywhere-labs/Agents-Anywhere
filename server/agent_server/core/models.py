@@ -250,7 +250,17 @@ class AuthResponse(BaseModel):
     role: UserRoleName
     accessToken: str
     tokenType: str = "bearer"
+    # When the access token expires; refresh before then with ``refreshToken``.
+    expiresAt: str | None = None
+    # One-time: ``POST /auth/refresh`` returns the next one. None for tokens issued
+    # without a login (token family) of their own.
+    refreshToken: str | None = None
+    refreshExpiresAt: str | None = None
     serverTime: str
+
+
+class AuthRefreshRequest(BaseModel):
+    refreshToken: str = Field(min_length=1, max_length=512)
 
 
 class AuthMeResponse(BaseModel):

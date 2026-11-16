@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import Depends, Header, HTTPException
 from starlette.requests import HTTPConnection
 
-from agent_server.core.auth import verify_user_access_token
+from agent_server.core.auth import verify_user_access_claims
 from agent_server.core.models import UserView
 from agent_server.infra.connector_gateway import ConnectorGateway
 from agent_server.infra.connector_rpc import ConnectorRpcManager
@@ -273,29 +273,44 @@ def get_session_runtime_state_cache(
     return conn.app.state.session_runtime_state_cache
 
 
-def user_id_from_authorization(authorization: str | None) -> str:
-    """Return the user id carried by a bearer token header, without DB lookup."""
+async def authenticate_access_token(app: Any, token: str) -> tuple[str, str | None] | None:
+    """``(user_id, family_id)`` for a valid token of an active login (``services.user_tokens``)."""
+
+    tokens = getattr(app.state, "user_tokens", None)
+    if tokens is None:
+        claims = verify_user_access_claims(token)
+        return claims
+    return await tokens.authenticate(token)
+
+
+async def current_user_claims(
+    conn: HTTPConnection,
+    authorization: str | None = Header(None, alias="Authorization"),
+) -> tuple[str, str | None]:
+    """``(user_id, family_id)`` of the bearer token; 401 when it is invalid or its login was revoked."""
+
     prefix = "Bearer "
     if authorization is None or not authorization.startswith(prefix):
         raise HTTPException(status_code=401, detail="missing user access token")
-    user_id = verify_user_access_token(authorization[len(prefix) :])
-    if user_id is None:
+    claims = await authenticate_access_token(conn.app, authorization[len(prefix) :])
+    if claims is None:
         raise HTTPException(status_code=401, detail="invalid user access token")
-    return user_id
+    return claims
 
 
 async def current_user_id(
     conn: HTTPConnection,
     authorization: str | None = Header(None, alias="Authorization"),
 ) -> str:
-    """Lightweight: returns user id from the bearer token without DB lookup.
+    """The caller's user id.
 
-    Use this for endpoints that only need to know who the caller is. For
-    endpoints that need role / disabled, use current_user instead. Every
-    authenticated call also counts as platform presence for usage statistics;
-    the recorder throttles that per user so it stays off the hot path.
+    The token's signature is checked, and the account and login (token family)
+    must still be active; that status is cached per worker for a few seconds.
+    For endpoints that need role, use current_user. Every authenticated call
+    also counts as platform presence for usage statistics; the recorder
+    throttles that per user so it stays off the hot path.
     """
-    user_id = user_id_from_authorization(authorization)
+    user_id, _family = await current_user_claims(conn, authorization)
     recorder = getattr(conn.app.state, "usage_recorder", None)
     if recorder is not None:
         await recorder.touch_user(user_id)

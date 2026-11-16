@@ -16,7 +16,7 @@ import urllib.parse
 from fastapi import WebSocket
 from loguru import logger
 
-from agent_server.core.auth import verify_user_access_token
+from agent_server.deps import authenticate_access_token
 
 
 async def websocket_user_id(websocket: WebSocket, *, ticket_scope: str) -> str | None:
@@ -32,4 +32,5 @@ async def websocket_user_id(websocket: WebSocket, *, ticket_scope: str) -> str |
         return None
     if websocket.query_params.get("token"):
         logger.info("terminal stream authenticated with a token in the URL; clients should send a ticket")
-    return verify_user_access_token(urllib.parse.unquote(token))
+    claims = await authenticate_access_token(websocket.app, urllib.parse.unquote(token))
+    return claims[0] if claims is not None else None

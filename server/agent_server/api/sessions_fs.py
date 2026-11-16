@@ -25,7 +25,7 @@ from fastapi.responses import (
 
 from agent_server.api.device_session_reads import device_read_http_error
 from agent_server.api.device_transfers import get_device_blobs
-from agent_server.core.auth import verify_signed_token, verify_user_access_token
+from agent_server.core.auth import verify_signed_token
 from agent_server.core.models import (
     FsDownloadResponse,
     UploadedAttachment,
@@ -33,6 +33,7 @@ from agent_server.core.models import (
 )
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
+    authenticate_access_token,
     current_user_id,
     get_attachment_service,
     get_device_reads,
@@ -98,7 +99,7 @@ async def attachment_open(
     reads: DeviceReadService = Depends(get_device_reads),
     blobs: DeviceBlobService = Depends(get_device_blobs),
 ) -> Response:
-    user_id = _user_id_from_header(authorization=authorization, token=token)
+    user_id = await _user_id_from_header(request.app, authorization=authorization, token=token)
     try:
         path, metadata = await attachments.local_user_file(
             session_id=session_id,
@@ -178,7 +179,7 @@ async def attachment_thumbnail(
     output stays immutably cacheable.
     """
     try:
-        user_id = _user_id_from_header(authorization=authorization, token=token)
+        user_id = await _user_id_from_header(request.app, authorization=authorization, token=token)
         path, metadata = await attachments.local_user_file(
             session_id=session_id,
             file_id=file_id,
@@ -424,18 +425,19 @@ def _attachment_file_response(
     )
 
 
-def _user_id_from_header(
+async def _user_id_from_header(
+    app: Any,
     *,
     authorization: str | None,
     token: str | None = None,
 ) -> str:
     prefix = "Bearer "
     if authorization and authorization.startswith(prefix):
-        user_id = verify_user_access_token(authorization[len(prefix) :])
-        if user_id is not None:
-            return user_id
+        claims = await authenticate_access_token(app, authorization[len(prefix) :])
+        if claims is not None:
+            return claims[0]
     if token:
-        user_id = verify_user_access_token(token)
-        if user_id is not None:
-            return user_id
+        claims = await authenticate_access_token(app, token)
+        if claims is not None:
+            return claims[0]
     raise HTTPException(status_code=401, detail="invalid user access token")
