@@ -6,7 +6,7 @@
 
 ### 升级须知
 
-- 升级 Server 后，还在用旧版 Agents Anywhere（2.x 的 Connector、Desktop 或 DSH 插件）的设备只显示会话列表和实时状态：打开会话、发消息、规划、目标、排队、上传附件和创建分享都会提示「请在设备上升级 Agents Anywhere」，这些设备推送的会话内容不再保存；改名、置顶、归档和终端不受影响。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
+- 升级 Server 后，还在用旧版 Agents Anywhere（2.x 的 Connector、Desktop 或 DSH 插件）的设备只显示会话列表和实时状态：打开会话、发消息、规划、目标、排队、上传附件和创建分享都会提示「请在设备上升级 Agents Anywhere」，这些设备推送的会话内容不再保存；改名、置顶、归档和终端不受影响。（[#731](https://github.com/anywhere-labs/Agents-Anywhere/pull/731)）
 - Server 需要执行 `v2_59` 数据库迁移，新增登录记录表：此后退出登录、修改密码或停用账号，对应的登录令牌几秒内在所有 Server 实例上失效（修改密码只保留当前这次登录）；升级前签发的令牌在到期前继续可用，账号停用后立即失效。（[#728](https://github.com/anywhere-labs/Agents-Anywhere/pull/728)）
 - Server 必须设置至少 32 个字符的随机 `AGENT_SERVER_SECRET`：未设置、过短或仍是文档里的示例值时拒绝启动（只有设了 `AGENT_SERVER_DEV_MODE=1` 的开发环境例外），Compose 也不再提供默认值；同时需要执行 `v2_58` 数据库迁移删除旧的配对码表，升级时正在进行的设备配对要重新开始。（[#723](https://github.com/anywhere-labs/Agents-Anywhere/pull/723)）
 - Server 需要执行 `v2_57` 数据库迁移：只新增 v3 设备连接用到的会话目录字段和命令回执表，不改写已有数据。（[#685](https://github.com/anywhere-labs/Agents-Anywhere/pull/685)）
