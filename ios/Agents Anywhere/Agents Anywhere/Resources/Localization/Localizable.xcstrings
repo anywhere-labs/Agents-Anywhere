@@ -25227,6 +25227,57 @@
         }
       }
     },
+    "这台设备要求端到端加密，已拒绝未加密的连接。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This device requires end-to-end encryption; the unencrypted connection was refused."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这台设备要求端到端加密，已拒绝未加密的连接。"
+          }
+        }
+      }
+    },
+    "加密连接没有建立：设备可能重装过或身份已变化，请重新配对。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The encrypted connection could not be set up. The device may have been reinstalled; pair with it again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加密连接没有建立：设备可能重装过或身份已变化，请重新配对。"
+          }
+        }
+      }
+    },
+    "加密通道出现错误，已断开，请重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The encrypted channel failed and was closed. Try again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加密通道出现错误，已断开，请重试。"
+          }
+        }
+      }
+    },
     "设备离线，上线后查看。": {
       "comment": "Mirrors Web session.historyOfflineEmpty: empty timeline while the device is offline (protocol 1.2).",
       "extractionState": "manual",
