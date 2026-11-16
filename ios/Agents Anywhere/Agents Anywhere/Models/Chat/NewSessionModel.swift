@@ -410,8 +410,6 @@ final class NewSessionModel {
         guard canCreate, let runtime else { return nil }
         draft.text = text
         guard draft.canAttemptSend else { return nil }
-        // Prepared-workspace creation does not carry a planning intent yet; refuse instead of silently dropping it.
-        if usePlanning, preparedWorkflow != nil { error = String(localized: "该运行时需要先准备工作区，新会话暂不支持计划模式；请创建后再输入 /plan。"); return nil }
         let files = draft.attachments
         if let inputs = AgentForm.inputModalities(preparedWorkflow?.state.configuration, modelID: settings.modelID),
            !inputs.contains("image"), files.contains(where: { AgentForm.isModelImage($0.local.mediaType) }) {
@@ -471,7 +469,6 @@ final class NewSessionModel {
             error = String(localized: "Agent 配置已变化，请重新确认后发送。")
             return nil
         }
-        if usePlanning, preparedWorkflow != nil { error = String(localized: "该运行时需要先准备工作区，新会话暂不支持计划模式；请创建后再输入 /plan。"); return nil }
         var didSubmit = false
         do {
             guard isValid, !Task.isCancelled, projectID == target.2,
@@ -487,8 +484,11 @@ final class NewSessionModel {
                 guard let catalogRevision = preparedWorkflow.state.catalogRevision else { throw HTTPError.invalidResponse }
                 var body: [String: JSONValue] = ["preparationId": .string(preparedWorkflow.id), "createOperationId": .string(submission.pending.id),
                     "expectedRevision": .number(Double(preparedWorkflow.state.revision)), "catalogRevision": .number(Double(catalogRevision)),
-                    "clientMessageId": .string(submission.pending.id), "content": .string(text),
+                    "clientMessageId": .string(submission.pending.id), "content": .string(intent?.content ?? text),
                     "selections": .object(Dictionary(uniqueKeysWithValues: settings.selections.map { ($0.key.rawValue, .string($0.value)) }))]
+                if usePlanning {
+                    body["planningIntent"] = .object(["mode": .string("plan"), "operationId": .string(submission.pending.id)])
+                }
                 if !files.isEmpty {
                     body["attachments"] = .array(files.map { file in
                         let item = file.local

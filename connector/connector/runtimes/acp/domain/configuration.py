@@ -11,6 +11,12 @@ class ConfigurationSnapshot:
     options: tuple[dict[str, Any], ...] = ()
     revision: int = 0
 
+    def public_options(self) -> list[dict[str, Any]]:
+        return [
+            option for option in self.options
+            if not option.get("_meta", {}).get("aa", {}).get("planningControl")
+        ]
+
     def replace_options(self, options: list[dict]) -> ConfigurationSnapshot:
         seen = set()
         for item in options:

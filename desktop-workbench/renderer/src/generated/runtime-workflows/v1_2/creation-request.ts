@@ -78,6 +78,8 @@ export type Configuration = {
 export type Content = string
 export type Createoperationid = string
 export type Expectedrevision = number
+export type Mode = "plan"
+export type Operationid = string
 export type Preparationid = string
 export type Title = string | null
 
@@ -89,6 +91,7 @@ export interface BeginCreationRequest {
   content: Content
   createOperationId: Createoperationid
   expectedRevision: Expectedrevision
+  planningIntent?: PlanningCreationIntent | null
   preparationId: Preparationid
   selections: Selections
   title?: Title
@@ -101,6 +104,10 @@ export interface InlineAttachmentRef {
   sha256?: Sha256
   size?: Size
   [k: string]: unknown
+}
+export interface PlanningCreationIntent {
+  mode: Mode
+  operationId: Operationid
 }
 export interface Selections {
   [k: string]: string | null

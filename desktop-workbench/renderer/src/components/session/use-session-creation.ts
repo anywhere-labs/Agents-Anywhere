@@ -37,6 +37,7 @@ function rememberOperation(scope: string, id: string, remove = false) {
 /** Workspace-owned requests survive composer unmounts and never retry automatically. */
 export function useSessionCreation(options: Options) {
   const tCreation = useTranslations("dashboard.new")
+  const tRuntimeErrors = useTranslations("runtimeErrors")
   const latest = React.useRef(options)
   latest.current = options
   const [creations, setCreations] = React.useState<Record<string, SessionCreation>>({})
@@ -117,7 +118,9 @@ export function useSessionCreation(options: Options) {
         rememberOperation(latest.current.storageScope, id)
         let operation = await workflowApi.begin(token, { ...entry.draft.preparedWorkspace,
           createOperationId: id, clientMessageId: entry.draft.clientMessageId,
-          content: request.content, selections: request.selections ?? {}, ...(attachments.length ? { attachments } : {}), ...(request.title ? { title: request.title } : {}),
+          content: request.content, selections: request.selections ?? {},
+          ...(request.planningIntent ? { planningIntent: request.planningIntent } : {}),
+          ...(attachments.length ? { attachments } : {}), ...(request.title ? { title: request.title } : {}),
         })
         while (version === generation.current && userId === latest.current.userId) {
           setWorkflowCreations(current => ({ ...current, [id]: operation }))
@@ -125,7 +128,11 @@ export function useSessionCreation(options: Options) {
           if (["failed", "cancelled", "rejected", "outcome_unknown"].includes(operation.state.phase)) {
             workflowRefused = operation.state.messageAccepted === false
             if (workflowRefused) rememberOperation(latest.current.storageScope, id, true)
-            throw new Error(operation.state.failure?.message ?? tCreation("createFailed"))
+            const failure = operation.state.failure
+            const message = failure?.code && tRuntimeErrors.has(failure.code)
+              ? tRuntimeErrors(failure.code)
+              : failure?.message ?? tCreation("createFailed")
+            throw new Error(message)
           }
           await new Promise(resolve => window.setTimeout(resolve, 1000))
           operation = await workflowApi.get(token, "creation", operation.id)
@@ -158,7 +165,7 @@ export function useSessionCreation(options: Options) {
     } finally {
       if (version === generation.current) inFlight.current.delete(id)
     }
-  }, [publish, returnToEditor, tCreation])
+  }, [publish, returnToEditor, tCreation, tRuntimeErrors])
 
   const start = React.useCallback((draft: SessionCreationDraft, message: OptimisticSessionMessage, onBound: (id: string) => void) => {
     if (entries.current[draft.localSessionId]) return

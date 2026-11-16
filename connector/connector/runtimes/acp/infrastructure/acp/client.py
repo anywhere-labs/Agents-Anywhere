@@ -110,6 +110,7 @@ class AgentClient:
         self.turns: dict[str, Turn] = {}
         self.commands: dict[str, list] = {}
         self.configuration: dict[str, list] = {}
+        self.session_modes: dict[str, dict] = {}
 
     # Agent → AA
 
@@ -123,6 +124,13 @@ class AgentClient:
         if kind == "available_commands_update":
             self.commands[session_id] = value.get("availableCommands", [])
             self.declare("session.commands")
+        if kind == "current_mode_update" and self.uses_legacy_mode(session_id):
+            self.session_modes[session_id]["currentModeId"] = value.get("currentModeId")
+            await self.emit(session_id, {
+                "sessionUpdate": "config_option_update",
+                "configOptions": self.adapt(session_id, self.configuration.get(session_id, [])),
+            })
+            return
         if kind == "config_option_update":
             self.configuration[session_id] = value.get("configOptions", [])
             value = {**value, "configOptions": self.adapt(session_id, value.get("configOptions", []))}
@@ -158,11 +166,44 @@ class AgentClient:
         if capability_id not in declared:
             declared.append(capability_id)
 
+    def uses_legacy_mode(self, session_id: str) -> bool:
+        mode = self.dialect.planning_mode
+        return bool(
+            mode and mode.legacy and session_id in self.session_modes
+            and all(item.get("id") != mode.config_id for item in self.configuration.get(session_id, []))
+        )
+
     def adapt(self, session_id: str, options: list[dict]) -> list[dict]:
-        return self.dialect.adapt_configuration(session_id, standard_options(options))
+        adapted = self.dialect.adapt_configuration(session_id, standard_options(options))
+        mode = self.dialect.planning_mode
+        if mode is not None:
+            if self.uses_legacy_mode(session_id):
+                legacy = self.session_modes[session_id]
+                adapted = [*adapted, {
+                    "id": mode.config_id, "category": "mode", "type": "select", "name": "Mode",
+                    "currentValue": legacy.get("currentModeId"),
+                    "options": [
+                        {"value": item["id"], "name": item["name"]}
+                        for item in legacy.get("availableModes", [])
+                    ],
+                }]
+            return [
+                {
+                    **item,
+                    "_meta": {
+                        **(item.get("_meta") or {}),
+                        "aa": {**((item.get("_meta") or {}).get("aa") or {}), "planningControl": True},
+                    },
+                }
+                if item.get("id") == mode.config_id else item
+                for item in adapted
+            ]
+        return adapted
 
     def adapt_session(self, session_id: str, result: dict) -> dict:
         self.configuration[session_id] = result.get("configOptions", [])
+        if result.get("modes"):
+            self.session_modes[session_id] = result["modes"]
         self.dialect.verify_session(session_id, result)
         return {**result, "configOptions": self.adapt(session_id, result.get("configOptions", []))}
 
@@ -273,7 +314,12 @@ class AgentClient:
         await self.dialect.before_prompt(self, session_id, text, blocks, "prompt")
         self.turns[session_id] = Turn(operation_id, text, attachments_of(blocks))
         try:
-            result = await self.send_prompt(session_id, text, operation_id, blocks)
+            try:
+                result = await self.send_prompt(session_id, text, operation_id, blocks)
+            except RequestError as error:
+                if self.callbacks.failure is not None or not self.dialect.prompt_cancelled(session_id, error):
+                    raise
+                result = {"stopReason": "cancelled"}
             await self.observe(session_id)
             return result
         finally:
@@ -359,6 +405,11 @@ class AgentClient:
         return {"ok": True, "result": await self.send_prompt(session_id, text, "command")}
 
     async def configure(self, session_id: str, key: str, value: str | bool) -> dict:
+        mode = self.dialect.planning_mode
+        if mode is not None and key == mode.config_id and self.uses_legacy_mode(session_id):
+            await self.connection.set_session_mode(session_id=session_id, mode_id=value)
+            self.session_modes[session_id]["currentModeId"] = value
+            return {"configOptions": self.adapt(session_id, self.configuration.get(session_id, []))}
         options = await self.dialect.configure(self, session_id, key, value)
         if options is None:
             result = wire(

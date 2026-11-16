@@ -11,6 +11,7 @@ async def submit(
             name=item.get("name"),
             media_type=item.get("mediaType"),
             size=item.get("size"),
+            sha256=item.get("sha256"),
         )
         for item in request.get("attachments", [])
     )

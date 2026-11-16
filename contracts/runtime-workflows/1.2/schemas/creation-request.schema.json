@@ -59,6 +59,28 @@
       ],
       "title": "InlineAttachmentRef",
       "type": "object"
+    },
+    "PlanningCreationIntent": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "const": "plan",
+          "title": "Mode",
+          "type": "string"
+        },
+        "operationId": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Operationid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "operationId"
+      ],
+      "title": "PlanningCreationIntent",
+      "type": "object"
     }
   },
   "$id": "urn:agents-anywhere:runtime-workflows:1.2:creation-request",
@@ -124,6 +146,17 @@
       "minimum": 0,
       "title": "Expectedrevision",
       "type": "integer"
+    },
+    "planningIntent": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PlanningCreationIntent"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "preparationId": {
       "maxLength": 160,

@@ -19,6 +19,7 @@ class Interaction:
     response_operation_id: str | None = None
     response_digest: str | None = None
     response: dict[str, Any] | None = None
+    plan_review: bool = False
 
     def answer(
         self,

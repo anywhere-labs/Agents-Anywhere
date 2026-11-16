@@ -816,10 +816,8 @@ export function TaskComposer() {
     if (recoveryTargetUnavailable || workspace.connectorId !== selectedConnector.id) return
     if (!prompt.trim() && attachments.length === 0) return
     if (!capabilitiesReady || catalogsLoading || (needsPreparation && preparation.operation?.state.phase !== "ready")) return
-    // Prepared-workspace creation does not carry a planning intent yet; refuse instead of silently dropping it.
     if (useGoal && needsPreparation) { toast.error(tGoal("workspaceUnsupported")); return }
     if (useGoal && !goalObjective) return
-    if (usePlanning && needsPreparation) { toast.error(tPlanning("workspaceUnsupported")); return }
     if (requiresModelSelection && !selectedModelSelection) return
     if (requiresPermissionSelection && !selectedPermissionSelection) return
     if (attachments.length > 0 && (!canUseAttachments || !attachmentsAllowed)) return
