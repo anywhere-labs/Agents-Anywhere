@@ -328,7 +328,8 @@ struct ChatShellView: View {
             SpecRuneTasksView(
                 connectorId: connectorId,
                 projects: services.dashboardRepository.projects.filter { $0.connectorId == connectorId },
-                api: workspaceFilesService.connectorAPI
+                api: workspaceFilesService.connectorAPI,
+                onMenu: toggleSidebar
             )
             .id(connectorId)
         } else if case let .device(connectorId) = selection,

@@ -121,8 +121,8 @@ public nonisolated struct SpecRuneClient: Sendable {
                 docs[kind] = SpecRuneDoc(content: file.content, truncated: file.truncated)
             }
         }
-        // record / research 没有 has 标志，只能试读；缺失属于常态，容错即可。
-        for kind in [SpecRuneDocKind.record, .research] {
+        // record / research / review 没有 has 标志，只能试读；缺失属于常态，容错即可。
+        for kind in [SpecRuneDocKind.record, .research, .review] {
             if let file = try? await readText(repo: repo, path: "\(taskDir)/\(kind.fileName)") {
                 docs[kind] = SpecRuneDoc(content: file.content, truncated: file.truncated)
             }

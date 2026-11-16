@@ -18,9 +18,14 @@ struct SpecRuneTasksView: View {
     /// 该设备上的全部项目；非 SpecRune 项目会在侧栏置灰。
     let projects: [V2Project]
     let api: any V2ConnectorAPIProtocol
+    /// 打开 app 侧栏（Duo 内屏双栏时是切换，外屏抽屉时是展开）。
+    let onMenu: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Duo 横屏时系统把 toolbar 收编成右缘竖排；页面必须把 rail 按钮
+    /// 经 ChatPageToolbar 注入，否则新会话/账号入口会消失。
+    @Environment(\.chatRail) private var chatRail
 
     @State private var model: SpecRuneBoardModel?
     /// 导航栈路径（元素是任务 ref）。单栏 push 详情。
@@ -104,22 +109,26 @@ struct SpecRuneTasksView: View {
                 switch model.listStates[repo] ?? .idle {
                 case .idle, .loading:
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .navigationTitle(projectName(model, repo: repo))
                 case let .failed(message):
                     ContentUnavailableView("无法读取任务", appSymbol: "exclamationmark.triangle",
                                            description: Text(verbatim: message))
-                        .navigationTitle(projectName(model, repo: repo))
                 case let .loaded(list):
                     taskList(model, repo: repo, list: list)
-                        .navigationTitle(projectName(model, repo: repo))
                 }
             } else {
                 ContentUnavailableView("未选择项目", appSymbol: "sidebar.left",
                                        description: Text("用上方菜单选择一个 SpecRune 项目"))
             }
         }
-        // 菜单挂在最外层：读取失败时也要能换项目，否则用户被困在错误页。
-        .toolbar { ToolbarItem(placement: .principal) { projectMenu(model) } }
+        // 用 app 统一的页面工具栏：它负责把 rail 按钮送进 Duo 右缘竖排，
+        // 并处理抽屉形态下导航栏被卡片位移重画的问题。
+        // 标题固定「SpecRune」，当前项目在右侧菜单里显示——两者都写项目名会重复。
+        .modifier(ChatPageToolbar(
+            title: "SpecRune",
+            onMenu: onMenu,
+            railTrailing: chatRail.map { chatRailButtons($0) } ?? [],
+            pageTrailing: [AnyView(projectMenu(model))]
+        ))
     }
 
     private func projectName(_ model: SpecRuneBoardModel, repo: String) -> String {

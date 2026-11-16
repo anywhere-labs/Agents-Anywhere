@@ -89,6 +89,8 @@ public nonisolated enum SpecRuneDocKind: String, CaseIterable, Hashable, Sendabl
     case implement
     case record
     case research
+    /// 评审台账（`review.md`）。与其他文档一样按需读取。
+    case review
 
     public var fileName: String { "\(rawValue).md" }
 
@@ -99,6 +101,7 @@ public nonisolated enum SpecRuneDocKind: String, CaseIterable, Hashable, Sendabl
         case .implement: "实施"
         case .record: "记录"
         case .research: "调研"
+        case .review: "审查"
         }
     }
 }
