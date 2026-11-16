@@ -95,6 +95,9 @@ Noise 传输消息的明文格式为 `flag(1 字节) ‖ body`，`body` 最长 6
   - `payload = base64url(nonce12 ‖ AES-256-GCM(列表密钥, nonce, 明文 JSON, AD))`；
   - `AD = label("display", deviceId, sessionId, slot, keyId)`，`slot` 取 `device` 或 `user`；
   - nonce 每次加密时随机生成。AD 绑定了信封所在的行，Server 没法把一个会话的标题挪到另一个会话。
+  - 明文 JSON 的字段：`displayDevice` 是 `{title?, cwd?, preview?}`（原生标题、工作目录、最近一条的短摘要），`displayUser` 是 `{title}`（用户改的标题）。字段都可缺省，客户端忽略不认识的字段。普通模式的 `mode: "plain"` 用同样的字段。
+  - 显示规则：标题取 `displayUser.title`，没有再取 `displayDevice.title`；工作目录取 `displayDevice.cwd`。
+  - 客户端按信封的 `keyId` 找对应纪元的列表密钥；找不到或解不开时显示「加密中」占位，不报错，也不回退到 Server 的明文 `title` / `cwd`（加密模式下它们为空）。客户端应保留最近几个纪元的密钥（Web/Desktop 保留 4 个），设备在轮换后会用新密钥重新密封 `displayDevice`。
 - **附件与分享**（分段密文）：
   - 每个对象一把随机密钥，明文按 64 KiB 分段，空对象算一个空段；
   - 第 i 段的 nonce 为 4 字节 0 加上 i 的 8 字节大端编码，`AD = label(purpose, objectId, i) ‖ 0x00 ‖ final`，`final` 用来防截断；
