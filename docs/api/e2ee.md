@@ -95,3 +95,25 @@ GET /api/v3/e2ee/commands/{commandId}
 ## 数据库
 
 `v2_63` 新增 `e2ee_command_registrations`（命令 ID、用户、设备、输入摘要、时间、结果状态与错误码），不改写已有数据。
+
+## 金丝雀扫描（E-1）
+
+`server/scripts/e2ee_canary_scan.py` 在 Server 一侧查找事先放进内容里的随机字符串，按 UTF-8、UTF-16LE、十六进制和标准/URL 安全 base64（三种对齐）逐一匹配；WebSocket 抓包先去掩码、解压 `permessage-deflate` 再查。可以扫描：
+
+- PostgreSQL 的所有表、Redis 当前库的所有键和值；
+- 对象存储（本地文件根目录；S3 先用 `aws s3 sync` 或 `mc mirror` 镜像到本地再扫）；
+- Server、Router 的日志文件；
+- 抓到的 TCP 字节和单方向的 WebSocket 流（Server ↔ Router、Router ↔ 设备）。
+
+有命中时退出码为 1：
+
+```bash
+uv run python -m scripts.e2ee_canary_scan --canary-file canaries.txt \
+  --db-url "$AGENT_SERVER_DB_URL" --redis-url "$AGENT_SERVER_REDIS_URL" \
+  --files-root /var/lib/agents-anywhere/files --logs server.log --logs router.log \
+  --ws-capture server-to-router.bin --ws-capture router-to-server.bin
+```
+
+`server/tests/test_e2ee_canary.py` 用它在进程内做一遍：真实 MeshCall Router（`MESHCALL_ROUTER_BINARY`）前面放一个记录字节的代理，两段 Router 连接都经过它；内容以密文经隧道送到设备，附件以 `x-aa-sealed` 上传，命令按摘要登记，明文请求被拒绝；之后扫描数据库、文件、日志、两段 Router 流量和发给客户端的隧道帧。设置 `AGENT_SERVER_TEST_REDIS_URL`（指向一个空的库，测试结束后会清空它）时一并扫描 Redis。
+
+还没有覆盖的：真实设备（A 的连接和 connector-ts 通道，测试里的设备只回显密文）、隧道 WebSocket 端点本身和 uvicorn 访问日志。被拒绝的明文请求仍会以路径和查询参数出现在访问日志里；正确的客户端在加密模式下不会发出这类请求。
