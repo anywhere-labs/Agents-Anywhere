@@ -1275,13 +1275,6 @@ function SessionDetailVisit({
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       ) : null}
-      {historyUnavailable && state && state.items.length > 0 ? (
-        <Alert data-testid="session-history-offline" className="mx-auto mt-4 w-[calc(100%-2rem)] max-w-3xl">
-          <WifiOff />
-          <AlertTitle>{tSession("historyOfflineTitle")}</AlertTitle>
-          <AlertDescription>{tSession("historyOfflineCached")}</AlertDescription>
-        </Alert>
-      ) : null}
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <ScrollArea
@@ -1407,6 +1400,15 @@ function SessionDetailVisit({
         <div ref={composerContainerRef} className="pointer-events-auto relative">
           {onOpenReview && turnReviewDisplay.activeReview ? (
             <SessionReviewTag files={turnReviewDisplay.activeReview.files} onReview={() => onOpenReview()} />
+          ) : null}
+          {historyUnavailable && state && state.items.length > 0 ? (
+            <div className="mx-auto w-full max-w-3xl px-4 pt-2">
+              <Alert data-testid="session-history-offline">
+                <WifiOff />
+                <AlertTitle>{tSession("historyOfflineTitle")}</AlertTitle>
+                <AlertDescription>{tSession("historyOfflineCached")}</AlertDescription>
+              </Alert>
+            </div>
           ) : null}
           <RuntimeCreationStatus sessionId={sessionId} />
           <NativeSessionHandoff key={sessionId} token={token} session={session} state={runtimeState}
