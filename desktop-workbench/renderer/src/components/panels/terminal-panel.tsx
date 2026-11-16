@@ -12,7 +12,8 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { TerminalView } from "@/features/dashboard/types"
-import { apiWebSocketUrl } from "@/lib/api"
+import { apiPath, apiWebSocketUrl } from "@/lib/api"
+import { openTerminalStream, type TerminalStream } from "@/lib/transport/terminal-stream"
 import { cn } from "@/lib/utils"
 import { ChevronExternal } from "./runtime-icons"
 
@@ -468,7 +469,7 @@ function XtermHost({
 
     let term: import("@xterm/xterm").Terminal | null = null
     let fit: import("@xterm/addon-fit").FitAddon | null = null
-    let socket: WebSocket | null = null
+    let socket: TerminalStream | null = null
     let resizeObserver: ResizeObserver | null = null
     let lastSeenSeq = 0
     let lastSentSize: { cols: number; rows: number } | null = null
@@ -481,9 +482,7 @@ function XtermHost({
       const rows = term.rows
       if (lastSentSize?.cols === cols && lastSentSize.rows === rows) return
       lastSentSize = { cols, rows }
-      if (socket?.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: "resize", cols, rows }))
-      }
+      if (socket?.isOpen) socket.send({ type: "resize", cols, rows })
     }
 
     const printExit = (exitCode: number | null | undefined) => {
@@ -525,8 +524,8 @@ function XtermHost({
       term.focus()
 
       term.onData((data) => {
-        if (socket?.readyState !== WebSocket.OPEN) return
-        socket.send(JSON.stringify({ type: "input", data: utf8ToBase64(data) }))
+        if (!socket?.isOpen) return
+        socket.send({ type: "input", data: utf8ToBase64(data) })
       })
 
       resizeObserver = new ResizeObserver(() => {
@@ -545,7 +544,12 @@ function XtermHost({
       })
       resizeObserver.observe(host)
 
-      socket = new WebSocket(connectorTerminalStreamUrl(connectorId, terminal.terminalId, token))
+      socket = openTerminalStream({
+        connectorId,
+        terminalId: terminal.terminalId,
+        basePath: apiPath(`/connectors/${encodeURIComponent(connectorId)}/terminals-v2/${encodeURIComponent(terminal.terminalId)}`),
+        webSocketUrl: () => connectorTerminalStreamUrl(connectorId, terminal.terminalId, token),
+      })
       socket.onopen = () => {
         if (cancelled) return
         setStatus("open")

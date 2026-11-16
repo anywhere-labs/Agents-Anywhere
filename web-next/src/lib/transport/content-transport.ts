@@ -12,6 +12,10 @@
 
 export type ContentMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
 
+/** Encrypted uploads (e2ee 1.0): the body is already ciphertext, so the request goes to the Server over HTTPS. */
+export const SEALED_UPLOAD_HEADER = "x-aa-sealed"
+export const SEALED_UPLOAD_VALUE = "segments-v1"
+
 /** One client API call, exactly as it would be sent in normal mode. */
 export type ContentRequest = {
   method: ContentMethod
@@ -23,6 +27,8 @@ export type ContentRequest = {
 
 /** The shape the session controller needs from a realtime stream; a WebSocket satisfies it. */
 export type SessionEventStream = {
+  /** Called once the stream is live (a WebSocket's `open`, a channel subscription's acknowledgement). */
+  onopen?: (() => void) | null
   onmessage: ((message: { data: unknown }) => void) | null
   onclose: (() => void) | null
   onerror: (() => void) | null
@@ -44,6 +50,11 @@ export type SessionContentTransport = {
   request(request: ContentRequest): Promise<unknown>
   /** Opens the session's realtime stream; events use the normal-mode envelope. */
   openSessionStream(sessionId: string): SessionEventStream
+  /**
+   * Opens device terminal `terminalId` (`terminals-v2/{terminalId}/stream` in normal mode); every message is one
+   * message of that WebSocket. Input and resize are `request`s to the normal-mode paths.
+   */
+  openTerminalStream?(terminalId: string): SessionEventStream
 }
 
 /**
@@ -51,8 +62,12 @@ export type SessionContentTransport = {
  * The trust layer decides by device (each device has its own channel) and by
  * path (metadata such as the session list stays on the Server API).
  */
-export type ContentTransportResolver = (target: { sessionId: string; method: ContentMethod; path: string }) =>
-  SessionContentTransport | null
+export type ContentTransportTarget =
+  | { sessionId: string; deviceId: null; method: ContentMethod; path: string }
+  /** Device content without a session: files, shell, terminals, and session creation (its first message). */
+  | { sessionId: null; deviceId: string; method: ContentMethod; path: string }
+
+export type ContentTransportResolver = (target: ContentTransportTarget) => SessionContentTransport | null
 
 let resolver: ContentTransportResolver = () => null
 const requiredListeners = new Set<(detail: { sessionId: string | null; code: string }) => void>()
@@ -66,7 +81,16 @@ export function setContentTransportResolver(next: ContentTransportResolver): () 
 }
 
 export function contentTransportFor(sessionId: string, method: ContentMethod = "GET", path = ""): SessionContentTransport | null {
-  return resolver({ sessionId, method, path })
+  return resolver({ sessionId, deviceId: null, method, path })
+}
+
+export function contentTransportForDevice(deviceId: string, method: ContentMethod = "GET", path = ""): SessionContentTransport | null {
+  return resolver({ sessionId: null, deviceId, method, path })
+}
+
+/** Whether this session's content travels through an encrypted channel (so its plaintext must not reach the Server). */
+export function sessionContentIsEncrypted(sessionId: string): boolean {
+  return contentTransportFor(sessionId, "GET", `/api/v2/sessions/${encodeURIComponent(sessionId)}/snapshot`) !== null
 }
 
 /**
@@ -109,4 +133,23 @@ export function sessionIdOfContentPath(path: string): string | null {
   if (!match) return null
   const id = decodeURIComponent(match[1]!)
   return NOT_SESSION_IDS.has(id) ? null : id
+}
+
+const DEVICE_CONTENT_PATH = /^(?:\/api\/v\d+)?\/connectors\/([^/?#]+)\/(?:fs|shell|terminals|terminals-v2)(?:\/[^?#]*)?$/
+const SESSION_CREATE_PATH = /^(?:\/api\/v\d+)?\/sessions(?:\/create-and-start)?$/
+
+/**
+ * The device a client API call is content of when it has no session: device files, shell and terminals, and
+ * session creation (`POST /sessions`, `/sessions/create-and-start`: the first message is content; the device is
+ * the body's `connectorId`). `null` for everything else.
+ */
+export function deviceIdOfContentRequest(method: ContentMethod, path: string, body?: unknown): string | null {
+  const clean = path.split("?")[0] ?? ""
+  const match = DEVICE_CONTENT_PATH.exec(clean)
+  if (match) return decodeURIComponent(match[1]!)
+  if (method === "POST" && SESSION_CREATE_PATH.test(clean) && body && typeof body === "object") {
+    const connectorId = (body as { connectorId?: unknown }).connectorId
+    if (typeof connectorId === "string" && connectorId) return connectorId
+  }
+  return null
 }

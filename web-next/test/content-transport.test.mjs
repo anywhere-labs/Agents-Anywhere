@@ -17,6 +17,24 @@ test("only per-session paths are session content", () => {
     assert.equal(transport.sessionIdOfContentPath(path), null, path)
 })
 
+test("device files, terminals and session creation are content of a device", () => {
+  const of = transport.deviceIdOfContentRequest
+  assert.equal(of("GET", "/api/v2/connectors/dev_a/fs/read?root=/w&path=a"), "dev_a")
+  assert.equal(of("POST", "/api/v2/connectors/dev%2Fb/fs/list"), "dev/b")
+  assert.equal(of("POST", "/api/v2/connectors/dev_a/terminals-v2/t1/write"), "dev_a")
+  assert.equal(of("GET", "/api/v2/connectors/dev_a/terminals"), "dev_a")
+  assert.equal(of("POST", "/api/v2/sessions/create-and-start", { connectorId: "dev_c", content: "hi" }), "dev_c")
+  assert.equal(of("POST", "/api/v2/sessions", { connectorId: "dev_c" }), "dev_c")
+  for (const [method, path, body] of [
+    ["GET", "/api/v2/connectors", undefined],
+    ["GET", "/api/v2/connectors/dev_a/runtimes", undefined],
+    ["POST", "/api/v2/connectors/fs/preview/read", { previewAccessToken: "x" }],
+    ["GET", "/api/v2/sessions", { connectorId: "dev_c" }],
+    ["POST", "/api/v2/sessions/list", { connectorId: "dev_c" }],
+  ])
+    assert.equal(of(method, path, body), null, path)
+})
+
 test("content requests use an installed encrypted transport; account requests stay on HTTPS", async (t) => {
   const fetched = [], tunneled = []
   const client = new ApiClient({ fetcher: async (url) => { fetched.push(String(url)); return new Response("{\"ok\":true}", { headers: { "content-type": "application/json" } }) } })

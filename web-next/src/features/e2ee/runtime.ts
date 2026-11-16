@@ -15,7 +15,8 @@ import { knownSessionDevice, onServerE2eeDeclared, serverE2eeDeclaration } from 
 import { ClientTrustStore, indexedDbTrustBackend, memoryTrustBackend, type DevicePin } from "@/lib/e2ee/trust-store"
 import { TunnelMux, type TunnelSocket } from "@/lib/e2ee/tunnel"
 import { webNoiseCrypto } from "@/lib/e2ee/webcrypto"
-import { onContentTransportRequired, setContentTransportResolver } from "@/lib/transport/content-transport"
+import { onContentTransportRequired, SEALED_UPLOAD_HEADER, SEALED_UPLOAD_VALUE, setContentTransportResolver } from "@/lib/transport/content-transport"
+import { apiClient } from "@/lib/api"
 
 export interface E2eeRuntime {
   readonly store: ClientTrustStore
@@ -65,6 +66,8 @@ export function startE2ee(platform: "web" | "desktop"): E2eeRuntime | null {
     registerCommand: (registration) => dashboardApi.registerE2eeCommand(requireToken(), registration),
     deviceOfSession: async (sessionId) => (await dashboardApi.getSessionMeta(requireToken(), sessionId)).session.connectorId,
     knownDevice: knownSessionDevice,
+    uploadSealed: (path, form) =>
+      apiClient.post(path, form, { token: requireToken(), headers: { [SEALED_UPLOAD_HEADER]: SEALED_UPLOAD_VALUE } }),
   })
 
   let required = serverE2eeDeclaration() === "required"
@@ -90,13 +93,15 @@ export function startE2ee(platform: "web" | "desktop"): E2eeRuntime | null {
   void refresh()
 
   const requiresChannel = (deviceId: string) => required || pinned.has(deviceId)
-  const restore = setContentTransportResolver(({ sessionId, path }) => {
+  const restore = setContentTransportResolver(({ sessionId, deviceId, path }) => {
+    // Device files, terminals and session creation: the device is known up front.
+    if (deviceId !== null) return requiresChannel(deviceId) ? pool.transportForDevice(deviceId) : null
     // Directory entry and scheduling state stay plaintext in E2EE mode (the Server serves them).
     if (isPlaintextMetadataPath(path)) return null
     if (required) return pool.transportFor(sessionId)
     if (pinned.size === 0) return null
-    const deviceId = knownSessionDevice(sessionId)
-    if (deviceId === undefined || pinned.has(deviceId)) return pool.transportFor(sessionId)
+    const sessionDevice = knownSessionDevice(sessionId)
+    if (sessionDevice === undefined || pinned.has(sessionDevice)) return pool.transportFor(sessionId)
     return null
   })
 

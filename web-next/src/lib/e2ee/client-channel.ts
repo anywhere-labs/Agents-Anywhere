@@ -40,6 +40,11 @@ export interface ChannelReady {
 
 export type ChannelMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
 
+/** What a `TunnelSubscribe` opens: the session WebSocket, or device terminal `terminals-v2/{terminalId}/stream`. */
+export type SubscribeTarget =
+  | { readonly stream: "session"; readonly sessionId: string; readonly afterCursor?: string | null }
+  | { readonly stream: "terminal"; readonly terminalId: string }
+
 /** The channel failed or was closed; `code` is an AA error code (`e2ee_not_paired`, `pairing_expired`, …). */
 export class ChannelClosedError extends Error {
   override readonly name = "ChannelClosedError"
@@ -241,11 +246,21 @@ export class ClientSecureChannel {
     return response
   }
 
-  async subscribe(sessionId: string, afterCursor: string | null, onEvent: (event: Record<string, unknown>) => void): Promise<string> {
+  /** Opens a stream (`TunnelSubscribe`): a session's events, or a device terminal's WebSocket messages. */
+  async subscribe(target: SubscribeTarget, onEvent: (event: Record<string, unknown>) => void): Promise<string> {
     const transport = this.#requireOpen()
     const id = `s${this.#nextId++}`
     this.#subscriptions.set(id, onEvent)
-    await transport.sendMessage({ kind: "subscribe", id, stream: "session", sessionId, afterCursor })
+    const message =
+      target.stream === "terminal"
+        ? { kind: "subscribe", id, stream: "terminal", terminalId: target.terminalId }
+        : { kind: "subscribe", id, stream: "session", sessionId: target.sessionId, afterCursor: target.afterCursor ?? null }
+    try {
+      await transport.sendMessage(message)
+    } catch (error) {
+      this.#subscriptions.delete(id)
+      throw error
+    }
     return id
   }
 

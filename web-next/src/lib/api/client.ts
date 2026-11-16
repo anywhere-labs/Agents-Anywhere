@@ -4,7 +4,10 @@ import {
   extractErrorPayload
 } from "@/lib/api/errors";
 import {
+  SEALED_UPLOAD_HEADER,
   contentTransportFor,
+  contentTransportForDevice,
+  deviceIdOfContentRequest,
   isContentTransportRequired,
   reportContentTransportRequired,
   sessionIdOfContentPath,
@@ -92,7 +95,16 @@ export class ApiClient {
     const namespacedPath = apiPath(path);
     const sessionId = namespacedPath.startsWith("http") ? null : sessionIdOfContentPath(namespacedPath);
     const method = (options.method ?? "GET").toUpperCase() as ContentMethod;
-    const transport = sessionId ? contentTransportFor(sessionId, method, namespacedPath) : null;
+    const deviceId = namespacedPath.startsWith("http") || sessionId ? null : deviceIdOfContentRequest(method, namespacedPath, options.body);
+    // A sealed upload is already ciphertext: it is the one content request that goes to the Server directly.
+    const sealedUpload = new Headers(options.headers).has(SEALED_UPLOAD_HEADER);
+    const transport = sealedUpload
+      ? null
+      : sessionId
+        ? contentTransportFor(sessionId, method, namespacedPath)
+        : deviceId
+          ? contentTransportForDevice(deviceId, method, namespacedPath)
+          : null;
     if (transport) {
       const query: Record<string, string> = {};
       for (const [key, value] of Object.entries(options.query ?? {})) if (value != null) query[key] = String(value);

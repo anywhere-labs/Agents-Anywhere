@@ -1,6 +1,8 @@
 // Encrypted session content (docs/v3/11-e2ee-noise.md §10): implements the transport adapter's
 // `SessionContentTransport` over one secure channel per device. Requests become `TunnelRequest`s, the session
 // stream a `TunnelSubscribe`; commands are registered with the Server first (`POST /api/v3/e2ee/commands`).
+// Device content without a session (files, terminals, session creation) uses the same channel; attachments are
+// sealed and uploaded as ciphertext, their keys travel with the request that uses them.
 
 import { ApiError, apiErrorKind } from "@/lib/api/errors"
 import {
@@ -10,16 +12,18 @@ import {
   type SessionContentTransport,
   type SessionEventStream,
 } from "@/lib/transport/content-transport"
-import { b64url, fromB64url, utf8 } from "./bytes"
+import { b64url, buf, fromB64url, utf8 } from "./bytes"
 import {
   ChannelClosedError,
   ClientSecureChannel,
   type ChannelMethod,
   type DirectoryKeyGrant,
   type PairingPayload,
+  type SubscribeTarget,
 } from "./client-channel"
 import { inputDigest } from "./formats"
 import type { NoiseCrypto } from "./noise"
+import { AttachmentKeyRing, SEALED_UPLOAD_NAME, SEALED_UPLOAD_TYPE, sealAttachment } from "./sealed-attachments"
 import type { ClientTrustStore, DevicePin } from "./trust-store"
 import type { TunnelMux } from "./tunnel"
 import { randomBytes } from "./webcrypto"
@@ -43,10 +47,36 @@ export interface SecureTransportDeps {
   deviceOfSession(sessionId: string): Promise<string>
   /** Already known from the session list (no request needed). */
   knownDevice?(sessionId: string): string | undefined
+  /**
+   * `POST {path}` over plain HTTPS with `x-aa-sealed: segments-v1` (the Server lets it through: every file part
+   * is ciphertext). Resolves the Server's `AttachmentUploadResponse`.
+   */
+  uploadSealed?(path: string, form: FormData): Promise<unknown>
+  /** How long a session creation through the channel may take before its result counts as unknown (75 s). */
+  readonly createTimeoutMs?: number
 }
+
+type ContentTarget = { readonly sessionId: string } | { readonly deviceId: string }
+
+const ATTACHMENT_UPLOAD_PATH = /^(?:\/api\/v\d+)?\/sessions\/[^/?#]+\/attachments$/
+const SESSION_CREATE_PATH = /^(?:\/api\/v\d+)?\/sessions(?:\/create-and-start)?$/
+export const SESSION_CREATE_TIMEOUT_MS = 75_000
 
 const notPaired = (deviceId: string) =>
   new ApiError({ status: 409, kind: "http", code: "e2ee_not_paired", detail: `Pair this client with device ${deviceId} first.` })
+
+/** The device may or may not have created the session: never resend blindly; look for it first. */
+const creationOutcomeUnknown = () =>
+  new ApiError({
+    status: 504,
+    kind: apiErrorKind(504),
+    code: "command_outcome_unknown",
+    detail: "The device did not confirm the new session in time.",
+    payload: { detail: { resultUnknown: true, retryable: false } },
+  })
+
+/** Nothing was sent: the session was certainly not created. */
+const NOT_CREATED = { platformSessionCreated: false, created: false, messageAccepted: false, resultUnknown: false }
 
 function toApiError(error: unknown): ApiError {
   if (error instanceof ApiError) return error
@@ -61,11 +91,21 @@ function newChannelId(): string {
   return `c_${b64url(randomBytes(12))}`
 }
 
+/** The device's answer, or an unknown outcome after `ms` (the request may still have been carried out). */
+function withTimeout<T>(pending: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(creationOutcomeUnknown()), ms)
+  })
+  return Promise.race([pending, expired]).finally(() => clearTimeout(timer))
+}
+
 /** One secure channel per paired device, opened on demand (KK) and shared by every session of that device. */
 export class SecureChannelPool {
   readonly #deps: SecureTransportDeps
   readonly #channels = new Map<string, Promise<ClientSecureChannel>>()
   readonly #sessionDevices = new Map<string, string>()
+  readonly #attachmentKeys = new AttachmentKeyRing()
 
   constructor(deps: SecureTransportDeps) {
     this.#deps = deps
@@ -132,14 +172,26 @@ export class SecureChannelPool {
   transportFor(sessionId: string): SessionContentTransport {
     return {
       kind: "tunnel",
-      request: (request) => this.#request(sessionId, request),
-      openSessionStream: (id) => this.#openStream(id),
+      request: (request) => this.#request({ sessionId }, request),
+      openSessionStream: (id) => this.#openStream({ sessionId: id }, { stream: "session", sessionId: id }),
+      openTerminalStream: (terminalId) => this.#openStream({ sessionId }, { stream: "terminal", terminalId }),
+    }
+  }
+
+  /** The transport for device content without a session: files, terminals, session creation. */
+  transportForDevice(deviceId: string): SessionContentTransport {
+    return {
+      kind: "tunnel",
+      request: (request) => this.#request({ deviceId }, request),
+      openSessionStream: (id) => this.#openStream({ sessionId: id }, { stream: "session", sessionId: id }),
+      openTerminalStream: (terminalId) => this.#openStream({ deviceId }, { stream: "terminal", terminalId }),
     }
   }
 
   async closeAll(): Promise<void> {
     const channels = [...this.#channels.values()]
     this.#channels.clear()
+    this.#attachmentKeys.clear()
     await Promise.all(channels.map((pending) => pending.then((channel) => channel.close()).catch(() => undefined)))
   }
 
@@ -181,26 +233,50 @@ export class SecureChannelPool {
     })
   }
 
-  async #request(sessionId: string, request: ContentRequest): Promise<unknown> {
+  async #request(target: ContentTarget, request: ContentRequest): Promise<unknown> {
+    const sessionId = "sessionId" in target ? target.sessionId : null
     try {
-      const deviceId = await this.deviceOf(sessionId)
+      const deviceId = "deviceId" in target ? target.deviceId : await this.deviceOf(target.sessionId)
       const pin = await this.#deps.store.pin(deviceId)
       if (!pin) throw notPaired(deviceId)
       const query = new URLSearchParams(request.query ?? {}).toString()
       const path = query ? `${request.path}?${query}` : request.path
-      const body = request.body ?? null
-      if (request.method !== "GET" && body && typeof body === "object" && !(body instanceof FormData)) {
-        const skipped = await this.#registerCommand(deviceId, pin, body as Record<string, unknown>)
+      let body = request.body ?? null
+      if (body instanceof FormData) {
+        // Files never enter the channel as plaintext uploads: they are sealed and uploaded as ciphertext.
+        if (request.method === "POST" && ATTACHMENT_UPLOAD_PATH.test(request.path)) return await this.#uploadSealed(path, body)
+        throw new ApiError({ status: 415, kind: "http", code: "e2ee_upload_unsupported", detail: "Encrypted uploads are not available for this request." })
+      }
+      // Session creation: the device chosen by `connectorId` creates and runs the session (its first message is
+      // content). The first message has no upload yet, so attachments are refused before anything is sent.
+      const creating = request.method === "POST" && SESSION_CREATE_PATH.test(request.path)
+      const attachments = (body as { attachments?: unknown } | null)?.attachments
+      if (creating && Array.isArray(attachments) && attachments.length > 0)
+        throw new ApiError({
+          status: 409,
+          kind: "http",
+          code: "e2ee_attachments_unsupported",
+          detail: "The first message of an end-to-end encrypted session cannot carry attachments yet.",
+          payload: { detail: NOT_CREATED },
+        })
+      if (request.method !== "GET" && body && typeof body === "object" && !Array.isArray(body)) {
+        // The keys of sealed uploads travel with the request that uses them, inside the channel.
+        body = this.#attachmentKeys.attach(body as Record<string, unknown>)
+        const skipped = await this.#registerCommand(deviceId, pin, body as Record<string, unknown>, creating)
         if (skipped !== undefined) return skipped
       }
-      if (body instanceof FormData) throw new ApiError({ status: 415, kind: "http", code: "e2ee_upload_unsupported", detail: "Encrypted uploads are not available yet." })
       const channel = await this.channel(deviceId)
-      const response = await channel.request(request.method as ChannelMethod, path, body)
+      const pending = channel.request(request.method as ChannelMethod, path, body)
+      const response = creating ? await withTimeout(pending, this.#deps.createTimeoutMs ?? SESSION_CREATE_TIMEOUT_MS) : await pending
       if (response.status >= 400) {
         const detail = (response.body as { detail?: unknown } | null)?.detail
         const code = typeof detail === "object" && detail && "code" in detail ? String((detail as { code: unknown }).code) : undefined
         const message = typeof detail === "string" ? detail : typeof detail === "object" && detail && "message" in detail ? String((detail as { message: unknown }).message) : `HTTP ${response.status}`
         throw new ApiError({ status: response.status, kind: apiErrorKind(response.status), code, detail: message, payload: response.body })
+      }
+      if (creating) {
+        const created = (response.body as { session?: { id?: unknown } } | null)?.session?.id
+        if (typeof created === "string") this.noteSessionDevice(created, deviceId)
       }
       return response.body
     } catch (error) {
@@ -211,25 +287,60 @@ export class SecureChannelPool {
     }
   }
 
+  /**
+   * Seals every file of an attachment upload with its own key and uploads the ciphertext over HTTPS: one
+   * multipart request per file (the contract allows one file part), named `attachment.bin`.
+   */
+  async #uploadSealed(path: string, form: FormData): Promise<unknown> {
+    const upload = this.#deps.uploadSealed
+    if (!upload) throw new ApiError({ status: 415, kind: "http", code: "e2ee_upload_unsupported", detail: "Encrypted uploads are not available yet." })
+    const entries = [...form.entries()]
+    const fields = entries.filter((entry): entry is [string, string] => typeof entry[1] === "string")
+    const views: Array<Record<string, unknown>> = []
+    let last: Record<string, unknown> | null = null
+    for (const [field, value] of entries) {
+      if (typeof value === "string") continue
+      const file = await sealAttachment(new Uint8Array(await value.arrayBuffer()))
+      const name = value.name || "attachment"
+      const mimeType = value.type
+      const sealedForm = new FormData()
+      for (const [key, text] of fields) sealedForm.append(key, text)
+      // The Server sees neither the name nor the type: both go to the device with the key.
+      sealedForm.append(field, new Blob([buf(file.body)], { type: SEALED_UPLOAD_TYPE }), SEALED_UPLOAD_NAME)
+      last = (await upload(path, sealedForm)) as Record<string, unknown> | null
+      const view = (last?.["attachments"] as Array<Record<string, unknown>> | undefined)?.[0]
+      if (!view || typeof view["fileId"] !== "string")
+        throw new ApiError({ status: 502, kind: "http", code: "e2ee_upload_failed", detail: "The Server did not confirm the sealed upload." })
+      this.#attachmentKeys.remember(view["fileId"], file, { name, mimeType: mimeType || null })
+      // The Server's name, type, size and digest describe the ciphertext; the UI shows the file.
+      views.push({ ...view, name, size: file.size, ...(mimeType ? { mediaType: mimeType } : {}) })
+    }
+    return { ...last, attachments: views }
+  }
+
   /** Registers the command; returns a result to give back without sending when the Server already has one. */
-  async #registerCommand(deviceId: string, pin: DevicePin, body: Record<string, unknown>): Promise<unknown | undefined> {
+  async #registerCommand(deviceId: string, pin: DevicePin, body: Record<string, unknown>, creating = false): Promise<unknown | undefined> {
     const commandId = typeof body["clientMessageId"] === "string" ? body["clientMessageId"] : typeof body["commandId"] === "string" ? body["commandId"] : null
     if (!commandId) return undefined
     const key = this.#deps.store.directoryKey(pin)
     if (!key) throw notPaired(deviceId)
     const digest = await inputDigest({ digestKey: key.digest }, utf8(JSON.stringify(body)))
     const registration = await this.#deps.registerCommand({ commandId, deviceId, inputDigest: digest })
-    if (!registration.duplicate || registration.outcome === null) return undefined
+    if (!registration.duplicate) return undefined
     if (registration.outcome === "rejected")
-      throw new ApiError({ status: 409, kind: "http", code: registration.errorCode ?? "command_rejected", detail: "The device rejected this command." })
+      throw new ApiError({ status: 409, kind: "http", code: registration.errorCode ?? "command_rejected", detail: "The device rejected this command.", ...(creating ? { payload: { detail: NOT_CREATED } } : {}) })
+    // A repeated creation must not create a second session: its result is unknown until the session list says.
+    if (creating) throw creationOutcomeUnknown()
+    if (registration.outcome === null) return undefined
     return { accepted: true, duplicate: true, commandId }
   }
 
-  #openStream(sessionId: string): SessionEventStream {
+  #openStream(target: ContentTarget, spec: SubscribeTarget): SessionEventStream {
     let subscription: { channel: ClientSecureChannel; id: string } | null = null
     let closed = false
     let detachClose: (() => void) | null = null
     const stream: SessionEventStream = {
+      onopen: null,
       onmessage: null,
       onclose: null,
       onerror: null,
@@ -243,15 +354,16 @@ export class SecureChannelPool {
     }
     void (async () => {
       try {
-        const deviceId = await this.deviceOf(sessionId)
+        const deviceId = "deviceId" in target ? target.deviceId : await this.deviceOf(target.sessionId)
         const channel = await this.channel(deviceId)
         if (closed) return
         detachClose = channel.onClose(() => stream.close())
-        const id = await channel.subscribe(sessionId, null, (event) => {
+        const id = await channel.subscribe(spec, (event) => {
           if (!closed) stream.onmessage?.({ data: JSON.stringify(event) })
         })
         subscription = { channel, id }
         if (closed) void channel.unsubscribe(id).catch(() => undefined)
+        else stream.onopen?.()
       } catch (error) {
         if (closed) return
         stream.onerror?.()

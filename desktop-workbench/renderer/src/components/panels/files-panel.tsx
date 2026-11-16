@@ -474,9 +474,8 @@ export function FilesPanelBody({
   const downloadEntry = async () => {
     if (!token || !connectorId || !contextEntry || !contextIsFile) return
     try {
-      const response = await dashboardApi.connectorFsRead(token, connectorId, effectiveRoot, contextEntry.path)
-      const blob = await dashboardApi.downloadBlob(token, response.result.downloadUrl)
-      downloadBlob(blob, response.result.name || contextEntry.name)
+      const file = await dashboardApi.connectorFsReadBlob(token, connectorId, effectiveRoot, contextEntry.path)
+      downloadBlob(file.blob, file.name || contextEntry.name)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t("downloadFailed"))
     }

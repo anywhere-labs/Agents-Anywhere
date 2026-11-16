@@ -2,6 +2,9 @@ import { assertSessionCreationAccepted } from "@/lib/api/session-creation-result
 import { ApiClient, apiClient, apiPath } from "@/lib/api";
 import { noteSessionDevices } from "@/lib/e2ee/state";
 import { shouldAuthorizeDownloadUrl } from "@/lib/api/download-auth";
+import { ApiError } from "@/lib/api/errors";
+import { readFileThroughChannel } from "@/lib/transport/channel-files";
+import { contentTransportForDevice, sessionContentIsEncrypted } from "@/lib/transport/content-transport";
 import type {
   ArchiveAllResponse,
   BulkArchiveResponse,
@@ -63,6 +66,17 @@ import type {
   UsageReportResponse,
   WsTicketResponse,
 } from "@/features/dashboard/types";
+
+/** A device file's bytes, however they were fetched. */
+export type DeviceFileBlob = {
+  name: string;
+  size: number;
+  mediaType?: string;
+  blob: Blob;
+};
+
+/** Encrypted mode: a title is content, and the Server has no sealed title field yet. */
+export const E2EE_TITLE_UNSUPPORTED = "e2ee_title_unsupported";
 
 function queuePath(sessionId: string): string {
   return `/sessions/${encodeURIComponent(sessionId)}/runtime/queue`;
@@ -294,9 +308,52 @@ export class DashboardApi {
     token: string,
     body: SessionCreateAndStartRequest,
   ): Promise<SessionCreateResponse> {
+    if (this.sessionCreationIsEncrypted(body.connectorId)) return this.createAndStartThroughChannel(token, body);
     const response = await this.client.post<SessionCreateResponse>("/sessions/create-and-start", body, { token });
     assertSessionCreationAccepted(response);
     return response;
+  }
+
+  /** Encrypted mode: the request goes to the chosen device through its channel (the first message is content). */
+  sessionCreationIsEncrypted(connectorId: string): boolean {
+    return contentTransportForDevice(connectorId, "POST", apiPath("/sessions/create-and-start")) !== null;
+  }
+
+  /**
+   * Same request through the device's channel. When its outcome is unknown (no answer in time, or a repeated
+   * command), the Server's session list says whether the device created it: a single new session of the same
+   * device and project is offered to the user to check (never bound automatically, never resent).
+   */
+  private async createAndStartThroughChannel(
+    token: string,
+    body: SessionCreateAndStartRequest,
+  ): Promise<SessionCreateResponse> {
+    const before = await this.sessionIdsOf(token, body).catch(() => null);
+    try {
+      const response = await this.client.post<SessionCreateResponse>("/sessions/create-and-start", body, { token });
+      assertSessionCreationAccepted(response);
+      return response;
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== "command_outcome_unknown" || !before) throw error;
+      const after = await this.sessionIdsOf(token, body).catch(() => null);
+      const created = after ? [...after].filter((id) => !before.has(id)) : [];
+      if (created.length !== 1) throw error;
+      const detail = (error.payload as { detail?: Record<string, unknown> } | undefined)?.detail ?? {};
+      throw new ApiError({
+        status: error.status,
+        kind: error.kind,
+        code: error.code,
+        detail: error.detail,
+        payload: { detail: { ...detail, sessionId: created[0] } },
+      });
+    }
+  }
+
+  private async sessionIdsOf(token: string, body: { connectorId: string; projectId: string }): Promise<Set<string>> {
+    const { sessions } = await this.listSessionInventory(token);
+    return new Set(sessions
+      .filter((session) => session.connectorId === body.connectorId && (session.projectId ?? body.projectId) === body.projectId)
+      .map((session) => session.id));
   }
 
   /** Plaintext directory entry of one session (allowed in E2EE mode). */
@@ -309,6 +366,15 @@ export class DashboardApi {
     sessionId: string,
     body: SessionPatchRequest,
   ): Promise<SessionResponse> {
+    // The directory entry is plaintext; a title in it would leak content. Never send it in encrypted mode.
+    if (body.title !== undefined && sessionContentIsEncrypted(sessionId)) {
+      return Promise.reject(new ApiError({
+        status: 409,
+        kind: "http",
+        code: E2EE_TITLE_UNSUPPORTED,
+        detail: "Sessions cannot be renamed in end-to-end encrypted mode yet.",
+      }));
+    }
     return this.client.patch<SessionResponse>(
       `/sessions/${encodeURIComponent(sessionId)}/meta`,
       body,
@@ -569,6 +635,29 @@ export class DashboardApi {
       body,
       { token, query: { root } },
     );
+  }
+
+  /** Whether device files are read through an encrypted channel (no download URL; bytes come in chunks). */
+  connectorFsReadsThroughChannel(connectorId: string): boolean {
+    return contentTransportForDevice(connectorId, "GET", apiPath(`/connectors/${encodeURIComponent(connectorId)}/fs/read`)) !== null;
+  }
+
+  /** A device file's bytes: the download URL in normal mode, `TunnelFileChunk`s through the device's channel. */
+  async connectorFsReadBlob(
+    token: string,
+    connectorId: string,
+    root: string,
+    path: string,
+  ): Promise<DeviceFileBlob> {
+    const readPath = apiPath(`/connectors/${encodeURIComponent(connectorId)}/fs/read`);
+    const tunnel = contentTransportForDevice(connectorId, "GET", readPath);
+    if (tunnel) {
+      const { bytes, size } = await readFileThroughChannel(tunnel, readPath, { root, path });
+      return { name: path.split(/[\\/]/).filter(Boolean).at(-1) ?? path, size, blob: new Blob(bytes) };
+    }
+    const response = await this.connectorFsRead(token, connectorId, root, path);
+    const blob = await this.downloadBlob(token, response.result.downloadUrl);
+    return { name: response.result.name, size: response.result.size, mediaType: response.result.mediaType, blob };
   }
 
   async downloadBlob(token: string | null, url: string): Promise<Blob> {

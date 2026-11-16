@@ -25,6 +25,10 @@ class FakeDevice {
     this.channels = new Map()
     this.directoryKey = randomBytes(32)
     this.requests = []
+    this.subscriptions = []
+    this.unsubscribed = []
+    this.files = new Map()
+    this.silentCreate = false
     this.socket = null
   }
   async init() {
@@ -93,17 +97,41 @@ class FakeDevice {
       return transport.sendMessage(this.ready(route.clientId))
     }
     for (const message of await state.transport.receive(frame)) {
-      if (message.kind === "request") {
+      if (message.kind === "request" && message.path.includes("/fs/read?")) {
+        this.requests.push(message)
+        await state.transport.sendMessage({ kind: "response", id: message.id, status: 200, body: this.readChunk(message.path) })
+      } else if (message.kind === "request" && message.path.endsWith("/sessions/create-and-start")) {
+        this.requests.push(message)
+        // A device that never answers (offline after receiving, or slow): the client must not wait forever.
+        if (this.silentCreate) continue
+        await state.transport.sendMessage({ kind: "response", id: message.id, status: 200, body: { session: { id: "sess_new", connectorId: this.deviceId }, connectorResult: { accepted: true } } })
+      } else if (message.kind === "request") {
         this.requests.push(message)
         const failing = message.path.endsWith("/fail")
         await state.transport.sendMessage({
           kind: "response", id: message.id, status: failing ? 409 : 200,
           body: failing ? { detail: { code: "session_busy", message: "busy" } } : { echo: message.path, body: message.body },
         })
+      } else if (message.kind === "subscribe" && message.stream === "terminal") {
+        this.subscriptions.push(message)
+        // Every event is one message of the normal-mode terminal WebSocket.
+        await state.transport.sendMessage({ kind: "event", sub: message.id, event: { type: "replay", data: btoa("$ "), seq: 1 } })
+        await state.transport.sendMessage({ kind: "event", sub: message.id, event: { type: "output", data: btoa("ls\r\n"), seq: 2 } })
       } else if (message.kind === "subscribe") {
+        this.subscriptions.push(message)
         await state.transport.sendMessage({ kind: "event", sub: message.id, event: { type: "session.subscribed", sessionId: message.sessionId } })
+      } else if (message.kind === "unsubscribe") {
+        this.unsubscribed.push(message.id)
       }
     }
+  }
+  /** `GET …/fs/read?root&path&offset&length` -> `TunnelFileChunk`. */
+  readChunk(path) {
+    const query = new URL(path, "https://device.test").searchParams
+    const bytes = this.files.get(`${query.get("root")}/${query.get("path")}`)
+    const offset = Number(query.get("offset"))
+    const slice = bytes.subarray(offset, offset + Number(query.get("length")))
+    return { encoding: "base64", data: Buffer.from(slice).toString("base64"), offset, size: bytes.length, eof: offset + slice.length >= bytes.length }
   }
   ready(clientId) {
     return { kind: "ready", deviceId: this.deviceId, clientId, directoryKeyId: "dk_1", directoryKeyEpoch: 1 }
@@ -129,12 +157,17 @@ function fakeSocket(device) {
   return socket
 }
 
-async function setup() {
+async function setup(options = {}) {
   const device = await new FakeDevice("dev_1").init()
   const socket = fakeSocket(device)
   const store = new ClientTrustStore(memoryTrustBackend())
   const registered = []
   let registration = (reg) => ({ commandId: reg.commandId, outcome: null, errorCode: null, duplicate: false })
+  const uploads = []
+  const uploadResponse = (form) => ({
+    attachments: form.getAll("files").map((file, index) => ({ fileId: `f_${uploads.length}_${index}`, name: file.name, size: file.size, sha256: "c".repeat(64), mediaType: file.type })),
+    serverTime: "now",
+  })
   const pool = new SecureChannelPool({
     store, crypto: webNoiseCrypto, label: "test", platform: "web",
     mux: new TunnelMux(async () => socket),
@@ -143,8 +176,14 @@ async function setup() {
       return registration(reg)
     },
     deviceOfSession: async () => "dev_1",
+    ...options,
+    uploadSealed: async (path, form) => {
+      const response = uploadResponse(form)
+      uploads.push({ path, form })
+      return response
+    },
   })
-  return { device, socket, store, pool, registered, setRegistration: (fn) => (registration = fn) }
+  return { device, socket, store, pool, registered, uploads, setRegistration: (fn) => (registration = fn) }
 }
 
 test("pairing pins the device, then content flows through the channel", async () => {
@@ -293,4 +332,282 @@ test("metadata paths stay on the Server API", () => {
   assert.equal(isPlaintextMetadataPath("/api/v2/sessions/s1/runtime/capabilities"), true)
   assert.equal(isPlaintextMetadataPath("/api/v2/sessions/s1/snapshot"), false)
   assert.equal(isPlaintextMetadataPath("/api/v2/sessions/s1/runtime/messages"), false)
+})
+
+const transportModule = await import("../src/lib/transport/content-transport.ts")
+const { openSealedAttachment, SEALED_UPLOAD_NAME, SEALED_UPLOAD_TYPE } = await import("../src/lib/e2ee/sealed-attachments.ts")
+const { readFileThroughChannel } = await import("../src/lib/transport/channel-files.ts")
+const { openTerminalStream } = await import("../src/lib/transport/terminal-stream.ts")
+const { ApiClient } = await import("../src/lib/api/client.ts")
+const { dashboardApi, E2EE_TITLE_UNSUPPORTED } = await import("../src/features/dashboard/api.ts")
+const { toHex } = await import("../src/lib/e2ee/bytes.ts")
+
+/** Routes like the runtime: device content and session content go through the pool, metadata stays on HTTPS. */
+function routeThrough(t, pool) {
+  t.after(transportModule.setContentTransportResolver(({ sessionId, deviceId, path }) => {
+    if (deviceId !== null) return pool.transportForDevice(deviceId)
+    return /\/meta$/.test(path) ? null : pool.transportFor(sessionId)
+  }))
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 10))
+
+test("attachments are sealed before upload; the device opens them with the keys sent through the channel", async () => {
+  const { device, socket, pool, registered, uploads } = await setup()
+  await pool.pair(device.pairing())
+  // Three segments, the last one short.
+  const plaintext = new Uint8Array(150_000).map((_, i) => (i * 7) % 251)
+  const form = new FormData()
+  form.append("files", new File([plaintext], "secret-report.pdf", { type: "application/pdf" }))
+
+  const response = await pool.transportFor("s").request({ method: "POST", path: "/api/v2/sessions/s/attachments", body: form })
+  assert.equal(uploads.length, 1)
+  assert.equal(uploads[0].path, "/api/v2/sessions/s/attachments")
+  const [part] = uploads[0].form.getAll("files")
+  // The Server sees neither the name, the type nor the bytes.
+  assert.equal(part.name, SEALED_UPLOAD_NAME)
+  assert.equal(part.type, SEALED_UPLOAD_TYPE)
+  const uploaded = new Uint8Array(await part.arrayBuffer())
+  assert.equal(uploaded.length, 150_000 + 3 * 16)
+  assert.ok(!Buffer.from(uploaded).includes(Buffer.from(plaintext.subarray(0, 64))), "plaintext reached the upload")
+  // The UI keeps showing the real file.
+  const view = response.attachments[0]
+  assert.equal(view.fileId, "f_0_0")
+  assert.equal(view.name, "secret-report.pdf")
+  assert.equal(view.size, plaintext.length)
+  assert.equal(view.mediaType, "application/pdf")
+  // Nothing about the upload crossed the tunnel.
+  assert.equal(device.requests.length, 0)
+
+  const body = { content: "see attached", attachments: [{ fileId: view.fileId }], clientMessageId: "m_att" }
+  await pool.transportFor("s").request({ method: "POST", path: "/api/v2/sessions/s/runtime/messages", body })
+  const sent = device.requests.at(-1).body
+  assert.deepEqual(sent.attachments, [{ fileId: "f_0_0" }])
+  assert.equal(sent.sealedAttachmentKeys.length, 1)
+  const key = sent.sealedAttachmentKeys[0]
+  assert.equal(key.fileId, "f_0_0")
+  assert.equal(key.name, "secret-report.pdf")
+  assert.equal(key.mimeType, "application/pdf")
+  assert.equal(key.size, plaintext.length)
+  assert.equal(key.sha256, toHex(new Uint8Array(await crypto.subtle.digest("SHA-256", plaintext))))
+  const opened = await openSealedAttachment(key, uploaded)
+  assert.deepEqual(opened, plaintext)
+  // The digest covers the body as sent (keys included); the key never crosses the tunnel or the Server in the clear.
+  assert.equal(registered.at(-1).inputDigest, await formats.inputDigest(device.directoryKey, utf8(JSON.stringify(sent))))
+  assert.ok(!JSON.stringify(socket.sent).includes(key.key))
+  assert.ok(!JSON.stringify(registered).includes(key.key))
+
+  // A modified upload does not open.
+  const tampered = uploaded.slice()
+  tampered[10] ^= 1
+  await assert.rejects(openSealedAttachment(key, tampered))
+  // Requests that reference no sealed upload are unchanged.
+  await pool.transportFor("s").request({ method: "POST", path: "/api/v2/sessions/s/runtime/messages", body: { content: "x", attachments: [{ fileId: "other" }] } })
+  assert.equal(device.requests.at(-1).body.sealedAttachmentKeys, undefined)
+
+  // Several files: one upload (one file part) each, every file with its own key.
+  const two = new FormData()
+  two.append("files", new File(["a"], "a.txt", { type: "text/plain" }))
+  two.append("files", new File(["b"], "b.txt", { type: "text/plain" }))
+  const both = await pool.transportFor("s").request({ method: "POST", path: "/api/v2/sessions/s/attachments", body: two })
+  assert.equal(uploads.length, 3)
+  for (const { form: sent } of uploads.slice(1)) assert.equal(sent.getAll("files").length, 1)
+  assert.deepEqual(both.attachments.map((item) => [item.fileId, item.name]), [["f_1_0", "a.txt"], ["f_2_0", "b.txt"]])
+  await pool.transportFor("s").request({ method: "POST", path: "/api/v2/sessions/s/runtime/messages", body: { content: "y", attachments: both.attachments.map(({ fileId }) => ({ fileId })) } })
+  const keys = device.requests.at(-1).body.sealedAttachmentKeys
+  assert.deepEqual(keys.map((item) => item.fileId), ["f_1_0", "f_2_0"])
+  assert.notEqual(keys[0].key, keys[1].key)
+})
+
+test("a sealed upload bypasses the channel resolver and goes to the Server over HTTPS", async (t) => {
+  const fetched = []
+  const client = new ApiClient({
+    fetcher: async (url, init) => {
+      fetched.push({ url: String(url), headers: init.headers })
+      return new Response("{\"attachments\":[]}", { headers: { "content-type": "application/json" } })
+    },
+  })
+  t.after(transportModule.setContentTransportResolver(() => ({ kind: "tunnel", request: async () => assert.fail("sealed upload went into the channel"), openSessionStream: () => assert.fail() })))
+  await client.post("/sessions/s/attachments", new FormData(), { token: "t", headers: { [transportModule.SEALED_UPLOAD_HEADER]: transportModule.SEALED_UPLOAD_VALUE } })
+  assert.equal(fetched.length, 1)
+  assert.equal(fetched[0].url, "/api/v2/sessions/s/attachments")
+  assert.equal(new Headers(fetched[0].headers).get("x-aa-sealed"), "segments-v1")
+})
+
+test("device files are read through the channel in chunks until eof", async (t) => {
+  const { device, pool } = await setup()
+  await pool.pair(device.pairing())
+  const bytes = new Uint8Array(20).map((_, i) => i + 1)
+  device.files.set("/work/out/a.bin", bytes)
+  const read = await readFileThroughChannel(pool.transportForDevice("dev_1"), "/api/v2/connectors/dev_1/fs/read", { root: "/work", path: "out/a.bin" }, { chunkBytes: 7 })
+  assert.equal(read.size, 20)
+  assert.deepEqual(new Uint8Array(await new Blob(read.bytes).arrayBuffer()), bytes)
+  const offsets = device.requests.map((request) => {
+    const query = new URL(request.path, "https://x").searchParams
+    assert.equal(request.method, "GET")
+    assert.equal(query.get("root"), "/work")
+    assert.equal(query.get("path"), "out/a.bin")
+    assert.equal(query.get("length"), "7")
+    return query.get("offset")
+  })
+  assert.deepEqual(offsets, ["0", "7", "14"])
+
+  // The download/preview helper uses the same reads; no download URL is fetched.
+  routeThrough(t, pool)
+  t.mock.method(globalThis, "fetch", async () => assert.fail("a device file went over HTTPS"))
+  assert.equal(dashboardApi.connectorFsReadsThroughChannel("dev_1"), true)
+  const file = await dashboardApi.connectorFsReadBlob("t", "dev_1", "/work", "out/a.bin")
+  assert.equal(file.name, "a.bin")
+  assert.equal(file.size, 20)
+  assert.deepEqual(new Uint8Array(await file.blob.arrayBuffer()), bytes)
+  // Listing takes the same channel.
+  await dashboardApi.connectorFsList("t", "dev_1", { root: "/work", path: "out" })
+  assert.equal(device.requests.at(-1).path, "/api/v2/connectors/dev_1/fs/list")
+})
+
+test("a terminal is a channel subscription; input and resize are requests to the normal paths", async (t) => {
+  const { device, pool } = await setup()
+  await pool.pair(device.pairing())
+  routeThrough(t, pool)
+  const base = "/api/v2/connectors/dev_1/terminals-v2/term_1"
+  const stream = openTerminalStream({ connectorId: "dev_1", terminalId: "term_1", basePath: base, webSocketUrl: () => assert.fail("opened a plaintext WebSocket") })
+  const messages = []
+  const opened = new Promise((resolve) => (stream.onopen = resolve))
+  const received = new Promise((resolve) => {
+    stream.onmessage = (message) => {
+      messages.push(JSON.parse(message.data))
+      if (messages.length === 2) resolve()
+    }
+  })
+  await opened
+  assert.equal(stream.isOpen, true)
+  await received
+  const subscription = device.subscriptions.at(-1)
+  assert.deepEqual(subscription, { kind: "subscribe", id: subscription.id, stream: "terminal", terminalId: "term_1" })
+  assert.deepEqual(messages, [{ type: "replay", data: btoa("$ "), seq: 1 }, { type: "output", data: btoa("ls\r\n"), seq: 2 }])
+
+  stream.send({ type: "input", data: btoa("a") })
+  stream.send({ type: "input", data: btoa("b") })
+  stream.send({ type: "resize", cols: 100, rows: 30 })
+  await settle()
+  assert.deepEqual(device.requests.map((request) => [request.method, request.path, request.body]), [
+    ["POST", `${base}/write`, { dataBase64: btoa("a") }],
+    ["POST", `${base}/write`, { dataBase64: btoa("b") }],
+    ["POST", `${base}/resize`, { cols: 100, rows: 30 }],
+  ])
+  let closed = false
+  stream.onclose = () => (closed = true)
+  stream.close()
+  await settle()
+  assert.equal(closed, true)
+  assert.equal(stream.isOpen, false)
+  assert.deepEqual(device.unsubscribed, [subscription.id])
+})
+
+test("creating a session sends the first message only through the chosen device's channel", async (t) => {
+  const { device, socket, pool, registered } = await setup()
+  await pool.pair(device.pairing())
+  routeThrough(t, pool)
+  const fetched = []
+  const client = new ApiClient({ fetcher: async (url) => { fetched.push(String(url)); return new Response("{}") } })
+  const body = { connectorId: "dev_1", projectId: "p", runtime: "codex", content: "the secret first message", clientMessageId: "m_first" }
+  const created = await client.post("/sessions/create-and-start", body, { token: "t" })
+  assert.equal(created.session.id, "sess_new")
+  assert.deepEqual(fetched, [])
+  assert.equal(device.requests.at(-1).path, "/api/v2/sessions/create-and-start")
+  assert.equal(device.requests.at(-1).body.content, "the secret first message")
+  assert.equal(registered.at(-1).commandId, "m_first")
+  assert.ok(!JSON.stringify(socket.sent).includes("secret"))
+  assert.ok(!JSON.stringify(registered).includes("secret"))
+  assert.equal(await pool.deviceOf("sess_new"), "dev_1")
+
+  // A device this client has not paired with is refused; still nothing in the clear.
+  await assert.rejects(client.post("/sessions", { ...body, connectorId: "dev_other" }, { token: "t" }), (error) => error.code === "e2ee_not_paired")
+  assert.deepEqual(fetched, [])
+})
+
+/** The Server's session list (plaintext metadata) as `GET /sessions/list` returns it, one answer per call. */
+function serverSessionLists(t, ...lists) {
+  const calls = []
+  t.mock.method(globalThis, "fetch", async (url, init) => {
+    calls.push({ url: String(url), body: init?.body })
+    const ids = lists[Math.min(calls.length - 1, lists.length - 1)]
+    const sessions = ids.map((id) => ({ id, connectorId: "dev_1", projectId: "p" }))
+    return new Response(JSON.stringify({ sessions, serverTime: "now" }), { headers: { "content-type": "application/json" } })
+  })
+  return calls
+}
+
+test("an unanswered session creation times out as unknown and is looked up in the Server session list", async (t) => {
+  const { device, pool, registered } = await setup({ createTimeoutMs: 30 })
+  await pool.pair(device.pairing())
+  routeThrough(t, pool)
+  device.silentCreate = true
+  const calls = serverSessionLists(t, ["s_old"], ["s_old", "s_made"])
+  const body = { connectorId: "dev_1", projectId: "p", runtime: "codex", title: "plan", content: "/plan secret", clientMessageId: "m_slow" }
+  await assert.rejects(dashboardApi.createAndStartSession("t", body), (error) => {
+    assert.equal(error.code, "command_outcome_unknown")
+    assert.deepEqual(error.payload.detail, { resultUnknown: true, retryable: false, sessionId: "s_made" })
+    return true
+  })
+  // Sent once through the channel, registered once; the Server only saw two list reads.
+  assert.equal(device.requests.filter((request) => request.path.endsWith("/create-and-start")).length, 1)
+  assert.equal(registered.filter((reg) => reg.commandId === "m_slow").length, 1)
+  assert.deepEqual(calls.map((call) => new URL(call.url, "https://x").pathname), ["/api/v2/sessions/list", "/api/v2/sessions/list"])
+  assert.ok(!JSON.stringify(calls).includes("secret"))
+
+  // Without exactly one new session the result stays unknown and no session is guessed.
+  serverSessionLists(t, ["s_old"], ["s_old"])
+  await assert.rejects(dashboardApi.createAndStartSession("t", { ...body, clientMessageId: "m_slow2" }), (error) =>
+    error.code === "command_outcome_unknown" && error.payload.detail.sessionId === undefined)
+})
+
+test("a repeated session creation is not resent; its result is unknown", async (t) => {
+  const { device, pool, setRegistration } = await setup()
+  await pool.pair(device.pairing())
+  routeThrough(t, pool)
+  serverSessionLists(t, ["s_old"])
+  const body = { connectorId: "dev_1", projectId: "p", runtime: "codex", content: "again", clientMessageId: "m_dup" }
+  for (const outcome of ["accepted", null]) {
+    setRegistration((reg) => ({ commandId: reg.commandId, outcome, errorCode: null, duplicate: true }))
+    await assert.rejects(dashboardApi.createAndStartSession("t", body), (error) => error.code === "command_outcome_unknown" && error.payload.detail.resultUnknown === true)
+  }
+  assert.equal(device.requests.length, 0)
+})
+
+test("the first message of an encrypted session creation carries no attachments", async (t) => {
+  const { device, pool, registered } = await setup()
+  await pool.pair(device.pairing())
+  routeThrough(t, pool)
+  serverSessionLists(t, [])
+  const body = {
+    connectorId: "dev_1", projectId: "p", runtime: "codex", content: "see file", clientMessageId: "m_att_first",
+    attachments: [{ fileId: "a", name: "a.txt", contentBase64: "YQ==" }],
+  }
+  await assert.rejects(dashboardApi.createAndStartSession("t", body), (error) => {
+    assert.equal(error.code, "e2ee_attachments_unsupported")
+    // Certainly not created: the UI keeps the draft for editing.
+    assert.equal(error.payload.detail.resultUnknown, false)
+    return true
+  })
+  assert.equal(registered.length, 0)
+  assert.equal(device.requests.length, 0)
+})
+
+test("renaming an encrypted session is refused without sending the title", async (t) => {
+  const { device, pool } = await setup()
+  await pool.pair(device.pairing())
+  routeThrough(t, pool)
+  const fetched = []
+  t.mock.method(globalThis, "fetch", async (url, init) => {
+    fetched.push({ url: String(url), body: init?.body })
+    return new Response(JSON.stringify({ session: { id: "s" } }), { headers: { "content-type": "application/json" } })
+  })
+  await assert.rejects(dashboardApi.patchSession("t", "s", { title: "my secret plan" }), (error) => error.code === E2EE_TITLE_UNSUPPORTED)
+  assert.deepEqual(fetched, [])
+  // Other directory flags are metadata and still go to the Server.
+  await dashboardApi.patchSession("t", "s", { pinned: true })
+  assert.equal(fetched.length, 1)
+  assert.ok(fetched[0].url.endsWith("/api/v2/sessions/s/meta"))
+  assert.ok(!String(fetched[0].body).includes("secret"))
 })
