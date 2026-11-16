@@ -54,16 +54,8 @@ def _invalid_device_response(exc: ValidationError) -> HTTPException:
 
 
 async def session_view_v12(db: Any, session: SessionView) -> SessionViewV12:
-    fields = await db.session_directory_fields(session.id) or {}
-    return SessionViewV12.model_validate(
-        {
-            **session.model_dump(mode="json"),
-            "displayDevice": fields.get("displayDevice"),
-            "displayUser": fields.get("displayUser"),
-            "planState": fields.get("planState") or "none",
-            "goalState": fields.get("goalState") or "none",
-        }
-    )
+    # The session view already carries the 1.2 directory fields (envelopes, plan/goal state).
+    return SessionViewV12.model_validate(session.model_dump(mode="json"))
 
 
 async def device_snapshot(

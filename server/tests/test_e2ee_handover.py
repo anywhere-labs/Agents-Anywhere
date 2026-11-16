@@ -163,6 +163,22 @@ def test_required_mode_places_sessions_by_project_id_or_leaves_them_for_the_clie
                 missing = await client.patch("/api/v2/sessions/sess_p2/meta", headers=headers, json={"projectId": "prj_x"})
                 assert missing.status_code == 404
                 assert (await store.get_session("sess_p2")).projectId == other_project
+
+                # Every place a session is served carries the envelopes (clients decrypt the list).
+                envelope = {"mode": "sealed", "keyId": "dk1", "payload": "c2VhbGVk"}
+                user_title = {"mode": "sealed", "keyId": "dk1", "payload": "dXNlcg=="}
+                patched = await client.patch(
+                    "/api/v2/sessions/sess_p2/meta", headers=headers, json={"displayUser": user_title}
+                )
+                assert patched.json()["session"]["displayUser"] == user_title
+                assert patched.json()["session"]["displayDevice"] == envelope
+                meta = (await client.get("/api/v2/sessions/sess_p2/meta", headers=headers)).json()["session"]
+                listed = (await client.get("/api/v2/sessions", headers=headers)).json()["sessions"]
+                inventory = (await client.get("/api/v2/sessions/list", headers=headers)).json()["sessions"]
+                for view in (meta, next(s for s in listed if s["id"] == "sess_p2"),
+                             next(s for s in inventory if s["id"] == "sess_p2")):
+                    assert view["displayDevice"] == envelope and view["displayUser"] == user_title
+                    assert view["planState"] == "none" and view["goalState"] == "active"
             finally:
                 await device.stop()
 

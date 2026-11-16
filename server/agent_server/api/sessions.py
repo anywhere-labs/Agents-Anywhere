@@ -529,6 +529,7 @@ async def patch_session_meta(
                 detail={"code": "display_envelope_not_sealed", "message": "displayUser must be a sealed envelope"},
             )
         await db.set_session_display_user(session_id, envelope)
+        session = await db.get_session(session_id, user_id=user_id)
     if payload.projectId is not None:
         try:
             session = await db.set_session_project(session_id, payload.projectId, user_id=user_id)

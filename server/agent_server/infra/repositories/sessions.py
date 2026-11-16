@@ -1925,7 +1925,13 @@ class SessionRepositoryMixin:
         updated_seq = int(row["updated_seq"] or 0)
         aa_archived = bool(row["archived"])
         source_availability = _normalized_source_availability(row["source_state"])
+        # Protocol 1.2 directory fields ride along everywhere a session is served (lists, meta,
+        # dashboard): E2EE clients decrypt the list from the envelopes (contracts/e2ee/1.0).
         return SessionView(
+            displayDevice=json.loads(row["display_device"]) if row.get("display_device") else None,
+            displayUser=json.loads(row["display_user"]) if row.get("display_user") else None,
+            planState=row.get("plan_state") or "none",
+            goalState=row.get("goal_state") or "none",
             id=session_id,
             connectorId=row["connector_id"],
             projectId=row["project_id"],

@@ -898,6 +898,12 @@ class SessionView(BaseModel):
     lastItemOrderSeq: int | None = None
     sortAt: str | None = None
     updatedSeq: int
+    # Protocol 1.2 directory fields (``SessionViewV12``), additive for older clients. E2EE clients
+    # decrypt the list from the envelopes (``device_meshcall.DisplayEnvelope``, contracts/e2ee/1.0).
+    displayDevice: dict[str, Any] | None = None
+    displayUser: dict[str, Any] | None = None
+    planState: str = "none"
+    goalState: str = "none"
 
     @model_validator(mode="after")
     def _normalize_runtime_identity(self) -> SessionView:
