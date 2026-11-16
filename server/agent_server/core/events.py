@@ -124,6 +124,9 @@ def timeline_events_from_items(
     return events
 
 
+PORT_EVENT_TYPES = ("port.listening", "port.closed")
+
+
 def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvelope]:
     session_id = payload.get("sessionId")
     if not isinstance(session_id, str):
@@ -175,6 +178,17 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
                 event_type="runtime.queue.updated",
                 payload={"queue": queue},
             )
+        )
+    # Port preview (``contracts/preview/1.0``): the device's listening ports for this session.
+    # Live state only; sequence 0 so it never moves a client's cursor.
+    port_event = payload.get("portEvent")
+    if (
+        isinstance(port_event, dict)
+        and port_event.get("type") in PORT_EVENT_TYPES
+        and isinstance(port_event.get("payload"), dict)
+    ):
+        events.append(
+            protocol_event(session_id, sequence=0, event_type=port_event["type"], payload=port_event["payload"])
         )
     planning = payload.get("planningState")
     if isinstance(planning, dict):

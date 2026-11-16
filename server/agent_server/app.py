@@ -35,6 +35,7 @@ from agent_server.api import (
     model_config,
     oauth,
     pairing,
+    previews,
     projects,
     runtime_workflows,
     service,
@@ -69,6 +70,7 @@ from agent_server.infra.model_gateway_probe import (
     private_gateways_allowed,
 )
 from agent_server.infra.pairing_store import PairingStore
+from agent_server.infra.preview_state import PreviewStateStore
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.session_watch import SessionWatchHub
@@ -85,6 +87,7 @@ from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_blobs import DeviceBlobService
 from agent_server.services.device_commands import DeviceCommandService
 from agent_server.services.device_link import DeviceLinkService, e2ee_mode
+from agent_server.services.previews import PreviewService
 from agent_server.services.device_planning import DevicePlanningService
 from agent_server.services.device_queue import DeviceQueueService
 from agent_server.services.device_reads import DeviceReadService
@@ -168,6 +171,7 @@ def create_app(
         tokens_task: asyncio.Task[None] | None = None
         trim_task: asyncio.Task[None] | None = None
         purge_task: asyncio.Task[None] | None = None
+        preview_task: asyncio.Task[None] | None = None
         try:
             logger.info(
                 "server concurrency pid={} workers={} event_workers={}",
@@ -191,6 +195,7 @@ def create_app(
             usage_task = asyncio.create_task(app.state.usage_maintenance.run())
             tokens_task = asyncio.create_task(tokens_link_service_for(app.state).run_keep_alive())
             purge_task = asyncio.create_task(_purge_v2_attachments(app), name="v2-attachment-purge")
+            preview_task = asyncio.create_task(app.state.previews.run(), name="preview-sweeper")
             # Switches a stopped worker left behind; waiting ones resume on events.
             await model_channel_service_for(app.state).resume()
             app.state.channel_reconciler = ChannelReconciler(app.state.store,
@@ -207,6 +212,9 @@ def create_app(
                 await SetupTokenService(app.state.setup_token, app.state.redis).snapshot()
             yield
         finally:
+            if preview_task is not None:
+                preview_task.cancel()
+                await asyncio.gather(preview_task, return_exceptions=True)
             if purge_task is not None:
                 purge_task.cancel()
                 await asyncio.gather(purge_task, return_exceptions=True)
@@ -401,6 +409,20 @@ def create_app(
     )
     app.state.ws_tickets = ClientWsTicketManager(app.state.redis)
     app.state.pairing = PairingStore(app.state.redis)
+    app.state.preview_state = PreviewStateStore(app.state.redis)
+
+    async def _device_online(device_id: str) -> bool:
+        return await app.state.device_link_hub.current_connection(device_id) is not None
+
+    app.state.previews = PreviewService(
+        app.state.store,
+        app.state.preview_state,
+        app.state.device_commands,
+        app.state.timeline_broker.publish,
+        _device_online,
+    )
+    app.state.device_link.event_listeners.append(app.state.previews.on_device_event)
+    app.state.device_link.presence_listeners.append(app.state.previews.on_presence)
     app.state.user_tokens = UserTokenService(app.state.store)
     app.state.setup_token = SetupToken()
     app.state.started_at_iso = utc_now()
@@ -494,6 +516,8 @@ def create_app(
     app.include_router(tunnel.router)
     app.include_router(agents.router, prefix=API_V2_PREFIX)
     app.include_router(pairing.router, prefix=API_V2_PREFIX)
+    app.include_router(previews.router)
+    app.include_router(previews.internal_router)
     app.include_router(projects.router, prefix=API_V2_PREFIX)
     app.include_router(sessions.router, prefix=API_V2_PREFIX)
     app.include_router(session_planning.router, prefix=API_V2_PREFIX)
