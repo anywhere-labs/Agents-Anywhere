@@ -26,7 +26,8 @@
 
 - `POST /api/v2/sessions`、`POST /api/v2/sessions/create-and-start`（携带首条消息）；
 - `/api/v2/sessions/{id}/` 下除 `meta`、`runtime/state`、`runtime/capabilities` 以外的全部路由：时间线、快照、事件、会话 WebSocket、命令、审批、计划、目标、Server 排队、附件、终端、文件、服务端分享快照；
-- `/api/v2/connectors/{id}/fs|shell|terminals|terminals-v2/…` 与 `/api/v2/connectors/fs/…`。
+- `/api/v2/connectors/{id}/fs|shell|terminals|terminals-v2/…` 与 `/api/v2/connectors/fs/…`；
+- `/api/v2/runtime-workflows/…` 全部路由（准备工作区、新建向导及其答复、会话树、Agent 操作会带首条消息、答复、路径和消息树）。在它们改走通道之前，客户端在加密设备上直接提示暂不支持。
 
 HTTP 返回 `409`：
 

@@ -73,6 +73,10 @@ _CONTENT_ROUTE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         # Device files, shell and terminals.
         ("*", rf"/api/v2/connectors/{_SID}/(fs|shell|terminals|terminals-v2)(/.*)?"),
         ("*", r"/api/v2/connectors/fs/.+"),
+        # Runtime workflows (workspace preparation, the creation wizard, its answers, session trees and agent
+        # operations) carry first messages, answers, paths and message trees; refuse the whole family until it
+        # is routed through the channel.
+        ("*", r"/api/v2/runtime-workflows(/.*)?"),
     )
 )
 

@@ -69,6 +69,11 @@ def test_settings_default_off_and_validate(monkeypatch):
         ("POST", "/api/v2/connectors/c1/shell/exec", True),
         ("GET", "/api/v2/connectors/c1/terminals-v2/t1/stream", True),
         ("GET", "/api/v2/connectors/fs/preview/read", True),
+        ("POST", "/api/v2/runtime-workflows/creations", True),
+        ("POST", "/api/v2/runtime-workflows/preparations", True),
+        ("POST", "/api/v2/runtime-workflows/creation/w1/responses", True),
+        ("GET", "/api/v2/runtime-workflows/sessions/s1/tree", True),
+        ("POST", "/api/v2/runtime-workflows/sessions/s1/operations", True),
         # Metadata stays plaintext.
         ("GET", "/api/v2/sessions", False),
         ("GET", "/api/v2/sessions/list", False),
