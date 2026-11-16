@@ -26,6 +26,17 @@ export interface TimelineSource {
 }
 
 /**
+ * A large field moved out of the item into the local blob store (04-connector.md §6.4). The item keeps a
+ * preview at `path` (JSON pointer inside `content`); clients expand it through `Store/readBlob`.
+ */
+export interface BlobRef {
+  readonly path: string
+  readonly blobId: string
+  readonly bytes: number
+  readonly mediaType: string | null
+}
+
+/**
  * What a projection produces: an item without the clock-owned fields. The id is computed by
  * `domain/identity` so it is the same on every path (live event, history read, paging, IPC).
  */
@@ -39,6 +50,8 @@ export interface TimelineDraft {
   readonly source: TimelineSource
   readonly createdAt: string
   readonly completedAt?: string | null
+  /** Set by the store's byte budget; projections leave it out. */
+  readonly blobRefs?: readonly BlobRef[]
 }
 
 /** A stored item: the draft plus what the Conversation owns (revision, hash, clock position). */
@@ -126,7 +139,13 @@ export function decideUpsert(sessionId: string, existing: TimelineItem | undefin
   if (existing === undefined) {
     return { kind: 'insert', item: { ...withoutUndefined(draft), sessionId, revision: 1, contentHash } }
   }
-  if (existing.contentHash === contentHash && existing.orderSeq === draft.orderSeq && sameSource(existing.source, draft.source)) {
+  if (
+    existing.contentHash === contentHash
+    && existing.orderSeq === draft.orderSeq
+    && sameSource(existing.source, draft.source)
+    && (existing.completedAt ?? null) === (draft.completedAt ?? null)
+    && JSON.stringify(existing.blobRefs ?? []) === JSON.stringify(draft.blobRefs ?? [])
+  ) {
     return { kind: 'unchanged', item: existing }
   }
   return {
@@ -167,6 +186,8 @@ export interface ProtocolTimelineItem {
   createdAt: string
   updatedAt: string
   completedAt: string | null
+  /** Present only when fields were moved to blobs; v2 clients ignore it. */
+  blobRefs?: BlobRef[]
 }
 
 export function toProtocolItem(item: TimelineItem): ProtocolTimelineItem {
@@ -185,5 +206,6 @@ export function toProtocolItem(item: TimelineItem): ProtocolTimelineItem {
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
     completedAt: item.completedAt ?? null,
+    ...(item.blobRefs !== undefined && item.blobRefs.length > 0 ? { blobRefs: [...item.blobRefs] } : {}),
   }
 }

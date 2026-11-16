@@ -149,8 +149,11 @@ export interface ReceiveMessageInput {
   sessionId: string
   clientMessageId: string
   inputDigest: string
-  /** The pending user message item shown at once (status `pending`). */
-  userItem: TimelineDraft
+  /**
+   * The pending user message item shown at once (status `pending`); null when the message is queued, because
+   * a queued message enters the timeline only when it is dispatched (v2 behaviour).
+   */
+  userItem: TimelineDraft | null
   /** When the admission decided to queue: the queue entry and its position mode. */
   enqueue: { item: Omit<QueueItem, 'status' | 'interruptRequested' | 'error'>; mode: 'auto' | 'interrupt' } | null
   commandId: string | null
