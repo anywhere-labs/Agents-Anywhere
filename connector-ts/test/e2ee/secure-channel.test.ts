@@ -10,6 +10,7 @@ import {
   fromB64url,
   nodeContentSealer,
   parsePairingUri,
+  sealSegments,
   type ChannelItem,
   type PairingPayload,
 } from '../../src/channel/index.js'
@@ -353,5 +354,80 @@ describe('展示信封', () => {
     expect(await dev.trust.openDisplay('sess_1', 'device', sealed)).toEqual({ title: '修复登录页' })
     await dev.trust.retireDirectoryKey(sealed.keyId)
     await expect(dev.trust.openDisplay('sess_1', 'device', sealed)).rejects.toThrow()
+  })
+})
+
+describe('E-1：Server 转发的内容里没有任何明文（进程内金丝雀）', () => {
+  it('消息、回复、事件、标题、附件、客户端名称里的金丝雀都不出现在经 Server 的字节里', async () => {
+    const canary = `canary-${randomBytes(12).toString('hex')}`
+    const needle = Buffer.from(canary, 'utf8')
+    const seen: Buffer[] = []
+    // Everything the Server (and the Router) could see: route + n + ct, with ct decoded as deeply as it decodes.
+    const record = (item: ChannelItem) => {
+      const raw = Buffer.from(item.ct, 'base64url')
+      seen.push(Buffer.from(JSON.stringify(item)), raw)
+      try {
+        const envelope = JSON.parse(raw.toString('utf8')) as { message?: string }
+        if (typeof envelope.message === 'string') seen.push(Buffer.from(envelope.message, 'base64url'))
+      } catch {
+        // transport frames are ciphertext, not JSON
+      }
+      return item
+    }
+    const dev = await device()
+    const invitation = await dev.trust.startPairing('https://aa.example.com', 'required')
+    const identity = generateX25519()
+    const link = relay(dev, identity, 'c_canary', { toDevice: record, toClient: record })
+    const { channel } = await ClientSecureChannel.pair(parsePairingUri(invitation.uri), {
+      ...link.options,
+      label: `phone ${canary}`,
+      platform: 'android',
+    })
+
+    // A message, its echoed reply, a pushed event.
+    await channel.request('POST', '/api/v2/sessions/s1/runtime/messages', { content: `please ${canary}`, clientMessageId: 'm1' })
+    await channel.subscribe('s1', null, () => undefined)
+    await tick()
+    dev.api.emitters.get('s1')!({ type: 'timeline.item_created', item: { text: `agent says ${canary}` } })
+    await tick()
+    await tick()
+    // A file read and a terminal write travel the same way.
+    await channel.request('GET', `/api/v2/connectors/dev_home/fs/readText?path=/tmp/${canary}.txt`)
+    await channel.request('POST', '/api/v2/connectors/dev_home/terminals-v2/t1/write', { data: `echo ${canary}\n` })
+
+    // Stored next to the Server: a sealed title and a sealed attachment.
+    const title = await dev.trust.sealDisplay('s1', 'device', { title: canary, latest: canary, cwd: `/home/${canary}` })
+    const attachmentKey = new Uint8Array(randomBytes(32))
+    const segments = sealSegments('attachment', 'file_1', attachmentKey, Buffer.from(`${canary}`.repeat(5000)))
+    seen.push(Buffer.from(JSON.stringify(title)), ...segments.map((segment) => Buffer.from(segment)))
+
+    expect(dev.api.requests.length).toBe(3)
+    expect(seen.length).toBeGreaterThan(10)
+    for (const bytes of seen) expect(bytes.includes(needle)).toBe(false)
+  })
+})
+
+describe('E-7：通道开销（进程内，不含网络）', () => {
+  it('2 KiB 请求往返与 1 MiB 快照的加密开销', async () => {
+    const dev = await device()
+    const { channel } = await pairClient(dev)
+    const body = { content: 'x'.repeat(2048) }
+    const timings: number[] = []
+    for (let i = 0; i < 300; i++) {
+      const started = performance.now()
+      await channel.request('POST', '/api/v2/sessions/s1/runtime/messages', body)
+      timings.push(performance.now() - started)
+    }
+    timings.sort((a, b) => a - b)
+    const p50 = timings[Math.floor(timings.length * 0.5)]!
+    const p95 = timings[Math.floor(timings.length * 0.95)]!
+    const big = 'y'.repeat(1024 * 1024)
+    const started = performance.now()
+    await channel.request('POST', '/api/v2/sessions/s1/snapshot', { big })
+    const snapshotMs = performance.now() - started
+    console.info(`E-7 in-process: 2 KiB round trip p50 ${p50.toFixed(3)} ms, p95 ${p95.toFixed(3)} ms; 1 MiB echo ${snapshotMs.toFixed(1)} ms`)
+    // Loose ceilings: they catch regressions (e.g. a per-frame key import), not machine speed.
+    expect(p95).toBeLessThan(20)
+    expect(snapshotMs).toBeLessThan(2000)
   })
 })
