@@ -1,12 +1,16 @@
 /**
  * DSH-3 regression: this plugin (dsh-bridge 2.x) against the v3 TS Connector's
  * `dsh-bridge 2.0` compatibility layer (connector-ts/src/runtime/dsh-bridge2), the way
- * `runtime.test.ts` runs it against the Python Connector probe. Skipped when
- * connector-ts has not been installed next to this package.
+ * `runtime.test.ts` runs it against the Python Connector probe.
+ *
+ * It is also the cross-version check from docs/v3 08 (risk table): the plugin keeps its own
+ * meshcall 0.3.0 client while the Connector runs meshcall 9334405 and that version's Router.
+ * Skipped when connector-ts is not installed next to this package or no 9334405 Router binary
+ * is found (`MESHCALL_V3_ROUTER_BINARY`, else `/tmp/aa-mc/bin/meshcall-router`).
  */
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { existsSync } from 'node:fs'
+import { accessSync, constants, existsSync, readFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -16,6 +20,18 @@ import { sessionId } from '../../src/host/dsh-runtime/identity.js'
 
 const connectorTs = new URL('../../../connector-ts/', import.meta.url)
 const installed = existsSync(new URL('node_modules/meshcall/package.json', connectorTs))
+const meshcallVersion = (base: URL) => (JSON.parse(readFileSync(new URL('node_modules/meshcall/package.json', base), 'utf8')) as { version: string }).version
+
+/** The Router binary of the Connector's meshcall (0.4.0-dev has no release to download). */
+function v3RouterBinary(): string | undefined {
+  for (const path of [process.env.MESHCALL_V3_ROUTER_BINARY, '/tmp/aa-mc/bin/meshcall-router']) {
+    if (!path) continue
+    try { accessSync(path, constants.X_OK); return path } catch { /* next */ }
+  }
+  return undefined
+}
+const routerBinary = v3RouterBinary()
+const skip = !installed ? 'connector-ts is not installed' : !routerBinary ? 'no meshcall 9334405 Router binary' : false
 
 async function until(check: () => boolean | Promise<boolean>, label: string, attempts = 1500) {
   for (let n = 0; n < attempts; n++) { if (await check()) return; await delay(10) }
@@ -25,7 +41,10 @@ async function until(check: () => boolean | Promise<boolean>, label: string, att
 type Json = Record<string, unknown>
 interface Notification { method: string, params: Json }
 
-test('the plugin syncs and answers through the TS Connector 2.0 compatibility layer', { timeout: 60_000, skip: !installed && 'connector-ts is not installed' }, async () => {
+test('the plugin syncs and answers through the TS Connector 2.0 compatibility layer', { timeout: 60_000, skip }, async () => {
+  // The point of the check: two meshcall versions on one local Router.
+  assert.equal(meshcallVersion(new URL('../../', import.meta.url)), '0.3.0', 'the plugin keeps meshcall 0.3.0')
+  assert.match(meshcallVersion(connectorTs), /9334405/, 'the Connector runs meshcall 9334405')
   const compat = await import(new URL('src/runtime/dsh-bridge2/index.ts', connectorTs).href) as typeof import('../../../connector-ts/src/runtime/dsh-bridge2/index.js')
   const home = await mkdtemp(join(tmpdir(), 'aa-dsh-ts-'))
   const published: Notification[] = []
@@ -43,7 +62,7 @@ test('the plugin syncs and answers through the TS Connector 2.0 compatibility la
   let runtime: InstanceType<typeof compat.Bridge2Runtime> | undefined
   try {
     context = await nativeRuntime(home)
-    router = await compat.Bridge2Router.start({ home, slot: { current: () => runtime?.relay } })
+    router = await compat.Bridge2Router.start({ home, binaryPath: routerBinary!, slot: { current: () => runtime?.relay } })
     assert.equal(router.rendezvousPath, bridgePath(home, 'connector.json'), 'publishes where the plugin looks')
     runtime = await compat.Bridge2Runtime.connect({ mesh: router.mesh, ledger, connectorId: 'connector-native-test',
       sessionNamespace: 'connector-native-test:instance-1' }, 20_000)

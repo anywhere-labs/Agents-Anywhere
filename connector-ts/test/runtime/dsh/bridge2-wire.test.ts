@@ -13,6 +13,9 @@ import { Bridge2Router, Bridge2Runtime, CONNECTOR_METADATA, NAMESPACE_METADATA, 
   type Bridge2Rendezvous } from '../../../src/runtime/dsh-bridge2/index.js'
 import { MemoryLedger } from '../../fixtures/bridge2-ledger.js'
 import { SyncServiceClient } from '../../fixtures/dsh-sync-client.js'
+import { routerBinary } from '../../fixtures/router-binary.js'
+
+const binary = routerBinary()
 
 const payload = z.looseObject({})
 const syncRequest = z.object({ subscriptionId: z.string(), checkpointVersion: z.int().optional() })
@@ -99,7 +102,7 @@ async function setup() {
   cleanups.push(() => rm(home, { recursive: true, force: true }))
   const ledger = new MemoryLedger()
   let runtime: Bridge2Runtime | undefined
-  const router = await Bridge2Router.start({ home, slot: { current: () => runtime?.relay } })
+  const router = await Bridge2Router.start({ home, binaryPath: binary!, slot: { current: () => runtime?.relay } })
   cleanups.push(() => router.stop())
   const rendezvous = JSON.parse(await readFile(router.rendezvousPath, 'utf8')) as Bridge2Rendezvous
   // The plugin: Mesh on the published endpoint with the published key, Bridge registered.
@@ -116,7 +119,7 @@ async function setup() {
 const batch = (subscriptionId: string, batchSeq: number, id: string) => ({ subscriptionId, batchSeq, projectionVersion: 3,
   operations: [{ kind: 'notifications', notifications: [{ method: 'timeline.itemUpsert', params: { sessionId: 's1', item: { id, sessionId: 's1', type: 'message', status: 'completed' } } }] }] })
 
-describe('dsh-bridge 2.0 over a real MeshCall Router (DSH-3)', () => {
+describe.skipIf(binary === null)('dsh-bridge 2.0 over a real MeshCall Router (DSH-3)', () => {
   test('rendezvous is the 2.0 document, private, and removed on stop', async () => {
     const { router, rendezvous } = await setup()
     expect(rendezvous).toMatchObject({ version: 2, protocol: 'meshcall', pid: process.pid, instanceId: router.instanceId })

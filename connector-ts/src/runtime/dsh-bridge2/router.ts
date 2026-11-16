@@ -13,7 +13,7 @@ import { mkdir, open, readFile, rename, rm, unlink } from 'node:fs/promises'
 import { homedir, tmpdir, userInfo } from 'node:os'
 import { dirname, join } from 'node:path'
 import { LocalRouter, Mesh, Router, type RunningServer } from 'meshcall'
-import { BRIDGE_SERVICE } from './client.js'
+import { BRIDGE_SERVICE, guardMeshCallResults } from './client.js'
 import { SYNC_SERVICE, SyncService, type RelaySlot } from './service.js'
 
 export const CONTROL_SERVICE = 'aa.local.v2.Control'
@@ -103,6 +103,8 @@ export interface Bridge2RouterOptions {
   slot: RelaySlot
   /** Extra services the Connector serves on the same Router (mounted before serving). */
   services?: object[]
+  /** The Router binary; default `MESHCALL_ROUTER_BINARY` or meshcall's own lookup. */
+  binaryPath?: string
 }
 
 /** A Router of its own, the Connector's Mesh on it with `SyncService` mounted, and the published rendezvous. */
@@ -112,6 +114,7 @@ export class Bridge2Router {
     private readonly bridgeKey: string, private readonly authFile: string) {}
 
   static async start(options: Bridge2RouterOptions): Promise<Bridge2Router> {
+    guardMeshCallResults()
     const home = options.home ?? (userInfo().homedir || homedir())
     const instanceId = randomUUID().replaceAll('-', '')
     const endpoint = routerEndpoint(instanceId, home)
@@ -119,7 +122,7 @@ export class Bridge2Router {
     const keys = { connector: apiKey('connector'), 'dsh-bridge': apiKey('dsh-bridge') }
     const authFile = join(home, '.agents-anywhere', 'router', `${instanceId}.auth.json`)
     await writePrivateJson(authFile, routerAuthDocument(keys))
-    const router = await LocalRouter.start({ ...endpoint, authFile })
+    const router = await LocalRouter.start({ ...endpoint, authFile, ...(options.binaryPath ? { binaryPath: options.binaryPath } : {}) })
     let mesh: Mesh | undefined
     try {
       mesh = new Mesh(new Router(endpoint), { token: keys.connector.key, peerId: `connector-${instanceId}` })
