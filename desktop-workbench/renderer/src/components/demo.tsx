@@ -1,5 +1,6 @@
 "use client"
 
+import { SecurePairingHost } from "@/components/e2ee/secure-pairing-host"
 import { EmptyAgentPrompt } from '@/components/empty-agent-prompt'
 
 import * as React from "react"
@@ -57,6 +58,7 @@ const SIDEBAR_MOTION_DURATION_MS = 220
 export function Demo() {
   return (
     <WorkspaceProvider>
+      <SecurePairingHost />
       <DevicePairingProvider>
         <DesktopConnectorProvider>
           <DesktopSessionNotifications />

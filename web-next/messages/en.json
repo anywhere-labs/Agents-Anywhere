@@ -2647,8 +2647,8 @@
   "e2ee": {
     "pairing": {
       "title": "Pair for end-to-end encryption",
-      "description": "On the device, open Secure connections and copy the pairing link (it expires in 10 minutes), then paste it here.",
-      "descriptionForDevice": "Content on {device} is end-to-end encrypted. On that device, open Secure connections and copy the pairing link, then paste it here.",
+      "description": "Create a pairing link on the device (Desktop: Settings → Secure connections; command-line devices: the Connector's pair command), then paste it here. It expires in 10 minutes.",
+      "descriptionForDevice": "Content on {device} is end-to-end encrypted. Create a pairing link on that device (Desktop: Settings → Secure connections; command-line devices: the Connector's pair command), then paste it here.",
       "linkLabel": "Pairing link",
       "invalidLink": "This is not a pairing link. It starts with aa-pair://.",
       "device": "Device",
@@ -2658,10 +2658,7 @@
       "cancel": "Cancel",
       "paired": "Paired with {device}. Its content now travels end-to-end encrypted.",
       "errorExpired": "This pairing link has expired or was already used. Create a new one on the device.",
-      "errorMismatch": "The device answering is not the one in the link. Pairing was stopped.",
-      "errorHandshake": "The secure connection could not be set up. Try again with a new link.",
-      "errorOffline": "The device is offline. Pair when it is online.",
-      "errorGeneric": "Pairing failed ({code}).",
+      "errorGeneric": "Pairing failed. Create a new pairing link on the device and try again.",
       "unsupported": "This browser cannot create end-to-end encrypted connections. Use a current version of Chrome, Edge, Firefox or Safari, or the Desktop app."
     },
     "settings": {
@@ -2683,9 +2680,12 @@
       "policyDescription": "This client refuses plaintext session content even though the server no longer requires encryption.",
       "relax": "Allow plaintext",
       "relaxTitle": "Allow plaintext on this client?",
-      "relaxDescription": "The server will be able to read session content of devices you have not paired with. Paired devices stay encrypted.",
+      "relaxDescription": "Only this client is affected: the server will be able to read session content of devices you have not paired with, and paired devices stay encrypted. If the server requires encryption again later, this client requires it again too.",
       "cancel": "Cancel",
-      "unsupported": "This browser cannot create end-to-end encrypted connections."
+      "unsupported": "This browser cannot create end-to-end encrypted connections.",
+      "copy": "Copy",
+      "copied": "Fingerprint copied.",
+      "copyFailed": "Couldn't copy the fingerprint."
     }
   }
 }

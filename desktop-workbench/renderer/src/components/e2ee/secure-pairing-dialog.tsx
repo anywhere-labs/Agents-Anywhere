@@ -9,6 +9,7 @@ import { Loader2, ShieldCheck } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
+import { useOptionalWorkspace } from "@/components/workspace-context"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
@@ -17,15 +18,17 @@ import { e2eeRuntime } from "@/features/e2ee/runtime"
 import { fromB64url } from "@/lib/e2ee/bytes"
 import { parsePairingUri, type PairingPayload } from "@/lib/e2ee/client-channel"
 import { identityFingerprint } from "@/lib/e2ee/formats"
+import { runtimeFailureOf, useRuntimeErrorText } from "@/lib/runtime-error-text"
 
 type Parsed = { payload: PairingPayload; fingerprint: string; expired: boolean }
 
-const PAIRING_ERROR_KEYS: Record<string, string> = {
-  pairing_expired: "errorExpired",
-  device_pin_mismatch: "errorMismatch",
-  e2ee_handshake_failed: "errorHandshake",
-  e2ee_protocol_error: "errorHandshake",
-  connector_offline: "errorOffline",
+/** The device's name when this workspace knows it, otherwise its id. */
+export function useDeviceName(): (deviceId: string | null | undefined) => string {
+  const connectors = useOptionalWorkspace()?.connectors
+  return React.useCallback(
+    (deviceId) => (deviceId ? connectors?.find((connector) => connector.id === deviceId)?.name || deviceId : ""),
+    [connectors],
+  )
 }
 
 export function SecurePairingDialog({
@@ -41,6 +44,9 @@ export function SecurePairingDialog({
   onPaired?: (deviceId: string) => void
 }) {
   const t = useTranslations("e2ee.pairing")
+  const errorText = useRuntimeErrorText()
+  const deviceName = useDeviceName()
+  const [now, setNow] = React.useState(() => Date.now())
   const [text, setText] = React.useState("")
   const [parsed, setParsed] = React.useState<Parsed | null>(null)
   const [invalid, setInvalid] = React.useState(false)
@@ -68,7 +74,7 @@ export function SecurePairingDialog({
     try {
       const payload = parsePairingUri(value)
       void identityFingerprint(fromB64url(payload.deviceIdentityPub)).then((fingerprint) => {
-        if (!cancelled) setParsed({ payload, fingerprint, expired: Date.parse(payload.expiresAt) < Date.now() })
+        if (!cancelled) setParsed({ payload, fingerprint, expired: Date.parse(payload.expiresAt) <= Date.now() })
       })
       setInvalid(false)
     } catch {
@@ -80,19 +86,29 @@ export function SecurePairingDialog({
     }
   }, [text])
 
+  // The link expires while the dialog is open: disable pairing at that moment, not only when it was pasted.
+  const expiresAt = parsed ? Date.parse(parsed.payload.expiresAt) : NaN
+  React.useEffect(() => {
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return
+    const timer = setTimeout(() => setNow(Date.now()), Math.min(expiresAt - Date.now() + 50, 2 ** 31 - 1))
+    return () => clearTimeout(timer)
+  }, [expiresAt])
+  const expired = parsed ? parsed.expired || expiresAt <= now : false
+
   async function pair() {
     const runtime = e2eeRuntime()
     if (!parsed || !runtime) return
     setPairing(true)
     setError(null)
     try {
-      const pin = await runtime.pair(parsed.payload)
-      toast.success(t("paired", { device: pin.deviceId }))
+      const pin = await runtime.pair(parsed.payload, deviceName(parsed.payload.deviceId))
+      toast.success(t("paired", { device: deviceName(pin.deviceId) }))
       onPaired?.(pin.deviceId)
       onOpenChange(false)
     } catch (caught) {
-      const code = (caught as { code?: string })?.code ?? ""
-      setError(t(PAIRING_ERROR_KEYS[code] ?? "errorGeneric", { code }))
+      // Known codes read the same here as on the session page (runtimeErrors); others get a generic line.
+      const failure = runtimeFailureOf(caught)
+      setError(failure.code ? errorText({ code: failure.code }, t("errorGeneric")) ?? t("errorGeneric") : t("errorGeneric"))
     } finally {
       setPairing(false)
     }
@@ -108,7 +124,7 @@ export function SecurePairingDialog({
             <ShieldCheck className="size-5" aria-hidden />
             {t("title")}
           </DialogTitle>
-          <DialogDescription>{deviceHint ? t("descriptionForDevice", { device: deviceHint }) : t("description")}</DialogDescription>
+          <DialogDescription>{deviceHint ? t("descriptionForDevice", { device: deviceName(deviceHint) }) : t("description")}</DialogDescription>
         </DialogHeader>
         <FieldGroup>
           <Field>
@@ -128,11 +144,11 @@ export function SecurePairingDialog({
           {parsed ? (
             <div className="rounded-md border p-3 text-sm" data-testid="e2ee-pairing-preview">
               <div className="text-muted-foreground">{t("device")}</div>
-              <div className="font-medium">{parsed.payload.deviceId}</div>
+              <div className="font-medium">{deviceName(parsed.payload.deviceId)}</div>
               <div className="mt-2 text-muted-foreground">{t("fingerprint")}</div>
               <div className="font-mono" data-testid="e2ee-pairing-fingerprint">{parsed.fingerprint}</div>
               <p className="mt-2 text-muted-foreground">{t("compareHint")}</p>
-              {parsed.expired ? <p className="mt-2 text-destructive">{t("errorExpired")}</p> : null}
+              {expired ? <p className="mt-2 text-destructive">{t("errorExpired")}</p> : null}
             </div>
           ) : null}
           {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
@@ -142,8 +158,8 @@ export function SecurePairingDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pairing}>
             {t("cancel")}
           </Button>
-          <Button onClick={() => void pair()} disabled={!parsed || parsed.expired || pairing || unavailable}>
-            {pairing ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+          <Button onClick={() => void pair()} disabled={!parsed || expired || pairing || unavailable}>
+            {pairing ? <Loader2 data-icon="inline-start" className="animate-spin" aria-hidden /> : null}
             {t("pair")}
           </Button>
         </DialogFooter>

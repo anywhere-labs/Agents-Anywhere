@@ -2848,8 +2848,8 @@
   "e2ee": {
     "pairing": {
       "title": "配对端到端加密",
-      "description": "在设备上打开「安全连接」，复制配对链接（10 分钟内有效），粘贴到这里。",
-      "descriptionForDevice": "{device} 上的内容是端到端加密的。在那台设备上打开「安全连接」，复制配对链接，粘贴到这里。",
+      "description": "在设备上生成配对链接（Desktop：设置 → 安全连接；命令行设备：运行 Connector 的配对命令），粘贴到这里。链接 10 分钟内有效。",
+      "descriptionForDevice": "{device} 上的内容是端到端加密的。在这台设备上生成配对链接（Desktop：设置 → 安全连接；命令行设备：运行 Connector 的配对命令），粘贴到这里。",
       "linkLabel": "配对链接",
       "invalidLink": "这不是配对链接，配对链接以 aa-pair:// 开头。",
       "device": "设备",
@@ -2859,10 +2859,7 @@
       "cancel": "取消",
       "paired": "已与 {device} 配对，它的内容现在端到端加密传输。",
       "errorExpired": "配对链接已过期或已经用过，请在设备上重新生成。",
-      "errorMismatch": "响应的设备不是链接里的那台，已停止配对。",
-      "errorHandshake": "无法建立安全连接，请换一个新链接重试。",
-      "errorOffline": "设备不在线，请在设备上线后配对。",
-      "errorGeneric": "配对失败（{code}）。",
+      "errorGeneric": "配对失败，请在设备上重新生成配对链接后重试。",
       "unsupported": "这个浏览器无法建立端到端加密连接。请使用新版 Chrome、Edge、Firefox、Safari，或使用 Desktop。"
     },
     "settings": {
@@ -2884,9 +2881,12 @@
       "policyDescription": "即使服务器不再要求加密，本客户端仍拒绝明文的会话内容。",
       "relax": "允许明文",
       "relaxTitle": "允许本客户端使用明文？",
-      "relaxDescription": "服务器将能读到未配对设备的会话内容；已配对的设备仍然加密。",
+      "relaxDescription": "只影响本客户端：服务器将能读到未配对设备的会话内容，已配对的设备仍然加密。服务器以后重新要求加密时，本客户端也会重新要求。",
       "cancel": "取消",
-      "unsupported": "这个浏览器无法建立端到端加密连接。"
+      "unsupported": "这个浏览器无法建立端到端加密连接。",
+      "copy": "复制",
+      "copied": "已复制指纹。",
+      "copyFailed": "无法复制指纹。"
     }
   }
 }
