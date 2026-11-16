@@ -5,9 +5,9 @@ import type { Params } from './params.js'
 import { ShellOps } from './shell.js'
 import type { Terminals } from './terminals.js'
 
-export { AttachmentCache, safeFileName, type AttachmentSource, type FetchFile, type LocalAttachment } from './attachments.js'
+export { AttachmentCache, safeFileName, type AttachmentSource, type FetchFile, type LocalAttachment, type OpenSealed } from './attachments.js'
 export { WorkspaceError, fsError } from './errors.js'
-export { FileOps, mimeOf, type DirEntry, type PreparedDownload, type ReadDirResult, type ReadTextResult, type WriteFileResult } from './files.js'
+export { FILE_CHUNK_MAX_BYTES, FileOps, mimeOf, type DirEntry, type FileChunk, type PreparedDownload, type ReadDirResult, type ReadTextResult, type WriteFileResult } from './files.js'
 export { MAX_DIR_ENTRIES, MAX_OUTPUT_CHARS, MAX_READ_TEXT_BYTES, type Params } from './params.js'
 export { PortWatcher, listeningPorts, mergeByPort, parseLsof, parseNetstat, parseProcNetTcp, parseTasklist, type ListeningPort } from './ports.js'
 export { RootPolicy, expandHome, realPathOf, rootsFromEnv, type RootPolicyOptions } from './roots.js'
@@ -36,6 +36,7 @@ export function workspaceMethods(files: FileOps, shell: ShellOps, terminals?: Te
     'fs.readText': params => files.readText(params),
     'fs.writeFile': params => files.writeFile(params),
     'fs.prepareDownload': params => files.prepareDownload(params),
+    'fs.readRange': params => files.readRange(params),
     'shell.exec': params => shell.exec(params),
     'shell.task.start': params => shell.taskStart(params),
     'shell.task.cancel': params => shell.taskCancel(params),

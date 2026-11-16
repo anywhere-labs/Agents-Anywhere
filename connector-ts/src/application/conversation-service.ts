@@ -59,6 +59,8 @@ export interface AttachmentRef {
   mediaType: string
   size: number
   sha256?: string | null
+  /** E2EE: the key of a sealed upload (contracts/e2ee/1.0 `SealedAttachmentKey`); the bytes on the Server are ciphertext. */
+  sealedKey?: string | null
 }
 
 export interface SendMessageCommand {
@@ -462,7 +464,14 @@ export class ConversationService {
         throw new UseCaseError('session_busy', admission.legacy ? `session is ${admission.status}` : 'The session is busy.', { legacy: admission.legacy, status: admission.status })
       }
       const at = this.deps.clock.nowIso()
-      const attachments: QueueAttachment[] = (command.attachments ?? []).map(ref => ({ fileId: ref.fileId, name: ref.name, mediaType: ref.mediaType, size: ref.size }))
+      const attachments: QueueAttachment[] = (command.attachments ?? []).map(ref => ({
+        fileId: ref.fileId,
+        name: ref.name,
+        mediaType: ref.mediaType,
+        size: ref.size,
+        ...(ref.sha256 != null ? { sha256: ref.sha256 } : {}),
+        ...(ref.sealedKey != null ? { sealedKey: ref.sealedKey } : {}),
+      }))
       const received = await this.deps.store.deliveries.receive({
         sessionId: command.sessionId,
         clientMessageId: command.clientMessageId,
@@ -498,9 +507,19 @@ export class ConversationService {
   /** Hands an accepted delivery to the Runtime. Never retried on an unknown outcome. */
   private async deliver(sessionId: string, clientMessageId: string, content: string, refs: AttachmentRef[]): Promise<'started' | 'rejected' | 'unknown'> {
     const binding = await this.binding(sessionId)
+    // Attachments first: one that cannot be fetched or opened (a sealed upload with a wrong key) is a rejection
+    // the Runtime never saw, not an unknown outcome.
+    let attachments: PromptAttachment[]
+    try {
+      attachments = this.deps.attachments === undefined ? [] : await Promise.all(refs.map(ref => this.deps.attachments!(sessionId, ref)))
+    } catch (error) {
+      const code = typeof (error as { code?: unknown })?.code === 'string' ? String((error as { code: string }).code) : 'attachment_unavailable'
+      await this.deps.store.deliveries.transition(sessionId, clientMessageId, 'rejected', { at: this.deps.clock.nowIso(), errorCode: code })
+      await this.writeFailedUserMessage(sessionId, clientMessageId, content, code, (error as Error)?.message ?? code)
+      return 'rejected'
+    }
     const at = this.deps.clock.nowIso()
     await this.deps.store.deliveries.transition(sessionId, clientMessageId, 'sending', { at })
-    const attachments = this.deps.attachments === undefined ? [] : await Promise.all(refs.map(ref => this.deps.attachments!(sessionId, ref)))
     let acceptance
     try {
       acceptance = await binding.session.prompt({ text: content, ...(attachments.length > 0 ? { attachments } : {}) }, { deliveryId: clientMessageId, clientMessageId })
@@ -698,7 +717,20 @@ export class ConversationService {
 
   private async deliverQueued(sessionId: string, clientMessageId: string, content: string, attachments: readonly QueueAttachment[]): Promise<'started' | 'rejected' | 'unknown'> {
     const binding = await this.binding(sessionId)
-    const refs = this.deps.attachments === undefined ? [] : await Promise.all(attachments.map(a => this.deps.attachments!(sessionId, { fileId: a.fileId, name: a.name ?? a.fileId, mediaType: a.mediaType ?? 'application/octet-stream', size: a.size ?? 0 })))
+    let refs: PromptAttachment[]
+    try {
+      refs = this.deps.attachments === undefined ? [] : await Promise.all(attachments.map(a => this.deps.attachments!(sessionId, {
+        fileId: a.fileId,
+        name: a.name ?? a.fileId,
+        mediaType: a.mediaType ?? 'application/octet-stream',
+        size: a.size ?? 0,
+        ...(a.sha256 != null ? { sha256: a.sha256 } : {}),
+        ...(a.sealedKey != null ? { sealedKey: a.sealedKey } : {}),
+      })))
+    } catch (error) {
+      this.reportError(sessionId, error)
+      return 'rejected'
+    }
     let acceptance
     try {
       acceptance = await binding.session.prompt({ text: content, ...(refs.length > 0 ? { attachments: refs } : {}) }, { deliveryId: clientMessageId, clientMessageId })

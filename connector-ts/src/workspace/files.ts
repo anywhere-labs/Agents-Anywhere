@@ -24,6 +24,17 @@ import type { RootPolicy } from './roots.js'
 
 export const WRITE_MAX_BYTES = 32 * 1024 * 1024
 export const DOWNLOAD_CHUNK_BYTES = 256 * 1024
+/** `FILE_CHUNK_MAX_BYTES` (contracts/e2ee/1.0): the largest slice one channel read returns. */
+export const FILE_CHUNK_MAX_BYTES = 8 * 1024 * 1024
+
+/** `TunnelFileChunk` (contracts/e2ee/1.0): one slice of a file read through a secure channel. */
+export interface FileChunk {
+  encoding: 'base64'
+  data: string
+  offset: number
+  size: number
+  eof: boolean
+}
 
 export interface DirEntry {
   name: string
@@ -293,5 +304,36 @@ export class FileOps {
         stream.destroy()
       }
     })()
+  }
+
+  /**
+   * `GET fs/read?root&path&offset&length` through a secure channel (E2EE has no download URL): at most
+   * `FILE_CHUNK_MAX_BYTES` from `offset`. Same root and path checks as a download.
+   */
+  public async readRange(params: Params): Promise<FileChunk> {
+    const path = await this.preparedDownloadPath(params)
+    const { size } = await regularFile(path)
+    const offset = Number(params.offset ?? 0)
+    const wanted = Number(params.length ?? FILE_CHUNK_MAX_BYTES)
+    if (!Number.isSafeInteger(offset) || offset < 0) throw invalid('offset must be a non-negative integer')
+    if (!Number.isSafeInteger(wanted) || wanted < 1) throw invalid('length must be a positive integer')
+    const length = Math.min(wanted, FILE_CHUNK_MAX_BYTES, Math.max(0, size - offset))
+    const buffer = Buffer.alloc(length)
+    let read = 0
+    if (length > 0) {
+      const handle = await open(path, 'r').catch((error: unknown) => {
+        throw fsError(error, path)
+      })
+      try {
+        while (read < length) {
+          const { bytesRead } = await handle.read(buffer, read, length - read, offset + read)
+          if (bytesRead === 0) break
+          read += bytesRead
+        }
+      } finally {
+        await handle.close()
+      }
+    }
+    return { encoding: 'base64', data: buffer.subarray(0, read).toString('base64'), offset, size, eof: offset + read >= size }
   }
 }

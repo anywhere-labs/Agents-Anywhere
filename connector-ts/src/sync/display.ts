@@ -10,7 +10,7 @@ export const plainSealer: DisplaySealer = {
 }
 
 /** `SessionSummary` on the wire (device-meshcall 1.0): facts plus the envelope, never message text. */
-export function wireSummary(facts: SummaryFacts, sealer: DisplaySealer): Record<string, unknown> {
+export async function wireSummary(facts: SummaryFacts, sealer: DisplaySealer): Promise<Record<string, unknown>> {
   return {
     sessionId: facts.sessionId,
     runtimeType: facts.runtimeType,
@@ -26,6 +26,6 @@ export function wireSummary(facts: SummaryFacts, sealer: DisplaySealer): Record<
     resetSeq: facts.resetSeq,
     planState: facts.planState,
     goalState: facts.goalState,
-    displayDevice: sealer.seal(facts.display),
+    displayDevice: await sealer.seal(facts.display, facts.sessionId),
   }
 }

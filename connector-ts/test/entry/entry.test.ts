@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { RuntimeHandle, RuntimeProvider } from '../../src/application/ports/index.js'
 import { codexStableSessionId } from '../../src/domain/identity/index.js'
 import { runCli, runDesktopHost, runRpc, startHostProcess, type DesktopHostMessage } from '../../src/entry/index.js'
+import { noVault } from '../../src/keystore/index.js'
 import { joinChunks } from '../../src/sync/index.js'
 import { FakeRuntimeSession, PushQueue } from '../support/fake-runtime-session.js'
 import { FakeServer, RouterProcess, routerBinary } from '../support/mesh-harness.js'
@@ -47,7 +48,7 @@ describe.skipIf(binary === null)('entry: rpc, CLI and the composition root', () 
     const stdout = new PassThrough()
     const lines: string[] = []
     stdout.on('data', (chunk: Buffer) => lines.push(...chunk.toString('utf8').split('\n').filter(Boolean)))
-    const done = runRpc({ home, routerBinary: binary!, compose: { storeMode: 'in-process', providers: [] } }, { stdin, stdout })
+    const done = runRpc({ home, routerBinary: binary!, compose: { storeMode: 'in-process', providers: [], trust: false, terminals: false } }, { stdin, stdout })
     await until(() => lines.length > 0, 15_000, 'ready line')
     const ready = JSON.parse(lines[0]!) as { kind: string; version: number; pid: number; endpoint: { unixPath: string }; key: string }
     expect(ready).toMatchObject({ kind: 'connector.ready', version: 1, pid: process.pid })
@@ -88,7 +89,7 @@ describe.skipIf(binary === null)('entry: rpc, CLI and the composition root', () 
 
     let stop!: () => void
     const stopped = new Promise<void>(resolve => (stop = resolve))
-    const running = runCli(['start'], { io, home, routerBinary: binary!, until: stopped, compose: { storeMode: 'in-process', providers: [] } })
+    const running = runCli(['start'], { io, home, routerBinary: binary!, until: stopped, compose: { storeMode: 'in-process', providers: [], trust: false, terminals: false } })
     await until(() => server.held !== null, 20_000, 'online').catch(error => {
       throw new Error(`${(error as Error).message}\n${err.join('\n')}`)
     })
@@ -125,7 +126,7 @@ describe.skipIf(binary === null)('entry: rpc, CLI and the composition root', () 
       discover: async () => ({ type: 'codex', displayName: 'Codex', installed: true, agentVersion: '0.166.0', problems: [], instancePolicy: 'multiple', processScope: 'shared' }),
       start: async () => handle,
     }
-    const host = await startHostProcess({ kind: 'cli', home, routerBinary: binary!, compose: { storeMode: 'in-process', providers: [provider] } })
+    const host = await startHostProcess({ kind: 'cli', home, routerBinary: binary!, compose: { storeMode: 'in-process', providers: [provider], trust: { vault: noVault() }, terminals: false } })
     try {
       const credential = server.deviceCredential
       await host.controller.start({ serverUrl: server.url, connectorId: credential.deviceId, connectorToken: credential.token })

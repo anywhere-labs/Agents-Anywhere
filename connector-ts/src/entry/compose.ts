@@ -5,10 +5,12 @@ import { CommandInbox, type CommandHandler } from '../application/inbound/index.
 import { ConversationService, NativeHistory } from '../application/index.js'
 import type { LiveEvents, RuntimeHandle, RuntimeHandleEvent, RuntimeProvider } from '../application/ports/index.js'
 import type { ConnectorRuntime, ConnectorSettings, RuntimeFactory } from '../host/index.js'
-import { ControlPlane, DeviceLink, readSystemProxySettings, resolveEgress, type Egress, type LinkLogger, type SecureChannelHandler } from '../link/index.js'
+import { ControlPlane, DeviceLink, deviceAttachmentFetcher, readSystemProxySettings, resolveEgress, type Egress, type LinkLogger } from '../link/index.js'
 import { openStoreWorker, inProcessStore, openSqliteStore, type RemoteStore } from '../store/index.js'
-import { DeviceReaders, MemoryChangeFeed, OutboxSignal, capabilitySet, plainSealer, type DisplaySealer, type RuntimeFacts } from '../sync/index.js'
+import { DeviceReaders, DeviceTunnelApi, MemoryChangeFeed, OutboxSignal, capabilitySet, plainSealer, type RuntimeFacts, type SessionFacts } from '../sync/index.js'
+import { AttachmentCache, FileOps, RootPolicy, ShellOps, Terminals, nodePtySpawner, rootsFromEnv, workspaceMethods } from '../workspace/index.js'
 import { builtinProviders, nativeSessionId, RuntimeRegistry, type RuntimeInstanceSpec } from './runtimes.js'
+import { DeviceTrust, openSealedUpload, type DeviceTrustOptions } from './trust.js'
 
 export type Log = (level: 'debug' | 'info' | 'warn' | 'error', message: string) => void
 
@@ -23,10 +25,15 @@ export interface ComposeOptions {
   readonly scanOnStart?: boolean
   /** Extra command handlers (preview, runtime/apply, device settings), by business method name. */
   readonly commands?: Readonly<Record<string, CommandHandler>>
-  /** F's display sealer for encrypted mode; plain by default. */
-  readonly sealer?: DisplaySealer
-  /** F's `Secure/channel` handler (`secureChannelVia(hub)`), registered in encrypted mode. */
-  readonly secure?: SecureChannelHandler
+  /**
+   * Device Trust (E2EE): `false` turns it off (the device then never serves an encrypted mode); the object
+   * overrides the secrets' vault (tests use `noVault()`), the local confirmation and the device label.
+   */
+  readonly trust?: false | Partial<Pick<DeviceTrustOptions, 'vault' | 'confirmation' | 'deviceLabel'>>
+  /** Workspace roots (default `AGENT_CONNECTOR_WORKSPACE_ROOTS`, else the home directory). */
+  readonly workspaceRoots?: readonly string[] | 'any'
+  /** Terminals need node-pty; `false` leaves them out (tests, hosts without it). */
+  readonly terminals?: boolean
   /** The store in a worker thread (production) or in this thread (tests, tools). */
   readonly storeMode?: 'worker' | 'in-process'
   /** Told when a link exists (the host wires port events and other live sources to `link.attach`). */
@@ -72,7 +79,14 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
       const store = options.storeMode === 'in-process' ? inProcessStore(openSqliteStore(storeOptions)) : await openStoreWorker(storeOptions)
       track?.store(store)
       let link: DeviceLink | null = null
-      const live: LiveEvents = { emit: (method, payload) => link?.attach.emit(method, payload) }
+      const sessionFacts = new SessionFactsHub()
+      // Session facts also go to the session's channel subscribers; attach drops them in encrypted mode.
+      const live: LiveEvents = {
+        emit: (method, payload) => {
+          if (typeof payload.sessionId === 'string') sessionFacts.publish(payload.sessionId, method, payload)
+          link?.attach.emit(method, payload)
+        },
+      }
       const feed = new MemoryChangeFeed()
       const log = options.log
       // Assigned below; Runtime events only arrive after an instance started, which needs the service.
@@ -83,38 +97,90 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         log,
         onEvent: (spec, handle, event) => onRuntimeEvent(spec, handle, event),
       })
-      let service!: ConversationService
+      let service: ConversationService | null = null
       const history = new NativeHistory({
         store,
         feed,
         runtimes,
         clock,
         sessionIdFor: (_handle, runtimeId, summary) => nativeSessionId(settings.connectorId, runtimes.spec(runtimeId) ?? legacySpec(runtimeId), summary),
-        isBound: sessionId => service.isBound(sessionId),
+        isBound: sessionId => service?.isBound(sessionId) ?? false,
         onError: (sessionId, error) => log('warn', `native history${sessionId === null ? '' : ` of ${sessionId}`}: ${(error as Error)?.message ?? String(error)}`),
       })
-      service = new ConversationService({ store, feed, live, runtimes, clock, ids, history })
       const scans = new RuntimeScans(history, log)
-      onRuntimeEvent = (spec, handle, event) => runtimeEvent({ spec, handle, event, live, scans, service, store, connectorId: settings.connectorId, log })
-      const facts: RuntimeFacts = {
-        sessionCapabilities: async sessionId => {
-          const session = await store.sessions.get(sessionId)
-          if (session === null) return null
-          const bound = service.boundSession(sessionId)
-          if (bound !== null) return capabilitySet(bound.capabilities, { runtime: session.runtimeId, sessionId })
-          const handle = await runtimes.started(session.runtimeId)
-          return handle === null || handle === undefined ? null : capabilitySet(handle.capabilities(), { runtime: session.runtimeId, sessionId: null })
-        },
-        catalogs: async sessionId => {
-          const session = await store.sessions.get(sessionId)
-          const handle = session === null ? null : await runtimes.started(session.runtimeId)
-          return handle === null || handle === undefined ? null : ((await handle.catalogs().catch(() => null)) as Record<string, unknown> | null)
-        },
-      }
+      const policy = new RootPolicy({ roots: options.workspaceRoots ?? rootsFromEnv() })
+      const files = new FileOps(policy)
+      const terminals = await openTerminals(policy, options.terminals !== false, log)
+      let trust: DeviceTrust | null = null
       try {
-        await service.recover()
         const egress = await egressFor(settings, signal, options.log)
-        const inbox = new CommandInbox(store, clock, service, options.commands ?? {})
+        const handshake = new ControlPlane({
+          serverUrl: settings.serverUrl,
+          credential: () => ({ deviceId: settings.connectorId, token: settings.connectorToken }),
+          egress,
+          connectorVersion: options.connectorVersion,
+          os: process.platform,
+        })
+        const attachments = new AttachmentCache(join(options.dataDir, 'attachments'), deviceAttachmentFetcher(settings.serverUrl, handshake, egress), openSealedUpload)
+        const conversation = new ConversationService({
+          store,
+          feed,
+          live,
+          runtimes,
+          clock,
+          ids,
+          history,
+          attachments: async (sessionId, ref) => {
+            const local = await attachments.resolve(sessionId, ref)
+            return { kind: 'file', path: local.path, mimeType: local.mediaType, name: local.name }
+          },
+        })
+        service = conversation
+        onRuntimeEvent = (spec, handle, event) => runtimeEvent({ spec, handle, event, live, scans, service: conversation, store, connectorId: settings.connectorId, log })
+        const facts: RuntimeFacts = {
+          sessionCapabilities: async sessionId => {
+            const session = await store.sessions.get(sessionId)
+            if (session === null) return null
+            const bound = conversation.boundSession(sessionId)
+            if (bound !== null) return capabilitySet(bound.capabilities, { runtime: session.runtimeId, sessionId })
+            const handle = await runtimes.started(session.runtimeId)
+            return handle === null || handle === undefined ? null : capabilitySet(handle.capabilities(), { runtime: session.runtimeId, sessionId: null })
+          },
+          catalogs: async sessionId => {
+            const session = await store.sessions.get(sessionId)
+            const handle = session === null ? null : await runtimes.started(session.runtimeId)
+            return handle === null || handle === undefined ? null : ((await handle.catalogs().catch(() => null)) as Record<string, unknown> | null)
+          },
+        }
+        await conversation.recover()
+        const inbox = new CommandInbox(store, clock, conversation, options.commands ?? {})
+        const readers = new DeviceReaders(store, clock.nowIso, facts, history)
+        const watch = { store, feed, now: clock.nowIso }
+        const workspace = workspaceMethods(files, new ShellOps(policy), terminals ?? undefined)
+        const tunnel = new DeviceTunnelApi({
+          deviceId: settings.connectorId,
+          store,
+          readers,
+          watch,
+          inbox,
+          clock,
+          workspace,
+          ...(terminals !== null ? { terminals } : {}),
+          facts: sessionFacts,
+          newId: ids.newId,
+        })
+        if (options.trust !== false) {
+          trust = await DeviceTrust.open({
+            dataDir: options.dataDir,
+            deviceId: settings.connectorId,
+            log,
+            api: tunnel,
+            republishSummaries: () => store.sessions.republishSummaries(),
+            outbox: store.outbox,
+            ...(options.trust ?? {}),
+          })
+        }
+        const deviceTrust = trust
         const outboxSignal = new OutboxSignal()
         const logger: LinkLogger = {
           debug: text => options.log('debug', text),
@@ -125,25 +191,21 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         link = new DeviceLink({
           deviceId: settings.connectorId,
           host: options.host,
-          handshake: new ControlPlane({
-            serverUrl: settings.serverUrl,
-            credential: () => ({ deviceId: settings.connectorId, token: settings.connectorToken }),
-            egress,
-            connectorVersion: options.connectorVersion,
-            os: process.platform,
-          }),
+          handshake,
           store,
           inbox,
           outboxSignal,
           services: {
-            outbox: { outbox: store.outbox, sealer: options.sealer ?? plainSealer, signal: outboxSignal },
-            watch: { store, feed, now: clock.nowIso },
-            readers: new DeviceReaders(store, clock.nowIso, facts, history),
-            ...(options.secure !== undefined ? { secure: options.secure } : {}),
+            outbox: { outbox: store.outbox, sealer: deviceTrust?.sealer() ?? plainSealer, signal: outboxSignal },
+            watch,
+            readers,
+            ...(deviceTrust !== null ? { secure: deviceTrust.secure } : {}),
           },
           egress,
           logger,
-          onWelcome: welcome => {
+          ...(deviceTrust !== null ? { localE2eeMode: () => deviceTrust.localMode() } : {}),
+          onWelcome: async welcome => {
+            await deviceTrust?.declareServerMode(welcome.e2eeMode)
             const settingsFromServer = welcome.desired?.deviceSettings
             if (settingsFromServer !== undefined && settingsFromServer !== null) hooks.deviceSettings(settingsFromServer)
             runtimes.apply(welcome.desired?.runtimes ?? [])
@@ -157,13 +219,48 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         await link.run(signal)
       } finally {
         scans.close()
-        await service.close().catch(() => undefined)
+        await trust?.close().catch(() => undefined)
+        await service?.close().catch(() => undefined)
+        terminals?.shutdown()
         await runtimes.close().catch(() => undefined)
         track?.store(null)
         await store.close().catch(() => undefined)
       }
     },
   })
+}
+
+/** Live session facts by session, for secure channel subscribers (`SessionFacts`). */
+class SessionFactsHub implements SessionFacts {
+  private readonly listeners = new Map<string, Set<(method: string, payload: Record<string, unknown>) => void>>()
+
+  public subscribe(sessionId: string, listener: (method: string, payload: Record<string, unknown>) => void): () => void {
+    let set = this.listeners.get(sessionId)
+    if (set === undefined) {
+      set = new Set()
+      this.listeners.set(sessionId, set)
+    }
+    set.add(listener)
+    return () => {
+      set.delete(listener)
+      if (set.size === 0 && this.listeners.get(sessionId) === set) this.listeners.delete(sessionId)
+    }
+  }
+
+  public publish(sessionId: string, method: string, payload: Record<string, unknown>): void {
+    for (const listener of this.listeners.get(sessionId) ?? []) listener(method, payload)
+  }
+}
+
+/** Terminals when node-pty loads; a device without it still serves files and sessions. */
+async function openTerminals(policy: RootPolicy, wanted: boolean, log: Log): Promise<Terminals | null> {
+  if (!wanted) return null
+  try {
+    return new Terminals({ policy, spawn: await nodePtySpawner() })
+  } catch (error) {
+    log('warn', `terminals are unavailable: ${message(error)}`)
+    return null
+  }
 }
 
 function legacySpec(runtimeId: string): RuntimeInstanceSpec {

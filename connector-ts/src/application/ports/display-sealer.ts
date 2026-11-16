@@ -16,5 +16,8 @@ export interface DisplayEnvelope {
  * plain: in E2EE mode a plain envelope would leak.
  */
 export interface DisplaySealer {
-  seal(fields: DisplayFields): DisplayEnvelope
+  /** The AD binds the envelope to its session (contracts/e2ee/1.0), so the session id comes along. */
+  seal(fields: DisplayFields, sessionId: string): DisplayEnvelope | Promise<DisplayEnvelope>
+  /** E2EE: outbox messages are scrubbed of content (`command.result` keeps only its outcome and error code). */
+  readonly encrypted?: boolean
 }

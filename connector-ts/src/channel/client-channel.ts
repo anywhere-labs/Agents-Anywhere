@@ -230,6 +230,15 @@ export class ClientSecureChannel {
     return id
   }
 
+  /** `TunnelSubscribe {stream: "terminal"}`: the device terminal's stream messages (`replay`, `output`, `exit`). */
+  async subscribeTerminal(terminalId: string, fromSeq: number, onEvent: (event: Record<string, unknown>) => void): Promise<string> {
+    const transport = this.#requireOpen()
+    const id = `s${this.#nextId++}`
+    this.#subscriptions.set(id, onEvent)
+    await transport.sendMessage({ kind: 'subscribe', id, stream: 'terminal', terminalId, fromSeq })
+    return id
+  }
+
   async unsubscribe(id: string): Promise<void> {
     this.#subscriptions.delete(id)
     await this.#transport?.sendMessage({ kind: 'unsubscribe', id })

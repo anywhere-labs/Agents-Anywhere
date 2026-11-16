@@ -369,7 +369,7 @@ export class DeviceLink {
           }
         }
         const current = this.grant!
-        const built = this.services.build(registration[this.mode], current.services)
+        const built = this.services.build(registration[this.mode], current.services, this.mode)
         if (built.skipped.length > 0) this.log.warn(`not registering ${built.skipped.join(', ')} (not in the Router token, or no handler on this device)`)
         const target = this.routerTarget(current)
         let mesh: Mesh

@@ -1,7 +1,7 @@
 // 设备端安全通道：一条 Secure/channel 调用对应一个实例。握手时向 Device Trust 询问授权，
 // 握手后把解密出的请求交给 TunnelApi（与普通模式同一组用例），信任管理请求在这里处理。
 
-import type { ChannelCaller, TunnelApi } from '../application/inbound/tunnel-api.js'
+import type { ChannelCaller, TunnelApi, TunnelSubscription } from '../application/inbound/tunnel-api.js'
 import type { DeviceTrustService } from '../application/trust/device-trust-service.js'
 import { TrustError, clientIdFor, type ClientPlatform } from '../domain/trust/index.js'
 import { HandshakeState, type NoiseCrypto, type NoiseKeyPair } from './noise/index.js'
@@ -227,10 +227,14 @@ export class DeviceSecureChannel {
       }
       case 'subscribe': {
         const id = String(message['id'] ?? '')
-        const sessionId = String(message['sessionId'] ?? '')
-        if (!id || !sessionId || this.#subscriptions.has(id)) throw new ChannelProtocolError('malformed subscribe')
+        const stream: 'session' | 'terminal' = message['stream'] === 'terminal' ? 'terminal' : 'session'
+        const sessionId = stream === 'session' ? String(message['sessionId'] ?? '') : ''
+        const terminalId = stream === 'terminal' ? String(message['terminalId'] ?? '') : ''
+        if (!id || (stream === 'session' ? !sessionId : !terminalId) || this.#subscriptions.has(id)) throw new ChannelProtocolError('malformed subscribe')
         const afterCursor = typeof message['afterCursor'] === 'string' ? message['afterCursor'] : null
-        const stop = await this.#deps.api.subscribe(caller, { sessionId, afterCursor }, (event) => {
+        const fromSeq = typeof message['fromSeq'] === 'number' && Number.isSafeInteger(message['fromSeq']) ? message['fromSeq'] : 0
+        const target: TunnelSubscription = stream === 'session' ? { stream, sessionId, afterCursor } : { stream, sessionId, afterCursor, terminalId, fromSeq }
+        const stop = await this.#deps.api.subscribe(caller, target, (event) => {
           void transport.sendMessage({ kind: 'event', sub: id, event }).catch(() => undefined)
         })
         this.#subscriptions.set(id, stop)

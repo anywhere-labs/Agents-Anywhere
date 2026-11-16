@@ -200,7 +200,7 @@ describe('shell', () => {
   })
 
   it('exposes the v2 method names', () => {
-    expect(Object.keys(workspaceMethods(files(), shell())).sort()).toEqual(['fs.prepareDownload', 'fs.readDir', 'fs.readText', 'fs.writeFile', 'shell.exec', 'shell.task.cancel', 'shell.task.start'])
+    expect(Object.keys(workspaceMethods(files(), shell())).sort()).toEqual(['fs.prepareDownload', 'fs.readDir', 'fs.readRange', 'fs.readText', 'fs.writeFile', 'shell.exec', 'shell.task.cancel', 'shell.task.start'])
   })
 })
 
