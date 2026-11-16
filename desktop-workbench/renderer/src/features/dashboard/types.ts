@@ -787,6 +787,8 @@ export type SessionPatchRequest = {
   title?: string;
   pinned?: boolean;
   archived?: boolean;
+  /** E2EE: the client assigns sessions the device found on its own (the Server cannot read their cwd). */
+  projectId?: string;
 };
 
 export type FsEntry = {

@@ -2849,6 +2849,9 @@
     "resumeTitle": "恢复此目标？"
   },
   "e2ee": {
+    "display": {
+      "locked": "加密中，设备上线后显示"
+    },
     "pairing": {
       "title": "配对端到端加密",
       "description": "在设备上生成配对链接（Desktop：设置 → 安全连接；命令行设备：运行 Connector 的配对命令），粘贴到这里。链接 10 分钟内有效。",

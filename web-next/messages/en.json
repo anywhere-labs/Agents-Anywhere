@@ -2654,6 +2654,9 @@
     "resumeTitle": "Resume this goal?"
   },
   "e2ee": {
+    "display": {
+      "locked": "Encrypted — shown once the device is online"
+    },
     "pairing": {
       "title": "Pair for end-to-end encryption",
       "description": "Create a pairing link on the device (Desktop: Settings → Secure connections; command-line devices: the Connector's pair command), then paste it here. It expires in 10 minutes.",

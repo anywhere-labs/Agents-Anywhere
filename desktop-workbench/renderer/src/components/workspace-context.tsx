@@ -49,6 +49,10 @@ import { sortSessionViews } from "@/components/session/session-list-order"
 import { hasDesktopConnectorBridge } from "@/features/desktop/bridge"
 import { useSessionCreation } from "@/components/session/use-session-creation"
 import { isApiError } from "@/lib/api/errors"
+import { useTranslations } from "next-intl"
+import { sessionDisplayDecryptor, type SessionDisplayState } from "@/features/e2ee/display"
+import { sessionProjectAssigner } from "@/features/e2ee/project-assignment"
+import { useDisplayedSessions, useSessionDisplayVersion } from "@/features/e2ee/use-session-display"
 
 // ─── Panel / page types ───────────────────────────────────────
 
@@ -71,6 +75,11 @@ export type AppPage = "home" | "session" | "settings" | "admin" | "mobile-connec
 
 export type WorkspaceSessionView = DemoSessionView & {
   projectId?: string | null
+  /** Protocol 1.2 display envelopes; sealed in E2EE mode (the UI shows the decrypted `title` / `cwd`). */
+  displayDevice?: RealSessionView["displayDevice"]
+  displayUser?: RealSessionView["displayUser"]
+  /** Set when the session has display envelopes: `locked` means the title is the 「加密中」 placeholder. */
+  displayState?: SessionDisplayState
 }
 
 type SessionView = WorkspaceSessionView
@@ -217,6 +226,8 @@ function mapConnector(connector: RealConnectorView): ConnectorView {
   }
 }
 
+const UNTITLED_SESSION = "Untitled session"
+
 function mapSession(session: RealSessionView): SessionView {
   return {
     id: session.id,
@@ -229,8 +240,10 @@ function mapSession(session: RealSessionView): SessionView {
     runtimeName: session.runtimeName,
     runtimeTypeDisplayName: session.runtimeTypeDisplayName,
     externalSessionId: session.externalSessionId,
-    title: session.title || "Untitled session",
+    title: session.title || UNTITLED_SESSION,
     cwd: session.cwd,
+    displayDevice: session.displayDevice ?? null,
+    displayUser: session.displayUser ?? null,
     status: session.status,
     takeover: session.takeover,
     pinned: session.pinned,
@@ -1596,11 +1609,29 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const validPages: AppPage[] = ["home", "session", "settings", "admin", "mobile-connections", "tokens-anywhere", "device"]
   const page: AppPage = validPages.includes(route.page as AppPage) ? (route.page as AppPage) : "home"
 
+  // E2EE: titles and working directories as the user sees them (decrypted display envelopes).
+  const tE2eeDisplay = useTranslations("e2ee.display")
+  const displayLabels = React.useMemo(() => ({ locked: tE2eeDisplay("locked"), untitled: UNTITLED_SESSION }), [tE2eeDisplay])
+  const displayedSessions = useDisplayedSessions(sessions, displayLabels)
+  const displayVersion = useSessionDisplayVersion()
+
+  // Sessions the device found on its own arrive unassigned in E2EE mode; match their decrypted cwd to a project.
+  React.useEffect(() => {
+    const token = authSession?.accessToken
+    if (!token || !workspaceDataEnabled || isLoading) return
+    const decryptor = sessionDisplayDecryptor()
+    const assigner = sessionProjectAssigner(async (sessionId, projectId) => {
+      const response = await dashboardApi.patchSession(token, sessionId, { projectId })
+      if (currentAccessTokenRef.current === token) upsertSession(response.session)
+    })
+    assigner.consider(sessions, projects, (session) => decryptor.read(session))
+  }, [authSession?.accessToken, displayVersion, isLoading, projects, sessions, upsertSession, workspaceDataEnabled])
+
   const routeSessionId = route.page === "session" ? route.sessionId : null
   const activeSessionId = routeSessionId ? resolveSessionAlias(routeSessionId, sessionAliases) : null
   const activeSessionOptimisticState = activeSessionId ? getOptimisticSessionState(activeSessionId) : null
   const activeSession = activeSessionId
-    ? sessions.find((item) => item.id === activeSessionId) ??
+    ? displayedSessions.find((item) => item.id === activeSessionId) ??
       (activeSessionOptimisticState?.session ? mapSession(activeSessionOptimisticState.session) : null)
     : null
   const activeSessionPending = Boolean(
@@ -1618,7 +1649,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   const value: WorkspaceState = {
     connectors,
-    sessions,
+    sessions: displayedSessions,
     projects,
     runtimes,
     modelConfig,

@@ -29,6 +29,25 @@ export interface E2eeRuntime {
 }
 
 let runtime: E2eeRuntime | null = null
+const runtimeListeners = new Set<() => void>()
+
+/** Called after the trust layer starts and after it stops (sign-out). */
+export function onE2eeRuntimeChanged(listener: () => void): () => void {
+  runtimeListeners.add(listener)
+  return () => {
+    runtimeListeners.delete(listener)
+  }
+}
+
+function runtimeChanged(): void {
+  for (const listener of runtimeListeners) {
+    try {
+      listener()
+    } catch {
+      // listeners must not break the trust layer
+    }
+  }
+}
 
 /** Same list as the Server's gate (`core/e2ee_settings.py`): per-session paths that are metadata, not content. */
 const PLAINTEXT_METADATA = /^(?:\/api\/v\d+)?\/sessions\/[^/?#]+\/(?:meta|runtime\/state|runtime\/capabilities)(?:[?#].*)?$/
@@ -116,7 +135,9 @@ export function startE2ee(platform: "web" | "desktop"): E2eeRuntime | null {
       await pool.closeAll()
       mux.close()
       runtime = null
+      runtimeChanged()
     },
   }
+  runtimeChanged()
   return runtime
 }
