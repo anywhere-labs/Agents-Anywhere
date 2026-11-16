@@ -4,6 +4,13 @@ import {
   extractErrorPayload
 } from "@/lib/api/errors";
 import { desktopApiProxyBase, getDesktopServerConnection } from "@/features/desktop/server-connection";
+import {
+  contentTransportFor,
+  isContentTransportRequired,
+  reportContentTransportRequired,
+  sessionIdOfContentPath,
+  type ContentMethod,
+} from "@/lib/transport/content-transport";
 
 export type ApiTokenProvider = () => string | null | undefined;
 
@@ -95,6 +102,17 @@ export class ApiClient {
   }
 
   async request<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
+    // Session content may have to travel through the device's encrypted channel.
+    const namespacedPath = apiPath(path);
+    const sessionId = namespacedPath.startsWith("http") ? null : sessionIdOfContentPath(namespacedPath);
+    const method = (options.method ?? "GET").toUpperCase() as ContentMethod;
+    const transport = sessionId ? contentTransportFor(sessionId, method, namespacedPath) : null;
+    if (transport) {
+      const query: Record<string, string> = {};
+      for (const [key, value] of Object.entries(options.query ?? {})) if (value != null) query[key] = String(value);
+      return (await transport.request({ method, path: namespacedPath, query, body: options.body ?? undefined })) as T;
+    }
+
     const url = this.buildUrl(path, options.query);
     const headers = new Headers(options.headers);
     const body = normalizeBody(options.body);
@@ -127,6 +145,7 @@ export class ApiClient {
     const payload = await readPayload(response);
     if (!response.ok) {
       const normalized = extractErrorPayload(payload);
+      if (isContentTransportRequired(normalized.code)) reportContentTransportRequired(sessionId, normalized.code!);
       throw new ApiError({
         status: response.status,
         kind: apiErrorKind(response.status),

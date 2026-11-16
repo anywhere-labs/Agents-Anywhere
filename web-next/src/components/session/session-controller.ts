@@ -1,6 +1,7 @@
 import { dashboardApi } from "@/features/dashboard/api"
 import { isApiError } from "@/lib/api/errors"
 import { createClientId } from "@/lib/id"
+import { contentTransportFor, socketEventStream, type SessionEventStream } from "@/lib/transport/content-transport"
 import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
 import type { ProtocolEventEnvelope, SessionView, TimelineItem } from "@/features/dashboard/types"
 import type { SessionRemoteState } from "./session-state-cache"
@@ -97,7 +98,7 @@ export function createSessionController(options: SessionControllerOptions) {
   let callbacks = options
   let started = false
   let disposed = false
-  let socket: WebSocket | null = null
+  let socket: SessionEventStream | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let recoveryRetryTimer: ReturnType<typeof setTimeout> | null = null
   let snapshotReady = options.hasSnapshot
@@ -546,13 +547,25 @@ export function createSessionController(options: SessionControllerOptions) {
     await recoverEvents()
   }
 
+  /** The encrypted channel when one carries this session, otherwise the ticketed WebSocket. */
+  async function openSessionStream(): Promise<SessionEventStream | null> {
+    const tunnel = contentTransportFor(sessionId)
+    if (tunnel) return tunnel.openSessionStream(sessionId)
+    const ticket = await dashboardApi.createWsTicket(token, createClientId("web"), sessionId)
+    if (disposed || snapshot.invalidated) return null
+    return socketEventStream(new WebSocket(dashboardApi.sessionWebSocketUrl(sessionId, ticket.ticket)))
+  }
+
   async function connect() {
     if (disposed || snapshot.invalidated) return
     const currentConnection = ++connection
     try {
-      const ticket = await dashboardApi.createWsTicket(token, createClientId("web"), sessionId)
-      if (disposed || snapshot.invalidated || currentConnection !== connection) return
-      const currentSocket = new WebSocket(dashboardApi.sessionWebSocketUrl(sessionId, ticket.ticket))
+      const currentSocket = await openSessionStream()
+      if (disposed || snapshot.invalidated || currentConnection !== connection) {
+        currentSocket?.close()
+        return
+      }
+      if (!currentSocket) return
       socket = currentSocket
       currentSocket.onmessage = (message) => {
         if (disposed || snapshot.invalidated || currentConnection !== connection || typeof message.data !== "string")
