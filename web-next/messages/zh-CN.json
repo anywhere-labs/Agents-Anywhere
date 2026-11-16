@@ -1446,6 +1446,12 @@
       "login": "打开登录页面",
       "title": "已退出登录"
     },
+    "e2eeWebUnavailable": {
+      "title": "这个服务器要求端到端加密",
+      "description": "管理员已关闭 Web 客户端：浏览器无法对会话内容做端到端加密。",
+      "useApps": "请使用 Agents Anywhere Desktop 或手机 App 登录。",
+      "signOut": "退出登录"
+    },
     "mobileOAuth": {
       "cancel": "取消",
       "continue": "继续",
