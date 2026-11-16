@@ -14,6 +14,9 @@ struct V2APIClient {
     let realtime: V2RealtimeAPI
     /// Port preview (`/api/v3/previews`).
     let previews: V3PreviewAPI
+    let e2ee: V2E2EEAPI
+    /// Shared with the E2EE tunnel WebSocket.
+    let urlSession: URLSession
     private let ownedURLSession: URLSession?
 
     init(
@@ -23,6 +26,7 @@ struct V2APIClient {
     ) {
         let session = urlSession ?? URLSession(configuration: V2MobileNetworking.configuration())
         ownedURLSession = urlSession == nil ? session : nil
+        self.urlSession = session
         self.serverURL = serverURL.normalizedV2ServerURL()
         let transport = URLSessionHTTPTransport(
             serverURL: serverURL,
@@ -39,6 +43,7 @@ struct V2APIClient {
         attachments = V2AttachmentAPI(transport: transport)
         modelConfig = V2ModelConfigAPI(transport: transport)
         previews = V3PreviewAPI(transport: transport)
+        e2ee = V2E2EEAPI(transport: transport)
         realtime = V2RealtimeAPI(
             serverURL: serverURL,
             transport: transport,

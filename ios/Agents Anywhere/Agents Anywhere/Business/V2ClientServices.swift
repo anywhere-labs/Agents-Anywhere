@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 @MainActor
 final class V2ClientServices {
@@ -29,6 +32,8 @@ final class V2ClientServices {
     let newSession: NewSessionModel
     /// Port preview actions; the instance's availability lasts for this app run.
     let portPreviews: PortPreviewStore
+    /// Optional end-to-end encryption: client trust, secure channels and per-device transport choice.
+    let e2ee: V2E2EEService
 
     /// Parent of every account's offline directory (one per server + account).
     nonisolated static let defaultOfflineRoot = URL.applicationSupportDirectory.appendingPathComponent("AgentsAnywhere/Offline/v1")
@@ -75,6 +80,16 @@ final class V2ClientServices {
             connectorAPI: api.connectors,
             serverURL: api.serverURL
         )
+        let trust = ClientTrustStore(storage: E2EEKeychainStorage(), scope: "e2ee." + V2RestorationStore.scopeKey(scope))
+        let e2eeAPI = api.e2ee
+        e2ee = V2E2EEService(
+            trust: trust,
+            tunnel: URLSessionE2EETunnel(serverURL: api.serverURL, urlSession: api.urlSession) {
+                try await e2eeAPI.tunnelTicket(clientId: try trust.clientId()).ticket
+            },
+            api: e2eeAPI,
+            clientLabel: Self.clientLabel
+        )
         newSession = NewSessionModel(scope: scope, devices: deviceManagement,
             preparation: sessionPreparation, creation: sessionCreation, projectAPI: api.projects, workflowAPI: V2RuntimeWorkflowAPI(transport: api.sessions.transport))
         newSession.onProjectResolved = { [weak self] in self?.dashboardRepository.upsertProject($0) }
@@ -96,6 +111,11 @@ final class V2ClientServices {
             dashboardRepository.removeLocalSession(submission.session.id)
             dashboardRepository.upsert([response.session])
             onCreationBound?(submission.session.id, response.session.id)
+        }
+        Task { [account, e2ee] in
+            // Older servers have no `e2ee` field (off); a failed read keeps the mode unchanged,
+            // and each device's own "requires encryption" record applies regardless.
+            await e2ee.loadServerConfig { try await account.authConfig().e2ee }
         }
         sessionReads.updateConnectivity(.init(availability: .offline))
         connectivity.onChange = { [weak self] status in
@@ -162,6 +182,15 @@ final class V2ClientServices {
         connectivity.stop()
         onConnectivityChange = nil
         sessionRepository.reset()
+        Task { [e2ee] in await e2ee.shutdown() }
         api.cancelOutstandingRequests()
+    }
+
+    private static var clientLabel: String {
+        #if canImport(UIKit)
+        UIDevice.current.model
+        #else
+        "iOS"
+        #endif
     }
 }

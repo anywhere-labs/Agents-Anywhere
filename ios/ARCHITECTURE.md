@@ -170,6 +170,36 @@ preview on demand and exchanges a fresh one-time ticket for every open, which
 `SessionPortPreviewCard` shows in `SFSafariViewController`; a 404 or
 `preview_disabled` hides the card for the rest of the app run.
 
+## End-to-end encryption (e2ee 1.0)
+
+`Network/E2EE` implements the client side of `contracts/e2ee/1.0`; every
+primitive comes from CryptoKit. `NoiseHandshake` and friends are the Noise state
+machine (S8). `E2EEFormats` holds the byte formats (client ID, fingerprint,
+prologues, framing, display envelopes, sealed segments, input digests, the
+`aa-pair://` link) and is pinned by `aa-formats.json`. `E2EETransportSession`
+fragments, rekeys (2^20 frames or one hour, only between messages) and checks
+frame counters. `ClientSecureChannel` is an actor: frames from the tunnel reach
+it in order through one reader task, and it encrypts synchronously before
+handing frames to `E2EETunnelLink.send`, which keeps their order, so nonces
+cannot be reordered by actor reentrancy. It sends nothing before `ready`.
+
+`ClientTrustStore` keeps the client identity key, each device's pinned key and
+directory key, and the sticky "this device requires encryption" policy in the
+Keychain (`AfterFirstUnlockThisDeviceOnly`, never synchronized). Only an
+in-channel `close` from the device (revoked / not paired) drops a pin; a
+`ClientTunnelEnd` relayed by the Server is reported (`E2EEError.fromDevice ==
+false`) and never changes trust records or policy.
+
+`URLSessionE2EETunnel` multiplexes routes on `WS /api/v3/tunnel` after a
+`POST /api/v2/ws-ticket {scope: {tunnel: true}}`. `V2E2EEService` reads the
+Server mode from `auth/config`, pairs, reconnects with KK and chooses each
+device's transport: `route(for:)`, `transport(for:plain:)` (an `HTTPTransport`
+that existing API resources accept), `sessionEvents(...)` and `sendCommand(...)`
+(which registers the input digest first). The session, dashboard and repository
+call sites still use plain HTTP; they need to ask `route(for:)` with the
+session's device before switching. Encrypted uploads, downloads and display
+envelopes in lists are not wired yet.
+
 ## Migration boundary
 
 Retired session/runtime API methods, models and the chat placeholder live in
