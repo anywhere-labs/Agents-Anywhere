@@ -31,6 +31,7 @@ import { agentEnvironment } from '../../supervisor/environment.js'
 import type { LocalLaunch } from '../launch.js'
 import { PI_PERMISSION_OPTIONS } from './definition.js'
 import { historyDirectories } from './installation.js'
+import { PiSessionAliases } from './aliases.js'
 import type { PiLayout } from './launch.js'
 import { PermissionStore, PiRuntimeSession, type PiSessionHost } from './session.js'
 import { updateDefaultModel, type PiSettings } from './settings.js'
@@ -79,6 +80,7 @@ export class PiRuntimeHandle implements RuntimeHandle {
   readonly instanceId: string
   readonly events = new EventQueue<RuntimeHandleEvent>()
   readonly index: PiNativeIndex
+  readonly aliases: PiSessionAliases
   private readonly sessions = new Set<PiRuntimeSession>()
   private readonly permissions: PermissionStore
   private capabilityItems: readonly Capability[] = INITIAL_CAPABILITIES
@@ -90,10 +92,11 @@ export class PiRuntimeHandle implements RuntimeHandle {
   constructor(private readonly options: PiHandleOptions) {
     this.instanceId = options.instanceId
     const agentDir = options.layout.agentDir
+    this.aliases = new PiSessionAliases(join(options.layout.root, 'pi-session-aliases.json'))
     this.index = new PiNativeIndex(() => [
       ...historyDirectories(options.settings as unknown as Parameters<typeof historyDirectories>[0], agentDir),
       ...(options.layout.sessionDir !== undefined ? [options.layout.sessionDir] : []),
-    ])
+    ], this.aliases)
     this.permissions = new PermissionStore(options.layout.permissionFile)
     if (options.warmUp) this.ready = this.warmUp()
   }
@@ -132,12 +135,12 @@ export class PiRuntimeHandle implements RuntimeHandle {
 
   /**
    * 只读历史：直接解析原生文件，不 resume、不抢锁、不写源文件。条目 ID 用 v2 浏览原生会话时的平台会话 ID
-   * （`pi_native_<…>`，domain/identity `piNativeSessionId`）计算。
+   * （`pi_native_<…>`，domain/identity `piNativeSessionId`）计算；会话换过原生 ID 时用对外的（最初的）ID。
    */
   async readNativeHistory(ref: NativeSessionRef, window: HistoryWindow): Promise<NativeHistoryPage> {
     const source = await this.index.find(ref)
     const history = await this.index.read(source.path)
-    return piHistoryPage(piTimeline(history, piNativeSessionId(this.instanceId, history.path, history.nativeId)), window)
+    return piHistoryPage(piTimeline(history, piNativeSessionId(this.instanceId, history.path, source.externalSessionId)), window)
   }
 
   async open(target: OpenTarget, options: OpenOptions): Promise<PiRuntimeSession> {
@@ -182,6 +185,7 @@ export class PiRuntimeHandle implements RuntimeHandle {
       instanceId: this.instanceId,
       index: this.index,
       permissions: this.permissions,
+      aliases: this.aliases,
       planningDir: options.layout.planningDir,
       stateDir: options.layout.root,
       lockDir: options.lockDir ?? join(homedir(), '.cache/agents-anywhere/pi-native-locks'),

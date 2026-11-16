@@ -5,7 +5,7 @@ import { CODEX } from './definition.js'
 import { codexDialect } from './dialect.js'
 
 export { CODEX, CODEX_COMPANION_SETTINGS } from './definition.js'
-export { CODEX_GOAL_METHOD, CODEX_HISTORY_RESET, CODEX_SESSION_READ, codexDialect, codexPlanReview, type CodexDialectOptions } from './dialect.js'
+export { CODEX_GOAL_METHOD, CODEX_HISTORY_RESET, CODEX_SESSION_READ, codexDialect, codexLocalImageLinks, codexPlanReview, type CodexDialectOptions } from './dialect.js'
 export { codexIdentity } from './identity.js'
 export { CODEX_PERMISSIONS, codexPermissionCatalog, codexPermissionSelectionForMode } from './permissions.js'
 
