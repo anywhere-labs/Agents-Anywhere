@@ -18,6 +18,7 @@ import type {
   RuntimeType,
 } from '../../application/ports/runtime-session.js'
 import type { AcpClient, AgentInfo, JsonRecord } from './client.js'
+import type { LegacyModesSpec } from './config.js'
 
 /** 一个会话内的条目身份：按 v2 规则算 Timeline ID。 */
 export interface ItemIdentity {
@@ -96,6 +97,8 @@ export interface AcpDialect {
   handleRequest?(method: string, params: JsonRecord, session: DialectSessionHooks): Promise<unknown> | undefined
   /** 错误归类。 */
   classifyError?(error: unknown): RuntimeError | undefined
+  /** 旧 session modes 作为哪个配置项出现（Command Code 的权限模式）；缺省见 config.ts `LegacyModesSpec`。 */
+  readonly legacyModes?: LegacyModesSpec
   /** 调整配置项（类别修正、隐藏不支持的项）。 */
   adaptConfig?(options: ConfigOption[]): ConfigOption[]
   /** 只读历史：不 resume、不抢锁、不写原生记录。undefined 时走通用实现（加载 + 捕获 + 关闭）。 */

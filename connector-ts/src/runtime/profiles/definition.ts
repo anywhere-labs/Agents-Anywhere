@@ -50,6 +50,8 @@ export interface AcpAgentDefinition {
   readonly version?: readonly string[]
   /** 进程在会话工作目录里启动（每个工作目录一个进程）；否则在实例数据目录。 */
   readonly launchInWorkspace?: boolean
+  /** 列出 Agent 的原生会话（`session/list`）；缺省 true（v2 `native_inventory`）。 */
+  readonly nativeInventory?: boolean
   readonly settings?: readonly PathSetting[]
   /** 实例配置；不给时由 `executable` 和 `settings` 生成。 */
   readonly configSchema?: ConfigSchema

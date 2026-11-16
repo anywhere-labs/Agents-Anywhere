@@ -31,7 +31,7 @@ import type {
 import type { GoalState } from '../../generated/protocol/v1_2/goal-state.js'
 import { AcpProjectionIdentity, acpFingerprint, type JsonValue } from '../../domain/identity/index.js'
 import { asRecord, describeAcpError, isMethodNotFound, type AcpClient, type AgentInfo, type JsonRecord } from './client.js'
-import { choiceError, findOption, normalizeConfig, withCurrent, type NormalizedConfig } from './config.js'
+import { choiceError, findOption, normalizeConfig, replaceConfig, withCurrent, type ConfigApply, type NormalizedConfig } from './config.js'
 import type { AcpDialect, ItemIdentity, SessionContext } from './dialect.js'
 import { ConnectionClosedError, JsonRpcError, RequestTimeoutError, type RequestContext } from './jsonrpc.js'
 import { isAcceptanceEvidence, isContentUpdate, translateUpdate } from './mapping.js'
@@ -320,7 +320,8 @@ export class AcpRuntimeSession implements RuntimeSession {
     const returned = asRecord(response).configOptions
     if (Array.isArray(returned)) {
       const normalized = normalizeConfig({ configOptions: returned })
-      this.config = { ...normalized, options: this.adapt(normalized.options), apply: { ...this.config.apply, ...normalized.apply } }
+      const next = replaceConfig(this.config, normalized)
+      this.config = { ...next, options: this.adapt(next.options) }
     } else {
       this.config = { ...this.config, options: withCurrent(this.config.options, option.id, option.type === 'boolean' ? change.value === true || change.value === 'true' : change.value) }
     }
@@ -412,6 +413,7 @@ export class AcpRuntimeSession implements RuntimeSession {
       replay,
       suppressUserEcho: !replay && this.turn?.origin === 'user' && this.dialect.echoesUserPrompt !== false,
       config: this.config.options,
+      modesOptionId: Object.entries(this.config.apply).find(([, apply]) => apply === 'set_mode')?.[0] ?? 'mode',
     })
   }
 
@@ -429,9 +431,10 @@ export class AcpRuntimeSession implements RuntimeSession {
     for (const event of events) {
       if ((event.type === 'tool.started' || event.type === 'tool.updated') && typeof update.toolCallId === 'string') this.toolItems.set(update.toolCallId, event.itemId)
       if (event.type === 'config.updated') {
-        const apply = { ...this.config.apply }
-        for (const option of event.options) apply[option.id] ??= option.type === 'boolean' ? 'boolean' : 'option'
-        this.config = { ...this.config, options: this.adapt([...event.options]), apply }
+        const apply: Record<string, ConfigApply> = {}
+        for (const option of event.options) apply[option.id] = this.config.apply[option.id] ?? (option.type === 'boolean' ? 'boolean' : 'option')
+        const next = replaceConfig(this.config, { options: [...event.options], apply, native: this.config.native })
+        this.config = { ...next, options: this.adapt(next.options) }
         this.emitConfig()
         continue
       }

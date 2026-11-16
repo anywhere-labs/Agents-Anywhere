@@ -103,13 +103,25 @@ export function fromConfigOption(raw: unknown): { option: ConfigOption; apply: C
   return { option: { ...head, type: 'select', currentValue: option.currentValue, values: selectValues(option.options) }, apply: 'option' }
 }
 
-export function fromModes(raw: unknown): ConfigOption | undefined {
+/**
+ * 旧的 session modes 以什么配置项出现。缺省是 `mode` / Mode / mode 类别，且只在 Agent 没给 configOptions 时出现；
+ * 方言给了这个说明时，即使有 configOptions，只要其中没有同类别的项，也把 modes 补成一项（v2 Command Code 把权限放在 modes 里）。
+ */
+export interface LegacyModesSpec {
+  readonly id: string
+  readonly name: string
+  readonly category: ConfigOption['category']
+}
+
+const DEFAULT_MODES: LegacyModesSpec = { id: 'mode', name: 'Mode', category: 'mode' }
+
+export function fromModes(raw: unknown, spec: LegacyModesSpec = DEFAULT_MODES): ConfigOption | undefined {
   const modes = asRecord(raw)
   if (!Array.isArray(modes.availableModes) || modes.availableModes.length === 0 || typeof modes.currentModeId !== 'string') return undefined
   return {
-    id: 'mode',
-    name: 'Mode',
-    category: 'mode',
+    id: spec.id,
+    name: spec.name,
+    category: spec.category,
     type: 'select',
     currentValue: modes.currentModeId,
     values: modes.availableModes.map(asRecord).map(m => {
@@ -138,7 +150,7 @@ export function fromModels(raw: unknown): ConfigOption | undefined {
 }
 
 /** 会话报告的设置。`configOptions` 优先于旧的 modes / models。 */
-export function normalizeConfig(state: AgentConfigState | null | undefined): NormalizedConfig {
+export function normalizeConfig(state: AgentConfigState | null | undefined, legacyModes?: LegacyModesSpec): NormalizedConfig {
   const options: ConfigOption[] = []
   const apply: Record<string, ConfigApply> = {}
   if (Array.isArray(state?.configOptions)) {
@@ -148,12 +160,18 @@ export function normalizeConfig(state: AgentConfigState | null | undefined): Nor
       options.push(n.option)
       apply[n.option.id] = n.apply
     }
+    const mode = legacyModes && !options.some(o => o.category === legacyModes.category) ? fromModes(state.modes, legacyModes) : undefined
+    if (mode && apply[mode.id] === undefined) {
+      options.push(mode)
+      apply[mode.id] = 'set_mode'
+    }
     return { options, apply, native: true }
   }
-  const mode = fromModes(state?.modes)
+  const spec = legacyModes ?? DEFAULT_MODES
+  const mode = fromModes(state?.modes, spec)
   if (mode) {
     options.push(mode)
-    apply.mode = 'set_mode'
+    apply[spec.id] = 'set_mode'
   }
   const model = fromModels(state?.models)
   if (model) {
@@ -230,4 +248,16 @@ export function selectionsToConfig(config: readonly ConfigOption[], selections: 
     out.push({ optionId: option.id, value })
   }
   return out
+}
+
+/**
+ * 用 Agent 新报告的完整配置替换当前配置：由旧 modes / models 得来的项（`set_mode` / `set_model`）
+ * 不在 configOptions 里，新列表没有它们时保留原样，直到 Agent 报告新的 modes 状态。
+ */
+export function replaceConfig(current: NormalizedConfig, next: NormalizedConfig): NormalizedConfig {
+  const kept = current.options.filter(o => (current.apply[o.id] === 'set_mode' || current.apply[o.id] === 'set_model')
+    && next.apply[o.id] === undefined && !next.options.some(n => n.category === o.category))
+  const apply: Record<string, ConfigApply> = { ...next.apply }
+  for (const option of kept) apply[option.id] = current.apply[option.id]!
+  return { options: [...next.options, ...kept], apply, native: next.native }
 }

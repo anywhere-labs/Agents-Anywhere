@@ -119,6 +119,8 @@ export interface TranslateContext {
   readonly suppressUserEcho: boolean
   /** 当前配置（`current_mode_update` 要改写成 config.updated）。 */
   readonly config: readonly ConfigOption[]
+  /** 承载旧 session modes 的配置项 ID（缺省 `mode`）。 */
+  readonly modesOptionId?: string
 }
 
 /** 是否算「接纳证据」：回合开始后第一个助手、思考、工具或计划更新（v2 公共引擎的接纳判定）。 */
@@ -233,7 +235,8 @@ export function translateUpdate(update: JsonRecord, context: TranslateContext): 
     case 'current_mode_update': {
       const mode = typeof update.currentModeId === 'string' ? update.currentModeId : undefined
       if (mode === undefined) return []
-      const options = context.config.map(o => (o.category === 'mode' && o.id === 'mode' ? { ...o, currentValue: mode } : o))
+      const target = context.modesOptionId ?? 'mode'
+      const options = context.config.map(o => (o.id === target ? { ...o, currentValue: mode } : o))
       return [{ ...base, type: 'config.updated', options }]
     }
     case 'session_info_update':

@@ -25,6 +25,8 @@ export class FakeAcpAgent {
     { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'm1', options: [{ value: 'm1', name: 'Model 1' }, { value: 'm2', name: 'Model 2' }] },
     { id: 'effort', name: 'Effort', category: 'thought_level', type: 'select', currentValue: 'low', options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }] },
   ]
+  /** 旧的 session modes（session/new 一并返回）。 */
+  modes: Json | undefined
   onPrompt: PromptScript = async () => ({ stopReason: 'end_turn' })
   onSteer: (params: Json) => Promise<Json> = async () => ({ outcome: 'injected' })
   cancelled = 0
@@ -42,7 +44,7 @@ export class FakeAcpAgent {
     this.peer.onRequest('session/new', params => {
       record('session/new')(params)
       this.sessions += 1
-      return { sessionId: `native-${this.sessions}`, configOptions: this.configOptions }
+      return { sessionId: `native-${this.sessions}`, configOptions: this.configOptions, ...(this.modes ? { modes: this.modes } : {}) }
     })
     this.peer.onRequest('session/resume', params => {
       record('session/resume')(params)
@@ -68,6 +70,11 @@ export class FakeAcpAgent {
       const { configId, value } = params as Json
       this.configOptions = this.configOptions.map(o => (o.id === configId ? { ...o, currentValue: value } : o))
       return { configOptions: this.configOptions }
+    })
+    this.peer.onRequest('session/set_mode', params => {
+      record('session/set_mode')(params)
+      if (this.modes) this.modes = { ...this.modes, currentModeId: (params as Json).modeId }
+      return {}
     })
     this.peer.onRequest('session/prompt', (params, context) => {
       record('session/prompt')(params)

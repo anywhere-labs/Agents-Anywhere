@@ -1,6 +1,9 @@
 // RuntimeHandle / RuntimeProvider 的通用 ACP 实现：进程池 + ACP 客户端 + 方言。
 // 进程监督在 supervisor/，会话引擎在 session.ts；这里负责打开会话、原生会话目录、只读历史与运行时级事件。
 
+import { realpathSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import type {
   Capability,
   Catalogs,
@@ -37,7 +40,8 @@ export interface AcpConnection extends PooledConnection {
   readonly info: AgentInfo
 }
 
-export type ConnectionFactory = () => Promise<AcpConnection>
+/** `scope.cwd`：按工作目录分进程时（MiMo）的进程工作目录。 */
+export type ConnectionFactory = (scope?: { readonly cwd: string }) => Promise<AcpConnection>
 
 /** 起一个适配器进程并完成 initialize。 */
 export function processConnection(command: AgentCommand, dialect: AcpDialect, options: { initializeTimeoutMs?: number; onStderr?: (line: string) => void } = {}): ConnectionFactory {
@@ -98,6 +102,10 @@ export interface AcpHandleOptions {
   readonly dialect: AcpDialect
   readonly connect: ConnectionFactory
   readonly idleMs?: number
+  /** 不列出原生会话（v2 definition `native_inventory=False`）。 */
+  readonly nativeInventory?: boolean
+  /** 每个工作目录一个 Agent 进程，进程在该目录里启动（v2 `launch_in_workspace`）。 */
+  readonly processPerWorkspace?: boolean
   /** 建会话前就能列出的权限选项（v2 definition `permission_options`：值, 名称）。 */
   readonly permissionOptions?: ReadonlyArray<readonly [string, string]>
 }
@@ -111,7 +119,8 @@ export class AcpRuntimeHandle implements RuntimeHandle {
   readonly type: RuntimeType
   readonly instanceId: string
   readonly events = new EventQueue<RuntimeHandleEvent>()
-  private readonly pool: AgentPool<AcpConnection>
+  /** 进程池：通常只有一个（键为空串）；按工作目录分进程时每个目录一个。 */
+  private readonly pools = new Map<string, AgentPool<AcpConnection>>()
   private readonly sessions = new Map<AcpConnection, Set<AcpRuntimeSession>>()
   private info: AgentInfo | undefined
   private lastConfig: readonly ConfigOption[] = []
@@ -119,9 +128,15 @@ export class AcpRuntimeHandle implements RuntimeHandle {
   constructor(private readonly options: AcpHandleOptions) {
     this.type = options.type
     this.instanceId = options.instanceId
-    this.pool = new AgentPool<AcpConnection>({
+  }
+
+  private pool(scope: string): AgentPool<AcpConnection> {
+    let pool = this.pools.get(scope)
+    if (pool !== undefined) return pool
+    const options = this.options
+    pool = new AgentPool<AcpConnection>({
       start: async () => {
-        const connection = await options.connect()
+        const connection = await options.connect(scope === '' ? undefined : { cwd: scope })
         this.info = connection.info
         this.sessions.set(connection, new Set())
         this.events.push({ type: 'status', status: 'ready' })
@@ -137,11 +152,22 @@ export class AcpRuntimeHandle implements RuntimeHandle {
         this.events.push(expected ? { type: 'status', status: 'stopped' } : { type: 'status', status: 'degraded', error: { code: 'runtime_crashed', message: reason, retryable: true } })
       },
     })
+    this.pools.set(scope, pool)
+    return pool
+  }
+
+  private scope(cwd: string | undefined): string {
+    if (this.options.processPerWorkspace !== true || cwd === undefined) return ''
+    try {
+      return realpathSync(cwd)
+    } catch {
+      return resolve(cwd)
+    }
   }
 
   /** 拿到连接（必要时启动进程）。 */
-  connection(): Promise<AcpConnection> {
-    return this.pool.acquire()
+  connection(cwd?: string): Promise<AcpConnection> {
+    return this.pool(this.scope(cwd)).acquire()
   }
 
   capabilities(): RuntimeCapabilities {
@@ -165,6 +191,7 @@ export class AcpRuntimeHandle implements RuntimeHandle {
   }
 
   async listNativeSessions(cursor?: string): Promise<NativeSessionPage> {
+    if (this.options.nativeInventory === false) return { sessions: [] }
     const connection = await this.connection()
     if (!hasSessionCapability(connection.info, 'list')) return { sessions: [] }
     const result = asRecord(await connection.client.request('session/list', cursor !== undefined ? { cursor } : {}, { timeoutMs: 60_000 }))
@@ -180,7 +207,7 @@ export class AcpRuntimeHandle implements RuntimeHandle {
   }
 
   async readNativeHistory(ref: NativeSessionRef, window: HistoryWindow): Promise<NativeHistoryPage> {
-    const connection = await this.connection()
+    const connection = await this.connection(ref.locator)
     const special = this.options.dialect.readNativeHistory?.(connection.client, ref, `history:${ref.nativeSessionId}`)
     if (special !== undefined) return special
     // 通用实现：加载并捕获回放，再关闭。会写原生记录的 Runtime（Claude）必须由方言或原生历史伴随层接管。
@@ -201,7 +228,7 @@ export class AcpRuntimeHandle implements RuntimeHandle {
   }
 
   async open(target: OpenTarget, options: OpenOptions): Promise<AcpRuntimeSession> {
-    const connection = await this.connection()
+    const connection = await this.connection(target.kind === 'new' ? target.spec.cwd : target.ref.locator)
     const { client, info } = connection
     const dialect = this.options.dialect
     let nativeSessionId: string
@@ -227,7 +254,7 @@ export class AcpRuntimeHandle implements RuntimeHandle {
         replayed = options.replay === 'full' ? captured.updates : []
       }
     }
-    const config = normalizeConfig({ configOptions: response.configOptions, modes: response.modes, models: response.models })
+    const config = normalizeConfig({ configOptions: response.configOptions, modes: response.modes, models: response.models }, dialect.legacyModes)
     const session = new AcpRuntimeSession({
       client, dialect, sessionId: options.sessionId, nativeSessionId, info, config, canClose: hasSessionCapability(info, 'close'),
     })
@@ -261,7 +288,7 @@ export class AcpRuntimeHandle implements RuntimeHandle {
     }
   }
  async stop(): Promise<void> {
-    await this.pool.shutdown()
+    await Promise.all([...this.pools.values()].map(pool => pool.shutdown()))
     this.events.close()
   }
 }
