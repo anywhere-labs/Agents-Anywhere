@@ -9,6 +9,7 @@
 // 布尔项保留布尔值（端口的 ConfigOption.type = 'boolean'）。
 
 import type { ConfigOption } from '../../application/ports/runtime-session.js'
+import { fail } from './errors.js'
 import { asRecord, type JsonRecord } from './client.js'
 
 /** 一个设置怎么下发给 Agent。 */
@@ -87,11 +88,13 @@ export function fromConfigOption(raw: unknown): { option: ConfigOption; apply: C
   const id = text(option.id)
   if (id === undefined) return undefined
   const description = text(option.description)
+  // ACP 的 category 是保留枚举；AA 自己的类别放在 `_meta.aa.selectionCategory`（v2 ConfigurationService.observe）。
+  const declared = text(asRecord(asRecord(option._meta).aa).selectionCategory)
   const head = {
     id,
     name: text(option.name) ?? id,
     ...(description !== undefined ? { description } : {}),
-    category: aaCategory(text(option.category), id),
+    category: declared === 'model' || declared === 'permission' || declared === 'effort' ? declared : aaCategory(text(option.category), id),
   }
   if (option.type === 'boolean' || typeof option.currentValue === 'boolean') {
     return { option: { ...head, type: 'boolean', currentValue: option.currentValue === true }, apply: 'boolean' }
@@ -183,4 +186,48 @@ export function withCurrent(config: readonly ConfigOption[], id: string, value: 
 
 export function sameConfig(a: readonly ConfigOption[], b: readonly ConfigOption[]): boolean {
   return JSON.stringify(a) === JSON.stringify(b)
+}
+
+const SELECTION_PREFIX = 'acp-selection:'
+
+/** acp/domain/catalogs.py `decode_selection`：模型选择 ID 可能同时编码了推理强度。 */
+export function decodeAcpSelection(value: string): { model: string; effort?: string } {
+  if (!value.startsWith(SELECTION_PREFIX)) return { model: value }
+  try {
+    const decoded: unknown = JSON.parse(Buffer.from(value.slice(SELECTION_PREFIX.length), 'base64url').toString('utf8'))
+    if (Array.isArray(decoded) && decoded.length === 2 && typeof decoded[0] === 'string' && typeof decoded[1] === 'string') {
+      return { model: decoded[0], effort: decoded[1] }
+    }
+  } catch {
+    // 落到下面的错误
+  }
+  fail('invalid_selection', '模型与推理强度选择无效。')
+}
+
+
+/**
+ * acp/domain/configuration.py `merge_legacy`：按类别给出的初始选择（model / effort / permission…）
+ * 落到会话配置项上。每个类别必须恰好对应一个配置项，值必须在可选范围内。返回按类别顺序的赋值。
+ */
+export function selectionsToConfig(config: readonly ConfigOption[], selections: Readonly<Record<string, string | null>>): Array<{ optionId: string; value: string }> {
+  const flat: Record<string, string | null> = { ...selections }
+  const model = flat.model
+  if (model !== undefined && model !== null) {
+    const decoded = decodeAcpSelection(model)
+    if (decoded.effort !== undefined && flat.effort !== undefined && flat.effort !== null && flat.effort !== decoded.effort) {
+      fail('configuration_conflict', '模型选择与推理强度不一致。')
+    }
+    flat.model = decoded.model
+    if (decoded.effort !== undefined) flat.effort = decoded.effort
+  }
+  const out: Array<{ optionId: string; value: string }> = []
+  for (const [category, value] of Object.entries(flat)) {
+    if (value === null || value === undefined) continue
+    const matches = config.filter(option => option.category === category)
+    if (matches.length !== 1) fail('configuration_mapping_unavailable', '该选择没有唯一且无损的 Agent 配置映射。')
+    const option = matches[0]!
+    if (choiceError(config, option.id, value) !== undefined) fail('invalid_configuration_value', '配置值不在当前可用范围。')
+    out.push({ optionId: option.id, value })
+  }
+  return out
 }

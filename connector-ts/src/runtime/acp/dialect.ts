@@ -74,12 +74,18 @@ export interface AcpDialect {
   /** 插话方式：ACP 扩展 `_session/steering`、文本命令（Hermes `/steer`），或不支持。 */
   readonly steer: 'extension' | 'text-command' | 'none'
   readonly steerCommand?: string
+  /** 文本命令插话能不能带附件；缺省不能（v2 `SlashSteer.attachments`）。 */
+  readonly steerAttachments?: boolean
   /** Agent 会把 AA 发的用户消息回显成 user_message_chunk：这类回显不再落条目。 */
   readonly echoesUserPrompt?: boolean
   /** 把一条 ACP 更新翻译成内部事件；返回 undefined 时走通用翻译。 */
   translateUpdate?(update: JsonRecord, context: SessionContext): RuntimeEvent[] | undefined
   /** 反向请求的交互类别；返回 undefined 时走通用判断。 */
   interactionKind?(method: string, params: JsonRecord): InteractionKind | undefined
+  /** 反向请求到达时先给方言看一眼（Hermes 记下审批卡的 toolCallId）。不改变处理方式。 */
+  observeRequest?(method: string, params: JsonRecord, context: SessionContext): void
+  /** 打开会话后检查 Agent 是否满足要求（例如必须提供模型配置）；返回错误时会话打开失败。 */
+  verifySession?(config: readonly ConfigOption[]): RuntimeError | undefined
   /** 计划审阅的回答怎么落到 ACP 选项上。 */
   planReview?(answer: Extract<InteractionAnswer, { kind: 'plan_review' }>, options: readonly JsonRecord[]): PlanReviewDecision
   /** 计划模式承载在哪个配置项上。 */

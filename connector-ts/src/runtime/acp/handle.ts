@@ -23,8 +23,9 @@ import type { ProtocolModelCatalog } from '../../generated/protocol/v1_2/model-c
 import { AgentPool, type PooledConnection } from '../supervisor/agent-pool.js'
 import { AgentProcess, type AgentCommand } from '../supervisor/agent-process.js'
 import { AcpClient, asRecord, type AgentInfo, type JsonRecord } from './client.js'
-import { normalizeConfig } from './config.js'
+import { normalizeConfig, selectionsToConfig } from './config.js'
 import type { AcpDialect } from './dialect.js'
+import { RuntimeFailure } from './errors.js'
 import type { JsonRpcPeer } from './jsonrpc.js'
 import { translateUpdate } from './mapping.js'
 import { EventQueue } from './queue.js'
@@ -97,6 +98,8 @@ export interface AcpHandleOptions {
   readonly dialect: AcpDialect
   readonly connect: ConnectionFactory
   readonly idleMs?: number
+  /** 建会话前就能列出的权限选项（v2 definition `permission_options`：值, 名称）。 */
+  readonly permissionOptions?: ReadonlyArray<readonly [string, string]>
 }
 
 /** 会话能力：协商得到的 sessionCapabilities 里有没有某一项。 */
@@ -147,7 +150,18 @@ export class AcpRuntimeHandle implements RuntimeHandle {
   }
 
   async catalogs(): Promise<Catalogs> {
-    return catalogsFromConfig(this.type, this.lastConfig)
+    const fromConfig = catalogsFromConfig(this.type, this.lastConfig)
+    const permissions = this.options.permissionOptions
+    if (!permissions?.length) return fromConfig
+    // acp/runtime.py `list_permission_catalog`
+    return {
+      ...fromConfig,
+      permissions: {
+        runtime: this.type,
+        revision: 1,
+        permissions: permissions.map(([value, title]) => ({ id: value, displayName: title, description: null, default: false, selectionId: value, metadata: {} })),
+      },
+    }
   }
 
   async listNativeSessions(cursor?: string): Promise<NativeSessionPage> {
@@ -224,16 +238,29 @@ export class AcpRuntimeHandle implements RuntimeHandle {
       this.sessions.get(connection)?.delete(session)
       await originalClose()
     }
-    if (replayed.length) session.replay(replayed)
-    if (target.kind === 'new' && target.spec.selections) {
-      for (const [optionId, value] of Object.entries(target.spec.selections)) {
-        if (value !== null) await session.configure({ optionId, value }).catch(() => undefined)
-      }
+    const problem = dialect.verifySession?.(session.configOptions)
+    if (problem !== undefined) {
+      await session.close().catch(() => undefined)
+      throw new RuntimeFailure(problem)
     }
+    if (replayed.length) session.replay(replayed)
+    if (target.kind === 'new' && target.spec.selections) await this.applySelections(session, target.spec.selections)
     return session
   }
 
-  async stop(): Promise<void> {
+  /**
+   * 创建时的初始选择（类别 → selection ID）落到会话配置（v2 `merge_legacy` + `configurations.update`）。
+   * 映射不唯一、值不可用或设置失败都让创建失败，并关闭刚建的会话。
+   */
+  private async applySelections(session: AcpRuntimeSession, selections: Readonly<Record<string, string | null>>): Promise<void> {
+    try {
+      for (const change of selectionsToConfig(session.configOptions, selections)) await session.configure(change)
+    } catch (error) {
+      await session.close().catch(() => undefined)
+      throw error
+    }
+  }
+ async stop(): Promise<void> {
     await this.pool.shutdown()
     this.events.close()
   }

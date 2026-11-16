@@ -35,6 +35,7 @@ import { choiceError, findOption, normalizeConfig, withCurrent, type NormalizedC
 import type { AcpDialect, ItemIdentity, SessionContext } from './dialect.js'
 import { ConnectionClosedError, JsonRpcError, RequestTimeoutError, type RequestContext } from './jsonrpc.js'
 import { isAcceptanceEvidence, isContentUpdate, translateUpdate } from './mapping.js'
+import { RuntimeFailure } from './errors.js'
 import { EventQueue } from './queue.js'
 
 /** v2 通用 ACP 规则的条目身份（AcpProjectionIdentity），用户消息用 clientMessageId 的指纹。 */
@@ -49,6 +50,7 @@ export function defaultIdentity(context: SessionContext): ItemIdentity {
 }
 
 export function runtimeError(error: unknown, fallbackCode = 'runtime_error'): RuntimeError {
+  if (error instanceof RuntimeFailure) return error.error
   if (error instanceof RequestTimeoutError) return { code: 'runtime_timeout', message: error.message, retryable: true }
   if (error instanceof ConnectionClosedError) return { code: 'runtime_disconnected', message: error.message, retryable: true }
   if (error instanceof JsonRpcError) {
@@ -117,6 +119,8 @@ export class AcpRuntimeSession implements RuntimeSession {
   private config: NormalizedConfig
   private capabilityRevision = 1
   private turn: ActiveTurn | undefined
+  /** toolCallId → 已经落到 Timeline 的工具条目。审批只关联这些（Hermes 的审批卡 id 不是工具调用）。 */
+  private readonly toolItems = new Map<string, string>()
   private readonly interactions = new Map<string, PendingInteraction>()
   private readonly detach: () => void
   private closed = false
@@ -206,6 +210,9 @@ export class AcpRuntimeSession implements RuntimeSession {
     const userItemId = this.identity.userItemId(delivery.clientMessageId)
     if (this.dialect.steer === 'text-command') {
       // Hermes：运行中的 `/steer <text>` 文本命令。
+      if (input.attachments?.length && this.dialect.steerAttachments !== true) {
+        return { outcome: 'rejected', error: { code: 'invalid_argument', message: '运行中插话不支持附件，请等本轮结束后再发送。' } }
+      }
       const command = this.dialect.steerCommand ?? '/steer'
       try {
         await this.client.request('session/prompt', { sessionId: this.nativeSessionId, prompt: [{ type: 'text', text: `${command} ${input.text}` }] }, { timeoutMs: 30_000 })
@@ -420,6 +427,7 @@ export class AcpRuntimeSession implements RuntimeSession {
     if (turn && !turn.accepted && isAcceptanceEvidence(update)) this.accept(turn)
     const events = this.translate(update)
     for (const event of events) {
+      if ((event.type === 'tool.started' || event.type === 'tool.updated') && typeof update.toolCallId === 'string') this.toolItems.set(update.toolCallId, event.itemId)
       if (event.type === 'config.updated') {
         const apply = { ...this.config.apply }
         for (const option of event.options) apply[option.id] ??= option.type === 'boolean' ? 'boolean' : 'option'
@@ -441,6 +449,7 @@ export class AcpRuntimeSession implements RuntimeSession {
     if (handled !== undefined) return handled
     if (method !== 'session/request_permission' && method !== 'elicitation/create') throw JsonRpcError.methodNotFound(method)
     if (this.turn && !this.turn.accepted) this.accept(this.turn)
+    this.dialect.observeRequest?.(method, params, this.context)
     const kind = this.dialect.interactionKind?.(method, params) ?? (method === 'elicitation/create' ? 'form' : 'approval')
     const interactionId = `interaction_${randomUUID()}`
     const options = Array.isArray(params.options) ? params.options.map(asRecord) : []
@@ -458,7 +467,7 @@ export class AcpRuntimeSession implements RuntimeSession {
   private interactionEvent(interactionId: string, kind: InteractionKind, method: string, params: JsonRecord, options: JsonRecord[]): RuntimeEvent {
     const turnId = this.turn?.turnId
     const toolCall = asRecord(params.toolCall)
-    const toolItem = typeof toolCall.toolCallId === 'string' ? this.identity.itemFor({ sessionUpdate: 'tool_call_update', toolCallId: toolCall.toolCallId }) : null
+    const toolItem = typeof toolCall.toolCallId === 'string' ? this.toolItems.get(toolCall.toolCallId) : undefined
     const mapped: InteractionOption[] = options.map(o => ({
       id: String(o.optionId),
       label: String(o.name ?? o.optionId),
