@@ -28,14 +28,14 @@ describe('PortShare', () => {
   it('forwards only to loopback and refuses LAN-only bindings', () => {
     expect(decidePortShare(5173, [listening(5173, '0.0.0.0')], 0, false)).toEqual({ port: 5173, localIP: '127.0.0.1' })
     expect(decidePortShare(5173, [listening(5173, '::1')], 0, false)).toEqual({ port: 5173, localIP: '::1' })
-    expect(() => decidePortShare(3000, [listening(3000, '192.168.1.5')], 0, false)).toThrow(expect.objectContaining({ code: 'port_not_local' }))
-    expect(() => decidePortShare(4000, [listening(3000)], 0, false)).toThrow(expect.objectContaining({ code: 'port_not_listening' }))
+    expect(() => decidePortShare(3000, [listening(3000, '192.168.1.5')], 0, false)).toThrow(expect.objectContaining({ code: 'preview_port_not_allowed', details: expect.objectContaining({ reason: 'not_local' }) }))
+    expect(() => decidePortShare(4000, [listening(3000)], 0, false)).toThrow(expect.objectContaining({ code: 'preview_port_not_allowed', details: expect.objectContaining({ reason: 'not_listening' }) }))
     expect(() => decidePortShare(0, [], 0, false)).toThrow(WorkspaceError)
   })
 
   it('limits open previews per device but lets an open one refresh', () => {
     const ports = [listening(5173)]
-    expect(() => decidePortShare(5173, ports, MAX_OPEN_PREVIEWS, false)).toThrow(expect.objectContaining({ code: 'preview_limit' }))
+    expect(() => decidePortShare(5173, ports, MAX_OPEN_PREVIEWS, false)).toThrow(expect.objectContaining({ code: 'preview_limit_reached' }))
     expect(decidePortShare(5173, ports, MAX_OPEN_PREVIEWS, true).port).toBe(5173)
   })
 })
@@ -201,7 +201,7 @@ describe('preview commands', () => {
       .resolves.toEqual({ previewId: 'pv1', port: 5173, localIP: '127.0.0.1' })
     expect(opened[0]).toMatchObject({ slug: 'abcdefghij', token: 't' })
     await expect(commands.previewOpen({ previewId: 'pv2', slug: 'abcdefghik', port: 9999, frpToken: 't', frpsAddr: 'wss://f.example', tokenExpiresAt: 'x' }))
-      .rejects.toMatchObject({ code: 'port_not_listening' })
+      .rejects.toMatchObject({ code: 'preview_port_not_allowed' })
     await expect(commands.previewClose({ previewId: 'pv1', slug: 'abcdefghij' })).resolves.toEqual({ closed: true })
   })
 })

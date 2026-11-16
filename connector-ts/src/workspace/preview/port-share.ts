@@ -29,7 +29,8 @@ export interface PortShareDecision {
 /**
  * Checks one preview request against the PortShare rules: the port must be listening now, reachable on loopback,
  * and the device must have room for another preview. The user confirmed the port by asking for the preview, which
- * is the only way the Server sends `Commands/previewOpen`.
+ * is the only way the Server sends `Commands/previewOpen`. Error codes follow contracts/runtime-errors 1.1;
+ * `details.reason` tells a closed port (`not_listening`) from one bound off loopback (`not_local`).
  */
 export function decidePortShare(
   port: number,
@@ -39,13 +40,13 @@ export function decidePortShare(
 ): PortShareDecision {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new WorkspaceError('invalid_argument', `invalid port: ${port}`)
   const bindings = listening.filter(entry => entry.port === port)
-  if (bindings.length === 0) throw new WorkspaceError('port_not_listening', `nothing is listening on port ${port}`, { port })
+  if (bindings.length === 0) throw new WorkspaceError('preview_port_not_allowed', `nothing is listening on port ${port}`, { port, reason: 'not_listening' })
   const localIP = loopbackTarget(bindings)
   if (localIP === null) {
-    throw new WorkspaceError('port_not_local', `port ${port} is not reachable on this computer's loopback address`, { port })
+    throw new WorkspaceError('preview_port_not_allowed', `port ${port} is not reachable on this computer's loopback address`, { port, reason: 'not_local' })
   }
   if (!alreadyOpen && openPreviews >= MAX_OPEN_PREVIEWS) {
-    throw new WorkspaceError('preview_limit', `at most ${MAX_OPEN_PREVIEWS} previews can be open on one device`, { limit: MAX_OPEN_PREVIEWS })
+    throw new WorkspaceError('preview_limit_reached', `at most ${MAX_OPEN_PREVIEWS} previews can be open on one device`, { limit: MAX_OPEN_PREVIEWS })
   }
   return { port, localIP }
 }
