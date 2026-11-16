@@ -56,6 +56,8 @@ describe('AttachHub', () => {
     expect((await stream.next()).value).toEqual({ kind: 'event', m: 'runtime.notice.updated', p: { sessionId: 's1' } })
     hub.setMode('required')
     hub.emit('runtime.queue.updated', { sessionId: 's1' })
+    // A session's facts are content in encrypted mode, even on an allowed method; device-level status still goes.
+    hub.emit('runtime.status', { runtimeId: 'r1', sessionId: 's1', status: { event: 'planning.state.updated' } })
     hub.emit('port.listening', { ports: [{ port: 3000 }] })
     expect((await stream.next()).value).toEqual({ kind: 'event', m: 'port.listening', p: { ports: [{ port: 3000 }] } })
     abort.abort()
@@ -109,9 +111,9 @@ describe('secureChannelVia', () => {
         wire = w
         return {
           isClosed: false,
-          receive: async (item: Record<string, unknown>) => {
+          receive: async (item: { n: number; ct: string }) => {
             received.push(item.n)
-            await wire.send({ n: Number(item.n) + 100 })
+            await wire.send({ n: Number(item.n) + 100, ct: item.ct })
             if (item.n === 2) wire.end('not_paired')
           },
           close: async () => undefined,
@@ -121,7 +123,7 @@ describe('secureChannelVia', () => {
     const io = duplex([{ n: 1, ct: 'a' }, { n: 2, ct: 'b' }])
     await expect(secureChannelVia(hub)({ clientId: 'cl_1', ch: 'ch_1' }, io.channel as never, context())).rejects.toMatchObject({ code: 'not_paired' })
     expect(received).toEqual([1, 2])
-    expect(io.sent).toEqual([{ n: 101 }, { n: 102 }])
+    expect(io.sent).toEqual([{ n: 101, ct: 'a' }, { n: 102, ct: 'b' }])
   })
 
   it('closes the channel when the client ends its side', async () => {
@@ -245,8 +247,10 @@ describe.skipIf(binary === null)('DeviceLink against a real Router', () => {
     startLink()
     await until(() => link.state === 'online', 10_000, 'online')
     const hellos = server.hellos
+    const seen = states.length
     await server.drop()
-    await until(() => link.state === 'registered', 5000, 'attach cancelled')
+    // The re-ready can follow within milliseconds, so look for the transition, not the current state.
+    await until(() => states.slice(seen).includes('registered'), 5000, 'attach cancelled')
     const recovery = await until(() => link.state === 'online' && server.held !== null, 10_000, 'held again')
     expect(server.hellos).toBe(hellos)
     expect(recovery).toBeLessThan(5000)

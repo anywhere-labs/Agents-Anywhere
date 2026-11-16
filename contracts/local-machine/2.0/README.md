@@ -65,6 +65,17 @@ Python Connector 统一维护启动互斥、运行记录和本机 Connector ID �
 
 生命周期变更进行中（包括已取消调用留下的后端清理）时，新的 `start`、`stop`、`restart` 和 `saveConfig` 立即返回 `connector_busy`，`retryable:false`，不排队、不合并，也不自动补执行。查询与 `cancelPairing` 仍可用；内部的配对提交和进程关闭可以等待生命周期锁。先后完成的两次显式 `restart` 表示两次用户操作，仍分别执行。
 
+## 版本交接（v3 Connector 增加）
+
+v3 Connector 之间按「新版本接管」仲裁（`docs/v3/04-connector.md` §9.1）。持有租约的 v3 Connector 在本机 Router 上另发一个 `handover` 角色的 API key，只能调用 `aa.local.v2.Control/requestHandover`；key 与 endpoint 写在 `~/.agents-anywhere/router/<runtime.instanceId>.handover.json`（`0600`，`{"version":1,"connectorVersion","pid","endpoint","key"}`），释放租约时删除。
+
+- 后启动的 Connector 发现租约属于更旧的 v3 版本时，读取该文件并调用 `requestHandover({"version": "<自己的版本>"})`。
+- 只有严格更新的版本会得到 `{"accepted": true, "waitMs": N}`；否则返回 `{"accepted": false, "reason": "not_newer" | "not_available"}`。
+- 接受后，旧 Connector 等运行中的回合结束（最多 `waitMs`），停止后端连接、释放租约，宿主进程随之退出；`getState().lastError` 为 `handed over to Connector <版本>`。请求方在此期间重试占用。
+- 后启动的版本更旧时不请求交接：`connector_already_running` 的 `details.decision` 为 `use_existing`，宿主改为连接现有 Connector。v2 Connector 不认识这个方法，冲突照旧。
+
+该方法只是新增，不改变已有方法；它不声明幂等，SDK 不会自动重发。
+
 ## 启动互斥冲突
 
 `acquireOwnership` 用于无配置时的启动预检；`saveConfig`、配对和启动也由 Python 检查占用。Host 不自行检查 PID 或写入运行记录。冲突是应用错误码 `connector_already_running`：

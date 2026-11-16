@@ -32,10 +32,13 @@
     <string name="runtime_error_configuration_changed">The configuration option is no longer available.</string>
     <string name="runtime_error_configuration_conflict">The selections conflict. Choose the model and reasoning effort again.</string>
     <string name="runtime_error_configuration_mapping_unavailable">This earlier selection has no exact agent configuration mapping.</string>
-    <string name="runtime_error_device_pin_mismatch">The device identity has changed. Pair with it again.</string>
+    <string name="runtime_error_device_pin_mismatch">The device identity does not match the one you paired with. Create a new pairing link on the device (scan the QR code on a phone) and pair again.</string>
     <string name="runtime_error_device_read_timeout">The device is responding slowly. Try again shortly.</string>
     <string name="runtime_error_dsh_home_mismatch">This DSH uses a different data directory and does not serve the DSH runtime on this device.</string>
-    <string name="runtime_error_e2ee_not_paired">This device has not authorised this client yet. Pair with it first.</string>
+    <string name="runtime_error_e2ee_downgrade_refused">This device requires end-to-end encryption; the unencrypted connection was refused.</string>
+    <string name="runtime_error_e2ee_handshake_failed">The encrypted connection could not be set up. The device may have been reinstalled; pair with it again.</string>
+    <string name="runtime_error_e2ee_not_paired">This device has not authorised this client yet. Create a pairing link on the device (scan the QR code on a phone) and pair.</string>
+    <string name="runtime_error_e2ee_protocol_error">The encrypted channel failed and was closed. Try again.</string>
     <string name="runtime_error_e2ee_required">This server requires end-to-end encryption. Pair with the device first.</string>
     <string name="runtime_error_image_input_unsupported">The current model does not declare image input. Remove the image or switch to a model that supports images.</string>
     <string name="runtime_error_initialization_interrupted">The initializing agent exited before the first message was submitted. Prepare again.</string>
@@ -75,7 +78,7 @@
     <string name="runtime_error_operation_outcome_unknown">The outcome is uncertain. Check the original operation instead of submitting again.</string>
     <string name="runtime_error_outcome_unknown">The outcome is uncertain. Check the original operation instead of submitting again.</string>
     <string name="runtime_error_owner_changed">The session\'s agent has changed. Refresh and try again.</string>
-    <string name="runtime_error_pairing_expired">The pairing code has expired. Generate a new one on the computer.</string>
+    <string name="runtime_error_pairing_expired">This pairing link has expired or was already used. Create a new one on the device (scan the new QR code on a phone).</string>
     <string name="runtime_error_permission_denied">The current permissions or approvals do not allow this command.</string>
     <string name="runtime_error_pi_adapter_cache_corrupt">The cached Pi ACP dependencies have changed.</string>
     <string name="runtime_error_pi_adapter_dependencies_missing">The Pi ACP dependency directory is missing.</string>

@@ -30,7 +30,7 @@
       "type": "string"
     },
     "path": {
-      "description": "client API path, e.g. /api/v2/sessions/{id}/snapshot",
+      "description": "client API path, e.g. /api/v2/sessions/{id}/snapshot, or /e2ee/v1/…",
       "minLength": 1,
       "title": "Path",
       "type": "string"

@@ -25227,6 +25227,108 @@
         }
       }
     },
+    "这台设备要求端到端加密，已拒绝未加密的连接。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This device requires end-to-end encryption; the unencrypted connection was refused."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这台设备要求端到端加密，已拒绝未加密的连接。"
+          }
+        }
+      }
+    },
+    "加密连接没有建立：设备可能重装过或身份已变化，请重新配对。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The encrypted connection could not be set up. The device may have been reinstalled; pair with it again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加密连接没有建立：设备可能重装过或身份已变化，请重新配对。"
+          }
+        }
+      }
+    },
+    "加密通道出现错误，已断开，请重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The encrypted channel failed and was closed. Try again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加密通道出现错误，已断开，请重试。"
+          }
+        }
+      }
+    },
+    "设备身份与配对时不一致，请在设备上重新生成配对链接（手机上扫二维码）后再配对。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The device identity does not match the one you paired with. Create a new pairing link on the device (scan the QR code on a phone) and pair again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备身份与配对时不一致，请在设备上重新生成配对链接（手机上扫二维码）后再配对。"
+          }
+        }
+      }
+    },
+    "这台设备还没有授权当前客户端，请在设备上生成配对链接（手机上扫二维码）后配对。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This device has not authorised this client yet. Create a pairing link on the device (scan the QR code on a phone) and pair."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这台设备还没有授权当前客户端，请在设备上生成配对链接（手机上扫二维码）后配对。"
+          }
+        }
+      }
+    },
+    "配对链接已过期或已经用过，请在设备上重新生成（手机上重新扫二维码）。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This pairing link has expired or was already used. Create a new one on the device (scan the new QR code on a phone)."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "配对链接已过期或已经用过，请在设备上重新生成（手机上重新扫二维码）。"
+          }
+        }
+      }
+    },
     "这个 DSH 使用的是另一个数据目录，不服务此设备上的 DSH Runtime。": {
       "extractionState": "manual",
       "localizations": {

@@ -1,0 +1,46 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:channel-ready",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Device -> client, first transport message after KK (and after ``pair.committed``).\nThe client sends no request before it. The device re-checked policy and the grant.",
+  "properties": {
+    "clientId": {
+      "description": "client_id_for(identity public key)",
+      "pattern": "^cli_[a-z2-7]{26}$",
+      "title": "Clientid",
+      "type": "string"
+    },
+    "deviceId": {
+      "minLength": 1,
+      "title": "Deviceid",
+      "type": "string"
+    },
+    "directoryKeyEpoch": {
+      "minimum": 0,
+      "title": "Directorykeyepoch",
+      "type": "integer"
+    },
+    "directoryKeyId": {
+      "minLength": 1,
+      "title": "Directorykeyid",
+      "type": "string"
+    },
+    "kind": {
+      "const": "ready",
+      "default": "ready",
+      "title": "Kind",
+      "type": "string"
+    }
+  },
+  "required": [
+    "deviceId",
+    "clientId",
+    "directoryKeyId",
+    "directoryKeyEpoch"
+  ],
+  "title": "ChannelReady",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

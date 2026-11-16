@@ -1,0 +1,79 @@
+{
+  "$defs": {
+    "DirectoryKeyGrant": {
+      "description": "Sent by the device to a client inside the channel after pairing or rotation.",
+      "properties": {
+        "deviceId": {
+          "minLength": 1,
+          "title": "Deviceid",
+          "type": "string"
+        },
+        "epoch": {
+          "minimum": 0,
+          "title": "Epoch",
+          "type": "integer"
+        },
+        "key": {
+          "description": "32 bytes, base64url without padding",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "title": "Key",
+          "type": "string"
+        },
+        "keyId": {
+          "minLength": 1,
+          "title": "Keyid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "deviceId",
+        "keyId",
+        "epoch",
+        "key"
+      ],
+      "title": "DirectoryKeyGrant",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:e2ee:1.0:pair-committed",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Device -> client right after XXpsk0: the grant is on disk. If it is lost, the client\nretries with KK; a successful KK proves the grant exists.",
+  "properties": {
+    "clientId": {
+      "description": "client_id_for(identity public key)",
+      "pattern": "^cli_[a-z2-7]{26}$",
+      "title": "Clientid",
+      "type": "string"
+    },
+    "deviceId": {
+      "minLength": 1,
+      "title": "Deviceid",
+      "type": "string"
+    },
+    "directoryKey": {
+      "$ref": "#/$defs/DirectoryKeyGrant"
+    },
+    "grantedAt": {
+      "title": "Grantedat",
+      "type": "string"
+    },
+    "kind": {
+      "const": "pair.committed",
+      "default": "pair.committed",
+      "title": "Kind",
+      "type": "string"
+    }
+  },
+  "required": [
+    "deviceId",
+    "clientId",
+    "grantedAt",
+    "directoryKey"
+  ],
+  "title": "PairCommitted",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}
