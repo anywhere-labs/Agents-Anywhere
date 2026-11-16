@@ -1,10 +1,11 @@
-import { Archive, Boxes, Smartphone, Sun, User } from "lucide-react"
+import { Archive, Boxes, ShieldCheck, Smartphone, Sun, User } from "lucide-react"
 
 export const settingsNavigation = [
   { id: "account", labelKey: "account", icon: User, group: "general" },
   { id: "appearance", labelKey: "appearance", icon: Sun, group: "general" },
   { id: "mobile-connections", labelKey: "mobileConnections", icon: Smartphone, group: "general" },
   { id: "archived-sessions", labelKey: "archivedSessions", icon: Archive, group: "general" },
+  { id: "secure-connections", labelKey: "secureConnections", icon: ShieldCheck, group: "general" },
   { id: "model-configs", labelKey: "modelConfigsTitle", icon: Boxes, group: "models" },
 ] as const
 

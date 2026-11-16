@@ -14,6 +14,7 @@ import { authFlowHash, clearAuthFlow, rememberAuthFlow, takeAuthFlow } from "@/f
 import { forgetSessionDiskCache } from "@/components/session/session-disk-store"
 import { sessionCacheScope } from "@/components/session/session-state-cache"
 import { e2eeRuntime, startE2ee } from "@/features/e2ee/runtime"
+import { SecurePairingHost } from "@/components/e2ee/secure-pairing-host"
 
 export type AuthScreen =
   | "bootstrap"
@@ -453,6 +454,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
+      {session ? <SecurePairingHost /> : null}
     </AuthContext.Provider>
   )
 }

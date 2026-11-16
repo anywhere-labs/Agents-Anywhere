@@ -15,6 +15,7 @@ import { useTranslations } from "next-intl"
 import { forgetSessionDiskCache } from "@/components/session/session-disk-store"
 import { sessionCacheScope } from "@/components/session/session-state-cache"
 import { e2eeRuntime, startE2ee } from "@/features/e2ee/runtime"
+import { SecurePairingHost } from "@/components/e2ee/secure-pairing-host"
 
 export type AuthScreen = "login" | "signed-out" | "preview" | "onboarding" | "app"
 
@@ -311,6 +312,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
+      {session ? <SecurePairingHost /> : null}
     </AuthContext.Provider>
   )
 }

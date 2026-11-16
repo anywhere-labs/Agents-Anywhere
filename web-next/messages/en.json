@@ -1966,7 +1966,8 @@
       },
       "modelConfigsTitle": "Model gateways",
       "modelsGroup": "Models",
-      "channelSwitchTitle": "Gateway switching"
+      "channelSwitchTitle": "Gateway switching",
+      "secureConnections": "Secure connections"
     },
     "team": {
       "title": "Team",
@@ -2642,5 +2643,49 @@
     "achievedUnknownTime": "Goal achieved",
     "secondsUnit": " s",
     "resumeTitle": "Resume this goal?"
+  },
+  "e2ee": {
+    "pairing": {
+      "title": "Pair for end-to-end encryption",
+      "description": "On the device, open Secure connections and copy the pairing link (it expires in 10 minutes), then paste it here.",
+      "descriptionForDevice": "Content on {device} is end-to-end encrypted. On that device, open Secure connections and copy the pairing link, then paste it here.",
+      "linkLabel": "Pairing link",
+      "invalidLink": "This is not a pairing link. It starts with aa-pair://.",
+      "device": "Device",
+      "fingerprint": "Device fingerprint",
+      "compareHint": "Check that the device shows the same fingerprint before you pair.",
+      "pair": "Pair",
+      "cancel": "Cancel",
+      "paired": "Paired with {device}. Its content now travels end-to-end encrypted.",
+      "errorExpired": "This pairing link has expired or was already used. Create a new one on the device.",
+      "errorMismatch": "The device answering is not the one in the link. Pairing was stopped.",
+      "errorHandshake": "The secure connection could not be set up. Try again with a new link.",
+      "errorOffline": "The device is offline. Pair when it is online.",
+      "errorGeneric": "Pairing failed ({code}).",
+      "unsupported": "This browser cannot create end-to-end encrypted connections. Use a current version of Chrome, Edge, Firefox or Safari, or the Desktop app."
+    },
+    "settings": {
+      "title": "Secure connections",
+      "statusRequired": "End-to-end encryption is on: session content only travels through encrypted connections to paired devices.",
+      "statusOptional": "End-to-end encryption is off on this server. Pairing a device turns it on for that device.",
+      "pairDevice": "Pair a device",
+      "thisClient": "This client's fingerprint",
+      "thisClientHint": "A device asks you to compare this when it approves a new client.",
+      "devicesTitle": "Paired devices",
+      "devicesDescription": "Content of these devices only travels end-to-end encrypted.",
+      "noDevices": "No paired devices yet.",
+      "pairedAt": "Paired {time}",
+      "forget": "Forget",
+      "forgetTitle": "Forget {device}?",
+      "forgetDescription": "This client stops trusting the device's key. You need a new pairing link from the device to open its sessions again.",
+      "forgotten": "Device forgotten.",
+      "policyTitle": "Require encryption on this client",
+      "policyDescription": "This client refuses plaintext session content even though the server no longer requires encryption.",
+      "relax": "Allow plaintext",
+      "relaxTitle": "Allow plaintext on this client?",
+      "relaxDescription": "The server will be able to read session content of devices you have not paired with. Paired devices stay encrypted.",
+      "cancel": "Cancel",
+      "unsupported": "This browser cannot create end-to-end encrypted connections."
+    }
   }
 }

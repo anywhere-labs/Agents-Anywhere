@@ -37,6 +37,7 @@ import { AccountProfileCard } from "@/components/pages/account-profile-card"
 import { accountDisplayName } from "@/features/auth/account-profile"
 import { MobileConnectionDialog } from "@/components/pages/mobile-signin-panel"
 import { ArchivedSessionsTab } from "@/components/settings/archived-sessions-tab"
+import { SecureConnectionsTab } from "@/components/settings/secure-connections-tab"
 import { ModelConfigsTab } from "@/components/settings/model-configs-tab"
 import { parseSettingsTab, settingsNavigation } from "@/components/settings/settings-navigation"
 import { PageHeader } from "@/components/pages/page-header"
@@ -639,6 +640,7 @@ export function SettingsPage() {
               userId={mobileUserId}
             />
           )}
+          {tab === "secure-connections" && <SecureConnectionsTab />}
           {tab === "archived-sessions" && (
             <ArchivedSessionsTab
               sessions={sessions}

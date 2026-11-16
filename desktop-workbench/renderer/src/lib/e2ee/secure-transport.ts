@@ -3,7 +3,13 @@
 // stream a `TunnelSubscribe`; commands are registered with the Server first (`POST /api/v3/e2ee/commands`).
 
 import { ApiError, apiErrorKind } from "@/lib/api/errors"
-import type { ContentRequest, SessionContentTransport, SessionEventStream } from "@/lib/transport/content-transport"
+import {
+  isContentTransportRequired,
+  reportContentTransportRequired,
+  type ContentRequest,
+  type SessionContentTransport,
+  type SessionEventStream,
+} from "@/lib/transport/content-transport"
 import { b64url, fromB64url, utf8 } from "./bytes"
 import {
   ChannelClosedError,
@@ -198,7 +204,10 @@ export class SecureChannelPool {
       }
       return response.body
     } catch (error) {
-      throw toApiError(error)
+      const apiError = toApiError(error)
+      // Same signal as the HTTPS path: lets the trust UI offer pairing or reconnect.
+      if (isContentTransportRequired(apiError.code)) reportContentTransportRequired(sessionId, apiError.code!)
+      throw apiError
     }
   }
 

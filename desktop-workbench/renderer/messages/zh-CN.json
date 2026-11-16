@@ -2144,7 +2144,8 @@
       },
       "modelConfigsTitle": "模型网关",
       "modelsGroup": "模型",
-      "channelSwitchTitle": "网关切换"
+      "channelSwitchTitle": "网关切换",
+      "secureConnections": "安全连接"
     },
     "team": {
       "title": "团队",
@@ -2843,5 +2844,49 @@
     "achievedUnknownTime": "目标已完成",
     "secondsUnit": " 秒",
     "resumeTitle": "恢复此目标？"
+  },
+  "e2ee": {
+    "pairing": {
+      "title": "配对端到端加密",
+      "description": "在设备上打开「安全连接」，复制配对链接（10 分钟内有效），粘贴到这里。",
+      "descriptionForDevice": "{device} 上的内容是端到端加密的。在那台设备上打开「安全连接」，复制配对链接，粘贴到这里。",
+      "linkLabel": "配对链接",
+      "invalidLink": "这不是配对链接，配对链接以 aa-pair:// 开头。",
+      "device": "设备",
+      "fingerprint": "设备指纹",
+      "compareHint": "配对前，请确认设备上显示的指纹与这里一致。",
+      "pair": "配对",
+      "cancel": "取消",
+      "paired": "已与 {device} 配对，它的内容现在端到端加密传输。",
+      "errorExpired": "配对链接已过期或已经用过，请在设备上重新生成。",
+      "errorMismatch": "响应的设备不是链接里的那台，已停止配对。",
+      "errorHandshake": "无法建立安全连接，请换一个新链接重试。",
+      "errorOffline": "设备不在线，请在设备上线后配对。",
+      "errorGeneric": "配对失败（{code}）。",
+      "unsupported": "这个浏览器无法建立端到端加密连接。请使用新版 Chrome、Edge、Firefox、Safari，或使用 Desktop。"
+    },
+    "settings": {
+      "title": "安全连接",
+      "statusRequired": "端到端加密已开启：会话内容只经加密连接与已配对的设备传输。",
+      "statusOptional": "这台服务器没有开启端到端加密。与某台设备配对后，该设备的内容会加密传输。",
+      "pairDevice": "配对设备",
+      "thisClient": "本客户端指纹",
+      "thisClientHint": "设备批准新客户端时，会请你核对这个指纹。",
+      "devicesTitle": "已配对的设备",
+      "devicesDescription": "这些设备的内容只经端到端加密传输。",
+      "noDevices": "还没有配对的设备。",
+      "pairedAt": "配对于 {time}",
+      "forget": "忘记",
+      "forgetTitle": "忘记 {device}？",
+      "forgetDescription": "本客户端将不再信任这台设备的密钥，需要在设备上重新生成配对链接才能再打开它的会话。",
+      "forgotten": "已忘记这台设备。",
+      "policyTitle": "本客户端要求加密",
+      "policyDescription": "即使服务器不再要求加密，本客户端仍拒绝明文的会话内容。",
+      "relax": "允许明文",
+      "relaxTitle": "允许本客户端使用明文？",
+      "relaxDescription": "服务器将能读到未配对设备的会话内容；已配对的设备仍然加密。",
+      "cancel": "取消",
+      "unsupported": "这个浏览器无法建立端到端加密连接。"
+    }
   }
 }
