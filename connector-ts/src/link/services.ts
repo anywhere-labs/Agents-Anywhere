@@ -1,9 +1,10 @@
-import { MeshCallError, ResourceExhaustedError, method, service, z, type DuplexChannel, type RpcContext } from 'meshcall'
+import { MeshCallError, ResourceExhaustedError, z, type DuplexChannel, type RpcContext } from 'meshcall'
 
 import { CommandInbox, errorCode } from '../application/inbound/index.js'
 import type { OutboxStore } from '../application/ports/index.js'
 import type { CommandCall } from '../generated/device-meshcall/v1_0/command-call.js'
 import { chunkJson, outboxStream, watchSession, type DeviceReaders, type OutboxStreamOptions, type WatchDeps } from '../sync/index.js'
+import { defineService, type MethodDef } from '../mesh/index.js'
 import type { AttachHub } from './attach.js'
 
 export const CONNECTION_METADATA = 'aa-connection-id'
@@ -88,8 +89,6 @@ export interface DeviceServicesDeps {
   readonly onCommand?: () => void
 }
 
-const looseObject = z.looseObject({})
-const anyItem = z.looseObject({})
 
 /** Thrown when a call carries another generation's `aa-connection-id` (the Server then says hello again). */
 export function connectionReplaced(): MeshCallError {
@@ -102,38 +101,6 @@ function asMeshError(error: unknown): unknown {
   const coded = errorCode(error)
   if (coded.code === 'internal') return error
   return new MeshCallError(coded.code, coded.message, coded.retryable === true ? { retryable: true } : {})
-}
-
-interface MethodDef {
-  readonly name: string
-  readonly kind: 'unary' | 'server_stream' | 'duplex'
-  readonly description: string
-  readonly request?: z.ZodType
-  readonly idempotent?: boolean
-  readonly readOnly?: boolean
-  readonly handler: (...args: never[]) => unknown
-}
-
-/**
- * Builds a `@service` instance without decorator syntax: the decorators are plain functions of `(fn, context)`,
- * and the Commands service has one method per registered command, which a class literal cannot list per mode.
- */
-export function defineService(name: string, description: string, methods: readonly MethodDef[]): object {
-  const Service = class {}
-  Object.defineProperty(Service, 'name', { value: name.split('.').pop() ?? 'Service' })
-  const prototype = Service.prototype as Record<string, unknown>
-  for (const def of methods) {
-    const fn = def.handler
-    prototype[def.name] = fn
-    const context = { kind: 'method', name: def.name, static: false, private: false, metadata: {}, access: { has: () => true, get: () => fn }, addInitializer: () => undefined } as unknown as ClassMethodDecoratorContext
-    const request = def.request ?? looseObject
-    const semantics = { description: def.description, ...(def.idempotent !== undefined ? { idempotent: def.idempotent } : {}), ...(def.readOnly !== undefined ? { readOnly: def.readOnly } : {}) }
-    if (def.kind === 'unary') method({ ...semantics, request, response: looseObject })(fn as never, context)
-    else if (def.kind === 'server_stream') method.serverStream({ ...semantics, request, outputItem: anyItem })(fn as never, context)
-    else method.duplex({ description: def.description, reason: 'one encrypted client channel: frames flow both ways for its whole life', request, inputItem: anyItem, outputItem: anyItem })(fn as never, context)
-  }
-  service(name, { description, targeted: true })(Service, { kind: 'class', name: Service.name, metadata: {}, addInitializer: () => undefined } as unknown as ClassDecoratorContext)
-  return new Service()
 }
 
 class Limiter {

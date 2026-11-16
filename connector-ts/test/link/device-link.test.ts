@@ -281,6 +281,16 @@ describe.skipIf(binary === null)('DeviceLink against a real Router', () => {
     expect(server.held?.events.map(event => event.m)).toEqual(['port.listening'])
   }, 20_000)
 
+  it('stops with credential_rejected when the Server refuses the device credential', async () => {
+    startLink()
+    await until(() => link.state === 'online', 10_000, 'online')
+    // Pairing replaced the credential elsewhere: the next hello cannot authenticate.
+    server.credential = 'ct_rotated'
+    await server.revokeToken()
+    await expect(running).rejects.toMatchObject({ code: 'credential_rejected' })
+    expect(link.state).toBe('stopped')
+  }, 20_000)
+
   it('reaches the Router through an HTTP CONNECT proxy', async () => {
     const proxy = new ConnectProxy()
     await proxy.start()

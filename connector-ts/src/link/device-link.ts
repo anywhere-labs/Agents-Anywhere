@@ -130,7 +130,7 @@ export function isDuplicateInstance(error: unknown): boolean {
 
 /** The Server no longer knows this generation (or this device): only a new hello helps. */
 function needsHello(error: unknown): boolean {
-  return error instanceof HttpError && (error.status === 401 || (error.status === 409 && error.code === 'connection_replaced'))
+  return error instanceof HttpError && error.code !== 'credential_rejected' && (error.status === 401 || (error.status === 409 && error.code === 'connection_replaced'))
 }
 
 function rpcLogger(log: LinkLogger): RpcLogger {
@@ -349,7 +349,7 @@ export class DeviceLink {
     }
   }
 
-  /** Runs until `signal` aborts. */
+  /** Runs until `signal` aborts; rejects only when the Server refuses the device credential (`credential_rejected`). */
   public async run(signal: AbortSignal): Promise<void> {
     const backoff = new Backoff(this.timing('backoffBaseMs', 1000), this.timing('backoffMaxMs', 30_000))
     const registration = this.options.registration ?? DEFAULT_REGISTRATION
@@ -375,6 +375,8 @@ export class DeviceLink {
             fresh = true
           } catch (error) {
             if (signal.aborted) break
+            // Pairing again is the only cure; the host shows it (v2 "expired credential").
+            if ((error as { code?: unknown }).code === 'credential_rejected') throw error
             problem(`hello failed: ${(error as Error).message}`)
             await sleep(backoff.next(), signal)
             continue
