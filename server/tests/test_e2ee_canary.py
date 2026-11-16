@@ -59,7 +59,7 @@ from scripts.e2ee_canary_scan import (
     scan_tree,
     scan_websocket,
 )
-from scripts.v3_fake_device import FakeDevice, _make_services, connect_device
+from scripts.v3_fake_device import connect_device
 
 CLIENT = "cli_" + "c" * 26
 
@@ -179,36 +179,6 @@ class RecordingProxy:
         await asyncio.gather(pipe(reader, up_writer, "to-router"), pipe(up_reader, writer, "from-router"))
 
 
-class EncryptedFakeDevice(FakeDevice):
-    """The fake device registering only what a ``required`` Mesh token allows: ``Link``, ``Commands`` and ``Secure``.
-
-    (The shared fake registers every service, which the Router refuses under the narrowed token.)
-    """
-
-    async def start(self) -> None:
-        from meshcall import (
-            Mesh,
-            ReconnectPolicy,
-            RetryPolicy,
-            Router,
-            RouterCredentials,
-        )
-
-        from agent_server.core.device_meshcall import MESH_MAX_FRAME_BYTES
-
-        services = _make_services(self.state)
-        self.mesh = Mesh(
-            Router(self.router_url),
-            credentials=RouterCredentials.bearer(self.token),
-            reconnect=ReconnectPolicy(enabled=False),
-            retry=RetryPolicy(enabled=False),
-            max_frame_size=MESH_MAX_FRAME_BYTES,
-        )
-        self.mesh.mount(services[0], services[3], services[4], instance_id=self.state.device_id)
-        self._serve = self.mesh.serve(access_log=False, log_level="WARNING", drain_timeout=0.5)
-        self.server = await self._serve.__aenter__()
-
-
 # ---------------------------------------------------------------------------
 # Log capture
 # ---------------------------------------------------------------------------
@@ -279,7 +249,6 @@ def canary_env(monkeypatch, tmp_path):
     files_root = tmp_path / "files"
     files_root.mkdir()
     monkeypatch.setenv("AGENT_SERVER_E2EE", "required")
-    monkeypatch.setattr("scripts.v3_fake_device.FakeDevice", EncryptedFakeDevice)
     monkeypatch.setenv("AGENT_SERVER_FILES_LOCAL_ROOT", str(files_root))
     redis_url = _redis_url()
     if redis_url:
@@ -474,8 +443,9 @@ def test_required_mode_keeps_every_canary_off_the_server_side(canary_env, monkey
 
 @pytest.mark.xfail(
     strict=True,
-    reason="C: placing a session needs its cwd, which a correct device seals in required mode "
-    "(MissingWorkspaceError); the summary needs a projectId or another plaintext placement key",
+    reason="C/A: in required mode the Server cannot place a session by cwd (sealed). Agreed fix "
+    "(contracts/e2ee/1.0): SessionSummary.projectId places a new row once; without it the row has no project "
+    "and a client assigns one through PATCH meta",
 )
 def test_required_mode_places_a_session_from_a_sealed_summary(canary_env, monkeypatch) -> None:
     router, proxy, _files_root, _redis_url = canary_env
@@ -511,11 +481,6 @@ def test_required_mode_places_a_session_from_a_sealed_summary(canary_env, monkey
     asyncio.run(scenario())
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="C: in required mode device_link stores a plain displayDevice (title, cwd) as-is; "
-    "core.device_meshcall.scrub_for_e2ee / core.e2ee_settings.accept_display_envelope are not applied yet",
-)
 def test_required_mode_drops_plaintext_a_device_sends(canary_env, monkeypatch) -> None:
     """Defence in depth (§11): a buggy or v2-era device that still sends plaintext must not get it stored."""
 
