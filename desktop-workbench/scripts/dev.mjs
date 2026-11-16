@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import http from "node:http";
 import { createRequire } from "node:module";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureUvBundle } from "./prepare-uv.mjs";
+import { ensureRouterBundle } from "./prepare-router.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const rendererPackage = "agents-anywhere-desktop-renderer";
@@ -21,9 +21,8 @@ const yarnCommand = process.platform === "win32" ? "yarn.cmd" : "yarn";
 let webProcess = null;
 let devUrl = explicitWebUrl;
 
-// Development runs the same uv the installer ships, so provision it up front
-// instead of depending on whatever `uv` the developer has on PATH.
-const uvBundle = prepareBundledUv();
+// Development runs the same Connector bundle and Router the installer ships.
+const connectorBundle = prepareConnector();
 
 if (!explicitWebUrl) {
   const port = explicitWebPort ?? await findAvailablePort(5184);
@@ -46,7 +45,7 @@ if (!explicitWebUrl) {
 
 try {
   await waitForUrl(devUrl);
-  await uvBundle;
+  await connectorBundle;
   // What electron.cmd does, minus cmd.exe: a shell would split a project path
   // that contains a space.
   const electronCli = createRequire(import.meta.url).resolve("electron/cli.js");
@@ -77,17 +76,20 @@ try {
 }
 
 /**
- * Downloads the bundled uv on first use. A failure is not fatal: the Desktop
- * falls back to `uv` on PATH, so only warn and let the app report the rest.
+ * Builds the Router (once per MeshCall commit) and bundles the TS Connector
+ * from `../connector-ts`. A failure is not fatal: Desktop starts and reports
+ * the Connector as unavailable.
  */
-async function prepareBundledUv() {
+async function prepareConnector() {
   try {
-    const [uvPath] = await ensureUvBundle({ log: (message) => console.log(message) });
-    console.log(`Using bundled uv at ${uvPath}`);
+    const [routerPath] = await ensureRouterBundle({ log: (message) => console.log(message) });
+    console.log(`Using meshcall-router at ${routerPath}`);
   } catch (error) {
-    console.warn(`Could not prepare the bundled uv: ${error instanceof Error ? error.message : error}`);
-    console.warn("Falling back to uv on PATH; run `yarn bundle:uv` to retry the download.");
+    console.warn(`Could not build meshcall-router: ${error instanceof Error ? error.message : error}`);
+    console.warn("Install Go, or set MESHCALL_ROUTER_BINARY to a router built from vendor/meshcall's commit.");
   }
+  const result = spawnSync(process.execPath, [path.join(root, "scripts", "bundle-connector.mjs")], { cwd: root, stdio: "inherit" });
+  if (result.status !== 0) console.warn("Could not bundle the Connector; run `yarn bundle:connector` after installing connector-ts dependencies.");
 }
 
 function parsePort(value) {

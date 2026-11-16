@@ -3,17 +3,15 @@ import test from "node:test";
 import { nextSilentLaunchState, ownershipNeedsWindow, shouldLaunchSilently } from "./silent-launch";
 
 test("silent launch keeps the window hidden while ownership is unresolved", () => {
-  // A cold boot spends minutes here: the Connector is still starting, and the
-  // old fixed 10 s wait showed the window at the end of it.
-  for (const status of ["checking", "preparing"] as const) {
-    assert.equal(nextSilentLaunchState("holding", status, false), "holding");
-  }
+  // A cold boot can spend a while here: the Connector is still starting, and
+  // a fixed wait would show the window at the end of it.
+  assert.equal(nextSilentLaunchState("holding", "checking", false), "holding");
 });
 
 test("silent launch stays hidden once this machine owns the Connector", () => {
   assert.equal(nextSilentLaunchState("holding", "owned", false), "owned");
   // A later loss of ownership must not pop the window open on its own.
-  for (const status of ["checking", "preparing", "conflict", "error"] as const) {
+  for (const status of ["checking", "conflict", "error"] as const) {
     assert.equal(nextSilentLaunchState("owned", status, false), "owned");
   }
 });
@@ -37,7 +35,6 @@ test("ownership window decisions match the states that block the machine", () =>
   assert.equal(ownershipNeedsWindow("error"), true);
   assert.equal(ownershipNeedsWindow("owned"), false);
   assert.equal(ownershipNeedsWindow("checking"), false);
-  assert.equal(ownershipNeedsWindow("preparing"), false);
 });
 
 test("a login-item launch stays silent even before the Connector reports settings", () => {

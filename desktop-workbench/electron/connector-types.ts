@@ -91,15 +91,6 @@ export type ConnectorState = {
   runtimePath: string;
   dataPath: string;
   logsPath?: string;
-  connectorDir: string;
-  resolvedUvPath: string;
-  uvMissing: boolean;
-  /** The interpreter `uv run` is pinned to; empty when uv chooses one itself. */
-  resolvedPythonPath: string;
-  uvPath: string;
-  pythonPath: string;
-  uvPypiIndexUrl: string;
-  uvPythonInstallMirror: string;
   /** "" follows the system, "direct" skips any proxy, otherwise a proxy URL. */
   connectorProxy: string;
   logChunkSizeKb: number;
@@ -123,10 +114,6 @@ export type DesktopSettings = {
    * the Connector handed over so shutdown works offline too.
    */
   confirmQuitOnShutdown: boolean;
-  uvPath: string;
-  pythonPath: string;
-  uvPypiIndexUrl: string;
-  uvPythonInstallMirror: string;
   /** "" follows the system, "direct" skips any proxy, otherwise a proxy URL. */
   connectorProxy: string;
   logChunkSizeKb: number;

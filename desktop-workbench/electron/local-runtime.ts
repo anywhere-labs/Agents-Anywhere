@@ -1,4 +1,4 @@
-// Read-only view. Python Connector owns migration, identity history and runtime ownership.
+// Read-only view. The Connector owns migration, identity history and runtime ownership.
 import fs from "node:fs";
 import path from "node:path";
 import { userInfo } from "node:os";
@@ -10,21 +10,20 @@ export type RuntimeOwner = {
 };
 export type LocalState = Record<string, unknown> & { version: 2; connectorIds: string[]; runtime?: RuntimeOwner };
 /**
- * What the gate can offer besides a recheck. `provisioning`: building the
- * Connector environment failed, so a mirror switch or a clean download may
- * help; the current choices let the gate preselect them. `backendStopped`: the
- * Desktop backend process is gone and a recheck starts it again.
+ * What the gate can offer besides a recheck. `backendStopped`: the Desktop
+ * backend process is gone and a recheck starts it again. `newerConnector`: a
+ * newer Connector (CLI or DSH plugin) serves this computer, or took over from
+ * Desktop's own; Desktop does not compete with it (v3 design 04-connector.md §9.1).
  */
 export type OwnershipRecovery =
-  | { kind: "provisioning"; pypiIndexUrl: string; pythonInstallMirror: string; downloadsPython: boolean }
-  | { kind: "backendStopped" };
+  | { kind: "backendStopped" }
+  | { kind: "newerConnector" };
 /**
- * `checking` is the value before the first probe answers; `preparing` means the
- * first Connector environment install is still running. An `error` carries the
- * underlying failure in `message`, which the renderer quotes.
+ * `checking` is the value before the first probe answers. An `error` carries
+ * the underlying failure in `message`, which the renderer quotes.
  */
 export type OwnershipState = {
-  status: "owned" | "conflict" | "preparing" | "checking" | "error";
+  status: "owned" | "conflict" | "checking" | "error";
   message?: string;
   owner?: RuntimeOwner;
   recovery?: OwnershipRecovery;

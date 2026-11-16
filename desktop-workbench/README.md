@@ -13,7 +13,7 @@ token. Native shell concerns — window, tray, updates, notifications, OAuth and
 file dialogs — stay in Main over IPC.
 
 ```text
-Renderer -> /desktop-api (same origin) -> Electron Main -> loopback HTTP+SSE -> Desktop backend -> anywhere-cli rpc -> Server
+Renderer -> /desktop-api (same origin) -> Electron Main -> loopback HTTP+SSE -> Desktop backend -> embedded TS Connector -> Server
 Renderer -> narrow preload IPC --------------------------------------------------> Electron Main (window, updates, OAuth, dialogs)
 ```
 
@@ -143,65 +143,37 @@ cd desktop-workbench
 WORKBENCH_API_ORIGIN=http://127.0.0.1:8000 WORKBENCH_API_NAMESPACE= yarn dev
 ```
 
-On macOS, install the Xcode Command Line Tools (`xcode-select --install`) to
-build the native Connector process supervisor.
+Desktop runs the v3 TypeScript Connector (`../connector-ts`) inside the app: no
+Python, uv or package download is involved. `yarn bundle:connector` bundles its
+Desktop entry with esbuild into `dist/connector/` (`desktop-main.js` and the
+store's `worker-entry.js`); Main forks it as an Electron utility process when
+the backend asks, and the Connector posts its control endpoint and host key over
+the parent port. Desktop then drives it over `aa.local.v2.Control` and `Logs`
+on the Connector's local MeshCall Router, exactly as before. It needs the
+Connector's dependencies installed once (`cd ../connector-ts && yarn install`).
 
-Development runs the repo-level `../connector` project with the same `uv` the
-packaged app ships, so a dev launch never depends on the developer's PATH.
-`yarn dev` and `yarn start` download that uv into
-`build/uv/<platform>-<arch>/uv[.exe]` on first use (once, then cached under
-`.cache/uv`); `yarn ensure:uv` does the same without starting the app.
-
-`uv` resolution order is the saved `uvPath` setting, then the bundled
-`build/uv/<platform>-<arch>/uv[.exe]` (packaged builds read the same directory
-from `resources/uv`), then `uv` on PATH. `yarn bundle:uv` re-bundles explicitly
-after changing `UV_BUNDLE_VERSION` and also fetches the third-party license
-notices that packaging ships. Override the connector source or launcher when
-needed:
+`yarn bundle:router` builds that Router into
+`build/meshcall-router/<platform>-<arch>/meshcall-router[.exe]` from the MeshCall
+commit `vendor/meshcall` pins (0.4.0 has no release binaries yet), so it needs
+Go and git; `MESHCALL_SOURCE_DIR` points at an existing checkout instead of
+cloning into `.cache/meshcall`. `yarn dev` and `yarn start` run both steps
+first. Overrides:
 
 ```bash
-WORKBENCH_CONNECTOR_DIR=/absolute/path/to/connector yarn dev
-WORKBENCH_CONNECTOR_CLI=/absolute/path/to/anywhere-cli yarn dev
-WORKBENCH_UV_BUNDLE_DIR=/absolute/path/to/uv-bundle yarn dev
-WORKBENCH_PYTHON_BUNDLE_DIR=/absolute/path/to/python-bundle yarn dev
+WORKBENCH_CONNECTOR_ENTRY=/absolute/path/to/desktop-main.js yarn dev
+WORKBENCH_CONNECTOR_SOURCE=/absolute/path/to/connector-ts yarn bundle:connector
+MESHCALL_ROUTER_BINARY=/absolute/path/to/meshcall-router yarn dev
 ```
 
-The Python interpreter is resolved as the saved `pythonPath` setting, then the
-bundled CPython at `build/python/<platform>-<arch>/` (`python.exe` on Windows,
-`bin/python3` elsewhere; packaged builds read `resources/python`). The result
-is passed to `uv run --python`, so uv neither searches for nor downloads an
-interpreter. Development does not download the bundle automatically: without
-`yarn bundle:python` (or a previous `yarn pack`), uv picks an interpreter
-itself and may download one. Once the bundle exists, development uses it too,
-and uv rebuilds the repo's `connector/.venv` on it once.
-
-The first launch after that also runs `uv sync`, which downloads every
-Connector dependency (and the interpreter, without a bundled one). The window
-shows a preparing screen while the ownership probe waits for it; that probe
-alone allows up to 15 minutes, while every later RPC keeps its 30-second
-deadline. The same applies when the existing environment was created by another
-interpreter, such as the Python uv downloaded before Desktop bundled one: uv
-replaces that environment, and when an earlier sync failed before installing
-the Connector (the environment has `pyvenv.cfg` but no `anywhere-cli`). The
-saved `uvPypiIndexUrl` mirror is uv's first index (`UV_INDEX`) and official PyPI
-the fallback (`UV_DEFAULT_INDEX`, `UV_INDEX_URL`): uv takes each package from
-the first index that has it, so a mirror that filters large wheels (TUNA, USTC
-and BFSU carry no `openai-codex`) still installs. `PIP_INDEX_URL` follows the
-mirror. The saved `uvPythonInstallMirror` sets `UV_PYTHON_INSTALL_MIRROR` for
-the Python interpreter download (GitHub python-build-standalone when empty); it
-only matters without a bundled or saved interpreter, and Settings hides it
-otherwise. `UV_HTTP_TIMEOUT` defaults to 60 seconds. The saved `connectorProxy`
-sets `AA_CONNECTOR_PROXY` for the Connector's route to the Server, see
+The Connector keeps using Desktop's `userData/connector/connector.json`, so an
+upgraded Desktop keeps its device credential and binding. Its data lives in the
+machine-wide `~/.agents-anywhere/v3`, shared with the command-line Connector
+and the DSH plugin; v2 session files under `~/.agents-anywhere/` are imported by
+the Connector on its first start and left in place. On the first launch Desktop
+deletes what the Python Connector left under `userData/connector` (`.venv`,
+`uv-cache`, `connector-source` and the environment receipts). The saved
+`connectorProxy` is the Connector config's `proxy` (`system` when empty), see
 [Connector network](../docs/connector-network.md).
-
-When building the environment fails, or uv itself reports the failure on a
-normal launch (`error:`, `×` or `Caused by:` lines), the ownership gate offers
-recovery in place of a bare recheck, because Settings is out of reach until the
-Connector answers: the PyPI and Python mirror choices, saved at once, and
-**Clear cache and retry**. Clearing stops the RPC process and deletes the
-project environment (only a directory holding `pyvenv.cfg`) and, when packaged,
-`uv-cache` and the `connector-source` copy with its `uv.lock`; credentials and
-settings stay. A development launch keeps the developer's uv cache.
 
 Do not start a second Connector with the same Desktop config while the app is
 running. Standalone CLI devices remain supported and should use their own
@@ -217,7 +189,7 @@ yarn workspace agents-anywhere-desktop-renderer test
 yarn workspace agents-anywhere-desktop-renderer protocol:check
 ```
 
-`test:main` covers Desktop provisioning, account isolation, local disconnect,
+`test:main` covers the embedded Connector's lifecycle and version arbitration, Desktop provisioning, account isolation, local disconnect,
 local-versus-remote reconnect behavior, quit handling, API routing, and credential
 redaction in logs. Renderer tests cover pairing, project resolution and ordering,
 preferences, clipboard fallbacks, and terminal inventory/restore behavior. These
@@ -225,13 +197,10 @@ checks run headlessly without starting Electron or a development server.
 
 ## Packaging
 
-The release build bundles the Connector source (`pyproject.toml`, `README.md` and
-the `connector/` package only, like the DSH plugin; no `uv.lock`, tests or caches),
-a platform-specific `uv`, and a platform-specific CPython. Dependencies are
-installed on first run; Python is never downloaded.
-The packaged app never runs `uv` inside its own bundle: it first mirrors the
-bundled source to `userData/connector-source/<content-hash>/` (as the DSH plugin
-does), so `uv.lock` is written there and the signed bundle stays untouched:
+The release build carries the bundled Connector (`dist/connector/`, unpacked from
+the asar because its store starts a worker thread from a file) and the
+platform's MeshCall Router under `resources/meshcall-router`. Nothing is
+installed or downloaded on first run:
 
 ```bash
 yarn dist:mac               # universal macOS DMG (Apple Silicon + Intel)
@@ -241,8 +210,8 @@ yarn pack                   # unpacked Electron application
 yarn dist                   # host-platform release (universal on macOS)
 ```
 
-`dist`, `dist:mac` and `dist:win` read the signing environment, run the `uv` and
-Python bundles and the app build with those secrets stripped, and hand them to electron-builder
+`dist`, `dist:mac` and `dist:win` read the signing environment, run the Router
+and Pi bundles and the app build with those secrets stripped, and hand them to electron-builder
 only. The signing material is therefore never visible to a build or test
 subprocess. Add `--arm64`, `--x64` or `--universal` (macOS) to select the
 architecture, or `--dir` for an unpacked build. `dist:mac` must run on macOS and
@@ -264,26 +233,10 @@ anything is packaged. With no credentials the artifact is built unsigned and the
 script says which step was skipped. After a signed macOS build the script runs
 `codesign --verify` (and `xcrun stapler validate` when notarized).
 
-Set `UV_BUNDLE_TARGETS=all` or a comma-separated target list for multi-platform
-artifact preparation; `dist:mac --universal` prepares both macOS `uv` builds
-automatically. Packaged builds keep the Connector virtual environment, uv cache,
-config, binding, and logs under Electron `userData`; signed resources are never
-modified at runtime. `bundle:uv` verifies the upstream archive checksum before
-copying it into `build/uv`.
-
-`bundle:python` places a python-build-standalone CPython (`install_only_stripped`,
-version pinned in `scripts/prepare-python.mjs`) under `build/python/<platform>-<arch>/`,
-verified against the release's `SHA256SUMS` and cached under `.cache/python`.
-It removes what the Connector never loads (Tk/Tcl, IDLE, turtle demos, and the
-interpreter's own pip) and ships CPython's license under `THIRD_PARTY_LICENSES`.
-`PYTHON_BUNDLE_TARGETS` selects targets like `UV_BUNDLE_TARGETS`, and
-`dist`/`dist:mac`/`dist:win` prepare the same targets as `uv`. macOS and Linux
-interpreters contain symlinks, so prepare them on macOS or Linux.
-`PYTHON_BUNDLE_VERSION` and `PYTHON_BUNDLE_RELEASE` select another build, and
-`PYTHON_BUNDLE_MIRROR` downloads from a mirror with the same release layout, e.g.
-`https://registry.npmmirror.com/-/binary/python-build-standalone`. The bundle
-adds roughly 40 MB per architecture before installer compression; the universal
-macOS app carries both architectures.
+`ROUTER_BUNDLE_TARGETS` selects Router targets (`darwin-arm64,darwin-x64`);
+`dist:mac --universal` builds both macOS Routers automatically, and Go
+cross-compiles them from any host. Packaged builds keep config, binding and logs
+under Electron `userData`; signed resources are never modified at runtime.
 
 `bundle:pi` pre-installs the Pi ACP adapter and SDK into `build/pi-runtime/`
 from the Connector's `connector/runtimes/acp/profiles/pi/dependencies.json`,
@@ -297,8 +250,9 @@ before signing, because electron-builder drops `node_modules` from
 runtime the Connector copies it into its npm cache when the dependency list
 matches and runs Pi on the Desktop executable with `ELECTRON_RUN_AS_NODE=1`, so
 Pi needs neither a Node download nor npm. Without a matching bundle it falls
-back to a compatible system Node or a download, trying npmmirror first when the
-Python source is a mirror.
+back to a compatible system Node or a download. (This is the v2 Connector's Pi
+runtime; the embedded TS Connector does not start Pi yet, and the bundle stays
+until it does.)
 
 ## Desktop updates
 
@@ -339,11 +293,11 @@ metadata is not rewritten. Development records contain the Electron executable,
 project path and launch arguments; packaged records contain the installed app
 and executable paths. The DSH plugin reads this metadata without modifying it.
 
-Python Connector alone maintains the ordered `connectorIds` history and runtime
+The Connector alone maintains the ordered `connectorIds` history and runtime
 ownership. Every accepted start, including CLI and reconnection, appends a missing
 ID once. Desktop writes installation metadata under the same short file transaction
-as Python, preserving IDs, runtime ownership and unknown fields. Hosts read legacy
-records without migrating them; Python performs the migration on a successful write.
+as the Connector, preserving IDs, runtime ownership and unknown fields. Hosts read legacy
+records without migrating them; the Connector performs the migration on a successful write.
 When the OS refuses the transaction's loopback port and nobody listens on it (for
 example a Windows excluded port range), both writers log a warning and write
 without the lease instead of failing startup; see the shared record contract.
@@ -352,7 +306,7 @@ Desktop and the DSH plugin match local IDs against the signed-in user's server
 device list. First-login provisioning and pairing after a deleted device reuse the
 first matching ID in local order and rotate its token. An empty intersection creates
 a device; list or token-rotation failures stop provisioning for retry. Private
-bindings and credentials are retained when Python rejects startup, so a retry does
+bindings and credentials are retained when the Connector rejects startup, so a retry does
 not create a duplicate device. Tokens remain private. See the
 [shared record contract](../contracts/local-machine/2.0/README.md).
 
@@ -384,54 +338,58 @@ through argv instead of `open-url`.
 
 ## Connector lifecycle
 
-Startup exclusion is implemented entirely in Python and includes CLI, Desktop and
-DSH plugin Connectors. Main calls `connector.acquireOwnership` before provisioning;
-Python records its actual PID and startup source, and verifies that any recorded
-PID still identifies that Connector process. It never treats the Electron or uv
-parent as the owner. RPC conflicts use `-32009 / connector_already_running`.
-Desktop displays a retryable conflict and stops automatic restart attempts. The RPC
-channel remains usable, and retry asks Python again. `connector.stop` stops the
-backend connection; ownership remains while that Python process is alive. Explicit
-Quit terminates it. The next start can replace records left by a crashed process.
+Startup exclusion and version arbitration live in the Connector and include CLI,
+Desktop and DSH plugin Connectors. Main calls `connector.acquireOwnership` before
+provisioning. RPC conflicts use `-32009 / connector_already_running`, and their
+`decision` says what Desktop does:
+
+- `conflict` (a v2 Connector, or one of unknown version): Desktop shows a
+  retryable conflict with the owner and stops automatic restart attempts. The
+  control channel stays usable, and retry asks the Connector again.
+- `request_handover` is handled inside the Connector: an older v3 Connector is
+  asked to hand over and waited for (up to five minutes, so the ownership probe
+  allows that long).
+- `use_existing` (a newer Connector already serves the machine): Desktop stops
+  its own Connector, does not restart it, and the gate explains that a newer
+  Connector is in charge. **Check again** tries once more, for when that
+  Connector has exited.
+
+A Desktop Connector that hands over to a newer one (`stopped` with
+`handed_over`) is treated the same way. `connector.stop` stops the server
+connection; ownership remains while that Connector process is alive. Explicit
+Quit asks it to shut down (and kills it after five seconds); a utility process
+also ends with Main, and the Connector stops when its parent port closes.
 
 Until the first probe answers, ownership is `checking`, which the renderer shows
 as progress rather than as a failure. Any other failure opens a blocking dialog
 that quotes the underlying error and offers to copy it or open the logs folder.
-When the RPC process exits or times out before answering, the error includes its
-last stderr lines, where uv and Python explain a failed launch; stderr is logged
-in whole lines. Every failed acquisition, including a retry, is logged. If the
+When the Connector fails to start (`failed` with a code), exits, or times out
+before answering, the error includes its last output lines; output is logged in
+whole lines. Every failed acquisition, including a retry, is logged. If the
 backend stops after it became ready, owned or not, the dialog quotes the
 backend's exit code, last reported error and output, and its **Restart** starts a
-new backend, which probes ownership again; the Connector exits with the old one
-when its stdin closes. The backend owns the log, so Main appends to it directly
+new backend, which probes ownership again; Main kills the old backend's Connector. The backend owns the log, so Main appends to it directly
 whenever no ready backend is running. A launch whose backend never becomes ready
 shows a native error box with the log directory before quitting.
 
 Startup work after `ready` (shell environment, ownership, installation record,
 binding adoption, the launch auto-start) reports failures where the renderer
 looks: the gate while ownership is not settled, the Connector's `lastError` once
-it is. An RPC process that exits without being stopped also records its exit and
-last stderr lines in `lastError` until a new process reports its own state.
+it is. A Connector that exits without being stopped also records its exit and
+last output lines in `lastError` until a new process reports its own state.
 
 - Successful Desktop login reuses a matching local device or provisions a
   `connectorKind: "desktop"` device with the user-authenticated Connector API.
 - Successful local connection, reconnection, CLI pairing and pair-code completion
   refresh the device list without opening an Agent quick-setup dialog.
 - Electron Main persists the returned `connectorId` and `connectorToken`, then
-  sends them to `anywhere-cli rpc` through `connector.saveConfig`.
+  sends them to the Connector through `connector.saveConfig`.
 - Closing the window on macOS keeps the app and Connector running in the
   background. Explicit Quit stops the runtime and terminates the full process
   tree.
-- Open-at-login, silent launch, automatic Connector start, `uv` path, Python
-  path, PyPI mirror, Python download mirror, and log retention are Desktop
-  settings. Settings shows the resolved uv and Python, and hides the Python
-  download mirror while a bundled or saved interpreter is in use.
-- On first initialization without a saved mirror choice, Main checks the OS
-  preferred languages and selects Aliyun PyPI and npmmirror Python builds for
-  Chinese systems, or the official sources otherwise. It persists the choice before any `uv` provisioning process and
-  applies it as uv's first index ahead of the official PyPI fallback (see
-  first-run provisioning above), without a renderer prompt. Existing choices, including official PyPI, are
-  preserved; factory reset reapplies the system default.
+- Open-at-login, silent launch, automatic Connector start, the Connector
+  network and log retention are Desktop settings. Settings of the Python
+  Connector (uv and Python paths, package mirrors) are dropped.
 - An authentication failure is surfaced to the renderer and is not retried
   automatically. Reconnection must be confirmed on that physical Desktop.
 - Factory reset revokes the current Desktop credential on the Server first. A
@@ -485,12 +443,12 @@ server address; native renderer URLs are never shared as connection addresses.
 ### Universal macOS installers
 
 On macOS, `yarn dist` and `yarn dist:mac` build a universal DMG for Apple Silicon
-and Intel by default, bundling uv for both architectures. Explicit `--arm64` or
+and Intel by default, bundling the Router for both architectures. Explicit `--arm64` or
 `--x64` builds remain available for diagnostics. Both commands use the same
 signing and notarization credential checks.
 
 Use `yarn dist:mac --skip-build` to retry packaging after a completed app build;
-it requires existing compiled output and both uv bundles. Run a full build after
+it requires existing compiled output and both Router builds. Run a full build after
 changing application source. Yarn installs both CPU variants of optional native
 dependencies for universal packaging.
 

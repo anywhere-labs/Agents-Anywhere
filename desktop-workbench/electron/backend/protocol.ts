@@ -16,7 +16,9 @@
  *   a token, or an IPC channel.
  * - The `fork()` IPC channel carries process lifecycle only (ready, shutdown)
  *   plus `netFetch`, which must run in Electron Main because it is the only
- *   place that gets Chromium's proxy and certificate handling.
+ *   place that gets Chromium's proxy and certificate handling, and the
+ *   Connector utility process, which only Main can fork
+ *   (`utilityProcess`, v3 design 04-connector.md §9.4).
  */
 
 /** Header every loopback request must carry. The token is per launch. */
@@ -39,20 +41,14 @@ export type BackendInit = {
   bindingPath: string;
   /** `<dataPath>/connector.json` */
   configPath: string;
-  connectorDir: string;
   resourcesPath: string;
   /**
-   * Directory holding `<platform>-<arch>/uv[.exe]`, the uv that packaging
-   * bundles. Development passes its build output so a dev launch runs the exact
-   * uv the installer ships instead of whatever is on the developer's PATH.
+   * The bundled TS Connector's utility-process entry (`dist/connector/desktop-main.js`,
+   * built by `yarn bundle:connector`). Main forks it; the backend only asks.
    */
-  uvBundleDir: string;
-  /**
-   * Directory holding `<platform>-<arch>/`, the CPython that packaging
-   * bundles so a packaged Connector never waits on uv downloading Python.
-   * Development uses `build/python` once `yarn bundle:python` created it.
-   */
-  pythonBundleDir: string;
+  connectorEntry: string;
+  /** The bundled local MeshCall Router, or empty for meshcall's own lookup. */
+  routerBinary: string;
   homePath: string;
   documentsPath: string;
   packaged: boolean;
@@ -85,10 +81,22 @@ export type BackendControlMessage =
       body: string;
     }
   | { type: "netFetchError"; id: number; message: string }
+  /** Backend → Main: fork the Connector utility process with this environment. */
+  | { type: "connectorFork"; id: number; env: Record<string, string> }
+  /** Backend → Main: a message for the Connector's `parentPort` (`{type: "shutdown"}`). */
+  | { type: "connectorPost"; id: number; message: unknown }
+  /** Backend → Main: kill the Connector process (it ignored `shutdown`). */
+  | { type: "connectorKill"; id: number }
+  /** Main → Backend: what the Connector posted (`ready`, `failed`, `stopped`). */
+  | { type: "connectorMessage"; id: number; message: unknown }
+  /** Main → Backend: one line the Connector wrote to stdout or stderr. */
+  | { type: "connectorOutput"; id: number; line: string }
+  /** Main → Backend: the process is gone (`code` null when it never started). */
+  | { type: "connectorExit"; id: number; code: number | null; error?: string }
   | { type: "shutdown" }
   | { type: "shutdownComplete" };
 
-export type BackendEventName = "environment" | "ownership" | "state" | "logs" | "logsCleared" | "settings";
+export type BackendEventName = "ownership" | "state" | "logs" | "logsCleared" | "settings";
 
 export type BackendEvent = { event: BackendEventName; data: unknown };
 

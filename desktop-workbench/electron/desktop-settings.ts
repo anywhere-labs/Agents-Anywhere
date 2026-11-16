@@ -1,18 +1,12 @@
 import type { DesktopSettings, DesktopSettingsPatch } from "./connector-types";
 import { readJsonFile, writeJsonFile } from "./json-store";
 
-export const NPMMIRROR_PYTHON_BUILDS = "https://registry.npmmirror.com/-/binary/python-build-standalone";
-
 const DEFAULT_SETTINGS: DesktopSettings = {
   openAtLogin: false,
   startConnectorOnLaunch: true,
   silentLaunch: true,
   notificationsEnabled: true,
   confirmQuitOnShutdown: false,
-  uvPath: "",
-  pythonPath: "",
-  uvPypiIndexUrl: "",
-  uvPythonInstallMirror: "",
   connectorProxy: "",
   logChunkSizeKb: 512,
   logRetainChunks: 20,
@@ -22,21 +16,12 @@ const DEFAULT_SETTINGS: DesktopSettings = {
 export class DesktopSettingsStore {
   private settings: DesktopSettings;
 
-  constructor(private readonly filePath: string, systemLanguages: readonly string[] = []) {
-    const saved = readJsonFile<Partial<DesktopSettings>>(filePath, {});
-    this.settings = normalizeSettings(saved);
-    // Decide before the first uv process, including provisioning before login.
-    // A saved empty string is an explicit choice of the official source.
-    const chinese = systemLanguages.some(language => /^zh(?:[-_]|$)/i.test(language.trim()));
-    if (saved.uvPypiIndexUrl === undefined) {
-      this.settings.uvPypiIndexUrl = chinese ? "https://mirrors.aliyun.com/pypi/simple" : "";
-    }
-    if (saved.uvPythonInstallMirror === undefined) {
-      this.settings.uvPythonInstallMirror = chinese ? NPMMIRROR_PYTHON_BUILDS : "";
-    }
-    if (saved.uvPypiIndexUrl === undefined || saved.uvPythonInstallMirror === undefined) {
-      writeJsonFile(this.filePath, this.settings);
-    }
+  /**
+   * Settings of the Python Connector Desktop no longer runs (uv, Python and
+   * package mirrors) are ignored and dropped on the next write.
+   */
+  constructor(private readonly filePath: string, _systemLanguages: readonly string[] = []) {
+    this.settings = normalizeSettings(readJsonFile<Partial<DesktopSettings>>(filePath, {}));
   }
 
   get(): DesktopSettings {
@@ -85,14 +70,6 @@ function normalizeSettings(value: Partial<DesktopSettings>): DesktopSettings {
       value.confirmQuitOnShutdown,
       DEFAULT_SETTINGS.confirmQuitOnShutdown,
     ),
-    uvPath: typeof value.uvPath === "string" ? value.uvPath.trim() : DEFAULT_SETTINGS.uvPath,
-    pythonPath: typeof value.pythonPath === "string" ? value.pythonPath.trim() : DEFAULT_SETTINGS.pythonPath,
-    uvPypiIndexUrl: typeof value.uvPypiIndexUrl === "string"
-      ? value.uvPypiIndexUrl.trim()
-      : DEFAULT_SETTINGS.uvPypiIndexUrl,
-    uvPythonInstallMirror: typeof value.uvPythonInstallMirror === "string"
-      ? value.uvPythonInstallMirror.trim()
-      : DEFAULT_SETTINGS.uvPythonInstallMirror,
     connectorProxy: connectorProxyValue(value.connectorProxy),
     logChunkSizeKb: clamp(value.logChunkSizeKb, DEFAULT_SETTINGS.logChunkSizeKb, 64, 10_240),
     logRetainChunks: clamp(value.logRetainChunks, DEFAULT_SETTINGS.logRetainChunks, 1, 200),
