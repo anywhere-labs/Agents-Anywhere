@@ -13,6 +13,7 @@ import { useTranslations } from "next-intl"
 import { authFlowHash, clearAuthFlow, rememberAuthFlow, takeAuthFlow } from "@/features/auth/continuation"
 import { forgetSessionDiskCache } from "@/components/session/session-disk-store"
 import { sessionCacheScope } from "@/components/session/session-state-cache"
+import { e2eeRuntime, startE2ee } from "@/features/e2ee/runtime"
 
 export type AuthScreen =
   | "bootstrap"
@@ -402,6 +403,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return currentUser
   }, [session?.accessToken])
 
+  // End-to-end encryption: the trust layer runs while signed in; this client's identity stays on the device.
+  React.useEffect(() => {
+    if (session?.accessToken) startE2ee("web")
+  }, [session?.accessToken])
+
   const signOutUserRef = React.useRef<string | null>(null)
   signOutUserRef.current = session?.userId ?? null
   const signOut = React.useCallback(() => {
@@ -409,6 +415,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (signOutUserRef.current)
       void forgetSessionDiskCache(sessionCacheScope(process.env.NEXT_PUBLIC_AGENTS_ANYWHERE_API ?? "", signOutUserRef.current))
     clearAuthFlow(window.sessionStorage)
+    void e2eeRuntime()?.dispose()
     clearStoredSession()
     setSession(null)
     setMe(null)

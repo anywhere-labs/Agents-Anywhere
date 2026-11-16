@@ -8,7 +8,7 @@ export type Id = string
 export type Kind = "request"
 export type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
 /**
- * client API path, e.g. /api/v2/sessions/{id}/snapshot
+ * client API path, e.g. /api/v2/sessions/{id}/snapshot, or /e2ee/v1/…
  */
 export type Path = string
 

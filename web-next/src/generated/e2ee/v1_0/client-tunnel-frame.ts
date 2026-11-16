@@ -5,11 +5,14 @@
  */
 
 /**
- * base64 Noise transport message
+ * base64url Noise message (see HandshakeEnvelope for the handshake phase)
  */
 export type Ct = string
 export type N = number
 export type Ch = string
+/**
+ * client_id_for(identity public key)
+ */
 export type Clientid = string
 export type Deviceid = string
 export type T = "tun"

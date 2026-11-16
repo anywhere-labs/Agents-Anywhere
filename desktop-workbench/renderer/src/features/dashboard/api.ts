@@ -1,5 +1,6 @@
 import { assertSessionCreationAccepted } from "@/lib/api/session-creation-result";
 import { ApiClient, apiClient, apiWebSocketUrl } from "@/lib/api";
+import { noteSessionDevices } from "@/lib/e2ee/state";
 import { desktopDownloadUrl } from "@/features/desktop/server-connection";
 import { shouldAuthorizeDownloadUrl } from "@/lib/api/download-auth";
 import type {
@@ -226,11 +227,30 @@ export class DashboardApi {
     token: string,
     query: { archived: boolean; limit?: number; cursor?: string | null },
   ): Promise<SessionListResponse> {
-    return this.client.get<SessionListResponse>("/sessions", { token, query });
+    return this.client.get<SessionListResponse>("/sessions", { token, query }).then((response) => {
+      noteSessionDevices(response.sessions);
+      return response;
+    });
   }
 
   listSessionInventory(token: string): Promise<Pick<SessionListResponse, "sessions" | "serverTime">> {
-    return this.client.get("/sessions/list", { token });
+    return this.client.get<Pick<SessionListResponse, "sessions" | "serverTime">>("/sessions/list", { token }).then((response) => {
+      noteSessionDevices(response.sessions);
+      return response;
+    });
+  }
+
+  /** Ticket for the secure-channel tunnel `WS /api/v3/tunnel` (E2EE). */
+  createTunnelTicket(token: string, clientId: string): Promise<WsTicketResponse> {
+    return this.client.post<WsTicketResponse>("/ws-ticket", { clientId, scope: { tunnel: true } }, { token });
+  }
+
+  /** `POST /api/v3/e2ee/commands`: plaintext registration of a command sent through a secure channel. */
+  registerE2eeCommand(
+    token: string,
+    registration: { commandId: string; deviceId: string; inputDigest: string },
+  ): Promise<{ commandId: string; outcome: "accepted" | "rejected" | null; errorCode: string | null; duplicate: boolean }> {
+    return this.client.post("/api/v3/e2ee/commands", registration, { token });
   }
 
   getConnectorDeviceSettings(token: string, connectorId: string): Promise<ConnectorDeviceSettingsResponse> {
@@ -278,6 +298,11 @@ export class DashboardApi {
     const response = await this.client.post<SessionCreateResponse>("/sessions/create-and-start", body, { token });
     assertSessionCreationAccepted(response);
     return response;
+  }
+
+  /** Plaintext directory entry of one session (allowed in E2EE mode). */
+  getSessionMeta(token: string, sessionId: string): Promise<SessionResponse> {
+    return this.client.get<SessionResponse>(`/sessions/${encodeURIComponent(sessionId)}/meta`, { token });
   }
 
   patchSession(
@@ -436,6 +461,10 @@ export class DashboardApi {
 
   sessionWebSocketUrl(sessionId: string, ticket: string): string {
     return apiWebSocketUrl(`/sessions/${encodeURIComponent(sessionId)}/ws?ticket=${encodeURIComponent(ticket)}`);
+  }
+
+  tunnelWebSocketUrl(ticket: string): string {
+    return apiWebSocketUrl(`/api/v3/tunnel?ticket=${encodeURIComponent(ticket)}`);
   }
 
   dashboardWebSocketUrl(ticket: string): string {

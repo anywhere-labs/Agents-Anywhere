@@ -1,3 +1,4 @@
+import { declareServerE2ee } from "@/lib/e2ee/state";
 import { normalizeEmail } from "./account-profile";
 import { ApiClient, apiClient } from "@/lib/api";
 import {
@@ -30,8 +31,10 @@ import type {
 export class AuthApi {
   constructor(private readonly client: ApiClient = apiClient) {}
 
-  config(): Promise<AuthConfig> {
-    return this.client.get<AuthConfig>("/auth/config", { auth: false });
+  async config(): Promise<AuthConfig> {
+    const config = await this.client.get<AuthConfig>("/auth/config", { auth: false });
+    declareServerE2ee(config.e2ee?.mode);
+    return config;
   }
 
   passwordSalt(email: string): Promise<AuthPasswordSaltResponse> {

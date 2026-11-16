@@ -30,6 +30,8 @@ export const API_NAMESPACE = normalizeApiNamespace(process.env.NEXT_PUBLIC_AGENT
 
 export function apiPath(path: string): string {
   if (path.startsWith("http")) return path;
+  // v3 additions (E2EE commands, the secure-channel tunnel) live beside the v2 namespace.
+  if (path.startsWith("/api/v3/")) return path;
   if (!API_NAMESPACE) return path.startsWith("/") ? path : `/${path}`;
   if (path === API_NAMESPACE || path.startsWith(`${API_NAMESPACE}/`)) return path;
   const normalized = path.startsWith("/") ? path : `/${path}`;
