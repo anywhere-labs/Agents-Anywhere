@@ -107,6 +107,7 @@ import com.agentsanywhere.app.feature.sessiondetail.failSnapshotLoad
 import com.agentsanywhere.app.feature.sessiondetail.isValidAttachmentMediaType
 import com.agentsanywhere.app.feature.sessiondetail.isInternalRuntimeError
 import com.agentsanywhere.app.feature.sessiondetail.hasPendingOptimisticSend
+import com.agentsanywhere.app.feature.sessiondetail.isFailedLocalSend
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeCommand
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeCommandBlock
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeCommandExecutionState
@@ -156,6 +157,7 @@ import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.runtimePermissionLocalizer
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.agentsanywhere.app.ui.screens.devices.DeviceConfirmDialog
 import com.agentsanywhere.app.ui.screens.files.RemoteFilePreviewDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -311,6 +313,7 @@ private fun SessionDetailVisit(
     var shareBusy by remember(sessionId) { mutableStateOf(false) }
     var pendingOpenFilePath by remember(sessionId) { mutableStateOf<String?>(null) }
     var filePreviewTarget by remember(sessionId) { mutableStateOf<FilePreviewTarget?>(null) }
+    var failedMessageId by remember(sessionId, preparedSession?.localSessionId) { mutableStateOf<String?>(null) }
     var terminalVerticalDragActive by remember(sessionId) { mutableStateOf(false) }
     var composerHeightPx by remember { mutableStateOf(0) }
     var readOnlyComposerTapCount by remember(sessionId) { mutableStateOf(0) }
@@ -1999,6 +2002,7 @@ private fun SessionDetailVisit(
                                 onCopyMessage = ::copyMessageText,
                                 onShareReply = ::requestShare,
                                 onOpenFile = ::openReferencedFile,
+                                onFailedMessage = { failedMessageId = it.id },
                                 onRespondNotice = ::respondNotice,
                             )
                         }
@@ -2232,6 +2236,28 @@ private fun SessionDetailVisit(
             onDismiss = { filePreviewTarget = null },
         )
     }
+    // Closes by itself when the message is resent or its Server echo arrives.
+    failedMessageId
+        ?.let { id -> state.messages.firstOrNull { it.id == id && it.isFailedLocalSend } }
+        ?.let { message ->
+            DeviceConfirmDialog(
+                title = stringResource(R.string.session_failed_send_title),
+                body = stringResource(
+                    R.string.session_failed_send_body,
+                    message.errorMessage?.takeIf(String::isNotBlank)
+                        ?: stringResource(R.string.session_send_failed),
+                ),
+                confirmLabel = stringResource(R.string.common_delete),
+                danger = true,
+                onDismiss = { failedMessageId = null },
+                onConfirm = {
+                    failedMessageId = null
+                    optimisticSessionId?.let { id ->
+                        state = controller.discardFailedMessage(id, state, message.id)
+                    }
+                },
+            )
+        }
     previewImage?.let { preview ->
         AttachmentPreviewDialog(
             preview = preview,
