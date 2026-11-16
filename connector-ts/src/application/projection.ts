@@ -9,6 +9,26 @@ import type { ToolContent, ToolStatus, TimelineItemEvent } from './ports/index.j
  * streaming items, assigns `orderSeq`, and produces the v2 content shapes clients already render
  * (`connector/runtimes/acp/infrastructure/projection.py`).
  */
+type MessageCompleted = Extract<TimelineItemEvent, { type: 'message.completed' }>
+
+/**
+ * `content.attachments` of a finished message, in the v2 Timeline shape (`{fileId, name, mediaType, size?, sha256?}`):
+ * what the Runtime gives already in that shape (native history, Pi's echo), else each prompt attachment's platform
+ * identity. A prompt attachment without one is described by name and type only: its local path or inline data
+ * never goes into the Timeline.
+ */
+export function timelineAttachments(event: MessageCompleted): JsonValue[] {
+  if (event.timelineAttachments !== undefined) return event.timelineAttachments.map(info => ({ ...info }))
+  return (event.attachments ?? []).map(attachment => {
+    if (attachment.info !== undefined) return { ...attachment.info }
+    const described: Record<string, JsonValue> = { kind: attachment.kind }
+    if (attachment.name !== undefined) described.name = attachment.name
+    if (attachment.mimeType !== undefined) described.mimeType = attachment.mimeType
+    if (attachment.kind === 'link') described.uri = attachment.uri
+    return described
+  })
+}
+
 export class TimelineProjector {
   private readonly live = new Map<string, TimelineDraft>()
   private nextNativeIndex: number
@@ -74,17 +94,19 @@ export class TimelineProjector {
         const previousText = typeof previous?.content.text === 'string' ? previous.content.text : ''
         const text = event.type === 'message.delta' ? previousText + event.text : event.text
         const clientMessageId = event.clientMessageId ?? (typeof previous?.content.clientMessageId === 'string' ? previous.content.clientMessageId : undefined)
+        const attachments = event.type === 'message.completed' ? timelineAttachments(event) : []
         const content: JsonObject = {
           kind: 'markdown',
           format: 'markdown',
           text,
           isThinking: event.role === 'reasoning',
           ...(clientMessageId !== undefined ? { clientMessageId } : {}),
-          ...(event.type === 'message.completed' && event.attachments !== undefined && event.attachments.length > 0
-            ? { attachments: event.attachments.map(attachment => ({ ...attachment }) as JsonValue) }
+          ...(attachments.length > 0
+            ? { attachments }
             : previous?.content.attachments !== undefined ? { attachments: previous.content.attachments } : {}),
         }
-        const status: TimelineItemStatus = event.type === 'message.completed' || event.role === 'user' ? 'done' : 'running'
+        // A finished message keeps the Runtime's verdict (Pi: a model error is failed, an interruption cancelled).
+        const status: TimelineItemStatus = event.type === 'message.completed' ? (event.status ?? 'done') : event.role === 'user' ? 'done' : 'running'
         return this.put({
           id: event.itemId,
           type: 'message',
@@ -94,7 +116,7 @@ export class TimelineProjector {
           content,
           source: this.source({ event: event.type, ...(clientMessageId !== undefined ? { clientMessageId } : {}) }),
           createdAt: previous?.createdAt ?? this.now(),
-          ...(status === 'done' ? { completedAt: this.now() } : {}),
+          ...(status !== 'running' ? { completedAt: this.now() } : {}),
         })
       }
       case 'tool.started':

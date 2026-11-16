@@ -504,6 +504,18 @@ export class ConversationService {
     })
   }
 
+  /**
+   * A platform attachment as the Runtime gets it: the local file, plus its platform identity (`info`), which a
+   * Runtime that records it natively (Pi) keeps so that history and replay show the same attachment.
+   */
+  private async resolveAttachment(sessionId: string, ref: AttachmentRef): Promise<PromptAttachment> {
+    const attachment = await this.deps.attachments!(sessionId, ref)
+    return {
+      ...attachment,
+      info: { fileId: ref.fileId, name: ref.name, mediaType: ref.mediaType, size: ref.size, ...(typeof ref.sha256 === 'string' ? { sha256: ref.sha256 } : {}) },
+    }
+  }
+
   /** Hands an accepted delivery to the Runtime. Never retried on an unknown outcome. */
   private async deliver(sessionId: string, clientMessageId: string, content: string, refs: AttachmentRef[]): Promise<'started' | 'rejected' | 'unknown'> {
     const binding = await this.binding(sessionId)
@@ -511,7 +523,7 @@ export class ConversationService {
     // the Runtime never saw, not an unknown outcome.
     let attachments: PromptAttachment[]
     try {
-      attachments = this.deps.attachments === undefined ? [] : await Promise.all(refs.map(ref => this.deps.attachments!(sessionId, ref)))
+      attachments = this.deps.attachments === undefined ? [] : await Promise.all(refs.map(ref => this.resolveAttachment(sessionId, ref)))
     } catch (error) {
       const code = typeof (error as { code?: unknown })?.code === 'string' ? String((error as { code: string }).code) : 'attachment_unavailable'
       await this.deps.store.deliveries.transition(sessionId, clientMessageId, 'rejected', { at: this.deps.clock.nowIso(), errorCode: code })
@@ -719,7 +731,7 @@ export class ConversationService {
     const binding = await this.binding(sessionId)
     let refs: PromptAttachment[]
     try {
-      refs = this.deps.attachments === undefined ? [] : await Promise.all(attachments.map(a => this.deps.attachments!(sessionId, {
+      refs = this.deps.attachments === undefined ? [] : await Promise.all(attachments.map(a => this.resolveAttachment(sessionId, {
         fileId: a.fileId,
         name: a.name ?? a.fileId,
         mediaType: a.mediaType ?? 'application/octet-stream',

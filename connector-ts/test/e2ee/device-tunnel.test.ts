@@ -209,7 +209,8 @@ describe('encrypted mode on the device: the client API inside the channel', () =
     const findPrompt = () => sessions[0]!.calls.find(call => call.method === 'prompt' && (call as { input: { text: string } }).input.text === 'see attached')
     await expect.poll(findPrompt).toBeTruthy()
     const prompt = findPrompt() as unknown as { input: { attachments: { kind: string; path: string; mimeType: string; name: string }[] } }
-    expect(prompt.input.attachments[0]).toMatchObject({ kind: 'file', mimeType: 'image/png', name: 'photo.png' })
+    // The platform identity rides along, so a Runtime that records it natively (Pi) shows it again in history.
+    expect(prompt.input.attachments[0]).toMatchObject({ kind: 'file', mimeType: 'image/png', name: 'photo.png', info: { fileId: 'file_1', name: 'photo.png', mediaType: 'image/png', sha256 } })
     expect(readFileSync(prompt.input.attachments[0]!.path).equals(plaintext)).toBe(true)
 
     // A key that does not open the upload is refused before the Runtime sees anything.
