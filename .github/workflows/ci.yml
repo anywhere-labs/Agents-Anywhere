@@ -299,6 +299,18 @@ jobs:
       - name: Check runtime workflow contracts
         working-directory: server
         run: uv run --no-sync python -m scripts.export_workflow_schemas --check
+      - name: Set up Go for the MeshCall Router
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: Build the MeshCall Router (pinned 9334405)
+        # tests/test_device_mesh*.py run against a real Router (device-meshcall 1.0).
+        run: |
+          git clone -q --filter=blob:none https://github.com/t4wefan/meshcall.git "$RUNNER_TEMP/meshcall"
+          git -C "$RUNNER_TEMP/meshcall" checkout -q 93344059ada65735c6cc08fdf3247ea9fb808d6b
+          (cd "$RUNNER_TEMP/meshcall/meshcall-router" && CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/bin/meshcall-router" ./cmd/meshcall-router)
+          echo "MESHCALL_ROUTER_BINARY=$RUNNER_TEMP/bin/meshcall-router" >> "$GITHUB_ENV"
       - name: Restore test dependency baseline
         if: github.event_name == 'workflow_dispatch' && inputs.server_mode != 'verify'
         uses: actions/cache/restore@v4

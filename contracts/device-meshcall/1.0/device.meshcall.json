@@ -604,6 +604,80 @@
             }
           },
           "stream": "unary"
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "read_only": true
+          },
+          "balance": {
+            "key": null,
+            "kind": "round_robin"
+          },
+          "deprecated": null,
+          "description": "Progress of a session creation (critical lane).",
+          "duplex_reason": null,
+          "input_item": null,
+          "name": "creationGet",
+          "output_item": null,
+          "parameters": [],
+          "request": {
+            "module": "agent_server.core.device_meshcall",
+            "qualname": "MethodPayload",
+            "schema": {
+              "description": "Payload of a method whose model is defined by its owning contract (runtime-control, preview...).",
+              "properties": {},
+              "type": "object"
+            }
+          },
+          "response": {
+            "module": "agent_server.core.device_meshcall",
+            "qualname": "MethodPayload",
+            "schema": {
+              "description": "Payload of a method whose model is defined by its owning contract (runtime-control, preview...).",
+              "properties": {},
+              "type": "object"
+            }
+          },
+          "stream": "unary"
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "read_only": true
+          },
+          "balance": {
+            "key": null,
+            "kind": "round_robin"
+          },
+          "deprecated": null,
+          "description": "Progress of a workspace preparation (critical lane).",
+          "duplex_reason": null,
+          "input_item": null,
+          "name": "workspacePreparationGet",
+          "output_item": null,
+          "parameters": [],
+          "request": {
+            "module": "agent_server.core.device_meshcall",
+            "qualname": "MethodPayload",
+            "schema": {
+              "description": "Payload of a method whose model is defined by its owning contract (runtime-control, preview...).",
+              "properties": {},
+              "type": "object"
+            }
+          },
+          "response": {
+            "module": "agent_server.core.device_meshcall",
+            "qualname": "MethodPayload",
+            "schema": {
+              "description": "Payload of a method whose model is defined by its owning contract (runtime-control, preview...).",
+              "properties": {},
+              "type": "object"
+            }
+          },
+          "stream": "unary"
         }
       ],
       "name": "aa.device.v1.Sessions",
@@ -1843,6 +1917,554 @@
           "duplex_reason": null,
           "input_item": null,
           "name": "sessionCreationBegin",
+          "output_item": null,
+          "parameters": [
+            "commandId",
+            "deadline",
+            "inputDigest",
+            "p"
+          ],
+          "request": {
+            "module": "agent_server.core.device_meshcall",
+            "qualname": "CommandCall",
+            "schema": {
+              "description": "Request of every ``Commands/*`` call: a state-changing intent with a durable receipt.",
+              "properties": {
+                "commandId": {
+                  "description": "equals clientMessageId/operationId when the client supplied one",
+                  "minLength": 1,
+                  "title": "Commandid",
+                  "type": "string"
+                },
+                "deadline": {
+                  "title": "Deadline",
+                  "type": "string"
+                },
+                "inputDigest": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Client-computed digest of the plaintext input; the Server only compares it",
+                  "title": "Inputdigest"
+                },
+                "p": {
+                  "additionalProperties": true,
+                  "title": "P",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "commandId",
+                "deadline"
+              ],
+              "type": "object"
+            }
+          },
+          "response": {
+            "module": "agent_server.core.device_meshcall",
+            "qualname": "CommandAck",
+            "schema": {
+              "$defs": {
+                "LinkError": {
+                  "properties": {
+                    "code": {
+                      "minLength": 1,
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "default": "",
+                      "title": "Message",
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "default": false,
+                      "title": "Retryable",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ],
+                  "title": "LinkError",
+                  "type": "object"
+                }
+              },
+              "description": "Response of a ``Commands/*`` call. ``accepted`` only after the device committed it to disk.\n\n``unknown`` never travels: the Server derives it from transport errors after the call opened.",
+              "properties": {
+                "e": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/LinkError"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "outcome": {
+                  "enum": [
+                    "accepted",
+                    "rejected"
+                  ],
+                  "title": "Outcome",
+                  "type": "string"
+                },
+                "r": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": true,
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "R"
+                }
+              },
+              "required": [
+                "outcome"
+              ],
+              "type": "object"
+            }
+          },
+          "stream": "unary"
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "read_only": false
+          },
+          "balance": {
+            "key": null,
+            "kind": "round_robin"
+          },
+          "deprecated": null,
+          "description": "Command session.creation.respond. accepted only after the device committed it; idempotency_key = commandId.",
+          "duplex_reason": null,
+          "input_item": null,
+          "name": "sessionCreationRespond",
+          "output_item": null,
+          "parameters": [
+            "commandId",
+            "deadline",
+            "inputDigest",
+            "p"
+          ],
+          "request": {
+            "module": "agent_server.core.device_meshcall",
+            "qualname": "CommandCall",
+            "schema": {
+              "description": "Request of every ``Commands/*`` call: a state-changing intent with a durable receipt.",
+              "properties": {
+                "commandId": {
+                  "description": "equals clientMessageId/operationId when the client supplied one",
+                  "minLength": 1,
+                  "title": "Commandid",
+                  "type": "string"
+                },
+                "deadline": {
+                  "title": "Deadline",
+                  "type": "string"
+                },
+                "inputDigest": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Client-computed digest of the plaintext input; the Server only compares it",
+                  "title": "Inputdigest"
+                },
+                "p": {
+                  "additionalProperties": true,
+                  "title": "P",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "commandId",
+                "deadline"
+              ],
+              "type": "object"
+            }
+          },
+          "response": {
+            "module": "agent_server.core.device_meshcall",
+            "qualname": "CommandAck",
+            "schema": {
+              "$defs": {
+                "LinkError": {
+                  "properties": {
+                    "code": {
+                      "minLength": 1,
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "default": "",
+                      "title": "Message",
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "default": false,
+                      "title": "Retryable",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ],
+                  "title": "LinkError",
+                  "type": "object"
+                }
+              },
+              "description": "Response of a ``Commands/*`` call. ``accepted`` only after the device committed it to disk.\n\n``unknown`` never travels: the Server derives it from transport errors after the call opened.",
+              "properties": {
+                "e": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/LinkError"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "outcome": {
+                  "enum": [
+                    "accepted",
+                    "rejected"
+                  ],
+                  "title": "Outcome",
+                  "type": "string"
+                },
+                "r": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": true,
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "R"
+                }
+              },
+              "required": [
+                "outcome"
+              ],
+              "type": "object"
+            }
+          },
+          "stream": "unary"
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "read_only": false
+          },
+          "balance": {
+            "key": null,
+            "kind": "round_robin"
+          },
+          "deprecated": null,
+          "description": "Command session.creation.cancel. accepted only after the device committed it; idempotency_key = commandId.",
+          "duplex_reason": null,
+          "input_item": null,
+          "name": "sessionCreationCancel",
+          "output_item": null,
+          "parameters": [
+            "commandId",
+            "deadline",
+            "inputDigest",
+            "p"
+          ],
+          "request": {
+            "module": "agent_server.core.device_meshcall",
+            "qualname": "CommandCall",
+            "schema": {
+              "description": "Request of every ``Commands/*`` call: a state-changing intent with a durable receipt.",
+              "properties": {
+                "commandId": {
+                  "description": "equals clientMessageId/operationId when the client supplied one",
+                  "minLength": 1,
+                  "title": "Commandid",
+                  "type": "string"
+                },
+                "deadline": {
+                  "title": "Deadline",
+                  "type": "string"
+                },
+                "inputDigest": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Client-computed digest of the plaintext input; the Server only compares it",
+                  "title": "Inputdigest"
+                },
+                "p": {
+                  "additionalProperties": true,
+                  "title": "P",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "commandId",
+                "deadline"
+              ],
+              "type": "object"
+            }
+          },
+          "response": {
+            "module": "agent_server.core.device_meshcall",
+            "qualname": "CommandAck",
+            "schema": {
+              "$defs": {
+                "LinkError": {
+                  "properties": {
+                    "code": {
+                      "minLength": 1,
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "default": "",
+                      "title": "Message",
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "default": false,
+                      "title": "Retryable",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ],
+                  "title": "LinkError",
+                  "type": "object"
+                }
+              },
+              "description": "Response of a ``Commands/*`` call. ``accepted`` only after the device committed it to disk.\n\n``unknown`` never travels: the Server derives it from transport errors after the call opened.",
+              "properties": {
+                "e": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/LinkError"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "outcome": {
+                  "enum": [
+                    "accepted",
+                    "rejected"
+                  ],
+                  "title": "Outcome",
+                  "type": "string"
+                },
+                "r": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": true,
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "R"
+                }
+              },
+              "required": [
+                "outcome"
+              ],
+              "type": "object"
+            }
+          },
+          "stream": "unary"
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "read_only": false
+          },
+          "balance": {
+            "key": null,
+            "kind": "round_robin"
+          },
+          "deprecated": null,
+          "description": "Command workspace.preparation.respond. accepted only after the device committed it; idempotency_key = commandId.",
+          "duplex_reason": null,
+          "input_item": null,
+          "name": "workspacePreparationRespond",
+          "output_item": null,
+          "parameters": [
+            "commandId",
+            "deadline",
+            "inputDigest",
+            "p"
+          ],
+          "request": {
+            "module": "agent_server.core.device_meshcall",
+            "qualname": "CommandCall",
+            "schema": {
+              "description": "Request of every ``Commands/*`` call: a state-changing intent with a durable receipt.",
+              "properties": {
+                "commandId": {
+                  "description": "equals clientMessageId/operationId when the client supplied one",
+                  "minLength": 1,
+                  "title": "Commandid",
+                  "type": "string"
+                },
+                "deadline": {
+                  "title": "Deadline",
+                  "type": "string"
+                },
+                "inputDigest": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Client-computed digest of the plaintext input; the Server only compares it",
+                  "title": "Inputdigest"
+                },
+                "p": {
+                  "additionalProperties": true,
+                  "title": "P",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "commandId",
+                "deadline"
+              ],
+              "type": "object"
+            }
+          },
+          "response": {
+            "module": "agent_server.core.device_meshcall",
+            "qualname": "CommandAck",
+            "schema": {
+              "$defs": {
+                "LinkError": {
+                  "properties": {
+                    "code": {
+                      "minLength": 1,
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "default": "",
+                      "title": "Message",
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "default": false,
+                      "title": "Retryable",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ],
+                  "title": "LinkError",
+                  "type": "object"
+                }
+              },
+              "description": "Response of a ``Commands/*`` call. ``accepted`` only after the device committed it to disk.\n\n``unknown`` never travels: the Server derives it from transport errors after the call opened.",
+              "properties": {
+                "e": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/LinkError"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "outcome": {
+                  "enum": [
+                    "accepted",
+                    "rejected"
+                  ],
+                  "title": "Outcome",
+                  "type": "string"
+                },
+                "r": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": true,
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "R"
+                }
+              },
+              "required": [
+                "outcome"
+              ],
+              "type": "object"
+            }
+          },
+          "stream": "unary"
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "read_only": false
+          },
+          "balance": {
+            "key": null,
+            "kind": "round_robin"
+          },
+          "deprecated": null,
+          "description": "Command workspace.preparation.cancel. accepted only after the device committed it; idempotency_key = commandId.",
+          "duplex_reason": null,
+          "input_item": null,
+          "name": "workspacePreparationCancel",
           "output_item": null,
           "parameters": [
             "commandId",

@@ -31,12 +31,14 @@ v3 中 Server 与 Connector 之间的契约，取代 v2 的 `/api/v2/connector/w
 
 业务方法到路由的映射见源文件的 `REQUEST_METHODS`、`command_route()`、`LINK_ROUTES`；事件与出站箱的方法名见 `EVENT_METHODS`、`OUTBOX_METHODS`。
 
+`CRITICAL_METHODS` 是 v2 关键通道（#484）的全部方法：审批回复、notices、建会话与工作区准备的查询、回复和取消。设备要为它们单独留出执行额度，长读请求不能占满。
+
 ## 错误
 
 `classify_mesh_error()` 和 `mesh-errors.json` 把 MeshCall 的错误分成三类：
 
 - **未投递**：`call.open` 之前就失败（连不上 Router、`no_instances`、`instance_unknown`、`instance_draining`），按离线处理。
-- **结果未知**：调用已经打开之后出现 `instance_lost`、`deadline_exceeded`、`cancelled`。读请求报 `device_read_timeout`，命令报 `command_outcome_unknown`。这一类**不报成离线，也不自动重发**。
+- **结果未知**：调用已经打开之后出现 `instance_lost`、`deadline_exceeded`、`cancelled`，以及其他 `unavailable`（调用途中与 Router 的连接断开、Router 正在关闭）。读请求报 `device_read_timeout`，命令报 `command_outcome_unknown`。这一类**不报成离线，也不自动重发**。
 - **应用错误**：设备返回的 AA 错误码。
 
 ## 会话时钟与地板值

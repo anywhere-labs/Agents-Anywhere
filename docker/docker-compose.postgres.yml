@@ -53,11 +53,65 @@ services:
       AGENT_SERVER_MIGRATION_LOCK_TIMEOUT: ${AGENT_SERVER_MIGRATION_LOCK_TIMEOUT:-120}
     command: ["sh", "-c", "cd /app/server && uv run --no-sync python -m agent_server.infra.db.migrations upgrade"]
 
+  # Writes the MeshCall Router auth file for the Server's account (aa-server). Without
+  # AGENT_SERVER_MESH_PASSWORD it generates a password once and keeps it in the volume.
+  mesh-auth-next:
+    image: agents-anywhere-server:postgres
+    depends_on:
+      migrate-next:
+        condition: service_completed_successfully
+    environment:
+      AGENT_SERVER_MESH_PASSWORD: ${AGENT_SERVER_MESH_PASSWORD:-}
+    volumes:
+      - agents-anywhere-mesh-next:/mesh
+    command: ["sh", "-c", "cd /app/server && uv run --no-sync python -m agent_server.infra.device_mesh init-auth --dir /mesh"]
+
+  # Devices register aa.device.v1.* here; every Server worker is a client (device-meshcall 1.0).
+  # Single instance, no persistent state: a restart drops tokens and calls, devices hello again.
+  meshcall-router:
+    build:
+      context: ./meshcall-router
+      args:
+        GO_IMAGE: ${MESHCALL_GO_IMAGE:-golang:1.26-bookworm}
+        GOPROXY: ${MESHCALL_GOPROXY:-https://proxy.golang.org,direct}
+    image: agents-anywhere-meshcall-router:9334405
+    restart: unless-stopped
+    depends_on:
+      mesh-auth-next:
+        condition: service_completed_successfully
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8765"
+      - --auth-file
+      - /mesh/router-auth.json
+      # Same as every client's maxFrameBytes; a larger frame closes the whole connection (1009).
+      - --max-frame-size
+      - "4194304"
+      # At least one token per online device (default 4096).
+      - --max-tokens
+      - ${MESHCALL_MAX_TOKENS:-20000}
+      # One worker connection carries attach + outbox per device and one watch per watched session.
+      - --max-calls-per-connection
+      - "0"
+      - --max-connections
+      - ${MESHCALL_MAX_CONNECTIONS:-20000}
+      - --max-anonymous-connections
+      - "64"
+      # A dead device link frees its instance id sooner (devices ping every 15 s).
+      - --idle-timeout
+      - 30s
+    volumes:
+      - agents-anywhere-mesh-next:/mesh:ro
+
   server-next:
     image: agents-anywhere-server:postgres
     restart: unless-stopped
     depends_on:
       migrate-next:
+        condition: service_completed_successfully
+      mesh-auth-next:
         condition: service_completed_successfully
       redis-next:
         condition: service_healthy
@@ -75,12 +129,33 @@ services:
       AGENT_SERVER_SECRET: ${AGENT_SERVER_SECRET:-change-me-before-production}
       AGENT_SERVER_PUBLIC_ORIGIN: ${AGENT_SERVER_PUBLIC_ORIGIN:-}
       AGENT_SERVER_CORS_ORIGINS: ${AGENT_SERVER_CORS_ORIGINS:-http://127.0.0.1:${AGENTS_ANYWHERE_WEB_PORT:-5174},http://localhost:${AGENTS_ANYWHERE_WEB_PORT:-5174}}
+      AGENT_SERVER_MESH_ROUTER_URL: ws://meshcall-router:8765
+      AGENT_SERVER_MESH_PASSWORD_FILE: /mesh/aa-server.password
+      # What devices dial; empty = wss://<host of the hello request>/api/v3/device/mesh.
+      AGENT_SERVER_MESH_PUBLIC_URL: ${AGENT_SERVER_MESH_PUBLIC_URL:-}
     volumes:
       - agents-anywhere-files-next:/data
+      - agents-anywhere-mesh-next:/mesh:ro
+
+  # Front gateway: the device MeshCall WebSocket goes to the Router, the rest to the Server.
+  gateway-next:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - server-next
+      - meshcall-router
+    environment:
+      AGENT_SERVER_GATEWAY_ADDRESS: ${AGENT_SERVER_GATEWAY_ADDRESS:-:8080}
+      AGENT_SERVER_GATEWAY_AUTO_HTTPS: ${AGENT_SERVER_GATEWAY_AUTO_HTTPS:-off}
+    volumes:
+      - ./gateway/Caddyfile:/etc/caddy/Caddyfile:ro
+      - agents-anywhere-caddy-next:/data
     ports:
-      - "${AGENTS_ANYWHERE_WEB_PORT:-5174}:8000"
+      - "${AGENTS_ANYWHERE_WEB_PORT:-5174}:8080"
 
 volumes:
   agents-anywhere-pg-next:
   agents-anywhere-redis-next:
   agents-anywhere-files-next:
+  agents-anywhere-mesh-next:
+  agents-anywhere-caddy-next:

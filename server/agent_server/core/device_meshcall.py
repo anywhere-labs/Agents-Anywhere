@@ -476,6 +476,9 @@ REQUEST_METHODS: dict[str, MeshRoute] = {
     "store.planDocument": _r("Store", "planDocument"),
     "runtime.catalogs": _r("Runtime", "catalogs"),
     "command.status": _r("Commands", "status"),
+    # v2 critical-channel reads (#484): creation and workspace preparation progress.
+    "session.creation.get": _r("Sessions", "creationGet"),
+    "workspace.preparation.get": _r("Sessions", "workspacePreparationGet"),
 }
 
 COMMAND_METHODS: tuple[str, ...] = (
@@ -485,6 +488,10 @@ COMMAND_METHODS: tuple[str, ...] = (
     "session.respondNotice",
     "session.select",
     "session.creation.begin",
+    "session.creation.respond",
+    "session.creation.cancel",
+    "workspace.preparation.respond",
+    "workspace.preparation.cancel",
     "session.planning",
     "session.goal",
     "session.queue.update",
@@ -510,6 +517,20 @@ def command_route(method: str) -> MeshRoute:
     name = head + "".join(part[:1].upper() + part[1:] for part in rest)
     return _r("Commands", name)
 
+
+# The v2 critical channel (#484, ``connector/server/rpc.py`` CRITICAL_RPC_METHODS): the device
+# serves these from a reserved lane so long reads cannot starve approvals and creation prompts.
+# ``interaction.respond`` is ``session.respondNotice`` here.
+CRITICAL_METHODS: tuple[str, ...] = (
+    "session.respondNotice",
+    "session.notices",
+    "session.creation.get",
+    "session.creation.respond",
+    "session.creation.cancel",
+    "workspace.preparation.get",
+    "workspace.preparation.respond",
+    "workspace.preparation.cancel",
+)
 
 LINK_ROUTES: dict[str, MeshRoute] = {
     "link.attach": _r("Link", "attach", "server_stream"),
@@ -566,6 +587,10 @@ MESH_ERROR_RULES: tuple[MeshErrorRule, ...] = (
     MeshErrorRule(code="deadline_exceeded", failure="outcome_unknown",
                   readError="device_read_timeout", commandError="command_outcome_unknown"),
     MeshErrorRule(code="cancelled", failure="outcome_unknown",
+                  readError="device_read_timeout", commandError="command_outcome_unknown"),
+    # Any other ``unavailable`` after the call opened (connection to the Router lost mid-call,
+    # router_draining, router_shutdown): the device may have run it.
+    MeshErrorRule(code="unavailable", failure="outcome_unknown",
                   readError="device_read_timeout", commandError="command_outcome_unknown"),
     MeshErrorRule(code="internal", failure="application",
                   readError="internal", commandError="internal"),

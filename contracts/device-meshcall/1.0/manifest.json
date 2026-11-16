@@ -254,11 +254,11 @@
   "extras": [
     {
       "path": "device.meshcall.json",
-      "sha256": "18c31da7d0ab5a85c291b85f24c3fd0b31af63cd6b31c7232305690d651814cb"
+      "sha256": "d8aa3797de3301909f2870be3485bd08787d1ac627a0145b399bd36f52b101e9"
     },
     {
       "path": "mesh-errors.json",
-      "sha256": "c1ab02d3d460dcaf032cfd46760901aba5d32ed60972102fae42f26156d0515a"
+      "sha256": "5bb8ebbf8523543774df089202b382b0e12dfa0f7273c28d47d140cd337b9b5d"
     }
   ],
   "jsonSchemaDraft": "https://json-schema.org/draft/2020-12/schema",

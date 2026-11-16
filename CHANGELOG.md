@@ -6,6 +6,7 @@
 
 ### 升级须知
 
+- 自托管 Compose 新增 MeshCall Router 和前置网关（Caddy）：对外端口改由网关提供，v3 设备经 `/api/v3/device/mesh` 连接 Router；Router 账号密码默认自动生成并保存在数据卷里，也可以用 `AGENT_SERVER_MESH_PASSWORD` 指定。（[#675](https://github.com/anywhere-labs/Agents-Anywhere/pull/675)）
 - 运行中排队消息需要 Server 执行 `v2_56` 数据库迁移（只新增两张表，不改写已有数据）；排队在 Web、Desktop、Android 和 iOS 上可用，旧版客户端的行为不变。（[#658](https://github.com/anywhere-labs/Agents-Anywhere/pull/658)、[#659](https://github.com/anywhere-labs/Agents-Anywhere/pull/659)）
 
 ### 会话创建与消息交付

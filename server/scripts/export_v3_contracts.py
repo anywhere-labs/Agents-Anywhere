@@ -242,6 +242,10 @@ MESH_SERVICES: tuple[tuple[str, str, tuple[MeshMethod, ...]], ...] = (
                        annotations=RO),
             MeshMethod("queue", "Queued deliveries of a session.", dl.MethodPayload, dl.MethodPayload,
                        annotations=RO),
+            MeshMethod("creationGet", "Progress of a session creation (critical lane).", dl.MethodPayload,
+                       dl.MethodPayload, annotations=RO),
+            MeshMethod("workspacePreparationGet", "Progress of a workspace preparation (critical lane).",
+                       dl.MethodPayload, dl.MethodPayload, annotations=RO),
         ),
     ),
     (

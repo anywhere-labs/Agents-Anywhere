@@ -56,6 +56,7 @@ from agent_server.infra.db.migrations import (
     require_current_database,
     upgrade_database,
 )
+from agent_server.infra.device_mesh import DeviceMesh, MeshSettings
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.malloc_trim import run_malloc_trim_loop
 from agent_server.infra.model_gateway_probe import (
@@ -155,6 +156,8 @@ def create_app(
             await app.state.terminal_stream_hub.start()
             await app.state.terminal_broker.start()
             await app.state.rpc.start()
+            # Never blocks startup: a Router that is down only shows in readiness (#441 review).
+            await app.state.device_mesh.start()
             await app.state.usage_recorder.start()
             presence_task = asyncio.create_task(_connector_presence_watchdog(app))
             deletion_task = asyncio.create_task(app.state.connector_deletion_recovery.run())
@@ -220,6 +223,10 @@ def create_app(
                 logger.exception("failed to flush usage events on shutdown")
             await app.state.capability_refresh.close()
             try:
+                await app.state.device_mesh.close()
+            except Exception:  # noqa: BLE001 - shutdown must continue
+                logger.exception("failed to close the device mesh client")
+            try:
                 await app.state.rpc.close()
             finally:
                 try:
@@ -279,6 +286,7 @@ def create_app(
         instance_id=process_settings.instance_id(),
     )
     app.state.store.bind_connector_lifecycle(app.state.rpc.lifecycle_guard)
+    app.state.device_mesh = DeviceMesh(MeshSettings.from_environment())
     app.state.fs_downloads = FsDownloadRelayManager(app.state.redis)
     app.state.shell_tasks = ShellTaskManager(app.state.redis)
     app.state.terminal_broker = TerminalBroker(
@@ -414,6 +422,8 @@ def create_app(
                 checks["redis"] = {"status": "error", "message": str(exc)}
         else:
             checks["redis"] = {"status": "not_configured"}
+        # The Router is reported, never required: without it devices are offline, not the Server.
+        checks["mesh"] = await app.state.device_mesh.check()
         if app.state.timeline_broker.healthy:
             checks["realtime"] = {"status": "ok"}
         else:

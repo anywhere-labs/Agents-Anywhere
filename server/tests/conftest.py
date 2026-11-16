@@ -204,3 +204,7 @@ def fresh_database_url() -> Iterator[str]:
 def server_secret(monkeypatch):
     """A Server secret long enough for the secret box."""
     monkeypatch.setenv("AGENT_SERVER_SECRET", "test-server-secret-0123456789abcdef")
+
+
+# A real MeshCall Router for the device-meshcall tests (skipped without a Router binary).
+from mesh_fixtures import mesh_router  # noqa: F401

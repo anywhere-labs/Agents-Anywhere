@@ -116,6 +116,9 @@ The compose file uses:
 - `redis-next` service for cross-instance coordination, Pub/Sub, and the live Timeline sequencer/write buffer
 - `migrate-next` one-shot service that upgrades the database before server startup
 - `server-next` service for the FastAPI backend and statically exported Web UI
+- `mesh-auth-next` one-shot service that writes the MeshCall Router auth file (see below)
+- `meshcall-router` service: the MeshCall Router that v3 devices register on (internal only)
+- `gateway-next` service (Caddy) that publishes the Web port: `/api/v3/device/mesh` goes to the Router, everything else to `server-next`
 - `agents-anywhere-pg-next` volume for PostgreSQL data
 - `agents-anywhere-redis-next` volume mounted at `/data` for Redis AOF data
 - `agents-anywhere-files-next` volume mounted at `/data` for uploads / attachments
@@ -126,6 +129,43 @@ The compose file uses:
 - Redis memory capped by `REDIS_MAXMEMORY` (default `256mb`) with `noeviction`
 - Redis AOF persistence with `appendfsync everysec`; RDB snapshots remain disabled
 - Timeline revision leases configurable through `AGENT_SERVER_TIMELINE_REVISION_LEASE_SIZE` (default `4096`)
+
+### MeshCall Router (v3 devices)
+
+v3 devices connect to the Server over [MeshCall](https://github.com/t4wefan/meshcall)
+(`contracts/device-meshcall/1.0`). The Router is a separate Go process built
+from the pinned commit `9334405` (`docker/meshcall-router/Dockerfile`); it keeps no
+state, so a restart only makes devices reconnect.
+
+- Devices reach it only through the gateway at `wss://<server>/api/v3/device/mesh`;
+  the gateway passes WebSocket upgrades and drops cookies. Do not publish port 8765.
+- Every Server worker is a Router client with the account `aa-server`. Without
+  `AGENT_SERVER_MESH_PASSWORD`, `mesh-auth-next` generates a password once and keeps
+  it in the `agents-anywhere-mesh-next` volume; the Server reads it from there.
+- The Server starts even if the Router is down; `/api/v2/health/ready` then shows
+  `checks.mesh.status = "error"` and v3 devices appear offline.
+- Capacity: `MESHCALL_MAX_TOKENS` (default `20000`, at least one per online device)
+  and `MESHCALL_MAX_CONNECTIONS` (default `20000`). Calls per connection are not
+  limited, because one worker connection carries two streams per device.
+- `AGENT_SERVER_MESH_PUBLIC_URL` overrides the address handed to devices; by
+  default it is `wss://<host of the request>/api/v3/device/mesh`.
+
+Behind your own reverse proxy (nginx), forward the device path to the gateway
+port like any other path, keeping WebSocket upgrades:
+
+```nginx
+location /api/v3/device/mesh {
+    proxy_pass http://127.0.0.1:5174;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 1h;
+}
+```
+
+Development (`local-up.sh` or a bare `uvicorn`): set
+`AGENT_SERVER_MESH_LOCAL_ROUTER=1` to let the Server start a local Router
+(`meshcall` SDK `LocalRouter`; `MESHCALL_ROUTER_BINARY` selects the binary).
 
 Publish the Web console on a different host port:
 

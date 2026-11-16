@@ -11,6 +11,7 @@ from agent_server.core.auth import verify_user_access_token
 from agent_server.core.models import UserView
 from agent_server.infra.connector_gateway import ConnectorGateway
 from agent_server.infra.connector_rpc import ConnectorRpcManager
+from agent_server.infra.device_mesh import DeviceMesh
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
@@ -234,6 +235,10 @@ def get_terminal_relay_service(conn: HTTPConnection) -> TerminalRelayService:
 
 def get_rpc(conn: HTTPConnection) -> ConnectorRpcManager:
     return conn.app.state.rpc
+
+
+def get_device_mesh(conn: HTTPConnection) -> DeviceMesh:
+    return conn.app.state.device_mesh
 
 
 def get_terminal_broker(conn: HTTPConnection) -> TerminalBroker:

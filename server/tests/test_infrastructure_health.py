@@ -35,8 +35,20 @@ def test_liveness_and_readiness_are_separate(tmp_path) -> None:
     assert response.json()["checks"] == {
         "database": {"status": "ok", "schemaVersion": CURRENT_SCHEMA_VERSION},
         "redis": {"status": "not_configured"},
+        "mesh": {"status": "not_configured"},
         "realtime": {"status": "ok"},
     }
+
+
+def test_readiness_reports_a_down_router_without_failing(monkeypatch) -> None:
+    # #441 review: the MeshCall Router being down must never stop the Server.
+    monkeypatch.setenv("AGENT_SERVER_MESH_ROUTER_URL", "ws://127.0.0.1:9")
+    monkeypatch.setenv("AGENT_SERVER_MESH_PASSWORD", "x")
+    with TestClient(create_app()) as client:
+        response = client.get("/api/v2/health/ready")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready"
+    assert response.json()["checks"]["mesh"]["status"] == "error"
 
 
 def test_readiness_fails_closed_when_redis_is_unavailable(tmp_path) -> None:

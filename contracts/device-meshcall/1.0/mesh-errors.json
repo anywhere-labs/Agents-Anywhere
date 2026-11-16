@@ -51,6 +51,13 @@
       "reason": null
     },
     {
+      "code": "unavailable",
+      "commandError": "command_outcome_unknown",
+      "failure": "outcome_unknown",
+      "readError": "device_read_timeout",
+      "reason": null
+    },
+    {
       "code": "internal",
       "commandError": "internal",
       "failure": "application",

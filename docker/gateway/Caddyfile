@@ -1,0 +1,32 @@
+# Front gateway of the Compose deployment.
+#
+# - /api/v3/device/mesh: devices' MeshCall WebSocket, proxied to the Router. Only WebSocket
+#   upgrades pass; cookies are dropped. Nothing else of the Router is reachable from outside
+#   (no HTTP gateway, no metrics).
+# - everything else: the Agents Anywhere Server.
+#
+# TLS is terminated in front of this gateway (or set AGENT_SERVER_GATEWAY_ADDRESS to a host name
+# to let Caddy obtain a certificate).
+{
+	auto_https {$AGENT_SERVER_GATEWAY_AUTO_HTTPS:off}
+	admin off
+}
+
+{$AGENT_SERVER_GATEWAY_ADDRESS::8080} {
+	@device_mesh {
+		path /api/v3/device/mesh
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	handle @device_mesh {
+		request_header -Cookie
+		# The Router accepts the WebSocket upgrade on any path.
+		reverse_proxy {$AGENT_SERVER_MESH_ROUTER_ADDRESS:meshcall-router:8765}
+	}
+	handle /api/v3/device/mesh {
+		respond "WebSocket upgrade required" 426
+	}
+	handle {
+		reverse_proxy {$AGENT_SERVER_UPSTREAM:server-next:8000}
+	}
+}
