@@ -24,6 +24,7 @@
 
 - 没发出去的消息下方显示「发送失败」，点开可以查看原因并删除这条消息，不会再一直留在对话里。（[#660](https://github.com/anywhere-labs/Agents-Anywhere/pull/660)）
 - 打开过文件后再进入会话，会直接显示对话，不再先停在「文件」页。（[#661](https://github.com/anywhere-labs/Agents-Anywhere/pull/661)）
+- 在小米 15、小米 17 等已升级 HyperOS 4 的手机上，展开推理内容不再闪退；推理正文改用与其他文字相同的常规字重。
 
 ## 2.2.0（2026-11-14）
 
