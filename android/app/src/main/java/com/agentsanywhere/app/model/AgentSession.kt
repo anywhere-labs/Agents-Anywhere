@@ -31,6 +31,9 @@ data class AgentSession(
     val optimisticTopUntil: Long = 0L,
     // Preserve the canonical timestamp, including null, separately from the display activity fallback.
     val sortAt: String? = null,
+    /** Protocol 1.2 state-only enums (`none` from older Servers); readable while the device is offline. */
+    val planState: String = "none",
+    val goalState: String = "none",
 ) {
     val runtimeLabels: RuntimeInstanceLabels
         get() = runtimeInstanceLabels(runtimeName, runtimeType)

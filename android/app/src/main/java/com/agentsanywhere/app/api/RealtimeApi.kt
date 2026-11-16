@@ -83,6 +83,7 @@ class RealtimeApi(
             nextCursor = response.optString("nextCursor", after),
             snapshotRequired = response.optBoolean("snapshotRequired", false),
             serverTime = response.optNullableString("serverTime"),
+            deviceOffline = response.optBoolean("deviceOffline", false),
         )
     }
 

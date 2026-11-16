@@ -29,7 +29,14 @@ data class RemoteSession(
     val runtimeId: String = runtime,
     val runtimeType: String = runtime,
     val runtimeName: String = runtimeType,
+    /** Protocol 1.2 state-only enums; `none` from older Servers. Readable while the device is offline. */
+    val planState: String = "none",
+    val goalState: String = "none",
 )
+
+/** Protocol 1.2: whether the Server could read history from the session's device. */
+const val HISTORY_SOURCE_LIVE = "live"
+const val HISTORY_SOURCE_UNAVAILABLE = "unavailable"
 
 data class RemoteSessionResponse(
     val session: RemoteSession,
@@ -92,7 +99,13 @@ data class RemoteSessionTimelinePage(
     val nextSeq: Int,
     val hasMore: Boolean,
     val serverTime: String?,
-)
+    /** Protocol 1.2; an offline page is empty and is not the start of history. */
+    val historySource: String = HISTORY_SOURCE_LIVE,
+    val deviceOffline: Boolean = false,
+) {
+    val historyUnavailable: Boolean
+        get() = deviceOffline || historySource == HISTORY_SOURCE_UNAVAILABLE
+}
 
 data class RemoteSessionRuntimeStateResponse(
     val state: RemoteSessionRuntimeState,
@@ -175,7 +188,13 @@ data class RemoteSessionSnapshot(
     val serverTime: String?,
     /** Null when the Server predates the message queue. */
     val queue: RemoteSessionQueueState? = null,
-)
+    /** Protocol 1.2: an offline snapshot carries metadata only, not the history. */
+    val historySource: String = HISTORY_SOURCE_LIVE,
+    val deviceOffline: Boolean = false,
+) {
+    val historyUnavailable: Boolean
+        get() = deviceOffline || historySource == HISTORY_SOURCE_UNAVAILABLE
+}
 
 data class RemoteSessionRuntimeCatalogs(
     val model: RemoteRuntimeModelCatalog?,

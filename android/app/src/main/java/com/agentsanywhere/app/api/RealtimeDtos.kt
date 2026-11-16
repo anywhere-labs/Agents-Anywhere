@@ -59,7 +59,15 @@ data class RemoteEventRecoveryResponse(
     val nextCursor: String,
     val snapshotRequired: Boolean,
     val serverTime: String?,
+    /** Protocol 1.2: the device is offline, nothing after the cursor is readable now. */
+    val deviceOffline: Boolean = false,
 )
+
+/** Event envelopes are unchanged across protocol versions; 1.2 only adds event types. */
+val ACCEPTED_EVENT_PROTOCOL_VERSIONS: Set<String> = setOf("1.0", "1.1", "1.2")
+
+/** Protocol 1.2: the device link was rebuilt; each client recovers its own gap from its cursor. */
+const val SESSION_CATCHUP_REQUIRED = "session.catchup_required"
 
 internal fun eventCursorSequence(cursor: String?): Long? {
     val value = cursor?.takeIf { it.startsWith("seq:") }?.removePrefix("seq:") ?: return null

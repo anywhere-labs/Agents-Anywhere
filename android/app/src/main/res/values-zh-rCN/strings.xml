@@ -403,6 +403,9 @@
     <string name="session_agent_interrupting">正在中断 %1$s</string>
     <string name="session_agent_fallback">Agent</string>
     <string name="session_device_offline_placeholder">设备已离线，暂时不能聊天。</string>
+    <string name="session_history_offline_title">设备离线</string>
+    <string name="session_history_offline_cached">显示的是本机缓存。更早的消息和新的进展要等设备上线后才能看到。</string>
+    <string name="session_history_offline_empty">设备离线，上线后查看。</string>
     <string name="session_reply_to">回复 %1$s</string>
     <string name="session_read_only_placeholder">只读模式-开启接管后可发送消息</string>
     <string name="session_runtime_model_loading">正在加载模型…</string>

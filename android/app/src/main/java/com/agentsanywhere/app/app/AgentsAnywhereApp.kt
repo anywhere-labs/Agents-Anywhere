@@ -166,6 +166,7 @@ fun AgentsAnywhereApp(
         SessionDetailController(
             sessionsApi = SessionsApi(apiClient),
             sessionStore = sessionStore,
+            diskStore = com.agentsanywhere.app.feature.sessiondetail.SessionDiskStore.shared(context),
         )
     }
     DisposableEffect(sessionDetailController) {
@@ -266,6 +267,8 @@ fun AgentsAnywhereApp(
         onDispose { connectivity.unregisterNetworkCallback(callback) }
     }
     fun clearSessionAndReturnToLogin(expectedToken: String? = null) {
+        val signedOutServer = sessionStore.readServerUrl()
+        val signedOutUser = sessionStore.readUserId()
         val didClearSession = if (expectedToken == null) {
             authController.signOut()
             true
@@ -274,6 +277,13 @@ fun AgentsAnywhereApp(
         }
         if (!didClearSession) return
 
+        // Signing out forgets this account's session content on this device; pages
+        // still closing cannot write it back.
+        if (signedOutServer.isNotBlank() && signedOutUser.isNotBlank()) {
+            com.agentsanywhere.app.feature.sessiondetail.SessionDiskStore.shared(context).forget(
+                com.agentsanywhere.app.feature.sessiondetail.SessionDiskStore.scopeFor(signedOutServer, signedOutUser),
+            )
+        }
         appUpdateViewModel.syncSession(false)
         remoteTerminalPool.disposeLocal()
         sessionsState = SessionsState()

@@ -404,6 +404,9 @@
     <string name="session_agent_interrupting">Interrupting %1$s</string>
     <string name="session_agent_fallback">Agent</string>
     <string name="session_device_offline_placeholder">Device is offline. You can\'t chat right now.</string>
+    <string name="session_history_offline_title">Device offline</string>
+    <string name="session_history_offline_cached">Showing what this phone cached earlier. Older messages and new progress appear once the device is back online.</string>
+    <string name="session_history_offline_empty">The device is offline. Messages appear once it is back online.</string>
     <string name="session_reply_to">Reply to %1$s</string>
     <string name="session_read_only_placeholder">Read-only mode - turn on takeover to send messages</string>
     <string name="session_runtime_model_loading">Loading model…</string>

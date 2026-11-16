@@ -166,14 +166,22 @@ import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.agentsanywhere.app.ui.screens.devices.DeviceConfirmDialog
 import com.agentsanywhere.app.ui.screens.files.RemoteFilePreviewDialog
+import com.agentsanywhere.app.feature.sessiondetail.markHistoryLive
+import com.agentsanywhere.app.feature.sessiondetail.markHistoryUnavailable
+import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
+
+/** Throttle for disk copies of the session in view (as on Web). */
+private const val SESSION_DISK_SAVE_INTERVAL_MILLIS = 8_000L
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -332,6 +340,7 @@ private fun SessionDetailVisit(
     var modelCatalogRefreshKey by remember(sessionId) { mutableStateOf<String?>(null) }
     var permissionCatalogRefreshKey by remember(sessionId) { mutableStateOf<String?>(null) }
     val refetchInFlight = remember(sessionId) { AtomicBoolean(false) }
+    var diskRestoreTried by remember(sessionId) { mutableStateOf(false) }
     val olderInFlight = remember(sessionId) { AtomicBoolean(false) }
     val remoteTerminal = remember(sessionId, terminalPool) { terminalPool.forSession(sessionId) }
 
@@ -450,10 +459,14 @@ private fun SessionDetailVisit(
                 }.onFailure {
                     showError(context.getString(R.string.session_share_open_failed))
                 }
-            }.onFailure {
+            }.onFailure { error ->
                 pendingShareItemIds = null
                 shareBusy = false
-                showError(context.getString(R.string.session_share_failed))
+                // e.g. `share_requires_online_device` while the device is offline.
+                showError(
+                    runtimeErrorText(context, com.agentsanywhere.app.ui.designsystem.runtimeErrorCode(error), null)
+                        ?: context.getString(R.string.session_share_failed),
+                )
             }
         }
     }
@@ -817,6 +830,8 @@ private fun SessionDetailVisit(
     fun loadOlderMessages() {
         val id = sessionId ?: return
         if (!appVisible || !state.hasMore || state.timeline.loadingOlder || refetchInFlight.get()) return
+        // The device holds older history; paging waits until it is back online.
+        if (state.historyUnavailable) return
         if (!olderInFlight.compareAndSet(false, true)) return
         val beforeOrderSeq = state.timeline.orderingItems
             .minOfOrNull { it.orderSeq }
@@ -988,7 +1003,8 @@ private fun SessionDetailVisit(
                     retryClientMessageId = clientMessageId
                     saveComposerDraft(text, pendingAttachments, clientMessageId)
                     showError(
-                        error.message?.takeUnless(::isInternalRuntimeError)
+                        runtimeErrorText(context, com.agentsanywhere.app.ui.designsystem.runtimeErrorCode(error), null)
+                            ?: error.message?.takeUnless(::isInternalRuntimeError)
                             ?: context.getString(R.string.session_send_failed),
                     )
                 }
@@ -1030,7 +1046,11 @@ private fun SessionDetailVisit(
                 }
                 .onFailure { error ->
                     val rawMessage = error.message
-                    val message = rawMessage
+                    // Known codes (`connector_offline`, `command_outcome_unknown`, ...) use their
+                    // localized text. An unknown outcome is never re-sent automatically: the
+                    // message stays failed for the user to check and retry.
+                    val message = runtimeErrorText(context, com.agentsanywhere.app.ui.designsystem.runtimeErrorCode(error), null)
+                        ?: rawMessage
                         ?.takeUnless(::isInternalRuntimeError)
                         ?: context.getString(
                             if (error is SteerRejected) R.string.session_steer_failed else R.string.session_send_failed,
@@ -1381,7 +1401,35 @@ private fun SessionDetailVisit(
 
     LaunchedEffect(sessionId, appVisible) {
         if (sessionId == null || !appVisible) return@LaunchedEffect
+        if (!state.initialized && visit != null && !diskRestoreTried) {
+            diskRestoreTried = true
+            // Memory had nothing: show the disk copy at once and recover from its cursor.
+            val restored = controller.restoreVisit(visit, currentDevices, state)
+            if (restored != null && isVisitActive() && !state.initialized) {
+                state = restored
+                return@LaunchedEffect
+            }
+        }
         if (!state.initialized) loadInitialSnapshot()
+    }
+
+    // Disk copies: when leaving (the cache's close), when backgrounded, and at
+    // most every few seconds while the history changes in view.
+    LaunchedEffect(visit, appVisible) {
+        if (visit == null) return@LaunchedEffect
+        if (!appVisible) {
+            controller.saveVisit(visit, state)
+            return@LaunchedEffect
+        }
+        var lastSave = 0L
+        snapshotFlow { Triple(state.timeline.remoteItems, state.realtime.cursor, state.meta.remote) }
+            .drop(1)
+            .collectLatest {
+                val wait = SESSION_DISK_SAVE_INTERVAL_MILLIS - (System.currentTimeMillis() - lastSave)
+                if (wait > 0) delay(wait)
+                if (isVisitActive()) controller.saveVisit(visit, state)
+                lastSave = System.currentTimeMillis()
+            }
     }
 
     LaunchedEffect(sessionId, appVisible, state.initialized, realtimeController) {
@@ -1451,6 +1499,15 @@ private fun SessionDetailVisit(
             },
             onAccessRevoked = { error ->
                 withContext(Dispatchers.Main.immediate) { invalidateAccess(error) }
+            },
+            historyUnavailable = { withContext(Dispatchers.Main.immediate) { state.historyUnavailable } },
+            historyBaseMissing = { withContext(Dispatchers.Main.immediate) { state.timeline.historyBaseMissing } },
+            onHistoryAvailability = { available ->
+                withContext(Dispatchers.Main.immediate) {
+                    if (isVisitActive() && sessionId == id) {
+                        state = if (available) state.markHistoryLive() else state.markHistoryUnavailable()
+                    }
+                }
             },
             onConnectionChanged = { connected, recovering, attempt, error ->
                 scope.launch {
@@ -2061,6 +2118,9 @@ private fun SessionDetailVisit(
                             state.timeline.errorMessage != null && state.messages.isEmpty() -> {
                                 EmptyDetailMessage(state.timeline.errorMessage.orEmpty())
                             }
+                            state.historyUnavailable && state.messages.isEmpty() -> {
+                                EmptyDetailMessage(stringResource(R.string.session_history_offline_empty))
+                            }
                             state.messages.isEmpty() && (state.planning == null || (state.planning?.effectiveMode != "plan" && state.planning?.draft == null && state.planning?.proposal == null && state.planning?.documents.isNullOrEmpty())) && openInteractions.isEmpty() && !hasOpenNotifications ->
                                 SessionWelcomeMessage()
                             else -> MessageList(
@@ -2106,7 +2166,8 @@ private fun SessionDetailVisit(
                                 respondingNoticeIds = state.respondingNoticeIds,
                                 noticeResponseErrors = noticeResponseErrors,
                                 bottomContentPadding = timelineBottomPadding,
-                                hasMore = state.hasMore,
+                                // Offline, the device holds the older pages: no automatic paging.
+                                hasMore = state.hasMore && !state.historyUnavailable,
                                 loadingOlder = state.timeline.loadingOlder,
                                 historyError = state.timeline.historyErrorMessage != null,
                                 onLoadOlder = { loadOlderMessages() },
@@ -2184,6 +2245,9 @@ private fun SessionDetailVisit(
                                 if(goalMode) androidx.compose.material3.TextButton(onClick={goalMode=false}) {androidx.compose.material3.Text(stringResource(R.string.goal_exit_mode))}
                                 goalReplacement?.let { replacement ->
                                     androidx.compose.material3.AlertDialog(onDismissRequest={goalReplacement=null},title={androidx.compose.material3.Text(stringResource(R.string.goal_replace_title))},text={androidx.compose.material3.Text(replacement.first,maxLines=4)},confirmButton={androidx.compose.material3.TextButton(onClick={goalReplacement=null;goalAction("set",replacement.first,replacement.second,true)}){androidx.compose.material3.Text(stringResource(R.string.goal_replace))}},dismissButton={androidx.compose.material3.TextButton(onClick={goalReplacement=null}){androidx.compose.material3.Text(stringResource(R.string.goal_cancel))}})
+                                }
+                                if (state.historyUnavailable && state.messages.any { !it.optimistic }) {
+                                    SessionHistoryOfflineNotice()
                                 }
                                 if (planTarget == null) SessionMessageQueuePanel(
                                     queue = state.queue,

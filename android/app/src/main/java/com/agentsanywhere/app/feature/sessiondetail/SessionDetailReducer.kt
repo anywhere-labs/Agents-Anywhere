@@ -1,7 +1,9 @@
 package com.agentsanywhere.app.feature.sessiondetail
 
+import com.agentsanywhere.app.api.ACCEPTED_EVENT_PROTOCOL_VERSIONS
 import com.agentsanywhere.app.api.RemoteRuntimeNotice
 import com.agentsanywhere.app.api.RemoteSessionEventEnvelope
+import com.agentsanywhere.app.api.SESSION_CATCHUP_REQUIRED
 import com.agentsanywhere.app.feature.sessions.toAgentSession
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
@@ -17,8 +19,30 @@ internal fun reduceRealtimeEvent(
     current: SessionDetailState,
     event: RemoteSessionEventEnvelope,
     devices: List<AgentDevice>,
+): SessionDetailState = reduceRealtimeEventUnfrozen(current, event, devices).keepingOfflineCursor(current)
+
+/**
+ * While the history is unavailable the cursor is not proven to cover the gap
+ * before a live event, so no event may move it; recovery reads past it later.
+ */
+private fun SessionDetailState.keepingOfflineCursor(before: SessionDetailState): SessionDetailState {
+    if (!before.timeline.historyUnavailable || !timeline.historyUnavailable) return this
+    if (realtime.cursor == before.realtime.cursor && timeline.nextSeq == before.timeline.nextSeq &&
+        timeline.eventCursor == before.timeline.eventCursor) return this
+    return copy(
+        realtime = realtime.copy(cursor = before.realtime.cursor),
+        timeline = timeline.copy(nextSeq = before.timeline.nextSeq, eventCursor = before.timeline.eventCursor),
+    )
+}
+
+private fun reduceRealtimeEventUnfrozen(
+    current: SessionDetailState,
+    event: RemoteSessionEventEnvelope,
+    devices: List<AgentDevice>,
 ): SessionDetailState {
-    if (event.protocolVersion !in setOf("1.0", "1.1") || event.sessionId != current.session?.id) return current
+    if (event.protocolVersion !in ACCEPTED_EVENT_PROTOCOL_VERSIONS || event.sessionId != current.session?.id) return current
+    // A request to recover from this client's own cursor; it is not a change and has no position.
+    if (event.type == SESSION_CATCHUP_REQUIRED) return current
     if (event.type == "runtime.queue.updated") {
         // The queue orders itself by revision. Its envelope borrows the session's
         // current sequence, so it neither advances the cursor nor deduplicates.
@@ -46,7 +70,7 @@ internal fun reduceRealtimeEvent(
             val observed = session.toAgentSession(devices.associateBy { it.id })
             val existing = next.session
             if (existing == null || observed.updatedSeq >= existing.updatedSeq) {
-                next = next.applyMetaObservation(observed, event.emittedAt)
+                next = next.applyMetaObservation(observed, event.emittedAt, session)
             }
         }
         "timeline.item_created", "timeline.item_updated" -> event.payload.item?.let { item ->
@@ -137,7 +161,7 @@ internal fun reduceRealtimeEvents(
         if (pendingTimeline.isEmpty()) return
         val seen = mutableSetOf<String>()
         val accepted = pendingTimeline.filter { event ->
-            event.protocolVersion in setOf("1.0", "1.1") &&
+            event.protocolVersion in ACCEPTED_EVENT_PROTOCOL_VERSIONS &&
                 event.sessionId == next.session?.id &&
                 event.eventId !in next.realtime.processedEventIds &&
                 seen.add(event.eventId)
@@ -161,11 +185,11 @@ internal fun reduceRealtimeEvents(
             pendingTimeline += event
         } else {
             flushTimeline()
-            next = reduceRealtimeEvent(next, event, devices)
+            next = reduceRealtimeEventUnfrozen(next, event, devices)
         }
     }
     flushTimeline()
-    return next
+    return next.keepingOfflineCursor(current)
 }
 
 internal fun reduceRuntimeLiveState(
@@ -242,6 +266,7 @@ internal fun reduceSnapshotWithLiveState(
     requestState: SessionDetailState,
     replaceHistory: Boolean = false,
 ): SessionDetailState {
+    if (snapshot.timeline.historyUnavailable) return reduceOfflineSnapshot(snapshot, live, requestState)
     if (replaceHistory && live.initialized) {
         // A required snapshot is authoritative, including after a Server cursor reset.
         // Keep only observations that arrived while this snapshot was in flight.
@@ -249,12 +274,15 @@ internal fun reduceSnapshotWithLiveState(
         val previousOrdering = requestState.timeline.orderingItems.associateBy { it.id }
         val changedOrdering = live.timeline.orderingItems.filter { previousOrdering[it.id] != it }
         val changedMessages = live.messages.filter { it.optimistic || previousMessages[it.id] != it }
+        val previousItems = requestState.timeline.remoteItems
+        val changedItems = live.timeline.remoteItems.filter { (id, item) -> previousItems[id] !== item }
         val observed = live.copy(
             meta = if (live.session != requestState.session) live.meta else snapshot.meta,
             timeline = snapshot.timeline.copy(
                 historyGeneration = live.timeline.historyGeneration,
                 messages = changedMessages,
                 orderingItems = changedOrdering,
+                remoteItems = changedItems,
                 nextSeq = maxOf(snapshot.nextSeq, changedOrdering.maxOfOrNull { it.updatedSeq } ?: 0),
             ),
             runtime = if (live.runtime.copy(isLoading = false, errorMessage = null) !=
@@ -295,6 +323,7 @@ internal fun reduceSnapshotWithLiveState(
         historyGeneration = live.timeline.historyGeneration,
         messages = mergeReducerOptimistic(mergedReal, live.messages, mergedOrdering),
         orderingItems = mergedOrdering,
+        remoteItems = snapshot.timeline.remoteItems.mergeRemoteItems(live.timeline.remoteItems.values),
         nextSeq = maxOf(snapshot.timeline.nextSeq, live.timeline.nextSeq),
         eventCursor = laterEventCursor(snapshot.timeline.eventCursor, live.timeline.eventCursor),
     )
@@ -347,6 +376,46 @@ internal fun reduceSnapshotWithLiveState(
     )
 }
 
+/**
+ * The Server keeps no history: an offline snapshot carries metadata only.
+ * Loaded content, paging and the recovery cursor survive it; without any, the
+ * empty page is not an authoritative base, so the next read is a snapshot.
+ */
+private fun reduceOfflineSnapshot(
+    snapshot: SessionDetailState,
+    live: SessionDetailState,
+    requestState: SessionDetailState,
+): SessionDetailState {
+    val hasContent = (live.initialized && !live.timeline.historyBaseMissing) || live.timeline.remoteItems.isNotEmpty()
+    val base = if (hasContent) {
+        snapshot.copy(timeline = live.timeline.copy(historyUnavailable = false), realtime = live.realtime)
+    } else {
+        snapshot.copy(
+            timeline = snapshot.timeline.copy(
+                orderingItems = emptyList(),
+                messages = snapshot.messages.filter { it.optimistic },
+                remoteItems = emptyMap(),
+                nextSeq = 0,
+                hasMore = false,
+                eventCursor = "seq:0",
+                historyUnavailable = false,
+            ),
+            realtime = snapshot.realtime.copy(cursor = "seq:0"),
+        )
+    }
+    val merged = reduceSnapshotWithLiveState(base, live, requestState)
+    return merged.copy(
+        timeline = merged.timeline.copy(
+            historyUnavailable = true,
+            historyBaseMissing = !hasContent,
+            hasMore = base.timeline.hasMore,
+            loadingOlder = false,
+        ),
+        // The Server's head is not this client's position: keep its own cursor.
+        realtime = merged.realtime.copy(cursor = base.realtime.cursor),
+    )
+}
+
 private fun mergeRealtimeState(
     snapshot: SessionRealtimeState,
     live: SessionRealtimeState,
@@ -371,6 +440,7 @@ private fun SessionDetailState.applyTimelineRealtimeItems(
         incoming = incoming,
         replace = replace,
     )
+    val remoteItems = timeline.remoteItems.mergeRemoteItems(incoming, replace)
     val messages = if (!hasOptimistic) projection.messages else mergeReducerOptimistic(
         projection.messages,
         this.messages,
@@ -384,6 +454,7 @@ private fun SessionDetailState.applyTimelineRealtimeItems(
         timeline = timeline.copy(
             messages = messages,
             orderingItems = projection.orderingItems,
+            remoteItems = remoteItems,
             historyGeneration = timeline.historyGeneration + if (replace) 1 else 0,
             loadingOlder = if (replace) false else timeline.loadingOlder,
             nextSeq = maxOf(timeline.nextSeq, cursorSequence),
@@ -412,10 +483,12 @@ private fun mergeReducerOptimistic(
 internal fun SessionDetailState.applyMetaObservation(
     session: AgentSession,
     serverTime: String?,
+    remote: com.agentsanywhere.app.api.RemoteSession? = null,
 ): SessionDetailState {
     return copy(
         meta = meta.copy(
             session = session,
+            remote = remote ?: meta.remote?.takeIf { it.id == session.id },
             serverTime = serverTime,
             isLoading = false,
             errorMessage = null,

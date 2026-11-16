@@ -28,6 +28,7 @@
 - 打开过文件后再进入会话，会直接显示对话，不再先停在「文件」页。（[#661](https://github.com/anywhere-labs/Agents-Anywhere/pull/661)）
 - 在小米 15、小米 17 等已升级 HyperOS 4 的手机上，展开推理内容不再闪退；推理正文改用与其他文字相同的常规字重。（[#662](https://github.com/anywhere-labs/Agents-Anywhere/pull/662)）
 - Agent 运行中输入框不再禁用：输入内容后点发送即排队，长按发送键可选「打断并发送」或「引导当前任务」，输入框为空时发送键仍是停止；输入框上方显示排队消息，点一条可以立即发送、编辑、删除或重试。（[#659](https://github.com/anywhere-labs/Agents-Anywhere/pull/659)）
+- 看过的会话会保存在手机上，重新打开 App 也能立即显示；工作设备离线时保留已显示的内容，在输入框上方提示「设备离线」，设备上线后自动补齐离线期间的消息；退出登录会删除手机上保存的会话内容。（[#PR_NUMBER](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR_NUMBER)）
 
 ### iOS
 

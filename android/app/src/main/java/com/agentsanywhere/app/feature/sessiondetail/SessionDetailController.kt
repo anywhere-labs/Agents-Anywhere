@@ -33,18 +33,84 @@ class NativeHistoryRejected(val code: String?, message: String) : IllegalStateEx
 class SessionDetailController(
     private val sessionsApi: SessionsApi,
     private val sessionStore: AuthSessionReader,
+    private val diskStore: SessionDiskStore? = null,
 ) {
 
 
-    val sessionCache = SessionStateCache()
+    val sessionCache = SessionStateCache(disk = diskStore)
+
+    init {
+        // Signing in to another account forgets what earlier accounts cached on this device.
+        diskScope()?.let { scope -> diskStore?.retainOnly(scope) }
+    }
 
     fun cacheScope(): String = listOf(sessionStore.readServerUrl(), sessionStore.readUserId(),
         sessionStore.readAuthSessionId().orEmpty()).joinToString("\u0000")
 
+    /** The disk cache is per server and account; without a known account nothing is stored. */
+    private fun diskScope(): String? {
+        if (diskStore == null) return null
+        val userId = sessionStore.readUserId().takeIf(String::isNotBlank) ?: return null
+        val serverUrl = sessionStore.readServerUrl().takeIf(String::isNotBlank) ?: return null
+        return SessionDiskStore.scopeFor(serverUrl, userId)
+    }
+
     fun visitKey(): String = cacheScope() + "\u0000" + sessionStore.readAccessToken()
 
     fun openVisit(sessionId: String): SessionVisit =
-        sessionCache.open(cacheScope(), sessionId, sessionStore.readAccessToken())
+        sessionCache.open(cacheScope(), sessionId, sessionStore.readAccessToken(), diskScope())
+
+    /**
+     * Reads the disk cache when memory had nothing for this visit. A hit is
+     * replayed through the snapshot projection and shown at once; the caller
+     * then recovers from its cursor instead of reading a snapshot.
+     */
+    suspend fun restoreVisit(
+        visit: SessionVisit,
+        devices: List<AgentDevice>,
+        currentState: SessionDetailState,
+    ): SessionDetailState? {
+        if (visit.cached != null) return null
+        val stored = sessionCache.readPersisted(visit) ?: return null
+        return withContext(Dispatchers.Default) {
+            val projection = mergeRemoteTimelineItems(
+                currentOrdering = emptyList(),
+                currentMessages = emptyList(),
+                incoming = stored.items,
+                replace = true,
+            )
+            val messages = mergeOptimistic(
+                sessionId = visit.sessionId,
+                realMessages = projection.messages,
+                currentMessages = currentState.messages,
+                orderingItems = projection.orderingItems,
+            )
+            SessionDetailState(
+                meta = SessionMeta(
+                    session = stored.session.toAgentSession(devices.associateBy { it.id }),
+                    remote = stored.session,
+                ),
+                timeline = SessionTimelineState(
+                    messages = messages,
+                    orderingItems = projection.orderingItems,
+                    remoteItems = emptyMap<String, com.agentsanywhere.app.api.RemoteTimelineItem>()
+                        .mergeRemoteItems(stored.items, replace = true),
+                    nextSeq = stored.nextSeq,
+                    hasMore = stored.hasMore,
+                    eventCursor = stored.eventCursor,
+                ),
+                realtime = SessionRealtimeState(cursor = stored.eventCursor),
+                commands = currentState.commands,
+                initialized = true,
+                sending = messages.hasPendingOptimisticSend(),
+            )
+        }.also { visit.readingPosition = stored.reading }
+    }
+
+    /** Saves the open visit to disk (backgrounding, throttled while reading); memory is untouched. */
+    fun saveVisit(visit: SessionVisit, state: SessionDetailState) {
+        sessionCache.save(visit, state)
+    }
 
     fun isCurrentVisit(visit: SessionVisit): Boolean = sessionCache.isCurrent(visit) &&
         visit.scope == cacheScope() && visit.token == sessionStore.readAccessToken()
@@ -173,10 +239,12 @@ class SessionDetailController(
                     limit = INITIAL_TIMELINE_LIMIT,
                 )
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                // An offline snapshot lists nothing; its empty page is not the history.
+                val items = if (snapshot.historyUnavailable) emptyList() else snapshot.timeline.items
                 val projection = mergeRemoteTimelineItems(
                     currentOrdering = emptyList(),
                     currentMessages = emptyList(),
-                    incoming = snapshot.timeline.items,
+                    incoming = items,
                     replace = true,
                 )
                 val messages = mergeOptimistic(
@@ -190,14 +258,18 @@ class SessionDetailController(
                     queue = mergeQueueState(currentState?.queue, snapshot.queue),
                     meta = SessionMeta(
                         session = snapshot.session.toAgentSession(devices.associateBy { it.id }),
+                        remote = snapshot.session,
                         serverTime = snapshot.serverTime,
                     ),
                     timeline = SessionTimelineState(
                         messages = messages,
                         orderingItems = projection.orderingItems,
+                        remoteItems = emptyMap<String, com.agentsanywhere.app.api.RemoteTimelineItem>()
+                            .mergeRemoteItems(items, replace = true),
                         nextSeq = snapshot.timeline.nextSeq,
                         hasMore = snapshot.timeline.hasMore,
                         eventCursor = snapshot.eventCursor,
+                        historyUnavailable = snapshot.historyUnavailable,
                     ),
                     runtime = snapshot.state.toSessionRuntimeState(snapshot.serverTime),
                     capabilities = snapshot.effectiveCapabilities.toEffectiveCapabilities(
@@ -315,6 +387,7 @@ class SessionDetailController(
                     next = next.applyMetaObservation(
                         response.session.toAgentSession(devices.associateBy { it.id }),
                         response.serverTime,
+                        response.session,
                     )
                 },
                 onFailure = { error ->
@@ -325,12 +398,20 @@ class SessionDetailController(
             )
             timelineRequest.await().fold(
                 onSuccess = { page ->
+                    if (page.historyUnavailable) {
+                        // Nothing was readable; the position stays for the next recovery.
+                        next = next.markHistoryUnavailable().let {
+                            it.copy(timeline = it.timeline.copy(isLoading = false))
+                        }
+                        return@fold
+                    }
                     val projection = mergeRemoteTimelineItems(
                         currentOrdering = next.timeline.orderingItems,
                         currentMessages = next.messages.filterNot { it.optimistic },
                         incoming = page.items,
                         replace = false,
                     )
+                    next = next.markHistoryLive()
                     next = next.copy(
                         timeline = next.timeline.copy(
                             messages = mergeOptimistic(
@@ -340,6 +421,7 @@ class SessionDetailController(
                                 projection.orderingItems,
                             ),
                             orderingItems = projection.orderingItems,
+                            remoteItems = next.timeline.remoteItems.mergeRemoteItems(page.items),
                             nextSeq = max(next.timeline.nextSeq, page.nextSeq),
                             eventCursor = "seq:${max(next.timeline.nextSeq, page.nextSeq)}",
                             isLoading = false,
@@ -548,6 +630,10 @@ class SessionDetailController(
                     beforeOrderSeq = beforeOrderSeq,
                     limit = TIMELINE_PAGE_LIMIT,
                 )
+                if (page.historyUnavailable) {
+                    // An offline page is empty but is not the start of history.
+                    return@runCatching SessionTimelineState(historyUnavailable = true)
+                }
                 val projection = mergeRemoteTimelineItems(
                     currentOrdering = emptyList(),
                     currentMessages = emptyList(),
@@ -557,6 +643,8 @@ class SessionDetailController(
                 SessionTimelineState(
                     messages = projection.messages,
                     orderingItems = projection.orderingItems,
+                    remoteItems = emptyMap<String, com.agentsanywhere.app.api.RemoteTimelineItem>()
+                        .mergeRemoteItems(page.items, replace = true),
                     nextSeq = page.nextSeq,
                     hasMore = page.hasMore,
                 )
@@ -612,7 +700,11 @@ class SessionDetailController(
                     queue = delivery.queueField,
                 )
                 if (!response.ok) {
-                    throw IllegalStateException(response.failureMessage("Runtime rejected the message."))
+                    // Keep the stable code so the screen can localize it (e.g. `command_outcome_unknown`).
+                    throw com.agentsanywhere.app.feature.sessions.RuntimeOperationFailure(
+                        response.errorCode,
+                        response.failureMessage("Runtime rejected the message."),
+                    )
                 }
                 SendMessageResult(
                     attachments = uploaded,
@@ -873,6 +965,12 @@ class SessionDetailController(
         expectedHistoryGeneration: Long,
     ): SessionDetailState {
         if (current.timeline.historyGeneration != expectedHistoryGeneration) return current
+        if (older.historyUnavailable) {
+            // Keep everything loaded and `hasMore`: the device holds the rest.
+            return current.markHistoryUnavailable().let {
+                it.copy(timeline = it.timeline.copy(loadingOlder = false, historyErrorMessage = null))
+            }
+        }
         val orderingItems = mergeTimelineOrderingItems(
             current.timeline.orderingItems,
             older.orderingItems,
@@ -892,6 +990,8 @@ class SessionDetailController(
             timeline = current.timeline.copy(
                 messages = messages,
                 orderingItems = orderingItems,
+                // Older revisions never replace newer ones (same rule as the projection).
+                remoteItems = older.remoteItems.mergeRemoteItems(current.timeline.remoteItems.values),
                 nextSeq = max(current.nextSeq, older.nextSeq),
                 hasMore = older.hasMore,
                 loadingOlder = false,

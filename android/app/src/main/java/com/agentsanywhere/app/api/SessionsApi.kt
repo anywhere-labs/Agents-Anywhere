@@ -699,6 +699,8 @@ class SessionsApi(
 
     internal fun parseProject(value: JSONObject): RemoteProject = value.toRemoteProject()
 
+    internal fun parseTimelineItem(value: JSONObject): RemoteTimelineItem = value.toRemoteTimelineItem()
+
     internal fun parseSessionEvent(value: JSONObject): RemoteSessionEventEnvelope {
         val payload = value.optJSONObject("payload") ?: JSONObject()
         val catalogType = payload.optNullableString("catalogType")
@@ -771,6 +773,8 @@ class SessionsApi(
             runtimeId = runtimeId,
             runtimeType = runtimeType,
             runtimeName = runtimeName,
+            planState = optNullableString("planState") ?: "none",
+            goalState = optNullableString("goalState") ?: "none",
         )
     }
 
@@ -832,6 +836,8 @@ class SessionsApi(
             nextSeq = optInt("nextSeq", 0),
             hasMore = optBoolean("hasMore", false),
             serverTime = optNullableString("serverTime"),
+            historySource = optNullableString("historySource") ?: HISTORY_SOURCE_LIVE,
+            deviceOffline = optBoolean("deviceOffline", false),
         )
     }
 
@@ -858,6 +864,8 @@ class SessionsApi(
             eventCursor = optString("eventCursor", "seq:0"),
             serverTime = optNullableString("serverTime"),
             queue = optJSONObject("queue")?.toSessionQueueState(),
+            historySource = optNullableString("historySource") ?: HISTORY_SOURCE_LIVE,
+            deviceOffline = optBoolean("deviceOffline", false),
         )
     }
 

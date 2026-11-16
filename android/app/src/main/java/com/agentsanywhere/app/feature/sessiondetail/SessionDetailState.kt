@@ -37,7 +37,18 @@ data class SessionDetailState(
         get() = timeline.hasMore
 
     fun withSession(session: AgentSession?): SessionDetailState = copy(meta = meta.copy(session = session))
+
+    /** Protocol 1.2: the device is offline and this history is the locally loaded part only. */
+    val historyUnavailable: Boolean
+        get() = timeline.historyUnavailable
 }
+
+internal fun SessionDetailState.markHistoryUnavailable(): SessionDetailState =
+    if (timeline.historyUnavailable) this else copy(timeline = timeline.copy(historyUnavailable = true))
+
+/** The device answered a read; a missing base still needs its snapshot. */
+internal fun SessionDetailState.markHistoryLive(): SessionDetailState =
+    if (!timeline.historyUnavailable) this else copy(timeline = timeline.copy(historyUnavailable = false))
 
 data class SessionRealtimeState(
     val connected: Boolean = false,
@@ -68,6 +79,8 @@ internal fun laterEventCursor(current: String, incoming: String): String {
 
 data class SessionMeta(
     val session: AgentSession? = null,
+    /** The protocol document behind [session], kept for the disk cache. */
+    val remote: com.agentsanywhere.app.api.RemoteSession? = null,
     val serverTime: String? = null,
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
