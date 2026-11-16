@@ -15,6 +15,10 @@
     "contracts:generate": "node scripts/generate-contract-types.mjs",
     "contracts:check": "node scripts/generate-contract-types.mjs --check"
   },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.4.0",
+    "zod": "^4.1.0"
+  },
   "devDependencies": {
     "@types/node": "^22.15.0",
     "json-schema-to-typescript": "^15.0.4",
