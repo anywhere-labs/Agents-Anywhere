@@ -147,7 +147,58 @@ export interface RuntimeHandle {
   open(target: OpenTarget, options: OpenOptions): Promise<RuntimeSession>
   /** 运行时级事件：原生会话目录变化、运行时状态、跟随建议等。 */
   readonly events: AsyncIterable<RuntimeHandleEvent>
+  /**
+   * 释放原生会话的外部持有者（Codex：退出占着线程的 Codex App）。有它时能力 `runtime.owner_release` 为 supported。
+   * 两步：先拟定计划给用户看，用户在触发它的 AA 会话里明确同意后才执行。
+   */
+  readonly ownerRelease?: OwnerReleasePort
   stop(): Promise<void>
+}
+
+/**
+ * 释放外部持有者：会话层确认（在哪个 AA 会话里触发，就在哪个会话里确认）。打开已有会话失败、错误
+ * `details.ownerRelease === 'available'` 时，会话引擎调 `prepare`，把计划作为该会话里的确认交给客户端展示；
+ * 用户同意后调 `execute`，然后重新打开；用户拒绝或离开时调 `discard`。
+ */
+export interface OwnerReleasePort {
+  prepare(ref: NativeSessionRef, context: { readonly sessionId: string }): Promise<OwnerReleasePrepareResult>
+  /** 只能在用户对这份计划明确同意之后调用。`force`：宽限期后仍未退出时允许强制结束（要单独征得同意）。 */
+  execute(planId: string, consent: { readonly force: boolean }): Promise<OwnerReleaseOutcome>
+  discard(planId: string): void
+}
+
+export type OwnerReleasePrepareResult =
+  | { readonly status: 'plan'; readonly plan: OwnerReleasePlan }
+  /** 已经可以打开（可以跟随，或没人持有），不需要释放。 */
+  | { readonly status: 'not_needed' }
+  | { readonly status: 'unavailable'; readonly reason: 'owner_not_running' | 'platform_unsupported' | 'process_table_unavailable' }
+
+export interface OwnerReleasePlan {
+  readonly planId: string
+  /** 触发它的 AA 会话；确认只在这个会话里展示。 */
+  readonly sessionId: string
+  readonly nativeSessionId: string
+  readonly expiresAt: number
+  /** 要结束的持有者（展示用）。 */
+  readonly owner: { readonly displayName: string; readonly processCount: number }
+  /** 持有者里其它正在使用的会话也会一起被释放（Codex App 的所有线程）。 */
+  readonly releasesOtherSessions: boolean
+  /** 宽限期（毫秒）：先请求正常退出，超时后才需要强制。 */
+  readonly gracePeriodMs: number
+  /** Runtime 专属的细节（进程 PID、写锁状态），客户端不依赖它的形状。 */
+  readonly details?: JsonObject
+}
+
+export interface OwnerReleaseOutcome {
+  readonly status:
+    | 'released' | 'already_released'
+    /** 计划过期、已用过或进程变了：重新 prepare 并再次征得同意。 */
+    | 'plan_expired' | 'plan_changed'
+    /** 宽限期后仍未退出，且没有同意强制。 */
+    | 'survivors'
+    /** 进程退出了，但会话仍被持有。 */
+    | 'still_held'
+  readonly details?: JsonObject
 }
 
 export interface Catalogs {

@@ -16,7 +16,7 @@
 import type { ConfigOption, HistoryItem, NativeSessionRef, RuntimeEvent } from '../../../application/ports/runtime-session.js'
 import { codexModelSelectionId } from '../../../domain/identity/index.js'
 import { negotiatedCapabilities } from '../../acp/capabilities.js'
-import { asRecord, type JsonRecord } from '../../acp/client.js'
+import { asRecord, type AgentInfo, type JsonRecord } from '../../acp/client.js'
 import type { AcpDialect, PlanReviewDecision } from '../../acp/dialect.js'
 import { translateUpdate } from '../../acp/mapping.js'
 import { historyPage } from '../../companions/native-history/page.js'
@@ -49,6 +49,15 @@ export function codexPlanReview(answer: { action: 'approve' | 'revise' | 'dismis
   return revise !== undefined ? { optionId: revise } : {}
 }
 
+/**
+ * codex-acp 是否把 `image/*` 的 `file://` resource_link 转成 Codex 原生 `localImage`（initialize 的
+ * `_meta.codexIpc.localImageLinks`）。不支持时模型只看到路径文本，所以图片附件能力按不支持报告，
+ * 客户端隐藏入口；AA 从不改发 data URL（会写进 rollout、撑大文件）。
+ */
+export function codexLocalImageLinks(info: AgentInfo): boolean {
+  return asRecord(info.meta.codexIpc).localImageLinks === true
+}
+
 const HISTORY_EVENTS = new Set<RuntimeEvent['type']>(['message.delta', 'message.completed', 'tool.started', 'tool.updated', 'notice'])
 
 export interface CodexDialectOptions {
@@ -70,7 +79,8 @@ export function codexDialect(options: CodexDialectOptions = {}): AcpDialect {
     clientCapabilities: () => ({ ...structuredClone(GENERIC_CLIENT_CAPABILITIES), _meta: { codexItemContext: true } }),
     initializeMeta: () => ({ codexIpc: { approvals: true, settings: true, historyReplacement: true, ...(options.announceNewThreads === true ? { announceNewThreads: true } : {}) } }),
     capabilities: info => [
-      ...negotiatedCapabilities(info, { steer: asRecord(info.meta.steering).supported === true, permissionCatalog: true }),
+      ...negotiatedCapabilities(info, { steer: asRecord(info.meta.steering).supported === true, permissionCatalog: true })
+        .map(capability => (capability.id === 'runtime.attachment' && !codexLocalImageLinks(info) ? { id: capability.id, supported: false } : capability)),
       { id: 'session.planning', supported: true },
       { id: 'session.plan_document', supported: true },
       { id: 'session.plan_review', supported: true },
