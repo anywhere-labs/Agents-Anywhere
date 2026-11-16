@@ -30,6 +30,7 @@ from meshcall import (
     Router,
     RouterCredentials,
     RpcContext,
+    RpcDuplex,
     mutates,
     query,
     service,
@@ -48,6 +49,7 @@ from agent_server.core.device_meshcall import (
     LinkAttachItem,
     LinkError,
     OutboxItem,
+    SecureChannelItem,
     StoreReadResponse,
     StreamChunk,
     command_route,
@@ -411,7 +413,26 @@ def _make_services(state: FakeDeviceState) -> list[object]:
     namespace["status"] = query(status)
     commands = service(f"{SERVICE_PREFIX}.Commands", targeted=True)(type("Commands", (), namespace))
 
-    return [Link(), Sessions(), Store(), commands()]
+    @service(f"{SERVICE_PREFIX}.Secure", targeted=True)
+    class Secure:
+        """Noise channels (the fake echoes)."""
+
+        @mutates(reason="a Noise channel sends and receives at the same time")
+        async def channel(
+            self, clientId: str, ch: str, wire: RpcDuplex[SecureChannelItem, SecureChannelItem], ctx: RpcContext
+        ) -> None:
+            """Echo ``ct`` back as ``echo:<ct>``; ``ct == "end"`` ends the call, ``ct == "fail"`` fails it."""
+            state.calls.append("secure.channel")
+            async for item in wire:
+                if item.ct == "end":
+                    return
+                if item.ct == "fail":
+                    raise MeshCallError(
+                        "failed_precondition", "not paired", details={"source": "device", "aaCode": "e2ee_not_paired"}
+                    )
+                await wire.send(SecureChannelItem(n=item.n, ct=f"echo:{item.ct}"))
+
+    return [Link(), Sessions(), Store(), commands(), Secure()]
 
 
 class FakeDevice:

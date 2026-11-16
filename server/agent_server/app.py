@@ -46,6 +46,7 @@ from agent_server.api import (
     sessions_terminal,
     shares,
     tokens_link,
+    tunnel,
 )
 from agent_server.core.api_namespace import API_V2_PREFIX
 from agent_server.core.process_settings import ProcessSettings
@@ -515,6 +516,7 @@ def create_app(
     app.include_router(connector_ingress.router, prefix=API_V2_PREFIX)
     app.include_router(device_link.router)
     app.include_router(device_transfers.router)
+    app.include_router(tunnel.router)
     app.include_router(agents.router, prefix=API_V2_PREFIX)
     app.include_router(pairing.router, prefix=API_V2_PREFIX)
     app.include_router(projects.router, prefix=API_V2_PREFIX)
