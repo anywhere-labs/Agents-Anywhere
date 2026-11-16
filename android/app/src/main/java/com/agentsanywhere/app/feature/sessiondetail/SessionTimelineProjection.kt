@@ -82,7 +82,7 @@ private fun mergeStreamedMessage(
     if (old.type != "message" || old.author != MessageAuthor.Agent || old.id != item.id || old.optimistic) return null
     if (old.revision != oldOrder.revision || old.updatedSeq != oldOrder.updatedSeq) return null
     if (item.revision <= old.revision && item.updatedSeq < old.updatedSeq) return TimelineProjection(ordering, messages)
-    val orderSeq = item.orderSeq.takeIf { it > 0 } ?: oldOrder.orderSeq
+    val orderSeq = item.orderSeq.takeIf { it.hasOrderSeq() } ?: oldOrder.orderSeq
     if (orderSeq != oldOrder.orderSeq || orderSeq != old.orderSeq) return null
     // Equal-order neighbours need the full updatedSeq/id tie breaker.
     if (messages.getOrNull(rowIndex - 1)?.orderSeq == orderSeq || messages.getOrNull(rowIndex + 1)?.orderSeq == orderSeq) return null
@@ -629,6 +629,9 @@ private fun String.stripInjectedAttachmentMentions(): String {
     return take(cut).trimEnd()
 }
 
+/** Timeline positions are zero-based; only a missing position ([MISSING_ORDER_SEQ]) is negative. */
+private fun Int.hasOrderSeq(): Boolean = this >= 0
+
 internal data class TimelineProjection(
     val orderingItems: List<TimelineOrderingItem>,
     val messages: List<TimelineMessage>,
@@ -640,12 +643,12 @@ private fun normalizeTimelineOrderingItems(
 ): List<TimelineOrderingItem> {
     val currentById = current.associateBy { it.id }
     var maxOrderSeq = maxOf(
-        current.maxOfOrNull { it.orderSeq.takeIf { value -> value > 0 } ?: 0 } ?: 0,
-        incoming.maxOfOrNull { it.orderSeq.takeIf { value -> value > 0 } ?: 0 } ?: 0,
+        current.maxOfOrNull { it.orderSeq.takeIf { value -> value.hasOrderSeq() } ?: 0 } ?: 0,
+        incoming.maxOfOrNull { it.orderSeq.takeIf { value -> value.hasOrderSeq() } ?: 0 } ?: 0,
     )
     return incoming.map { item ->
-        val existingOrder = currentById[item.id]?.orderSeq?.takeIf { it > 0 }
-        val normalizedOrder = item.orderSeq.takeIf { it > 0 }
+        val existingOrder = currentById[item.id]?.orderSeq?.takeIf { it.hasOrderSeq() }
+        val normalizedOrder = item.orderSeq.takeIf { it.hasOrderSeq() }
             ?: existingOrder
             ?: (++maxOrderSeq)
         TimelineOrderingItem(
@@ -666,8 +669,8 @@ internal fun mergeTimelineOrderingItems(
         val existing = byId[observed.id]
         if (existing == null || observed.revision > existing.revision || observed.updatedSeq >= existing.updatedSeq) {
             byId[observed.id] = observed.copy(
-                orderSeq = observed.orderSeq.takeIf { it > 0 }
-                    ?: existing?.orderSeq?.takeIf { it > 0 }
+                orderSeq = observed.orderSeq.takeIf { it.hasOrderSeq() }
+                    ?: existing?.orderSeq?.takeIf { it.hasOrderSeq() }
                     ?: ((byId.values.maxOfOrNull { it.orderSeq } ?: 0) + 1),
             )
         }

@@ -988,7 +988,7 @@ class SessionsApi(
                 ?: "",
             content = content,
             source = optJSONObject("source") ?: JSONObject(),
-            orderSeq = optInt("orderSeq", 0),
+            orderSeq = if (isNull("orderSeq")) MISSING_ORDER_SEQ else optInt("orderSeq", MISSING_ORDER_SEQ),
             revision = optInt("revision", 1),
             updatedSeq = optInt("updatedSeq", 0),
             createdAt = optString("createdAt", ""),

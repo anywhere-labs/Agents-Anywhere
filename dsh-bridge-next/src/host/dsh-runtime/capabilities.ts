@@ -14,7 +14,8 @@ export interface RuntimeCapability {
 export function capabilities(sessionId?: string, writable = false, userQuestions = false,
   controls: { approval?: boolean, model?: boolean, effort?: boolean, permission?: boolean, attachments?: boolean, files?: boolean, commands?: CommandCapability } = {}) {
   const enabled = new Set(['runtime.config', ...(writable ? ['session.send_message', 'session.interrupt'] : []),
-    ...(userQuestions || controls.approval ? ['session.interaction.approval'] : []),
+    // Notice responses include continuing a failed turn, which needs only the Session Controller.
+    ...(userQuestions || controls.approval || writable ? ['session.interaction.approval'] : []),
     ...(controls.model ? ['catalog.model'] : []), ...(controls.effort ? ['catalog.effort'] : []),
     ...(controls.permission ? ['catalog.permission'] : []),
     ...(controls.commands?.available ? ['session.commands'] : []),

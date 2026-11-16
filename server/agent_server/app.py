@@ -38,6 +38,7 @@ from agent_server.api import (
     service,
     session_goals,
     session_planning,
+    session_queue,
     sessions,
     sessions_fs,
     sessions_terminal,
@@ -169,6 +170,8 @@ def create_app(
             goal_task = asyncio.create_task(
                 run_goal_outbox(app.state.store, app.state.timeline_broker)
             )
+            # Messages that waited across a restart go out once their session is idle.
+            app.state.message_queue_dispatcher.start()
             if process_settings.malloc_trim_interval_seconds > 0:
                 # Opt-in mitigation for glibc heap creep in long-lived workers (#466).
                 trim_task = asyncio.create_task(
@@ -192,6 +195,9 @@ def create_app(
             driver = getattr(app.state, "channel_driver", None)
             if driver is not None:
                 await driver.close()
+            dispatcher = getattr(app.state, "message_queue_dispatcher", None)
+            if dispatcher is not None:
+                await dispatcher.close()
             if goal_task is not None:
                 goal_task.cancel()
                 await asyncio.gather(goal_task, return_exceptions=True)
@@ -340,6 +346,17 @@ def create_app(
             os.environ.get("AGENT_SERVER_USAGE_FLUSH_INTERVAL_SECONDS", "1")
         ),
     )
+    from agent_server.deps import session_run_service_for
+    from agent_server.services.session_message_queue import MessageQueueDispatcher
+
+    app.state.message_queue_dispatcher = MessageQueueDispatcher(
+        app.state.store,
+        app.state.timeline_broker,
+        lambda: session_run_service_for(app.state),
+        coordinator=app.state.redis,
+        # Read through app state so a replaced RPC manager is used.
+        is_online=lambda connector_id: app.state.rpc.is_online(connector_id),
+    )
     app.state.usage_maintenance = UsageMaintenanceLoop(
         app.state.store,
         app.state.redis,
@@ -436,6 +453,7 @@ def create_app(
     app.include_router(projects.router, prefix=API_V2_PREFIX)
     app.include_router(sessions.router, prefix=API_V2_PREFIX)
     app.include_router(session_planning.router, prefix=API_V2_PREFIX)
+    app.include_router(session_queue.router, prefix=API_V2_PREFIX)
     app.include_router(session_goals.router, prefix=API_V2_PREFIX)
     app.include_router(sessions_fs.router, prefix=API_V2_PREFIX)
     app.include_router(sessions_terminal.router, prefix=API_V2_PREFIX)

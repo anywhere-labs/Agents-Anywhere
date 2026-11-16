@@ -1,5 +1,36 @@
 # DSH Bridge Next 验证记录
 
+## DSH 0.2.2-rc.3 测试基线（2026-11-13）
+
+`@deepseek-ai/dsh-*` 开发依赖从 `0.2.2-rc.1` 升到 `0.2.2-rc.3`。rc.3 自带的 Cordis 4.1.0（`cordis-plugin-group`、`cordis-plugin-include`、`cordis-plugin-loader` 1.1.0）和 Schemastery 3.19.0 与 rc.1 相同，peer 范围不变。新增开发依赖 `@deepseek-ai/dsh-error`：rc.3 把 `HarnessError` 拆到这个包，`dsh-llm`、`dsh-attachment`、`dsh-sandbox` 只把它列为 peer 依赖。
+
+只升依赖、不改其他文件时：
+
+- 类型检查报 3 处 `Cannot find module '@deepseek-ai/dsh-error'`，都来自上面三个包的类型声明。补上开发依赖后通过。
+- `check:build` 渲染设置面板时抛出 `ReferenceError: HTMLButtonElement is not defined`：rc.3 的 `dsh-client-ui-primitives` 在 `Menu` 里用 `instanceof HTMLButtonElement` 处理焦点，产物检查的 jsdom 环境原先没有暴露这个全局。`scripts/check-client.ts` 补上后通过，真实浏览器不受影响。
+- 测试和插件 `src/**` 都无需改动。
+
+修正后：本机 Node 22.23.3（CI 为 22.23.2）上 `corepack yarn check`（check:deps、typecheck、build、check:build、test）exit 0，250 项全部通过，没有跳过，包括需要 PostgreSQL 的探针；Node 24.14.0 上 `corepack yarn test` 同样 250 项全部通过。在全新临时 `DSH_HOME` 中，用官方 `@deepseek-ai/dsh@0.2.2-rc.3` 执行 `dsh plugin --profile aa-023-smoke add "link:$PWD"` 成功，`--dump-config` 包含 `agents-anywhere-bridge-next` 配置行；除 pnpm 对 `link:` 依赖的通用 peer 提示外没有报错。
+
+`0.2.2-rc.3` 于 2026-11-13 发布，发布后 24 小时内在本地安装同样需要设置 `YARN_NPM_MINIMAL_AGE_GATE=0`（CI 已设置）。本机如果沿用旧的 `server/uv.lock`，两个 Python 探针会因为 SQLAlchemy 2.0 没有 `await_` 而失败（Server 自 #559 起用到 SQLAlchemy 2.1）；执行 `uv lock --project server --upgrade-package sqlalchemy` 后通过。CI 每次重新解析依赖，不受影响。
+
+对照 rc.1 之后的升级指南（DSH 仓库 `docs/upgrade-guide/v0.2.2-rc.1/`）和会话持久化变更记录，核对过、无需改动的部分：
+
+- 空 prompt 继续生成：rc.3 的 SessionController 接受空内容的 prompt，在可重试的失败之后继续生成，并写入一条 `source.kind: 'retry'` 的空 `user/message`。插件只把 `source.kind: 'user'` 的消息同步为用户消息，自己也不发空内容，所以 AA 不会出现空气泡，也不会误触发继续生成。AA 目前没有这个入口。
+- `Session.append` 新增批量写入，整批提交后再逐个通知。插件只读取回调传入的事件，后续处理都是异步的。
+- 子 Agent 的判定改为只看 `header.origin === 'subagent'`（移除了运行时归属 `roots()`、`isOwnedBy`），与插件一直使用的判定一致。
+- 运行时上下文消息改用 `<system-reminder>` 包装，新增 `team/mode` 事件、`subagent/catalog` 第 3 版和 Team 任务的 `ownerName`：插件不同步这几类记录。
+- 审批拒绝、附件读取等工具失败现在带 `error.name` 与 `error.code`，插件照常显示为失败。
+- 实验性 Computer Use 新增「移动鼠标指针」授权，同样使用 `approval` 意图，自带中文文案，没有对象名。AA 显示为标题「授权请求」、选项「本会话允许」「拒绝」的单选题，现有单元测试覆盖这种形状。
+- 侧栏与插件管理页的插槽契约（`sidebar.footer.action`、`plugins.bundle.config`、`plugins.detail.actions`），以及 Connection 的 `browserPeer`、`createSharedFetchHandler` 和五个参数的 `wireStream.open` 都没有变化。macOS 窗口拖动区域的新规则只影响自定义浮层，插件使用官方 `Modal` 与 `Menu`。
+
+rc.3 之后 DSH master 上尚未发布、下次升级要复核的变化：
+
+- Client 模块改由 renderer 安装样式。插件仍自己插入样式标签，可以正常加载，但热更新或停用插件后，旧样式要刷新页面才会消失；改用 `meta.stylesheets` 会让旧版 DSH 加载不到样式，需要保留回退。
+- master 上的 `@deepseek-ai/cordis` 已合入上游 Cordis 4.0.0-rc.12（`ctx.root`、`Service.config` 等改名），插件没有用到这些接口；如果发布的版本超出 4.1.x，需要放宽 peer。
+
+未做：DSH Desktop、Windows、手机端实机验收。
+
 ## DSH 0.2.2-rc.1 测试基线（2026-11-04）
 
 `@deepseek-ai/dsh-*` 开发依赖从 `0.2.1-rc.2` 升到 `0.2.2-rc.1`；Cordis 对齐 0.2.2 线（`cordis` 4.1.0，`cordis-plugin-group`、`cordis-plugin-include`、`cordis-plugin-loader` 1.1.0），`schemastery` 升到 3.19.0。Cordis 与 Schemastery 的 peer 从 `~4.0.4`、`~3.18.4` 放宽为 `~4.0.4 || ~4.1.0`、`~3.18.4 || ~3.19.0`，否则在 0.2.2 profile 中安装会提示 peer 不满足。DSH 0.2.2 仍只按 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*` peer 判断插件兼容性（预发布版本参与匹配），Typert peer `>=0.2.0-rc.1 <0.3.0-0` 不变，`0.2.2-rc.1` 在范围内。新增开发依赖 `@deepseek-ai/dsh-util-file-drag`（`dsh-client-ui-primitives` 的类型声明引用它，但只把它列在自己的 devDependencies 里）和 `@deepseek-ai/dsh-tool-executor-native`（测试夹具使用）。

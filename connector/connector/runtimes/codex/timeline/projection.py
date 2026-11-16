@@ -24,6 +24,11 @@ from connector.runtimes.codex.timeline.agent_calls import (
     subagent_activity_arguments_from_raw,
     subagent_activity_native_action,
 )
+from connector.runtimes.codex.timeline.auto_review import (
+    AUTOMATIC_APPROVAL_REVIEW,
+    auto_review_content,
+    auto_review_item_status,
+)
 from connector.runtimes.codex.timeline.content import (
     codex_timeline_content_from_mapping,
 )
@@ -92,6 +97,7 @@ class CodexTimelineProjection:
     explicit_derived_key: str | None = None
     attachments: tuple[Mapping[str, Any], ...] = ()
     revision: int = 1
+    review_content: Mapping[str, Any] | None = None
 
     def with_client_message_id(self, client_message_id: str) -> CodexTimelineProjection:
         return replace(
@@ -216,6 +222,8 @@ class CodexTimelineProjection:
         )
 
     def content_mapping(self) -> Mapping[str, Any]:
+        if self.review_content is not None:
+            return dict(self.review_content)
         if self.raw_type == "reasoning":
             if self.text:
                 return {
@@ -479,6 +487,17 @@ def timeline_projection_from_event(
 def timeline_projection_from_raw(raw: Mapping[str, Any]) -> CodexTimelineProjection:
     raw_dict = dict(raw)
     raw_type = timeline_raw_type(raw_dict)
+    if raw_type == AUTOMATIC_APPROVAL_REVIEW:
+        return CodexTimelineProjection(
+            native_id=native_item_id(raw_dict),
+            raw_type=raw_type,
+            status=auto_review_item_status(raw_dict),
+            role=timeline_item_role(raw_dict),
+            turn_id=timeline_item_turn_id(raw_dict),
+            explicit_derived_key=explicit_derived_key(raw_dict),
+            revision=timeline_item_revision(raw_dict),
+            review_content=auto_review_content(raw_dict),
+        )
     if raw_type == "agentMessage" and isinstance(raw_dict.get("questions"), list):
         # thread/read and IPC use an async AgentMessage item, while raw model
         # notifications carry the original function call. Both share call_id.

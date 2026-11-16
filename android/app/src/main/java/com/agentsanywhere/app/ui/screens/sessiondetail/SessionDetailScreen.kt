@@ -806,7 +806,7 @@ private fun SessionDetailVisit(
         val beforeOrderSeq = state.timeline.orderingItems
             .minOfOrNull { it.orderSeq }
             ?: state.messages.filterNot { it.optimistic }.minOfOrNull { it.orderSeq }
-        if (beforeOrderSeq == null || beforeOrderSeq <= 1) {
+        if (beforeOrderSeq == null || beforeOrderSeq <= 0) {
             olderInFlight.set(false)
             state = state.copy(
                 timeline = state.timeline.copy(hasMore = false, loadingOlder = false),
@@ -1266,6 +1266,17 @@ private fun SessionDetailVisit(
             scope.launch { pagerState.animateScrollToPage(0) }
         } else {
             navigate(AppDestination.Sessions)
+        }
+    }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { }
+    LaunchedEffect(sessionId) {
+        // Android 13+ only shows notifications (including the terminal service's) after a runtime grant.
+        if (sessionId != null && shouldRequestNotificationPermission(context)) {
+            notificationPermissionRequested = true
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 
@@ -2093,7 +2104,8 @@ private fun SessionDetailVisit(
                             modifier = Modifier.align(Alignment.TopCenter),
                         )
                         SessionDetailHeader(
-                            title = state.session?.title ?: stringResource(R.string.session_title_fallback),
+                            title = state.session?.title?.takeIf(String::isNotBlank)
+                                ?: stringResource(R.string.session_title_fallback),
                             darkMode = darkMode,
                             onLeftClick = ::openRuntimeSettings,
                             onRightClick = { scope.launch { pagerState.animateScrollToPage(1) } },
@@ -2716,3 +2728,12 @@ private fun uniqueGalleryFile(directory: File, displayName: String): File {
 
 private const val MAX_ATTACHMENT_FILES = 6
 private const val MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+
+/** Ask at most once per app process; the system stops prompting after the user declines twice. */
+private var notificationPermissionRequested = false
+
+private fun shouldRequestNotificationPermission(context: Context): Boolean =
+    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+        !notificationPermissionRequested &&
+        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+        PackageManager.PERMISSION_GRANTED

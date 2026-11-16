@@ -18,10 +18,16 @@ from agent_server.core.capabilities import (
     RUNTIME_ATTACHMENT,
     SESSION_INTERRUPT,
     SESSION_PLANNING,
+    SESSION_QUEUE,
     SESSION_SEND_MESSAGE,
     SESSION_STEER,
 )
+from agent_server.core.message_queue import (
+    QUEUEABLE_SESSION_STATUSES,
+    MessageQueueError,
+)
 from agent_server.core.models import (
+    AttachmentRef,
     InlineAttachmentRef,
     MessageCreateRequest,
     RpcResponsePayload,
@@ -55,6 +61,11 @@ from agent_server.services.effective_capabilities import (
     read_session_capability_facts,
 )
 from agent_server.services.repository_ports import SessionRunRepository
+from agent_server.services.session_message_queue import (
+    QueueDispatchFailure,
+    QueueNotReadyError,
+    publish_queue_state,
+)
 from agent_server.services.usage_events import (
     NullUsageRecorder,
     UsageRecorder,
@@ -118,6 +129,8 @@ class SessionRunService:
         usage_recorder: UsageRecorder | NullUsageRecorder | None = None,
         prepare_model_channel: Callable[..., Awaitable[str]] | None = None,
         admit_runtime: Callable[..., AbstractAsyncContextManager[None]] | None = None,
+        message_queue: Any | None = None,
+        queue_broker: Any | None = None,
     ) -> None:
         self._store = store
         self._manager = manager
@@ -125,6 +138,9 @@ class SessionRunService:
         self._usage = usage_recorder or NullUsageRecorder()
         self._prepare_model_channel = prepare_model_channel
         self._admit_runtime = admit_runtime
+        # ``wake(session_id)``: schedules dispatch of the session's queue.
+        self._message_queue = message_queue
+        self._queue_broker = queue_broker
 
     def _admitted(self, connector_id: str, runtime_id: str, *, user_id: str) -> AbstractAsyncContextManager[None]:
         """Keep a model channel switch from restarting the runtime under this request."""
@@ -632,11 +648,13 @@ class SessionRunService:
         payload: MessageCreateRequest,
         *,
         user_id: str,
+        from_queue: bool = False,
     ) -> RpcResponsePayload:
         session_id = session.id
         await self._ensure_session_runtime_running(session, user_id=user_id)
         from agent_server.core.planning.commands import parse_plan_command
-        intent = parse_plan_command(payload.content)
+        # A queued message is delivered as an ordinary message.
+        intent = None if from_queue else parse_plan_command(payload.content)
         if intent:
             from agent_server.core.models import RpcError
             from agent_server.core.planning.models import PlanningRequest
@@ -653,7 +671,19 @@ class SessionRunService:
             return RpcResponsePayload(ok=result.ok, result={"planning": result.model_dump(mode="json")},
                 error=None if result.ok else RpcError(code=result.code or "planning_rejected", message=result.message or "规划操作未完成。"))
         runtime_status = await self._read_runtime_status(session)
+        if not from_queue and payload.queue in {"auto", "interrupt"}:
+            queued = await self._enqueue_if_busy(
+                session, payload, runtime_status=runtime_status, user_id=user_id,
+            )
+            if queued is not None:
+                return queued
         if runtime_status not in {"idle", "error"}:
+            if from_queue:
+                raise QueueNotReadyError(f"session is {runtime_status}")
+            if payload.queue == "never":
+                raise SessionRunConflictError(
+                    {"code": "session_busy", "message": f"session is {runtime_status}"}
+                )
             raise SessionRunConflictError(f"session is {runtime_status}")
         await self._require_session_capability(
             session,
@@ -729,6 +759,114 @@ class SessionRunService:
             )
         )
         return RpcResponsePayload(ok=True, result=result)
+
+    async def _enqueue_if_busy(
+        self,
+        session: SessionView,
+        payload: MessageCreateRequest,
+        *,
+        runtime_status: str,
+        user_id: str,
+    ) -> RpcResponsePayload | None:
+        """Queue the message when it cannot start a turn now.
+
+        A message also waits when earlier ones still do, so the queue keeps
+        its order even if the session is momentarily idle.
+        """
+        busy = runtime_status in QUEUEABLE_SESSION_STATUSES
+        if not busy and not await self._store.session_queue_has_items(session.id):
+            return None
+        await self._require_session_capability(session, SESSION_QUEUE, user_id=user_id)
+        attachments = [
+            {key: item.get(key) for key in ("fileId", "name", "mediaType", "size")}
+            for item in await self._attachment_payloads(
+                session_id=session.id,
+                user_id=user_id,
+                file_ids=[attachment.fileId for attachment in payload.attachments],
+            )
+        ]
+        interrupt = payload.queue == "interrupt"
+        try:
+            item, queue, created = await self._store.enqueue_session_message(
+                session.id,
+                user_id=user_id,
+                client_message_id=payload.clientMessageId or f"queue_{uuid4().hex}",
+                content=payload.content,
+                attachments=attachments,
+                at_head=interrupt,
+                interrupt=interrupt,
+            )
+        except MessageQueueError as exc:
+            raise SessionRunConflictError(exc.detail()) from exc
+        if created:
+            await publish_queue_state(self._store, self._queue_broker, session.id, queue)
+            if self._message_queue is not None:
+                self._message_queue.wake(session.id)
+        return RpcResponsePayload(
+            ok=True,
+            result={
+                "delivery": "queued",
+                "item": item,
+                "queuePosition": item["position"],
+                "queue": queue,
+            },
+        )
+
+    async def read_session_runtime_status(self, session: SessionView) -> SessionStatus:
+        return await self._read_runtime_status(session)
+
+    async def dispatch_queued_message(
+        self,
+        session_id: str,
+        item: dict[str, Any],
+        *,
+        user_id: str,
+    ) -> None:
+        """Send a queued message as a new turn, for the queue dispatcher.
+
+        Raises ``QueueNotReadyError`` when the message should keep waiting and
+        ``QueueDispatchFailure`` when it was refused.
+        """
+        try:
+            session = await self._store.get_session(session_id, user_id=user_id)
+        except KeyError:
+            raise QueueDispatchFailure(
+                "session_not_found", "The session is no longer available to the sender."
+            ) from None
+        if session.archived:
+            raise QueueDispatchFailure("session_archived", "The session was archived.")
+        if not session.takeover:
+            raise QueueNotReadyError("session is read-only until takeover is enabled")
+        if not await self._manager.is_online(session.connectorId):
+            raise QueueNotReadyError("connector is offline")
+        payload = MessageCreateRequest(
+            content=item["content"],
+            attachments=[
+                AttachmentRef(fileId=attachment["fileId"])
+                for attachment in item.get("attachments") or []
+            ],
+            clientMessageId=item["clientMessageId"],
+        )
+        try:
+            async with self._admitted(session.connectorId, _session_runtime_id(session), user_id=user_id):
+                await self._send_message_admitted(
+                    session, payload, user_id=user_id, from_queue=True,
+                )
+        except QueueNotReadyError:
+            raise
+        except SessionRunNotFoundError as exc:
+            code = "attachment_missing" if "attachment" in str(exc.detail) else "session_not_found"
+            raise QueueDispatchFailure(code, str(exc.detail)) from exc
+        except SessionRunConflictError as exc:
+            # Offline, or the runtime has not yet reported that the turn ended:
+            # keep waiting for the next wake-up instead of failing the message.
+            if exc.detail == "connector is offline" or exc.detail == (
+                f"session capability is unavailable: {SESSION_SEND_MESSAGE}"
+            ):
+                raise QueueNotReadyError(str(exc.detail)) from exc
+            raise QueueDispatchFailure(*_queue_failure(exc.detail)) from exc
+        except SessionRunError as exc:
+            raise QueueDispatchFailure(*_queue_failure(exc.detail)) from exc
 
     async def _persist_operation_source_state(
         self,
@@ -885,7 +1023,9 @@ class SessionRunService:
             raise SessionRunConflictError("connector is offline")
         await self._ensure_session_runtime_running(session, user_id=user_id)
         runtime_status = await self._read_runtime_status(session)
-        if runtime_status != "running":
+        # ACP runtimes accept steering while an approval waits; the runtime's
+        # own ``session.steer`` availability below decides the rest.
+        if runtime_status not in {"running", "waiting_approval"}:
             raise SessionRunConflictError("session is not running")
         await self._require_session_capability(
             session,
@@ -1218,6 +1358,18 @@ class SessionRunService:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         await self._store.clear_active_run(session_id)
         return RpcResponsePayload(ok=True, result=result)
+
+
+def _queue_failure(detail: Any) -> tuple[str, str]:
+    if isinstance(detail, dict):
+        code = detail.get("code")
+        message = detail.get("message")
+        return (
+            code if isinstance(code, str) and code else "queue_dispatch_failed",
+            message if isinstance(message, str) and message else "The queued message could not be sent.",
+        )
+    text = str(detail) if detail else "The queued message could not be sent."
+    return "queue_dispatch_failed", text
 
 
 def _unconfirmed_creation_detail(session_id: str, code: str, message: str) -> dict[str, Any]:

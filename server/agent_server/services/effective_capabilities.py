@@ -25,10 +25,12 @@ from agent_server.core.capabilities import (
     SESSION_PLAN_REVIEW,
     SESSION_GOAL,
     SESSION_PLANNING,
+    SESSION_QUEUE,
     SESSION_RECOVER,
     SESSION_SEND_MESSAGE,
     SESSION_STEER,
 )
+from agent_server.core.message_queue import MESSAGE_QUEUE_MAX_ITEMS
 from agent_server.core.models import SessionView
 from agent_server.core.protocol import ProtocolCapability, ProtocolCapabilitySet
 from agent_server.infra.connector_rpc import ConnectorRpcManager
@@ -78,6 +80,8 @@ class SessionCapabilityRepository(Protocol):
         *,
         user_id: str | None = None,
     ) -> dict[str, Any]: ...
+
+    async def get_session(self, session_id: str) -> SessionView: ...
 
     async def get_session_seq(self, session_id: str) -> int: ...
 
@@ -176,10 +180,20 @@ async def publish_connector_session_capabilities(
             return
         stamp: tuple[int, str] | None = None
         index: SessionCapabilityIndex | None = None
-        for session in sessions:
+        for listed in sessions:
             if active.get(connector_id) is not token:
                 return
-            async with store.session_revision_fence(session.id):
+            async with store.session_revision_fence(listed.id):
+                # The list predates this fence. Takeover, runtime instance and
+                # ownership can change before the batch reaches a session, and
+                # projecting the listed row would push stale permissions.
+                try:
+                    session = await store.get_session(listed.id)
+                    next_seq = await store.get_session_seq(listed.id)
+                except KeyError:
+                    continue
+                if session.connectorId != connector_id:
+                    continue
                 session = await with_effective_session_connector_status(presence, session)
                 # Other server processes can publish newer facts while this
                 # batch waits for a session fence. Check only the small stamp;
@@ -191,7 +205,6 @@ async def publish_connector_session_capabilities(
                     ))
                     stamp = current_stamp
                 effective_capabilities = index.project(session)
-                next_seq = await store.get_session_seq(session.id)
                 if active.get(connector_id) is not token:
                     return
                 await publisher.publish(
@@ -301,10 +314,50 @@ class SessionCapabilityIndex:
                 session, capability_id, source,
                 online=session.connectorStatus == "online",
             ))
+        send = next((item for item in capabilities if item.capabilityId == SESSION_SEND_MESSAGE), None)
+        capabilities.append(server_queue_capability(session, send))
         return ProtocolCapabilitySet(
             revision=effective_capability_revision(session, self.source),
             capabilities=capabilities,
         )
+
+
+def server_queue_capability(
+    session: SessionView,
+    send_message: ProtocolCapability | None,
+) -> ProtocolCapability:
+    """``session.queue`` follows whether the runtime can take messages at all.
+
+    A running turn makes ``session.send_message`` unavailable; that is exactly
+    when the queue is useful, so only support, presence and takeover count.
+    """
+    supported = send_message is not None and send_message.supported
+    online = session.connectorStatus == "online"
+    archived = bool(getattr(session, "archived", False))
+    available = supported and online and not archived
+    allowed = bool(session.takeover)
+    if not supported:
+        reason = "runtime_capability_unsupported"
+    elif not online:
+        reason = "connector_offline"
+    elif archived:
+        reason = "session_archived"
+    elif not allowed:
+        reason = "session_not_taken_over"
+    else:
+        reason = None
+    return ProtocolCapability(
+        capabilityId=SESSION_QUEUE,
+        scope="session",
+        runtime=session.runtime,
+        runtimeId=session.runtimeId,
+        sessionId=session.id,
+        supported=supported,
+        available=available,
+        allowed=allowed,
+        unavailableReason=reason,
+        metadata={"source": "server.message_queue", "maxItems": MESSAGE_QUEUE_MAX_ITEMS},
+    )
 
 
 def derive_session_effective_capabilities(

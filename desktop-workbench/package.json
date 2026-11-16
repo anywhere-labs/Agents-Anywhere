@@ -25,7 +25,8 @@
     "ensure:uv": "node scripts/ensure-uv.mjs",
     "bundle:uv": "node scripts/prepare-uv.mjs",
     "bundle:python": "node scripts/prepare-python.mjs",
-    "pack": "yarn bundle:uv && yarn bundle:python && yarn build && electron-builder --dir",
+    "bundle:pi": "node scripts/prepare-pi-runtime.mjs",
+    "pack": "yarn bundle:uv && yarn bundle:python && yarn bundle:pi && yarn build && electron-builder --dir",
     "dist": "node scripts/dist-desktop.mjs",
     "dist:mac": "node scripts/dist-desktop.mjs mac",
     "dist:win": "node scripts/dist-desktop.mjs win"
@@ -40,6 +41,7 @@
   },
   "build": {
     "appId": "dev.agentsanywhere.workbench",
+    "afterPack": "scripts/after-pack.cjs",
     "productName": "Agents Anywhere",
     "files": [
       "dist/electron/**",
@@ -119,7 +121,10 @@
     },
     "mac": {
       "extraResources": [
-        { "from": "dist/connector-guard", "to": "connector-guard" }
+        {
+          "from": "dist/connector-guard",
+          "to": "connector-guard"
+        }
       ],
       "icon": "build/icon.icns",
       "hardenedRuntime": true,
