@@ -46,6 +46,14 @@ def _receipt_view(row: Any) -> dict[str, Any]:
     }
 
 
+def _is_plain(raw: str | None) -> bool:
+    try:
+        envelope = json.loads(raw) if raw else None
+    except ValueError:
+        return False
+    return isinstance(envelope, dict) and envelope.get("mode") == "plain"
+
+
 def _plain_title(raw: str | None) -> str | None:
     """The title of a stored plain display envelope, if any."""
 
@@ -191,21 +199,21 @@ class DeviceLinkRepositoryMixin:
             # The v2 title/cwd columns, for clients that do not read envelopes yet, follow the
             # order clients display: ``displayUser``, then ``displayDevice``. Only plain envelopes
             # give plaintext; required mode and sealed envelopes leave none on the Server.
-            if not accept_display:
+            user_title = _plain_title(before.display_user)
+            if accept_display and display.mode == "plain" and isinstance(display.payload, dict):
+                device_title = display.payload.get("title")
+                title = user_title or (device_title if isinstance(device_title, str) else None)
+                if title is not None:
+                    values["title"] = title
+                if isinstance(display.payload.get("cwd"), str):
+                    values["cwd"] = display.payload["cwd"]
+            else:
+                # Encrypted (required mode, or the device seals): no plaintext stays on the Server,
+                # including a user title renamed in plain before encryption was turned on.
                 values["title"] = None
                 values["cwd"] = None
-            else:
-                user_title = _plain_title(before.display_user)
-                if display.mode == "plain" and isinstance(display.payload, dict):
-                    device_title = display.payload.get("title")
-                    title = user_title or (device_title if isinstance(device_title, str) else None)
-                    if title is not None:
-                        values["title"] = title
-                    if isinstance(display.payload.get("cwd"), str):
-                        values["cwd"] = display.payload["cwd"]
-                else:
-                    values["title"] = user_title
-                    values["cwd"] = None
+                if _is_plain(before.display_user):
+                    values["display_user"] = None
             await conn.execute(update(sessions).where(sessions.c.id == session_id).values(**values))
         return (
             before.status != values["status"]
@@ -213,6 +221,7 @@ class DeviceLinkRepositoryMixin:
             or before.goal_state != summary.goalState
             or (summary.latestTurnEndSeq is not None and int(before.latest_turn_end_seq) != summary.latestTurnEndSeq)
             or before.display_device != values["display_device"]
+            or "display_user" in values
             or before.sort_at != summary.sortAt
             or int(before.head_seq) != summary.headSeq
         )

@@ -12,7 +12,8 @@ import asyncio
 from device_link_helpers import acked, eventually, server, summary, user_and_device
 from mesh_fixtures import RouterProcess
 
-from agent_server.core.device_meshcall import registered_services
+from agent_server.core.device_meshcall import DisplayEnvelope, registered_services
+from agent_server.core.e2ee_settings import E2eeSettings
 from scripts.v3_fake_device import connect_device
 
 DIGEST = "hmac-sha256:" + "A" * 43
@@ -209,6 +210,21 @@ def test_normal_mode_user_title_wins_over_the_device_title(mesh_router: RouterPr
                 assert session.title == "mine"
                 assert session.displayDevice["payload"]["title"] == "device two"
                 assert session.cwd == "/repo"
+
+                # Encryption turned on: the next summary leaves no plaintext, not even the user's title.
+                app.state.e2ee_settings = E2eeSettings(mode="required")
+                encrypted = device.state.push_outbox("session.summary", summary("sess_t1", 3, title="device three"))
+                await eventually(lambda: acked(device, encrypted.oid))
+                session = await store.get_session("sess_t1")
+                assert session.title is None and session.cwd is None
+                assert session.displayUser is None and session.displayDevice is None
+
+                # A sealed user title stays.
+                sealed = {"mode": "sealed", "keyId": "dk1", "payload": "dXNlcg=="}
+                await store.set_session_display_user("sess_t1", DisplayEnvelope.model_validate(sealed))
+                again = device.state.push_outbox("session.summary", summary("sess_t1", 4))
+                await eventually(lambda: acked(device, again.oid))
+                assert (await store.get_session("sess_t1")).displayUser == sealed
             finally:
                 await device.stop()
 
