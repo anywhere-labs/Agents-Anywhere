@@ -368,12 +368,28 @@ def _command_id(params: dict[str, Any]) -> str:
     return f"c_{secrets.token_urlsafe(16)}"
 
 
+def _device_payload(method: str, params: dict[str, Any], command_id: str) -> dict[str, Any]:
+    """v2 RPC params -> device command payload (A's #674 shapes)."""
+
+    payload = dict(params)
+    if method == "interaction.respond":
+        if "inputData" in payload:
+            payload["input"] = payload.pop("inputData")
+        payload.setdefault("responseId", command_id)
+    return payload
+
+
 class DeviceRpcBridge:
-    """Serve ``ConnectorRpcManager.request`` for v3 devices (``MeshLinkPort``)."""
+    """Serve ``ConnectorRpcManager.request`` for v3 devices (``MeshLinkPort``).
+
+    ``commands`` (a ``DeviceCommandService``) is attached by the app; with it every
+    state-changing call gets a durable receipt in ``device_commands``.
+    """
 
     def __init__(self, hub: DeviceLinkHub, mesh: DeviceMesh) -> None:
         self._hub = hub
         self._mesh = mesh
+        self.commands: Any | None = None
 
     def local_connection(self, device_id: str) -> str | None:
         return self._hub.local_connection(device_id)
@@ -411,6 +427,8 @@ class DeviceRpcBridge:
                     timeout=min(timeout, self._mesh.settings.read_timeout_seconds),
                 )
                 return result.model_dump(mode="json")
+            if method in V2_COMMAND_METHODS and self.commands is not None:
+                return await self._send_command(device_id, method, params, timeout=timeout)
             if method in V2_COMMAND_METHODS:
                 command_id = _command_id(params)
                 deadline = datetime.now(UTC) + timedelta(seconds=timeout)
@@ -441,3 +459,33 @@ class DeviceRpcBridge:
             "device_method_unsupported",
             f"{method} is not available on v3 devices yet (device-meshcall 1.0)",
         )
+
+    async def _send_command(self, device_id: str, method: str, params: dict[str, Any], *, timeout: float) -> Any:
+        from agent_server.infra.connector_rpc import (
+            ConnectorOfflineError,
+            ConnectorOutcomeUnknownError,
+            ConnectorRpcError,
+        )
+
+        command_id = _command_id(params)
+        session_id = params.get("sessionId")
+        try:
+            outcome = await self.commands.send(
+                user_id=None,
+                device_id=device_id,
+                kind=V2_COMMAND_METHODS[method],
+                command_id=command_id,
+                payload=_device_payload(method, params, command_id),
+                session_id=session_id if isinstance(session_id, str) else None,
+                timeout=timeout,
+            )
+        except Exception as exc:
+            code = getattr(exc, "code", None)
+            if code == "connector_offline":
+                raise ConnectorOfflineError("device is offline") from exc
+            if code == "command_outcome_unknown":
+                raise ConnectorOutcomeUnknownError(code, getattr(exc, "message", code)) from exc
+            if isinstance(code, str):
+                raise ConnectorRpcError(code, getattr(exc, "message", code)) from exc
+            raise
+        return outcome.result

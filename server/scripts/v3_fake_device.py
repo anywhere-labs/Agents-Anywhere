@@ -114,6 +114,7 @@ class FakeDeviceState:
         self.command_log: list[tuple[str, dict[str, Any]]] = []
         self.command_handler: Callable[[str, dict[str, Any]], Any] | None = None
         self.command_delay = 0.0
+        self.ack_delay = 0.0
         self.attach_opened = threading.Event()
         self.outbox_opened = threading.Event()
         self.read_delay = 0.0
@@ -328,6 +329,9 @@ def _make_services(state: FakeDeviceState) -> list[object]:
         else:
             ack = CommandAck(outcome="accepted", r=result)
         state.receipts[commandId] = ack
+        if state.ack_delay:
+            # Committed, but the answer is late: the Server sees an unknown outcome.
+            await asyncio.sleep(state.ack_delay)
         return ack
 
     namespace: dict[str, Any] = {"__doc__": "State-changing commands with durable receipts."}

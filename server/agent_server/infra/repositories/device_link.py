@@ -11,7 +11,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, func, select, update
+from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from agent_server.core.device_meshcall import DisplayEnvelope, SessionSummary
@@ -297,6 +297,19 @@ class DeviceLinkRepositoryMixin:
                 )
             ).mappings().first()
         return _receipt_view(row) if row is not None else None
+
+    async def delete_device_command(self, user_id: str, command_id: str, *, only_state: str = "pending") -> bool:
+        """Forget a receipt that never reached the device (only while it is still ``only_state``)."""
+
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                delete(device_commands).where(
+                    device_commands.c.user_id == user_id,
+                    device_commands.c.command_id == command_id,
+                    device_commands.c.state == only_state,
+                )
+            )
+        return bool(result.rowcount)
 
     async def get_device_command(self, user_id: str, command_id: str) -> dict[str, Any] | None:
         async with read_connection(self._engine) as conn:

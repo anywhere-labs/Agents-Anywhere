@@ -45,6 +45,7 @@ from agent_server.services.dashboard_events import publish_dashboard_changed
 
 LINK_CONTRACT = f"device-meshcall/{DEVICE_MESHCALL_VERSION}"
 REQUIRED_SERVICES = frozenset({"aa.device.v1.Link", "aa.device.v1.Commands"})
+DEFERRABLE_COMMANDS = frozenset({"device.settings.apply", "runtime.apply", "channel.switch"})
 _SERVER_VERSION = "3.0.0-dev"
 
 
@@ -94,6 +95,9 @@ class DeviceLinkService:
         self.event_listeners: list[Any] = []
         # ``SessionWatchHub``: opens/stops ``Sessions/watch`` streams as the link comes and goes.
         self.session_watch: Any | None = None
+        # ``DeviceCommandService``: settles ``unknown`` receipts after ``ready``.
+        self.commands: Any | None = None
+        self._reconcile_tasks: set[asyncio.Task[Any]] = set()
         hub.on_outbox = self.handle_outbox
         hub.on_event = self.handle_event
         hub.on_presence = self.handle_presence
@@ -161,6 +165,9 @@ class DeviceLinkService:
                 m=row["kind"],
             )
             for row in await self._store.unsettled_device_commands(device_id)
+            # Only commands that may be delivered late (03-architecture §3.10); a user message
+            # whose outcome is unknown is never re-sent, it converges through Commands/status.
+            if row["kind"] in DEFERRABLE_COMMANDS
         ]
         desired = DesiredState(
             runtimes=await self._desired_runtimes(device_id),
@@ -218,6 +225,11 @@ class DeviceLinkService:
             await self._hub.hold(device_id, connection_id)
         except DeviceCallError as exc:
             raise DeviceLinkError(409, "attach_failed", f"Link/attach did not answer: {exc}") from exc
+        if self.commands is not None:
+            # Receipts still ``unknown`` converge through read-only ``Commands/status``.
+            task = asyncio.create_task(self.commands.reconcile_device(device_id), name=f"device-reconcile-{device_id}")
+            self._reconcile_tasks.add(task)
+            task.add_done_callback(self._reconcile_tasks.discard)
 
     async def revoke(self, device_id: str, reason: str) -> None:
         """Credentials revoked or device deleted: revoke its Router token and drop the link."""

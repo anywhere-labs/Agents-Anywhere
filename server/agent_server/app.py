@@ -78,6 +78,7 @@ from agent_server.services.channel_reconciliation import ChannelReconciler
 from agent_server.services.connector_deletion import ConnectorDeletionRecovery
 from agent_server.services.connector_rpc import ConnectorServiceError
 from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.device_commands import DeviceCommandService
 from agent_server.services.device_link import DeviceLinkService, e2ee_mode
 from agent_server.services.device_reads import DeviceReadService
 from agent_server.services.device_runtimes import DeviceRuntimeService
@@ -299,7 +300,8 @@ def create_app(
         app.state.device_mesh, app.state.redis, worker_id=app.state.rpc.instance_id
     )
     # v3 devices answer ConnectorRpcManager requests over MeshCall.
-    app.state.rpc.attach_mesh_link(DeviceRpcBridge(app.state.device_link_hub, app.state.device_mesh))
+    app.state.device_rpc_bridge = DeviceRpcBridge(app.state.device_link_hub, app.state.device_mesh)
+    app.state.rpc.attach_mesh_link(app.state.device_rpc_bridge)
     app.state.fs_downloads = FsDownloadRelayManager(app.state.redis)
     app.state.shell_tasks = ShellTaskManager(app.state.redis)
     app.state.terminal_broker = TerminalBroker(
@@ -401,6 +403,11 @@ def create_app(
         enabled=lambda: e2ee_mode() != "required",
     )
     app.state.device_link.session_watch = app.state.session_watch
+    app.state.device_commands = DeviceCommandService(
+        app.state.store, app.state.device_mesh, app.state.device_link_hub
+    )
+    app.state.device_link.commands = app.state.device_commands
+    app.state.device_rpc_bridge.commands = app.state.device_commands
     app.state.usage_maintenance = UsageMaintenanceLoop(
         app.state.store,
         app.state.redis,
