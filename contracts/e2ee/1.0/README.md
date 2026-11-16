@@ -46,6 +46,13 @@
 
 客户端在收到 `ready` 之前不发任何请求；任何一方都不在握手消息里携带业务数据（不做 0-RTT）。`pair.committed` 丢失时，客户端用 KK 重试：KK 成功就说明授权已经写入。
 
+**结束一条通道**：`ClientTunnelEnd {t: "end", route, code}`。
+
+- Server 发给客户端，表示设备结束了 `Secure/channel` 调用（`code` 取调用的错误码）或者设备离线（`connector_offline`）。
+- 客户端发给 Server，表示取消这次调用。
+- 握手完成前的失败只能这样报：`e2ee_not_paired`、`pairing_expired`、`e2ee_handshake_failed`（psk 不对、路由被改写、设备身份变了）、`e2ee_protocol_error`。
+- Server 能伪造的最多只是一次断线。客户端不会因为收到 `end` 而放松加密要求；重连时 KK 失败，客户端报 `device_pin_mismatch`。
+
 **传输阶段**：`ct = base64url(Noise 传输消息)`，`n` 等于该方向的 Noise nonce。收到的 `n` 与本端接收计数器不一致时，直接关闭通道，不尝试解密。
 
 ## 帧与消息

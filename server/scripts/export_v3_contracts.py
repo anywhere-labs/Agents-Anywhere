@@ -118,6 +118,7 @@ E2EE = Contract(
         _a("revoke-client-request", e2ee.RevokeClientRequest),
         _a("trust-list-response", e2ee.TrustListResponse),
         _a("client-tunnel-frame", e2ee.ClientTunnelFrame),
+        _a("client-tunnel-end", e2ee.ClientTunnelEnd),
         _a("tunnel-request", e2ee.TunnelRequest),
         _a("tunnel-response", e2ee.TunnelResponse),
         _a("tunnel-subscribe", e2ee.TunnelSubscribe),

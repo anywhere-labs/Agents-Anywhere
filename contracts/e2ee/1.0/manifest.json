@@ -106,6 +106,14 @@
     },
     {
       "direction": "bidirectional",
+      "model": "ClientTunnelEnd",
+      "path": "schemas/client-tunnel-end.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "0bdc23823bd892088739c2df07685fe91b1e1833c9085d6bc34e8d944b7d5f9a",
+      "slug": "client-tunnel-end"
+    },
+    {
+      "direction": "bidirectional",
       "model": "TunnelRequest",
       "path": "schemas/tunnel-request.schema.json",
       "pydanticMode": "validation",

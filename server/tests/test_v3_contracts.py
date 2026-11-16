@@ -209,6 +209,17 @@ def test_e2ee_helpers_match_the_shared_vectors() -> None:
     assert PairingPayload.model_validate_json(decoded).model_dump() == uri["payload"]
 
 
+def test_tunnel_end_codes_have_client_messages() -> None:
+    from typing import get_args
+
+    messages = json.loads((REPOSITORY_ROOT / "contracts" / "runtime-errors" / "1.1" / "messages.json").read_text())
+    # connector_offline is the v2 API error clients already translate.
+    codes = set(get_args(e2ee.TunnelEndCode)) - {"closed", "too_large", "connector_offline"}
+    assert codes <= set(messages["messages"]), codes - set(messages["messages"])
+    e2ee.ClientTunnelEnd.model_validate({"t": "end", "route": {"deviceId": "d", "clientId": "cli_" + "a" * 26, "ch": "c"},
+                                         "code": "pairing_expired"})
+
+
 def test_e2ee_frame_body_limit_fits_one_noise_message() -> None:
     assert e2ee.FRAME_MAX_BODY_BYTES + 1 + e2ee.NOISE_TAG_BYTES == e2ee.NOISE_MAX_MESSAGE_BYTES
     formats = json.loads((E2EE_VECTORS / "aa-formats.json").read_text())

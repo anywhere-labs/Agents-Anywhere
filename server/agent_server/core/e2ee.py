@@ -294,6 +294,33 @@ class ClientTunnelFrame(BaseModel):
     ct: str = Field(description="base64url Noise message (see HandshakeEnvelope for the handshake phase)")
 
 
+TunnelEndCode = Literal[
+    "closed",
+    "e2ee_not_paired",
+    "pairing_expired",
+    "e2ee_handshake_failed",
+    "e2ee_protocol_error",
+    "too_large",
+    "connector_offline",
+    "e2ee_required",
+]
+
+
+class ClientTunnelEnd(BaseModel):
+    """Ends one channel on ``WS /api/v3/tunnel``.
+
+    Server -> client: the device ended its ``Secure/channel`` call (``code`` is the call's error code) or the
+    device went offline. Client -> Server: cancel the call. The Server cannot forge anything worse than a
+    disconnect with it: a client never relaxes encryption because of an ``end``.
+    """
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True, extra="forbid")
+
+    t: Literal["end"]
+    route: TunnelRoute
+    code: TunnelEndCode = "closed"
+
+
 class CommandRegistration(E2eeModel):
     """``POST /api/v3/e2ee/commands`` before the command goes through the channel, so the Server
     keeps idempotency for encrypted commands. ``inputDigest`` is keyed (see ``input_digest``):
