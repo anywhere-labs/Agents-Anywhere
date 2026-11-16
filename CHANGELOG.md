@@ -22,7 +22,7 @@
 
 ### 本机连接
 
-- 连接 v3 Connector 的设备上，会话内容改为打开时从设备读取，Server 不再保存；设备离线时仍能看到会话标题和状态，并提示设备离线、历史暂不可用，设备没有及时响应时提示超时而不是离线。（[#696](https://github.com/anywhere-labs/Agents-Anywhere/pull/696)）
+- 连接 v3 Connector 的设备上，会话内容改为打开时从设备读取、有人在看时由设备实时推送，Server 不再保存；设备离线时仍能看到会话标题和状态，并提示设备离线、历史暂不可用，设备没有及时响应时提示超时而不是离线；设备重新连上后，打开着的会话会自动补齐断线期间的内容。（[#696](https://github.com/anywhere-labs/Agents-Anywhere/pull/696)、[#702](https://github.com/anywhere-labs/Agents-Anywhere/pull/702)）
 - 准备 Pi 时会复用本机 Node 22.19 及以上版本（包括 Node 24），不再强制下载；需要下载时，官方源连不上会自动改用 npmmirror，Python 安装源选了镜像的设备会优先使用 npmmirror；Windows 上多个进程同时准备不再报 `Resource deadlock avoided`，而是排队等待；数据目录通过 Junction 挂到其他盘时，不再误报「Node 安装包路径无效」；Node 下载失败时会提示检查网络。（[#657](https://github.com/anywhere-labs/Agents-Anywhere/pull/657)）
 
 ### Android
