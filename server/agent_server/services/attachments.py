@@ -237,6 +237,35 @@ class AttachmentService:
         self._validate_blob_integrity(data, metadata)
         return data, metadata
 
+    async def staged_file_metadata(self, *, session_id: str, file_id: str) -> dict[str, Any]:
+        """Metadata of a file the Server still holds; KeyError when it does not."""
+
+        self._validate_file_id(file_id)
+        return await self._files.metadata(session_id, file_id)
+
+    async def save_share_copy(
+        self,
+        *,
+        session_id: str,
+        file_id: str,
+        data: bytes,
+        name: str | None,
+        media_type: str | None,
+        expected_sha256: str | None,
+    ) -> dict[str, Any]:
+        """Keep the Server's copy of a file a share exposes (v3: the original lives on the device)."""
+
+        if expected_sha256 and hashlib.sha256(data).hexdigest() != expected_sha256:
+            raise ValueError(f"{file_id} does not match its sha256")
+        return await self._persist_file_blob(
+            session_id=session_id,
+            data=data,
+            name=name,
+            media_type=media_type,
+            origin="share",
+            file_id=file_id,
+        )
+
     async def delete_file(self, *, session_id: str, file_id: str) -> None:
         self._validate_file_id(file_id)
         await self._files.delete(session_id, file_id)

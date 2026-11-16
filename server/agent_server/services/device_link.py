@@ -97,6 +97,8 @@ class DeviceLinkService:
         self.session_watch: Any | None = None
         # ``DeviceCommandService``: settles ``unknown`` receipts after ``ready``.
         self.commands: Any | None = None
+        # ``DeviceBlobService.consumed``: drops the staged copy of a file the device stored.
+        self.attachment_consumed: Any | None = None
         self._reconcile_tasks: set[asyncio.Task[Any]] = set()
         hub.on_outbox = self.handle_outbox
         hub.on_event = self.handle_event
@@ -309,9 +311,8 @@ class DeviceLinkService:
             )
 
     async def _attachment_consumed(self, device_id: str, consumed: AttachmentConsumedOut) -> None:
-        delete = getattr(self._store, "delete_staged_attachment", None)
-        if delete is not None:
-            await delete(device_id, consumed.fileId, consumed.sha256)
+        if self.attachment_consumed is not None:
+            await self.attachment_consumed(device_id, consumed.fileId, consumed.sha256)
 
     # -- lossy events -------------------------------------------------------------
 

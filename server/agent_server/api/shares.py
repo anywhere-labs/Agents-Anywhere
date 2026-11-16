@@ -8,6 +8,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 
+from agent_server.api.device_session_reads import device_read_http_error
+from agent_server.api.device_transfers import get_device_blobs
 from agent_server.core.models import (
     PublicSessionShareResponse,
     PublicSharedSession,
@@ -19,11 +21,18 @@ from agent_server.core.utc import utc_now
 from agent_server.deps import (
     current_user_id,
     get_attachment_service,
+    get_device_reads,
     get_store,
     get_timeline_write_buffer,
 )
 from agent_server.infra.repositories.facade import Store
 from agent_server.services.attachments import AttachmentService
+from agent_server.services.device_blobs import DeviceBlobService
+from agent_server.services.device_reads import (
+    DeviceReadError,
+    DeviceReadService,
+    DeviceReadTimeout,
+)
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
 router = APIRouter(tags=["session-shares"])
@@ -41,9 +50,17 @@ async def create_session_share(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     timeline_write_buffer: TimelineWriteBuffer = Depends(get_timeline_write_buffer),
+    reads: DeviceReadService = Depends(get_device_reads),
+    blobs: DeviceBlobService = Depends(get_device_blobs),
 ) -> SessionShareCreateResponse:
     try:
-        await db.get_session(session_id, user_id=user_id)
+        owned = await db.get_session(session_id, user_id=user_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="session not found") from None
+    if await reads.is_v3_device(owned.connectorId):
+        share = await _device_share(db, blobs, owned, payload, user_id=user_id)
+        return _share_response(request, share, payload.scope)
+    try:
         async with timeline_write_buffer.session_fence(session_id):
             session = await db.get_session(session_id, user_id=user_id)
             timeline = await db.timeline.read(session_id)
@@ -94,13 +111,76 @@ async def create_session_share(
             )
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
+    return _share_response(request, share, payload.scope)
+
+
+def _share_response(request: Request, share: dict[str, Any], scope: str) -> SessionShareCreateResponse:
     share_path = f"/share/{share['id']}"
     return SessionShareCreateResponse(
         shareId=share["id"],
         sharePath=share_path,
         shareUrl=f"{_public_origin(request)}{share_path}",
-        scope=payload.scope,
+        scope=scope,
         createdAt=share["createdAt"],
+    )
+
+
+async def _device_share(
+    db: Store,
+    blobs: DeviceBlobService,
+    session: Any,
+    payload: SessionShareCreateRequest,
+    *,
+    user_id: str,
+) -> dict[str, Any]:
+    """v3: the device exports an immutable snapshot; the Server keeps it and copies of its files."""
+
+    try:
+        exported = await blobs.export_share(
+            session.connectorId,
+            session.id,
+            scope=payload.scope,
+            item_ids=list(payload.itemIds) if payload.scope == "message" else [],
+        )
+    except (DeviceReadTimeout, DeviceReadError) as exc:
+        raise device_read_http_error(exc) from exc
+    if exported is None:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "share_requires_online_device", "message": "the device must be online to create a share"},
+        )
+    try:
+        selected = [TimelineItem.model_validate(item) for item in exported["items"]]
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=502, detail={"code": "device_response_invalid", "message": str(exc)[:500]}
+        ) from exc
+    if payload.scope == "message":
+        if {item.id for item in selected} != set(payload.itemIds):
+            raise HTTPException(status_code=404, detail="timeline item not found")
+        if any(item.type != "message" or item.role != "assistant" for item in selected):
+            raise HTTPException(status_code=422, detail="a reply share may only contain assistant messages")
+    if not selected:
+        raise HTTPException(status_code=422, detail="there is no content to share")
+    items = [item.model_dump(mode="json", exclude_none=True) for item in selected]
+    referenced = _attachment_file_ids(items) | set(exported["attachments"])
+    missing = await blobs.copy_for_share(session.connectorId, session.id, sorted(referenced))
+    snapshot = {
+        "session": {
+            "id": session.id,
+            "title": session.title,
+            "runtime": session.runtime,
+            "runtimeName": session.runtimeName,
+            "cwd": session.cwd,
+        },
+        "items": items,
+    }
+    return await db.create_session_share(
+        user_id=user_id,
+        session_id=session.id,
+        scope=payload.scope,
+        snapshot=snapshot,
+        allowed_file_ids=referenced - set(missing),
     )
 
 

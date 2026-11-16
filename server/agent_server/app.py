@@ -30,6 +30,7 @@ from agent_server.api import (
     connectors,
     dashboard_stream,
     device_link,
+    device_transfers,
     error_handlers,
     model_config,
     oauth,
@@ -78,6 +79,7 @@ from agent_server.services.channel_reconciliation import ChannelReconciler
 from agent_server.services.connector_deletion import ConnectorDeletionRecovery
 from agent_server.services.connector_rpc import ConnectorServiceError
 from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.device_blobs import DeviceBlobService
 from agent_server.services.device_commands import DeviceCommandService
 from agent_server.services.device_link import DeviceLinkService, e2ee_mode
 from agent_server.services.device_reads import DeviceReadService
@@ -231,6 +233,7 @@ def create_app(
             await app.state.capability_refresh.close()
             try:
                 await app.state.session_watch.close()
+                await app.state.device_blobs.close()
                 await app.state.device_link_hub.close()
                 await app.state.device_mesh.close()
             except Exception:  # noqa: BLE001 - shutdown must continue
@@ -408,6 +411,15 @@ def create_app(
     )
     app.state.device_link.commands = app.state.device_commands
     app.state.device_rpc_bridge.commands = app.state.device_commands
+    app.state.device_blobs = DeviceBlobService(
+        app.state.store,
+        app.state.device_mesh,
+        app.state.device_link_hub,
+        app.state.fs_downloads,
+        app.state.store.attachments,
+        app.state.redis,
+    )
+    app.state.device_link.attachment_consumed = app.state.device_blobs.consumed
     app.state.usage_maintenance = UsageMaintenanceLoop(
         app.state.store,
         app.state.redis,
@@ -502,6 +514,7 @@ def create_app(
     app.include_router(client_ws.router, prefix=API_V2_PREFIX)
     app.include_router(connector_ingress.router, prefix=API_V2_PREFIX)
     app.include_router(device_link.router)
+    app.include_router(device_transfers.router)
     app.include_router(agents.router, prefix=API_V2_PREFIX)
     app.include_router(pairing.router, prefix=API_V2_PREFIX)
     app.include_router(projects.router, prefix=API_V2_PREFIX)

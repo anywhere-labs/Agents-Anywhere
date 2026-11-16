@@ -12,8 +12,10 @@ import asyncio
 import base64
 import collections
 import contextlib
+import hashlib
 import itertools
 import json
+import re
 import threading
 import time
 import zlib
@@ -115,6 +117,10 @@ class FakeDeviceState:
         self.command_handler: Callable[[str, dict[str, Any]], Any] | None = None
         self.command_delay = 0.0
         self.ack_delay = 0.0
+        # Blobs the device holds (fileId -> bytes, name, media type) and how it uploads them:
+        # ``blob_uploader(transfer, data)`` returns a concurrent future (the test's loop does the PUT).
+        self.blobs: dict[str, tuple[bytes, str, str]] = {}
+        self.blob_uploader: Callable[[dict[str, Any], bytes], Any] | None = None
         self.attach_opened = threading.Event()
         self.outbox_opened = threading.Event()
         self.read_delay = 0.0
@@ -257,7 +263,44 @@ def _make_services(state: FakeDeviceState) -> list[object]:
 
     @service(f"{SERVICE_PREFIX}.Store", targeted=True)
     class Store:
-        """Timeline reads."""
+        """Timeline reads, blobs and share exports."""
+
+        @stream
+        async def readBlob(
+            self, sessionId: str, blobRef: str, transfer: dict[str, Any], ctx: RpcContext
+        ) -> AsyncIterator[StreamChunk]:
+            """A blob: metadata on the stream, bytes over HTTP."""
+            state.calls.append("readBlob")
+            blob = state.blobs.get(blobRef)
+            if blob is None:
+                raise MeshCallError("not_found", "no such blob", details={"source": "device"})
+            data, name, media_type = blob
+            yield StreamChunk(
+                seq=0,
+                chunk={
+                    "name": name,
+                    "mediaType": media_type,
+                    "size": len(data),
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                },
+            )
+            if state.blob_uploader is None:
+                raise MeshCallError("failed_precondition", "no uploader", details={"source": "device"})
+            await asyncio.wrap_future(state.blob_uploader(transfer, data))
+            yield StreamChunk(seq=1, chunk={"done": True}, end=True)
+
+        @stream
+        async def exportShare(
+            self, sessionId: str, selection: dict[str, Any], ctx: RpcContext, byteBudget: int = 1024 * 1024
+        ) -> AsyncIterator[StreamChunk]:
+            """An immutable share snapshot."""
+            state.calls.append("exportShare")
+            items = state.session(sessionId).items
+            if selection.get("scope") == "message":
+                wanted = set(selection.get("itemIds") or [])
+                items = [item for item in items if item["id"] in wanted]
+            files = sorted(set(re.findall(r'"fileId":\s*"(file_[^"]+)"', json.dumps(items))))
+            yield StreamChunk(seq=0, chunk={"items": items, "attachments": files}, end=True)
 
         @query
         async def read(
