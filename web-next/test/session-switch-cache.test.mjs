@@ -30,6 +30,7 @@ const stubs = {
   "components/session/native-session-handoff.tsx": "export const NativeSessionHandoff=()=>null",
   "components/session/agent-recovery-notice.tsx": "export const AgentRecoveryNotice=()=>null",
   "components/session/runtime-creation-status.tsx": "export const RuntimeCreationStatus=()=>null",
+  "components/session/session-pairing-notice.tsx": "export const SessionPairingNotice=()=>null",
   "components/session/session-review-card.tsx": "export const SessionReviewCard=()=>null",
   "components/session/session-review-tag.tsx": "export const SessionReviewTag=()=>null",
   "components/session/turn-actions.tsx": "export const TurnActions=()=>null",

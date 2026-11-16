@@ -48,6 +48,7 @@ import {
   ToolMarkerRowContent,
 } from "@/components/session/session-tool-cards"
 import { timelineRunCounts } from "@/components/session/timeline-summary"
+import { SessionPairingNotice } from "@/components/session/session-pairing-notice"
 import { RuntimeCreationStatus } from "@/components/session/runtime-creation-status"
 import { AgentRecoveryNotice } from "@/components/session/agent-recovery-notice"
 import { NativeSessionHandoff } from "@/components/session/native-session-handoff"
@@ -1289,12 +1290,13 @@ function SessionDetailVisit({
 
   if (error && !session) {
     return (
-      <div className="mx-auto flex h-full max-w-3xl items-center justify-center px-6">
+      <div className="mx-auto flex h-full max-w-3xl flex-col items-center justify-center gap-3 px-6">
         <Alert variant="destructive">
           <CircleAlert />
           <AlertTitle>{tSession("unavailable")}</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
+        <SessionPairingNotice sessionId={sessionId} deviceId={fallbackSession?.connectorId ?? null} onPaired={() => controller.catchUp()} className="w-full" />
       </div>
     )
   }
@@ -1462,6 +1464,9 @@ function SessionDetailVisit({
                 <AlertDescription>{tSession("historyOfflineCached")}</AlertDescription>
               </Alert>
             </div>
+          ) : null}
+          {session ? (
+            <SessionPairingNotice sessionId={session.id} deviceId={session.connectorId} onPaired={() => controller.catchUp()} />
           ) : null}
           <RuntimeCreationStatus sessionId={sessionId} />
           <NativeSessionHandoff key={sessionId} token={token} session={session} state={runtimeState}

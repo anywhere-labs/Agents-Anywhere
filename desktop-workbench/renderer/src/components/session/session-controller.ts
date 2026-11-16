@@ -617,6 +617,10 @@ export function createSessionController(options: SessionControllerOptions) {
       }
     },
     updateState,
+    /** Read the gap from this session's cursor, e.g. after a command whose outcome is unknown. */
+    catchUp() {
+      requestCatchup()
+    },
     configure(next: SessionControllerOptions) {
       callbacks = next
     },

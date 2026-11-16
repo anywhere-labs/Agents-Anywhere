@@ -1273,7 +1273,9 @@
       "queueWaiting": "Queued",
       "queueRetry": "Retry",
       "queueSendNow": "Send now (interrupts the current task)",
-      "queueDelete": "Delete"
+      "queueDelete": "Delete",
+      "pairingRequiredTitle": "Pair this device first",
+      "pairDevice": "Pair this device"
     },
     "sessionStatus": {
       "idle": "Idle",

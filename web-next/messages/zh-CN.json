@@ -1202,7 +1202,9 @@
       "queueWaiting": "排队中",
       "queueRetry": "重试",
       "queueSendNow": "立即发送（打断当前任务）",
-      "queueDelete": "删除"
+      "queueDelete": "删除",
+      "pairingRequiredTitle": "需要先配对这台设备",
+      "pairDevice": "配对这台设备"
     },
     "sessionStatus": {
       "idle": "空闲",
