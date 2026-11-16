@@ -157,7 +157,7 @@
       "model": "SealedAttachmentKey",
       "path": "schemas/sealed-attachment-key.schema.json",
       "pydanticMode": "validation",
-      "sha256": "50161730c1ffaa09ffdab4d61ba586970f635404649f4a9e926591acca918da6",
+      "sha256": "b3d08c6023861d14a91087913509fa53ab398251ae26eb3fdf43f822247f538f",
       "slug": "sealed-attachment-key"
     },
     {
@@ -165,7 +165,7 @@
       "model": "TunnelFileChunk",
       "path": "schemas/tunnel-file-chunk.schema.json",
       "pydanticMode": "validation",
-      "sha256": "aabe237fe8debec593192d0e04e233031eaa551c168c5845d0edaece40da5f4e",
+      "sha256": "32f43c5c866b0f62531532df16d5abf658b7e6553ed9f5c084346280f6537b64",
       "slug": "tunnel-file-chunk"
     },
     {

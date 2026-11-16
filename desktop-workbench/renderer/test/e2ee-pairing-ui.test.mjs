@@ -83,3 +83,23 @@ test("pasting a pairing link shows the device fingerprint and pairs", async (t) 
   assert.deepEqual(pairedWith[0], payload)
   assert.deepEqual(paired, ["dev_ui"])
 })
+
+test("the pairing dialog can be opened again and again on request", async (t) => {
+  registerSource()
+  const { SecurePairingHost } = await import("../src/components/e2ee/secure-pairing-host.tsx")
+  const { requestSecurePairing } = await import("../src/lib/e2ee/state.ts")
+  const container = document.createElement("div")
+  document.body.append(container)
+  const root = createRoot(container)
+  await act(async () => root.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC" }, h(SecurePairingHost))))
+  t.after(async () => { await act(async () => root.unmount()); container.remove() })
+  const textarea = () => document.getElementById("e2ee-pairing-link")
+  for (let round = 0; round < 2; round++) {
+    await act(async () => requestSecurePairing("dev_again"))
+    await until(() => textarea())
+    assert.ok(document.body.textContent.includes("dev_again"))
+    const cancel = [...document.querySelectorAll("button")].find((button) => button.textContent === "Cancel")
+    await act(async () => cancel.click())
+    await until(() => !textarea())
+  }
+})

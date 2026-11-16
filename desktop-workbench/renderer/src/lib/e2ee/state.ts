@@ -30,3 +30,15 @@ export function noteSessionDevices(sessions: readonly { id: string; connectorId?
 export function knownSessionDevice(sessionId: string): string | undefined {
   return sessionDevices.get(sessionId)
 }
+
+const pairingRequests = new Set<(deviceId: string | null) => void>()
+
+/** Opens the pairing dialog (for a device when known). Any screen may call it, any number of times. */
+export function requestSecurePairing(deviceId?: string | null): void {
+  for (const listener of pairingRequests) listener(deviceId ?? null)
+}
+
+export function onSecurePairingRequested(listener: (deviceId: string | null) => void): () => void {
+  pairingRequests.add(listener)
+  return () => pairingRequests.delete(listener)
+}

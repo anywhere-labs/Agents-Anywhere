@@ -7,6 +7,14 @@ export type Fileid = string
  */
 export type Key = string
 /**
+ * real media type; the upload itself is application/octet-stream
+ */
+export type Mimetype = string | null
+/**
+ * real file name; the upload itself is named attachment.bin
+ */
+export type Name = string | null
+/**
  * hex SHA-256 of the plaintext; also the segment AD objectId
  */
 export type Sha256 = string
@@ -27,6 +35,8 @@ export type Size = number
 export interface SealedAttachmentKey {
   fileId: Fileid
   key: Key
+  mimeType?: Mimetype
+  name?: Name
   sha256: Sha256
   size: Size
   [k: string]: unknown

@@ -127,8 +127,8 @@
       "en": "This earlier selection has no exact agent configuration mapping."
     },
     "device_pin_mismatch": {
-      "zh-CN": "设备身份发生了变化，需要重新配对。",
-      "en": "The device identity has changed. Pair with it again."
+      "zh-CN": "设备身份与配对时不一致，请在设备上重新生成配对链接（手机上扫二维码）后再配对。",
+      "en": "The device identity does not match the one you paired with. Create a new pairing link on the device (scan the QR code on a phone) and pair again."
     },
     "device_read_timeout": {
       "zh-CN": "设备响应较慢，请稍后重试。",
@@ -143,8 +143,8 @@
       "en": "The encrypted connection could not be set up. The device may have been reinstalled; pair with it again."
     },
     "e2ee_not_paired": {
-      "zh-CN": "这台设备还没有授权当前客户端，请先配对。",
-      "en": "This device has not authorised this client yet. Pair with it first."
+      "zh-CN": "这台设备还没有授权当前客户端，请在设备上生成配对链接（手机上扫二维码）后配对。",
+      "en": "This device has not authorised this client yet. Create a pairing link on the device (scan the QR code on a phone) and pair."
     },
     "e2ee_protocol_error": {
       "zh-CN": "加密通道出现错误，已断开，请重试。",
@@ -307,8 +307,8 @@
       "en": "The session's agent has changed. Refresh and try again."
     },
     "pairing_expired": {
-      "zh-CN": "配对码已失效，请在电脑上重新生成。",
-      "en": "The pairing code has expired. Generate a new one on the computer."
+      "zh-CN": "配对链接已过期或已经用过，请在设备上重新生成（手机上重新扫二维码）。",
+      "en": "This pairing link has expired or was already used. Create a new one on the device (scan the new QR code on a phone)."
     },
     "permission_denied": {
       "zh-CN": "当前权限或用户审批未允许此命令。",

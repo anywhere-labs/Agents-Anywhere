@@ -72,7 +72,7 @@ export class SecureChannelPool {
   }
 
   /** First pairing from a QR code / `aa-pair://` link. Keeps the new channel open for use. */
-  async pair(payload: PairingPayload): Promise<DevicePin> {
+  async pair(payload: PairingPayload, deviceLabel?: string): Promise<DevicePin> {
     const identity = await this.#deps.store.identity()
     const ch = newChannelId()
     let channel: ClientSecureChannel | null = null
@@ -94,7 +94,7 @@ export class SecureChannelPool {
     const pin = await this.#deps.store.savePairing({
       deviceId: payload.deviceId,
       devicePub: payload.deviceIdentityPub,
-      label: payload.deviceId,
+      label: deviceLabel || payload.deviceId,
       grantedAt: result.grantedAt,
       directoryKey: result.directoryKey,
     })

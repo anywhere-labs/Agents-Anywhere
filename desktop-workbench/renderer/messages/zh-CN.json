@@ -2675,11 +2675,11 @@
     "configuration_changed": "配置选项已不可用。",
     "configuration_conflict": "选择之间不一致，请重新选择模型和推理强度。",
     "configuration_mapping_unavailable": "该旧选择没有唯一且无损的 Agent 配置映射。",
-    "device_pin_mismatch": "设备身份发生了变化，需要重新配对。",
+    "device_pin_mismatch": "设备身份与配对时不一致，请在设备上重新生成配对链接（手机上扫二维码）后再配对。",
     "device_read_timeout": "设备响应较慢，请稍后重试。",
     "e2ee_downgrade_refused": "这台设备要求端到端加密，已拒绝未加密的连接。",
     "e2ee_handshake_failed": "加密连接没有建立：设备可能重装过或身份已变化，请重新配对。",
-    "e2ee_not_paired": "这台设备还没有授权当前客户端，请先配对。",
+    "e2ee_not_paired": "这台设备还没有授权当前客户端，请在设备上生成配对链接（手机上扫二维码）后配对。",
     "e2ee_protocol_error": "加密通道出现错误，已断开，请重试。",
     "e2ee_required": "这个服务器启用了端到端加密，需要先和设备配对。",
     "image_input_unsupported": "当前模型声明不支持图片输入，请移除图片或切换支持图片的模型。",
@@ -2720,7 +2720,7 @@
     "operation_outcome_unknown": "结果尚不确定，请先查询原操作，不要重复提交。",
     "outcome_unknown": "结果尚不确定，请先查询原操作，不要重复提交。",
     "owner_changed": "会话执行者已变化，请刷新。",
-    "pairing_expired": "配对码已失效，请在电脑上重新生成。",
+    "pairing_expired": "配对链接已过期或已经用过，请在设备上重新生成（手机上重新扫二维码）。",
     "permission_denied": "当前权限或用户审批未允许此命令。",
     "pi_adapter_cache_corrupt": "Pi ACP 缓存依赖来源已变化。",
     "pi_adapter_dependencies_missing": "Pi ACP 依赖目录不存在。",
@@ -2848,8 +2848,8 @@
   "e2ee": {
     "pairing": {
       "title": "配对端到端加密",
-      "description": "在设备上打开「安全连接」，复制配对链接（10 分钟内有效），粘贴到这里。",
-      "descriptionForDevice": "{device} 上的内容是端到端加密的。在那台设备上打开「安全连接」，复制配对链接，粘贴到这里。",
+      "description": "在设备上生成配对链接（Desktop：设置 → 安全连接；命令行设备：运行 Connector 的配对命令），粘贴到这里。链接 10 分钟内有效。",
+      "descriptionForDevice": "{device} 上的内容是端到端加密的。在这台设备上生成配对链接（Desktop：设置 → 安全连接；命令行设备：运行 Connector 的配对命令），粘贴到这里。",
       "linkLabel": "配对链接",
       "invalidLink": "这不是配对链接，配对链接以 aa-pair:// 开头。",
       "device": "设备",
@@ -2859,10 +2859,7 @@
       "cancel": "取消",
       "paired": "已与 {device} 配对，它的内容现在端到端加密传输。",
       "errorExpired": "配对链接已过期或已经用过，请在设备上重新生成。",
-      "errorMismatch": "响应的设备不是链接里的那台，已停止配对。",
-      "errorHandshake": "无法建立安全连接，请换一个新链接重试。",
-      "errorOffline": "设备不在线，请在设备上线后配对。",
-      "errorGeneric": "配对失败（{code}）。",
+      "errorGeneric": "配对失败，请在设备上重新生成配对链接后重试。",
       "unsupported": "这个浏览器无法建立端到端加密连接。请使用新版 Chrome、Edge、Firefox、Safari，或使用 Desktop。"
     },
     "settings": {
@@ -2884,9 +2881,12 @@
       "policyDescription": "即使服务器不再要求加密，本客户端仍拒绝明文的会话内容。",
       "relax": "允许明文",
       "relaxTitle": "允许本客户端使用明文？",
-      "relaxDescription": "服务器将能读到未配对设备的会话内容；已配对的设备仍然加密。",
+      "relaxDescription": "只影响本客户端：服务器将能读到未配对设备的会话内容，已配对的设备仍然加密。服务器以后重新要求加密时，本客户端也会重新要求。",
       "cancel": "取消",
-      "unsupported": "这个浏览器无法建立端到端加密连接。"
+      "unsupported": "这个浏览器无法建立端到端加密连接。",
+      "copy": "复制",
+      "copied": "已复制指纹。",
+      "copyFailed": "无法复制指纹。"
     }
   }
 }

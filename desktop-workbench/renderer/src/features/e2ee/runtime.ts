@@ -20,8 +20,8 @@ import { onContentTransportRequired, setContentTransportResolver } from "@/lib/t
 export interface E2eeRuntime {
   readonly store: ClientTrustStore
   readonly pool: SecureChannelPool
-  /** Pair with a device from its QR code text (`aa-pair://…`). */
-  pair(uri: string | PairingPayload): Promise<DevicePin>
+  /** Pair with a device from its QR code text (`aa-pair://…`); `deviceLabel` is the device name to remember. */
+  pair(uri: string | PairingPayload, deviceLabel?: string): Promise<DevicePin>
   /** Whether content of this device must use a secure channel. */
   requiresChannel(deviceId: string): boolean
   dispose(): Promise<void>
@@ -103,7 +103,7 @@ export function startE2ee(platform: "web" | "desktop"): E2eeRuntime | null {
   runtime = {
     store,
     pool,
-    pair: (uri) => pool.pair(typeof uri === "string" ? parsePairingUri(uri) : uri),
+    pair: (uri, deviceLabel) => pool.pair(typeof uri === "string" ? parsePairingUri(uri) : uri, deviceLabel),
     requiresChannel,
     async dispose() {
       restore()
