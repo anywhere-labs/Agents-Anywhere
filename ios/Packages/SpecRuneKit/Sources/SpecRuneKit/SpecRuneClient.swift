@@ -141,6 +141,9 @@ public nonisolated struct SpecRuneClient: Sendable {
             result = try await transport.shell(repo: repo, command: command)
         } catch let error as SpecRuneError {
             throw error
+        } catch is CancellationError {
+            // 视图切换导致的取消不是「连不上设备」，别包装成 offline。
+            throw CancellationError()
         } catch {
             throw SpecRuneError.offline(String(describing: error).prefix(200).description)
         }

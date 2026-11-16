@@ -319,11 +319,15 @@ struct ChatShellView: View {
     @ViewBuilder
     private var mainContent: some View {
         if case let .specRune(connectorId) = selection,
+           let services = appState.nativeChatServices,
            let workspaceFilesService = appState.workspaceFilesService
         {
+            // 项目取自 dashboard repository，而不是 appState.projects：
+            // 后者要等 syncDashboard 才同步，而侧栏项目列表直接读 repository，
+            // 两者不同步时看板会显示空列表（真机/模拟器实测）。
             SpecRuneTasksView(
                 connectorId: connectorId,
-                projects: appState.projects.filter { $0.connectorId == connectorId },
+                projects: services.dashboardRepository.projects.filter { $0.connectorId == connectorId },
                 api: workspaceFilesService.connectorAPI
             )
             .id(connectorId)

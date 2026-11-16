@@ -120,10 +120,14 @@ final class SpecRuneBoardModel {
     func loadDetail(repo: String, ref: String) async {
         let key = detailKey(repo: repo, ref: ref)
         if case .loaded = detailStates[key] { return }
+        if case .loading = detailStates[key] { return }
         detailStates[key] = .loading
         do {
             let detail = try await client.taskDetail(repo: repo, ref: ref)
             detailStates[key] = .loaded(detail)
+        } catch is CancellationError {
+            // 导航动画/页面切换会取消在途请求；回到 idle，下次进入再拉。
+            detailStates[key] = .idle
         } catch let error as SpecRuneError {
             detailStates[key] = .failed(error.message)
         } catch {

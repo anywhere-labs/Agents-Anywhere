@@ -23,7 +23,8 @@ struct SpecRuneTasksView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var model: SpecRuneBoardModel?
-    @State private var selectedTaskRef: String?
+    /// 导航栈路径（元素是任务 ref）。单栏 push 详情。
+    @State private var taskPath: [String] = []
 
     private var detailAnimation: Animation? {
         reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 1.0)
@@ -52,68 +53,46 @@ struct SpecRuneTasksView: View {
     // MARK: - 三栏
 
     private func board(_ model: SpecRuneBoardModel) -> some View {
-        NavigationSplitView {
-            projectSidebar(model)
-                .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 340)
-        } content: {
+        // 单栏 + push 详情：这个看板嵌在 app 的 detail 区域里，外面还有
+        // 一条 app 侧栏。Duo 内屏横屏约 669pt，再并排两栏会把详情挤到不可见，
+        // 所以列表与详情用导航栈串联，宽度全部留给当前页。
+        NavigationStack(path: $taskPath) {
             taskColumn(model)
-                .navigationSplitViewColumnWidth(min: 300, ideal: 380)
-        } detail: {
-            detailColumn(model)
-        }
-        .navigationSplitViewStyle(.balanced)
-    }
-
-    // MARK: - 项目侧栏
-
-    private func projectSidebar(_ model: SpecRuneBoardModel) -> some View {
-        List(selection: Binding(
-            get: { model.selectedRepo },
-            set: { repo in
-                guard let repo else { return }
-                // 换项目时先清空任务选中：详情列跟着 repo 变，
-                // 不清会把上一项目的 ref 带过来，永久停在 loading。
-                selectedTaskRef = nil
-                Task { await model.select(repo: repo) }
-            }
-        )) {
-            Section("项目") {
-                ForEach(model.deviceProjects) { project in
-                    projectRow(
-                        project,
-                        isSpecRune: model.specRuneRepos[project.workspacePath],
-                        failure: model.probeFailures[project.workspacePath]
-                    )
-                    .tag(project.workspacePath)
-                    .disabled(model.specRuneRepos[project.workspacePath] == false)
+                .navigationDestination(for: String.self) { ref in
+                    detailPage(model, ref: ref)
                 }
+        }
+    }
+
+    // MARK: - 项目切换（工具栏菜单）
+
+    /// 项目切换器：列出该设备上的 SpecRune 项目，未启用的置灰。
+    private func projectMenu(_ model: SpecRuneBoardModel) -> some View {
+        Menu {
+            ForEach(model.deviceProjects) { project in
+                let enabled = model.specRuneRepos[project.workspacePath] == true
+                Button {
+                    taskPath.removeAll()
+                    Task { await model.select(repo: project.workspacePath) }
+                } label: {
+                    if model.selectedRepo == project.workspacePath {
+                        Label(project.name, appSymbol: "checkmark")
+                    } else {
+                        Text(verbatim: enabled ? project.name : "\(project.name)（未启用）")
+                    }
+                }
+                .disabled(!enabled)
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(verbatim: model.selectedRepo.flatMap { repo in
+                    model.deviceProjects.first { $0.workspacePath == repo }?.name
+                } ?? "选择项目")
+                    .font(.subheadline.weight(.medium))
+                AppSymbol("chevron.down", size: 11)
             }
         }
-        .listStyle(.sidebar)
-        .navigationTitle("SpecRune")
-    }
-
-    private func projectRow(_ project: V2Project, isSpecRune: Bool?, failure: String?) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(verbatim: project.name)
-                .font(.body.weight(.medium))
-                .lineLimit(1)
-            Text(subtitle(for: project, isSpecRune: isSpecRune, failure: failure))
-                .font(.caption)
-                .foregroundStyle(AppTheme.secondaryText(colorScheme))
-                .lineLimit(1)
-        }
-        .padding(.vertical, 2)
-    }
-
-    private func subtitle(for project: V2Project, isSpecRune: Bool?, failure: String?) -> String {
-        // 读不到 ≠ 未启用：把真实原因显示出来，别把离线说成「没装 SpecRune」。
-        if let failure { return failure }
-        switch isSpecRune {
-        case .some(true): return "SpecRune 项目"
-        case .some(false): return "未启用 SpecRune"
-        case .none: return "检测中…"
-        }
+        .disabled(model.deviceProjects.isEmpty)
     }
 
     // MARK: - 任务列
@@ -132,10 +111,12 @@ struct SpecRuneTasksView: View {
             case let .loaded(list):
                 taskList(model, repo: repo, list: list)
                     .navigationTitle(projectName(model, repo: repo))
+                    .toolbar { ToolbarItem(placement: .principal) { projectMenu(model) } }
             }
         } else {
             ContentUnavailableView("未选择项目", appSymbol: "sidebar.left",
-                                   description: Text("从左侧选择一个 SpecRune 项目"))
+                                   description: Text("用上方菜单选择一个 SpecRune 项目"))
+                .toolbar { ToolbarItem(placement: .principal) { projectMenu(model) } }
         }
     }
 
@@ -144,14 +125,7 @@ struct SpecRuneTasksView: View {
     }
 
     private func taskList(_ model: SpecRuneBoardModel, repo: String, list: SpecRuneTaskList) -> some View {
-        List(selection: Binding(
-            get: { selectedTaskRef },
-            set: { ref in
-                selectedTaskRef = ref
-                guard let ref else { return }
-                Task { await model.loadDetail(repo: repo, ref: ref) }
-            }
-        )) {
+        List {
             let active = list.tasks.sorted(by: Self.newestFirst)
             let archived = list.archive.sorted(by: Self.newestFirst)
             if active.isEmpty && archived.isEmpty {
@@ -161,14 +135,14 @@ struct SpecRuneTasksView: View {
             if !active.isEmpty {
                 Section("进行中 · \(active.count)") {
                     ForEach(active) { task in
-                        SpecRuneTaskRow(task: task).tag(task.dir)
+                        NavigationLink(value: task.dir) { SpecRuneTaskRow(task: task) }
                     }
                 }
             }
             if !archived.isEmpty {
                 Section("已归档 · \(archived.count)") {
                     ForEach(archived) { task in
-                        SpecRuneTaskRow(task: task).tag(task.dir)
+                        NavigationLink(value: task.dir) { SpecRuneTaskRow(task: task) }
                     }
                 }
             }
@@ -186,22 +160,24 @@ struct SpecRuneTasksView: View {
     // MARK: - 详情列
 
     @ViewBuilder
-    private func detailColumn(_ model: SpecRuneBoardModel) -> some View {
-        if let repo = model.selectedRepo, let ref = selectedTaskRef {
+    private func detailPage(_ model: SpecRuneBoardModel, ref: String) -> some View {
+        if let repo = model.selectedRepo {
             switch model.detail(repo: repo, ref: ref) {
             case .idle, .loading:
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                // idle 与 loading 必须共用同一个视图树：分成两个分支时，
+                // 状态从 idle 变 loading 会销毁 .task，请求被取消→回 idle→再触发，死循环。
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .task(id: ref) { await model.loadDetail(repo: repo, ref: ref) }
             case let .failed(message):
                 ContentUnavailableView("无法读取任务详情", appSymbol: "exclamationmark.triangle",
                                        description: Text(verbatim: message))
             case let .loaded(detail):
                 SpecRuneTaskDetailView(detail: detail, repo: repo, model: model)
-                    .id("\(repo)|\(ref)")
-                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .trailing)))
             }
         } else {
-            ContentUnavailableView("未选择任务", appSymbol: "checkmark.circle",
-                                   description: Text("选择左侧任务查看详情"))
+            ContentUnavailableView("未选择项目", appSymbol: "sidebar.left",
+                                   description: Text("用上方菜单选择一个 SpecRune 项目"))
         }
     }
 }
